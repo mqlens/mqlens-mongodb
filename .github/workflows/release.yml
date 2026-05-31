@@ -80,6 +80,8 @@ jobs:
           tagName: ${{ github.ref_name == 'main' && 'mqlens-v__VERSION__' || 'dev' }}
           releaseName: ${{ github.ref_name == 'main' && 'MQLens v__VERSION__' || 'MQLens Dev Build' }}
           releaseBody: 'Generating release notes…'
+          prerelease: ${{ github.ref_name != 'main' }}
+          args: ${{ matrix.args }}
 
   # Replace the placeholder body with real notes once the bundles are uploaded:
   # an auto-generated changelog for stable (main) releases, or a recent-commit
@@ -115,5 +117,3 @@ jobs:
             } > notes.md
           fi
           gh release edit "$TAG" --notes-file notes.md
-          prerelease: ${{ github.ref_name != 'main' }}
-          args: ${{ matrix.args }}
