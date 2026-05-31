@@ -84,6 +84,22 @@ jobs:
           echo "${{ secrets.APPLE_API_KEY_P8 }}" | base64 --decode > "$RUNNER_TEMP/apple_api_key.p8"
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/apple_api_key.p8" >> "$GITHUB_ENV"
 
+      # Stable -> mqlens-v<version>. Dev -> a unique semver pre-release carrying
+      # the build's short SHA (e.g. mqlens-v0.1.0-dev.a1b2c3d) so every dev build
+      # gets its own tag and nothing collides with the `dev` branch name.
+      - name: Compute release tag
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "REL_TAG=mqlens-v${VERSION}" >> "$GITHUB_ENV"
+            echo "REL_NAME=MQLens v${VERSION}" >> "$GITHUB_ENV"
+          else
+            SHA="${GITHUB_SHA:0:7}"
+            echo "REL_TAG=mqlens-v${VERSION}-dev.${SHA}" >> "$GITHUB_ENV"
+            echo "REL_NAME=MQLens v${VERSION}-dev.${SHA}" >> "$GITHUB_ENV"
+          fi
+
       - name: Build app & publish release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -98,8 +114,8 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           # APPLE_API_KEY_PATH is exported by the prepare step above (macOS only).
         with:
-          tagName: ${{ github.ref_name == 'main' && 'mqlens-v__VERSION__' || 'dev' }}
-          releaseName: ${{ github.ref_name == 'main' && 'MQLens v__VERSION__' || 'MQLens Dev Build' }}
+          tagName: ${{ env.REL_TAG }}
+          releaseName: ${{ env.REL_NAME }}
           releaseBody: 'Generating release notes…'
           prerelease: ${{ github.ref_name != 'main' }}
           args: ${{ matrix.args }}
@@ -119,16 +135,17 @@ jobs:
       - name: Compose and publish release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
+          VERSION=$(node -p "require('./package.json').version")
           if [ "${{ github.ref_name }}" = "main" ]; then
-            VERSION=$(node -p "require('./package.json').version")
             TAG="mqlens-v${VERSION}"
             gh api --method POST "repos/${{ github.repository }}/releases/generate-notes" \
               -f tag_name="$TAG" --jq '.body' > notes.md
           else
-            TAG="dev"
+            TAG="mqlens-v${VERSION}-dev.${GITHUB_SHA:0:7}"
             {
-              echo "Rolling development build from the \`dev\` branch — unstable, not for production."
+              echo "Development pre-release — unstable, not for production."
               echo ""
               echo "**Commit:** \`${{ github.sha }}\`"
               echo "**Built:** $(date -u '+%Y-%m-%d %H:%M UTC')"
@@ -138,3 +155,17 @@ jobs:
             } > notes.md
           fi
           gh release edit "$TAG" --notes-file notes.md
+
+      # Keep the Releases page tidy: on dev, keep only the 10 newest dev
+      # pre-releases (tags like mqlens-v*-dev.*) and delete the rest + their tags.
+      - name: Prune old dev pre-releases
+        if: github.ref_name != 'main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --limit 100 --json tagName,createdAt,isPrerelease \
+            --jq '[.[] | select(.isPrerelease and (.tagName | test("-dev\\.")))]
+                  | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' \
+          | while read -r t; do
+              [ -n "$t" ] && gh release delete "$t" --cleanup-tag --yes
+            done
