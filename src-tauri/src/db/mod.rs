@@ -2,6 +2,7 @@
 
 pub mod aggregate;
 pub mod gridfs;
+pub mod metadata;
 pub mod query;
 pub mod schema;
 pub mod version;
