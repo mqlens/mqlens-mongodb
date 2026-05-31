@@ -1,0 +1,186 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Download from '../components/Download.astro';
+import { SITE } from '../consts';
+
+const features = [
+  {
+    title: 'Every connection mode',
+    body: 'Standalone, replica set, or raw connection string. TLS with system CA, custom CA, or client certificate; SSH tunnel; SOCKS5 proxy. A staged Test Connection reports each real phase: parse → DNS → connect → ping.',
+  },
+  {
+    title: 'All the auth mechanisms',
+    body: 'SCRAM-SHA-1/256, X.509, MONGODB-AWS (IAM with session token), GSSAPI/Kerberos, and LDAP (PLAIN) — with the correct $external plumbing.',
+  },
+  {
+    title: 'Query & aggregate',
+    body: 'find with filter, sort, projection, skip, limit and pagination. A visual query builder, full aggregation pipelines, and explain plans for both find and aggregate rendered as a visual plan tree.',
+  },
+  {
+    title: 'Edit documents — in bulk',
+    body: 'View, insert, edit, and delete documents. Run update-many / delete-many by filter with a counted, guarded confirmation so you never touch more than you meant to.',
+  },
+  {
+    title: 'Indexes, collections & views',
+    body: 'Create, inspect, and drop indexes with real key patterns and unique/sparse flags. Create, drop, and rename collections and databases, and build aggregation-backed views.',
+  },
+  {
+    title: 'Schema analysis',
+    body: 'Sample a collection and see per-field types and presence/coverage — including nested paths — to understand what your data actually looks like.',
+  },
+  {
+    title: 'GridFS & import/export',
+    body: 'Browse files in a GridFS bucket and download them to disk. Import and export JSON and CSV, including full-collection background exports.',
+  },
+  {
+    title: 'Embedded mongosh',
+    body: 'A real shell backed by an actual mongosh binary, right inside the app — for the moments a GUI cannot reach.',
+  },
+  {
+    title: 'AI query assistant',
+    body: 'Natural language → MQL, with your choice of provider (Anthropic, OpenAI, Gemini, or local agent CLIs). The API key stays in the backend, out of the frontend.',
+  },
+];
+---
+
+<BaseLayout>
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container hero-inner">
+      <span class="eyebrow">Open source · {SITE.license}</span>
+      <h1>The MongoDB GUI that's<br /><span class="grad">fast, native, and honest.</span></h1>
+      <p class="lede">
+        {SITE.name} connects to any real MongoDB deployment and lets you browse, query,
+        aggregate, explain, edit in bulk, manage indexes and views, analyze schemas, and
+        run an embedded <code>mongosh</code> — with credentials encrypted behind a master
+        password. Built with Tauri (Rust) and React.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#download">Download for free</a>
+        <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">View source</a>
+      </div>
+      <div class="hero-meta">
+        <span>✓ macOS · Windows · Linux</span>
+        <span>✓ GPG-signed &amp; notarized builds</span>
+        <span>✓ No telemetry</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download -->
+  <section class="section-tight">
+    <div class="container">
+      <h2 class="dl-heading">Download {SITE.name}</h2>
+      <Download />
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="section" id="features">
+    <div class="container">
+      <div class="sec-head">
+        <span class="eyebrow">Features</span>
+        <h2>Everything you need to work with MongoDB</h2>
+        <p>One cross-platform desktop app — no Atlas account required, no cloud round-trip for your data.</p>
+      </div>
+      <div class="feat-grid">
+        {features.map((f) => (
+          <article class="feat-card">
+            <h3>{f.title}</h3>
+            <p>{f.body}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Security strip -->
+  <section class="section security">
+    <div class="container sec-grid">
+      <div>
+        <span class="eyebrow">Security by default</span>
+        <h2>Your credentials never sit in plaintext</h2>
+        <ul class="checks">
+          <li>Connection profiles and settings are encrypted at rest with AES-256-GCM (Argon2id key derivation), gated behind a master password.</li>
+          <li>Disabling TLS certificate validation is an explicit, opt-in choice with an in-app warning — never silent.</li>
+          <li>AI provider API keys are held in the backend, out of the frontend bundle.</li>
+        </ul>
+        <a class="btn btn-ghost" href="/docs/#security">Read the security model →</a>
+      </div>
+      <pre><code># Verify any download against its signature
+gpg --import KEYS
+gpg --verify MQLens_0.1.0_amd64.deb.asc \
+            MQLens_0.1.0_amd64.deb</code></pre>
+    </div>
+  </section>
+
+  <!-- Final CTA -->
+  <section class="section cta">
+    <div class="container cta-inner">
+      <h2>Point {SITE.name} at your database.</h2>
+      <p>Free, open source, and yours to inspect.</p>
+      <a class="btn btn-primary" href="#download">Download {SITE.name}</a>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .hero {
+    padding: 96px 0 72px;
+    background:
+      radial-gradient(1100px 480px at 50% -140px, hsla(200, 90%, 50%, 0.20), transparent 70%),
+      radial-gradient(900px 460px at 92% 120%, hsla(268, 85%, 65%, 0.12), transparent 70%);
+    border-bottom: 1px solid var(--border);
+  }
+  .hero-inner { text-align: center; max-width: 820px; margin: 0 auto; }
+  .hero h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); margin: 18px 0 0; font-weight: 700; }
+  .grad {
+    background: linear-gradient(100deg, var(--accent-bright), var(--accent-teal));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .lede { font-size: 1.12rem; color: var(--text-dim); margin: 22px auto 0; max-width: 680px; }
+  .hero-cta { display: flex; gap: 12px; justify-content: center; margin-top: 30px; flex-wrap: wrap; }
+  .hero-meta {
+    display: flex; gap: 22px; justify-content: center; flex-wrap: wrap;
+    margin-top: 28px; color: var(--text-dim); font-size: 0.9rem;
+  }
+
+  .dl-heading { text-align: center; margin: 0 0 28px; font-size: 1.6rem; }
+
+  .sec-head { text-align: center; max-width: 640px; margin: 0 auto 48px; }
+  .sec-head h2 { font-size: clamp(1.8rem, 4vw, 2.4rem); margin: 12px 0 0; }
+  .sec-head p { color: var(--text-dim); margin-top: 14px; }
+
+  .feat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 18px;
+  }
+  .feat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    transition: border-color 0.15s ease, transform 0.08s ease;
+  }
+  .feat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .feat-card h3 { margin: 0 0 10px; font-size: 1.12rem; }
+  .feat-card p { margin: 0; color: var(--text-dim); font-size: 0.95rem; }
+
+  .security { background: var(--bg-soft); border-block: 1px solid var(--border); }
+  .sec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+  .sec-grid h2 { font-size: clamp(1.6rem, 3.5vw, 2.2rem); margin: 12px 0 20px; }
+  .checks { list-style: none; padding: 0; margin: 0 0 24px; }
+  .checks li { position: relative; padding-left: 28px; margin-bottom: 14px; color: var(--text-dim); }
+  .checks li::before { content: "✓"; position: absolute; left: 0; color: var(--accent-bright); font-weight: 700; }
+
+  .cta-inner { text-align: center; }
+  .cta-inner h2 { font-size: clamp(1.8rem, 4vw, 2.6rem); margin: 0; }
+  .cta-inner p { color: var(--text-dim); margin: 14px 0 26px; }
+
+  @media (max-width: 820px) {
+    .sec-grid { grid-template-columns: 1fr; gap: 28px; }
+  }
+</style>

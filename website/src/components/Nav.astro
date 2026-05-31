@@ -1,0 +1,64 @@
+---
+import { SITE, NAV } from '../consts';
+---
+
+<header class="nav">
+  <div class="container nav-inner">
+    <a href="/" class="brand">
+      <img src="/favicon.svg" alt="" width="28" height="28" />
+      <span>{SITE.name}</span>
+    </a>
+    <nav class="links">
+      {NAV.map((item) => (
+        <a href={item.href} {...('external' in item && item.external ? { target: '_blank', rel: 'noopener' } : {})}>
+          {item.label}
+        </a>
+      ))}
+      <a class="btn btn-primary nav-cta" href="/#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 64px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 800;
+    font-size: 1.15rem;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .brand:hover { text-decoration: none; }
+  .links {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+  .links > a:not(.btn) {
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 0.95rem;
+  }
+  .links > a:not(.btn):hover { color: var(--text); text-decoration: none; }
+  .nav-cta { padding: 8px 16px; }
+
+  @media (max-width: 640px) {
+    .links { gap: 14px; }
+    .links > a:not(.btn):not(:nth-last-child(2)) { display: none; }
+  }
+</style>

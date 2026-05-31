@@ -1,0 +1,127 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { SITE } from '../../consts';
+
+const toc = [
+  { id: 'install', label: 'Install' },
+  { id: 'first-connection', label: 'Your first connection' },
+  { id: 'verifying', label: 'Verifying downloads' },
+  { id: 'security', label: 'Security model' },
+  { id: 'build', label: 'Build from source' },
+  { id: 'prerequisites', label: 'Prerequisites' },
+];
+---
+
+<BaseLayout title="Docs" description={`How to install, verify, secure, and build ${SITE.name} — the native MongoDB desktop GUI.`}>
+  <section class="section docs">
+    <div class="container docs-grid">
+      <!-- Sidebar -->
+      <aside class="toc">
+        <p class="toc-title">On this page</p>
+        <nav>
+          {toc.map((t) => <a href={`#${t.id}`}>{t.label}</a>)}
+        </nav>
+      </aside>
+
+      <!-- Content -->
+      <article class="prose">
+        <span class="eyebrow">Documentation</span>
+        <h1>Getting started with {SITE.name}</h1>
+        <p class="intro">
+          {SITE.name} is a native desktop GUI for MongoDB. Point it at any deployment —
+          local, self-hosted, or Atlas — and browse, query, aggregate, and manage your
+          data from a single cross-platform app.
+        </p>
+
+        <h2 id="install">Install</h2>
+        <p>Download the build for your platform from the <a href="/#download">download section</a> or the <a href={SITE.releases} target="_blank" rel="noopener">releases page</a>:</p>
+        <ul>
+          <li><strong>macOS</strong> — open the <code>.dmg</code> and drag {SITE.name} to Applications. Builds are Apple-notarized, so Gatekeeper will let it run.</li>
+          <li><strong>Windows</strong> — run the <code>.msi</code> or <code>.exe</code> installer. Installers are Azure Trusted Signing–signed.</li>
+          <li><strong>Linux</strong> — install the <code>.deb</code> (<code>sudo apt install ./MQLens_*.deb</code>) or make the <code>.AppImage</code> executable and run it.</li>
+        </ul>
+        <p>To use the embedded shell you'll also need <a href="https://www.mongodb.com/docs/mongodb-shell/" target="_blank" rel="noopener"><code>mongosh</code></a> on your <code>PATH</code>.</p>
+
+        <h2 id="first-connection">Your first connection</h2>
+        <ol>
+          <li>Launch {SITE.name} and set a <strong>master password</strong> — this encrypts your saved connection profiles at rest.</li>
+          <li>Create a connection: enter a host (standalone or replica set) or paste a full connection string.</li>
+          <li>Configure transport and auth as needed — TLS (system CA, custom CA file, or client certificate), an SSH tunnel, or a SOCKS5 proxy, plus your auth mechanism.</li>
+          <li>Hit <strong>Test Connection</strong>. The staged check reports each real phase: parse → DNS resolve → connect → ping.</li>
+          <li>Connect, then browse databases, collections, views, and GridFS buckets in the tree and start querying.</li>
+        </ol>
+
+        <h2 id="verifying">Verifying downloads</h2>
+        <p>Every release asset ships with a detached GPG signature (<code>.asc</code>), and macOS bundles are additionally Apple-notarized. To verify a download:</p>
+        <pre><code># Import the MQLens release public key (once):
+gpg --import KEYS    # from the repo, or:
+curl -L https://mqlens.com/KEYS | gpg --import
+
+# Verify an asset against its .asc:
+gpg --verify MQLens_0.1.0_amd64.deb.asc MQLens_0.1.0_amd64.deb</code></pre>
+        <p>Signing key — <strong>MQLens Releases &lt;dev@mqlens.com&gt;</strong>, fingerprint:</p>
+        <pre><code>8E10 C09D 1FEC 8C8F 90B1  DB7E 5804 6649 06E7 D373</code></pre>
+
+        <h2 id="security">Security model</h2>
+        <ul>
+          <li>Connection credentials and settings are encrypted at rest behind your master password using AES-256-GCM with Argon2id key derivation. Nothing is stored in plaintext once the vault is initialized.</li>
+          <li>Disabling TLS certificate validation is an explicit, opt-in choice (with an in-app warning) — it is never silent.</li>
+          <li>AI provider API keys are held in the backend, out of the frontend bundle.</li>
+        </ul>
+        <blockquote>{SITE.name} talks directly to whatever MongoDB deployment you point it at. Use the usual care with production credentials.</blockquote>
+
+        <h2 id="build">Build from source</h2>
+        <pre><code>git clone {SITE.repo}.git
+cd mqlens-mongodb
+npm install
+npm run tauri dev      # run the desktop app with hot reload
+npm run tauri build    # produce a platform installer / bundle</code></pre>
+
+        <h2 id="prerequisites">Prerequisites</h2>
+        <ul>
+          <li><a href="https://nodejs.org/" target="_blank" rel="noopener">Node.js</a> 18+</li>
+          <li><a href="https://www.rust-lang.org/tools/install" target="_blank" rel="noopener">Rust</a> (stable) and the <a href="https://tauri.app/start/prerequisites/" target="_blank" rel="noopener">Tauri prerequisites</a> for your OS</li>
+          <li><a href="https://www.mongodb.com/docs/mongodb-shell/" target="_blank" rel="noopener"><code>mongosh</code></a> on your <code>PATH</code> (only for the embedded shell)</li>
+        </ul>
+
+        <hr />
+        <p class="help">
+          Hit a snag? <a href={`${SITE.repo}/issues`} target="_blank" rel="noopener">Open an issue on GitHub →</a>
+        </p>
+      </article>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .docs-grid { display: grid; grid-template-columns: 220px 1fr; gap: 56px; align-items: start; }
+  .toc { position: sticky; top: 88px; }
+  .toc-title { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.75rem; color: var(--text-dim); margin: 0 0 12px; }
+  .toc nav { display: flex; flex-direction: column; gap: 8px; border-left: 1px solid var(--border); padding-left: 14px; }
+  .toc nav a { color: var(--text-dim); font-size: 0.92rem; }
+  .toc nav a:hover { color: var(--accent-bright); text-decoration: none; }
+
+  .prose { max-width: 720px; }
+  .prose h1 { font-size: clamp(2rem, 4vw, 2.6rem); margin: 10px 0 0; }
+  .prose .intro { font-size: 1.1rem; color: var(--text-dim); margin: 18px 0 8px; }
+  .prose h2 { font-size: 1.4rem; margin: 44px 0 14px; padding-top: 8px; scroll-margin-top: 80px; }
+  .prose p, .prose li { color: var(--text); }
+  .prose ul, .prose ol { padding-left: 22px; }
+  .prose li { margin-bottom: 8px; }
+  .prose blockquote {
+    border-left: 3px solid var(--accent);
+    margin: 20px 0;
+    padding: 4px 18px;
+    color: var(--text-dim);
+    background: var(--accent-soft);
+    border-radius: 0 8px 8px 0;
+  }
+  .prose hr { border: none; border-top: 1px solid var(--border); margin: 40px 0 22px; }
+  .help { color: var(--text-dim); }
+
+  @media (max-width: 820px) {
+    .docs-grid { grid-template-columns: 1fr; gap: 24px; }
+    .toc { position: static; }
+    .toc nav { flex-flow: row wrap; border-left: none; padding-left: 0; gap: 14px; }
+  }
+</style>

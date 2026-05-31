@@ -1,0 +1,131 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { SITE } from '../../consts';
+
+// Static fallback entries. These render if the GitHub API is unreachable at build
+// time (e.g. rate-limited CI), and serve as the seed before the first stable release.
+const fallback = [
+  {
+    tag: 'v0.1.0',
+    name: 'MQLens 0.1.0',
+    date: '',
+    url: `${SITE.releases}`,
+    body:
+      'Initial public release. Connections (TLS / SSH / SOCKS5) with every auth mechanism, browse, find + visual query builder, aggregation pipelines, explain plans, bulk document edits, index/collection/view management, schema analysis, GridFS, JSON/CSV import/export, embedded mongosh, AI query assistant, and encrypted credentials behind a master password.',
+  },
+];
+
+// Minimal markdown → HTML for release bodies (headings, lists, inline code, links, bold).
+function renderMarkdown(md: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const inline = (s: string) =>
+    esc(s)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  const out: string[] = [];
+  let inList = false;
+  const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const h = /^(#{1,4})\s+(.*)$/.exec(line);
+    const li = /^[-*]\s+(.*)$/.exec(line);
+    if (h) { closeList(); out.push(`<h3>${inline(h[2])}</h3>`); }
+    else if (li) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${inline(li[1])}</li>`); }
+    else if (line === '') { closeList(); }
+    else { closeList(); out.push(`<p>${inline(line)}</p>`); }
+  }
+  closeList();
+  return out.join('\n');
+}
+
+type Release = { tag: string; name: string; date: string; url: string; body: string };
+let releases: Release[] = fallback;
+
+try {
+  const res = await fetch('https://api.github.com/repos/mqlens/mqlens-mongodb/releases?per_page=30', {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'mqlens-website' },
+  });
+  if (res.ok) {
+    const data = (await res.json()) as any[];
+    const stable = data
+      .filter((r) => !r.draft && !r.prerelease)
+      .map((r) => ({
+        tag: r.tag_name as string,
+        name: (r.name as string) || (r.tag_name as string),
+        date: r.published_at ? new Date(r.published_at).toISOString().slice(0, 10) : '',
+        url: r.html_url as string,
+        body: (r.body as string) || '',
+      }));
+    if (stable.length > 0) releases = stable;
+  }
+} catch {
+  // keep fallback
+}
+---
+
+<BaseLayout title="Changelog" description={`Release history for ${SITE.name}.`}>
+  <section class="section">
+    <div class="container narrow">
+      <span class="eyebrow">Changelog</span>
+      <h1>What's new in {SITE.name}</h1>
+      <p class="intro">
+        Release notes for every stable build. The canonical list — including pre-releases and
+        signed assets — lives on the <a href={SITE.releases} target="_blank" rel="noopener">GitHub releases page</a>.
+      </p>
+
+      <div class="timeline">
+        {releases.map((r) => (
+          <article class="entry">
+            <div class="entry-head">
+              <h2 id={r.tag}>
+                <a href={r.url} target="_blank" rel="noopener">{r.name}</a>
+              </h2>
+              <div class="meta">
+                <code class="tag">{r.tag}</code>
+                {r.date && <time datetime={r.date}>{r.date}</time>}
+              </div>
+            </div>
+            <div class="body" set:html={renderMarkdown(r.body)} />
+          </article>
+        ))}
+      </div>
+
+      <p class="more">
+        Looking for older or pre-release builds?
+        <a href={SITE.releases} target="_blank" rel="noopener">See all releases on GitHub →</a>
+      </p>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .narrow { max-width: 760px; }
+  h1 { font-size: clamp(2rem, 4vw, 2.6rem); margin: 10px 0 0; }
+  .intro { color: var(--text-dim); font-size: 1.08rem; margin: 16px 0 40px; }
+
+  .timeline { display: flex; flex-direction: column; gap: 36px; }
+  .entry {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    padding: 24px 26px;
+  }
+  .entry-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .entry-head h2 { font-size: 1.35rem; margin: 0; scroll-margin-top: 80px; }
+  .entry-head h2 a { color: var(--text); }
+  .entry-head h2 a:hover { color: var(--accent-bright); }
+  .meta { display: flex; align-items: center; gap: 12px; color: var(--text-dim); font-size: 0.85rem; }
+  .tag { background: var(--accent-soft); color: var(--accent-bright); border-color: transparent; }
+
+  .body :global(h3) { font-size: 1rem; margin: 18px 0 8px; }
+  .body :global(p) { color: var(--text-dim); margin: 8px 0; }
+  .body :global(ul) { color: var(--text-dim); padding-left: 22px; margin: 8px 0; }
+  .body :global(li) { margin-bottom: 6px; }
+
+  .more { margin-top: 40px; color: var(--text-dim); }
+</style>
