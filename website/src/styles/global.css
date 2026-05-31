@@ -1,0 +1,125 @@
+/* ============================================================
+   MQLens website theme — mirrors the desktop app's design system
+   (src/index.css): deep blue-charcoal canvas, electric sky-blue
+   accent, Inter + JetBrains Mono, small radii.
+   ============================================================ */
+:root {
+  /* Surfaces — from the app's dark palette */
+  --bg: hsl(222, 24%, 6%);           /* app --bg-base */
+  --bg-soft: hsl(222, 24%, 8%);      /* lifted band */
+  --bg-card: hsl(222, 20%, 10%);     /* app --bg-panel (opaque) */
+  --bg-elevated: hsl(222, 20%, 13%);
+  --border: hsl(220, 15%, 18%);      /* app --border-color */
+  --border-soft: hsl(220, 15%, 14%);
+
+  /* Text */
+  --text: hsl(210, 20%, 94%);        /* app --text-main */
+  --text-dim: hsl(215, 12%, 68%);    /* app --text-muted */
+  --text-faint: hsl(215, 8%, 48%);   /* app --text-dim */
+
+  /* Brand & status accents — exact app values */
+  --accent: hsl(200, 90%, 50%);          /* primary / link (sky-blue) */
+  --accent-bright: hsl(200, 90%, 62%);
+  --accent-teal: hsl(175, 85%, 43%);
+  --accent-green: hsl(142, 70%, 45%);    /* success / live */
+  --accent-amber: hsl(38, 92%, 60%);     /* warning / the icon's warm arc */
+  --accent-purple: hsl(268, 85%, 65%);
+  --accent-red: hsl(350, 80%, 55%);
+  --accent-soft: hsla(200, 90%, 50%, 0.10);
+
+  /* The app's signature button/brand gradient */
+  --brand-gradient: linear-gradient(135deg, hsl(200, 90%, 50%) 0%, hsl(205, 95%, 45%) 100%);
+  --brand-gradient-hover: linear-gradient(135deg, hsl(200, 90%, 60%) 0%, hsl(205, 95%, 55%) 100%);
+
+  --shadow-btn: 0 2px 6px hsla(200, 90%, 50%, 0.18);
+  --shadow-btn-hover: 0 6px 18px hsla(200, 90%, 50%, 0.28);
+  --shadow-card: 0 16px 36px rgba(0, 0, 0, 0.45);
+
+  --max-width: 1080px;
+  /* Radii — app uses small radii; pills only where intended */
+  --radius: 12px;
+  --radius-sm: 6px;
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  color: var(--text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* The app's canvas: blue glow top-left, purple bottom-right over deep navy */
+  background:
+    radial-gradient(900px 520px at 8% -4%,  hsla(200, 90%, 50%, 0.10) 0%, transparent 42%),
+    radial-gradient(900px 620px at 100% 100%, hsla(268, 85%, 65%, 0.08) 0%, transparent 48%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+a { color: var(--accent-bright); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+h1, h2, h3 { line-height: 1.15; letter-spacing: -0.02em; font-weight: 600; }
+
+.container {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 20px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.95rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 0.08s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.btn:hover { text-decoration: none; transform: translateY(-1px); }
+.btn-primary { background: var(--brand-gradient); color: #fff; box-shadow: var(--shadow-btn); }
+.btn-primary:hover { background: var(--brand-gradient-hover); box-shadow: var(--shadow-btn-hover); }
+.btn-ghost { background: transparent; color: var(--text); border-color: var(--border); }
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent-bright); }
+
+code, pre, kbd { font-family: var(--mono); font-size: 0.9em; }
+:not(pre) > code {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.12em 0.4em;
+  color: var(--accent-bright);
+}
+pre {
+  background: hsl(222, 26%, 4%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  overflow-x: auto;
+  line-height: 1.55;
+}
+pre code { color: var(--text); }
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--accent-bright);
+}
+
+.section { padding: 88px 0; }
+.section-tight { padding: 56px 0; }
+
+@media (max-width: 720px) {
+  .section { padding: 60px 0; }
+}

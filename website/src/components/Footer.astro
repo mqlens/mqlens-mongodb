@@ -1,0 +1,79 @@
+---
+import { SITE } from '../consts';
+const year = 2026;
+---
+
+<footer class="footer">
+  <div class="container foot-inner">
+    <div class="foot-brand">
+      <div class="brand-row">
+        <img src="/favicon.svg" alt="" width="24" height="24" />
+        <strong>{SITE.name}</strong>
+      </div>
+      <p>{SITE.tagline}.</p>
+    </div>
+    <div class="foot-cols">
+      <div>
+        <h4>Product</h4>
+        <a href="/#features">Features</a>
+        <a href="/#download">Download</a>
+        <a href="/changelog/">Changelog</a>
+      </div>
+      <div>
+        <h4>Docs</h4>
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/#verifying">Verify downloads</a>
+        <a href="/docs/#security">Security</a>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <a href={SITE.repo} target="_blank" rel="noopener">GitHub</a>
+        <a href={SITE.releases} target="_blank" rel="noopener">Releases</a>
+        <a href={`${SITE.repo}/issues`} target="_blank" rel="noopener">Issues</a>
+      </div>
+    </div>
+  </div>
+  <div class="container foot-bottom">
+    <span>© {year} {SITE.name}. Licensed under {SITE.license}.</span>
+    <span>Built with <a href="https://astro.build" target="_blank" rel="noopener">Astro</a>.</span>
+  </div>
+</footer>
+
+<style>
+  .footer {
+    border-top: 1px solid var(--border);
+    background: var(--bg-soft);
+    padding: 56px 0 28px;
+    margin-top: 40px;
+  }
+  .foot-inner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 40px;
+    justify-content: space-between;
+  }
+  .foot-brand { max-width: 280px; }
+  .brand-row { display: flex; align-items: center; gap: 8px; font-size: 1.1rem; }
+  .foot-brand p { color: var(--text-dim); margin: 10px 0 0; }
+  .foot-cols { display: flex; gap: 56px; flex-wrap: wrap; }
+  .foot-cols h4 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    margin: 0 0 12px;
+  }
+  .foot-cols a { display: block; color: var(--text); margin-bottom: 8px; font-size: 0.92rem; }
+  .foot-cols a:hover { color: var(--accent-bright); text-decoration: none; }
+  .foot-bottom {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 40px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.85rem;
+  }
+</style>
