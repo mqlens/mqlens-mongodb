@@ -16,6 +16,8 @@ mod mock_db;
 pub mod queries;
 pub mod ssh_tunnel;
 mod vault;
+mod window;
+pub use window::target_window_size;
 #[cfg(test)]
 mod tests;
 
