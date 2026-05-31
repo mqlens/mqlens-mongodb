@@ -169,3 +169,44 @@ jobs:
           | while read -r t; do
               [ -n "$t" ] && gh release delete "$t" --cleanup-tag --yes
             done
+
+  # Attach detached GPG signatures (.asc) to every release asset so users can
+  # verify authenticity (`gpg --verify file.asc file`). Activates automatically
+  # once the GPG_PRIVATE_KEY secret is set; otherwise it's a no-op.
+  sign-artifacts:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      ENABLE_GPG: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Import GPG key
+        if: env.ENABLE_GPG == 'true'
+        run: echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode | gpg --batch --import
+      - name: Sign release assets
+        if: env.ENABLE_GPG == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            TAG="mqlens-v${VERSION}"
+          else
+            TAG="mqlens-v${VERSION}-dev.${GITHUB_SHA:0:7}"
+          fi
+          KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/ {print $5; exit}')
+          mkdir -p _assets && cd _assets
+          gh release download "$TAG" --repo "${{ github.repository }}" --clobber
+          shopt -s nullglob
+          for f in *; do
+            case "$f" in *.asc) continue ;; esac
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+                --local-user "$KEYID" --armor --detach-sign --output "$f.asc" "$f"
+          done
+          if ls *.asc >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "${{ github.repository }}" *.asc --clobber
+          fi
