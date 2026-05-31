@@ -45,6 +45,17 @@ pub fn apply_main_timeouts(opts: &mut mongodb::options::ClientOptions) {
     }
 }
 
+/// First-run window size: ~85% of the monitor's logical area, clamped so it
+/// never drops below the minimum window size or exceeds the monitor itself.
+pub fn target_window_size(monitor_w_px: u32, monitor_h_px: u32, scale: f64) -> (f64, f64) {
+    let scale = if scale <= 0.0 { 1.0 } else { scale };
+    let max_w = monitor_w_px as f64 / scale;
+    let max_h = monitor_h_px as f64 / scale;
+    let w = (max_w * 0.85).clamp(800.0_f64.min(max_w), max_w);
+    let h = (max_h * 0.85).clamp(600.0_f64.min(max_h), max_h);
+    (w, h)
+}
+
 pub struct AppState {
     pub connections: Mutex<HashMap<String, Client>>,
     pub mocks: Mutex<HashMap<String, bool>>,
@@ -3113,6 +3124,31 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .setup(|app| {
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                // First launch (before the window-state plugin has saved anything):
+                // size the window to ~85% of the current monitor and center it.
+                let first_run = app
+                    .path()
+                    .app_config_dir()
+                    .map(|d| !d.join(".window-state.json").exists())
+                    .unwrap_or(true);
+                if first_run {
+                    if let Ok(Some(monitor)) = win.current_monitor() {
+                        let (w, h) = target_window_size(
+                            monitor.size().width,
+                            monitor.size().height,
+                            monitor.scale_factor(),
+                        );
+                        let _ = win.set_size(tauri::LogicalSize::new(w, h));
+                        let _ = win.center();
+                    }
+                }
+            }
+            Ok(())
+        })
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             connect_db,
