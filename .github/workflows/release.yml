@@ -210,3 +210,57 @@ jobs:
           if ls *.asc >/dev/null 2>&1; then
             gh release upload "$TAG" --repo "${{ github.repository }}" *.asc --clobber
           fi
+
+  # Sign the Windows installers (.exe / .msi) with Azure Trusted Signing and
+  # replace the unsigned assets on the release. Activates once the AZURE_*
+  # secrets are set; otherwise a no-op.
+  sign-windows:
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      ENABLE_WIN_SIGNING: ${{ secrets.AZURE_CLIENT_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.ENABLE_WIN_SIGNING == 'true'
+
+      - name: Download Windows installers from the release
+        if: env.ENABLE_WIN_SIGNING == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            TAG="mqlens-v${VERSION}"
+          else
+            TAG="mqlens-v${VERSION}-dev.${GITHUB_SHA:0:7}"
+          fi
+          echo "REL_TAG=$TAG" >> "$GITHUB_ENV"
+          mkdir -p win-assets
+          gh release download "$TAG" --repo "${{ github.repository }}" \
+            --pattern '*.exe' --pattern '*.msi' --dir win-assets --clobber
+
+      - name: Azure Trusted Signing
+        if: env.ENABLE_WIN_SIGNING == 'true'
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TS_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_TS_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TS_PROFILE }}
+          files-folder: ${{ github.workspace }}\win-assets
+          files-folder-filter: exe,msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Re-upload signed installers
+        if: env.ENABLE_WIN_SIGNING == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload "$REL_TAG" win-assets/*.exe win-assets/*.msi --repo "${{ github.repository }}" --clobber
