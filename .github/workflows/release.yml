@@ -17,6 +17,10 @@ jobs:
   build:
     permissions:
       contents: write
+    env:
+      # macOS signing + notarization switch on automatically once the Apple
+      # secrets are present; builds stay unsigned until then.
+      ENABLE_MAC_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -72,10 +76,27 @@ jobs:
 
       - run: npm ci
 
+      # Notarization uses an App Store Connect API key (.p8). Materialize it to
+      # a file on the runner; tauri-action reads APPLE_API_KEY_PATH from there.
+      - name: Prepare Apple API key (macOS signing)
+        if: matrix.platform == 'macos-latest' && env.ENABLE_MAC_SIGNING == 'true'
+        run: |
+          echo "${{ secrets.APPLE_API_KEY_P8 }}" | base64 --decode > "$RUNNER_TEMP/apple_api_key.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/apple_api_key.p8" >> "$GITHUB_ENV"
+
       - name: Build app & publish release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing + notarization (App Store Connect API key).
+          # All inactive until the matching repo secrets are set, so non-mac
+          # builds and unsigned macOS builds are unaffected.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          # APPLE_API_KEY_PATH is exported by the prepare step above (macOS only).
         with:
           tagName: ${{ github.ref_name == 'main' && 'mqlens-v__VERSION__' || 'dev' }}
           releaseName: ${{ github.ref_name == 'main' && 'MQLens v__VERSION__' || 'MQLens Dev Build' }}
