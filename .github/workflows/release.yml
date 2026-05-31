@@ -79,6 +79,41 @@ jobs:
         with:
           tagName: ${{ github.ref_name == 'main' && 'mqlens-v__VERSION__' || 'dev' }}
           releaseName: ${{ github.ref_name == 'main' && 'MQLens v__VERSION__' || 'MQLens Dev Build' }}
-          releaseBody: ${{ github.ref_name == 'main' && 'Download the installer for your platform from the assets below.' || 'Rolling development build from the `dev` branch — unstable.' }}
+          releaseBody: 'Generating release notes…'
+
+  # Replace the placeholder body with real notes once the bundles are uploaded:
+  # an auto-generated changelog for stable (main) releases, or a recent-commit
+  # list for rolling dev builds.
+  release-notes:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compose and publish release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+            TAG="mqlens-v${VERSION}"
+            gh api --method POST "repos/${{ github.repository }}/releases/generate-notes" \
+              -f tag_name="$TAG" --jq '.body' > notes.md
+          else
+            TAG="dev"
+            {
+              echo "Rolling development build from the \`dev\` branch — unstable, not for production."
+              echo ""
+              echo "**Commit:** \`${{ github.sha }}\`"
+              echo "**Built:** $(date -u '+%Y-%m-%d %H:%M UTC')"
+              echo ""
+              echo "### Recent changes"
+              git log -15 --no-merges --pretty='- %s (%h)'
+            } > notes.md
+          fi
+          gh release edit "$TAG" --notes-file notes.md
           prerelease: ${{ github.ref_name != 'main' }}
           args: ${{ matrix.args }}
