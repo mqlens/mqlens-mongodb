@@ -1,0 +1,84 @@
+name: Release
+
+# dev  branch  -> rolling pre-release tagged `dev`
+# main branch  -> stable release tagged `mqlens-v<version>` (bump the version
+#                 in src-tauri/tauri.conf.json + package.json before merging,
+#                 or the tag will already exist and the run will fail)
+on:
+  push:
+    branches: [main, dev]
+
+# Don't cancel an in-flight release run (it could leave partial assets).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest      # Apple Silicon
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest      # Intel
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - platform: ubuntu-22.04      # Linux
+            target: ''
+            args: ''
+          - platform: windows-latest    # Windows
+            target: ''
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri v2 + GSSAPI (mongodb gssapi-auth) build dependencies.
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libssl-dev \
+            libkrb5-dev \
+            clang \
+            libclang-dev \
+            build-essential \
+            curl wget file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Build app & publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name == 'main' && 'mqlens-v__VERSION__' || 'dev' }}
+          releaseName: ${{ github.ref_name == 'main' && 'MQLens v__VERSION__' || 'MQLens Dev Build' }}
+          releaseBody: ${{ github.ref_name == 'main' && 'Download the installer for your platform from the assets below.' || 'Rolling development build from the `dev` branch — unstable.' }}
+          prerelease: ${{ github.ref_name != 'main' }}
+          args: ${{ matrix.args }}
