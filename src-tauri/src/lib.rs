@@ -45,17 +45,6 @@ pub fn apply_main_timeouts(opts: &mut mongodb::options::ClientOptions) {
     }
 }
 
-/// First-run window size: ~85% of the monitor's logical area, clamped so it
-/// never drops below the minimum window size or exceeds the monitor itself.
-pub fn target_window_size(monitor_w_px: u32, monitor_h_px: u32, scale: f64) -> (f64, f64) {
-    let scale = if scale <= 0.0 { 1.0 } else { scale };
-    let max_w = monitor_w_px as f64 / scale;
-    let max_h = monitor_h_px as f64 / scale;
-    let w = (max_w * 0.85).clamp(800.0_f64.min(max_w), max_w);
-    let h = (max_h * 0.85).clamp(600.0_f64.min(max_h), max_h);
-    (w, h)
-}
-
 pub struct AppState {
     pub connections: Mutex<HashMap<String, Client>>,
     pub mocks: Mutex<HashMap<String, bool>>,
