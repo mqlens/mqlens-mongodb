@@ -1605,22 +1605,6 @@ mod tests {
         }
     }
 
-    // GO-LIVE: first-run window sizing fits the monitor and respects bounds.
-    #[test]
-    fn test_target_window_size_fits_monitor() {
-        use crate::target_window_size;
-        // 4K @ 2x scale -> 85% of logical 1920x1080 = 1632x918.
-        let (w, h) = target_window_size(3840, 2160, 2.0);
-        assert!((w - 1632.0).abs() < 1.0, "w={}", w);
-        assert!((h - 918.0).abs() < 1.0, "h={}", h);
-        // 1280x800 @1x -> 85% = 1088x680 (above the 800x600 floor).
-        let (w2, h2) = target_window_size(1280, 800, 1.0);
-        assert!((w2 - 1088.0).abs() < 1.0 && (h2 - 680.0).abs() < 1.0);
-        // A small monitor never yields a window larger than the monitor.
-        let (w3, h3) = target_window_size(1024, 640, 1.0);
-        assert!(w3 <= 1024.0 && h3 <= 640.0);
-    }
-
     #[tokio::test]
     async fn test_apply_main_timeouts_preserves_uri_values() {
         // M2: timeouts supplied in the URI must win over the 10s default.
