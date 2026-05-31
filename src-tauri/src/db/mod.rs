@@ -1,5 +1,7 @@
 //! Database-operation modules (split out of lib.rs).
 
+pub mod aggregate;
 pub mod gridfs;
+pub mod query;
 pub mod schema;
 pub mod version;
