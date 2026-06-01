@@ -14,10 +14,10 @@ import { SITE } from '../../consts';
       <span class="eyebrow">Open source · {SITE.license}</span>
       <h1>No paywalled features. Ever.<br /><span class="grad">A free NoSQLBooster alternative.</span></h1>
       <p class="lede">
-        NoSQLBooster offers a free tier, but its most useful features — aggregation pipeline
-        editor, SSH tunnels, advanced query options — are locked behind a paid licence. MQLens
-        ships everything in one completely free, Apache-2.0 package. No paywalls, no feature
-        tiers, no nagware. Just a full-power native MongoDB GUI that costs nothing.
+        NoSQLBooster is freemium — a limited free tier with paid upgrades for full capabilities.
+        MQLens ships everything in one completely free, Apache-2.0 package. No paywalls, no
+        feature tiers, no nagware. Native Tauri/Rust, 14 MB, every auth mode, SSH tunnel, SOCKS5,
+        aggregation pipelines, biometric-protected credentials, and an AI assistant. $0, forever.
       </p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="#download">Download for free</a>
@@ -70,34 +70,14 @@ import { SITE } from '../../consts';
               <td>OS-level storage</td>
             </tr>
             <tr>
-              <td>Auth: SCRAM-SHA-1/256</td>
-              <td class="col-us">Yes</td>
-              <td>Yes</td>
-            </tr>
-            <tr>
-              <td>Auth: X.509</td>
-              <td class="col-us">Yes</td>
-              <td>Yes (paid tier)</td>
-            </tr>
-            <tr>
-              <td>Auth: MONGODB-AWS (IAM)</td>
-              <td class="col-us">Yes</td>
-              <td>Yes (paid tier)</td>
-            </tr>
-            <tr>
-              <td>Auth: GSSAPI / Kerberos</td>
-              <td class="col-us">Yes</td>
-              <td>Yes (paid tier)</td>
-            </tr>
-            <tr>
-              <td>Auth: LDAP (PLAIN)</td>
-              <td class="col-us">Yes</td>
-              <td>Yes (paid tier)</td>
+              <td>Authentication support</td>
+              <td class="col-us">SCRAM-SHA-1/256, X.509, MONGODB-AWS, GSSAPI/Kerberos, LDAP — all mechanisms, always free</td>
+              <td>Available; check nosqlbooster.com for current free vs paid tier boundaries</td>
             </tr>
             <tr>
               <td>SSH tunnel</td>
-              <td class="col-us">Yes</td>
-              <td>Yes (paid tier)</td>
+              <td class="col-us">Yes — always free</td>
+              <td>Available; check nosqlbooster.com for current free vs paid tier boundaries</td>
             </tr>
             <tr>
               <td>SOCKS5 proxy</td>
@@ -106,13 +86,13 @@ import { SITE } from '../../consts';
             </tr>
             <tr>
               <td>Aggregation pipeline editor</td>
-              <td class="col-us">Yes</td>
-              <td>Yes (paid tier)</td>
+              <td class="col-us">Yes — always free</td>
+              <td>Available; check nosqlbooster.com for current free vs paid tier boundaries</td>
             </tr>
             <tr>
               <td>Visual explain plans</td>
-              <td class="col-us">Yes (find + aggregate)</td>
-              <td>Yes (paid tier)</td>
+              <td class="col-us">Yes (find + aggregate) — always free</td>
+              <td>Available; check nosqlbooster.com for current free vs paid tier boundaries</td>
             </tr>
             <tr>
               <td>Bulk edit (update-many / delete-many)</td>
@@ -131,8 +111,8 @@ import { SITE } from '../../consts';
             </tr>
             <tr>
               <td>GridFS browser</td>
-              <td class="col-us">Yes</td>
-              <td>Yes (paid tier)</td>
+              <td class="col-us">Yes — always free</td>
+              <td>Available; check nosqlbooster.com for current free vs paid tier boundaries</td>
             </tr>
             <tr>
               <td>Embedded shell</td>
@@ -152,9 +132,6 @@ import { SITE } from '../../consts';
           </tbody>
         </table>
       </div>
-      <p class="table-note">
-        Feature availability in NoSQLBooster's free vs paid tiers is based on their published pricing page. Verify current tier limits at nosqlbooster.com.
-      </p>
     </div>
   </section>
 
@@ -164,20 +141,9 @@ import { SITE } from '../../consts';
       <span class="eyebrow">Fair assessment</span>
       <h2>When NoSQLBooster is the better choice</h2>
       <p>
-        NoSQLBooster has a genuinely excellent fluent query API, a powerful built-in code editor
-        with MongoDB-specific IntelliSense, and a task scheduler for automating recurring queries.
-        If those productivity features are core to your daily workflow, the paid tier delivers
-        real value.
-      </p>
-      <p>
-        NoSQLBooster also ships SQL query support for MongoDB, which MQLens does not currently
-        offer. If your team migrates from a relational background and wants to keep querying in SQL
-        while learning MQL, that feature alone can justify the licence cost.
-      </p>
-      <p>
-        MQLens is the right pick when you want every advanced capability — SSH tunnels, all auth
-        modes, aggregation pipelines, AI assistant — without spending money or hitting a paywall
-        six months in when a free trial expires.
+        If your team needs SQL-to-MQL query support, NoSQLBooster-specific IntelliSense, or a
+        built-in task scheduler — and is comfortable paying for a licence — NoSQLBooster's feature
+        set may justify the cost.
       </p>
     </div>
   </section>

@@ -14,10 +14,10 @@ import { SITE } from '../../consts';
       <span class="eyebrow">Open source · {SITE.license}</span>
       <h1>A free MongoDB Compass alternative.<br /><span class="grad">Native, private, and full-featured.</span></h1>
       <p class="lede">
-        MongoDB Compass is the official GUI and a solid choice — but it runs on Electron, collects
-        usage telemetry by default, and ships no AI query assistant or SSH tunnel support in its
-        free Community edition. MQLens covers all of that and more, in a tiny native app built with
-        Tauri/Rust. Credentials are encrypted locally; zero data leaves your machine.
+        MongoDB Compass is the official GUI — but it runs on Electron (heavy), collects usage
+        telemetry by default, and has no AI query assistant or SOCKS5 proxy support. MQLens ships
+        all of that in a 14 MB native Tauri/Rust app. Credentials are encrypted with AES-256-GCM
+        and unlockable via biometrics. Zero telemetry. Apache-2.0 and $0.
       </p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="#download">Download for free</a>
@@ -151,20 +151,9 @@ import { SITE } from '../../consts';
       <span class="eyebrow">Fair assessment</span>
       <h2>When MongoDB Compass is the better choice</h2>
       <p>
-        Compass is the <strong>official</strong> MongoDB tool — maintained by the same team that builds
-        the database. If you rely on tight Atlas integration, need the latest MongoDB-specific UI
-        features the moment they ship, or your organization's security policy requires vendor-supported
-        software, Compass is the right call.
-      </p>
-      <p>
-        Compass also has a large community, extensive documentation, and is deeply familiar to most
-        MongoDB developers. If you are already comfortable with it and have no complaints, switching
-        tools has a real onboarding cost.
-      </p>
-      <p>
-        MQLens makes most sense if you want a lighter binary, zero telemetry without having to dig
-        through settings, biometric-protected credentials, an SSH tunnel, SOCKS5 proxy, GridFS
-        browsing, or an AI assistant — features Compass either lacks or gates.
+        Compass is the <strong>official</strong> MongoDB tool — if your organization requires
+        vendor-supported software, tight Atlas integration, or you simply want the tool built by
+        the same team that builds the database, Compass is the right call.
       </p>
     </div>
   </section>

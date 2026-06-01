@@ -14,12 +14,12 @@ import { SITE } from '../../consts';
       <span class="eyebrow">Open source · {SITE.license}</span>
       <h1>Beyond Robo 3T.<br /><span class="grad">Modern, maintained, and full-featured.</span></h1>
       <p class="lede">
-        Robo 3T (formerly Robomongo) was beloved for being lightweight and free, but its development
-        has slowed significantly since being acquired by Studio 3T, and it lacks support for many
-        modern MongoDB features. MQLens picks up that torch: still free, still native and lightweight
-        (~14 MB), but with full-power features Robo 3T never shipped — aggregation pipelines,
-        visual explain plans, every auth mode, encrypted credentials, SSH tunnel, SOCKS5 proxy,
-        GridFS, schema analysis, and an AI query assistant.
+        Robo 3T (formerly Robomongo) earned a loyal following for being free and lightweight — but
+        development has stalled and it lacks many features modern teams now expect. MQLens carries
+        that torch forward: still free, still native and tiny (~14 MB), but with full power Robo 3T
+        never shipped — aggregation pipelines, visual explain plans, every auth mode, encrypted
+        credentials with biometric unlock, SSH tunnel, SOCKS5 proxy, GridFS, schema analysis,
+        and an AI query assistant. Apache-2.0, zero telemetry.
       </p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="#download">Download for free</a>
@@ -72,29 +72,9 @@ import { SITE } from '../../consts';
               <td>Limited — connection strings stored with minimal protection</td>
             </tr>
             <tr>
-              <td>Auth: SCRAM-SHA-1/256</td>
-              <td class="col-us">Yes</td>
-              <td>Yes</td>
-            </tr>
-            <tr>
-              <td>Auth: X.509</td>
-              <td class="col-us">Yes</td>
-              <td>Limited</td>
-            </tr>
-            <tr>
-              <td>Auth: MONGODB-AWS (IAM)</td>
-              <td class="col-us">Yes</td>
-              <td>No</td>
-            </tr>
-            <tr>
-              <td>Auth: GSSAPI / Kerberos</td>
-              <td class="col-us">Yes</td>
-              <td>No</td>
-            </tr>
-            <tr>
-              <td>Auth: LDAP (PLAIN)</td>
-              <td class="col-us">Yes</td>
-              <td>No</td>
+              <td>Authentication support</td>
+              <td class="col-us">SCRAM-SHA-1/256, X.509, MONGODB-AWS, GSSAPI/Kerberos, LDAP — all mechanisms</td>
+              <td>Basic auth; development has slowed and it lacks many auth features modern teams expect</td>
             </tr>
             <tr>
               <td>SSH tunnel</td>
@@ -168,20 +148,8 @@ import { SITE } from '../../consts';
       <span class="eyebrow">Fair assessment</span>
       <h2>When Robo 3T is still worth considering</h2>
       <p>
-        Robo 3T earned a loyal following because it was genuinely fast and uncluttered. If you are
-        running an older MongoDB deployment (3.x–4.x) and you only need basic document browsing and
-        a shell, Robo 3T's simple interface gets out of the way and still works fine for that
-        workflow.
-      </p>
-      <p>
-        There is also something to be said for familiarity — if you have years of muscle memory
-        built up with Robo 3T's interface, switching tools has a real cost even if the new tool is
-        objectively more capable. Only you can weigh that trade-off.
-      </p>
-      <p>
-        That said, if you regularly use MongoDB 5.0+ features, need Kerberos or AWS IAM auth,
-        want to build aggregation pipelines visually, or need your connection profiles to survive
-        a laptop wipe with credentials intact, MQLens is worth a try.
+        If you are on an older MongoDB deployment, only need basic document browsing and a shell,
+        and already have years of Robo 3T muscle memory — it still works for that narrow workflow.
       </p>
     </div>
   </section>
