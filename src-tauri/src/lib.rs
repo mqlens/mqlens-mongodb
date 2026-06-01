@@ -40,6 +40,8 @@ pub use state::{AppState, LockExt};
 pub use window::target_window_size;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod integration_tests;
 
 /// Connect + server-selection timeout for the main (non-test) connection path.
 const MAIN_CONNECT_TIMEOUT_SECS: u64 = 10;

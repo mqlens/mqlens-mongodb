@@ -77,8 +77,18 @@ npm run dev            # frontend only (browser, no Tauri APIs)
 npm test               # frontend tests (Vitest)
 npm run coverage:frontend   # frontend tests with coverage
 cargo test --manifest-path src-tauri/Cargo.toml   # backend tests
-cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only   # backend coverage
+cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'   # backend coverage
 npm run build          # type-check + build the frontend bundle
+```
+
+The backend integration tests (and the coverage figure CI reports) need a real
+MongoDB. They skip automatically when `MQLENS_TEST_MONGO_URI` is unset, so set it
+to exercise the live database paths:
+
+```bash
+docker run -d -p 27017:27017 mongo:7
+MQLENS_TEST_MONGO_URI=mongodb://localhost:27017 \
+  cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'
 ```
 
 ## Build
