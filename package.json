@@ -12,7 +12,10 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "vitest run"
+    "test": "vitest run",
+    "coverage:frontend": "vitest run --coverage",
+    "coverage:backend": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only",
+    "coverage": "npm run coverage:frontend && npm run coverage:backend"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -34,6 +37,7 @@
     "@types/react-dom": "^19.1.6",
     "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^4.6.0",
+    "@vitest/coverage-v8": "^4.1.7",
     "jsdom": "^29.1.1",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
