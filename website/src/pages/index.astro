@@ -80,7 +80,7 @@ const heroDoc = `<span class="tok-p">&#123;</span>
   <section class="hero">
     <div class="container hero-inner">
       <span class="eyebrow">Open source · {SITE.license}</span>
-      <h1>The MongoDB GUI that does it all.<br /><span class="grad">Free, native, and private.</span></h1>
+      <h1>The MongoDB GUI<br />that does it all.<span class="grad">Free, native, and private.</span></h1>
       <p class="lede">
         {SITE.name} is a full-power MongoDB GUI — every auth mode, TLS/SSH/proxy,
         aggregation pipelines with explain plans, bulk edit, schema analysis, GridFS,
@@ -222,16 +222,27 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
       radial-gradient(900px 460px at 92% 120%, hsla(268, 85%, 65%, 0.12), transparent 70%);
     border-bottom: 1px solid var(--border);
   }
-  .hero-inner { text-align: center; max-width: 820px; margin: 0 auto; }
-  .hero h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); margin: 18px 0 0; font-weight: 700; }
+  .hero-inner { text-align: center; max-width: 900px; margin: 0 auto; }
+  .hero h1 {
+    font-size: clamp(2.3rem, 6vw, 3.6rem);
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    margin: 26px 0 0;
+    font-weight: 700;
+    text-wrap: balance;
+  }
   .grad {
+    display: block;
+    margin-top: 0.22em;
+    line-height: 1.1;
+    padding-bottom: 0.08em;
     background: linear-gradient(100deg, var(--accent-bright), var(--accent-teal));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
-  .lede { font-size: 1.12rem; color: var(--text-dim); margin: 22px auto 0; max-width: 680px; }
-  .hero-cta { display: flex; gap: 12px; justify-content: center; margin-top: 30px; flex-wrap: wrap; }
+  .lede { font-size: 1.12rem; line-height: 1.72; color: var(--text-dim); margin: 30px auto 0; max-width: 640px; }
+  .hero-cta { display: flex; gap: 12px; justify-content: center; margin-top: 38px; flex-wrap: wrap; }
   .hero-meta {
     display: flex; gap: 22px; justify-content: center; flex-wrap: wrap;
     margin-top: 28px; color: var(--text-dim); font-size: 0.9rem;
