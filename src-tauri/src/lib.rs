@@ -1140,6 +1140,8 @@ async fn vault_reset(
         }
     }
     *state.vault_key.lock_safe()? = None;
+    // A reset invalidates the old key; forget any biometric copy too.
+    let _ = biometric::remove_stored_key(&app_handle);
     Ok(())
 }
 
@@ -1170,6 +1172,8 @@ async fn vault_change_password(
     )?;
     connections::write_vault_meta(&meta_path, &new_meta)?;
     *state.vault_key.lock_safe()? = Some(new_key);
+    // Approach A: a password change derives a new key; keep biometrics working transparently.
+    biometric::restore_key_if_enrolled(&app_handle, &new_key);
     Ok(())
 }
 
