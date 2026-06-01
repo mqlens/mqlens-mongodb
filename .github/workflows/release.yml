@@ -84,6 +84,18 @@ jobs:
           echo "${{ secrets.APPLE_API_KEY_P8 }}" | base64 --decode > "$RUNNER_TEMP/apple_api_key.p8"
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/apple_api_key.p8" >> "$GITHUB_ENV"
 
+      # The biometry feature needs restricted keychain entitlements, which macOS
+      # only grants if a matching Developer ID provisioning profile is embedded in
+      # the bundle. tauri.conf.json's bundle.macOS.files copies this file into
+      # Contents/embedded.provisionprofile *before* Tauri signs, so the signature
+      # seals it. Without it the signed app is killed on launch (AMFI error -413).
+      # The profile must be issued for the same Developer ID cert that
+      # APPLE_SIGNING_IDENTITY resolves to, or AMFI rejects it.
+      - name: Prepare provisioning profile (macOS signing)
+        if: matrix.platform == 'macos-latest' && env.ENABLE_MAC_SIGNING == 'true'
+        run: |
+          echo "${{ secrets.APPLE_PROVISIONING_PROFILE }}" | base64 --decode > src-tauri/embedded.provisionprofile
+
       # Stable -> mqlens-v<version>. Dev -> a unique semver pre-release carrying
       # the build's short SHA (e.g. mqlens-v0.1.0-dev.a1b2c3d) so every dev build
       # gets its own tag and nothing collides with the `dev` branch name.

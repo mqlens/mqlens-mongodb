@@ -42,7 +42,10 @@
     ],
     "macOS": {
       "entitlements": "Entitlements.plist",
-      "infoPlist": "Info.plist"
+      "infoPlist": "Info.plist",
+      "files": {
+        "embedded.provisionprofile": "embedded.provisionprofile"
+      }
     }
   }
 }
