@@ -4,8 +4,17 @@ import {
   initializeVault,
   unlockVault,
   resetVault,
+  biometricStatus,
+  biometricUnlock,
   type VaultStatus,
+  type BiometricStatus,
 } from '../lib/vault';
+
+function biometryLabel(type: number): string {
+  if (type === 2) return 'Use Touch ID';
+  if (type === 3) return 'Use Face ID';
+  return 'Use biometrics';
+}
 
 interface VaultGateProps {
   children: React.ReactNode;
@@ -17,9 +26,36 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [bio, setBio] = useState<BiometricStatus | null>(null);
 
   useEffect(() => {
-    getVaultStatus().then(setStatus).catch((e) => setError(String(e)));
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await getVaultStatus();
+        if (cancelled) return;
+        setStatus(s);
+        if (s === 'locked') {
+          // Biometrics may be unavailable on this device; fall back to the password form.
+          const b = await biometricStatus().catch(() => null);
+          if (cancelled || !b) return;
+          setBio(b);
+          if (b.available && b.enrolled) {
+            try {
+              const next = await biometricUnlock();
+              if (!cancelled) setStatus(next);
+            } catch {
+              // Cancelled or stale key: silently stay on the password form.
+            }
+          }
+        }
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (status === 'loading') {
@@ -56,6 +92,16 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
       setError(String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const tryBiometric = async () => {
+    setError('');
+    try {
+      const next = await biometricUnlock();
+      setStatus(next);
+    } catch (e) {
+      setError(String(e));
     }
   };
 
@@ -111,6 +157,16 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
         >
           {isSetup ? 'Create & unlock' : 'Unlock'}
         </button>
+        {!isSetup && bio?.available && bio?.enrolled && (
+          <button
+            type="button"
+            className="mql-vault-link"
+            data-testid="vault-biometric-btn"
+            onClick={tryBiometric}
+          >
+            {biometryLabel(bio.biometryType)}
+          </button>
+        )}
         {!isSetup && (
           <button type="button" className="mql-vault-link" data-testid="vault-reset-btn" onClick={doReset}>
             Forgot password? Reset (deletes all saved credentials)

@@ -18,6 +18,7 @@ pub mod ssh_tunnel;
 mod state;
 mod vault;
 mod window;
+pub mod biometric;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
 pub use db::ddl::{
     create_collection_impl, create_view_impl, drop_collection_impl, drop_database_impl,
@@ -36,6 +37,7 @@ pub use db::metadata::{
 pub use db::query::{count_documents_impl, execute_mql_query_impl, explain_mql_query_impl};
 pub use db::schema::{analyze_schema_impl, infer_schema, FieldStat, SchemaReport, TypeCount};
 pub use db::version::get_mongodb_version_impl;
+pub use biometric::{decode_and_verify_key, encode_key, BiometricStatus};
 pub use state::{AppState, LockExt};
 pub use window::target_window_size;
 #[cfg(test)]
@@ -1138,6 +1140,8 @@ async fn vault_reset(
         }
     }
     *state.vault_key.lock_safe()? = None;
+    // A reset invalidates the old key; forget any biometric copy too.
+    let _ = biometric::remove_stored_key(&app_handle);
     Ok(())
 }
 
@@ -1168,6 +1172,8 @@ async fn vault_change_password(
     )?;
     connections::write_vault_meta(&meta_path, &new_meta)?;
     *state.vault_key.lock_safe()? = Some(new_key);
+    // Approach A: a password change derives a new key; keep biometrics working transparently.
+    biometric::restore_key_if_enrolled(&app_handle, &new_key);
     Ok(())
 }
 
@@ -1178,6 +1184,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_biometry::init())
         .setup(|app| {
             use tauri::Manager;
             if let Some(win) = app.get_webview_window("main") {
@@ -1247,6 +1254,10 @@ pub fn run() {
             vault_lock,
             vault_reset,
             vault_change_password,
+            biometric::biometric_status,
+            biometric::biometric_enable,
+            biometric::biometric_unlock,
+            biometric::biometric_disable,
             load_connection_profiles,
             save_connection_profile,
             delete_connection_profile,

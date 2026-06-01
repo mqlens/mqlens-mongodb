@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Check, LayoutGrid, Save, Terminal, Sparkles, ShieldCheck } from 'lucide-react';
-import { changeVaultPassword, resetVault } from '../lib/vault';
+import { changeVaultPassword, resetVault, biometricStatus, biometricEnable, biometricDisable, type BiometricStatus } from '../lib/vault';
 
 interface AppSettings {
   mongosh_path: string;
@@ -71,6 +71,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [newPw, setNewPw] = useState('');
   const [newPw2, setNewPw2] = useState('');
   const [secMsg, setSecMsg] = useState('');
+  const [bio, setBio] = useState<BiometricStatus | null>(null);
+  const [bioBusy, setBioBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +95,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       .then((a) => { if (!cancelled) setAgents(a); })
       .catch(() => {});
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    biometricStatus().then(setBio).catch(() => setBio(null));
   }, []);
 
   const localCommandFor = (agent: string) =>
@@ -149,6 +155,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setSecMsg('Master password changed');
       setOldPw(''); setNewPw(''); setNewPw2('');
     } catch (e) { setSecMsg(String(e)); }
+  };
+
+  const toggleBiometric = async () => {
+    if (!bio) return;
+    setBioBusy(true);
+    try {
+      if (bio.enrolled) {
+        await biometricDisable();
+        setBio({ ...bio, enrolled: false });
+      } else {
+        await biometricEnable();
+        setBio({ ...bio, enrolled: true });
+      }
+    } catch (e) {
+      setSecMsg(String(e));
+    } finally {
+      setBioBusy(false);
+    }
   };
 
   const onResetVault = async () => {
@@ -406,6 +430,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               Reset vault
             </button>
           </div>
+
+          {bio?.available && (
+            <label className="mql-field-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                data-testid="sec-biometric-toggle"
+                checked={!!bio.enrolled}
+                disabled={bioBusy}
+                onChange={toggleBiometric}
+              />
+              <span className="mql-settings-field-label">
+                Unlock with {bio.biometryType === 2 ? 'Touch ID' : bio.biometryType === 3 ? 'Face ID' : 'biometrics'}
+              </span>
+            </label>
+          )}
         </section>
       </div>
     </div>

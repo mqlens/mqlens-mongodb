@@ -279,6 +279,15 @@ pub fn unlock_key(meta: &VaultMeta, password: &str) -> Result<[u8; 32], String> 
     Ok(key)
 }
 
+/// True if `key` decrypts this vault's verifier to the known plaintext — i.e. it is the
+/// key the stored master password would derive. Used to validate a biometric-restored key.
+pub fn key_matches_meta(meta: &VaultMeta, key: &[u8; 32]) -> bool {
+    let Ok(blob) = base64::engine::general_purpose::STANDARD.decode(&meta.verifier) else {
+        return false;
+    };
+    matches!(crate::vault::decrypt(key, &blob), Ok(plain) if plain == crate::vault::VERIFIER_PLAINTEXT)
+}
+
 pub fn get_vault_meta_path(app_handle: &tauri::AppHandle) -> PathBuf {
     config_dir_file(app_handle, "vault.json")
 }

@@ -32,3 +32,8 @@ GO-LIVE.md
 .claude/
 CLAUDE.md
 AGENTS.md
+
+# Local-only: per-developer macOS signing config for testing biometric unlock
+# (contains a personal Apple Development identity; not for the shared repo)
+src-tauri/Entitlements.dev.plist
+src-tauri/tauri.dev.conf.json

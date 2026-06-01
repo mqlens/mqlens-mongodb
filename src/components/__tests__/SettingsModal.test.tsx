@@ -9,14 +9,22 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 const mockChangeVaultPassword = vi.fn();
 const mockResetVault = vi.fn();
+const mockBiometricStatus = vi.fn();
+const mockBiometricEnable = vi.fn();
+const mockBiometricDisable = vi.fn();
 vi.mock('../../lib/vault', () => ({
   changeVaultPassword: (...args: any[]) => mockChangeVaultPassword(...args),
   resetVault: () => mockResetVault(),
+  biometricStatus: () => mockBiometricStatus(),
+  biometricEnable: () => mockBiometricEnable(),
+  biometricDisable: () => mockBiometricDisable(),
 }));
 
 describe('SettingsView Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Safe default: biometrics unavailable so existing tests are unaffected
+    mockBiometricStatus.mockResolvedValue({ available: false, biometryType: 0, enrolled: false });
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === 'load_app_settings') {
         return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
@@ -129,6 +137,22 @@ describe('SettingsView Component', () => {
 
     expect(await screen.findByTestId('sec-msg')).toHaveTextContent('New passwords do not match');
     expect(mockChangeVaultPassword).not.toHaveBeenCalled();
+  });
+
+  it('shows the biometric toggle when available and enables it', async () => {
+    mockBiometricStatus.mockResolvedValue({ available: true, biometryType: 2, enrolled: false });
+    mockBiometricEnable.mockResolvedValue(undefined);
+    render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
+    const toggle = await screen.findByTestId('sec-biometric-toggle');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(mockBiometricEnable).toHaveBeenCalledTimes(1));
+  });
+
+  it('hides the biometric toggle when unavailable', async () => {
+    mockBiometricStatus.mockResolvedValue({ available: false, biometryType: 0, enrolled: false });
+    render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
+    await screen.findByTestId('sec-change-pw-btn');
+    expect(screen.queryByTestId('sec-biometric-toggle')).not.toBeInTheDocument();
   });
 
   it('switches AI provider and shows the relevant config fields', async () => {
