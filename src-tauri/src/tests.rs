@@ -2117,4 +2117,19 @@ mod tests {
         assert_eq!(keys["timestamp"], -1);
         assert!(!ts.unique, "a non-_id index is not unique");
     }
+
+    #[test]
+    fn test_key_matches_meta() {
+        use crate::connections::{build_vault_meta, key_matches_meta, unlock_key};
+        use crate::vault::KdfParams;
+        let params = KdfParams { m_kib: 8, t: 1, p: 1 };
+        let meta = build_vault_meta("hunter2", params).unwrap();
+        let good = unlock_key(&meta, "hunter2").unwrap();
+
+        assert!(key_matches_meta(&meta, &good), "the real key must verify");
+        assert!(
+            !key_matches_meta(&meta, &[0u8; 32]),
+            "a wrong key must not verify"
+        );
+    }
 }
