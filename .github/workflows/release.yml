@@ -95,6 +95,13 @@ jobs:
         if: matrix.platform == 'macos-latest' && env.ENABLE_MAC_SIGNING == 'true'
         run: |
           echo "${{ secrets.APPLE_PROVISIONING_PROFILE }}" | base64 --decode > src-tauri/embedded.provisionprofile
+          # Fail loudly: an empty/unset secret yields a 0-byte profile that still
+          # signs and notarizes fine but is killed by AMFI on launch (-413). Don't
+          # ship that silently.
+          if [ ! -s src-tauri/embedded.provisionprofile ]; then
+            echo "::error::APPLE_PROVISIONING_PROFILE secret is empty or unset — the signed app would be killed on launch (AMFI -413). Set the secret to the base64 of the Developer ID provisioning profile."
+            exit 1
+          fi
 
       # Stable -> mqlens-v<version>. Dev -> a unique semver pre-release carrying
       # the build's short SHA (e.g. mqlens-v0.1.0-dev.a1b2c3d) so every dev build
