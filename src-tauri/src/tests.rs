@@ -2132,4 +2132,31 @@ mod tests {
             "a wrong key must not verify"
         );
     }
+
+    #[test]
+    fn test_biometric_key_encode_decode_roundtrip_and_rejections() {
+        use base64::Engine as _;
+        use crate::biometric::{decode_and_verify_key, encode_key};
+        use crate::connections::{build_vault_meta, unlock_key};
+        use crate::vault::KdfParams;
+
+        let params = KdfParams { m_kib: 8, t: 1, p: 1 };
+        let meta = build_vault_meta("pw", params).unwrap();
+        let key = unlock_key(&meta, "pw").unwrap();
+
+        // Round-trip: encode then decode-and-verify yields the same key.
+        let encoded = encode_key(&key);
+        assert_eq!(decode_and_verify_key(&meta, &encoded).unwrap(), key);
+
+        // Not base64.
+        assert!(decode_and_verify_key(&meta, "%%%not-base64%%%").is_err());
+
+        // Valid base64 but wrong length (16 bytes).
+        let short = base64::engine::general_purpose::STANDARD.encode([1u8; 16]);
+        assert!(decode_and_verify_key(&meta, &short).is_err());
+
+        // Correct length but a key that doesn't match this vault.
+        let wrong = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+        assert!(decode_and_verify_key(&meta, &wrong).is_err());
+    }
 }

@@ -18,6 +18,7 @@ pub mod ssh_tunnel;
 mod state;
 mod vault;
 mod window;
+pub mod biometric;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
 pub use db::ddl::{
     create_collection_impl, create_view_impl, drop_collection_impl, drop_database_impl,
@@ -36,6 +37,7 @@ pub use db::metadata::{
 pub use db::query::{count_documents_impl, execute_mql_query_impl, explain_mql_query_impl};
 pub use db::schema::{analyze_schema_impl, infer_schema, FieldStat, SchemaReport, TypeCount};
 pub use db::version::get_mongodb_version_impl;
+pub use biometric::{decode_and_verify_key, encode_key, BiometricStatus};
 pub use state::{AppState, LockExt};
 pub use window::target_window_size;
 #[cfg(test)]
