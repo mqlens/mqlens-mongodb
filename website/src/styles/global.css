@@ -124,13 +124,169 @@ pre code { color: var(--text); }
   .section { padding: 60px 0; }
 }
 
-.hero-demo {
-  display: block;
-  width: 100%;
-  max-width: 1000px;
-  margin: 2rem auto 0;
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+/* ============================================================
+   Hero app-window mockup — pure CSS product shot of MQLens.
+   No images, no JS. Breaks out of the 820px hero-inner column.
+   ============================================================ */
+.app-mock {
+  width: min(960px, 100%);
+  margin: 44px auto 0;
+  text-align: left;
+  border: 1px solid hsla(200, 90%, 62%, 0.16);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--bg-elevated), var(--bg-card));
+  box-shadow: var(--shadow-card), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+/* Window chrome */
+.app-mock-chrome {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 14px;
+  background: linear-gradient(180deg, hsl(222, 20%, 15%), hsl(222, 20%, 12%));
+  border-bottom: 1px solid var(--border);
+}
+.app-mock-dots { display: flex; gap: 8px; }
+.app-mock-dots .dot {
+  width: 11px; height: 11px; border-radius: 50%;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.25) inset;
+}
+.dot-red { background: hsl(353, 75%, 58%); }
+.dot-amber { background: hsl(38, 92%, 60%); }
+.dot-green { background: hsl(142, 60%, 50%); }
+.app-mock-title {
+  position: absolute;
+  left: 50%; transform: translateX(-50%);
+  font-size: 12px; font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.app-mock-title-dim { color: var(--text-faint); font-weight: 500; }
+
+/* Body: sidebar + main */
+.app-mock-body { display: grid; grid-template-columns: 178px 1fr; }
+
+/* Sidebar / collection tree */
+.app-mock-side {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 12px 0 0;
+  background: hsla(222, 24%, 5%, 0.55);
+  border-right: 1px solid var(--border);
+  font-family: var(--font);
+  min-height: 248px;
+}
+.tree-row {
+  padding: 5px 16px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-row.tree-db { color: var(--text); font-weight: 600; }
+.tree-row.tree-coll { padding-left: 30px; }
+.tree-row.is-active {
+  color: var(--accent-bright);
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.side-foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 16px;
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.side-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 7px hsla(142, 70%, 45%, 0.7);
+}
+
+/* Main panel */
+.app-mock-main { padding: 12px 18px 18px; }
+.main-tabs {
+  display: flex; gap: 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+.main-tabs .tab {
+  padding: 4px 0 9px;
+  color: var(--text-faint);
+  font-size: 12.5px; font-weight: 500;
+}
+.main-tabs .tab.is-active {
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.query-bar {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 12px;
+  background: hsl(222, 26%, 4%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+.query-bar .query-prompt { color: var(--accent-teal); font-family: var(--mono); }
+.query-bar .query-code {
+  font-family: var(--mono);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.result-json {
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  background: hsl(222, 26%, 4%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  line-height: 1.5;
+}
+.result-json code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  white-space: pre;
+}
+
+/* JSON syntax coloring */
+.tok-key { color: var(--accent-bright); }
+.tok-str { color: var(--accent-teal); }
+.tok-num { color: var(--accent-amber); }
+.tok-bool { color: var(--accent-purple); }
+.tok-fn { color: var(--text-faint); }
+
+.explain-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  margin-top: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: hsla(142, 70%, 45%, 0.10);
+  border: 1px solid hsla(142, 70%, 45%, 0.30);
+  color: var(--accent-green);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.explain-chip .chip-tag { font-weight: 700; letter-spacing: 0.02em; }
+.explain-chip .chip-sep { color: hsla(142, 70%, 45%, 0.5); }
+.explain-chip .chip-ms { color: var(--accent-bright); }
+
+@media (max-width: 720px) {
+  .app-mock { font-size: 12px; }
+  .app-mock-body { grid-template-columns: 1fr; }
+  .app-mock-side { display: none; }
+  .app-mock-main { padding: 12px 14px 16px; }
+  .main-tabs { gap: 14px; overflow-x: auto; }
+  .app-mock-title { display: none; }
 }
 
 /* Feature-card icon chip — enterprise-style rounded square */
