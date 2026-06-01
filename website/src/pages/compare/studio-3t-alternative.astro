@@ -1,0 +1,233 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Download from '../../components/Download.astro';
+import { SITE } from '../../consts';
+---
+
+<BaseLayout
+  title="Free Studio 3T alternative"
+  description="MQLens gives you Studio 3T-level power — aggregation pipelines, visual explain plans, every auth mode, SSH tunnel — for free. Apache-2.0, native, zero telemetry."
+>
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container hero-inner">
+      <span class="eyebrow">Open source · {SITE.license}</span>
+      <h1>Full MongoDB power at $0.<br /><span class="grad">A free Studio 3T alternative.</span></h1>
+      <p class="lede">
+        Studio 3T is a commercial, Java-based MongoDB GUI that demands a paid subscription. MQLens
+        gives you the same professional depth — aggregation pipelines with visual explain plans,
+        every auth mechanism, TLS/SSH/SOCKS5, bulk edit, schema analysis, GridFS, an embedded
+        mongosh, and an AI query assistant — for $0. No subscription, no licence key, no Electron.
+        Native Tauri/Rust, 14 MB, Apache-2.0, free forever.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#download">Download for free</a>
+        <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">Star on GitHub ★</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Comparison table -->
+  <section class="section">
+    <div class="container">
+      <div class="sec-head">
+        <span class="eyebrow">Side by side</span>
+        <h2>MQLens vs Studio 3T</h2>
+        <p>Where full power should not require a subscription.</p>
+      </div>
+      <div class="table-wrap">
+        <table class="cmp-table">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th class="col-us">{SITE.name}</th>
+              <th>Studio 3T</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Price</td>
+              <td class="col-us">Free (Apache-2.0)</td>
+              <td>Commercial subscription (paid)</td>
+            </tr>
+            <tr>
+              <td>Source available</td>
+              <td class="col-us">Yes — full source on GitHub</td>
+              <td>No (proprietary)</td>
+            </tr>
+            <tr>
+              <td>Runtime / installer size</td>
+              <td class="col-us">Native (Tauri/Rust + WebView) ~14 MB</td>
+              <td>Java-based, larger footprint</td>
+            </tr>
+            <tr>
+              <td>Telemetry</td>
+              <td class="col-us">Zero</td>
+              <td>Usage data collected per privacy policy</td>
+            </tr>
+            <tr>
+              <td>Credential encryption</td>
+              <td class="col-us">AES-256-GCM + Argon2id, biometric unlock</td>
+              <td>OS-level storage</td>
+            </tr>
+            <tr>
+              <td>Auth: SCRAM-SHA-1/256</td>
+              <td class="col-us">Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Auth: X.509</td>
+              <td class="col-us">Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Auth: MONGODB-AWS (IAM)</td>
+              <td class="col-us">Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Auth: GSSAPI / Kerberos</td>
+              <td class="col-us">Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Auth: LDAP (PLAIN)</td>
+              <td class="col-us">Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>SSH tunnel</td>
+              <td class="col-us">Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>SOCKS5 proxy</td>
+              <td class="col-us">Yes</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td>Aggregation pipeline editor</td>
+              <td class="col-us">Yes</td>
+              <td>Yes (Aggregation Editor is a flagship feature)</td>
+            </tr>
+            <tr>
+              <td>Visual explain plans</td>
+              <td class="col-us">Yes (find + aggregate)</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Bulk edit (update-many / delete-many)</td>
+              <td class="col-us">Yes — guarded confirmation</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Schema analysis</td>
+              <td class="col-us">Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Index management</td>
+              <td class="col-us">Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>GridFS browser</td>
+              <td class="col-us">Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Embedded mongosh</td>
+              <td class="col-us">Yes</td>
+              <td>Yes (IntelliShell)</td>
+            </tr>
+            <tr>
+              <td>AI query assistant</td>
+              <td class="col-us">Yes — bring your own key, stays in backend</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td>macOS / Windows / Linux</td>
+              <td class="col-us">Yes — all three</td>
+              <td>Yes — all three</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Honest assessment -->
+  <section class="section honest">
+    <div class="container honest-inner">
+      <span class="eyebrow">Fair assessment</span>
+      <h2>When Studio 3T is the better choice</h2>
+      <p>
+        If your team needs enterprise support, a SQL-to-MQL translator, data-migration wizards, or
+        team-sharing features — and has the budget for a subscription — Studio 3T's deep feature
+        set is genuinely impressive and worth the investment.
+      </p>
+    </div>
+  </section>
+
+  <!-- Download CTA -->
+  <section class="section-tight" id="download">
+    <div class="container">
+      <h2 class="dl-heading">Try {SITE.name} — it's free</h2>
+      <Download />
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .hero {
+    padding: 96px 0 72px;
+    background:
+      radial-gradient(1100px 480px at 50% -140px, hsla(200, 90%, 50%, 0.20), transparent 70%),
+      radial-gradient(900px 460px at 92% 120%, hsla(268, 85%, 65%, 0.12), transparent 70%);
+    border-bottom: 1px solid var(--border);
+  }
+  .hero-inner { text-align: center; max-width: 820px; margin: 0 auto; }
+  .hero h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); margin: 18px 0 0; font-weight: 700; }
+  .grad {
+    background: linear-gradient(100deg, var(--accent-bright), var(--accent-teal));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .lede { font-size: 1.12rem; color: var(--text-dim); margin: 22px auto 0; max-width: 680px; }
+  .hero-cta { display: flex; gap: 12px; justify-content: center; margin-top: 30px; flex-wrap: wrap; }
+
+  .sec-head { text-align: center; max-width: 640px; margin: 0 auto 48px; }
+  .sec-head h2 { font-size: clamp(1.8rem, 4vw, 2.4rem); margin: 12px 0 0; }
+  .sec-head p { color: var(--text-dim); margin-top: 14px; }
+
+  .table-wrap { overflow-x: auto; }
+  .cmp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+  }
+  .cmp-table th,
+  .cmp-table td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .cmp-table thead th {
+    background: var(--bg-soft);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+  }
+  .cmp-table tbody tr:hover { background: var(--bg-soft); }
+  .col-us { color: var(--accent-bright); font-weight: 500; }
+  .cmp-table thead .col-us { color: var(--accent-bright); }
+
+  .honest { background: var(--bg-soft); border-block: 1px solid var(--border); }
+  .honest-inner { max-width: 720px; margin: 0 auto; }
+  .honest-inner h2 { font-size: clamp(1.6rem, 3.5vw, 2.2rem); margin: 12px 0 20px; }
+  .honest-inner p { color: var(--text-dim); margin-bottom: 16px; line-height: 1.7; }
+
+  .dl-heading { text-align: center; margin: 0 0 28px; font-size: 1.6rem; }
+</style>

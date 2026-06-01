@@ -1,9 +1,9 @@
 // Single source of truth for site-wide constants.
 export const SITE = {
   name: 'MQLens',
-  tagline: 'A fast, native desktop GUI for MongoDB',
+  tagline: 'The MongoDB GUI that does it all — free, native, and private',
   description:
-    'MQLens is a fast, native cross-platform desktop GUI for MongoDB. Connect with full TLS/SSH/proxy support, browse data, build queries and aggregation pipelines, read explain plans, manage indexes and views, and run an embedded mongosh — with credentials encrypted behind a master password.',
+    'MQLens is a free, native, cross-platform MongoDB GUI with the power of paid tools: every auth mode (SCRAM, X.509, AWS, Kerberos, LDAP), TLS/SSH/proxy, aggregation pipelines with explain plans, bulk edit, index/view management, schema analysis, GridFS, an embedded mongosh, and an AI query assistant. Credentials are encrypted locally with zero telemetry. Apache-2.0.',
   url: 'https://mqlens.com',
   repo: 'https://github.com/mqlens/mqlens-mongodb',
   releases: 'https://github.com/mqlens/mqlens-mongodb/releases',
