@@ -9,6 +9,9 @@ vi.mock('../../lib/vault', () => ({
   lockVault: vi.fn(),
   changeVaultPassword: vi.fn(),
   resetVault: vi.fn(),
+  biometricStatus: vi.fn().mockResolvedValue({ available: false, biometryType: 0, enrolled: false }),
+  biometricEnable: vi.fn(),
+  biometricDisable: vi.fn(),
 }));
 
 // Mock Tauri invoke function
