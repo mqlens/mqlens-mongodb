@@ -35,7 +35,7 @@
   --shadow-btn-hover: 0 6px 18px hsla(200, 90%, 50%, 0.28);
   --shadow-card: 0 16px 36px rgba(0, 0, 0, 0.45);
 
-  --max-width: 1080px;
+  --max-width: 1200px;
   /* Radii — app uses small radii; pills only where intended */
   --radius: 12px;
   --radius-sm: 6px;
@@ -131,4 +131,23 @@ pre code { color: var(--text); }
   margin: 2rem auto 0;
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+/* Feature-card icon chip — enterprise-style rounded square */
+.feat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: 0 0 16px;
+  border-radius: var(--radius);
+  background: hsla(200, 90%, 50%, 0.12);
+  border: 1px solid hsla(200, 90%, 50%, 0.25);
+  color: var(--accent-bright);
+}
+.feat-icon svg {
+  width: 22px;
+  height: 22px;
+  display: block;
 }

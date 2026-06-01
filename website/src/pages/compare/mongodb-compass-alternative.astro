@@ -14,10 +14,10 @@ import { SITE } from '../../consts';
       <span class="eyebrow">Open source · {SITE.license}</span>
       <h1>A free MongoDB Compass alternative.<br /><span class="grad">Native, private, and full-featured.</span></h1>
       <p class="lede">
-        MongoDB Compass is the official GUI — but it runs on Electron (heavy), collects usage
-        telemetry by default, and has no AI query assistant or SOCKS5 proxy support. MQLens ships
-        all of that in a 14 MB native Tauri/Rust app. Credentials are encrypted with AES-256-GCM
-        and unlockable via biometrics. Zero telemetry. Apache-2.0 and $0.
+        MongoDB Compass is the official GUI — but it runs on Electron (heavy) and collects usage
+        telemetry by default. MQLens delivers every auth mode and advanced feature in a 14 MB native
+        Tauri/Rust app. Credentials are encrypted with AES-256-GCM and unlockable via biometrics.
+        Zero telemetry. Apache-2.0 and $0.
       </p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="#download">Download for free</a>
@@ -68,11 +68,6 @@ import { SITE } from '../../consts';
               <td>SSH tunnel</td>
               <td class="col-us">Yes</td>
               <td>Yes (added in recent versions)</td>
-            </tr>
-            <tr>
-              <td>SOCKS5 proxy</td>
-              <td class="col-us">Yes</td>
-              <td>No</td>
             </tr>
             <tr>
               <td>Auth: SCRAM-SHA-1/256</td>
@@ -128,11 +123,6 @@ import { SITE } from '../../consts';
               <td>Embedded mongosh</td>
               <td class="col-us">Yes</td>
               <td>Yes</td>
-            </tr>
-            <tr>
-              <td>AI query assistant</td>
-              <td class="col-us">Yes — bring your own key, stays in backend</td>
-              <td>No</td>
             </tr>
             <tr>
               <td>Linux package formats</td>
