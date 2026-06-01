@@ -48,17 +48,19 @@ const features = [
   <section class="hero">
     <div class="container hero-inner">
       <span class="eyebrow">Open source · {SITE.license}</span>
-      <h1>The MongoDB GUI that's<br /><span class="grad">fast, native, and honest.</span></h1>
+      <h1>Studio 3T power for MongoDB.<br /><span class="grad">Free, native, and private.</span></h1>
       <p class="lede">
-        {SITE.name} connects to any real MongoDB deployment and lets you browse, query,
-        aggregate, explain, edit in bulk, manage indexes and views, analyze schemas, and
-        run an embedded <code>mongosh</code> — with credentials encrypted behind a master
-        password. Built with Tauri (Rust) and React.
+        {SITE.name} is a full-power MongoDB GUI — every auth mode, TLS/SSH/proxy,
+        aggregation pipelines with explain plans, bulk edit, schema analysis, GridFS,
+        an embedded <code>mongosh</code>, and an AI query assistant — in a tiny native
+        app (Tauri/Rust, not Electron). Credentials stay encrypted on your machine.
+        Apache-2.0, $0.
       </p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="#download">Download for free</a>
-        <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">View source</a>
+        <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">Star on GitHub ★</a>
       </div>
+      <img src="/demo.gif" alt="MQLens: connect, query, aggregate, and read an explain plan" class="hero-demo" loading="eager" width="1000" />
       <div class="hero-meta">
         <span>✓ macOS · Windows · Linux</span>
         <span>✓ GPG-signed &amp; notarized builds</span>

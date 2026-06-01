@@ -123,3 +123,12 @@ pre code { color: var(--text); }
 @media (max-width: 720px) {
   .section { padding: 60px 0; }
 }
+
+.hero-demo {
+  display: block;
+  width: 100%;
+  max-width: 1000px;
+  margin: 2rem auto 0;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
