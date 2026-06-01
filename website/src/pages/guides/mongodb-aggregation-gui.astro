@@ -1,0 +1,230 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Download from '../../components/Download.astro';
+import { SITE } from '../../consts';
+
+const matchExample = `{ "status": "active", "createdAt": { "$gte": { "$date": "2024-01-01T00:00:00Z" } } }`;
+const groupExample = `{
+  "_id": "$region",
+  "totalRevenue": { "$sum": "$amount" },
+  "orderCount": { "$sum": 1 },
+  "avgOrderValue": { "$avg": "$amount" }
+}`;
+const lookupExample = `{
+  "from": "products",
+  "localField": "productId",
+  "foreignField": "_id",
+  "as": "productDetails"
+}`;
+const projectExample = `{
+  "region": 1,
+  "totalRevenue": 1,
+  "avgOrderValue": { "$round": ["$avgOrderValue", 2] },
+  "_id": 0
+}`;
+---
+
+<BaseLayout
+  title="Build MongoDB aggregation pipelines in a GUI"
+  description="Learn how to build, preview, and optimize MongoDB aggregation pipelines stage by stage in MQLens — the free native MongoDB GUI. Covers $match, $group, $lookup, $project, result previews, and explain plans."
+>
+  <article class="section guide-page">
+    <div class="container guide-inner">
+
+      <header class="guide-header">
+        <span class="eyebrow">How-to guide</span>
+        <h1>Build MongoDB aggregation pipelines in a GUI</h1>
+        <p class="lede">
+          MongoDB's aggregation framework is one of the most powerful data-processing
+          tools in any database — but writing correct pipelines in raw JSON is slow
+          and error-prone. MQLens provides a stage-by-stage pipeline builder with live
+          result previews and an integrated explain plan so you can build, test, and
+          optimize pipelines without leaving the app.
+        </p>
+      </header>
+
+      <section class="guide-body">
+        <h2>How the pipeline builder works</h2>
+        <p>
+          An aggregation pipeline is a sequence of stages. Documents flow from the
+          collection into the first stage, are transformed, and the results flow into
+          the next stage. In MQLens, each stage is a separate editor panel. You add
+          stages one by one, give each stage a type (for example <code>$match</code>),
+          and write the stage body as a JSON object. The app evaluates the pipeline up
+          to and including the current stage each time you preview, so you always see
+          the intermediate state of your data.
+        </p>
+
+        <h2>Adding your first stage: $match</h2>
+        <p>
+          Open a collection in MQLens and click the <strong>Aggregation</strong> tab.
+          Click <strong>Add Stage</strong> and select <code>$match</code> from the
+          stage-type dropdown. Enter your filter document:
+        </p>
+        <pre><code set:html={matchExample}></code></pre>
+        <p>
+          Click <strong>Preview</strong> (or press the preview shortcut). MQLens runs
+          the pipeline up to this stage against the real collection and displays the
+          first documents in the result pane. The preview uses a default limit so it
+          never accidentally returns millions of documents.
+        </p>
+        <p>
+          Placing a <code>$match</code> as the first stage is important: MongoDB can
+          use an index on the matched fields when <code>$match</code> comes first,
+          whereas a <code>$match</code> later in the pipeline must scan the full output
+          of all prior stages.
+        </p>
+
+        <h2>Grouping data with $group</h2>
+        <p>
+          Add a second stage and choose <code>$group</code>. The <code>_id</code>
+          field defines the grouping key. Every other field uses an accumulator:
+        </p>
+        <pre><code set:html={groupExample}></code></pre>
+        <p>
+          Preview again to see the grouped result. Because you are building incrementally,
+          you know the <code>$match</code> stage is correct before you add the
+          grouping logic.
+        </p>
+
+        <h2>Joining collections with $lookup</h2>
+        <p>
+          <code>$lookup</code> performs a left-outer join between the pipeline documents
+          and another collection. Add a stage, select <code>$lookup</code>, and fill in
+          the fields:
+        </p>
+        <pre><code set:html={lookupExample}></code></pre>
+        <p>
+          For best performance, ensure the target collection has an index on
+          <code>foreignField</code> (<code>_id</code> is always indexed, but custom
+          foreign fields may not be). The explain plan (see below) will show you
+          immediately whether the lookup is using an index.
+        </p>
+        <p>
+          MQLens also supports the pipeline form of <code>$lookup</code> for
+          correlated subqueries — paste the full stage document directly into the
+          stage editor.
+        </p>
+
+        <h2>Shaping output with $project and $addFields</h2>
+        <p>
+          Use <code>$project</code> to include or exclude fields and compute new ones:
+        </p>
+        <pre><code set:html={projectExample}></code></pre>
+        <p>
+          <code>$addFields</code> is similar but leaves all existing fields intact and
+          only adds or overwrites the specified ones — useful when you want to compute a
+          derived field without rewriting the whole projection.
+        </p>
+        <p>
+          Other commonly used stages in MQLens:
+        </p>
+        <ul>
+          <li><strong>$sort</strong> — sort documents by one or more fields. Add it before <code>$limit</code> for top-N queries.</li>
+          <li><strong>$limit / $skip</strong> — paginate results. Best combined with a preceding <code>$sort</code> on a unique field.</li>
+          <li><strong>$unwind</strong> — flatten an array field into one document per element.</li>
+          <li><strong>$count</strong> — collapse the stream into a single document with a count field.</li>
+          <li><strong>$facet</strong> — run multiple sub-pipelines in parallel and combine their results.</li>
+        </ul>
+
+        <h2>Previewing results at each stage</h2>
+        <p>
+          The key workflow advantage of building pipelines in MQLens is the
+          per-stage preview. At any point you can click the stage number in the
+          left rail to see the output of just that stage. This lets you:
+        </p>
+        <ul>
+          <li>Verify that a <code>$match</code> is returning the documents you expect before you add grouping logic.</li>
+          <li>Confirm that a <code>$lookup</code> is joining correctly before you project away the join fields.</li>
+          <li>Catch shape mismatches (for example, a field named <code>productId</code> in one collection and <code>product_id</code> in another) early.</li>
+        </ul>
+
+        <h2>Getting an explain plan for the pipeline</h2>
+        <p>
+          Once you are happy with the pipeline's correctness, click
+          <strong>Explain Pipeline</strong>. MQLens runs the pipeline with
+          <code>executionStats</code> verbosity and renders a visual plan tree.
+          Each node in the tree shows its stage type, documents examined, and
+          execution time. Look for:
+        </p>
+        <ul>
+          <li>A COLLSCAN in the first stage — signals you need an index on the <code>$match</code> predicate.</li>
+          <li>A high document count entering a <code>$sort</code> without an IXSCAN — this triggers an expensive in-memory sort.</li>
+          <li>A <code>$lookup</code> scanning many keys in the foreign collection — add an index on <code>foreignField</code>.</li>
+        </ul>
+        <p>
+          The visual plan tree makes it easy to see the flow: the collection scan or
+          index scan at the bottom feeds into the first pipeline stage, and the
+          document counts at each stage boundary show you exactly where the pipeline
+          is processing the most data.
+        </p>
+
+        <h2>Saving and re-running pipelines</h2>
+        <p>
+          MQLens saves open pipelines with the connection profile, so your work
+          persists across sessions. You can also copy the full pipeline as a JSON
+          array to paste into your application code or into <code>mongosh</code>.
+        </p>
+
+        <div class="cta-block">
+          <p>
+            Download {SITE.name} free — a full aggregation pipeline builder with live
+            previews and visual explain plans, no Atlas subscription required.
+          </p>
+          <Download />
+        </div>
+      </section>
+
+    </div>
+  </article>
+</BaseLayout>
+
+<style>
+  .guide-inner {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .guide-header {
+    margin-bottom: 48px;
+  }
+  .guide-header h1 {
+    font-size: clamp(1.9rem, 4.5vw, 2.8rem);
+    margin: 16px 0 0;
+  }
+  .lede {
+    font-size: 1.1rem;
+    color: var(--text-dim);
+    margin: 20px 0 0;
+    line-height: 1.7;
+  }
+  .guide-body h2 {
+    font-size: 1.4rem;
+    margin: 44px 0 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .guide-body p {
+    color: var(--text-dim);
+    margin: 0 0 16px;
+    line-height: 1.75;
+  }
+  .guide-body ul,
+  .guide-body ol {
+    color: var(--text-dim);
+    padding-left: 24px;
+    margin: 0 0 20px;
+    line-height: 1.75;
+  }
+  .guide-body li {
+    margin-bottom: 8px;
+  }
+  .cta-block {
+    margin-top: 56px;
+    padding-top: 40px;
+    border-top: 1px solid var(--border);
+  }
+  .cta-block p {
+    font-size: 1.05rem;
+    margin-bottom: 28px;
+  }
+</style>

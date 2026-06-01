@@ -1,0 +1,161 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Download from '../../components/Download.astro';
+import { SITE } from '../../consts';
+---
+
+<BaseLayout
+  title="Connect to MongoDB over an SSH tunnel"
+  description="Step-by-step guide to connecting to a remote MongoDB instance through an SSH tunnel using MQLens — the free native MongoDB GUI. Covers bastion hosts, key-based auth, and the staged Test Connection."
+>
+  <article class="section guide-page">
+    <div class="container guide-inner">
+
+      <header class="guide-header">
+        <span class="eyebrow">How-to guide</span>
+        <h1>Connect to MongoDB over an SSH tunnel</h1>
+        <p class="lede">
+          Most production MongoDB deployments sit behind a private network with no
+          direct inbound port. An SSH tunnel punches through that boundary securely
+          without opening your database to the public internet. MQLens has
+          first-class support for SSH tunneling: enter your bastion details once,
+          and the connection manager handles the tunnel lifetime automatically.
+        </p>
+      </header>
+
+      <section class="guide-body">
+        <h2>Why use an SSH tunnel?</h2>
+        <p>
+          MongoDB typically listens on port 27017. In production you rarely want that
+          port reachable from the public internet. Instead, you place MongoDB on a
+          private subnet accessible only from a bastion (jump) host that accepts SSH
+          on port 22. Your local client then connects to the bastion over SSH, and
+          the bastion forwards traffic to MongoDB — the database never sees a direct
+          connection from your laptop.
+        </p>
+        <p>
+          The result is encrypted transit (SSH) without having to open firewall rules
+          or expose MongoDB's port to the world.
+        </p>
+
+        <h2>What you need before you start</h2>
+        <ul>
+          <li>The <strong>bastion host address</strong> (hostname or IP) and its SSH port (usually 22).</li>
+          <li>A <strong>username</strong> on the bastion (for example, <code>ubuntu</code> or <code>ec2-user</code>).</li>
+          <li>Either an <strong>SSH private key</strong> (RSA, Ed25519, ECDSA — passphrase-protected keys are supported) <em>or</em> a <strong>password</strong> for the bastion user.</li>
+          <li>The MongoDB host and port <em>as seen from the bastion</em> — often <code>localhost:27017</code> if MongoDB runs on the same machine, or a private DNS name like <code>mongo-primary.internal:27017</code>.</li>
+        </ul>
+
+        <h2>Setting up the connection in MQLens</h2>
+        <p>
+          Open MQLens and click <strong>New Connection</strong>. Fill in the MongoDB
+          host and port using the address that is reachable <em>from the bastion</em>,
+          not from your laptop. For example, if MongoDB runs on the same EC2 instance
+          as your bastion, use <code>localhost</code> and port <code>27017</code>.
+        </p>
+        <p>
+          Scroll down to the <strong>SSH Tunnel</strong> section and toggle it on.
+          You will see the following fields:
+        </p>
+        <ul>
+          <li><strong>SSH Host / Port</strong> — the public address of your bastion and its SSH port.</li>
+          <li><strong>SSH Username</strong> — the username on the bastion server.</li>
+          <li><strong>Authentication method</strong> — choose <em>Private Key</em> to browse for a <code>.pem</code> or <code>.key</code> file, or choose <em>Password</em> to type it inline (stored encrypted in the keychain).</li>
+          <li><strong>Private key passphrase</strong> — if your key is passphrase-protected, enter it here; MQLens never stores it in plaintext.</li>
+        </ul>
+        <p>
+          Add your MongoDB credentials (username, password, auth database) in the
+          <strong>Authentication</strong> section as usual. TLS settings also work in
+          combination with SSH tunneling — you can run TLS over the tunnel if your
+          server requires it.
+        </p>
+
+        <h2>Using the staged Test Connection to debug</h2>
+        <p>
+          Before saving, click <strong>Test Connection</strong>. MQLens runs the
+          connection in distinct, named phases and reports the outcome of each one:
+        </p>
+        <ol>
+          <li><strong>Parse</strong> — validates that the URI and all form fields are syntactically correct.</li>
+          <li><strong>DNS</strong> — resolves the bastion hostname to an IP address. A failure here usually means a typo or a VPN that is not active.</li>
+          <li><strong>Connect</strong> — opens the TCP connection to the bastion on its SSH port and completes the SSH handshake. Failures here are typically firewall rules or a wrong port number.</li>
+          <li><strong>Ping</strong> — sends a MongoDB <code>hello</code> (ping) command through the forwarded tunnel. A failure at this stage with the previous steps passing means the tunnel is working but MongoDB is not reachable at the host:port you specified.</li>
+        </ol>
+        <p>
+          This staged output lets you isolate the failure immediately rather than
+          guessing at a generic "connection refused" message. Once all four phases
+          turn green, save the connection. MQLens will re-establish the SSH tunnel
+          automatically on every reconnect.
+        </p>
+
+        <h2>SOCKS5 proxy as an alternative</h2>
+        <p>
+          If your team uses a SOCKS5 proxy (for example, established with
+          <code>ssh -D 1080 user@bastion</code>), MQLens supports that too. Switch
+          the proxy type to <strong>SOCKS5</strong>, point it at
+          <code>127.0.0.1:1080</code>, and leave the SSH tunnel fields empty.
+          The Test Connection phases work identically for proxy connections.
+        </p>
+
+        <div class="cta-block">
+          <p>
+            Download {SITE.name} free — SSH tunneling, TLS, and every auth mode included,
+            no subscription required.
+          </p>
+          <Download />
+        </div>
+      </section>
+
+    </div>
+  </article>
+</BaseLayout>
+
+<style>
+  .guide-inner {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .guide-header {
+    margin-bottom: 48px;
+  }
+  .guide-header h1 {
+    font-size: clamp(1.9rem, 4.5vw, 2.8rem);
+    margin: 16px 0 0;
+  }
+  .lede {
+    font-size: 1.1rem;
+    color: var(--text-dim);
+    margin: 20px 0 0;
+    line-height: 1.7;
+  }
+  .guide-body h2 {
+    font-size: 1.4rem;
+    margin: 44px 0 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .guide-body p {
+    color: var(--text-dim);
+    margin: 0 0 16px;
+    line-height: 1.75;
+  }
+  .guide-body ul,
+  .guide-body ol {
+    color: var(--text-dim);
+    padding-left: 24px;
+    margin: 0 0 20px;
+    line-height: 1.75;
+  }
+  .guide-body li {
+    margin-bottom: 8px;
+  }
+  .cta-block {
+    margin-top: 56px;
+    padding-top: 40px;
+    border-top: 1px solid var(--border);
+  }
+  .cta-block p {
+    font-size: 1.05rem;
+    margin-bottom: 28px;
+  }
+</style>
