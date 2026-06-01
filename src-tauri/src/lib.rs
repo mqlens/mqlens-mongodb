@@ -1178,6 +1178,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_biometry::init())
         .setup(|app| {
             use tauri::Manager;
             if let Some(win) = app.get_webview_window("main") {
