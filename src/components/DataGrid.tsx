@@ -298,6 +298,7 @@ const jsonKeyNode = (k: string) => (
     {jsonPunct(' : ')}
   </>
 );
+const printableJsonString = (value: string): string => JSON.stringify(value);
 
 // One row of the tree-table view (Key | Value | Type), data-only for cheap virtualization.
 interface TreeRow {
@@ -433,13 +434,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (val === null) return <span className="text-syntax-null">null</span>;
     if (typeof val === 'boolean') return <span className="text-syntax-boolean font-bold">{val ? 'true' : 'false'}</span>;
     if (typeof val === 'number') return <span className="text-syntax-number">{val}</span>;
-    if (typeof val === 'string') return <span className="text-syntax-string">"{val}"</span>;
+    if (typeof val === 'string') {
+      return <span className="text-syntax-string">{printableJsonString(val)}</span>;
+    }
 
     if (val instanceof ObjectId) {
       return (
         <>
           <span className="text-syntax-boolean">ObjectId</span>(
-          <span className="text-syntax-string">"{val.toString()}"</span>)
+          <span className="text-syntax-string">{JSON.stringify(val.toString())}</span>)
         </>
       );
     }
@@ -447,7 +450,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       return (
         <>
           <span className="text-syntax-boolean">ISODate</span>(
-          <span className="text-syntax-string">"{val.toISOString()}"</span>)
+          <span className="text-syntax-string">{JSON.stringify(val.toISOString())}</span>)
         </>
       );
     }
@@ -463,7 +466,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       return (
         <>
           <span className="text-syntax-boolean">NumberDecimal</span>(
-          <span className="text-syntax-string">"{val.toString()}"</span>)
+          <span className="text-syntax-string">{JSON.stringify(val.toString())}</span>)
         </>
       );
     }
@@ -488,7 +491,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         <>
           <span className="text-syntax-boolean">BinData</span>(
           <span className="text-syntax-number">{val.sub_type}</span>, 
-          <span className="text-syntax-string">"{val.toString('base64')}"</span>)
+          <span className="text-syntax-string">{JSON.stringify(val.toString('base64'))}</span>)
         </>
       );
     }
@@ -510,7 +513,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (v === null) return 4;
     if (typeof v === 'boolean') return v ? 4 : 5;
     if (typeof v === 'number') return String(v).length;
-    if (typeof v === 'string') return v.length + 2;
+    if (typeof v === 'string') return printableJsonString(v).length;
     if (v instanceof ObjectId) return 40;
     if (v instanceof Date) return 36;
     if (v instanceof Binary) return 64;
@@ -1116,13 +1119,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
         ) : viewMode === 'json' ? (
           /* Virtualized, line-numbered, collapsible JSON code panel */
           <div className="mql-jsonview flex-1 flex flex-col min-h-0 min-w-0" data-testid="json-view">
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0 overflow-auto">
               <List<{}>
                 rowCount={visibleJsonLines.length}
                 rowHeight={getRowHeight()}
                 rowComponent={JsonRow}
                 rowProps={{}}
-                style={{ height: '100%', width: '100%', minWidth: `${jsonMaxWidthPx}px` }}
+                style={{ height: '100%', width: `${jsonMaxWidthPx}px`, minWidth: '100%' }}
               />
             </div>
           </div>
