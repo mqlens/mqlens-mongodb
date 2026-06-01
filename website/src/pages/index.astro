@@ -63,20 +63,16 @@ const features = [
 // Literal braces/quotes here would be parsed as Astro/JSX expressions in markup,
 // so the query and result JSON are authored as strings and injected via set:html.
 const heroQuery =
-  'db.orders.find(&#123; status: <span class="tok-str">"shipped"</span> &#125;).sort(&#123; createdAt: <span class="tok-num">-1</span> &#125;)';
+  'db.orders.find(<span class="tok-p">&#123;</span> <span class="tok-key">status</span><span class="tok-p">:</span> <span class="tok-str">"shipped"</span> <span class="tok-p">&#125;</span>)<span class="tok-p">.</span>sort(<span class="tok-p">&#123;</span> <span class="tok-key">createdAt</span><span class="tok-p">:</span> <span class="tok-num">-1</span> <span class="tok-p">&#125;</span>)';
 
-const heroDoc = `&#123;
-  <span class="tok-key">"_id"</span>: <span class="tok-fn">ObjectId</span>(<span class="tok-str">"66f1c0a4e3b1a2f4d8c91a07"</span>),
-  <span class="tok-key">"status"</span>: <span class="tok-str">"shipped"</span>,
-  <span class="tok-key">"customer"</span>: <span class="tok-str">"ava.nguyen@example.com"</span>,
-  <span class="tok-key">"total"</span>: <span class="tok-num">238.40</span>,
-  <span class="tok-key">"items"</span>: [
-    &#123; <span class="tok-key">"sku"</span>: <span class="tok-str">"KBD-87"</span>, <span class="tok-key">"qty"</span>: <span class="tok-num">1</span> &#125;,
-    &#123; <span class="tok-key">"sku"</span>: <span class="tok-str">"CBL-USBC"</span>, <span class="tok-key">"qty"</span>: <span class="tok-num">2</span> &#125;
-  ],
-  <span class="tok-key">"paid"</span>: <span class="tok-bool">true</span>,
-  <span class="tok-key">"createdAt"</span>: <span class="tok-fn">ISODate</span>(<span class="tok-str">"2026-05-28T14:09:53Z"</span>)
-&#125;`;
+const heroDoc = `<span class="tok-p">&#123;</span>
+  <span class="tok-key">_id</span><span class="tok-p">:</span> <span class="tok-fn">ObjectId</span><span class="tok-p">(</span><span class="tok-str">"66f1a2c4e9b…"</span><span class="tok-p">)</span><span class="tok-p">,</span>
+  <span class="tok-key">status</span><span class="tok-p">:</span> <span class="tok-str">"shipped"</span><span class="tok-p">,</span>
+  <span class="tok-key">total</span><span class="tok-p">:</span> <span class="tok-num">248.50</span><span class="tok-p">,</span>
+  <span class="tok-key">paid</span><span class="tok-p">:</span> <span class="tok-bool">true</span><span class="tok-p">,</span>
+  <span class="tok-key">items</span><span class="tok-p">:</span> <span class="tok-p">[</span> <span class="tok-num">3</span> <span class="tok-p">]</span><span class="tok-p">,</span>
+  <span class="tok-key">shippedAt</span><span class="tok-p">:</span> <span class="tok-fn">ISODate</span><span class="tok-p">(</span><span class="tok-str">"2026-05-31"</span><span class="tok-p">)</span>
+<span class="tok-p">&#125;</span>`;
 ---
 
 <BaseLayout>
@@ -103,33 +99,51 @@ const heroDoc = `&#123;
             <span class="dot dot-amber"></span>
             <span class="dot dot-green"></span>
           </div>
-          <div class="app-mock-title">MQLens — prod-cluster <span class="app-mock-title-dim">(replica set)</span></div>
+          <div class="app-mock-title">
+            <span class="am-title-name">MQLens</span>
+            <span class="am-title-sep">·</span>
+            <span class="am-title-live"><span class="am-live-dot"></span> prod-cluster · replica set</span>
+          </div>
         </div>
         <div class="app-mock-body">
           <aside class="app-mock-side">
-            <div class="side-tree">
-              <div class="tree-row tree-db">▾ ecommerce</div>
-              <div class="tree-row tree-coll">users</div>
-              <div class="tree-row tree-coll is-active">orders</div>
-              <div class="tree-row tree-coll">products</div>
-              <div class="tree-row tree-db">▸ analytics</div>
+            <div class="am-side-conn"><span class="am-conn-dot"></span> prod-cluster</div>
+            <div class="am-tree">
+              <div class="am-node am-node-db">
+                <span class="am-db-glyph"></span>
+                <span class="am-caret">▾</span> ecommerce <span class="am-count">· 6</span>
+              </div>
+              <div class="am-children">
+                <div class="am-coll"><span class="am-coll-name">users</span><span class="am-docs">1.2k</span></div>
+                <div class="am-coll is-active"><span class="am-coll-name">orders</span><span class="am-docs">248</span></div>
+                <div class="am-index"><span class="am-idx-glyph">⚿</span> status_-1_createdAt_-1</div>
+                <div class="am-coll"><span class="am-coll-name">products</span><span class="am-docs">89</span></div>
+              </div>
+              <div class="am-node am-node-db">
+                <span class="am-db-glyph"></span>
+                <span class="am-caret">▸</span> analytics
+              </div>
             </div>
-            <div class="side-foot"><span class="side-dot"></span> mongosh</div>
           </aside>
           <div class="app-mock-main">
             <div class="main-tabs" role="tablist">
-              <span class="tab is-active">Documents</span>
+              <span class="tab is-active">Documents <span class="tab-pill">248</span></span>
               <span class="tab">Aggregation</span>
               <span class="tab">Explain</span>
               <span class="tab">Indexes</span>
             </div>
-            <div class="query-bar"><span class="query-prompt">&gt;</span><code class="query-code" set:html={heroQuery}></code></div>
+            <div class="query-bar">
+              <div class="am-seg" aria-hidden="true">
+                <span class="am-seg-item is-active">Find</span>
+                <span class="am-seg-item">Aggregate</span>
+              </div>
+              <code class="query-code" set:html={heroQuery}></code>
+              <button class="am-run" type="button" aria-hidden="true">Run</button>
+            </div>
             <pre class="result-json"><code set:html={heroDoc}></code></pre>
-            <div class="explain-chip">
-              <span class="chip-tag">IXSCAN</span>
-              <span class="chip-sep">·</span> 1,204 examined
-              <span class="chip-sep">·</span> 1,204 returned
-              <span class="chip-sep">·</span> <span class="chip-ms">12&#8202;ms</span>
+            <div class="am-status">
+              <span class="am-status-left">248 documents <span class="am-status-sep">·</span> 12 ms</span>
+              <span class="explain-chip">IXSCAN <span class="chip-sep">·</span> 1,204 examined <span class="chip-sep">·</span> 1,204 returned</span>
             </div>
           </div>
         </div>
