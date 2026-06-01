@@ -14,7 +14,7 @@
     "tauri": "tauri",
     "test": "vitest run",
     "coverage:frontend": "vitest run --coverage",
-    "coverage:backend": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only",
+    "coverage:backend": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\\.rs'",
     "coverage": "npm run coverage:frontend && npm run coverage:backend"
   },
   "dependencies": {
