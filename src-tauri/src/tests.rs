@@ -1205,25 +1205,23 @@ mod tests {
         assert!(result.is_err(), "Invalid URI should return error");
     }
 
-    // GO-LIVE H8: legacy "allow invalid hostname" options must map to
-    // tlsAllowInvalidHostnames — NOT silently escalate to disabling certificate
-    // validation. Only an explicit invalid-certificate option sets that.
+    // Legacy/new "allow invalid hostname" options must map to a URI option the
+    // Rust driver accepts with the default rustls backend.
     #[test]
     fn test_normalizes_legacy_tls_uri_options() {
         let uri = "mongodb://localhost:27017/?sslInvalidHostNameAllowed=true&sslAllowInvalidCertificates=true";
         let normalized = crate::connections::normalize_mongodb_uri_options(uri);
 
-        assert!(normalized.contains("tlsAllowInvalidHostnames=true"));
+        assert!(normalized.contains("tlsInsecure=true"));
         assert!(normalized.contains("tlsAllowInvalidCertificates=true"));
         assert!(!normalized.contains("sslInvalidHostNameAllowed"));
     }
 
     #[test]
-    fn test_hostname_option_does_not_escalate_to_disabling_cert_validation() {
-        // Only "allow invalid hostnames" requested → certificate validation MUST stay on.
+    fn test_hostname_option_maps_to_tls_insecure_driver_alias() {
         let uri = "mongodb://localhost:27017/?sslAllowInvalidHostnames=true";
         let normalized = crate::connections::normalize_mongodb_uri_options(uri);
-        assert!(normalized.contains("tlsAllowInvalidHostnames=true"));
+        assert!(normalized.contains("tlsInsecure=true"));
         assert!(!normalized.contains("tlsAllowInvalidCertificates"));
     }
 
@@ -1234,8 +1232,37 @@ mod tests {
 
         assert_eq!(
             normalized,
-            "mongodb://localhost:27017/?tlsAllowInvalidHostnames=true&tlsAllowInvalidCertificates=true"
+            "mongodb://localhost:27017/?tlsInsecure=true&tlsAllowInvalidCertificates=true"
         );
+    }
+
+    #[test]
+    fn test_normalizes_documented_legacy_uri_option_aliases() {
+        let uri = "mongodb://localhost:27017/?ssl=true;sslCAFile=/tmp/ca.pem;sslPEMKeyFile=/tmp/client.pem;localThreshold=20;gssapiServiceName=mongodb";
+        let normalized = crate::connections::normalize_mongodb_uri_options(uri);
+
+        assert_eq!(
+            normalized,
+            "mongodb://localhost:27017/?tls=true&tlsCAFile=/tmp/ca.pem&tlsCertificateKeyFile=/tmp/client.pem&localThresholdMS=20&authMechanismProperties=SERVICE_NAME:mongodb"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_normalized_tls_hostname_aliases_parse_with_driver() {
+        use mongodb::options::ClientOptions;
+
+        for uri in [
+            "mongodb://localhost:27017/?tlsAllowInvalidHostnames=true",
+            "mongodb://localhost:27017/?tlsallowinvalidhostnames=true",
+            "mongodb://localhost:27017/?sslInvalidHostNameAllowed=true",
+            "mongodb://localhost:27017/?ssl=true;sslAllowInvalidCertificates=true",
+            "mongodb://localhost:27017/?localThreshold=20;gssapiServiceName=mongodb",
+        ] {
+            let normalized = crate::connections::normalize_mongodb_uri_options(uri);
+            ClientOptions::parse(&normalized)
+                .await
+                .unwrap_or_else(|e| panic!("normalized URI should parse: {normalized} ({e})"));
+        }
     }
 
     #[tokio::test]

@@ -173,35 +173,56 @@ pub fn normalize_mongodb_uri_options(uri: &str) -> String {
 
     let mut normalized_parts = Vec::new();
 
-    for part in query.split('&') {
+    for part in query.split(['&', ';']) {
         let (key, value) = match part.split_once('=') {
             Some((key, value)) => (key, Some(value)),
             None => (part, None),
         };
         let key_lower = key.to_ascii_lowercase();
 
-        // Map legacy/case-variant option names to their canonical driver spellings.
-        // IMPORTANT: "allow invalid hostnames" maps to tlsAllowInvalidHostnames and
-        // does NOT disable certificate validation — only an explicit invalid-certificate
-        // option does that (GO-LIVE H8: no silent MITM escalation).
-        let normalized_key = match key_lower.as_str() {
-            "sslinvalidhostnameallowed"
-            | "sslallowinvalidhostname"
-            | "sslallowinvalidhostnames"
-            | "tlsallowinvalidhostname"
-            | "tlsallowinvalidhostnames" => "tlsAllowInvalidHostnames",
-            "sslinvalidcertificateallowed"
-            | "sslallowinvalidcertificate"
-            | "sslallowinvalidcertificates"
-            | "tlsallowinvalidcertificate"
-            | "tlsallowinvalidcertificates" => "tlsAllowInvalidCertificates",
-            "tlsinsecure" => "tlsInsecure",
-            "tlscafile" => "tlsCAFile",
-            "tlscertificatekeyfile" => "tlsCertificateKeyFile",
-            _ => key,
+        // Map legacy/case-variant option names to spellings this Rust driver accepts.
+        // The rustls-backed driver does not parse tlsAllowInvalidHostnames directly;
+        // tlsInsecure is the compatible URI-level way to accept hostname mismatches.
+        let (normalized_key, normalized_value) = match (key_lower.as_str(), value) {
+            ("ssl", _) => ("tls", value.map(str::to_string)),
+            (
+                "sslinvalidhostnameallowed"
+                | "sslallowinvalidhostname"
+                | "sslallowinvalidhostnames"
+                | "tlsallowinvalidhostname"
+                | "tlsallowinvalidhostnames",
+                _,
+            ) => ("tlsInsecure", value.map(str::to_string)),
+            (
+                "sslinvalidcertificateallowed"
+                | "sslallowinvalidcertificate"
+                | "sslallowinvalidcertificates"
+                | "tlsallowinvalidcertificate"
+                | "tlsallowinvalidcertificates",
+                _,
+            ) => {
+                ("tlsAllowInvalidCertificates", value.map(str::to_string))
+            }
+            ("sslcafile" | "tlscafile", _) => ("tlsCAFile", value.map(str::to_string)),
+            ("sslcertificatekeyfile" | "sslpemkeyfile" | "tlscertificatekeyfile", _) => {
+                ("tlsCertificateKeyFile", value.map(str::to_string))
+            }
+            (
+                "sslcertificatekeyfilepassword"
+                | "sslpemkeypassword"
+                | "tlscertificatekeyfilepassword",
+                _,
+            ) => ("tlsCertificateKeyFilePassword", value.map(str::to_string)),
+            ("tlsinsecure", _) => ("tlsInsecure", value.map(str::to_string)),
+            ("localthreshold", _) => ("localThresholdMS", value.map(str::to_string)),
+            ("gssapiservicename", Some(value)) => {
+                ("authMechanismProperties", Some(format!("SERVICE_NAME:{value}")))
+            }
+            ("gssapiservicename", None) => ("authMechanismProperties", None),
+            _ => (key, value.map(str::to_string)),
         };
 
-        let normalized_part = match value {
+        let normalized_part = match normalized_value {
             Some(value) => format!("{}={}", normalized_key, value),
             None => normalized_key.to_string(),
         };
