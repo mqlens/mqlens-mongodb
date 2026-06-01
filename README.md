@@ -1,5 +1,8 @@
 # MQLens
 
+[![CI](https://github.com/mqlens/mqlens-mongodb/actions/workflows/ci.yml/badge.svg)](https://github.com/mqlens/mqlens-mongodb/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-enabled-brightgreen.svg)](.github/workflows/ci.yml)
+
 **A fast, native desktop GUI for MongoDB** — built with [Tauri](https://tauri.app)
 (Rust) and React + TypeScript.
 
@@ -72,7 +75,9 @@ Other useful commands:
 ```bash
 npm run dev            # frontend only (browser, no Tauri APIs)
 npm test               # frontend tests (Vitest)
+npm run coverage:frontend   # frontend tests with coverage
 cargo test --manifest-path src-tauri/Cargo.toml   # backend tests
+cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'   # backend coverage
 npm run build          # type-check + build the frontend bundle
 ```
 

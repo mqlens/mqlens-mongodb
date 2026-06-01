@@ -22,8 +22,22 @@ jobs:
       - run: npm ci
       - name: Type-check & build
         run: npm run build
-      - name: Unit tests
-        run: npx vitest run
+      - name: Unit tests with coverage
+        run: npm run coverage:frontend
+      - name: Frontend coverage summary
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const summary = JSON.parse(fs.readFileSync('coverage/frontend/coverage-summary.json', 'utf8')).total;
+          const rows = ['lines', 'statements', 'functions', 'branches']
+            .map((key) => `| ${key} | ${summary[key].pct}% | ${summary[key].covered}/${summary[key].total} |`)
+            .join('\n');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Frontend coverage\n\n| Metric | Coverage | Covered |\n|---|---:|---:|\n${rows}\n`);
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: coverage/frontend
 
   backend:
     name: backend
@@ -47,8 +61,9 @@ jobs:
             libclang-dev \
             build-essential
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: cargo test
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Backend tests with coverage
+        run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'
