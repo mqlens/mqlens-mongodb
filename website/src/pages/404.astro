@@ -1,0 +1,24 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Page not found">
+  <section class="section nf">
+    <div class="container">
+      <span class="eyebrow">404</span>
+      <h1>This page wandered off.</h1>
+      <p>The page you're looking for doesn't exist or has moved.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="/">Back home</a>
+        <a class="btn btn-ghost" href="/docs/">Read the docs</a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .nf { text-align: center; padding: 120px 0; }
+  .nf h1 { font-size: clamp(2rem, 5vw, 3rem); margin: 14px 0 10px; }
+  .nf p { color: var(--text-dim); }
+  .actions { display: flex; gap: 12px; justify-content: center; margin-top: 28px; flex-wrap: wrap; }
+</style>

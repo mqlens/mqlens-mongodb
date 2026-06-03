@@ -1,0 +1,202 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Download from '../../components/Download.astro';
+import { SITE } from '../../consts';
+---
+
+<BaseLayout
+  title="How to read a MongoDB explain plan"
+  description="Understand MongoDB explain output — COLLSCAN vs IXSCAN, stages, docs examined vs returned — and see how MQLens renders it as an interactive visual plan tree for both find queries and aggregation pipelines."
+>
+  <article class="section guide-page">
+    <div class="container guide-inner">
+
+      <header class="guide-header">
+        <span class="eyebrow">How-to guide</span>
+        <h1>How to read a MongoDB explain plan</h1>
+        <p class="lede">
+          MongoDB's explain output tells you exactly how the query engine executes
+          your query: which indexes it uses, how many documents it examines, and where
+          time is spent. Reading raw explain JSON can be intimidating — MQLens renders
+          it as a visual plan tree so the critical information stands out immediately.
+        </p>
+      </header>
+
+      <section class="guide-body">
+        <h2>What explain output actually contains</h2>
+        <p>
+          When you run <code>db.collection.find(&#123;&#8230;&#125;).explain("executionStats")</code>,
+          MongoDB returns a nested document describing the <em>winning plan</em>: the
+          execution strategy the query planner chose from all the candidates it
+          considered. The two most important fields at each stage are:
+        </p>
+        <ul>
+          <li><strong>stage</strong> — what type of work this node performs (see below).</li>
+          <li><strong>nReturned</strong> — documents passed upward to the parent stage.</li>
+          <li><strong>totalDocsExamined</strong> — documents the engine actually read from disk or memory. A large gap between this and <code>nReturned</code> signals a poor index or a missing index.</li>
+          <li><strong>totalKeysExamined</strong> — index keys scanned. Should be close to <code>nReturned</code> for a well-covered query.</li>
+          <li><strong>executionTimeMillis</strong> — wall-clock time for the entire plan.</li>
+        </ul>
+
+        <h2>The most important stage types</h2>
+        <p>
+          MongoDB plans are trees of named stages. Understanding the stage names lets
+          you diagnose problems at a glance:
+        </p>
+        <ul>
+          <li>
+            <strong>COLLSCAN</strong> — a full collection scan. Every document is read
+            and checked against the filter. This is fine for small collections but
+            becomes expensive as data grows. If you see COLLSCAN on a large collection,
+            you are missing an index.
+          </li>
+          <li>
+            <strong>IXSCAN</strong> — an index scan. MongoDB walks the B-tree for the
+            named index. This is what you want. Check <code>indexName</code> to confirm
+            it is the index you expected.
+          </li>
+          <li>
+            <strong>FETCH</strong> — after an IXSCAN, MongoDB fetches the full document
+            from the collection to satisfy fields not covered by the index. If your
+            query only needs indexed fields, a <em>covered query</em> (no FETCH stage)
+            is even faster.
+          </li>
+          <li>
+            <strong>SORT</strong> — an in-memory sort. Appears when no index covers the
+            sort order. Large in-memory sorts can hit MongoDB's 100 MB sort memory
+            limit and fail. Adding a compound index that covers both the filter and
+            the sort fields eliminates this stage.
+          </li>
+          <li>
+            <strong>LIMIT / SKIP</strong> — applied after earlier stages. Seeing SKIP
+            high in a plan that also has COLLSCAN is a common pagination anti-pattern.
+          </li>
+          <li>
+            <strong>OR / AND_SORTED / AND_HASH</strong> — multi-index merge plans. These
+            appear when MongoDB combines results from multiple indexes. They work, but a
+            single well-designed compound index usually outperforms them.
+          </li>
+        </ul>
+
+        <h2>The golden ratio: keys examined vs docs returned</h2>
+        <p>
+          A healthy query has <code>totalKeysExamined &asymp; nReturned</code> and
+          <code>totalDocsExamined &asymp; nReturned</code>. If the engine examines 50,000
+          keys to return 10 documents, the index selectivity is low and you should
+          consider a more specific compound index or a different field order.
+        </p>
+        <p>
+          The <em>index ratio</em> — <code>nReturned / totalKeysExamined</code> — is a
+          quick health metric. Ratios below 0.1 (less than 10% efficiency) almost always
+          warrant an index redesign.
+        </p>
+
+        <h2>Explain plans for aggregation pipelines</h2>
+        <p>
+          Aggregation pipelines produce explain output too, but the structure is
+          different. The planner emits a <code>stages</code> array where each element
+          corresponds to a pipeline stage, and the first stage typically contains an
+          inner <code>queryPlanner</code> that describes the initial document selection.
+          Look for:
+        </p>
+        <ul>
+          <li>
+            Whether the <code>$match</code> at the start of the pipeline uses an IXSCAN.
+            If it falls back to COLLSCAN, move the <code>$match</code> earlier or add
+            an index on the matched field.
+          </li>
+          <li>
+            <code>$sort</code> stages that appear without a backing IXSCAN — these cause
+            in-memory sorts and should be resolved with a compound index that covers both
+            the match predicate and the sort fields.
+          </li>
+          <li>
+            <code>$lookup</code> stages that perform a full scan of the joined collection.
+            Add an index on the <code>foreignField</code> of every <code>$lookup</code>.
+          </li>
+        </ul>
+
+        <h2>Reading explain plans visually in MQLens</h2>
+        <p>
+          Raw explain JSON can be hundreds of lines deep. MQLens renders the plan as an
+          interactive tree: each node shows its stage name, <code>nReturned</code>,
+          documents examined, and execution time. You can expand or collapse branches and
+          immediately see which stage is responsible for the most document reads.
+        </p>
+        <p>
+          To get an explain plan in MQLens:
+        </p>
+        <ol>
+          <li>Open a collection and write your find filter, sort, and projection in the query panel.</li>
+          <li>Click the <strong>Explain</strong> button next to the Run button. MQLens runs the query with <code>executionStats</code> verbosity.</li>
+          <li>The visual plan tree opens in a side panel. COLLSCAN nodes are highlighted in amber; IXSCAN nodes appear in the accent color.</li>
+          <li>For aggregation pipelines, open the pipeline builder, compose your stages, and click <strong>Explain Pipeline</strong>. The tree expands to show each pipeline stage alongside its inner query plan node.</li>
+        </ol>
+        <p>
+          The tree view makes it immediately obvious when a deep nested COLLSCAN is
+          hiding inside an otherwise indexed aggregation pipeline — something that is
+          easy to miss in raw JSON output.
+        </p>
+
+        <div class="cta-block">
+          <p>
+            {SITE.name} is a free, native MongoDB GUI with visual explain plans for both
+            find queries and full aggregation pipelines.
+          </p>
+          <Download />
+        </div>
+      </section>
+
+    </div>
+  </article>
+</BaseLayout>
+
+<style>
+  .guide-inner {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .guide-header {
+    margin-bottom: 48px;
+  }
+  .guide-header h1 {
+    font-size: clamp(1.9rem, 4.5vw, 2.8rem);
+    margin: 16px 0 0;
+  }
+  .lede {
+    font-size: 1.1rem;
+    color: var(--text-dim);
+    margin: 20px 0 0;
+    line-height: 1.7;
+  }
+  .guide-body h2 {
+    font-size: 1.4rem;
+    margin: 44px 0 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .guide-body p {
+    color: var(--text-dim);
+    margin: 0 0 16px;
+    line-height: 1.75;
+  }
+  .guide-body ul,
+  .guide-body ol {
+    color: var(--text-dim);
+    padding-left: 24px;
+    margin: 0 0 20px;
+    line-height: 1.75;
+  }
+  .guide-body li {
+    margin-bottom: 8px;
+  }
+  .cta-block {
+    margin-top: 56px;
+    padding-top: 40px;
+    border-top: 1px solid var(--border);
+  }
+  .cta-block p {
+    font-size: 1.05rem;
+    margin-bottom: 28px;
+  }
+</style>

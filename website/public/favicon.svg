@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <!-- Filled badge: sky-blue → teal, the app's brand gradient -->
+    <linearGradient id="badge" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="hsl(201, 96%, 58%)"/>
+      <stop offset="0.55" stop-color="hsl(193, 90%, 49%)"/>
+      <stop offset="1" stop-color="hsl(173, 80%, 43%)"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="22" cy="15" r="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Circular badge filled with the brand gradient. Corners stay transparent. -->
+  <circle cx="32" cy="32" r="32" fill="url(#badge)"/>
+  <circle cx="32" cy="32" r="32" fill="url(#sheen)"/>
+
+  <!-- Bold white magnifier HANDLE in the corner -->
+  <line x1="44" y1="44" x2="52" y2="52" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- LENS ring (bold) — the magnifier glass -->
+  <circle cx="27" cy="27" r="19" fill="none" stroke="#ffffff" stroke-width="4"/>
+
+  <!-- DATABASE inside the glass, smaller than the ring so a clear teal "glass"
+       moat separates them (no white blob). Solid white; teal gaps = stacked discs. -->
+  <g transform="translate(27 27)">
+    <path d="M-8.5 -6.5 a8.5 3.4 0 0 0 17 0 V6.5 a8.5 3.4 0 0 1 -17 0 Z" fill="#ffffff"/>
+    <ellipse cx="0" cy="-6.5" rx="8.5" ry="3.4" fill="#ffffff"/>
+    <!-- two disc separators in brand blue, thick so they read at medium sizes -->
+    <path d="M-8.5 -1.7 a8.5 3.4 0 0 0 17 0" fill="none" stroke="hsl(196, 92%, 48%)" stroke-width="2.4"/>
+    <path d="M-8.5  2.7 a8.5 3.4 0 0 0 17 0" fill="none" stroke="hsl(196, 92%, 48%)" stroke-width="2.4"/>
+  </g>
+</svg>

@@ -3,11 +3,11 @@ mod tests {
     use crate::AppState;
     use crate::{
         connect_db_impl, count_documents_impl, create_collection_impl, create_index_impl,
-        delete_document_impl, disconnect_db_impl, drop_collection_impl, drop_database_impl,
-        execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
+        delete_document_impl, disconnect_db_impl, download_gridfs_file_impl, drop_collection_impl,
+        drop_database_impl, execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
         import_documents_impl, insert_document_impl, json_to_bson_document, list_collections_impl,
-        list_databases_impl, list_indexes_impl, rename_collection_impl, rename_database_impl,
-        start_collection_export_impl, update_document_impl,
+        list_databases_impl, list_gridfs_files_impl, list_indexes_impl, rename_collection_impl,
+        rename_database_impl, start_collection_export_impl, update_document_impl,
     };
 
     #[tokio::test]
@@ -150,6 +150,87 @@ mod tests {
         let exported = std::fs::read_to_string(&path).expect("Export file should exist");
         assert!(exported.contains("Alice Smith"));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_mock_full_collection_export_task_writes_csv() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("Should connect to mock db successfully");
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-export-test-{}-{}.csv",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        let task = start_collection_export_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            "csv",
+            &path_str,
+        )
+        .await
+        .expect("Should start CSV export task");
+
+        for _ in 0..50 {
+            let status = {
+                state
+                    .tasks
+                    .lock()
+                    .unwrap()
+                    .get(&task.id)
+                    .map(|t| t.status.clone())
+                    .unwrap()
+            };
+            if status != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 3);
+        let exported = std::fs::read_to_string(&path).expect("CSV export file should exist");
+        let header = exported.lines().next().unwrap_or_default();
+        assert!(header.contains("address"));
+        assert!(header.contains("email"));
+        assert!(header.contains("name"));
+        assert!(exported.contains("Alice Smith"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_collection_export_validates_format_path_and_connection() {
+        let state = AppState::new();
+
+        let invalid_format =
+            start_collection_export_impl(&state, "missing", "db", "coll", "xml", "/tmp/out.xml")
+                .await
+                .err()
+                .expect("invalid export format should error");
+        assert_eq!(invalid_format, "Export format must be json or csv");
+
+        let missing_path =
+            start_collection_export_impl(&state, "missing", "db", "coll", "json", "   ")
+                .await
+                .err()
+                .expect("blank export path should error");
+        assert_eq!(missing_path, "Export path is required");
+
+        let missing_connection =
+            start_collection_export_impl(&state, "missing", "db", "coll", "json", "/tmp/out.json")
+                .await
+                .err()
+                .expect("missing export connection should error");
+        assert_eq!(missing_connection, "Connection not found");
     }
 
     // Regression guard for the index-edit corruption bug (GO-LIVE C2/H4):
@@ -390,6 +471,11 @@ mod tests {
             extract_target_host_port("mongodb://myhost/mydb"),
             ("myhost".to_string(), 27017)
         );
+        // invalid port falls back to MongoDB default
+        assert_eq!(
+            extract_target_host_port("mongodb://myhost:not-a-port/mydb"),
+            ("myhost".to_string(), 27017)
+        );
     }
 
     #[test]
@@ -418,6 +504,20 @@ mod tests {
             999,
         );
         assert!(out.contains("user:pass@127.0.0.1:999"), "got {}", out);
+    }
+
+    #[test]
+    fn test_rewrite_uri_handles_query_without_path() {
+        use crate::ssh_tunnel::rewrite_uri_hosts;
+        let out = rewrite_uri_hosts(
+            "mongodb://db.example.com?directConnection=false&replicaSet=rs0&retryWrites=true",
+            "localhost",
+            27019,
+        );
+        assert_eq!(
+            out,
+            "mongodb://localhost:27019?retryWrites=true&directConnection=true"
+        );
     }
 
     #[test]
@@ -477,6 +577,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_mock_query_sort_pagination_and_parse_errors() {
+        let docs = crate::mock_db::execute_mock_query(
+            "sales_db",
+            "products",
+            r#"{"category":"Electronics"}"#,
+            r#"{"price":-1}"#,
+            1,
+            0,
+        )
+        .expect("mock query should sort and limit");
+        assert_eq!(docs.len(), 1);
+        let first: serde_json::Value = serde_json::from_str(&docs[0]).unwrap();
+        assert_eq!(first["name"], "SuperBook Pro");
+
+        let skipped = crate::mock_db::execute_mock_query(
+            "sales_db",
+            "products",
+            "{}",
+            r#"{"stock":1}"#,
+            1,
+            1,
+        )
+        .expect("mock query should skip");
+        let skipped_first: serde_json::Value = serde_json::from_str(&skipped[0]).unwrap();
+        assert_eq!(skipped_first["name"], "SuperBook Pro");
+
+        let bad_filter =
+            crate::mock_db::count_mock_documents("sales_db", "products", "{bad").unwrap_err();
+        assert!(bad_filter.contains("Invalid MQL filter JSON"));
+
+        let bad_sort =
+            crate::mock_db::execute_mock_query("sales_db", "products", "{}", "{bad", 10, 0)
+                .unwrap_err();
+        assert!(bad_sort.contains("Invalid MQL sort JSON"));
+    }
+
     #[tokio::test]
     async fn test_count_documents_empty_filter_returns_full_count() {
         let state = AppState::new();
@@ -490,8 +627,48 @@ mod tests {
         let blank = count_documents_impl(&state, &conn_id, "sales_db", "products", "")
             .await
             .expect("count blank filter");
-        assert!(full > 0, "empty-filter count should be the full collection size");
-        assert_eq!(full, blank, "blank and {{}} filters must behave identically");
+        assert!(
+            full > 0,
+            "empty-filter count should be the full collection size"
+        );
+        assert_eq!(
+            full, blank,
+            "blank and {{}} filters must behave identically"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_real_path_validation_before_missing_client() {
+        let state = AppState::new();
+        let id = "realish-query";
+        state.mocks.lock().unwrap().insert(id.to_string(), false);
+
+        let bad_filter =
+            execute_mql_query_impl(&state, id, "db", "coll", "{bad", "{}", "{}", 10, 0)
+                .await
+                .unwrap_err();
+        assert!(bad_filter.contains("Invalid MQL filter JSON"));
+
+        let bad_sort = execute_mql_query_impl(&state, id, "db", "coll", "{}", "{bad", "{}", 10, 0)
+            .await
+            .unwrap_err();
+        assert!(bad_sort.contains("Invalid MQL sort JSON"));
+
+        let missing_client =
+            execute_mql_query_impl(&state, id, "db", "coll", "{}", r#"{"name":1}"#, "{}", 10, 5)
+                .await
+                .unwrap_err();
+        assert_eq!(missing_client, "Connection client not found");
+
+        let bad_count = count_documents_impl(&state, id, "db", "coll", "{bad")
+            .await
+            .unwrap_err();
+        assert!(bad_count.contains("Invalid MQL filter JSON"));
+
+        let missing_count_client = count_documents_impl(&state, id, "db", "coll", r#"{"a":1}"#)
+            .await
+            .unwrap_err();
+        assert_eq!(missing_count_client, "Connection client not found");
     }
 
     #[tokio::test]
@@ -515,6 +692,13 @@ mod tests {
         assert!(
             not_array.unwrap_err().contains("must be a JSON array"),
             "non-array pipeline should be rejected"
+        );
+
+        let bad_stage =
+            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", r#"["bad"]"#).await;
+        assert!(
+            bad_stage.unwrap_err().contains("Invalid aggregation stage"),
+            "non-document stage should be rejected"
         );
 
         // A well-formed pipeline on a mock connection reports aggregation is unsupported there.
@@ -542,7 +726,8 @@ mod tests {
         let bad =
             explain_aggregate_query_impl(&state, &conn_id, "sales_db", "products", "[{bad}]").await;
         assert!(
-            bad.unwrap_err().contains("Invalid aggregation pipeline JSON"),
+            bad.unwrap_err()
+                .contains("Invalid aggregation pipeline JSON"),
             "malformed pipeline should report a parse error"
         );
 
@@ -552,6 +737,14 @@ mod tests {
         assert!(
             not_array.unwrap_err().contains("must be a JSON array"),
             "non-array pipeline should be rejected"
+        );
+
+        let bad_stage =
+            explain_aggregate_query_impl(&state, &conn_id, "sales_db", "products", r#"["bad"]"#)
+                .await;
+        assert!(
+            bad_stage.unwrap_err().contains("Invalid aggregation stage"),
+            "non-document pipeline stage should be rejected"
         );
 
         // A well-formed pipeline on a mock connection reports explain is unsupported there.
@@ -576,14 +769,15 @@ mod tests {
             .expect("connect mock");
 
         // Empty view name is rejected.
-        let no_name =
-            create_view_impl(&state, &conn_id, "sales_db", "", "customers", "[]").await;
+        let no_name = create_view_impl(&state, &conn_id, "sales_db", "", "customers", "[]").await;
         assert!(no_name.is_err(), "empty view name should be rejected");
 
         // Empty source collection is rejected.
-        let no_source =
-            create_view_impl(&state, &conn_id, "sales_db", "vip", "", "[]").await;
-        assert!(no_source.is_err(), "empty source collection should be rejected");
+        let no_source = create_view_impl(&state, &conn_id, "sales_db", "vip", "", "[]").await;
+        assert!(
+            no_source.is_err(),
+            "empty source collection should be rejected"
+        );
 
         // A pipeline that isn't a JSON array is rejected.
         let bad_pipeline =
@@ -601,7 +795,10 @@ mod tests {
         // A well-formed view on a mock connection no-ops successfully.
         let pipeline = r#"[{"$match": {"tier": "Premium"}}]"#;
         let ok = create_view_impl(&state, &conn_id, "sales_db", "vip", "customers", pipeline).await;
-        assert!(ok.is_ok(), "well-formed view on mock should succeed (no-op)");
+        assert!(
+            ok.is_ok(),
+            "well-formed view on mock should succeed (no-op)"
+        );
     }
 
     // GO-LIVE T1: backend seams reachable without a live MongoDB server.
@@ -632,12 +829,17 @@ mod tests {
 
         let run = run_mongosh_command_impl(&state, "bogus-session", "db.x.find()").await;
         // MongoshCommandOutput isn't Debug, so use .err() rather than unwrap_err().
-        let run_err = run.err().expect("running on an unknown session should error");
+        let run_err = run
+            .err()
+            .expect("running on an unknown session should error");
         assert!(run_err.contains("session not found"));
 
         // Stopping an unknown session is an idempotent no-op (no panic, returns Ok).
         let stop = stop_mongosh_session_impl(&state, "bogus-session").await;
-        assert!(stop.is_ok(), "stopping an unknown session should be a no-op");
+        assert!(
+            stop.is_ok(),
+            "stopping an unknown session should be a no-op"
+        );
     }
 
     #[tokio::test]
@@ -649,14 +851,24 @@ mod tests {
             .expect("connect mock");
 
         create_index_impl(
-            &state, &conn_id, "sales_db", "customers", "tmp_idx", r#"{"tmp":1}"#, false, false,
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            "tmp_idx",
+            r#"{"tmp":1}"#,
+            false,
+            false,
         )
         .await
         .expect("create index");
         let before = list_indexes_impl(&state, &conn_id, "sales_db", "customers")
             .await
             .expect("list");
-        assert!(before.iter().any(|i| i.name == "tmp_idx"), "index should exist after create");
+        assert!(
+            before.iter().any(|i| i.name == "tmp_idx"),
+            "index should exist after create"
+        );
 
         delete_index_impl(&state, &conn_id, "sales_db", "customers", "tmp_idx")
             .await
@@ -700,6 +912,23 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_gridfs_validation_errors_without_real_client() {
+        let state = AppState::new();
+        let id = "realish-gridfs";
+        state.mocks.lock().unwrap().insert(id.to_string(), false);
+
+        let bad_id = download_gridfs_file_impl(&state, id, "db", "fs", "{", "/tmp/file.bin")
+            .await
+            .unwrap_err();
+        assert!(bad_id.contains("Invalid file id JSON"));
+
+        let missing_client = list_gridfs_files_impl(&state, id, "db", "fs")
+            .await
+            .unwrap_err();
+        assert_eq!(missing_client, "Connection client not found");
+    }
+
     // GO-LIVE M7 (bulk ops): delete_many/update_many validate inputs and no-op on mock.
     #[tokio::test]
     async fn test_bulk_ops_validate_and_mock_noop() {
@@ -711,7 +940,10 @@ mod tests {
 
         // delete_many: malformed filter is rejected.
         let bad_filter = delete_many_impl(&state, &conn_id, "sales_db", "customers", "{bad").await;
-        assert!(bad_filter.is_err(), "malformed delete filter should be rejected");
+        assert!(
+            bad_filter.is_err(),
+            "malformed delete filter should be rejected"
+        );
 
         // delete_many: valid filter on mock no-ops (returns 0, no persistence).
         let del = delete_many_impl(&state, &conn_id, "sales_db", "customers", r#"{"tier":"X"}"#)
@@ -721,7 +953,12 @@ mod tests {
 
         // update_many: a non-operator update (bare replacement) is rejected.
         let non_op = update_many_impl(
-            &state, &conn_id, "sales_db", "customers", "{}", r#"{"name":"x"}"#,
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            "{}",
+            r#"{"name":"x"}"#,
         )
         .await;
         assert!(
@@ -736,7 +973,12 @@ mod tests {
 
         // update_many: a valid operator update on mock no-ops (returns 0).
         let upd = update_many_impl(
-            &state, &conn_id, "sales_db", "customers", r#"{"tier":"X"}"#, r#"{"$set":{"tier":"Y"}}"#,
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            r#"{"tier":"X"}"#,
+            r#"{"$set":{"tier":"Y"}}"#,
         )
         .await
         .expect("mock update_many ok");
@@ -773,8 +1015,11 @@ mod tests {
         // `price`: double in one doc, int in another -> mixed types, presence 2.
         let price = by_path("price");
         assert_eq!(price.presence, 2);
-        let price_types: std::collections::HashMap<&str, usize> =
-            price.types.iter().map(|t| (t.type_name.as_str(), t.count)).collect();
+        let price_types: std::collections::HashMap<&str, usize> = price
+            .types
+            .iter()
+            .map(|t| (t.type_name.as_str(), t.count))
+            .collect();
         assert_eq!(price_types.get("double"), Some(&1));
         assert_eq!(price_types.get("int"), Some(&1));
 
@@ -886,6 +1131,37 @@ mod tests {
         assert!(rename_database_impl(&state, &conn_id, "same", "same", true)
             .await
             .is_err());
+
+        let realish = "realish-ddl";
+        state
+            .mocks
+            .lock()
+            .unwrap()
+            .insert(realish.to_string(), false);
+        assert_eq!(
+            create_collection_impl(&state, realish, "sales_db", "new_coll")
+                .await
+                .unwrap_err(),
+            "Connection client not found"
+        );
+        assert_eq!(
+            drop_collection_impl(&state, realish, "sales_db", "new_coll")
+                .await
+                .unwrap_err(),
+            "Connection client not found"
+        );
+        assert_eq!(
+            rename_collection_impl(&state, realish, "sales_db", "from", "to")
+                .await
+                .unwrap_err(),
+            "Connection client not found"
+        );
+        assert_eq!(
+            drop_database_impl(&state, realish, "sales_db")
+                .await
+                .unwrap_err(),
+            "Connection client not found"
+        );
     }
 
     // GO-LIVE C5: real NL→MQL generation. The risky pure parts are request shaping
@@ -929,25 +1205,23 @@ mod tests {
         assert!(result.is_err(), "Invalid URI should return error");
     }
 
-    // GO-LIVE H8: legacy "allow invalid hostname" options must map to
-    // tlsAllowInvalidHostnames — NOT silently escalate to disabling certificate
-    // validation. Only an explicit invalid-certificate option sets that.
+    // Legacy/new "allow invalid hostname" options must map to a URI option the
+    // Rust driver accepts with the default rustls backend.
     #[test]
     fn test_normalizes_legacy_tls_uri_options() {
         let uri = "mongodb://localhost:27017/?sslInvalidHostNameAllowed=true&sslAllowInvalidCertificates=true";
         let normalized = crate::connections::normalize_mongodb_uri_options(uri);
 
-        assert!(normalized.contains("tlsAllowInvalidHostnames=true"));
+        assert!(normalized.contains("tlsInsecure=true"));
         assert!(normalized.contains("tlsAllowInvalidCertificates=true"));
         assert!(!normalized.contains("sslInvalidHostNameAllowed"));
     }
 
     #[test]
-    fn test_hostname_option_does_not_escalate_to_disabling_cert_validation() {
-        // Only "allow invalid hostnames" requested → certificate validation MUST stay on.
+    fn test_hostname_option_maps_to_tls_insecure_driver_alias() {
         let uri = "mongodb://localhost:27017/?sslAllowInvalidHostnames=true";
         let normalized = crate::connections::normalize_mongodb_uri_options(uri);
-        assert!(normalized.contains("tlsAllowInvalidHostnames=true"));
+        assert!(normalized.contains("tlsInsecure=true"));
         assert!(!normalized.contains("tlsAllowInvalidCertificates"));
     }
 
@@ -958,8 +1232,37 @@ mod tests {
 
         assert_eq!(
             normalized,
-            "mongodb://localhost:27017/?tlsAllowInvalidHostnames=true&tlsAllowInvalidCertificates=true"
+            "mongodb://localhost:27017/?tlsInsecure=true&tlsAllowInvalidCertificates=true"
         );
+    }
+
+    #[test]
+    fn test_normalizes_documented_legacy_uri_option_aliases() {
+        let uri = "mongodb://localhost:27017/?ssl=true;sslCAFile=/tmp/ca.pem;sslPEMKeyFile=/tmp/client.pem;localThreshold=20;gssapiServiceName=mongodb";
+        let normalized = crate::connections::normalize_mongodb_uri_options(uri);
+
+        assert_eq!(
+            normalized,
+            "mongodb://localhost:27017/?tls=true&tlsCAFile=/tmp/ca.pem&tlsCertificateKeyFile=/tmp/client.pem&localThresholdMS=20&authMechanismProperties=SERVICE_NAME:mongodb"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_normalized_tls_hostname_aliases_parse_with_driver() {
+        use mongodb::options::ClientOptions;
+
+        for uri in [
+            "mongodb://localhost:27017/?tlsAllowInvalidHostnames=true",
+            "mongodb://localhost:27017/?tlsallowinvalidhostnames=true",
+            "mongodb://localhost:27017/?sslInvalidHostNameAllowed=true",
+            "mongodb://localhost:27017/?ssl=true;sslAllowInvalidCertificates=true",
+            "mongodb://localhost:27017/?localThreshold=20;gssapiServiceName=mongodb",
+        ] {
+            let normalized = crate::connections::normalize_mongodb_uri_options(uri);
+            ClientOptions::parse(&normalized)
+                .await
+                .unwrap_or_else(|e| panic!("normalized URI should parse: {normalized} ({e})"));
+        }
     }
 
     #[tokio::test]
@@ -996,6 +1299,17 @@ mod tests {
         let initial_profiles = crate::connections::load_profiles_from_file(&test_file_path)
             .expect("Should load empty profiles");
         assert!(initial_profiles.is_empty());
+
+        std::fs::write(&test_file_path, "   ").unwrap();
+        let empty_profiles = crate::connections::load_profiles_from_file(&test_file_path)
+            .expect("Should treat empty profile file as empty");
+        assert!(empty_profiles.is_empty());
+
+        std::fs::write(&test_file_path, "{bad json").unwrap();
+        let bad_profiles = crate::connections::load_profiles_from_file(&test_file_path);
+        assert!(bad_profiles
+            .unwrap_err()
+            .contains("Failed to parse connections file"));
 
         // Create a connection profile
         let profile1 = crate::connections::ConnectionProfile {
@@ -1082,7 +1396,8 @@ mod tests {
 
         // Mock URI: all four phases succeed, offline.
         let log: Mutex<Vec<PhaseUpdate>> = Mutex::new(Vec::new());
-        let res = run_connection_test("mongodb://mock", None, &|u| log.lock().unwrap().push(u)).await;
+        let res =
+            run_connection_test("mongodb://mock", None, &|u| log.lock().unwrap().push(u)).await;
         assert!(res.is_ok());
         assert_eq!(
             ok_phases(&log),
@@ -1140,6 +1455,49 @@ mod tests {
         s.local_commands
             .insert("codex".into(), "codex run {prompt}".into());
         assert_eq!(resolve_local_command(&s, "codex"), "codex run {prompt}");
+    }
+
+    #[test]
+    fn test_settings_file_handling() {
+        use crate::connections::{load_settings_from_file, save_settings_to_file, AppSettings};
+
+        let dir = std::env::temp_dir().join(format!(
+            "mqlens-settings-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        assert_eq!(
+            load_settings_from_file(&path).unwrap(),
+            AppSettings::default()
+        );
+
+        std::fs::write(&path, "  ").unwrap();
+        assert_eq!(
+            load_settings_from_file(&path).unwrap(),
+            AppSettings::default()
+        );
+
+        std::fs::write(&path, "{bad json").unwrap();
+        let parse_err = load_settings_from_file(&path).unwrap_err();
+        assert!(parse_err.contains("Failed to parse settings file"));
+
+        let settings = AppSettings {
+            mongosh_path: "/opt/mongosh".to_string(),
+            ..Default::default()
+        };
+        save_settings_to_file(&path, &settings).expect("settings should save");
+        assert_eq!(
+            load_settings_from_file(&path).unwrap().mongosh_path,
+            "/opt/mongosh"
+        );
+
+        let write_err = save_settings_to_file(&dir, &settings).unwrap_err();
+        assert!(write_err.contains("Failed to write settings file"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1375,7 +1733,11 @@ mod tests {
     fn test_derive_key_is_deterministic_and_salt_sensitive() {
         use crate::vault::{derive_key, KdfParams};
         // Use cheap params so the test stays fast.
-        let params = KdfParams { m_kib: 8, t: 1, p: 1 };
+        let params = KdfParams {
+            m_kib: 8,
+            t: 1,
+            p: 1,
+        };
         let salt_a = [1u8; 16];
         let salt_b = [2u8; 16];
 
@@ -1393,7 +1755,11 @@ mod tests {
     fn test_vault_meta_build_and_unlock() {
         use crate::connections::{build_vault_meta, unlock_key};
         use crate::vault::KdfParams;
-        let params = KdfParams { m_kib: 8, t: 1, p: 1 };
+        let params = KdfParams {
+            m_kib: 8,
+            t: 1,
+            p: 1,
+        };
 
         let meta = build_vault_meta("correct horse", params).unwrap();
         assert_eq!(meta.version, 1);
@@ -1429,15 +1795,24 @@ mod tests {
         save_profiles_encrypted(&prof_path, &key, &profiles).unwrap();
         // On-disk bytes must not contain the plaintext password.
         let raw = std::fs::read(&prof_path).unwrap();
-        assert!(!String::from_utf8_lossy(&raw).contains("secret"), "password must not be plaintext");
+        assert!(
+            !String::from_utf8_lossy(&raw).contains("secret"),
+            "password must not be plaintext"
+        );
         assert_eq!(load_profiles_encrypted(&prof_path, &key).unwrap(), profiles);
-        assert!(load_profiles_encrypted(&prof_path, &wrong).is_err(), "wrong key must fail");
+        assert!(
+            load_profiles_encrypted(&prof_path, &wrong).is_err(),
+            "wrong key must fail"
+        );
 
         let mut settings = AppSettings::default();
         settings.anthropic_api_key = "sk-ant-123".into();
         save_settings_encrypted(&set_path, &key, &settings).unwrap();
         let raw_s = std::fs::read(&set_path).unwrap();
-        assert!(!String::from_utf8_lossy(&raw_s).contains("sk-ant-123"), "api key must not be plaintext");
+        assert!(
+            !String::from_utf8_lossy(&raw_s).contains("sk-ant-123"),
+            "api key must not be plaintext"
+        );
         assert_eq!(load_settings_encrypted(&set_path, &key).unwrap(), settings);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1466,12 +1841,24 @@ mod tests {
         save_profiles_to_file(&pt_profiles, &profiles).unwrap();
         assert!(pt_profiles.exists());
 
-        migrate_plaintext_to_encrypted(&key, &pt_profiles, &enc_profiles, &pt_settings, &enc_settings)
-            .unwrap();
+        migrate_plaintext_to_encrypted(
+            &key,
+            &pt_profiles,
+            &enc_profiles,
+            &pt_settings,
+            &enc_settings,
+        )
+        .unwrap();
 
-        assert!(!pt_profiles.exists(), "plaintext must be deleted after migration");
+        assert!(
+            !pt_profiles.exists(),
+            "plaintext must be deleted after migration"
+        );
         assert!(enc_profiles.exists(), "encrypted file must be written");
-        assert_eq!(load_profiles_encrypted(&enc_profiles, &key).unwrap(), profiles);
+        assert_eq!(
+            load_profiles_encrypted(&enc_profiles, &key).unwrap(),
+            profiles
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1485,7 +1872,11 @@ mod tests {
 
         let blob = encrypt(&key, msg).unwrap();
         assert_ne!(&blob[12..], msg, "ciphertext must not equal plaintext");
-        assert_eq!(decrypt(&key, &blob).unwrap(), msg, "round-trip must recover plaintext");
+        assert_eq!(
+            decrypt(&key, &blob).unwrap(),
+            msg,
+            "round-trip must recover plaintext"
+        );
 
         // Two encryptions of the same plaintext differ (fresh nonce each time).
         let blob2 = encrypt(&key, msg).unwrap();
@@ -1554,6 +1945,42 @@ mod tests {
         let json2 = serde_json::to_string(&cleared).unwrap();
         let back2: QueryStore = serde_json::from_str(&json2).unwrap();
         assert!(back2.collections.get(&key).unwrap().default.is_none());
+    }
+
+    #[test]
+    fn test_query_store_file_handling_is_best_effort() {
+        use crate::queries::{load_store_from_file, save_store_to_file, QueryStore};
+
+        let dir = std::env::temp_dir().join(format!(
+            "mqlens-query-store-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("queries.json");
+
+        assert_eq!(load_store_from_file(&path), QueryStore::default());
+
+        std::fs::write(&path, "   ").unwrap();
+        assert_eq!(load_store_from_file(&path), QueryStore::default());
+
+        std::fs::write(&path, "{not json").unwrap();
+        assert_eq!(load_store_from_file(&path), QueryStore::default());
+
+        let mut store = QueryStore::default();
+        let key = crate::queries::collection_key("conn", "db", "coll");
+        store.collections.insert(key.clone(), Default::default());
+        save_store_to_file(&path, &store).expect("store should save");
+        let loaded = load_store_from_file(&path);
+        assert!(loaded.collections.contains_key(&key));
+
+        let save_to_dir = save_store_to_file(&dir, &store).unwrap_err();
+        assert!(save_to_dir.contains("Failed to write queries file"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1643,9 +2070,120 @@ mod tests {
 
         reencrypt_data_files(&old_key, &new_key, &enc_profiles, &enc_settings).unwrap();
 
-        assert!(load_profiles_encrypted(&enc_profiles, &old_key).is_err(), "old key must fail");
-        assert_eq!(load_profiles_encrypted(&enc_profiles, &new_key).unwrap(), profiles);
+        assert!(
+            load_profiles_encrypted(&enc_profiles, &old_key).is_err(),
+            "old key must fail"
+        );
+        assert_eq!(
+            load_profiles_encrypted(&enc_profiles, &new_key).unwrap(),
+            profiles
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Exercise every mock dataset/index variant so the demo backend (used when no
+    // server is available) is covered, not just sales_db/products.
+    #[test]
+    fn test_mock_db_data_and_index_variants() {
+        use crate::mock_db::{
+            count_mock_documents, execute_mock_query, get_mock_collections, get_mock_explain,
+            get_mock_indexes,
+        };
+
+        // Collections per database, plus the empty fallback for an unknown db.
+        assert!(get_mock_collections("sales_db").contains(&"transactions".to_string()));
+        assert_eq!(
+            get_mock_collections("user_analytics"),
+            vec!["events".to_string(), "sessions".to_string()]
+        );
+        assert!(get_mock_collections("admin").contains(&"system.users".to_string()));
+        assert!(get_mock_collections("nope").is_empty());
+
+        // Query + count across the non-products datasets (each hits a distinct match arm).
+        let tx = execute_mock_query("sales_db", "transactions", "{}", "{}", 10, 0).unwrap();
+        assert_eq!(tx.len(), 3);
+        let pending =
+            count_mock_documents("sales_db", "transactions", r#"{"status":"Pending"}"#).unwrap();
+        assert_eq!(pending, 1);
+
+        let events = execute_mock_query("user_analytics", "events", "{}", "{}", 10, 0).unwrap();
+        assert_eq!(events.len(), 2);
+        let sessions =
+            execute_mock_query("user_analytics", "sessions", "{}", r#"{"duration_seconds":-1}"#, 10, 0)
+                .unwrap();
+        let first: serde_json::Value = serde_json::from_str(&sessions[0]).unwrap();
+        assert_eq!(first["session_id"], "sess_002", "longest session sorts first");
+
+        // Unknown collection yields no documents.
+        assert!(execute_mock_query("sales_db", "ghost", "{}", "{}", 10, 0)
+            .unwrap()
+            .is_empty());
+
+        // Explain renders a plan namespaced to the requested collection.
+        let explain = get_mock_explain("user_analytics", "events", "{}");
+        assert!(explain.contains("user_analytics.events"));
+
+        // Index sets for each collection, including the admin and unknown fallbacks.
+        let idx = |db, coll| -> Vec<String> {
+            get_mock_indexes(db, coll)
+                .into_iter()
+                .map(|i| i.name)
+                .collect()
+        };
+        assert!(idx("sales_db", "transactions").contains(&"timestamp_-1".to_string()));
+        assert!(idx("user_analytics", "events").contains(&"event_type_1".to_string()));
+        assert!(idx("user_analytics", "sessions").contains(&"session_id_1".to_string()));
+        assert!(idx("admin", "system.users").contains(&"user_1_db_1".to_string()));
+        assert_eq!(idx("sales_db", "unknown_coll"), vec!["_id_".to_string()]);
+
+        // A descending-direction index name parses its key pattern and direction.
+        let tx_indexes = get_mock_indexes("sales_db", "transactions");
+        let ts = tx_indexes.iter().find(|i| i.name == "timestamp_-1").unwrap();
+        let keys: serde_json::Value = serde_json::from_str(&ts.keys).unwrap();
+        assert_eq!(keys["timestamp"], -1);
+        assert!(!ts.unique, "a non-_id index is not unique");
+    }
+
+    #[test]
+    fn test_key_matches_meta() {
+        use crate::connections::{build_vault_meta, key_matches_meta, unlock_key};
+        use crate::vault::KdfParams;
+        let params = KdfParams { m_kib: 8, t: 1, p: 1 };
+        let meta = build_vault_meta("hunter2", params).unwrap();
+        let good = unlock_key(&meta, "hunter2").unwrap();
+
+        assert!(key_matches_meta(&meta, &good), "the real key must verify");
+        assert!(
+            !key_matches_meta(&meta, &[0u8; 32]),
+            "a wrong key must not verify"
+        );
+    }
+
+    #[test]
+    fn test_biometric_key_encode_decode_roundtrip_and_rejections() {
+        use base64::Engine as _;
+        use crate::biometric::{decode_and_verify_key, encode_key};
+        use crate::connections::{build_vault_meta, unlock_key};
+        use crate::vault::KdfParams;
+
+        let params = KdfParams { m_kib: 8, t: 1, p: 1 };
+        let meta = build_vault_meta("pw", params).unwrap();
+        let key = unlock_key(&meta, "pw").unwrap();
+
+        // Round-trip: encode then decode-and-verify yields the same key.
+        let encoded = encode_key(&key);
+        assert_eq!(decode_and_verify_key(&meta, &encoded).unwrap(), key);
+
+        // Not base64.
+        assert!(decode_and_verify_key(&meta, "%%%not-base64%%%").is_err());
+
+        // Valid base64 but wrong length (16 bytes).
+        let short = base64::engine::general_purpose::STANDARD.encode([1u8; 16]);
+        assert!(decode_and_verify_key(&meta, &short).is_err());
+
+        // Correct length but a key that doesn't match this vault.
+        let wrong = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+        assert!(decode_and_verify_key(&meta, &wrong).is_err());
     }
 }

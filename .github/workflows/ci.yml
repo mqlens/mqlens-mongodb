@@ -1,0 +1,86 @@
+name: CI
+
+# Run the test suites on every PR into dev or main so nothing merges red.
+on:
+  pull_request:
+    branches: [dev, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: frontend
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Type-check & build
+        run: npm run build
+      - name: Unit tests with coverage
+        run: npm run coverage:frontend
+      - name: Frontend coverage summary
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const summary = JSON.parse(fs.readFileSync('coverage/frontend/coverage-summary.json', 'utf8')).total;
+          const rows = ['lines', 'statements', 'functions', 'branches']
+            .map((key) => `| ${key} | ${summary[key].pct}% | ${summary[key].covered}/${summary[key].total} |`)
+            .join('\n');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Frontend coverage\n\n| Metric | Coverage | Covered |\n|---|---:|---:|\n${rows}\n`);
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: coverage/frontend
+
+  backend:
+    name: backend
+    runs-on: ubuntu-22.04
+    # A real MongoDB so the integration tests can exercise the live query/aggregate/
+    # DDL/document/export/GridFS/schema paths (the bulk of the backend). Without it
+    # those tests no-op and coverage drops well below the gate below.
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Integration tests read this; when unset they skip (keeps `cargo test` green offline).
+      MQLENS_TEST_MONGO_URI: mongodb://localhost:27017
+    steps:
+      - uses: actions/checkout@v4
+      # The Tauri lib + gssapi-auth feature need these system libs to compile.
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libssl-dev \
+            libkrb5-dev \
+            clang \
+            libclang-dev \
+            build-essential
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Backend tests with coverage
+        # Fail the build if line coverage drops below 70% (the agreed target floor).
+        run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --fail-under-lines 70 --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'

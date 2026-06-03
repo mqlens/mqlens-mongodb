@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+coverage/
 dist
 dist-ssr
 *.local
@@ -31,3 +32,14 @@ GO-LIVE.md
 .claude/
 CLAUDE.md
 AGENTS.md
+
+# Local-only: per-developer macOS signing override (auto-merged by Tauri on
+# macOS for `tauri dev`/`tauri build`). Pins the local Developer ID cert the
+# embedded provisioning profile is issued for; not for the shared repo / CI.
+src-tauri/tauri.macos.conf.json
+src-tauri/Entitlements.dev.plist
+
+# Developer ID provisioning profile required to launch signed builds (restricted
+# keychain entitlements). Supplied via the APPLE_PROVISIONING_PROFILE secret in
+# CI and decoded to this path before bundling; keep it out of the repo.
+src-tauri/embedded.provisionprofile

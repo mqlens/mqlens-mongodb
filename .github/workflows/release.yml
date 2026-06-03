@@ -17,6 +17,10 @@ jobs:
   build:
     permissions:
       contents: write
+    env:
+      # macOS signing + notarization switch on automatically once the Apple
+      # secrets are present; builds stay unsigned until then.
+      ENABLE_MAC_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -72,13 +76,210 @@ jobs:
 
       - run: npm ci
 
+      # Notarization uses an App Store Connect API key (.p8). Materialize it to
+      # a file on the runner; tauri-action reads APPLE_API_KEY_PATH from there.
+      - name: Prepare Apple API key (macOS signing)
+        if: matrix.platform == 'macos-latest' && env.ENABLE_MAC_SIGNING == 'true'
+        run: |
+          echo "${{ secrets.APPLE_API_KEY_P8 }}" | base64 --decode > "$RUNNER_TEMP/apple_api_key.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/apple_api_key.p8" >> "$GITHUB_ENV"
+
+      # The biometry feature needs restricted keychain entitlements, which macOS
+      # only grants if a matching Developer ID provisioning profile is embedded in
+      # the bundle. tauri.conf.json's bundle.macOS.files copies this file into
+      # Contents/embedded.provisionprofile *before* Tauri signs, so the signature
+      # seals it. Without it the signed app is killed on launch (AMFI error -413).
+      # The profile must be issued for the same Developer ID cert that
+      # APPLE_SIGNING_IDENTITY resolves to, or AMFI rejects it.
+      - name: Prepare provisioning profile (macOS signing)
+        if: matrix.platform == 'macos-latest' && env.ENABLE_MAC_SIGNING == 'true'
+        run: |
+          echo "${{ secrets.APPLE_PROVISIONING_PROFILE }}" | base64 --decode > src-tauri/embedded.provisionprofile
+          # Fail loudly: an empty/unset secret yields a 0-byte profile that still
+          # signs and notarizes fine but is killed by AMFI on launch (-413). Don't
+          # ship that silently.
+          if [ ! -s src-tauri/embedded.provisionprofile ]; then
+            echo "::error::APPLE_PROVISIONING_PROFILE secret is empty or unset — the signed app would be killed on launch (AMFI -413). Set the secret to the base64 of the Developer ID provisioning profile."
+            exit 1
+          fi
+
+      # Stable -> mqlens-v<version>. Dev -> a unique semver pre-release carrying
+      # the build's short SHA (e.g. mqlens-v0.1.0-dev.a1b2c3d) so every dev build
+      # gets its own tag and nothing collides with the `dev` branch name.
+      - name: Compute release tag
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "REL_TAG=mqlens-v${VERSION}" >> "$GITHUB_ENV"
+            echo "REL_NAME=MQLens v${VERSION}" >> "$GITHUB_ENV"
+          else
+            SHA="${GITHUB_SHA:0:7}"
+            echo "REL_TAG=mqlens-v${VERSION}-dev.${SHA}" >> "$GITHUB_ENV"
+            echo "REL_NAME=MQLens v${VERSION}-dev.${SHA}" >> "$GITHUB_ENV"
+          fi
+
       - name: Build app & publish release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing + notarization (App Store Connect API key).
+          # All inactive until the matching repo secrets are set, so non-mac
+          # builds and unsigned macOS builds are unaffected.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          # APPLE_API_KEY_PATH is exported by the prepare step above (macOS only).
         with:
-          tagName: ${{ github.ref_name == 'main' && 'mqlens-v__VERSION__' || 'dev' }}
-          releaseName: ${{ github.ref_name == 'main' && 'MQLens v__VERSION__' || 'MQLens Dev Build' }}
-          releaseBody: ${{ github.ref_name == 'main' && 'Download the installer for your platform from the assets below.' || 'Rolling development build from the `dev` branch — unstable.' }}
+          tagName: ${{ env.REL_TAG }}
+          releaseName: ${{ env.REL_NAME }}
+          releaseBody: 'Generating release notes…'
           prerelease: ${{ github.ref_name != 'main' }}
           args: ${{ matrix.args }}
+
+  # Replace the placeholder body with real notes once the bundles are uploaded:
+  # an auto-generated changelog for stable (main) releases, or a recent-commit
+  # list for rolling dev builds.
+  release-notes:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compose and publish release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            TAG="mqlens-v${VERSION}"
+            gh api --method POST "repos/${{ github.repository }}/releases/generate-notes" \
+              -f tag_name="$TAG" --jq '.body' > notes.md
+          else
+            TAG="mqlens-v${VERSION}-dev.${GITHUB_SHA:0:7}"
+            {
+              echo "Development pre-release — unstable, not for production."
+              echo ""
+              echo "**Commit:** \`${{ github.sha }}\`"
+              echo "**Built:** $(date -u '+%Y-%m-%d %H:%M UTC')"
+              echo ""
+              echo "### Recent changes"
+              git log -15 --no-merges --pretty='- %s (%h)'
+            } > notes.md
+          fi
+          gh release edit "$TAG" --notes-file notes.md
+
+      # Keep the Releases page tidy: on dev, keep only the 10 newest dev
+      # pre-releases (tags like mqlens-v*-dev.*) and delete the rest + their tags.
+      - name: Prune old dev pre-releases
+        if: github.ref_name != 'main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --limit 100 --json tagName,createdAt,isPrerelease \
+            --jq '[.[] | select(.isPrerelease and (.tagName | test("-dev\\.")))]
+                  | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' \
+          | while read -r t; do
+              [ -n "$t" ] && gh release delete "$t" --cleanup-tag --yes
+            done
+
+  # Attach detached GPG signatures (.asc) to every release asset so users can
+  # verify authenticity (`gpg --verify file.asc file`). Activates automatically
+  # once the GPG_PRIVATE_KEY secret is set; otherwise it's a no-op.
+  sign-artifacts:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      ENABLE_GPG: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Import GPG key
+        if: env.ENABLE_GPG == 'true'
+        run: echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode | gpg --batch --import
+      - name: Sign release assets
+        if: env.ENABLE_GPG == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            TAG="mqlens-v${VERSION}"
+          else
+            TAG="mqlens-v${VERSION}-dev.${GITHUB_SHA:0:7}"
+          fi
+          KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/ {print $5; exit}')
+          mkdir -p _assets && cd _assets
+          gh release download "$TAG" --repo "${{ github.repository }}" --clobber
+          shopt -s nullglob
+          for f in *; do
+            case "$f" in *.asc) continue ;; esac
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+                --local-user "$KEYID" --armor --detach-sign --output "$f.asc" "$f"
+          done
+          if ls *.asc >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "${{ github.repository }}" *.asc --clobber
+          fi
+
+  # Sign the Windows installers (.exe / .msi) with Azure Trusted Signing and
+  # replace the unsigned assets on the release. Activates once the AZURE_*
+  # secrets are set; otherwise a no-op.
+  sign-windows:
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      ENABLE_WIN_SIGNING: ${{ secrets.AZURE_CLIENT_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.ENABLE_WIN_SIGNING == 'true'
+
+      - name: Download Windows installers from the release
+        if: env.ENABLE_WIN_SIGNING == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            TAG="mqlens-v${VERSION}"
+          else
+            TAG="mqlens-v${VERSION}-dev.${GITHUB_SHA:0:7}"
+          fi
+          echo "REL_TAG=$TAG" >> "$GITHUB_ENV"
+          mkdir -p win-assets
+          gh release download "$TAG" --repo "${{ github.repository }}" \
+            --pattern '*.exe' --pattern '*.msi' --dir win-assets --clobber
+
+      - name: Azure Trusted Signing
+        if: env.ENABLE_WIN_SIGNING == 'true'
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TS_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_TS_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TS_PROFILE }}
+          files-folder: ${{ github.workspace }}\win-assets
+          files-folder-filter: exe,msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Re-upload signed installers
+        if: env.ENABLE_WIN_SIGNING == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload "$REL_TAG" win-assets/*.exe win-assets/*.msi --repo "${{ github.repository }}" --clobber

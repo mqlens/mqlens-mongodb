@@ -1,5 +1,8 @@
 # MQLens
 
+[![CI](https://github.com/mqlens/mqlens-mongodb/actions/workflows/ci.yml/badge.svg)](https://github.com/mqlens/mqlens-mongodb/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-enabled-brightgreen.svg)](.github/workflows/ci.yml)
+
 **A fast, native desktop GUI for MongoDB** — built with [Tauri](https://tauri.app)
 (Rust) and React + TypeScript.
 
@@ -72,8 +75,20 @@ Other useful commands:
 ```bash
 npm run dev            # frontend only (browser, no Tauri APIs)
 npm test               # frontend tests (Vitest)
+npm run coverage:frontend   # frontend tests with coverage
 cargo test --manifest-path src-tauri/Cargo.toml   # backend tests
+cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'   # backend coverage
 npm run build          # type-check + build the frontend bundle
+```
+
+The backend integration tests (and the coverage figure CI reports) need a real
+MongoDB. They skip automatically when `MQLENS_TEST_MONGO_URI` is unset, so set it
+to exercise the live database paths:
+
+```bash
+docker run -d -p 27017:27017 mongo:7
+MQLENS_TEST_MONGO_URI=mongodb://localhost:27017 \
+  cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'
 ```
 
 ## Build
@@ -92,6 +107,25 @@ npm run tauri build    # produce a platform installer / bundle
 
 > MQLens talks directly to whatever MongoDB deployment you point it at. Use the
 > usual care with production credentials.
+
+## Verifying downloads
+
+Every release asset is shipped with a detached GPG signature (`.asc`), and the
+macOS bundles are also Apple-notarized. To verify a download:
+
+```bash
+# Import the MQLens release public key (once):
+gpg --import KEYS          # from this repo, or: curl -L https://mqlens.com/KEYS | gpg --import
+
+# Verify an asset against its .asc:
+gpg --verify MQLens_0.1.0_amd64.deb.asc MQLens_0.1.0_amd64.deb
+```
+
+Signing key — **MQLens Releases `<dev@mqlens.com>`**, fingerprint:
+
+```
+8E10 C09D 1FEC 8C8F 90B1  DB7E 5804 6649 06E7 D373
+```
 
 ## License
 

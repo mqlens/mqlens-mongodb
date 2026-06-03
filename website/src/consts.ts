@@ -1,0 +1,19 @@
+// Single source of truth for site-wide constants.
+export const SITE = {
+  name: 'MQLens',
+  tagline: 'The MongoDB GUI that does it all — free, native, and private',
+  description:
+    'MQLens is a free, native, cross-platform MongoDB GUI with the power of paid tools: every auth mode (SCRAM, X.509, AWS, Kerberos, LDAP), TLS/SSH/proxy, aggregation pipelines with explain plans, bulk edit, index/view management, schema analysis, GridFS, an embedded mongosh, and an AI query assistant. Credentials are encrypted locally with zero telemetry. Apache-2.0.',
+  url: 'https://mqlens.com',
+  repo: 'https://github.com/mqlens/mqlens-mongodb',
+  releases: 'https://github.com/mqlens/mqlens-mongodb/releases',
+  releasesLatest: 'https://github.com/mqlens/mqlens-mongodb/releases/latest',
+  license: 'Apache-2.0',
+} as const;
+
+export const NAV = [
+  { label: 'Features', href: '/#features' },
+  { label: 'Docs', href: '/docs/' },
+  { label: 'Changelog', href: '/changelog/' },
+  { label: 'GitHub', href: SITE.repo, external: true },
+] as const;

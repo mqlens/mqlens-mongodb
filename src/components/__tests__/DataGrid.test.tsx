@@ -107,6 +107,17 @@ describe('DataGrid Component', () => {
     expect(screen.queryByText(/"Alice Smith"/)).not.toBeInTheDocument();
   });
 
+  it('keeps oversized multiline strings escaped and fully available in one JSON row', () => {
+    const huge = `first line\n${'x'.repeat(2500)}\nlast line`;
+    render(<DataGrid documents={[{ _id: 1, notes: huge }]} />);
+
+    const view = screen.getByTestId('json-view');
+    expect(view.textContent).toContain('first line\\n');
+    expect(view.textContent).toContain('\\nlast line');
+    expect(view.textContent).not.toContain('chars)"');
+    expect(view.textContent).not.toContain('first line\n');
+  });
+
   it('switches to the tree-table view (Key | Value | Type)', () => {
     render(<DataGrid documents={mockDocuments} />);
 
