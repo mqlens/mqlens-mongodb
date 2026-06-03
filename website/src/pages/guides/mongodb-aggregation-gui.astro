@@ -68,6 +68,12 @@ const projectExample = `{
           first documents in the result pane. The preview uses a default limit so it
           never accidentally returns millions of documents.
         </p>
+        <figure class="guide-shot">
+          <a href="/screenshots/mqlens-documents.png" target="_blank" rel="noopener">
+            <img src="/screenshots/mqlens-documents.png" alt="MQLens collection workspace with the Aggregation tab beside the Find tab" loading="lazy" decoding="async" />
+          </a>
+          <figcaption>Open any collection, then switch from <strong>Find</strong> to <strong>Aggregation</strong> in the same workspace to build and run a pipeline against the selected data.</figcaption>
+        </figure>
         <p>
           Placing a <code>$match</code> as the first stage is important: MongoDB can
           use an index on the matched fields when <code>$match</code> comes first,
@@ -217,6 +223,25 @@ const projectExample = `{
   }
   .guide-body li {
     margin-bottom: 8px;
+  }
+  .guide-shot {
+    margin: 28px 0 22px;
+  }
+  .guide-shot img {
+    display: block;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+  }
+  .guide-shot a:hover {
+    text-decoration: none;
+  }
+  .guide-shot figcaption {
+    color: var(--text-dim);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    margin-top: 10px;
   }
   .cta-block {
     margin-top: 56px;
