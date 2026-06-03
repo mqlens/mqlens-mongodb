@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <defs>
+    <linearGradient id="badge" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="hsl(201, 96%, 58%)"/>
+      <stop offset="0.55" stop-color="hsl(193, 90%, 49%)"/>
+      <stop offset="1" stop-color="hsl(173, 80%, 43%)"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="22" cy="15" r="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="hsl(200, 90%, 62%)"/>
+      <stop offset="1" stop-color="hsl(173, 80%, 50%)"/>
+    </linearGradient>
+    <radialGradient id="glowBlue" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="hsl(200, 90%, 50%)" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="hsl(200, 90%, 50%)" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowPurple" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="hsl(268, 85%, 65%)" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="hsl(268, 85%, 65%)" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="hsl(222, 24%, 6%)"/>
+  <rect x="120" y="-260" width="900" height="700" fill="url(#glowBlue)"/>
+  <rect x="500" y="380" width="900" height="600" fill="url(#glowPurple)"/>
+  <!-- Hairline frame -->
+  <rect x="20" y="20" width="1160" height="590" rx="28" fill="none" stroke="hsl(222, 20%, 18%)" stroke-width="2"/>
+
+  <!-- Logo badge -->
+  <g transform="translate(90, 86) scale(2.03125)">
+    <circle cx="32" cy="32" r="32" fill="url(#badge)"/>
+    <circle cx="32" cy="32" r="32" fill="url(#sheen)"/>
+    <line x1="44" y1="44" x2="52" y2="52" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="27" cy="27" r="19" fill="none" stroke="#ffffff" stroke-width="4"/>
+    <g transform="translate(27 27)">
+      <path d="M-8.5 -6.5 a8.5 3.4 0 0 0 17 0 V6.5 a8.5 3.4 0 0 1 -17 0 Z" fill="#ffffff"/>
+      <ellipse cx="0" cy="-6.5" rx="8.5" ry="3.4" fill="#ffffff"/>
+      <path d="M-8.5 -1.7 a8.5 3.4 0 0 0 17 0" fill="none" stroke="hsl(196, 92%, 48%)" stroke-width="2.4"/>
+      <path d="M-8.5  2.7 a8.5 3.4 0 0 0 17 0" fill="none" stroke="hsl(196, 92%, 48%)" stroke-width="2.4"/>
+    </g>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="320" y="190" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="92" font-weight="700" fill="#ffffff" letter-spacing="-2">MQLens</text>
+
+  <!-- Headline -->
+  <text x="92" y="330" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="60" font-weight="700" fill="#ffffff" letter-spacing="-1.5">The MongoDB GUI that does it all.</text>
+
+  <!-- Subhead gradient -->
+  <text x="92" y="408" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="46" font-weight="700" fill="url(#grad)">Free · native · private.</text>
+
+  <!-- Feature line -->
+  <text x="92" y="486" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="28" font-weight="400" fill="hsl(222, 14%, 70%)">Every auth mode · SSH/proxy · Explain plans · Encrypted · No telemetry</text>
+
+  <!-- Footer -->
+  <text x="92" y="566" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="hsl(200, 90%, 62%)">mqlens.com</text>
+  <text x="1108" y="566" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="28" font-weight="500" fill="hsl(222, 14%, 60%)">Tauri · Rust · Apache-2.0</text>
+</svg>
