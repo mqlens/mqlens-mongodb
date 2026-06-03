@@ -57,6 +57,33 @@ queries actually do — from a single cross-platform desktop app.
   profiles and settings are encrypted at rest with AES-256-GCM (Argon2id key
   derivation).
 
+## Install
+
+Grab the latest build for your OS from
+**[Releases](https://github.com/mqlens/mqlens-mongodb/releases/latest)**:
+
+- **macOS** — download the `.dmg` (Apple-notarized; Touch ID unlock supported).
+- **Windows** — download the `.msi` or `.exe` (signed via Azure Trusted Signing).
+- **Linux** — download the `.AppImage` (`chmod +x` and run) or install the `.deb`.
+
+No account, no sign-up, no telemetry.
+
+## MQLens vs. the alternatives
+
+| | MQLens | Compass | Studio 3T |
+|---|---|---|---|
+| Price | **Free (Apache-2.0)** | Free | Paid |
+| Engine | **Native (Tauri/Rust)** | Electron | Java |
+| All auth (X.509 / AWS / Kerberos / LDAP) | ✅ | partial | ✅ |
+| SSH tunnel / SOCKS5 proxy | ✅ | ❌ | ✅ |
+| Aggregation + explain tree | ✅ | ✅ | ✅ |
+| Embedded `mongosh` | ✅ | ✅ | ✅ |
+| AI query assistant (bring-your-own key) | ✅ | ✅ | partial |
+| Encrypted creds + biometric unlock | ✅ | ❌ | partial |
+| Telemetry | **None** | yes | yes |
+
+*Comparison reflects publicly documented behavior at time of writing; tools change — corrections welcome via an issue.*
+
 ## Tech stack
 
 - **Frontend:** React 19 + TypeScript, Vite, Tailwind-style utility CSS.
