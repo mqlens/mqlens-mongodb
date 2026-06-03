@@ -60,19 +60,75 @@ const features = [
   },
 ];
 
-// Literal braces/quotes here would be parsed as Astro/JSX expressions in markup,
-// so the query and result JSON are authored as strings and injected via set:html.
-const heroQuery =
-  'db.orders.find(<span class="tok-p">&#123;</span> <span class="tok-key">status</span><span class="tok-p">:</span> <span class="tok-str">"shipped"</span> <span class="tok-p">&#125;</span>)<span class="tok-p">.</span>sort(<span class="tok-p">&#123;</span> <span class="tok-key">createdAt</span><span class="tok-p">:</span> <span class="tok-num">-1</span> <span class="tok-p">&#125;</span>)';
+const screenshots = [
+  {
+    src: '/screenshots/mqlens-quick-start.png',
+    alt: 'MQLens quick start screen with connection and settings cards',
+    title: 'Start from a clean workspace',
+    body: 'The first screen gets users straight to connecting a MongoDB database or tuning settings.',
+  },
+  {
+    src: '/screenshots/mqlens-new-connection.png',
+    alt: 'MQLens new connection dialog configured for localhost MongoDB',
+    title: 'Create connections fast',
+    body: 'Paste a URI, test the connection, and save local or remote MongoDB profiles.',
+  },
+  {
+    src: '/screenshots/mqlens-connection-manager.png',
+    alt: 'MQLens connection manager showing a saved local MongoDB connection',
+    title: 'Organize connection profiles',
+    body: 'Group, duplicate, edit, and connect to saved profiles from the connection manager.',
+  },
+  {
+    src: '/screenshots/mqlens-documents.png',
+    alt: 'MQLens browsing MongoDB customer documents from the mqlens_demo database',
+    title: 'Browse real documents',
+    body: 'Inspect JSON documents with pagination, imports, exports, schema analysis, and bulk actions nearby.',
+  },
+  {
+    src: '/screenshots/mqlens-visual-builder.png',
+    alt: 'MQLens visual query builder panel next to MongoDB customer documents',
+    title: 'Build queries visually',
+    body: 'Use rule-based filters, projection, and sort controls without losing the raw query view.',
+  },
+  {
+    src: '/screenshots/mqlens-ai-assistant.png',
+    alt: 'MQLens AI query assistant panel beside MongoDB customer documents',
+    title: 'Ask for MQL in plain language',
+    body: 'Draft queries with the AI assistant while keeping the generated query visible and editable.',
+  },
+  {
+    src: '/screenshots/mqlens-index-detail.png',
+    alt: 'MQLens index detail view showing MongoDB index definition and raw BSON metadata',
+    title: 'Inspect indexes',
+    body: 'Review index definitions, constraints, key fields, operational status, and raw metadata.',
+  },
+  {
+    src: '/screenshots/mqlens-mongosh.png',
+    alt: 'MQLens embedded mongosh workspace with query editor and data viewer',
+    title: 'Drop into mongosh',
+    body: 'Run shell commands and inspect returned documents without leaving the desktop workspace.',
+  },
+  {
+    src: '/screenshots/mqlens-gridfs.png',
+    alt: 'MQLens GridFS browser showing files in the mqlens_demo fs bucket',
+    title: 'Manage GridFS files',
+    body: 'Browse GridFS buckets and download stored files from the same database tree.',
+  },
+  {
+    src: '/screenshots/mqlens-unlock.png',
+    alt: 'MQLens encrypted vault unlock screen',
+    title: 'Keep credentials gated',
+    body: 'Saved connections sit behind the encrypted vault rather than opening straight to secrets.',
+  },
+  {
+    src: '/screenshots/mqlens-touch-id.png',
+    alt: 'MQLens Touch ID prompt for unlocking the encrypted vault',
+    title: 'Unlock with biometrics',
+    body: 'Use platform biometrics where available for a faster encrypted-vault unlock flow.',
+  },
+];
 
-const heroDoc = `<span class="tok-p">&#123;</span>
-  <span class="tok-key">_id</span><span class="tok-p">:</span> <span class="tok-fn">ObjectId</span><span class="tok-p">(</span><span class="tok-str">"66f1a2c4e9b…"</span><span class="tok-p">)</span><span class="tok-p">,</span>
-  <span class="tok-key">status</span><span class="tok-p">:</span> <span class="tok-str">"shipped"</span><span class="tok-p">,</span>
-  <span class="tok-key">total</span><span class="tok-p">:</span> <span class="tok-num">248.50</span><span class="tok-p">,</span>
-  <span class="tok-key">paid</span><span class="tok-p">:</span> <span class="tok-bool">true</span><span class="tok-p">,</span>
-  <span class="tok-key">items</span><span class="tok-p">:</span> <span class="tok-p">[</span> <span class="tok-num">3</span> <span class="tok-p">]</span><span class="tok-p">,</span>
-  <span class="tok-key">shippedAt</span><span class="tok-p">:</span> <span class="tok-fn">ISODate</span><span class="tok-p">(</span><span class="tok-str">"2026-05-31"</span><span class="tok-p">)</span>
-<span class="tok-p">&#125;</span>`;
 ---
 
 <BaseLayout>
@@ -92,62 +148,14 @@ const heroDoc = `<span class="tok-p">&#123;</span>
         <a class="btn btn-primary" href="#download">Download for free</a>
         <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">Star on GitHub ★</a>
       </div>
-      <div class="app-mock" role="img" aria-label="MQLens querying a prod-cluster: db.orders.find({ status: 'shipped' }) returning a shipped order document with an IXSCAN explain plan">
-        <div class="app-mock-chrome">
-          <div class="app-mock-dots" aria-hidden="true">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-amber"></span>
-            <span class="dot dot-green"></span>
-          </div>
-          <div class="app-mock-title">
-            <span class="am-title-name">MQLens</span>
-            <span class="am-title-sep">·</span>
-            <span class="am-title-live"><span class="am-live-dot"></span> prod-cluster · replica set</span>
-          </div>
-        </div>
-        <div class="app-mock-body">
-          <aside class="app-mock-side">
-            <div class="am-side-conn"><span class="am-conn-dot"></span> prod-cluster</div>
-            <div class="am-tree">
-              <div class="am-node am-node-db">
-                <span class="am-db-glyph"></span>
-                <span class="am-caret">▾</span> ecommerce <span class="am-count">· 6</span>
-              </div>
-              <div class="am-children">
-                <div class="am-coll"><span class="am-coll-name">users</span><span class="am-docs">1.2k</span></div>
-                <div class="am-coll is-active"><span class="am-coll-name">orders</span><span class="am-docs">248</span></div>
-                <div class="am-index"><span class="am-idx-glyph">⚿</span> status_-1_createdAt_-1</div>
-                <div class="am-coll"><span class="am-coll-name">products</span><span class="am-docs">89</span></div>
-              </div>
-              <div class="am-node am-node-db">
-                <span class="am-db-glyph"></span>
-                <span class="am-caret">▸</span> analytics
-              </div>
-            </div>
-          </aside>
-          <div class="app-mock-main">
-            <div class="main-tabs" role="tablist">
-              <span class="tab is-active">Documents <span class="tab-pill">248</span></span>
-              <span class="tab">Aggregation</span>
-              <span class="tab">Explain</span>
-              <span class="tab">Indexes</span>
-            </div>
-            <div class="query-bar">
-              <div class="am-seg" aria-hidden="true">
-                <span class="am-seg-item is-active">Find</span>
-                <span class="am-seg-item">Aggregate</span>
-              </div>
-              <code class="query-code" set:html={heroQuery}></code>
-              <button class="am-run" type="button" aria-hidden="true">Run</button>
-            </div>
-            <pre class="result-json"><code set:html={heroDoc}></code></pre>
-            <div class="am-status">
-              <span class="am-status-left">248 documents <span class="am-status-sep">·</span> 12 ms</span>
-              <span class="explain-chip">IXSCAN <span class="chip-sep">·</span> 1,204 examined <span class="chip-sep">·</span> 1,204 returned</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <a class="hero-shot" href="/screenshots/mqlens-documents.png" target="_blank" rel="noopener">
+        <img
+          src="/screenshots/mqlens-documents.png"
+          alt="MQLens browsing MongoDB customer documents in the desktop app"
+          loading="eager"
+          decoding="async"
+        />
+      </a>
       <div class="hero-meta">
         <span>✓ macOS · Windows · Linux</span>
         <span>✓ GPG-signed &amp; notarized builds</span>
@@ -157,7 +165,7 @@ const heroDoc = `<span class="tok-p">&#123;</span>
   </section>
 
   <!-- Download -->
-  <section class="section-tight">
+  <section class="section-tight" id="download">
     <div class="container">
       <h2 class="dl-heading">Download {SITE.name}</h2>
       <Download />
@@ -179,6 +187,30 @@ const heroDoc = `<span class="tok-p">&#123;</span>
             <h3>{f.title}</h3>
             <p>{f.body}</p>
           </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Gallery -->
+  <section class="section gallery" id="gallery">
+    <div class="container">
+      <div class="sec-head">
+        <span class="eyebrow">Gallery</span>
+        <h2>Real screenshots from the desktop app</h2>
+        <p>Captured from the running desktop app against a seeded local MongoDB database with documents, indexes, query tools, AI assistance, and GridFS metadata.</p>
+      </div>
+      <div class="shot-grid">
+        {screenshots.map((shot) => (
+          <figure class="shot-card">
+            <a href={shot.src} target="_blank" rel="noopener" aria-label={`Open full-size screenshot: ${shot.title}`}>
+              <img src={shot.src} alt={shot.alt} loading="lazy" decoding="async" />
+            </a>
+            <figcaption>
+              <strong>{shot.title}</strong>
+              <span>{shot.body}</span>
+            </figcaption>
+          </figure>
         ))}
       </div>
     </div>
@@ -243,9 +275,74 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
   }
   .lede { font-size: 1.12rem; line-height: 1.72; color: var(--text-dim); margin: 30px auto 0; max-width: 640px; }
   .hero-cta { display: flex; gap: 12px; justify-content: center; margin-top: 38px; flex-wrap: wrap; }
+  .hero-shot {
+    display: block;
+    margin: 46px auto 0;
+    max-width: 980px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-card);
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+  }
+  .hero-shot:hover {
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  .hero-shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
   .hero-meta {
     display: flex; gap: 22px; justify-content: center; flex-wrap: wrap;
     margin-top: 28px; color: var(--text-dim); font-size: 0.9rem;
+  }
+
+  .gallery {
+    padding-top: 72px;
+    background: linear-gradient(180deg, rgba(14, 23, 32, 0.72), rgba(7, 12, 18, 0));
+  }
+  .shot-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 34px;
+  }
+  .shot-card {
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-card);
+  }
+  .shot-card a {
+    display: block;
+  }
+  .shot-card a:hover {
+    text-decoration: none;
+  }
+  .shot-card img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 3 / 2;
+    object-fit: cover;
+    object-position: left top;
+    border-bottom: 1px solid var(--border);
+  }
+  .shot-card figcaption {
+    display: grid;
+    gap: 8px;
+    padding: 16px;
+  }
+  .shot-card strong {
+    color: var(--text);
+    font-size: 1rem;
+  }
+  .shot-card span {
+    color: var(--text-dim);
+    line-height: 1.55;
+    font-size: 0.94rem;
   }
 
   .dl-heading { text-align: center; margin: 0 0 28px; font-size: 1.6rem; }
@@ -283,5 +380,6 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
 
   @media (max-width: 820px) {
     .sec-grid { grid-template-columns: 1fr; gap: 28px; }
+    .shot-grid { grid-template-columns: 1fr; }
   }
 </style>
