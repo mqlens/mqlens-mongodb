@@ -60,8 +60,7 @@ const ogImage = new URL('/og.png', SITE.url).href;
       "description": SITE.description,
     })} />
 
-    <!-- Privacy-friendly analytics (no cookies, no in-app telemetry) -->
-    <script defer data-domain="mqlens.com" src="https://plausible.io/js/script.outbound-links.js"></script>
+    <!-- Privacy-friendly analytics: handled by Cloudflare Web Analytics (auto-injected for the proxied site; no cookies, no in-app telemetry) -->
   </head>
   <body>
     <Nav />
