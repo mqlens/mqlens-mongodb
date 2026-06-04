@@ -170,7 +170,7 @@ const screenshots = [
               </ul>
             </div>
             <a class="feature-media" href={f.img} target="_blank" rel="noopener" aria-label={`Open full-size screenshot: ${f.title}`}>
-              <img src={f.img} alt={f.alt} loading="lazy" decoding="async" width="1600" height="1000" />
+              <img src={f.img.replace('.png', '.webp')} alt={f.alt} loading="lazy" decoding="async" width="1600" height="1000" />
             </a>
           </article>
         ))}
@@ -190,7 +190,7 @@ const screenshots = [
         {screenshots.map((shot) => (
           <figure class="shot-card">
             <a href={shot.src} target="_blank" rel="noopener" aria-label={`Open full-size screenshot: ${shot.title}`}>
-              <img src={shot.src} alt={shot.alt} loading="lazy" decoding="async" />
+              <img src={shot.src.replace('.png', '.webp')} alt={shot.alt} loading="lazy" decoding="async" width="1600" height="1000" />
             </a>
             <figcaption>
               <strong>{shot.title}</strong>

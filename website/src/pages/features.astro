@@ -155,7 +155,7 @@ const sections = [
               </ul>
             </div>
             <a class="feature-media" href={s.img} target="_blank" rel="noopener" aria-label={`Open full-size screenshot: ${s.title}`}>
-              <img src={s.img} alt={s.alt} loading="lazy" decoding="async" width="1600" height="1000" />
+              <img src={s.img.replace('.png', '.webp')} alt={s.alt} loading="lazy" decoding="async" width="1600" height="1000" />
             </a>
           </article>
         ))}
