@@ -1,5 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+
+// The modal's JSON editor wraps @monaco-editor/react; mock it with a plain
+// <textarea> that exposes the test id via wrapperProps and round-trips value.
+vi.mock('@monaco-editor/react', () => ({
+  default: ({ value, onChange, wrapperProps }: any) => (
+    <textarea
+      data-testid={wrapperProps?.['data-testid']}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+    />
+  ),
+}));
+
 import { DocumentEditModal } from '../DocumentEditModal';
 
 describe('DocumentEditModal', () => {

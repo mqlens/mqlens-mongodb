@@ -4871,6 +4871,15 @@ button, input, select, textarea {
   border-color: var(--accent-blue);
 }
 
+/* Monaco-backed JSON editor inside the insert/edit document modal */
+.index-modal-editor {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+.index-modal-editor:focus-within { border-color: var(--accent-blue); }
+
 .index-modal-textarea {
   background: var(--bg-input-blend);
   border: 1px solid var(--border-color);
