@@ -5250,3 +5250,35 @@ button, input, select, textarea {
 /* choose lays its action buttons full-width for easy tapping */
 .dialog-choices .dialog-btn { width: 100%; }
 
+/* Right-click context menu (result views) */
+.mql-context-menu {
+  position: fixed;
+  z-index: 100000;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--bg-dropdown-solid);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px hsla(0, 0%, 0%, 0.35);
+  font-size: 12.5px;
+  user-select: none;
+}
+.mql-context-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 5px;
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+}
+.mql-context-item:hover:not(:disabled) { background: var(--bg-item-hover); }
+.mql-context-item:disabled { opacity: 0.45; cursor: default; }
+.mql-context-item.is-danger { color: var(--accent-red); }
+.mql-context-item.is-danger:hover:not(:disabled) { background: hsla(0, 70%, 50%, 0.12); }
+.mql-context-icon { display: inline-flex; color: var(--text-dim); }
+.mql-context-item.is-danger .mql-context-icon { color: var(--accent-red); }
+.mql-context-sep { height: 1px; margin: 4px 6px; background: var(--border-color); }
+

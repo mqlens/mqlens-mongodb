@@ -244,4 +244,33 @@ describe('DataGrid Component', () => {
     fireEvent.click(screen.getByLabelText('Chart'));
     expect(screen.getByTestId('chart-view')).toBeTruthy();
   });
+
+  it('opens a context menu on right-click and fires document actions', () => {
+    const onEditDocument = vi.fn();
+    render(<DataGrid documents={mockDocuments} onEditDocument={onEditDocument} onDeleteDocument={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.contextMenu(screen.getByText('Alice Smith'));
+    expect(screen.getByTestId('context-menu')).toBeInTheDocument();
+    expect(screen.getByText('Delete document').closest('button')).toHaveClass('is-danger');
+    fireEvent.click(screen.getByText('Edit document'));
+    expect(onEditDocument).toHaveBeenCalledWith(mockDocuments[0]);
+  });
+
+  it('copies a cell value via the context menu', () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    render(<DataGrid documents={mockDocuments} onEditDocument={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.contextMenu(screen.getByText('Alice Smith'));
+    fireEvent.click(screen.getByText('Copy value'));
+    expect(writeText).toHaveBeenCalledWith('Alice Smith');
+  });
+
+  it('shows the same context menu in the JSON view', () => {
+    render(<DataGrid documents={mockDocuments} onEditDocument={() => {}} onDeleteDocument={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /json/i }));
+    fireEvent.contextMenu(screen.getByText(/"Alice Smith"/));
+    expect(screen.getByTestId('context-menu')).toBeInTheDocument();
+    expect(screen.getByText('Edit document')).toBeInTheDocument();
+  });
 });

@@ -912,6 +912,12 @@ function Workspace() {
     setDocumentModal({ mode: 'edit', initialJson: JSON.stringify(doc, null, 2), targetDoc: doc });
   };
 
+  // Duplicate: open the insert modal pre-filled with the document minus its _id.
+  const handleDuplicateDocument = (doc: Record<string, any>) => {
+    const { _id, ...rest } = doc;
+    setDocumentModal({ mode: 'insert', initialJson: JSON.stringify(rest, null, 2), targetDoc: null });
+  };
+
   const handleDeleteDocument = async (doc: Record<string, any>) => {
     if (!activeTab) return;
     if (doc._id === undefined) {
@@ -1332,6 +1338,7 @@ function Workspace() {
                           queryCode={buildTabQueryCode(activeTab)}
                           onInsertDocument={handleInsertDocument}
                           onEditDocument={handleEditDocument}
+                          onDuplicateDocument={handleDuplicateDocument}
                           onDeleteDocument={handleDeleteDocument}
                           onAnalyzeSchema={() => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection)}
                           onUpdateMany={handleUpdateMany}
