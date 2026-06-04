@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, FileJson } from 'lucide-react';
 import Editor from '@monaco-editor/react';
+import { shellToEjson } from '../lib/shellDoc';
 
 interface DocumentEditModalProps {
   isOpen: boolean;
@@ -36,21 +37,24 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   if (!isOpen) return null;
 
   const handleSave = async () => {
+    // The editor shows mongosh shell types (ISODate(...), ObjectId(...), …);
+    // convert them to Extended JSON before validating and saving.
+    const ejson = shellToEjson(json);
     let parsed: unknown;
     try {
-      parsed = JSON.parse(json);
+      parsed = JSON.parse(ejson);
     } catch (err: any) {
-      setError(`Invalid JSON: ${err.message || 'syntax error'}`);
+      setError(`Invalid document: ${err.message || 'syntax error'}`);
       return;
     }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      setError('A document must be a JSON object (e.g. { "field": value }).');
+      setError('A document must be an object (e.g. { "field": value }).');
       return;
     }
     setError(null);
     setSaving(true);
     try {
-      await onSave(json);
+      await onSave(ejson);
     } catch (err: any) {
       setError(String(err?.message || err));
       setSaving(false);
@@ -78,11 +82,11 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="index-modal-label">Document (JSON)</label>
+          <label className="index-modal-label">Document</label>
           <div className="index-modal-editor">
             <Editor
               height={360}
-              defaultLanguage="json"
+              defaultLanguage="javascript"
               theme={theme}
               value={json}
               onChange={(v) => setJson(v ?? '')}
@@ -104,8 +108,8 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
             />
           </div>
           <span className="index-modal-help-text">
-            MongoDB Extended JSON is supported (e.g. {'{ "_id": { "$oid": "..." } }'}). Editing
-            replaces the entire document.
+            Shell types are supported (e.g. {'ObjectId("..."), ISODate("..."), NumberLong("...")'}).
+            Editing replaces the entire document.
           </span>
         </div>
 
