@@ -148,16 +148,22 @@ const screenshots = [
         <a class="btn btn-primary" href="#download">Download for free</a>
         <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">Star on GitHub ★</a>
       </div>
-      <a class="hero-shot" href="#gallery">
-        <img
-          src="/demo.gif"
-          alt="MQLens demo: connect to MongoDB, run a find, build an aggregation, and read an explain plan"
-          loading="eager"
-          decoding="async"
-          width="1000"
-          height="641"
-        />
-      </a>
+      <div class="hero-shot">
+        <video
+          autoplay
+          muted
+          loop
+          playsinline
+          preload="metadata"
+          poster="/demo-poster.jpg"
+          width="1280"
+          height="822"
+          aria-label="MQLens demo: connect to MongoDB, run a find, build an aggregation, and read an explain plan"
+        >
+          <source src="/demo.webm" type="video/webm" />
+          <source src="/demo.mp4" type="video/mp4" />
+        </video>
+      </div>
       <div class="hero-meta">
         <span>✓ macOS · Windows · Linux</span>
         <span>✓ GPG-signed &amp; notarized builds</span>
@@ -258,12 +264,13 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
   }
   .hero-inner { text-align: center; max-width: 900px; margin: 0 auto; }
   .hero h1 {
-    font-size: clamp(2.3rem, 6vw, 3.6rem);
+    font-size: clamp(1.85rem, 7vw, 3.6rem);
     line-height: 1.08;
     letter-spacing: -0.025em;
     margin: 26px 0 0;
     font-weight: 700;
     text-wrap: balance;
+    overflow-wrap: break-word;
   }
   .grad {
     display: block;
@@ -287,11 +294,8 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
     background: var(--bg-card);
     box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
   }
-  .hero-shot:hover {
-    border-color: var(--accent);
-    text-decoration: none;
-  }
-  .hero-shot img {
+  .hero-shot img,
+  .hero-shot video {
     display: block;
     width: 100%;
     height: auto;
@@ -385,3 +389,19 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
     .shot-grid { grid-template-columns: 1fr; }
   }
 </style>
+
+<script>
+  // Respect prefers-reduced-motion: swap the autoplaying hero video for its static poster.
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.querySelectorAll<HTMLVideoElement>('.hero-shot video').forEach((v) => {
+      v.pause();
+      const img = document.createElement('img');
+      img.src = v.getAttribute('poster') || '';
+      img.alt = v.getAttribute('aria-label') || '';
+      img.width = 1280;
+      img.height = 822;
+      img.decoding = 'async';
+      v.replaceWith(img);
+    });
+  }
+</script>
