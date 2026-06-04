@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Download, Upload, Table2 } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3 } from 'lucide-react';
+import { ChartView } from './ChartView';
 import { EJSON, ObjectId, Long, Decimal128, Int32, Double, Binary, Timestamp } from 'bson';
 
 interface DataGridProps {
@@ -14,8 +15,6 @@ interface DataGridProps {
   onInsertDocument?: () => void;
   onEditDocument?: (doc: Record<string, any>) => void;
   onDeleteDocument?: (doc: Record<string, any>) => void;
-  onOpenExport?: () => void;
-  onImport?: () => void;
   onAnalyzeSchema?: () => void;
   onUpdateMany?: () => void;
   onDeleteMany?: () => void;
@@ -28,7 +27,7 @@ interface DataGridProps {
   onPageSizeChange?: (newLimit: number) => void;
 }
 
-type ViewMode = 'table' | 'tree' | 'json';
+type ViewMode = 'table' | 'tree' | 'json' | 'chart';
 
 interface ExplainNode {
   name: string;
@@ -324,8 +323,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onInsertDocument,
   onEditDocument,
   onDeleteDocument,
-  onOpenExport,
-  onImport,
   onAnalyzeSchema,
   onUpdateMany,
   onDeleteMany,
@@ -989,29 +986,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <span>Insert</span>
             </button>
           )}
-          {activeTab === 'results' && onOpenExport && (
-            <button
-              type="button"
-              onClick={onOpenExport}
-              className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-item-hover)] cursor-pointer transition-all"
-              title="Open export workspace"
-              data-testid="export-btn"
-            >
-              <Download size={12} />
-              <span>Export</span>
-            </button>
-          )}
-          {activeTab === 'results' && onImport && (
-            <button
-              onClick={onImport}
-              className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-item-hover)] cursor-pointer transition-all"
-              title="Import documents from a file"
-              data-testid="import-btn"
-            >
-              <Upload size={12} />
-              <span>Import</span>
-            </button>
-          )}
           {activeTab === 'results' && onAnalyzeSchema && (
             <button
               type="button"
@@ -1080,6 +1054,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 <Braces size={12} />
                 <span>JSON</span>
               </button>
+
+              <button
+                role="button"
+                aria-label="Chart"
+                onClick={() => setViewMode('chart')}
+                className={`px-2 py-1 rounded flex items-center gap-1.5 text-[11px] font-medium transition-all cursor-pointer ${viewMode === 'chart' ? 'bg-[var(--bg-item-active)] text-[var(--accent-blue)]' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
+              >
+                <BarChart3 size={12} />
+                <span>Chart</span>
+              </button>
             </div>
           ) : activeTab === 'explain' ? (
             /* Explain Tools */
@@ -1147,6 +1131,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
               />
             </div>
           </div>
+        ) : viewMode === 'chart' ? (
+          <ChartView documents={parsedDocs} columns={columns} density={density} />
         ) : (
           <div className="flex-1 overflow-auto flex flex-col min-w-0">
             {viewMode === 'table' && (

@@ -43,6 +43,28 @@ describe('DocumentViewer Component', () => {
     expect(screen.getByText('Limit')).toBeInTheDocument();
   });
 
+  it('renders Export/Import in the top toolbar and fires their handlers', () => {
+    const onOpenExport = vi.fn();
+    const onImport = vi.fn();
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={mockOnExecute}
+        onExplain={mockOnExplain}
+        onOpenExport={onOpenExport}
+        onImport={onImport}
+        loading={false}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(onOpenExport).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId('import-btn'));
+    expect(onImport).toHaveBeenCalledTimes(1);
+  });
+
   it('performs JSON validation on typing', async () => {
     render(
       <DocumentViewer
