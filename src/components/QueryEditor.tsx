@@ -60,6 +60,8 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
     scrollbar: { vertical: 'auto' as const, horizontal: 'auto' as const }, overviewRulerLanes: 0,
     renderLineHighlight: 'none' as const, tabSize: 2,
     fixedOverflowWidgets: true, overflowWidgetsDomNode,
+    // Multi-line: Enter inserts a newline; accept completions with Tab.
+    acceptSuggestionOnEnter: 'off' as const,
   };
 
   const singleLineOptions = {

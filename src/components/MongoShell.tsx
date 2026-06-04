@@ -671,6 +671,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               automaticLayout: true,
               tabSize: 2,
               contextmenu: false,
+              // Enter always inserts a newline (multi-line editor); accept
+              // completions with Tab. Ctrl/Cmd+Enter runs the command.
+              acceptSuggestionOnEnter: 'off',
             }}
             onMount={(editor, monaco) => {
               editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runRef.current());
