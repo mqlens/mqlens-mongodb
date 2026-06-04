@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AIChatPanel } from './AIChatPanel';
+import { QueryInput } from './QueryInput';
+import { QueryEditor } from './QueryEditor';
+import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
 import {
   loadCollectionQueries,
@@ -92,6 +95,7 @@ export function builderStateToQuery(state: BuilderState): GeneratedQuery {
 }
 
 interface DocumentViewerProps {
+  connectionId?: string;
   connectionName: string;
   databaseName: string;
   collectionName: string;
@@ -356,7 +360,8 @@ export interface DocumentViewerContextType {
 
 export const DocumentViewerContext = React.createContext<DocumentViewerContextType | null>(null);
 
-export const DocumentViewer: React.FC<DocumentViewerProps> = ({ 
+export const DocumentViewer: React.FC<DocumentViewerProps> = ({
+  connectionId,
   connectionName,
   databaseName,
   collectionName,
@@ -371,6 +376,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   availableFields = [],
   children
 }) => {
+  const { schema } = useCollectionSchema(connectionId, databaseName, collectionName);
   const [filterQuery, setFilterQuery] = useState('{}');
   const [projectionQuery, setProjectionQuery] = useState('{}');
   const [sortQuery, setSortQuery] = useState('{}');
@@ -1415,13 +1421,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 <div className="mql-qrow">
                   <div className={`mql-qcol ${!isFilterValid ? 'is-invalid' : ''}`}>
                     <div className="mql-qbadge">Query</div>
-                    <input
-                      type="text"
+                    <QueryInput
+                      surface="filter"
                       value={filterQuery}
-                      onChange={(e) => setFilterQuery(e.target.value)}
+                      onChange={setFilterQuery}
+                      fields={fields}
+                      schema={schema}
                       placeholder="{}"
                       className="mql-qinput"
-                      spellCheck="false"
                       data-testid="query-filter-input"
                     />
                     {!isFilterValid && (
@@ -1444,13 +1451,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   {/* Projection */}
                   <div className={`mql-qcol ${!isProjectionValid ? 'is-invalid' : ''}`}>
                     <div className="mql-qbadge">Projection</div>
-                    <input
-                      type="text"
+                    <QueryInput
+                      surface="projection"
                       value={projectionQuery}
-                      onChange={(e) => setProjectionQuery(e.target.value)}
+                      onChange={setProjectionQuery}
+                      fields={fields}
+                      schema={schema}
                       placeholder="{}"
                       className="mql-qinput"
-                      spellCheck="false"
                       data-testid="projection-query-input"
                     />
                     {!isProjectionValid && (
@@ -1470,13 +1478,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   {/* Sort */}
                   <div className={`mql-qcol ${!isSortValid ? 'is-invalid' : ''}`}>
                     <div className="mql-qbadge">Sort</div>
-                    <input
-                      type="text"
+                    <QueryInput
+                      surface="sort"
                       value={sortQuery}
-                      onChange={(e) => setSortQuery(e.target.value)}
+                      onChange={setSortQuery}
+                      fields={fields}
+                      schema={schema}
                       placeholder="{}"
                       className="mql-qinput"
-                      spellCheck="false"
                       data-testid="sort-query-input"
                     />
                     {!isSortValid && (
@@ -1604,12 +1613,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                             <Trash2 size={11} />
                           </button>
                         </div>
-                        <textarea
+                        <QueryEditor
+                          surface="aggStage"
                           value={stage.content}
-                          onChange={(e) => updateStageContent(stage.id, e.target.value)}
-                          className="mql-stage-body"
-                          rows={3}
-                          spellCheck={false}
+                          onChange={(v) => updateStageContent(stage.id, v)}
+                          fields={fields}
+                          schema={schema}
+                          height={120}
                         />
                       </div>
                       {index < stages.length - 1 && (
