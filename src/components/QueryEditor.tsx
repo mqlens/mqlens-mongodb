@@ -11,24 +11,78 @@ interface QueryEditorProps {
   fields: string[];
   schema?: SchemaMap;
   height?: number | string;
+  singleLine?: boolean;
+  className?: string;
+  'data-testid'?: string;
 }
 
-export const QueryEditor: React.FC<QueryEditorProps> = ({ surface, value, onChange, fields, schema, height = 120 }) => {
+export const QueryEditor: React.FC<QueryEditorProps> = ({
+  surface,
+  value,
+  onChange,
+  fields,
+  schema,
+  height,
+  singleLine = false,
+  className,
+  'data-testid': testid,
+}) => {
   const fieldsRef = useRef(fields); fieldsRef.current = fields;
   const schemaRef = useRef(schema); schemaRef.current = schema;
   const uriRef = useRef<string | null>(null);
   const theme = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'vs-dark';
 
-  return (
+  const editorHeight = height ?? (singleLine ? 22 : 120);
+
+  const multiLineOptions = {
+    minimap: { enabled: false }, lineNumbers: 'off' as const, folding: false,
+    scrollBeyondLastLine: false, wordWrap: 'on' as const, fontSize: 12,
+    scrollbar: { vertical: 'auto' as const, horizontal: 'auto' as const }, overviewRulerLanes: 0,
+    renderLineHighlight: 'none' as const, tabSize: 2,
+  };
+
+  const singleLineOptions = {
+    minimap: { enabled: false },
+    lineNumbers: 'off' as const,
+    folding: false,
+    glyphMargin: false,
+    lineDecorationsWidth: 0,
+    lineNumbersMinChars: 0,
+    wordWrap: 'off' as const,
+    scrollbar: {
+      vertical: 'hidden' as const,
+      horizontal: 'hidden' as const,
+      handleMouseWheel: false,
+      verticalScrollbarSize: 0,
+      horizontalScrollbarSize: 0,
+    },
+    overviewRulerLanes: 0,
+    renderLineHighlight: 'none' as const,
+    scrollBeyondLastLine: false,
+    fontSize: 11.5,
+    padding: { top: 4, bottom: 0 },
+    contextmenu: false,
+    automaticLayout: true,
+    fixedOverflowWidgets: true,
+    tabSize: 2,
+  };
+
+  const editor = (
     <Editor
-      height={height}
+      height={editorHeight}
       defaultLanguage="json"
       theme={theme}
       value={value}
       onChange={(v) => onChange(v ?? '')}
-      onMount={(editor, monaco: Monaco) => {
+      wrapperProps={testid ? { 'data-testid': testid } : undefined}
+      onMount={(ed, monaco: Monaco) => {
         registerMongoCompletionProvider(monaco);
-        const model = editor.getModel();
+        if (singleLine) {
+          // Prevent Enter from inserting a newline in single-line mode, but keep
+          // Enter working when the suggestion widget is open (to accept items).
+          ed.addCommand(monaco.KeyCode.Enter, () => {}, '!suggestWidgetVisible');
+        }
+        const model = ed.getModel();
         if (model) {
           uriRef.current = model.uri.toString();
           setModelMeta(uriRef.current, {
@@ -36,15 +90,20 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({ surface, value, onChan
             getFields: () => fieldsRef.current,
             getSchema: () => schemaRef.current,
           });
-          editor.onDidDispose(() => { if (uriRef.current) clearModelMeta(uriRef.current); });
+          ed.onDidDispose(() => { if (uriRef.current) clearModelMeta(uriRef.current); });
         }
       }}
-      options={{
-        minimap: { enabled: false }, lineNumbers: 'off', folding: false,
-        scrollBeyondLastLine: false, wordWrap: 'on', fontSize: 12,
-        scrollbar: { vertical: 'auto', horizontal: 'auto' }, overviewRulerLanes: 0,
-        renderLineHighlight: 'none', tabSize: 2,
-      }}
+      options={singleLine ? singleLineOptions : multiLineOptions}
     />
   );
+
+  if (singleLine) {
+    return (
+      <div className={className} style={{ flex: 1, minWidth: 0 }}>
+        {editor}
+      </div>
+    );
+  }
+
+  return editor;
 };

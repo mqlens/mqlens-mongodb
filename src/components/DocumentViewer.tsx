@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { AIChatPanel } from './AIChatPanel';
-import { QueryInput } from './QueryInput';
 import { QueryEditor } from './QueryEditor';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
@@ -1421,13 +1420,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 <div className="mql-qrow">
                   <div className={`mql-qcol ${!isFilterValid ? 'is-invalid' : ''}`}>
                     <div className="mql-qbadge">Query</div>
-                    <QueryInput
+                    <QueryEditor
+                      singleLine
                       surface="filter"
                       value={filterQuery}
                       onChange={setFilterQuery}
                       fields={fields}
                       schema={schema}
-                      placeholder="{}"
                       className="mql-qinput"
                       data-testid="query-filter-input"
                     />
@@ -1451,13 +1450,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   {/* Projection */}
                   <div className={`mql-qcol ${!isProjectionValid ? 'is-invalid' : ''}`}>
                     <div className="mql-qbadge">Projection</div>
-                    <QueryInput
+                    <QueryEditor
+                      singleLine
                       surface="projection"
                       value={projectionQuery}
                       onChange={setProjectionQuery}
                       fields={fields}
                       schema={schema}
-                      placeholder="{}"
                       className="mql-qinput"
                       data-testid="projection-query-input"
                     />
@@ -1478,13 +1477,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   {/* Sort */}
                   <div className={`mql-qcol ${!isSortValid ? 'is-invalid' : ''}`}>
                     <div className="mql-qbadge">Sort</div>
-                    <QueryInput
+                    <QueryEditor
+                      singleLine
                       surface="sort"
                       value={sortQuery}
                       onChange={setSortQuery}
                       fields={fields}
                       schema={schema}
-                      placeholder="{}"
                       className="mql-qinput"
                       data-testid="sort-query-input"
                     />
