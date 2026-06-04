@@ -59,3 +59,45 @@ export function labelOf(v: any): string {
   if (isDateValue(v)) return new Date(v as any).toISOString().slice(0, 10);
   return String(v);
 }
+
+export function aggregate(
+  docs: Array<Record<string, any>>,
+  xField: string,
+  measure: Measure,
+  measureField?: string,
+  cap = CATEGORY_CAP,
+): ChartData {
+  const size = new Map<string, number>();
+  const vals = new Map<string, number[]>();
+  for (const doc of docs) {
+    const key = labelOf(doc?.[xField]);
+    size.set(key, (size.get(key) ?? 0) + 1);
+    if (measure !== 'count' && measureField) {
+      const n = toNumber(doc?.[measureField]);
+      if (!Number.isNaN(n)) {
+        const arr = vals.get(key);
+        if (arr) arr.push(n); else vals.set(key, [n]);
+      }
+    }
+  }
+  let points: ChartPoint[] = [];
+  for (const key of size.keys()) {
+    let y = 0;
+    if (measure === 'count') {
+      y = size.get(key)!;
+    } else {
+      const arr = vals.get(key) ?? [];
+      if (arr.length > 0) {
+        if (measure === 'sum') y = arr.reduce((a, b) => a + b, 0);
+        else if (measure === 'avg') y = arr.reduce((a, b) => a + b, 0) / arr.length;
+        else if (measure === 'min') y = Math.min(...arr);
+        else if (measure === 'max') y = Math.max(...arr);
+      }
+    }
+    points.push({ x: key, y });
+  }
+  points.sort((a, b) => b.y - a.y);
+  const truncated = Math.max(0, points.length - cap);
+  if (truncated > 0) points = points.slice(0, cap);
+  return { points, truncated, total: docs.length };
+}

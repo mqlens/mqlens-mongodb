@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Int32, Double, Long, Decimal128 } from 'bson';
 import { toNumber, inferFields } from '../chartData';
+import { aggregate, CATEGORY_CAP } from '../chartData';
 
 describe('toNumber', () => {
   it('unwraps plain numbers and BSON numeric types', () => {
@@ -33,5 +34,37 @@ describe('inferFields', () => {
   it('treats an all-missing field as categorical', () => {
     const fields = inferFields([{ a: 1 }, { a: 2 }], ['a', 'ghost']);
     expect(fields.find((f) => f.name === 'ghost')!.kind).toBe('categorical');
+  });
+});
+
+describe('aggregate', () => {
+  const docs = [
+    { region: 'NA', spend: 100 },
+    { region: 'NA', spend: 50 },
+    { region: 'EU', spend: 200 },
+    { region: 'EU', spend: undefined },
+    { spend: 10 }, // missing region
+  ];
+  it('counts documents per group, sorted desc', () => {
+    const { points, total } = aggregate(docs, 'region', 'count');
+    expect(total).toBe(5);
+    expect(points[0]).toEqual({ x: 'NA', y: 2 });
+    expect(points.find((p) => p.x === '(missing)')).toEqual({ x: '(missing)', y: 1 });
+  });
+  it('sums a numeric field per group, ignoring non-numeric values', () => {
+    const { points } = aggregate(docs, 'region', 'sum', 'spend');
+    expect(points.find((p) => p.x === 'NA')!.y).toBe(150);
+    expect(points.find((p) => p.x === 'EU')!.y).toBe(200); // undefined ignored
+  });
+  it('computes avg, min, max', () => {
+    expect(aggregate(docs, 'region', 'avg', 'spend').points.find((p) => p.x === 'NA')!.y).toBe(75);
+    expect(aggregate(docs, 'region', 'min', 'spend').points.find((p) => p.x === 'NA')!.y).toBe(50);
+    expect(aggregate(docs, 'region', 'max', 'spend').points.find((p) => p.x === 'NA')!.y).toBe(100);
+  });
+  it('caps categories and reports the truncated count', () => {
+    const many = Array.from({ length: CATEGORY_CAP + 5 }, (_, i) => ({ k: `g${i}` }));
+    const { points, truncated } = aggregate(many, 'k', 'count');
+    expect(points.length).toBe(CATEGORY_CAP);
+    expect(truncated).toBe(5);
   });
 });
