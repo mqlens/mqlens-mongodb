@@ -34,6 +34,15 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
     d.setCompilerOptions({ ...d.getCompilerOptions(), lib: ['es2020'], allowNonTsExtensions: true });
   }
 
+  // Disable the built-in JSON language completions ($schema, etc.) so only our
+  // Mongo provider contributes in the filter/projection/sort/aggregation editors.
+  // Keep diagnostics/validation on.
+  const json = (monaco.languages as unknown as { json?: any }).json;
+  if (json?.jsonDefaults) {
+    const jd = json.jsonDefaults;
+    jd.setModeConfiguration({ ...jd.modeConfiguration, completionItems: false });
+  }
+
   const provider = {
     // Only trigger on word-starting characters — '.' (db.<coll>, field paths)
     // and '$' (operators). NOT space/brace/quote, so the dropdown doesn't pop
