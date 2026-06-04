@@ -69,34 +69,34 @@ const screenshots = [
     body: 'The first screen gets users straight to connecting a MongoDB database or tuning settings.',
   },
   {
-    src: '/screenshots/mqlens-new-connection.png',
-    alt: 'MQLens new connection dialog configured for localhost MongoDB',
-    title: 'Create connections fast',
-    body: 'Paste a URI, test the connection, and save local or remote MongoDB profiles.',
-  },
-  {
     src: '/screenshots/mqlens-ai-assistant.png',
     alt: 'MQLens AI query assistant panel beside MongoDB customer documents',
     title: 'Ask for MQL in plain language',
     body: 'Draft queries with the AI assistant while keeping the generated query visible and editable.',
   },
   {
+    src: '/screenshots/mqlens-schema.png',
+    alt: 'MQLens schema analysis showing per-field types and coverage',
+    title: 'Analyze your schema',
+    body: 'Sample a collection to see per-field types and presence/coverage at a glance.',
+  },
+  {
+    src: '/screenshots/mqlens-tree.png',
+    alt: 'MQLens documents shown in an expandable tree view with field types',
+    title: 'Explore documents as a tree',
+    body: 'Drill into nested fields with a typed tree view — or switch to table or raw JSON.',
+  },
+  {
+    src: '/screenshots/mqlens-json.png',
+    alt: 'MQLens documents rendered as syntax-highlighted JSON',
+    title: 'Read raw JSON',
+    body: 'Inspect documents as syntax-highlighted JSON with ObjectId and ISODate types.',
+  },
+  {
     src: '/screenshots/mqlens-gridfs.png',
     alt: 'MQLens GridFS browser showing files in the mqlens_demo fs bucket',
     title: 'Manage GridFS files',
     body: 'Browse GridFS buckets and download stored files from the same database tree.',
-  },
-  {
-    src: '/screenshots/mqlens-unlock.png',
-    alt: 'MQLens encrypted vault unlock screen',
-    title: 'Keep credentials gated',
-    body: 'Saved connections sit behind the encrypted vault rather than opening straight to secrets.',
-  },
-  {
-    src: '/screenshots/mqlens-touch-id.png',
-    alt: 'MQLens Touch ID prompt for unlocking the encrypted vault',
-    title: 'Unlock with biometrics',
-    body: 'Use platform biometrics where available for a faster encrypted-vault unlock flow.',
   },
 ];
 
@@ -188,7 +188,7 @@ const screenshots = [
       <div class="sec-head">
         <span class="eyebrow">Gallery</span>
         <h2>More of the workspace</h2>
-        <p>Captured from the running desktop app against a seeded local MongoDB database — quick start, connection setup, the AI assistant, GridFS, and the encrypted-vault unlock.</p>
+        <p>Captured from the running desktop app against a seeded local MongoDB database — quick start, the AI assistant, schema analysis, the tree and JSON views, and GridFS.</p>
       </div>
       <div class="shot-grid">
         {screenshots.map((shot) => (
