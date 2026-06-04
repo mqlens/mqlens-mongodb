@@ -65,6 +65,24 @@ body {
 a { color: var(--accent-bright); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/* Keyboard focus — visible on every interactive element */
+:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Respect users who prefer less motion */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  /* The hero video is paused via script under reduced motion; its poster frame stays visible. */
+}
+
 h1, h2, h3 { line-height: 1.15; letter-spacing: -0.02em; font-weight: 600; }
 
 .container {

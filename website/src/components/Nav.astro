@@ -8,7 +8,14 @@ import { SITE, NAV } from '../consts';
       <img src="/favicon.svg" alt="" width="28" height="28" />
       <span>{SITE.name}</span>
     </a>
-    <nav class="links">
+    <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="nav-links">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <line x1="3" y1="6" x2="21" y2="6" />
+        <line x1="3" y1="12" x2="21" y2="12" />
+        <line x1="3" y1="18" x2="21" y2="18" />
+      </svg>
+    </button>
+    <nav class="links" id="nav-links">
       {NAV.map((item) => (
         <a href={item.href} {...('external' in item && item.external ? { target: '_blank', rel: 'noopener' } : {})}>
           {item.label}
@@ -57,8 +64,55 @@ import { SITE, NAV } from '../consts';
   .links > a:not(.btn):hover { color: var(--text); text-decoration: none; }
   .nav-cta { padding: 8px 16px; }
 
-  @media (max-width: 640px) {
-    .links { gap: 14px; }
-    .links > a:not(.btn):not(:nth-last-child(2)) { display: none; }
+  /* Hamburger — hidden on desktop */
+  .nav-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    padding: 6px;
+    cursor: pointer;
+  }
+  .nav-toggle:hover { border-color: var(--accent); color: var(--accent-bright); }
+
+  @media (max-width: 720px) {
+    .nav-toggle { display: inline-flex; }
+    .links {
+      position: absolute;
+      top: 64px;
+      left: 0;
+      right: 0;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0;
+      padding: 8px 20px 18px;
+      background: var(--bg-soft);
+      border-bottom: 1px solid var(--border);
+      display: none;
+    }
+    .links.open { display: flex; }
+    .links > a:not(.btn) { padding: 12px 4px; font-size: 1rem; }
+    .nav-cta { margin-top: 8px; text-align: center; }
   }
 </style>
+
+<script>
+  const btn = document.querySelector<HTMLButtonElement>('.nav-toggle');
+  const links = document.getElementById('nav-links');
+  if (btn && links) {
+    btn.addEventListener('click', () => {
+      const open = links.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+    });
+    // Close the menu after navigating to an in-page anchor
+    links.querySelectorAll('a').forEach((a) =>
+      a.addEventListener('click', () => {
+        links.classList.remove('open');
+        btn.setAttribute('aria-expanded', 'false');
+      })
+    );
+  }
+</script>
