@@ -17,6 +17,10 @@ queries actually do — from a single cross-platform desktop app.
 > indexes and views, analyze schemas, browse GridFS, and run an embedded
 > `mongosh` — with credentials encrypted behind a master password.
 
+## Demo
+
+![MQLens demo: connect to MongoDB, run a find, build an aggregation, and read an explain plan](assets/demo.gif)
+
 ## Screenshots
 
 [![MQLens browsing MongoDB documents](website/public/screenshots/mqlens-documents.png)](website/public/screenshots/mqlens-documents.png)
