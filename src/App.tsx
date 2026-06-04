@@ -1305,6 +1305,8 @@ function Workspace() {
                     onExplain={handleExplainQuery}
                     onExplainAggregate={handleExplainAggregate}
                     onOpenShell={(command) => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection, command)}
+                    onOpenExport={() => handleOpenExportTab(activeTab)}
+                    onImport={handleImport}
                     loading={activeTab.loading}
                     availableFields={availableFields}
                   >
@@ -1330,8 +1332,6 @@ function Workspace() {
                           onInsertDocument={handleInsertDocument}
                           onEditDocument={handleEditDocument}
                           onDeleteDocument={handleDeleteDocument}
-                          onOpenExport={() => handleOpenExportTab(activeTab)}
-                          onImport={handleImport}
                           onAnalyzeSchema={() => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection)}
                           onUpdateMany={handleUpdateMany}
                           onDeleteMany={handleDeleteMany}

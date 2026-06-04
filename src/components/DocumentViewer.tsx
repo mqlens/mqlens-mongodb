@@ -30,6 +30,8 @@ import {
   Check,
   ChevronDown,
   Plus,
+  Download,
+  Upload,
   X
 } from 'lucide-react';
 
@@ -99,6 +101,8 @@ interface DocumentViewerProps {
   // Explain a full aggregation pipeline (M1). Receives the pipeline as a JSON string.
   onExplainAggregate?: (pipeline: string) => Promise<string>;
   onOpenShell?: (command: string) => void;
+  onOpenExport?: () => void;
+  onImport?: () => void;
   loading: boolean;
   availableFields?: string[];
   children?: React.ReactNode;
@@ -361,6 +365,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onExplain,
   onExplainAggregate,
   onOpenShell,
+  onOpenExport,
+  onImport,
   loading,
   availableFields = [],
   children
@@ -1305,7 +1311,31 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
         {/* AI Helper & Visual query builder */}
         <div className="flex items-center gap-1.5">
-          <button 
+          {onOpenExport && (
+            <button
+              type="button"
+              onClick={onOpenExport}
+              className="query-plane-btn"
+              data-testid="export-btn"
+              title="Open export workspace"
+            >
+              <Download size={11} />
+              <span>Export</span>
+            </button>
+          )}
+          {onImport && (
+            <button
+              type="button"
+              onClick={onImport}
+              className="query-plane-btn"
+              data-testid="import-btn"
+              title="Import documents from a file"
+            >
+              <Upload size={11} />
+              <span>Import</span>
+            </button>
+          )}
+          <button
             onClick={() => {
               const newOpen = !isAIHelperOpen;
               setIsAIHelperOpen(newOpen);

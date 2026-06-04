@@ -200,14 +200,6 @@ describe('DataGrid Component', () => {
     expect(screen.queryByTestId('query-code-tab')).toBeNull();
   });
 
-  it('opens the export workspace from the toolbar', () => {
-    const onOpenExport = vi.fn();
-    render(<DataGrid documents={mockDocuments} onOpenExport={onOpenExport} />);
-
-    fireEvent.click(screen.getByTestId('export-btn'));
-    expect(onOpenExport).toHaveBeenCalledTimes(1);
-  });
-
   it('renders a pager footer and fires page callbacks', () => {
     const onPageChange = vi.fn();
     const onPageSizeChange = vi.fn();
