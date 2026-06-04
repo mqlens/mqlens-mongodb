@@ -1296,7 +1296,8 @@ function Workspace() {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
                 const connectionName = activeConnection ? activeConnection.name : 'cmi-dev';
                 return (
-                  <DocumentViewer 
+                  <DocumentViewer
+                    connectionId={activeTab.connectionId}
                     connectionName={connectionName}
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
