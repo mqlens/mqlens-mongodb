@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Download, Upload, Table2 } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Download, Upload, Table2, BarChart3 } from 'lucide-react';
+import { ChartView } from './ChartView';
 import { EJSON, ObjectId, Long, Decimal128, Int32, Double, Binary, Timestamp } from 'bson';
 
 interface DataGridProps {
@@ -28,7 +29,7 @@ interface DataGridProps {
   onPageSizeChange?: (newLimit: number) => void;
 }
 
-type ViewMode = 'table' | 'tree' | 'json';
+type ViewMode = 'table' | 'tree' | 'json' | 'chart';
 
 interface ExplainNode {
   name: string;
@@ -1080,6 +1081,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 <Braces size={12} />
                 <span>JSON</span>
               </button>
+
+              <button
+                role="button"
+                aria-label="Chart"
+                onClick={() => setViewMode('chart')}
+                className={`px-2 py-1 rounded flex items-center gap-1.5 text-[11px] font-medium transition-all cursor-pointer ${viewMode === 'chart' ? 'bg-[var(--bg-item-active)] text-[var(--accent-blue)]' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
+              >
+                <BarChart3 size={12} />
+                <span>Chart</span>
+              </button>
             </div>
           ) : activeTab === 'explain' ? (
             /* Explain Tools */
@@ -1147,6 +1158,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
               />
             </div>
           </div>
+        ) : viewMode === 'chart' ? (
+          <ChartView documents={parsedDocs} columns={columns} density={density} />
         ) : (
           <div className="flex-1 overflow-auto flex flex-col min-w-0">
             {viewMode === 'table' && (

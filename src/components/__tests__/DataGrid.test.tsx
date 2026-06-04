@@ -246,4 +246,10 @@ describe('DataGrid Component', () => {
     rerender(<DataGrid documents={[{ _id: 1 }]} />);
     expect(screen.queryByTestId('pager')).not.toBeInTheDocument();
   });
+
+  it('switches to the chart view when the Chart toggle is clicked', () => {
+    render(<DataGrid documents={[{ region: 'NA', seats: 3 }, { region: 'EU', seats: 4 }]} />);
+    fireEvent.click(screen.getByLabelText('Chart'));
+    expect(screen.getByTestId('chart-view')).toBeTruthy();
+  });
 });
