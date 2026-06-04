@@ -60,8 +60,8 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
     scrollbar: { vertical: 'auto' as const, horizontal: 'auto' as const }, overviewRulerLanes: 0,
     renderLineHighlight: 'none' as const, tabSize: 2,
     fixedOverflowWidgets: true, overflowWidgetsDomNode,
-    // Enter always inserts a newline; Tab accepts a suggestion.
-    acceptSuggestionOnEnter: 'off' as const,
+    // Enter accepts an open suggestion; otherwise inserts a newline.
+    acceptSuggestionOnEnter: 'on' as const,
   };
 
   const singleLineOptions = {

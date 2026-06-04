@@ -29,17 +29,29 @@ export const AGG_STAGES = [
   '$lookup', '$addFields', '$set', '$unset', '$count', '$facet', '$sortByCount', '$replaceRoot',
 ];
 export const GROUP_ACCUMULATORS = ['$sum', '$avg', '$min', '$max', '$first', '$last', '$push', '$addToSet', '$count'];
+// Anything valid after a `.` in the shell: collection operations + cursor chain
+// methods (forEach, toArray, sort, …).
 export const CURSOR_METHODS = [
+  // collection ops
   'find', 'findOne', 'aggregate', 'countDocuments', 'estimatedDocumentCount', 'count', 'distinct',
   'insertOne', 'insertMany', 'updateOne', 'updateMany', 'replaceOne', 'deleteOne', 'deleteMany',
   'findOneAndUpdate', 'findOneAndReplace', 'findOneAndDelete', 'bulkWrite',
   'createIndex', 'createIndexes', 'getIndexes', 'dropIndex', 'dropIndexes',
-  'drop', 'renameCollection', 'stats', 'watch', 'mapReduce',
+  'drop', 'renameCollection', 'stats', 'watch', 'mapReduce', 'dataSize', 'totalIndexSize',
+  // cursor chain methods
+  'forEach', 'toArray', 'map', 'filter', 'hasNext', 'next', 'pretty', 'sort', 'limit', 'skip',
+  'size', 'itcount', 'explain', 'hint', 'batchSize', 'projection', 'allowDiskUse', 'collation', 'close',
 ];
 // db-level methods available on `db.<here>`
 export const DB_METHODS = [
   'getCollectionNames', 'getCollectionInfos', 'getCollection', 'createCollection',
   'getName', 'stats', 'runCommand', 'aggregate', 'dropDatabase', 'getMongo', 'hostInfo', 'serverStatus',
+  'getSiblingDB', 'createView', 'currentOp', 'killOp', 'version',
+];
+// Top-level mongosh globals / helpers (when not after a dot).
+export const SHELL_GLOBALS = [
+  'db', 'print', 'printjson', 'ObjectId', 'ISODate', 'UUID', 'Date',
+  'NumberLong', 'NumberInt', 'NumberDecimal', 'BinData', 'sleep', 'load', 'quit', 'version', 'use',
 ];
 
 function byPrefix<T extends { label: string }>(items: T[], token: string): T[] {
@@ -121,15 +133,21 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
       { label: '-1', kind: 'operator', insertText: '-1', detail: 'descending' }], token);
   }
   if (surface === 'shell') {
-    // db.<collection>.<partial> → collection/cursor methods
-    if (/\bdb\.\w+\.\w*$/.test(textBeforeCursor)) {
-      return byPrefix(CURSOR_METHODS.map((m) => ({ label: m, kind: 'method' as const, insertText: m })), token);
-    }
-    // db.<partial> → collection names + db-level methods
+    // db.<partial> (collection slot — exactly one dot after db) → collection names + db methods
     if (/\bdb\.\w*$/.test(textBeforeCursor)) {
       const colls = (ctx.collections ?? []).map((c) => ({ label: c, kind: 'field' as const, insertText: c, detail: 'collection' }));
       const dbm = DB_METHODS.map((m) => ({ label: m, kind: 'method' as const, insertText: m }));
       return byPrefix([...colls, ...dbm], token);
+    }
+    // any other `.<partial>` (after a collection, a ) or a ] ) → methods (find, forEach, sort, …)
+    if (/[)\]\w]\s*\.\w*$/.test(textBeforeCursor)) {
+      return byPrefix(CURSOR_METHODS.map((m) => ({ label: m, kind: 'method' as const, insertText: m })), token);
+    }
+    // top level (not after a dot, not inside an open ( or { ) → mongosh globals
+    const openParen = textBeforeCursor.lastIndexOf('(') > textBeforeCursor.lastIndexOf(')');
+    const openBrace = textBeforeCursor.lastIndexOf('{') > textBeforeCursor.lastIndexOf('}');
+    if (!openParen && !openBrace) {
+      return byPrefix(SHELL_GLOBALS.map((g) => ({ label: g, kind: 'method' as const, insertText: g })), token);
     }
     // otherwise (inside find({...}), aggregate([...])) → behave like a filter (fall through)
   }

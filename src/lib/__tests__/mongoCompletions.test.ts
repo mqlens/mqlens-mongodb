@@ -92,3 +92,14 @@ describe('getCompletions — shell collections vs methods', () => {
     expect(labels(items)).not.toContain('customers');
   });
 });
+
+describe('getCompletions — shell globals & chain methods', () => {
+  it('suggests mongosh globals at the top level (print, ObjectId)', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'pr', token: 'pr' }));
+    expect(labels(items)).toEqual(expect.arrayContaining(['print', 'printjson']));
+  });
+  it('suggests cursor chain methods after find()', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.customers.find({}).', token: '' }));
+    expect(labels(items)).toEqual(expect.arrayContaining(['forEach', 'toArray', 'sort', 'limit', 'map']));
+  });
+});
