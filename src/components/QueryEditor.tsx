@@ -105,6 +105,14 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
           // Prevent Enter from inserting a newline in single-line mode, but keep
           // Enter working when the suggestion widget is open (to accept items).
           ed.addCommand(monaco.KeyCode.Enter, () => {}, '!suggestWidgetVisible');
+        } else {
+          // Multi-line: when the autocomplete widget is open, Enter still inserts
+          // a newline (Tab accepts the suggestion).
+          ed.addCommand(
+            monaco.KeyCode.Enter,
+            () => ed.trigger('mql', 'type', { text: '\n' }),
+            'suggestWidgetVisible && textInputFocus && !inSnippetMode',
+          );
         }
         const model = ed.getModel();
         if (model) {

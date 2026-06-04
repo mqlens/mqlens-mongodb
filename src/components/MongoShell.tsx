@@ -677,6 +677,14 @@ export const MongoShell: React.FC<MongoShellProps> = ({
             }}
             onMount={(editor, monaco) => {
               editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runRef.current());
+              // When the autocomplete widget is open, Enter should still insert a
+              // newline (Tab accepts the suggestion). Without this the widget
+              // swallows Enter and you can't add lines.
+              editor.addCommand(
+                monaco.KeyCode.Enter,
+                () => editor.trigger('mql', 'type', { text: '\n' }),
+                'suggestWidgetVisible && textInputFocus && !inSnippetMode',
+              );
               editor.focus();
               registerMongoCompletionProvider(monaco);
               const model = editor.getModel();
