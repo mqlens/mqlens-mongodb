@@ -675,9 +675,15 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               acceptSuggestionOnEnter: 'on',
             }}
             onMount={(editor, monaco) => {
-              // Enter accepts an open suggestion, else newline; Ctrl/Cmd+Enter
-              // inserts a newline. Ctrl/Cmd+Enter runs the command.
-              editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runRef.current());
+              // Enter accepts an open suggestion, else newline. Ctrl/Cmd+Enter
+              // runs — scoped via onKeyDown (not addCommand, which leaks globally).
+              editor.onKeyDown((e) => {
+                if ((e.ctrlKey || e.metaKey) && e.keyCode === monaco.KeyCode.Enter) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  runRef.current();
+                }
+              });
               editor.focus();
               registerMongoCompletionProvider(monaco);
               const model = editor.getModel();

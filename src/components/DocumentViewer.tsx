@@ -1423,6 +1423,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                     <QueryEditor
                       singleLine
                       surface="filter"
+                      onRun={handleRun}
                       value={filterQuery}
                       onChange={setFilterQuery}
                       fields={fields}
@@ -1453,6 +1454,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                     <QueryEditor
                       singleLine
                       surface="projection"
+                      onRun={handleRun}
                       value={projectionQuery}
                       onChange={setProjectionQuery}
                       fields={fields}
@@ -1480,6 +1482,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                     <QueryEditor
                       singleLine
                       surface="sort"
+                      onRun={handleRun}
                       value={sortQuery}
                       onChange={setSortQuery}
                       fields={fields}
@@ -1614,6 +1617,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         </div>
                         <QueryEditor
                           surface="aggStage"
+                          onRun={handleRun}
                           value={stage.content}
                           onChange={(v) => updateStageContent(stage.id, v)}
                           fields={fields}

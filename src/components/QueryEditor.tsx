@@ -31,6 +31,7 @@ interface QueryEditorProps {
   height?: number | string;
   singleLine?: boolean;
   className?: string;
+  onRun?: () => void;
   'data-testid'?: string;
 }
 
@@ -43,10 +44,12 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
   height,
   singleLine = false,
   className,
+  onRun,
   'data-testid': testid,
 }) => {
   const fieldsRef = useRef(fields); fieldsRef.current = fields;
   const schemaRef = useRef(schema); schemaRef.current = schema;
+  const onRunRef = useRef(onRun); onRunRef.current = onRun;
   const uriRef = useRef<string | null>(null);
   const theme = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'vs-dark';
 
@@ -101,6 +104,15 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
       wrapperProps={testid ? { 'data-testid': testid } : undefined}
       onMount={(ed, monaco: Monaco) => {
         registerMongoCompletionProvider(monaco);
+        // Ctrl/Cmd+Enter runs the query. Scoped to this editor via onKeyDown
+        // (NOT addCommand, which registers keybindings globally across editors).
+        ed.onKeyDown((e) => {
+          if ((e.ctrlKey || e.metaKey) && e.keyCode === monaco.KeyCode.Enter) {
+            e.preventDefault();
+            e.stopPropagation();
+            onRunRef.current?.();
+          }
+        });
         if (singleLine) {
           // Keep single-line inputs to one line by stripping any newline. We do
           // NOT use editor.addCommand(Enter, …) here — Monaco registers those
