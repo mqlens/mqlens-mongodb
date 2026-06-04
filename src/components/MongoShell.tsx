@@ -228,8 +228,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const collectionsRef = useRef<string[]>([]);
   useEffect(() => {
     let alive = true;
-    invoke<string[]>('list_collections', { id: connectionId, db: currentDb })
-      .then((cols) => { if (alive) collectionsRef.current = cols; })
+    invoke<Array<{ name: string }>>('list_collections', { id: connectionId, db: currentDb })
+      .then((cols) => { if (alive) collectionsRef.current = cols.map((c) => c.name); })
       .catch(() => { if (alive) collectionsRef.current = []; });
     return () => { alive = false; };
   }, [connectionId, currentDb]);
