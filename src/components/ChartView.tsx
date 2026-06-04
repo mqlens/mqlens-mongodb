@@ -174,7 +174,18 @@ function renderChart(
   );
   if (type === 'line') return <LineChart data={points}>{axes}<Line type="monotone" dataKey="y" stroke={palette[0]} dot={false} /></LineChart>;
   if (type === 'area') return <AreaChart data={points}>{axes}<Area type="monotone" dataKey="y" stroke={palette[0]} fill={palette[0]} fillOpacity={0.3} /></AreaChart>;
-  if (type === 'scatter') return <ScatterChart>{axes}<Scatter data={points} dataKey="y" fill={palette[0]} /></ScatterChart>;
+  if (type === 'scatter') {
+    const numericX = points.length > 0 && points.every((p) => typeof p.x === 'number');
+    return (
+      <ScatterChart>
+        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+        <XAxis dataKey="x" type={numericX ? 'number' : 'category'} stroke={axisColor} tick={{ fill: axisColor, fontSize: 11 }} />
+        <YAxis dataKey="y" type="number" stroke={axisColor} tick={{ fill: axisColor, fontSize: 11 }} />
+        <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }} />
+        <Scatter data={points} dataKey="y" fill={palette[0]} />
+      </ScatterChart>
+    );
+  }
   if (type === 'pie') {
     return (
       <PieChart>
