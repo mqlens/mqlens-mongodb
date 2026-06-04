@@ -16,6 +16,16 @@ vi.mock('../../lib/vault', () => ({
 
 // Mock Tauri invoke function
 const mockInvoke = vi.fn();
+// Monaco does not render a usable DOM under jsdom. The aggregation stage editor
+// (QueryEditor) wraps @monaco-editor/react, so mock it with a plain <textarea>
+// that round-trips value/onChange — this keeps the existing stage tests, which
+// drive `pipeline-stage-N textarea`, working against the real component shape.
+vi.mock('@monaco-editor/react', () => ({
+  default: ({ value, onChange }: { value: string; onChange?: (v: string) => void }) => (
+    <textarea value={value} onChange={(e) => onChange?.(e.target.value)} />
+  ),
+}));
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
 }));

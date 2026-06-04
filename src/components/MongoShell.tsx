@@ -5,6 +5,7 @@ import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, Sparkles, Terminal }
 import { AIChatPanel } from './AIChatPanel';
 import { buildRunnableCommand, guardScriptRun, type GeneratedQuery } from '../lib/mongoCommand';
 import { DataGrid } from './DataGrid';
+import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
 
 type ShellTab = 'console' | 'viewer';
 
@@ -220,6 +221,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const wrapRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<() => void>(() => {});
   const autoRunRef = useRef(false);
+  // Tracks the latest result docs so the Monaco completion provider (registered
+  // once in onMount) can derive field names from the current results.
+  const viewerRef = useRef<{ docs: Record<string, any>[] } | null>(null);
 
   useEffect(() => {
     setCommand(defaultCommand);
@@ -542,6 +546,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   };
 
   runRef.current = () => runCommand();
+  viewerRef.current = viewer;
 
   useEffect(() => {
     if (!initialCommand || autoRunRef.current || !sessionAttempted || !sessionId) return;
@@ -661,6 +666,24 @@ export const MongoShell: React.FC<MongoShellProps> = ({
             onMount={(editor, monaco) => {
               editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runRef.current());
               editor.focus();
+              registerMongoCompletionProvider(monaco);
+              const model = editor.getModel();
+              if (model) {
+                const uri = model.uri.toString();
+                setModelMeta(uri, {
+                  surface: 'shell',
+                  getFields: () => {
+                    const docs = viewerRef.current?.docs ?? [];
+                    const keys = new Set<string>(['_id']);
+                    docs.forEach((d) => {
+                      if (d && typeof d === 'object') Object.keys(d).forEach((k) => keys.add(k));
+                    });
+                    return Array.from(keys);
+                  },
+                  getSchema: () => undefined,
+                });
+                editor.onDidDispose(() => clearModelMeta(uri));
+              }
             }}
             loading={
               <div className="mql-shell-monaco-loading">
