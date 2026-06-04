@@ -56,3 +56,50 @@ describe('getCompletions — shell', () => {
     expect(labels(items)).toEqual(expect.arrayContaining(['find', 'aggregate', 'countDocuments']));
   });
 });
+
+describe('getCompletions — JSON key quoting', () => {
+  it('quotes field keys in filter (JSON)', () => {
+    const items = getCompletions(base({ surface: 'filter', textBeforeCursor: '{ ', token: '' }));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('"region"');
+  });
+  it('does not double-quote when already inside a quote', () => {
+    const items = getCompletions(base({ surface: 'filter', textBeforeCursor: '{ "reg', token: 'reg' }));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('region');
+  });
+  it('leaves keys bare in the shell (JS)', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.customers.find({ ', token: '', fields: ['region'] }));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('region');
+  });
+  it('quotes $operator keys in filter', () => {
+    const items = getCompletions(base({ surface: 'filter', textBeforeCursor: '{ ', token: '$' }));
+    expect(items.find((i) => i.label === '$and')!.insertText).toBe('"$and"');
+  });
+});
+
+describe('getCompletions — shell collections vs methods', () => {
+  it('suggests collection names + db methods after db.', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.', token: '', collections: ['customers', 'orders'] }));
+    expect(labels(items)).toEqual(expect.arrayContaining(['customers', 'orders', 'getCollectionNames']));
+  });
+  it('prefix-filters collection names by the token', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.cust', token: 'cust', collections: ['customers', 'orders'] }));
+    expect(labels(items)).toContain('customers');
+    expect(labels(items)).not.toContain('orders');
+  });
+  it('suggests cursor methods after db.<coll>.', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.customers.', token: '', collections: ['customers'] }));
+    expect(labels(items)).toEqual(expect.arrayContaining(['find', 'aggregate', 'insertOne']));
+    expect(labels(items)).not.toContain('customers');
+  });
+});
+
+describe('getCompletions — shell globals & chain methods', () => {
+  it('suggests mongosh globals at the top level (print, ObjectId)', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'pr', token: 'pr' }));
+    expect(labels(items)).toEqual(expect.arrayContaining(['print', 'printjson']));
+  });
+  it('suggests cursor chain methods after find()', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.customers.find({}).', token: '' }));
+    expect(labels(items)).toEqual(expect.arrayContaining(['forEach', 'toArray', 'sort', 'limit', 'map']));
+  });
+});

@@ -9,6 +9,7 @@ export interface CompletionCtx {
   token: string;
   fields: string[];
   schema?: Map<string, FieldSchema>;
+  collections?: string[];   // collection names, for `db.<coll>` in the shell
 }
 
 export interface CompletionItem {
@@ -28,10 +29,29 @@ export const AGG_STAGES = [
   '$lookup', '$addFields', '$set', '$unset', '$count', '$facet', '$sortByCount', '$replaceRoot',
 ];
 export const GROUP_ACCUMULATORS = ['$sum', '$avg', '$min', '$max', '$first', '$last', '$push', '$addToSet', '$count'];
+// Anything valid after a `.` in the shell: collection operations + cursor chain
+// methods (forEach, toArray, sort, …).
 export const CURSOR_METHODS = [
-  'find', 'aggregate', 'countDocuments', 'estimatedDocumentCount', 'distinct',
-  'insertOne', 'insertMany', 'updateOne', 'updateMany', 'deleteOne', 'deleteMany',
-  'findOne', 'replaceOne', 'createIndex', 'getIndexes', 'drop',
+  // collection ops
+  'find', 'findOne', 'aggregate', 'countDocuments', 'estimatedDocumentCount', 'count', 'distinct',
+  'insertOne', 'insertMany', 'updateOne', 'updateMany', 'replaceOne', 'deleteOne', 'deleteMany',
+  'findOneAndUpdate', 'findOneAndReplace', 'findOneAndDelete', 'bulkWrite',
+  'createIndex', 'createIndexes', 'getIndexes', 'dropIndex', 'dropIndexes',
+  'drop', 'renameCollection', 'stats', 'watch', 'mapReduce', 'dataSize', 'totalIndexSize',
+  // cursor chain methods
+  'forEach', 'toArray', 'map', 'filter', 'hasNext', 'next', 'pretty', 'sort', 'limit', 'skip',
+  'size', 'itcount', 'explain', 'hint', 'batchSize', 'projection', 'allowDiskUse', 'collation', 'close',
+];
+// db-level methods available on `db.<here>`
+export const DB_METHODS = [
+  'getCollectionNames', 'getCollectionInfos', 'getCollection', 'createCollection',
+  'getName', 'stats', 'runCommand', 'aggregate', 'dropDatabase', 'getMongo', 'hostInfo', 'serverStatus',
+  'getSiblingDB', 'createView', 'currentOp', 'killOp', 'version',
+];
+// Top-level mongosh globals / helpers (when not after a dot).
+export const SHELL_GLOBALS = [
+  'db', 'print', 'printjson', 'ObjectId', 'ISODate', 'UUID', 'Date',
+  'NumberLong', 'NumberInt', 'NumberDecimal', 'BinData', 'sleep', 'load', 'quit', 'version', 'use',
 ];
 
 function byPrefix<T extends { label: string }>(items: T[], token: string): T[] {
@@ -40,14 +60,27 @@ function byPrefix<T extends { label: string }>(items: T[], token: string): T[] {
   return items.filter((i) => i.label.toLowerCase().startsWith(t));
 }
 
-function opItems(ops: string[], detail: string): CompletionItem[] {
-  return ops.map((op) => ({ label: op, kind: 'operator' as const, insertText: op, detail }));
+// True when the caret sits just after an opening double-quote (user is already
+// typing a quoted key), so we must NOT add quotes again.
+function inQuote(text: string): boolean {
+  return /"[\w$.]*$/.test(text);
+}
+
+// Object keys (field names and $operators/$stages) must be quoted in the JSON
+// surfaces (filter/projection/sort/aggStage); the mongosh surface is JS, where
+// bare keys/identifiers are fine.
+function keyInsert(ctx: CompletionCtx, s: string): string {
+  return ctx.surface !== 'shell' && !inQuote(ctx.textBeforeCursor) ? `"${s}"` : s;
+}
+
+function opItems(ctx: CompletionCtx, ops: string[], detail: string): CompletionItem[] {
+  return ops.map((op) => ({ label: op, kind: 'operator' as const, insertText: keyInsert(ctx, op), detail }));
 }
 
 function fieldItems(ctx: CompletionCtx): CompletionItem[] {
   return ctx.fields.map((name) => {
     const fs = ctx.schema?.get(name);
-    return { label: name, kind: 'field' as const, insertText: name, detail: fs?.type };
+    return { label: name, kind: 'field' as const, insertText: keyInsert(ctx, name), detail: fs?.type };
   });
 }
 
@@ -100,26 +133,39 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
       { label: '-1', kind: 'operator', insertText: '-1', detail: 'descending' }], token);
   }
   if (surface === 'shell') {
-    if (/\.\s*$/.test(textBeforeCursor) || /\.[A-Za-z]*$/.test(textBeforeCursor)) {
+    // db.<partial> (collection slot — exactly one dot after db) → collection names + db methods
+    if (/\bdb\.\w*$/.test(textBeforeCursor)) {
+      const colls = (ctx.collections ?? []).map((c) => ({ label: c, kind: 'field' as const, insertText: c, detail: 'collection' }));
+      const dbm = DB_METHODS.map((m) => ({ label: m, kind: 'method' as const, insertText: m }));
+      return byPrefix([...colls, ...dbm], token);
+    }
+    // any other `.<partial>` (after a collection, a ) or a ] ) → methods (find, forEach, sort, …)
+    if (/[)\]\w]\s*\.\w*$/.test(textBeforeCursor)) {
       return byPrefix(CURSOR_METHODS.map((m) => ({ label: m, kind: 'method' as const, insertText: m })), token);
     }
-    // inside find({...}) → behave like a filter (fall through)
+    // top level (not after a dot, not inside an open ( or { ) → mongosh globals
+    const openParen = textBeforeCursor.lastIndexOf('(') > textBeforeCursor.lastIndexOf(')');
+    const openBrace = textBeforeCursor.lastIndexOf('{') > textBeforeCursor.lastIndexOf('}');
+    if (!openParen && !openBrace) {
+      return byPrefix(SHELL_GLOBALS.map((g) => ({ label: g, kind: 'method' as const, insertText: g })), token);
+    }
+    // otherwise (inside find({...}), aggregate([...])) → behave like a filter (fall through)
   }
 
   const aggStageStart = surface === 'aggStage' && atKeyPosition(textBeforeCursor)
     && !/\$group/.test(textBeforeCursor.slice(textBeforeCursor.indexOf('{')));
 
   if (aggStageStart) {
-    return byPrefix(AGG_STAGES.map((s) => ({ label: s, kind: 'stage' as const, insertText: s })), token);
+    return byPrefix(AGG_STAGES.map((s) => ({ label: s, kind: 'stage' as const, insertText: keyInsert(ctx, s) })), token);
   }
   if (surface === 'aggStage' && /\$group/.test(textBeforeCursor) && atKeyPosition(textBeforeCursor)) {
-    return byPrefix([...opItems(GROUP_ACCUMULATORS, 'accumulator'), ...fieldItems(ctx)], token);
+    return byPrefix([...opItems(ctx, GROUP_ACCUMULATORS, 'accumulator'), ...fieldItems(ctx)], token);
   }
 
   // filter (and shell-inside-find, and agg $match body)
   if (atValuePosition(textBeforeCursor)) {
-    return byPrefix([...enumItemsForLastField(ctx), ...opItems(QUERY_OPERATORS, 'query operator')], token);
+    return byPrefix([...enumItemsForLastField(ctx), ...opItems(ctx, QUERY_OPERATORS, 'query operator')], token);
   }
   // key position
-  return byPrefix([...fieldItems(ctx), ...opItems(LOGICAL_OPERATORS, 'logical')], token);
+  return byPrefix([...fieldItems(ctx), ...opItems(ctx, LOGICAL_OPERATORS, 'logical')], token);
 }

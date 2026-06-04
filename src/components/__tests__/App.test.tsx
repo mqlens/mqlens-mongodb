@@ -21,8 +21,12 @@ const mockInvoke = vi.fn();
 // that round-trips value/onChange — this keeps the existing stage tests, which
 // drive `pipeline-stage-N textarea`, working against the real component shape.
 vi.mock('@monaco-editor/react', () => ({
-  default: ({ value, onChange }: { value: string; onChange?: (v: string) => void }) => (
-    <textarea value={value} onChange={(e) => onChange?.(e.target.value)} />
+  default: ({ value, onChange, wrapperProps }: { value: string; onChange?: (v: string) => void; wrapperProps?: Record<string, unknown> }) => (
+    <textarea
+      data-testid={wrapperProps?.['data-testid'] as string | undefined}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+    />
   ),
 }));
 
