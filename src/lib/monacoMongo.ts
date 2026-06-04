@@ -24,6 +24,16 @@ function kindToMonaco(monaco: Monaco, kind: CompletionKind) {
 export function registerMongoCompletionProvider(monaco: Monaco) {
   if (registered) return;
   registered = true;
+
+  // Drop the DOM library from the JS language service so the mongosh editor
+  // doesn't suggest browser types (Headers, HTMLElement, …). Keep core
+  // JavaScript (ES) + our Mongo completions only.
+  const ts = (monaco.languages as unknown as { typescript?: any }).typescript;
+  if (ts?.javascriptDefaults) {
+    const d = ts.javascriptDefaults;
+    d.setCompilerOptions({ ...d.getCompilerOptions(), lib: ['es2020'], allowNonTsExtensions: true });
+  }
+
   const provider = {
     // Only trigger on word-starting characters — '.' (db.<coll>, field paths)
     // and '$' (operators). NOT space/brace/quote, so the dropdown doesn't pop
