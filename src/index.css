@@ -4875,7 +4875,7 @@ button, input, select, textarea {
   background: var(--bg-input-blend);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  color: hsl(200, 90%, 75%);
+  color: var(--text-main);
   font-size: 12px;
   font-family: var(--font-mono);
   padding: 12px;

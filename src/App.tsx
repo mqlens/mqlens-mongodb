@@ -18,6 +18,7 @@ import { VaultGate } from './components/VaultGate';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
 import { buildRunnableCommand } from './lib/mongoCommand';
+import { EJSON } from 'bson';
 import { recordHistory, loadCollectionQueries } from './lib/queryStore';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
@@ -87,6 +88,18 @@ const buildTabQueryCode = (tab: QueryTab): string | null => {
     );
   }
   return null;
+};
+
+// Render a document for the JSON editor in clean (relaxed) Extended JSON, so
+// dates/numbers read as { "$date": "…" } / plain numbers instead of the verbose
+// canonical { "$date": { "$numberLong": … } } form shown by raw JSON.stringify.
+const formatDocForEditor = (doc: Record<string, any>): string => {
+  try {
+    const hydrated = EJSON.parse(EJSON.stringify(doc));
+    return EJSON.stringify(hydrated, undefined, 2, { relaxed: true });
+  } catch {
+    return JSON.stringify(doc, null, 2);
+  }
 };
 
 interface ActiveConnection {
@@ -909,13 +922,13 @@ function Workspace() {
   };
 
   const handleEditDocument = (doc: Record<string, any>) => {
-    setDocumentModal({ mode: 'edit', initialJson: JSON.stringify(doc, null, 2), targetDoc: doc });
+    setDocumentModal({ mode: 'edit', initialJson: formatDocForEditor(doc), targetDoc: doc });
   };
 
   // Duplicate: open the insert modal pre-filled with the document minus its _id.
   const handleDuplicateDocument = (doc: Record<string, any>) => {
     const { _id, ...rest } = doc;
-    setDocumentModal({ mode: 'insert', initialJson: JSON.stringify(rest, null, 2), targetDoc: null });
+    setDocumentModal({ mode: 'insert', initialJson: formatDocForEditor(rest), targetDoc: null });
   };
 
   const handleDeleteDocument = async (doc: Record<string, any>) => {
