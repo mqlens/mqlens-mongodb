@@ -335,41 +335,6 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
   .sec-head h2 { font-size: clamp(1.8rem, 4vw, 2.4rem); margin: 12px 0 0; }
   .sec-head p { color: var(--text-dim); margin-top: 14px; }
 
-  .feature-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 80px;
-    margin-top: 60px;
-  }
-  .feature-row {
-    display: grid;
-    grid-template-columns: 1fr 1.1fr;
-    gap: 52px;
-    align-items: center;
-  }
-  .feature-row:nth-child(even) .feature-media { order: -1; }
-  .feature-text h3 { font-size: clamp(1.4rem, 2.6vw, 1.85rem); margin: 0 0 14px; letter-spacing: -0.02em; }
-  .feature-text > p { color: var(--text-dim); margin: 0 0 20px; font-size: 1.06rem; line-height: 1.7; }
-  .feature-bullets { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
-  .feature-bullets li { position: relative; padding-left: 28px; color: var(--text-dim); line-height: 1.6; }
-  .feature-bullets li::before { content: "✓"; position: absolute; left: 0; top: 0; color: var(--accent-teal); font-weight: 700; }
-  .feature-media {
-    display: block;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    background: var(--bg-card);
-    box-shadow: 0 22px 64px rgba(0, 0, 0, 0.36);
-    transition: border-color 0.15s ease, transform 0.12s ease;
-  }
-  .feature-media:hover { border-color: var(--accent); transform: translateY(-2px); text-decoration: none; }
-  .feature-media img { display: block; width: 100%; height: auto; }
-
-  @media (max-width: 820px) {
-    .feature-rows { gap: 56px; }
-    .feature-row { grid-template-columns: 1fr; gap: 24px; }
-    .feature-row:nth-child(even) .feature-media { order: 0; }
-  }
 
   .security { background: var(--bg-soft); border-block: 1px solid var(--border); }
   .sec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
