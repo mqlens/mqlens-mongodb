@@ -40,14 +40,27 @@ function byPrefix<T extends { label: string }>(items: T[], token: string): T[] {
   return items.filter((i) => i.label.toLowerCase().startsWith(t));
 }
 
-function opItems(ops: string[], detail: string): CompletionItem[] {
-  return ops.map((op) => ({ label: op, kind: 'operator' as const, insertText: op, detail }));
+// True when the caret sits just after an opening double-quote (user is already
+// typing a quoted key), so we must NOT add quotes again.
+function inQuote(text: string): boolean {
+  return /"[\w$.]*$/.test(text);
+}
+
+// Object keys (field names and $operators/$stages) must be quoted in the JSON
+// surfaces (filter/projection/sort/aggStage); the mongosh surface is JS, where
+// bare keys/identifiers are fine.
+function keyInsert(ctx: CompletionCtx, s: string): string {
+  return ctx.surface !== 'shell' && !inQuote(ctx.textBeforeCursor) ? `"${s}"` : s;
+}
+
+function opItems(ctx: CompletionCtx, ops: string[], detail: string): CompletionItem[] {
+  return ops.map((op) => ({ label: op, kind: 'operator' as const, insertText: keyInsert(ctx, op), detail }));
 }
 
 function fieldItems(ctx: CompletionCtx): CompletionItem[] {
   return ctx.fields.map((name) => {
     const fs = ctx.schema?.get(name);
-    return { label: name, kind: 'field' as const, insertText: name, detail: fs?.type };
+    return { label: name, kind: 'field' as const, insertText: keyInsert(ctx, name), detail: fs?.type };
   });
 }
 
@@ -110,16 +123,16 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     && !/\$group/.test(textBeforeCursor.slice(textBeforeCursor.indexOf('{')));
 
   if (aggStageStart) {
-    return byPrefix(AGG_STAGES.map((s) => ({ label: s, kind: 'stage' as const, insertText: s })), token);
+    return byPrefix(AGG_STAGES.map((s) => ({ label: s, kind: 'stage' as const, insertText: keyInsert(ctx, s) })), token);
   }
   if (surface === 'aggStage' && /\$group/.test(textBeforeCursor) && atKeyPosition(textBeforeCursor)) {
-    return byPrefix([...opItems(GROUP_ACCUMULATORS, 'accumulator'), ...fieldItems(ctx)], token);
+    return byPrefix([...opItems(ctx, GROUP_ACCUMULATORS, 'accumulator'), ...fieldItems(ctx)], token);
   }
 
   // filter (and shell-inside-find, and agg $match body)
   if (atValuePosition(textBeforeCursor)) {
-    return byPrefix([...enumItemsForLastField(ctx), ...opItems(QUERY_OPERATORS, 'query operator')], token);
+    return byPrefix([...enumItemsForLastField(ctx), ...opItems(ctx, QUERY_OPERATORS, 'query operator')], token);
   }
   // key position
-  return byPrefix([...fieldItems(ctx), ...opItems(LOGICAL_OPERATORS, 'logical')], token);
+  return byPrefix([...fieldItems(ctx), ...opItems(ctx, LOGICAL_OPERATORS, 'logical')], token);
 }

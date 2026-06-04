@@ -56,3 +56,22 @@ describe('getCompletions — shell', () => {
     expect(labels(items)).toEqual(expect.arrayContaining(['find', 'aggregate', 'countDocuments']));
   });
 });
+
+describe('getCompletions — JSON key quoting', () => {
+  it('quotes field keys in filter (JSON)', () => {
+    const items = getCompletions(base({ surface: 'filter', textBeforeCursor: '{ ', token: '' }));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('"region"');
+  });
+  it('does not double-quote when already inside a quote', () => {
+    const items = getCompletions(base({ surface: 'filter', textBeforeCursor: '{ "reg', token: 'reg' }));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('region');
+  });
+  it('leaves keys bare in the shell (JS)', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.customers.find({ ', token: '', fields: ['region'] }));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('region');
+  });
+  it('quotes $operator keys in filter', () => {
+    const items = getCompletions(base({ surface: 'filter', textBeforeCursor: '{ ', token: '$' }));
+    expect(items.find((i) => i.label === '$and')!.insertText).toBe('"$and"');
+  });
+});

@@ -79,7 +79,11 @@ export const QueryInput: React.FC<QueryInputProps> = ({ surface, value, onChange
         }}
       />
       {open && items.length > 0 && (
-        <ul className="absolute left-0 top-full z-50 mt-1 max-h-56 w-64 overflow-auto rounded-md border border-[var(--border-color)] bg-[var(--bg-dropdown-solid)] py-1 text-[11px] shadow-lg" role="listbox">
+        <ul
+          className="absolute left-0 top-full z-50 mt-1 max-h-56 w-64 overflow-auto rounded-md border border-[var(--border-color)] py-1 text-[11px] shadow-lg"
+          style={{ backgroundColor: 'var(--bg-dropdown-solid)' }}
+          role="listbox"
+        >
           {items.map((it, i) => (
             <li
               key={`${it.kind}:${it.label}`}
