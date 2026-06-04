@@ -101,3 +101,30 @@ export function aggregate(
   if (truncated > 0) points = points.slice(0, cap);
   return { points, truncated, total: docs.length };
 }
+
+export function rawSeries(
+  docs: Array<Record<string, any>>,
+  xField: string,
+  yField: string,
+  cap = POINT_CAP,
+): ChartData {
+  let points: ChartPoint[] = [];
+  for (const doc of docs) {
+    const y = toNumber(doc?.[yField]);
+    if (Number.isNaN(y)) continue;
+    const xv = doc?.[xField];
+    const xn = toNumber(xv);
+    points.push({ x: Number.isNaN(xn) ? labelOf(xv) : xn, y });
+  }
+  const truncated = Math.max(0, points.length - cap);
+  if (truncated > 0) points = points.slice(0, cap);
+  return { points, truncated, total: docs.length };
+}
+
+export function buildChartData(docs: Array<Record<string, any>>, config: ChartConfig): ChartData {
+  if (config.mode === 'raw') {
+    if (!config.rawYField) return { points: [], truncated: 0, total: docs.length };
+    return rawSeries(docs, config.xField, config.rawYField);
+  }
+  return aggregate(docs, config.xField, config.measure, config.measureField);
+}

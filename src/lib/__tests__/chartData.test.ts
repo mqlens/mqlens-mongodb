@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Int32, Double, Long, Decimal128 } from 'bson';
 import { toNumber, inferFields } from '../chartData';
 import { aggregate, CATEGORY_CAP } from '../chartData';
+import { rawSeries, buildChartData, POINT_CAP } from '../chartData';
 
 describe('toNumber', () => {
   it('unwraps plain numbers and BSON numeric types', () => {
@@ -66,5 +67,40 @@ describe('aggregate', () => {
     const { points, truncated } = aggregate(many, 'k', 'count');
     expect(points.length).toBe(CATEGORY_CAP);
     expect(truncated).toBe(5);
+  });
+});
+
+describe('rawSeries', () => {
+  const docs = [
+    { seats: 3, spend: 100 },
+    { seats: 4, spend: 'oops' }, // y NaN -> dropped
+    { seats: 5, spend: 200 },
+  ];
+  it('maps numeric x/y and drops NaN-y rows', () => {
+    const { points } = rawSeries(docs, 'seats', 'spend');
+    expect(points).toEqual([{ x: 3, y: 100 }, { x: 5, y: 200 }]);
+  });
+  it('keeps categorical x as a label', () => {
+    const { points } = rawSeries([{ region: 'NA', spend: 100 }], 'region', 'spend');
+    expect(points[0]).toEqual({ x: 'NA', y: 100 });
+  });
+  it('caps points and reports truncation', () => {
+    const many = Array.from({ length: POINT_CAP + 3 }, (_, i) => ({ x: i, y: i }));
+    const { points, truncated } = rawSeries(many, 'x', 'y');
+    expect(points.length).toBe(POINT_CAP);
+    expect(truncated).toBe(3);
+  });
+});
+
+describe('buildChartData', () => {
+  const docs = [{ region: 'NA', spend: 10 }, { region: 'NA', spend: 20 }];
+  it('dispatches to aggregate', () => {
+    const d = buildChartData(docs, { mode: 'aggregate', xField: 'region', measure: 'count' });
+    expect(d.points[0]).toEqual({ x: 'NA', y: 2 });
+  });
+  it('dispatches to raw and returns empty when no y field', () => {
+    expect(buildChartData(docs, { mode: 'raw', xField: 'region', measure: 'count' }).points).toEqual([]);
+    const d = buildChartData(docs, { mode: 'raw', xField: 'spend', measure: 'count', rawYField: 'spend' });
+    expect(d.points.length).toBe(2);
   });
 });
