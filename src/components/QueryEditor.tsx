@@ -60,8 +60,6 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
     scrollbar: { vertical: 'auto' as const, horizontal: 'auto' as const }, overviewRulerLanes: 0,
     renderLineHighlight: 'none' as const, tabSize: 2,
     fixedOverflowWidgets: true, overflowWidgetsDomNode,
-    // Multi-line: Enter inserts a newline; accept completions with Tab.
-    acceptSuggestionOnEnter: 'off' as const,
   };
 
   const singleLineOptions = {
@@ -102,18 +100,12 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
       onMount={(ed, monaco: Monaco) => {
         registerMongoCompletionProvider(monaco);
         if (singleLine) {
-          // Prevent Enter from inserting a newline in single-line mode, but keep
-          // Enter working when the suggestion widget is open (to accept items).
+          // Single-line only: suppress Enter-inserts-newline when no suggestion
+          // is open (Enter still accepts a suggestion when the widget is visible).
           ed.addCommand(monaco.KeyCode.Enter, () => {}, '!suggestWidgetVisible');
-        } else {
-          // Multi-line: when the autocomplete widget is open, Enter still inserts
-          // a newline (Tab accepts the suggestion).
-          ed.addCommand(
-            monaco.KeyCode.Enter,
-            () => ed.trigger('mql', 'type', { text: '\n' }),
-            'suggestWidgetVisible && textInputFocus && !inSnippetMode',
-          );
         }
+        // Multi-line uses default Monaco behaviour: Enter accepts an open
+        // suggestion, otherwise inserts a newline.
         const model = ed.getModel();
         if (model) {
           uriRef.current = model.uri.toString();
