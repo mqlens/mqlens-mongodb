@@ -1,6 +1,37 @@
 ---
 import { SITE } from '../consts';
 
+// Total downloads across all GitHub release assets, summed at build time. Counts
+// real artifacts only (skips the .asc signature files). Falls back to null on any
+// error so the label is simply hidden offline / when the API is unreachable.
+async function fetchTotalDownloads(): Promise<number | null> {
+  try {
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'mqlens-website',
+    };
+    const token = process.env.GITHUB_TOKEN;
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(
+      'https://api.github.com/repos/mqlens/mqlens-mongodb/releases?per_page=100',
+      { headers },
+    );
+    if (!res.ok) return null;
+    const releases: any = await res.json();
+    if (!Array.isArray(releases)) return null;
+    const total = releases
+      .flatMap((r) => (Array.isArray(r.assets) ? r.assets : []))
+      .filter((a) => a && typeof a.name === 'string' && !a.name.endsWith('.asc'))
+      .reduce((sum, a) => sum + (Number(a.download_count) || 0), 0);
+    return total > 0 ? total : null;
+  } catch {
+    return null;
+  }
+}
+
+const totalDownloads = await fetchTotalDownloads();
+const downloadsLabel = totalDownloads != null ? totalDownloads.toLocaleString('en-US') : null;
+
 // Asset filenames are version-stamped, so direct "latest" links aren't stable;
 // each button points at the latest release page. Sizes are approximate and from
 // the current release. Client-side JS highlights the visitor's detected OS.
@@ -36,6 +67,12 @@ const cards = [
 ---
 
 <div class="dl" id="dl-cards">
+  {downloadsLabel && (
+    <p class="dl-stat" aria-label={`${downloadsLabel} total downloads`}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <strong>{downloadsLabel}</strong> downloads and counting
+    </p>
+  )}
   <div class="dl-cards">
     {cards.map((c) => (
       <article class="dl-card" data-match={c.match}>
@@ -168,6 +205,24 @@ const cards = [
   .dl-btn-secondary { background: var(--bg-elevated); color: var(--text); border-color: var(--border); }
   .dl-btn-secondary:hover { border-color: var(--accent); }
   .dl-size { font-size: 0.82rem; font-weight: 500; opacity: 0.8; }
+
+  .dl-stat {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: fit-content;
+    margin: 0 auto;
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--text-dim);
+    font-size: 0.95rem;
+    font-weight: 500;
+  }
+  .dl-stat strong { color: var(--accent-bright); font-weight: 700; }
+  .dl-stat svg { color: var(--accent-bright); }
 
   .dl-all { text-align: center; margin: 34px 0 0; }
   .dl-all a { display: inline-flex; align-items: center; gap: 8px; color: var(--text-dim); font-weight: 600; }
