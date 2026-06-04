@@ -105,19 +105,24 @@ const screenshots = [
 <BaseLayout>
   <!-- Hero -->
   <section class="hero">
-    <div class="container hero-inner">
-      <span class="eyebrow">Open source · {SITE.license}</span>
-      <h1>The MongoDB GUI<br />that does it all.<span class="grad">Free, native, and private.</span></h1>
-      <p class="lede">
-        {SITE.name} is a full-power MongoDB GUI — every auth mode, TLS/SSH/proxy,
-        aggregation pipelines with explain plans, bulk edit, schema analysis, GridFS,
-        an embedded <code>mongosh</code>, and an AI query assistant — in a tiny native
-        app (Tauri/Rust, not Electron). Credentials stay encrypted on your machine.
-        Apache-2.0, $0.
-      </p>
-      <div class="hero-cta">
-        <a class="btn btn-primary" href="#download">Download for free</a>
-        <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">Star on GitHub ★</a>
+    <div class="container hero-grid">
+      <div class="hero-copy">
+        <span class="hero-badge">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Tiny native app · macOS · Windows · Linux
+        </span>
+        <h1>The MongoDB GUI that does it all.<span class="grad">Free, native, and private.</span></h1>
+        <p class="lede">
+          Every auth mode, TLS/SSH/proxy, aggregation pipelines with explain plans,
+          bulk edit, schema analysis, GridFS, an embedded <code>mongosh</code>, and an
+          AI query assistant — in a tiny native app (Tauri/Rust, not Electron).
+          Credentials stay encrypted on your machine.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#download">Download for free</a>
+          <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+        <p class="hero-note">Free &amp; open source (Apache-2.0) · No telemetry · No account.</p>
       </div>
       <div class="hero-shot">
         <video
@@ -134,11 +139,6 @@ const screenshots = [
           <source src="/demo.webm" type="video/webm" />
           <source src="/demo.mp4" type="video/mp4" />
         </video>
-      </div>
-      <div class="hero-meta">
-        <span>✓ macOS · Windows · Linux</span>
-        <span>✓ GPG-signed &amp; notarized builds</span>
-        <span>✓ No telemetry</span>
       </div>
     </div>
   </section>
@@ -234,25 +234,44 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
 
 <style>
   .hero {
-    padding: 96px 0 88px;
+    padding: 84px 0 80px;
     background:
-      radial-gradient(1100px 480px at 50% -140px, hsla(200, 90%, 50%, 0.20), transparent 70%),
-      radial-gradient(900px 460px at 92% 120%, hsla(268, 85%, 65%, 0.12), transparent 70%);
+      radial-gradient(1100px 520px at 80% -120px, hsla(200, 90%, 50%, 0.18), transparent 70%),
+      radial-gradient(800px 460px at 6% 130%, hsla(268, 85%, 65%, 0.10), transparent 70%);
     border-bottom: 1px solid var(--border);
   }
-  .hero-inner { text-align: center; max-width: 900px; margin: 0 auto; }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.12fr;
+    gap: 56px;
+    align-items: center;
+  }
+  .hero-copy { text-align: left; }
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .hero-badge svg { color: var(--accent-bright); }
   .hero h1 {
-    font-size: clamp(1.85rem, 7vw, 3.6rem);
+    font-size: clamp(2rem, 4vw, 3.3rem);
     line-height: 1.08;
     letter-spacing: -0.025em;
-    margin: 26px 0 0;
+    margin: 22px 0 0;
     font-weight: 700;
     text-wrap: balance;
     overflow-wrap: break-word;
   }
   .grad {
     display: block;
-    margin-top: 0.22em;
+    margin-top: 0.18em;
     line-height: 1.1;
     padding-bottom: 0.08em;
     background: linear-gradient(100deg, var(--accent-bright), var(--accent-teal));
@@ -260,17 +279,17 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
     background-clip: text;
     color: transparent;
   }
-  .lede { font-size: 1.12rem; line-height: 1.72; color: var(--text-dim); margin: 30px auto 0; max-width: 640px; }
-  .hero-cta { display: flex; gap: 12px; justify-content: center; margin-top: 38px; flex-wrap: wrap; }
+  .lede { font-size: 1.08rem; line-height: 1.7; color: var(--text-dim); margin: 22px 0 0; max-width: 540px; }
+  .hero-cta { display: flex; gap: 12px; justify-content: flex-start; margin-top: 30px; flex-wrap: wrap; }
+  .hero-note { color: var(--text-faint); font-size: 0.88rem; margin: 16px 0 0; }
   .hero-shot {
     display: block;
-    margin: 46px auto 0;
-    max-width: 980px;
+    margin: 0;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius);
     overflow: hidden;
     background: var(--bg-card);
-    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
   }
   .hero-shot img,
   .hero-shot video {
@@ -278,9 +297,14 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
     width: 100%;
     height: auto;
   }
-  .hero-meta {
-    display: flex; gap: 22px; justify-content: center; flex-wrap: wrap;
-    margin-top: 28px; color: var(--text-dim); font-size: 0.9rem;
+
+  @media (max-width: 900px) {
+    .hero { padding: 52px 0 56px; }
+    .hero-grid { grid-template-columns: 1fr; gap: 34px; }
+    .hero-copy { text-align: center; }
+    .hero h1 { font-size: clamp(1.9rem, 7vw, 2.9rem); }
+    .lede { margin-left: auto; margin-right: auto; }
+    .hero-cta { justify-content: center; }
   }
 
   .gallery {
