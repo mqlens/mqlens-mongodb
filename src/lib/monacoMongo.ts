@@ -25,7 +25,10 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
   if (registered) return;
   registered = true;
   const provider = {
-    triggerCharacters: ['$', '"', '.', ' ', '{'],
+    // Only trigger on word-starting characters — '.' (db.<coll>, field paths)
+    // and '$' (operators). NOT space/brace/quote, so the dropdown doesn't pop
+    // until you actually start typing a word.
+    triggerCharacters: ['.', '$'],
     provideCompletionItems(model: any, position: any) {
       const meta = modelMeta.get(model.uri.toString());
       if (!meta) return { suggestions: [] };
