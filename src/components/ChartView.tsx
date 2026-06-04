@@ -55,8 +55,8 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
     () => ACCENT_VARS.map((v, i) => cssVar(v, ['#38bdf8', '#14b8a6', '#22c55e', '#f59e0b', '#a855f7', '#ef4444'][i])),
     [],
   );
-  const axisColor = cssVar('--text-muted', '#9aa4b2');
-  const gridColor = cssVar('--border-color', '#2a2f3a');
+  const axisColor = useMemo(() => cssVar('--text-muted', '#9aa4b2'), []);
+  const gridColor = useMemo(() => cssVar('--border-color', '#2a2f3a'), []);
 
   const effectiveType: ChartType = mode === 'raw' && chartType === 'pie' ? 'bar' : chartType;
   const data = useMemo(
@@ -172,8 +172,8 @@ function renderChart(
       <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }} />
     </>
   );
-  if (type === 'line') return <LineChart data={points}>{axes}<Line type="monotone" dataKey="y" stroke={palette[0]} dot={false} /></LineChart>;
-  if (type === 'area') return <AreaChart data={points}>{axes}<Area type="monotone" dataKey="y" stroke={palette[0]} fill={palette[0]} fillOpacity={0.3} /></AreaChart>;
+  if (type === 'line') return <LineChart data={points}>{axes}<Line type="monotone" dataKey="y" stroke={palette[0]} dot={false} isAnimationActive={false} /></LineChart>;
+  if (type === 'area') return <AreaChart data={points}>{axes}<Area type="monotone" dataKey="y" stroke={palette[0]} fill={palette[0]} fillOpacity={0.3} isAnimationActive={false} /></AreaChart>;
   if (type === 'scatter') {
     const numericX = points.length > 0 && points.every((p) => typeof p.x === 'number');
     return (
@@ -182,7 +182,7 @@ function renderChart(
         <XAxis dataKey="x" type={numericX ? 'number' : 'category'} stroke={axisColor} tick={{ fill: axisColor, fontSize: 11 }} />
         <YAxis dataKey="y" type="number" stroke={axisColor} tick={{ fill: axisColor, fontSize: 11 }} />
         <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }} />
-        <Scatter data={points} dataKey="y" fill={palette[0]} />
+        <Scatter data={points} dataKey="y" fill={palette[0]} isAnimationActive={false} />
       </ScatterChart>
     );
   }
@@ -191,11 +191,11 @@ function renderChart(
       <PieChart>
         <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }} />
         <Legend />
-        <Pie data={points} dataKey="y" nameKey="x" outerRadius="80%" label>
+        <Pie data={points} dataKey="y" nameKey="x" outerRadius="80%" label isAnimationActive={false}>
           {points.map((_, i) => <Cell key={i} fill={palette[i % palette.length]} />)}
         </Pie>
       </PieChart>
     );
   }
-  return <BarChart data={points}>{axes}<Bar dataKey="y" fill={palette[0]} /></BarChart>;
+  return <BarChart data={points}>{axes}<Bar dataKey="y" fill={palette[0]} isAnimationActive={false} /></BarChart>;
 }
