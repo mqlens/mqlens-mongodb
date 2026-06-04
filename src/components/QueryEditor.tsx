@@ -4,6 +4,24 @@ import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '.
 import type { Surface } from '../lib/mongoCompletions';
 import type { SchemaMap } from '../lib/useCollectionSchema';
 
+// A single body-level node where Monaco renders overflow widgets (the suggest
+// dropdown). Without this, the widget is trapped inside the query-row's stacking
+// context and gets covered by the toolbar / results panel.
+let overflowNode: HTMLElement | null = null;
+function getOverflowNode(): HTMLElement | undefined {
+  if (typeof document === 'undefined') return undefined;
+  if (!overflowNode) {
+    overflowNode = document.createElement('div');
+    overflowNode.className = 'monaco-editor'; // so suggest-widget CSS applies
+    overflowNode.style.position = 'absolute';
+    overflowNode.style.top = '0';
+    overflowNode.style.left = '0';
+    overflowNode.style.zIndex = '100000';
+    document.body.appendChild(overflowNode);
+  }
+  return overflowNode;
+}
+
 interface QueryEditorProps {
   surface: Surface;
   value: string;
@@ -34,11 +52,14 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
 
   const editorHeight = height ?? (singleLine ? 22 : 120);
 
+  const overflowWidgetsDomNode = getOverflowNode();
+
   const multiLineOptions = {
     minimap: { enabled: false }, lineNumbers: 'off' as const, folding: false,
     scrollBeyondLastLine: false, wordWrap: 'on' as const, fontSize: 12,
     scrollbar: { vertical: 'auto' as const, horizontal: 'auto' as const }, overviewRulerLanes: 0,
     renderLineHighlight: 'none' as const, tabSize: 2,
+    fixedOverflowWidgets: true, overflowWidgetsDomNode,
   };
 
   const singleLineOptions = {
@@ -64,6 +85,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
     contextmenu: false,
     automaticLayout: true,
     fixedOverflowWidgets: true,
+    overflowWidgetsDomNode,
     tabSize: 2,
   };
 
