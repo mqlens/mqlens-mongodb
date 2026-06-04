@@ -11,6 +11,7 @@ interface FieldStat {
   types: TypeCount[];
   presence: number;
   coverage: number;
+  enumValues?: string[];
 }
 interface SchemaReport {
   sampled: number;
