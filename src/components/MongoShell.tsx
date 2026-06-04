@@ -224,6 +224,15 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // Tracks the latest result docs so the Monaco completion provider (registered
   // once in onMount) can derive field names from the current results.
   const viewerRef = useRef<{ docs: Record<string, any>[] } | null>(null);
+  // Collection names for the current db, for `db.<coll>` completions in the shell.
+  const collectionsRef = useRef<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    invoke<string[]>('list_collections', { id: connectionId, db: currentDb })
+      .then((cols) => { if (alive) collectionsRef.current = cols; })
+      .catch(() => { if (alive) collectionsRef.current = []; });
+    return () => { alive = false; };
+  }, [connectionId, currentDb]);
 
   useEffect(() => {
     setCommand(defaultCommand);
@@ -681,6 +690,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                     return Array.from(keys);
                   },
                   getSchema: () => undefined,
+                  getCollections: () => collectionsRef.current,
                 });
                 editor.onDidDispose(() => clearModelMeta(uri));
               }

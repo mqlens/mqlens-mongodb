@@ -2,7 +2,7 @@ import type { Monaco } from '@monaco-editor/react';
 import { getCompletions, type Surface, type CompletionKind } from './mongoCompletions';
 import type { SchemaMap } from './useCollectionSchema';
 
-interface ModelMeta { surface: Surface; getFields: () => string[]; getSchema: () => SchemaMap | undefined; }
+interface ModelMeta { surface: Surface; getFields: () => string[]; getSchema: () => SchemaMap | undefined; getCollections?: () => string[]; }
 const modelMeta = new Map<string, ModelMeta>();
 let registered = false;
 
@@ -33,11 +33,10 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
         startLineNumber: position.lineNumber, startColumn: 1,
         endLineNumber: position.lineNumber, endColumn: position.column,
       });
-      const word = model.getWordUntilPosition(position);
-      const token = textBeforeCursor.slice(word.startColumn - 1).match(/[\w$.]*$/)?.[0] ?? word.word;
+      const token = textBeforeCursor.match(/[\w$]*$/)?.[0] ?? '';
       const items = getCompletions({
         surface: meta.surface, textBeforeCursor, token,
-        fields: meta.getFields(), schema: meta.getSchema(),
+        fields: meta.getFields(), schema: meta.getSchema(), collections: meta.getCollections?.(),
       });
       const range = {
         startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,

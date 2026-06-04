@@ -13,7 +13,7 @@ interface QueryInputProps {
   'data-testid'?: string;
 }
 
-const tokenOf = (textBeforeCursor: string) => textBeforeCursor.match(/[\w$.]*$/)?.[0] ?? '';
+const tokenOf = (textBeforeCursor: string) => textBeforeCursor.match(/[\w$]*$/)?.[0] ?? '';
 
 export const QueryInput: React.FC<QueryInputProps> = ({ surface, value, onChange, fields, schema, placeholder, className, ...rest }) => {
   const inputRef = useRef<HTMLInputElement>(null);

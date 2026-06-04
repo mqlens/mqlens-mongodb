@@ -75,3 +75,20 @@ describe('getCompletions — JSON key quoting', () => {
     expect(items.find((i) => i.label === '$and')!.insertText).toBe('"$and"');
   });
 });
+
+describe('getCompletions — shell collections vs methods', () => {
+  it('suggests collection names + db methods after db.', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.', token: '', collections: ['customers', 'orders'] }));
+    expect(labels(items)).toEqual(expect.arrayContaining(['customers', 'orders', 'getCollectionNames']));
+  });
+  it('prefix-filters collection names by the token', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.cust', token: 'cust', collections: ['customers', 'orders'] }));
+    expect(labels(items)).toContain('customers');
+    expect(labels(items)).not.toContain('orders');
+  });
+  it('suggests cursor methods after db.<coll>.', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.customers.', token: '', collections: ['customers'] }));
+    expect(labels(items)).toEqual(expect.arrayContaining(['find', 'aggregate', 'insertOne']));
+    expect(labels(items)).not.toContain('customers');
+  });
+});
