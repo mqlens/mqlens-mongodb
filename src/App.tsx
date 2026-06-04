@@ -18,7 +18,7 @@ import { VaultGate } from './components/VaultGate';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
 import { buildRunnableCommand } from './lib/mongoCommand';
-import { EJSON } from 'bson';
+import { formatDocForEditor } from './lib/ejsonView';
 import { recordHistory, loadCollectionQueries } from './lib/queryStore';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
@@ -88,18 +88,6 @@ const buildTabQueryCode = (tab: QueryTab): string | null => {
     );
   }
   return null;
-};
-
-// Render a document for the JSON editor in clean (relaxed) Extended JSON, so
-// dates/numbers read as { "$date": "…" } / plain numbers instead of the verbose
-// canonical { "$date": { "$numberLong": … } } form shown by raw JSON.stringify.
-const formatDocForEditor = (doc: Record<string, any>): string => {
-  try {
-    const hydrated = EJSON.parse(EJSON.stringify(doc));
-    return EJSON.stringify(hydrated, undefined, 2, { relaxed: true });
-  } catch {
-    return JSON.stringify(doc, null, 2);
-  }
 };
 
 interface ActiveConnection {
