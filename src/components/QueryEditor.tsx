@@ -102,12 +102,21 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
       onMount={(ed, monaco: Monaco) => {
         registerMongoCompletionProvider(monaco);
         if (singleLine) {
-          // Single-line only: suppress Enter-inserts-newline when no suggestion
-          // is open (Enter still accepts a suggestion when the widget is visible).
-          ed.addCommand(monaco.KeyCode.Enter, () => {}, '!suggestWidgetVisible');
+          // Keep single-line inputs to one line by stripping any newline. We do
+          // NOT use editor.addCommand(Enter, …) here — Monaco registers those
+          // keybindings GLOBALLY across editors, which would break Enter in the
+          // multi-line mongosh/aggregation editors. This listener is scoped to
+          // this editor instance only.
+          ed.onDidChangeModelContent(() => {
+            const v = ed.getValue();
+            if (v.includes('\n')) {
+              const flat = v.replace(/\n/g, '');
+              const pos = ed.getPosition();
+              ed.setValue(flat);
+              if (pos) ed.setPosition({ lineNumber: 1, column: Math.min(pos.column, flat.length + 1) });
+            }
+          });
         }
-        // Multi-line uses default Monaco behaviour: Enter accepts an open
-        // suggestion, otherwise inserts a newline.
         const model = ed.getModel();
         if (model) {
           uriRef.current = model.uri.toString();
