@@ -5419,4 +5419,12 @@ button, input, select, textarea {
   padding: 10px 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word; color: var(--text-main);
 }
+/* Masked password input with show/hide toggle */
+.mql-password-field { position: relative; display: flex; align-items: center; width: 100%; }
+.mql-password-field input { width: 100%; padding-right: 30px; }
+.mql-password-toggle {
+  position: absolute; right: 8px; display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px;
+}
+.mql-password-toggle:hover { color: var(--text-main); }
 
