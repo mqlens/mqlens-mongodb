@@ -22,6 +22,7 @@ import { formatBytes } from './lib/format';
 import { buildRunnableCommand } from './lib/mongoCommand';
 import { docToShell } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries } from './lib/queryStore';
+import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
@@ -140,13 +141,13 @@ function Workspace() {
     );
   };
 
-  const handleQuickConnect = async (profile: { id: string; name: string; uri: string; ssh?: unknown }) => {
+  const handleQuickConnect = async (profile: ConnectionProfile) => {
     if (activeConnections.some((c) => c.profileId === profile.id)) return; // already connected
     try {
       const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
       addActiveConnection(id, profile.name, profile.uri, profile.id);
     } catch (e) {
-      toast(`Could not connect to ${profile.name}: ${String(e)}`, 'error');
+      toast(`Could not connect to ${profile.name}: ${(e as any)?.message || String(e)}`, 'error');
     }
   };
 
@@ -157,7 +158,7 @@ function Workspace() {
       const id = await invoke<string>('connect_db', { uri: 'mongodb://mock', ssh: null });
       addActiveConnection(id, 'Sample (mqlens_demo)', 'mongodb://mock', SAMPLE_ID);
     } catch (e) {
-      toast(`Could not load sample data: ${String(e)}`, 'error');
+      toast(`Could not load sample data: ${(e as any)?.message || String(e)}`, 'error');
     }
   };
   const [isIndexModalOpen, setIsIndexModalOpen] = useState(false);
