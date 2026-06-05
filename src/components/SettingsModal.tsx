@@ -43,6 +43,15 @@ const PROVIDER_LABELS: Record<string, string> = {
   antigravity: 'Antigravity (local)',
 };
 
+type SettingsTab = 'appearance' | 'ai' | 'mongosh' | 'updates' | 'security';
+const SETTINGS_TABS: { id: SettingsTab; label: string; Icon: typeof LayoutGrid }[] = [
+  { id: 'appearance', label: 'Appearance', Icon: LayoutGrid },
+  { id: 'ai', label: 'AI Assistant', Icon: Sparkles },
+  { id: 'mongosh', label: 'Mongosh', Icon: Terminal },
+  { id: 'updates', label: 'Updates', Icon: ArrowUpCircle },
+  { id: 'security', label: 'Security', Icon: ShieldCheck },
+];
+
 interface SettingsViewProps {
   density: 'roomy' | 'cozy' | 'compact';
   onChangeDensity: (density: 'roomy' | 'cozy' | 'compact') => void;
@@ -63,6 +72,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [localCommands, setLocalCommands] = useState<Record<string, string>>({});
   const [customInstructions, setCustomInstructions] = useState('');
   const [updateChannel, setUpdateChannel] = useState<'stable' | 'dev'>('stable');
+  const [tab, setTab] = useState<SettingsTab>('appearance');
   const [agents, setAgents] = useState<AgentDetection[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -201,7 +211,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </header>
 
-      <div className="mql-settings-body">
+      <div className="mql-settings-layout">
+        <nav className="mql-settings-tabs" role="tablist" aria-label="Settings sections">
+          {SETTINGS_TABS.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              data-testid={`settings-tab-${id}`}
+              className={`mql-settings-tab ${tab === id ? 'is-active' : ''}`}
+              onClick={() => setTab(id)}
+            >
+              <Icon size={14} /> <span>{label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="mql-settings-panel">
+        {tab === 'appearance' && (
         <section className="mql-settings-section">
           <div className="mql-settings-section-h">
             <LayoutGrid size={13} color="var(--accent-blue)" />
@@ -234,7 +262,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             })}
           </div>
         </section>
+        )}
 
+        {tab === 'updates' && (
         <section className="mql-settings-section">
           <div className="mql-settings-section-h">
             <ArrowUpCircle size={13} color="var(--accent-blue)" />
@@ -271,7 +301,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <ArrowUpCircle size={13} /> Check for updates
           </button>
         </section>
+        )}
 
+        {tab === 'mongosh' && (
         <section className="mql-settings-section">
           <div className="mql-settings-section-h">
             <Terminal size={13} color="var(--accent-green)" />
@@ -292,15 +324,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <Terminal size={11} />
               {testing ? 'Testing...' : 'Test Path'}
             </button>
-            <button className="mql-btn mql-btn-primary" onClick={saveSettings} disabled={saving} type="button">
-              <Save size={11} />
-              {saving ? 'Saving...' : 'Save'}
-            </button>
           </div>
-          {status && <div className="mql-settings-status">{status}</div>}
-          {error && <div className="mql-settings-error">{error}</div>}
         </section>
+        )}
 
+        {tab === 'ai' && (
         <section className="mql-settings-section">
           <div className="mql-settings-section-h">
             <Sparkles size={13} color="var(--accent-blue)" />
@@ -405,14 +433,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               data-testid="ai-instructions-input" />
           </label>
 
-          <div className="mql-settings-actions">
-            <button className="mql-btn mql-btn-primary" onClick={saveSettings} disabled={saving} type="button">
-              <Save size={11} />
-              {saving ? 'Saving...' : 'Save'}
-            </button>
-          </div>
         </section>
+        )}
 
+        {tab === 'security' && (
         <section className="mql-settings-section">
           <div className="mql-settings-section-h">
             <ShieldCheck size={13} color="var(--accent-amber)" />
@@ -488,6 +512,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </label>
           )}
         </section>
+        )}
+
+          {(tab === 'updates' || tab === 'mongosh' || tab === 'ai') && (
+            <div className="mql-settings-footer">
+              <div className="mql-settings-footer-msg">
+                {status && <span className="mql-settings-status">{status}</span>}
+                {error && <span className="mql-settings-error">{error}</span>}
+              </div>
+              <button className="mql-btn mql-btn-primary" onClick={saveSettings} disabled={saving} type="button" data-testid="settings-save-btn">
+                <Save size={11} />
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
