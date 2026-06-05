@@ -23,7 +23,9 @@ import {
   Cog,
   Pencil,
   Table2,
-  Activity
+  Activity,
+  Search,
+  X
 } from 'lucide-react';
 
 // Mirrors the backend CollectionInfo struct returned by `list_collections`.
@@ -146,6 +148,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   collectionMutationTrigger,
 }) => {
   const { toast, confirm, prompt } = useDialogs();
+  // Tree filter: matches connection / database / (loaded) collection names.
+  const [filterQuery, setFilterQuery] = useState('');
   // key: connectionId, value: database names list
   const [databases, setDatabases] = useState<{ [connectionId: string]: string[] }>({});
   
@@ -843,9 +847,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </header>
 
+      {/* Filter / search the tree */}
+      {activeConnections.length > 0 && (
+        <div className="mql-tree-search">
+          <Search size={12} className="mql-tree-search-icon" />
+          <input
+            type="text"
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+            placeholder="Search connections, databases, collections…"
+            aria-label="Search sidebar"
+            data-testid="sidebar-search"
+          />
+          {filterQuery && (
+            <button
+              type="button"
+              className="mql-tree-search-clear"
+              onClick={() => setFilterQuery('')}
+              aria-label="Clear search"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Database Navigation Tree */}
-      <div 
-        className="mql-tree-scroll database-tree-container" 
+      <div
+        className="mql-tree-scroll database-tree-container"
         onContextMenu={(e) => {
           if (e.target === e.currentTarget) handleEmptySpaceContextMenu(e);
         }}
@@ -853,8 +882,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {activeConnections.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {activeConnections.map((conn) => {
-              const isConnExpanded = expandedConnections[conn.id];
+              const q = filterQuery.trim().toLowerCase();
+              const filterActive = q.length > 0;
               const connDbs = databases[conn.id] || [];
+              const connNameMatch = filterActive && conn.name.toLowerCase().includes(q);
+              const visibleDbs = connDbs.filter((dbName) =>
+                !filterActive ||
+                connNameMatch ||
+                dbName.toLowerCase().includes(q) ||
+                (collections[`${conn.id}/${dbName}`] || []).some((c) => c.name.toLowerCase().includes(q))
+              );
+              // Hide a connection entirely when nothing under it matches.
+              if (filterActive && !connNameMatch && visibleDbs.length === 0) return null;
+              // While filtering, auto-reveal connections so matches are visible.
+              const isConnExpanded = expandedConnections[conn.id] || filterActive;
 
               return (
                 <div key={conn.id} className="mql-tree-node">
@@ -891,11 +932,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {/* Databases List */}
                   {isConnExpanded && (
                     <div className="mql-tree-children">
-                      {connDbs.map((dbName) => {
+                      {visibleDbs.map((dbName) => {
                         const dbKey = `${conn.id}/${dbName}`;
-                        const isDbExpanded = expandedDbs[dbKey];
-                        const isFolderExpanded = expandedCollectionsFolders[`${dbKey}/collections`];
-                        const dbColls = collections[dbKey] || [];
+                        const rawColls = collections[dbKey] || [];
+                        // When filtering and neither the connection nor the db name
+                        // matches, narrow the db's collections to the matches and
+                        // auto-expand so they're visible.
+                        const dbNameMatch = filterActive && (connNameMatch || dbName.toLowerCase().includes(q));
+                        const dbColls = filterActive && !dbNameMatch
+                          ? rawColls.filter((c) => c.name.toLowerCase().includes(q))
+                          : rawColls;
+                        const autoExpandDb = filterActive && !dbNameMatch && dbColls.length > 0;
+                        const isDbExpanded = expandedDbs[dbKey] || autoExpandDb;
+                        const isFolderExpanded = expandedCollectionsFolders[`${dbKey}/collections`] || autoExpandDb;
 
                         // Separate the flat collection list into the standard MongoDB
                         // categories. Views come from the backend's collection type;

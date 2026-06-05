@@ -572,6 +572,23 @@ button { cursor: pointer; }
   padding: 8px;
   display: flex; flex-direction: column; gap: 4px;
 }
+.mql-tree-search {
+  display: flex; align-items: center; gap: 6px;
+  margin: 6px 8px 0; padding: 4px 8px;
+  border: 1px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-base);
+}
+.mql-tree-search-icon { color: var(--text-dim); flex: none; }
+.mql-tree-search input {
+  flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+  color: var(--text-main); font-size: 12px;
+}
+.mql-tree-search input::placeholder { color: var(--text-dim); }
+.mql-tree-search-clear {
+  display: inline-flex; background: none; border: none; color: var(--text-dim);
+  cursor: pointer; padding: 0; flex: none;
+}
+.mql-tree-search-clear:hover { color: var(--text-main); }
 .mql-tree-node { display: flex; flex-direction: column; }
 .mql-tree-children {
   margin-left: 12px; padding-left: 4px;
@@ -5466,3 +5483,106 @@ button, input, select, textarea {
 .mql-update-progress-bar > span { display: block; height: 100%; background: var(--accent-blue); transition: width 0.2s ease; }
 .mql-update-progress-pct { display: block; margin-top: 6px; font-size: 11px; color: var(--text-dim); }
 
+/* ===== Quick Start (welcome dashboard) ===== */
+.mql-quickstart { display: block; height: 100%; overflow: auto; padding: 36px 36px 56px; box-sizing: border-box; background: var(--bg-base); }
+.mql-qs-page { max-width: 1280px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+.mql-qs-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.mql-qs-side { display: flex; flex-direction: column; gap: 20px; }
+
+/* Panels */
+.mql-qs-panel { background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 16px; padding: 22px; }
+.mql-qs-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.mql-qs-h { font-size: 15px; font-weight: 700; color: var(--text-main); margin: 0 0 12px; }
+.mql-qs-panel-head .mql-qs-h { margin: 0; }
+.mql-qs-muted { color: var(--text-muted); font-size: 12px; margin: 0 0 14px; }
+
+/* Hero */
+.mql-qs-hero-panel { display: flex; flex-direction: column; gap: 20px; }
+.mql-qs-hero { display: flex; align-items: center; gap: 16px; }
+.mql-qs-logo { width: 52px; height: 52px; border-radius: 13px; flex: 0 0 auto; }
+.mql-qs-title { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin: 0; color: var(--text-main); }
+.mql-qs-subtitle { margin: 4px 0 0; color: var(--text-muted); font-size: 13.5px; }
+
+/* Stat cards */
+.mql-qs-stats { display: flex; gap: 14px; flex-wrap: wrap; }
+.mql-qs-stat { display: flex; align-items: center; gap: 12px; flex: 0 1 240px;
+  border: 1px solid var(--border-color); border-radius: 12px; padding: 14px 16px; background: var(--bg-base); }
+.mql-qs-stat-ico { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center;
+  justify-content: center; color: var(--accent-blue); background: var(--bg-item-hover); flex: 0 0 auto; }
+.mql-qs-stat-body { display: flex; flex-direction: column; min-width: 0; }
+.mql-qs-stat-num { font-size: 22px; font-weight: 800; line-height: 1.1; color: var(--text-main); }
+.mql-qs-stat-label { font-size: 12px; color: var(--text-muted); }
+
+/* Action rows (Quick start) */
+.mql-qs-actions { display: flex; flex-direction: column; gap: 2px; }
+.mql-qs-action { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; background: none;
+  border: none; padding: 9px 10px; border-radius: 9px; color: var(--text-main); font-size: 13px; cursor: pointer; text-decoration: none; }
+.mql-qs-action:hover { background: var(--bg-item-hover); }
+.mql-qs-action svg { color: var(--accent-blue); flex: 0 0 auto; }
+
+/* Connections grid + cards */
+.mql-qs-conns-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.mql-qs-card { display: flex; flex-direction: column; gap: 12px; width: 100%; text-align: left;
+  padding: 15px; border: 1px solid var(--border-color); border-radius: 13px; background: var(--bg-base); cursor: pointer; color: var(--text-main); }
+.mql-qs-card:hover:not(:disabled) { border-color: var(--accent-blue); }
+.mql-qs-card.is-connected, .mql-qs-card:disabled { cursor: default; }
+.mql-qs-card-head { display: flex; align-items: center; gap: 11px; }
+.mql-qs-card-av { width: 40px; height: 40px; border-radius: 11px; display: flex; align-items: center;
+  justify-content: center; font-weight: 700; font-size: 15px; color: #fff; flex: 0 0 auto; }
+.mql-qs-card-id { display: flex; flex-direction: column; min-width: 0; }
+.mql-qs-card-name { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 7px; }
+.mql-qs-card-status { margin-top: 3px; font-size: 11.5px; }
+.mql-qs-card-topo { color: var(--text-muted); }
+.mql-qs-card-host { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mql-qs-card-foot { display: flex; align-items: center; gap: 5px; min-height: 16px; font-size: 12.5px; font-weight: 600;
+  color: var(--accent-blue); border-top: 1px solid var(--border-color); padding-top: 11px; }
+.mql-qs-spin { color: var(--accent-blue); animation: mql-qs-rot 0.8s linear infinite; }
+@keyframes mql-qs-rot { to { transform: rotate(360deg); } }
+
+/* Add-connection card */
+.mql-qs-card-add { align-items: flex-start; border-style: dashed; gap: 8px; }
+.mql-qs-card-add:hover { border-color: var(--accent-blue); background: var(--bg-item-hover); }
+.mql-qs-add-ico { width: 40px; height: 40px; border-radius: 11px; display: flex; align-items: center;
+  justify-content: center; color: var(--accent-blue); background: var(--bg-item-hover); }
+.mql-qs-add-label { font-weight: 700; font-size: 14px; color: var(--text-main); }
+.mql-qs-card-add .mql-qs-card-foot { color: var(--text-muted); font-weight: 400; border: 0; padding-top: 0; }
+
+/* Badges */
+.mql-qs-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px; letter-spacing: .03em; }
+.mql-qs-badge.is-srv { background: rgba(34, 197, 94, .14); color: var(--accent-green); }
+.mql-qs-badge.is-ssh { background: rgba(124, 92, 250, .16); color: #7c5cff; }
+.mql-qs-badge.is-live { background: rgba(34, 197, 94, .14); color: var(--accent-green); display: inline-flex; align-items: center; gap: 4px; }
+.mql-qs-badge.is-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); }
+
+/* Tips */
+.mql-qs-tips { display: flex; flex-direction: column; gap: 11px; }
+.mql-qs-tip { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-muted); }
+.mql-qs-tip svg { color: var(--accent-blue); flex: 0 0 auto; }
+.mql-qs-kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  border: 1px solid var(--border-color); border-bottom-width: 2px; border-radius: 5px;
+  padding: 1px 6px; color: var(--text-main); background: var(--bg-item-hover); white-space: nowrap; }
+
+/* Local storage */
+.mql-qs-store { display: flex; flex-direction: column; gap: 12px; }
+.mql-qs-store-row { display: flex; align-items: center; gap: 11px; }
+.mql-qs-store-row > svg { color: var(--text-dim); flex: 0 0 auto; }
+.mql-qs-store-body { min-width: 0; flex: 1; }
+.mql-qs-store-k { font-size: 12.5px; color: var(--text-main); }
+.mql-qs-store-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mql-qs-store-v { font-size: 12.5px; font-weight: 700; color: var(--text-main); }
+
+/* Links + empty */
+.mql-qs-link { display: inline-flex; align-items: center; gap: 5px; background: none; border: none;
+  color: var(--accent-blue); font-size: 12.5px; cursor: pointer; padding: 0; text-decoration: none; }
+.mql-qs-link:hover { text-decoration: underline; }
+.mql-qs-empty { border: 1.5px dashed var(--border-color); border-radius: 12px; padding: 30px 22px; text-align: center; }
+.mql-qs-empty-ico { color: var(--text-dim); margin-bottom: 8px; }
+.mql-qs-empty-title { color: var(--text-main); font-weight: 600; margin-bottom: 4px; }
+.mql-qs-empty-sub { font-size: 12.5px; color: var(--text-muted); max-width: 360px; margin: 0 auto; }
+
+@media (max-width: 960px) {
+  .mql-qs-page { grid-template-columns: 1fr; }
+  .mql-quickstart { padding: 28px 20px 44px; }
+}

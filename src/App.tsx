@@ -22,6 +22,7 @@ import { formatBytes } from './lib/format';
 import { buildRunnableCommand } from './lib/mongoCommand';
 import { docToShell } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries } from './lib/queryStore';
+import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
@@ -100,6 +101,16 @@ interface ActiveConnection {
   uri: string;
 }
 
+/** Extract the auth username from a MongoDB connection URI; '' when there are no credentials. */
+function usernameFromUri(uri: string): string {
+  try {
+    const { username } = new URL(uri);
+    return username ? decodeURIComponent(username) : '';
+  } catch {
+    return '';
+  }
+}
+
 const QUICK_START_TAB_ID = 'quickstart';
 
 const createQuickStartTab = (): QueryTab => ({
@@ -120,7 +131,36 @@ function Workspace() {
   const [tabs, setTabs] = useState<QueryTab[]>([createQuickStartTab()]);
   const [activeTabId, setActiveTabId] = useState<string | null>(QUICK_START_TAB_ID);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
+  const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+
+  /** Record a newly-connected connection. Dedupes by profileId. */
+  const addActiveConnection = (id: string, name: string, uri: string, profileId: string) => {
+    setActiveConnections((prev) =>
+      prev.some((c) => c.profileId === profileId) ? prev : [...prev, { id, profileId, name, uri }]
+    );
+  };
+
+  const handleQuickConnect = async (profile: ConnectionProfile) => {
+    if (activeConnections.some((c) => c.profileId === profile.id)) return; // already connected
+    try {
+      const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
+      addActiveConnection(id, profile.name, profile.uri, profile.id);
+    } catch (e) {
+      toast(`Could not connect to ${profile.name}: ${(e as any)?.message || String(e)}`, 'error');
+    }
+  };
+
+  const handleLoadSampleData = async () => {
+    const SAMPLE_ID = '__sample__';
+    if (activeConnections.some((c) => c.profileId === SAMPLE_ID)) return;
+    try {
+      const id = await invoke<string>('connect_db', { uri: 'mongodb://mock', ssh: null });
+      addActiveConnection(id, 'Sample (mqlens_demo)', 'mongodb://mock', SAMPLE_ID);
+    } catch (e) {
+      toast(`Could not load sample data: ${(e as any)?.message || String(e)}`, 'error');
+    }
+  };
   const [isIndexModalOpen, setIsIndexModalOpen] = useState(false);
   const [indexModalTarget, setIndexModalTarget] = useState<{
     connectionId: string;
@@ -135,7 +175,7 @@ function Workspace() {
   } | null>(null);
   const [indexMutationTrigger, setIndexMutationTrigger] = useState(0);
   const [collectionMutationTrigger, setCollectionMutationTrigger] = useState(0);
-  const [sidebarWidth, setSidebarWidth] = useState(260);
+  const [sidebarWidth, setSidebarWidth] = useState(300);
   const [isResizing, setIsResizing] = useState(false);
 
   const startResizing = (mouseDownEvent: React.MouseEvent) => {
@@ -1158,15 +1198,6 @@ function Workspace() {
 
   return (
     <div className="mql-app">
-      <div className="mql-titlebar" data-tauri-drag-region="true">
-        <span style={{ flex: 1 }}/>
-        <span className="mql-titlebar-brand">
-          <img src={logoMark} alt="" className="mql-titlebar-logo" />
-          MQLens — {activeConnections[0]?.name || 'No connection'}
-        </span>
-        <span style={{ flex: 1 }}/>
-      </div>
-
       <div className="mql-main">
         {/* Sidebar Explorer */}
         <div className="mql-sidebar-wrap" style={{ width: sidebarWidth }}>
@@ -1221,13 +1252,11 @@ function Workspace() {
 
         <ConnectionManager
           isOpen={isConnectionModalOpen}
-          onClose={() => setIsConnectionModalOpen(false)}
+          onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
           onConnect={(id, name, uri, profileId) => {
-            setActiveConnections(prev => {
-              if (prev.some(c => c.profileId === profileId)) return prev;
-              return [...prev, { id, profileId, name, uri }];
-            });
+            addActiveConnection(id, name, uri, profileId);
             setIsConnectionModalOpen(false);
+            setProfilesRefreshKey((k) => k + 1);
           }}
           activeConnections={activeConnections}
         />
@@ -1351,10 +1380,12 @@ function Workspace() {
               {activeTab && activeTab.type === 'collection' && (() => {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
                 const connectionName = activeConnection ? activeConnection.name : 'cmi-dev';
+                const connectionUser = activeConnection ? usernameFromUri(activeConnection.uri) : '';
                 return (
                   <DocumentViewer
                     connectionId={activeTab.connectionId}
                     connectionName={connectionName}
+                    connectionUser={connectionUser}
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
                     onExecute={handleExecuteQuery}
@@ -1484,7 +1515,10 @@ function Workspace() {
                 <QuickStart
                   onConnect={() => setIsConnectionModalOpen(true)}
                   onOpenSettings={handleOpenSettingsTab}
-                  hasConnections={activeConnections.length > 0}
+                  onQuickConnect={handleQuickConnect}
+                  onLoadSampleData={handleLoadSampleData}
+                  activeConnections={activeConnections}
+                  profilesRefreshKey={profilesRefreshKey}
                 />
               )}
             </>
