@@ -81,6 +81,26 @@ describe('MonitoringView', () => {
     expect(await screen.findByTestId('current-ops-table')).toBeInTheDocument();
   });
 
+  it('filters the current-operations list by search text', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'server_status') return Promise.resolve(STATUS);
+      if (cmd === 'current_ops') return Promise.resolve([
+        { opid: 1, op: 'query', ns: 'sales_db.orders', secsRunning: 1, client: 'a', desc: '', command: '{}' },
+        { opid: 2, op: 'command', ns: 'admin.$cmd', secsRunning: 0, client: 'b', desc: '', command: '{}' },
+      ]);
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'get_profiling_status') return Promise.resolve({ level: 0, slowMs: 100 });
+      if (cmd === 'read_profile') return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+    render(<MonitoringView connectionId="conn-1" />);
+    expect(await screen.findByText('sales_db.orders')).toBeInTheDocument();
+    expect(screen.getByText('admin.$cmd')).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('ops-search'), { target: { value: 'orders' } });
+    expect(screen.getByText('sales_db.orders')).toBeInTheDocument();
+    expect(screen.queryByText('admin.$cmd')).toBeNull();
+  });
+
   it('switches between the Current operations and Profiler tabs', async () => {
     render(<MonitoringView connectionId="conn-1" />);
     // Current operations is the default tab.

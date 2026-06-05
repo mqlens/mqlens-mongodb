@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
-import { Activity, RefreshCw, Skull, Lock } from 'lucide-react';
+import { Activity, RefreshCw, Skull, Lock, Network, Gauge, MemoryStick, Database, ArrowDownUp, Search } from 'lucide-react';
 import { formatBytes } from '../lib/format';
 import {
   serverStatus,
@@ -45,21 +45,41 @@ const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color })
   );
 };
 
-const MetricCard: React.FC<{ label: string; value: string; sub?: string; series: number[]; color: string }> = ({
-  label,
-  value,
-  sub,
-  series,
-  color,
-}) => (
-  <div className="mql-mon-card">
-    <div className="mql-mon-card-label">{label}</div>
+const MetricCard: React.FC<{
+  label: string;
+  value: string;
+  sub?: string;
+  series: number[];
+  color: string;
+  icon: React.ReactNode;
+}> = ({ label, value, sub, series, color, icon }) => (
+  <div className="mql-mon-card" style={{ ['--card-color' as any]: color }}>
+    <div className="mql-mon-card-top">
+      <span className="mql-mon-card-icon">{icon}</span>
+      <span className="mql-mon-card-label">{label}</span>
+    </div>
     <div className="mql-mon-card-value">{value}</div>
     {sub && <div className="mql-mon-card-sub">{sub}</div>}
     <div className="mql-mon-spark">
       <Sparkline data={series} color={color} />
     </div>
   </div>
+);
+
+// Color-code operation types so the tables read at a glance.
+const OP_COLORS: Record<string, string> = {
+  query: '#38bdf8',
+  command: '#94a3b8',
+  getmore: '#22d3ee',
+  insert: '#34d399',
+  update: '#f59e0b',
+  remove: '#f87171',
+  delete: '#f87171',
+  none: '#64748b',
+};
+const opColor = (op: string): string => OP_COLORS[op?.toLowerCase()] ?? '#a78bfa';
+const OpBadge: React.FC<{ op: string }> = ({ op }) => (
+  <span className="mql-mon-op" style={{ ['--op-color' as any]: opColor(op) }}>{op}</span>
 );
 
 // MongoDB error 13 / "not authorized" → the user lacks the privilege.
@@ -92,6 +112,12 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
   const [opsErr, setOpsErr] = useState<string | null>(null);
   const [profilerErr, setProfilerErr] = useState<string | null>(null);
   const [section, setSection] = useState<'ops' | 'profiler'>('ops');
+
+  // Filters
+  const [opsSearch, setOpsSearch] = useState('');
+  const [opsType, setOpsType] = useState('');
+  const [profSearch, setProfSearch] = useState('');
+  const [profMinMs, setProfMinMs] = useState(0);
 
   // Profiler state
   const [dbs, setDbs] = useState<string[]>([]);
@@ -208,6 +234,22 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
     return { conns, resident, cachePct, opsPerSec, netPerSec };
   }, [samples]);
 
+  const opTypes = useMemo(() => Array.from(new Set(ops.map((o) => o.op))).sort(), [ops]);
+  const filteredOps = useMemo(() => {
+    const q = opsSearch.trim().toLowerCase();
+    return ops.filter(
+      (o) =>
+        (!opsType || o.op === opsType) &&
+        (!q || `${o.ns} ${o.client} ${o.op} ${o.command}`.toLowerCase().includes(q)),
+    );
+  }, [ops, opsSearch, opsType]);
+  const filteredProfile = useMemo(() => {
+    const q = profSearch.trim().toLowerCase();
+    return profile.filter(
+      (p) => p.millis >= profMinMs && (!q || `${p.ns} ${p.op} ${p.planSummary} ${p.command}`.toLowerCase().includes(q)),
+    );
+  }, [profile, profSearch, profMinMs]);
+
   const latestOpsPerSec = series.opsPerSec.length ? series.opsPerSec[series.opsPerSec.length - 1] : 0;
   const latestNetPerSec = series.netPerSec.length ? series.netPerSec[series.netPerSec.length - 1] : 0;
   const cachePctNow = status?.cache && status.cache.maxBytes > 0 ? (status.cache.bytesInCache / status.cache.maxBytes) * 100 : null;
@@ -234,6 +276,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
           <div className="mql-mon-cards">
             <MetricCard
               label="Connections"
+              icon={<Network size={14} />}
               value={status ? String(status.connections.current) : '—'}
               sub={status ? `${status.connections.available.toLocaleString()} available` : undefined}
               series={series.conns}
@@ -241,6 +284,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
             />
             <MetricCard
               label="Ops / sec"
+              icon={<Gauge size={14} />}
               value={status ? Math.round(latestOpsPerSec).toLocaleString() : '—'}
               sub="all opcounters"
               series={series.opsPerSec}
@@ -248,6 +292,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
             />
             <MetricCard
               label="Resident memory"
+              icon={<MemoryStick size={14} />}
               value={status ? `${status.memory.residentMb.toLocaleString()} MB` : '—'}
               sub={status ? `${status.memory.virtualMb.toLocaleString()} MB virtual` : undefined}
               series={series.resident}
@@ -255,6 +300,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
             />
             <MetricCard
               label="Cache used"
+              icon={<Database size={14} />}
               value={cachePctNow != null ? `${cachePctNow.toFixed(0)}%` : 'n/a'}
               sub={status?.cache ? `${formatBytes(status.cache.bytesInCache)} / ${formatBytes(status.cache.maxBytes)}` : undefined}
               series={series.cachePct}
@@ -262,6 +308,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
             />
             <MetricCard
               label="Network"
+              icon={<ArrowDownUp size={14} />}
               value={status ? `${formatBytes(latestNetPerSec)}/s` : '—'}
               sub={status ? `${formatBytes(status.network.bytesIn + status.network.bytesOut)} total` : undefined}
               series={series.netPerSec}
@@ -300,36 +347,58 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
           ) : ops.length === 0 ? (
             <div className="mql-mon-empty">No active operations.</div>
           ) : (
-            <table className="mql-mon-table" data-testid="current-ops-table">
-              <thead>
-                <tr>
-                  <th>opid</th><th>op</th><th>ns</th><th>secs</th><th>client</th><th>command</th><th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {ops.map((op) => (
-                  <tr key={op.opid}>
-                    <td>{op.opid}</td>
-                    <td>{op.op}</td>
-                    <td className="mql-mon-ns">{op.ns}</td>
-                    <td>{op.secsRunning}</td>
-                    <td>{op.client}</td>
-                    <td className="mql-mon-cmd" title={op.command}>{op.command}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="mql-mon-kill"
-                        title="Kill operation"
-                        data-testid={`kill-op-${op.opid}`}
-                        onClick={() => handleKill(op)}
-                      >
-                        <Skull size={12} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              <div className="mql-mon-filters">
+                <div className="mql-mon-search">
+                  <Search size={12} />
+                  <input
+                    value={opsSearch}
+                    onChange={(e) => setOpsSearch(e.target.value)}
+                    placeholder="Filter by ns, client, or command…"
+                    data-testid="ops-search"
+                  />
+                </div>
+                <select value={opsType} onChange={(e) => setOpsType(e.target.value)} className="mql-mon-select" data-testid="ops-type-filter">
+                  <option value="">All ops</option>
+                  {opTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <span className="mql-mon-count">{filteredOps.length} / {ops.length}</span>
+              </div>
+              {filteredOps.length === 0 ? (
+                <div className="mql-mon-empty">No operations match the filter.</div>
+              ) : (
+                <table className="mql-mon-table" data-testid="current-ops-table">
+                  <thead>
+                    <tr>
+                      <th>opid</th><th>op</th><th>ns</th><th>secs</th><th>client</th><th>command</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredOps.map((op) => (
+                      <tr key={op.opid}>
+                        <td>{op.opid}</td>
+                        <td><OpBadge op={op.op} /></td>
+                        <td className="mql-mon-ns">{op.ns}</td>
+                        <td className={op.secsRunning >= 5 ? 'mql-mon-slow' : ''}>{op.secsRunning}</td>
+                        <td>{op.client}</td>
+                        <td className="mql-mon-cmd" title={op.command}>{op.command}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="mql-mon-kill"
+                            title="Kill operation"
+                            data-testid={`kill-op-${op.opid}`}
+                            onClick={() => handleKill(op)}
+                          >
+                            <Skull size={12} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
         </div>
       ) : (
@@ -373,22 +442,51 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                 : 'No profiled operations yet.'}
             </div>
           ) : (
-            <table className="mql-mon-table" data-testid="profile-table">
-              <thead>
-                <tr><th>millis</th><th>op</th><th>ns</th><th>plan</th><th>command</th></tr>
-              </thead>
-              <tbody>
-                {profile.map((p, i) => (
-                  <tr key={i}>
-                    <td className={p.millis >= 100 ? 'mql-mon-slow' : ''}>{p.millis}</td>
-                    <td>{p.op}</td>
-                    <td className="mql-mon-ns">{p.ns}</td>
-                    <td>{p.planSummary}</td>
-                    <td className="mql-mon-cmd" title={p.command}>{p.command}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              <div className="mql-mon-filters">
+                <div className="mql-mon-search">
+                  <Search size={12} />
+                  <input
+                    value={profSearch}
+                    onChange={(e) => setProfSearch(e.target.value)}
+                    placeholder="Filter by ns, plan, or command…"
+                    data-testid="profiler-search"
+                  />
+                </div>
+                <label className="mql-mon-minms">
+                  ≥
+                  <input
+                    type="number"
+                    min={0}
+                    value={profMinMs}
+                    onChange={(e) => setProfMinMs(Number(e.target.value) || 0)}
+                    data-testid="profiler-min-ms"
+                  />
+                  ms
+                </label>
+                <span className="mql-mon-count">{filteredProfile.length} / {profile.length}</span>
+              </div>
+              {filteredProfile.length === 0 ? (
+                <div className="mql-mon-empty">No entries match the filter.</div>
+              ) : (
+                <table className="mql-mon-table" data-testid="profile-table">
+                  <thead>
+                    <tr><th>millis</th><th>op</th><th>ns</th><th>plan</th><th>command</th></tr>
+                  </thead>
+                  <tbody>
+                    {filteredProfile.map((p, i) => (
+                      <tr key={i}>
+                        <td className={p.millis >= 100 ? 'mql-mon-slow' : ''}>{p.millis}</td>
+                        <td><OpBadge op={p.op} /></td>
+                        <td className="mql-mon-ns">{p.ns}</td>
+                        <td>{p.planSummary}</td>
+                        <td className="mql-mon-cmd" title={p.command}>{p.command}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
         </div>
       )}
