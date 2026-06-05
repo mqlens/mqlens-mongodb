@@ -5486,9 +5486,15 @@ button, input, select, textarea {
 /* ===== Quick Start (two-column start page) ===== */
 .mql-quickstart { height: 100%; overflow: auto; padding: 40px 32px; box-sizing: border-box; display: flex; }
 /* margin:auto inside a flex container centers the panel on both axes and stays scroll-safe. */
-.mql-qs-grid { display: flex; gap: 36px; width: 100%; max-width: 1160px; margin: auto; align-items: flex-start; }
-.mql-qs-rail { flex: 0 0 248px; position: sticky; top: 0; }
-.mql-qs-conns { flex: 1; min-width: 0; }
+.mql-qs-grid { display: flex; flex-direction: column; gap: 18px; width: 100%; max-width: 860px; margin: auto; }
+.mql-qs-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.mql-qs-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.mql-qs-actions .mql-qs-btn { width: auto; margin-bottom: 0; }
+.mql-qs-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; padding-bottom: 16px; border-bottom: 1px solid var(--border-color); }
+.mql-qs-tips-row { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; }
+.mql-qs-tips-row .mql-qs-tip { margin-top: 0; }
+.mql-qs-meta .mql-qs-rail-links { margin-top: 0; }
+.mql-qs-conns { width: 100%; min-width: 0; }
 
 .mql-qs-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .mql-qs-logo { width: 38px; height: 38px; border-radius: 9px; }

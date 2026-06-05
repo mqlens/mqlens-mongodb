@@ -53,8 +53,8 @@ export const QuickStart: React.FC<QuickStartProps> = ({
   return (
     <div className="mql-quickstart" data-testid="quickstart-tab">
       <div className="mql-qs-grid">
-        {/* Left rail */}
-        <aside className="mql-qs-rail">
+        {/* Header on top */}
+        <header className="mql-qs-top">
           <div className="mql-qs-brand">
             <img src={brandMark} alt="MQLens" className="mql-qs-logo" />
             <div>
@@ -62,26 +62,25 @@ export const QuickStart: React.FC<QuickStartProps> = ({
               {version && <div className="mql-qs-brand-ver">v{version}</div>}
             </div>
           </div>
-          <p className="mql-qs-tagline">
-            Browse clusters, inspect indexes, run queries.
-          </p>
-
-          <button className="mql-qs-btn is-primary" onClick={onConnect}>
-            <Plus size={14} /> New Connection
-          </button>
-          {isEmpty && (
-            <button className="mql-qs-btn is-ghost" data-testid="qs-load-sample" onClick={onLoadSampleData}>
-              <Download size={14} /> Load Sample Data
+          <div className="mql-qs-actions">
+            {isEmpty && (
+              <button className="mql-qs-btn is-ghost" data-testid="qs-load-sample" onClick={onLoadSampleData}>
+                <Download size={14} /> Load Sample Data
+              </button>
+            )}
+            <button className="mql-qs-btn is-primary" onClick={onConnect}>
+              <Plus size={14} /> New Connection
             </button>
-          )}
+          </div>
+        </header>
 
-          <div className="mql-qs-rail-section">
-            <div className="mql-qs-label">Tips &amp; shortcuts</div>
-            <div className="mql-qs-tip"><kbd className="mql-qs-kbd">⌘ ↵</kbd><span>Run the current query</span></div>
-            <div className="mql-qs-tip"><kbd className="mql-qs-kbd">⌘ F</kbd><span>Search the sidebar tree</span></div>
+        <div className="mql-qs-meta">
+          <div className="mql-qs-tips-row">
+            <span className="mql-qs-label">Tips</span>
+            <div className="mql-qs-tip"><kbd className="mql-qs-kbd">⌘ ↵</kbd><span>Run query</span></div>
+            <div className="mql-qs-tip"><kbd className="mql-qs-kbd">⌘ F</kbd><span>Search tree</span></div>
             <div className="mql-qs-tip"><FolderOpen size={13} /><span>Open a collection for indexes &amp; plans</span></div>
           </div>
-
           <div className="mql-qs-rail-links">
             <a className="mql-qs-link" href={DOCS_URL} target="_blank" rel="noreferrer">
               Docs <ExternalLink size={11} />
@@ -90,9 +89,9 @@ export const QuickStart: React.FC<QuickStartProps> = ({
               <Settings size={11} /> Settings
             </button>
           </div>
-        </aside>
+        </div>
 
-        {/* Right column */}
+        {/* Saved connections below */}
         <section className="mql-qs-conns">
           <div className="mql-qs-conns-head">
             <span className="mql-qs-label">Saved connections</span>
@@ -104,7 +103,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
               <div className="mql-qs-empty-ico"><Search size={22} /></div>
               <div className="mql-qs-empty-title">No saved connections yet</div>
               <div className="mql-qs-empty-sub">
-                Add a MongoDB cluster, or explore the built-in sample dataset — both are on the left.
+                Add a MongoDB cluster, or explore the built-in sample dataset — both are above.
               </div>
             </div>
           ) : (
