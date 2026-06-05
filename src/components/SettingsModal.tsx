@@ -15,6 +15,7 @@ interface AppSettings {
   gemini_model?: string;
   local_commands?: Record<string, string>;
   ai_custom_instructions?: string;
+  update_channel?: string;
 }
 
 interface AgentDetection {
@@ -61,6 +62,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [geminiModel, setGeminiModel] = useState('gemini-1.5-flash');
   const [localCommands, setLocalCommands] = useState<Record<string, string>>({});
   const [customInstructions, setCustomInstructions] = useState('');
+  const [updateChannel, setUpdateChannel] = useState<'stable' | 'dev'>('stable');
   const [agents, setAgents] = useState<AgentDetection[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +92,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         setGeminiModel(s.gemini_model || 'gemini-1.5-flash');
         setLocalCommands(s.local_commands || {});
         setCustomInstructions(s.ai_custom_instructions || '');
+        setUpdateChannel(s.update_channel === 'dev' ? 'dev' : 'stable');
       })
       .catch((err) => { if (!cancelled) setError(String(err)); });
     invoke<AgentDetection[]>('detect_local_agents')
@@ -122,6 +125,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           gemini_model: geminiModel.trim() || 'gemini-1.5-flash',
           local_commands: localCommands,
           ai_custom_instructions: customInstructions,
+          update_channel: updateChannel,
         },
       });
       setStatus('Settings saved');
@@ -239,6 +243,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="mql-settings-option-copy" style={{ marginBottom: 8 }}>
             MQLens checks for updates on launch and installs only after you approve. You can also check now.
           </div>
+
+          <div className="mql-label" style={{ marginBottom: 6 }}>Channel</div>
+          <div role="group" aria-label="Update channel" style={{ display: 'inline-flex', gap: 4, marginBottom: 6 }}>
+            {(['stable', 'dev'] as const).map((ch) => (
+              <button
+                key={ch}
+                type="button"
+                data-testid={`update-channel-${ch}`}
+                className={`mql-btn ${updateChannel === ch ? 'mql-btn-primary' : 'mql-btn-secondary'}`}
+                onClick={() => setUpdateChannel(ch)}
+              >
+                {ch === 'stable' ? 'Stable' : 'Dev (pre-release)'}
+              </button>
+            ))}
+          </div>
+          <div className="mql-settings-option-copy" style={{ marginBottom: 10, fontSize: 11 }}>
+            Dev receives pre-release builds. Switching to Dev pulls newer dev builds; switching back to Stable won’t downgrade automatically. Click Save to apply.
+          </div>
+
           <button
             type="button"
             className="mql-btn mql-btn-secondary"
