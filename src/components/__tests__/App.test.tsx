@@ -38,6 +38,10 @@ vi.mock('@tauri-apps/api/app', () => ({
   getVersion: () => Promise.resolve('0.3.1'),
 }));
 
+vi.mock('@tauri-apps/api/path', () => ({
+  appConfigDir: () => Promise.resolve('/tmp/MQLens'),
+}));
+
 const saveMock = vi.fn();
 const openMock = vi.fn();
 const writeTextFileMock = vi.fn();

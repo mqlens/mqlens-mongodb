@@ -5,7 +5,7 @@ import type { ConnectionProfile } from '../../lib/connection';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => invokeMock(...a) }));
-vi.mock('@tauri-apps/api/app', () => ({ getVersion: () => Promise.resolve('0.3.2') }));
+vi.mock('@tauri-apps/api/path', () => ({ appConfigDir: () => Promise.resolve('/tmp/MQLens') }));
 
 const profiles: ConnectionProfile[] = [
   { id: 'b', name: 'beta', uri: 'mongodb://localhost:27017' },

@@ -5484,17 +5484,20 @@ button, input, select, textarea {
 .mql-update-progress-pct { display: block; margin-top: 6px; font-size: 11px; color: var(--text-dim); }
 
 /* ===== Quick Start (welcome dashboard) ===== */
-.mql-quickstart { height: 100%; overflow: auto; padding: 40px 40px 56px; box-sizing: border-box; }
-.mql-qs-page { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+.mql-quickstart { height: 100%; overflow: auto; padding: 36px 36px 56px; box-sizing: border-box; }
+.mql-qs-page { max-width: 1280px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+.mql-qs-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.mql-qs-side { display: flex; flex-direction: column; gap: 20px; }
 
 /* Panels */
-.mql-qs-panel { background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 16px; padding: 24px; }
+.mql-qs-panel { background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 16px; padding: 22px; }
 .mql-qs-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
-.mql-qs-h { font-size: 16px; font-weight: 700; color: var(--text-main); margin: 0; }
+.mql-qs-h { font-size: 15px; font-weight: 700; color: var(--text-main); margin: 0 0 12px; }
+.mql-qs-panel-head .mql-qs-h { margin: 0; }
+.mql-qs-muted { color: var(--text-muted); font-size: 12px; margin: 0 0 14px; }
 
 /* Hero */
-.mql-qs-hero-panel { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 28px; align-items: stretch; }
-.mql-qs-hero-main { display: flex; flex-direction: column; gap: 22px; }
+.mql-qs-hero-panel { display: flex; flex-direction: column; gap: 20px; }
 .mql-qs-hero { display: flex; align-items: center; gap: 16px; }
 .mql-qs-logo { width: 52px; height: 52px; border-radius: 13px; flex: 0 0 auto; }
 .mql-qs-title { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin: 0; color: var(--text-main); }
@@ -5502,7 +5505,7 @@ button, input, select, textarea {
 
 /* Stat cards */
 .mql-qs-stats { display: flex; gap: 14px; flex-wrap: wrap; }
-.mql-qs-stat { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 160px;
+.mql-qs-stat { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 150px;
   border: 1px solid var(--border-color); border-radius: 12px; padding: 14px 16px; background: var(--bg-base); }
 .mql-qs-stat-ico { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center;
   justify-content: center; color: var(--accent-blue); background: var(--bg-item-hover); flex: 0 0 auto; }
@@ -5510,17 +5513,15 @@ button, input, select, textarea {
 .mql-qs-stat-num { font-size: 22px; font-weight: 800; line-height: 1.1; color: var(--text-main); }
 .mql-qs-stat-label { font-size: 12px; color: var(--text-muted); }
 
-/* Quick actions */
-.mql-qs-quick { border: 1px solid var(--border-color); border-radius: 12px; padding: 14px; background: var(--bg-base); }
-.mql-qs-quick-h { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700;
-  color: var(--text-dim); margin: 2px 4px 8px; }
+/* Action rows (Quick start) */
+.mql-qs-actions { display: flex; flex-direction: column; gap: 2px; }
 .mql-qs-action { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; background: none;
   border: none; padding: 9px 10px; border-radius: 9px; color: var(--text-main); font-size: 13px; cursor: pointer; text-decoration: none; }
 .mql-qs-action:hover { background: var(--bg-item-hover); }
 .mql-qs-action svg { color: var(--accent-blue); flex: 0 0 auto; }
 
 /* Connections grid + cards */
-.mql-qs-conns-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+.mql-qs-conns-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
 .mql-qs-card { display: flex; flex-direction: column; gap: 12px; width: 100%; text-align: left;
   padding: 15px; border: 1px solid var(--border-color); border-radius: 13px; background: var(--bg-base); cursor: pointer; color: var(--text-main); }
 .mql-qs-card:hover:not(:disabled) { border-color: var(--accent-blue); }
@@ -5539,6 +5540,14 @@ button, input, select, textarea {
 .mql-qs-spin { color: var(--accent-blue); animation: mql-qs-rot 0.8s linear infinite; }
 @keyframes mql-qs-rot { to { transform: rotate(360deg); } }
 
+/* Add-connection card */
+.mql-qs-card-add { align-items: flex-start; border-style: dashed; gap: 8px; }
+.mql-qs-card-add:hover { border-color: var(--accent-blue); background: var(--bg-item-hover); }
+.mql-qs-add-ico { width: 40px; height: 40px; border-radius: 11px; display: flex; align-items: center;
+  justify-content: center; color: var(--accent-blue); background: var(--bg-item-hover); }
+.mql-qs-add-label { font-weight: 700; font-size: 14px; color: var(--text-main); }
+.mql-qs-card-add .mql-qs-card-foot { color: var(--text-muted); font-weight: 400; border: 0; padding-top: 0; }
+
 /* Badges */
 .mql-qs-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px; letter-spacing: .03em; }
 .mql-qs-badge.is-srv { background: var(--soft-green-bg, #14361f); color: var(--accent-green); }
@@ -5546,23 +5555,23 @@ button, input, select, textarea {
 .mql-qs-badge.is-live { background: #14361f; color: var(--accent-green); display: inline-flex; align-items: center; gap: 4px; }
 .mql-qs-badge.is-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); }
 
-/* Getting started panel */
-.mql-qs-start-panel { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; align-items: center; }
-.mql-qs-start-tips { min-width: 0; }
-.mql-qs-tips { display: flex; flex-direction: column; gap: 11px; margin-top: 14px; }
+/* Tips */
+.mql-qs-tips { display: flex; flex-direction: column; gap: 11px; }
 .mql-qs-tip { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-muted); }
 .mql-qs-tip svg { color: var(--accent-blue); flex: 0 0 auto; }
 .mql-qs-kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
   border: 1px solid var(--border-color); border-bottom-width: 2px; border-radius: 5px;
   padding: 1px 6px; color: var(--text-main); background: var(--bg-item-hover); white-space: nowrap; }
 
-/* Docs banner */
-.mql-qs-banner { display: block; text-decoration: none; border-radius: 13px; padding: 18px;
-  background: linear-gradient(135deg, #0f3b50, #11546a 55%, #0d7a78); color: #eafcff; }
-.mql-qs-banner:hover { filter: brightness(1.07); }
-.mql-qs-banner-kicker { font-size: 12px; opacity: .85; }
-.mql-qs-banner-title { font-size: 17px; font-weight: 700; margin: 2px 0 6px; color: #fff; }
-.mql-qs-banner-sub { font-size: 12px; opacity: .92; display: flex; align-items: center; gap: 6px; }
+/* Local storage */
+.mql-qs-store { display: flex; flex-direction: column; gap: 12px; }
+.mql-qs-store-row { display: flex; align-items: center; gap: 11px; }
+.mql-qs-store-row > svg { color: var(--text-dim); flex: 0 0 auto; }
+.mql-qs-store-body { min-width: 0; flex: 1; }
+.mql-qs-store-k { font-size: 12.5px; color: var(--text-main); }
+.mql-qs-store-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mql-qs-store-v { font-size: 12.5px; font-weight: 700; color: var(--text-main); }
 
 /* Links + empty */
 .mql-qs-link { display: inline-flex; align-items: center; gap: 5px; background: none; border: none;
@@ -5573,7 +5582,7 @@ button, input, select, textarea {
 .mql-qs-empty-title { color: var(--text-main); font-weight: 600; margin-bottom: 4px; }
 .mql-qs-empty-sub { font-size: 12.5px; color: var(--text-muted); max-width: 360px; margin: 0 auto; }
 
-@media (max-width: 820px) {
-  .mql-qs-hero-panel, .mql-qs-start-panel { grid-template-columns: 1fr; gap: 20px; }
+@media (max-width: 960px) {
+  .mql-qs-page { grid-template-columns: 1fr; }
   .mql-quickstart { padding: 28px 20px 44px; }
 }
