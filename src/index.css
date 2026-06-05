@@ -5487,7 +5487,7 @@ button, input, select, textarea {
 .mql-quickstart { height: 100%; overflow: auto; padding: 56px 48px; box-sizing: border-box; }
 .mql-qs-page { max-width: 1080px; margin: 0 auto; }
 
-.mql-qs-hero { display: flex; align-items: center; gap: 16px; margin-bottom: 40px; }
+.mql-qs-hero { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 40px; }
 .mql-qs-logo { width: 52px; height: 52px; border-radius: 13px; flex: 0 0 auto; }
 .mql-qs-title { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; margin: 0; color: var(--text-main); }
 .mql-qs-subtitle { margin: 5px 0 0; color: var(--text-muted); font-size: 14px; }
