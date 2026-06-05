@@ -5428,3 +5428,24 @@ button, input, select, textarea {
 }
 .mql-password-toggle:hover { color: var(--text-main); }
 
+/* In-app updater (toast + approval dialog) */
+.mql-update-toast {
+  position: fixed; right: 16px; bottom: 16px; z-index: 100000;
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--bg-dropdown-solid); color: var(--text-main);
+  border: 1px solid var(--border-color); border-radius: 8px;
+  padding: 8px 12px; font-size: 12.5px; box-shadow: 0 10px 30px hsla(0, 0%, 0%, 0.35);
+}
+.mql-update-toast.is-error { border-color: var(--accent-red); color: var(--accent-red); }
+.mql-update-toast-x { display: inline-flex; background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 2px; }
+.mql-update-toast-x:hover { color: var(--text-main); }
+.mql-update-notes {
+  max-height: 200px; overflow: auto; margin: 10px 0 0;
+  background: var(--bg-base); border: 1px solid var(--border-color); border-radius: 6px;
+  padding: 8px 10px; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; color: var(--text-muted);
+}
+.mql-update-progress { margin-top: 14px; }
+.mql-update-progress-bar { height: 8px; background: var(--bg-base); border: 1px solid var(--border-color); border-radius: 999px; overflow: hidden; }
+.mql-update-progress-bar > span { display: block; height: 100%; background: var(--accent-blue); transition: width 0.2s ease; }
+.mql-update-progress-pct { display: block; margin-top: 6px; font-size: 11px; color: var(--text-dim); }
+

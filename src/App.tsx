@@ -16,6 +16,7 @@ import { GridFsView } from './components/GridFsView';
 import { MonitoringView } from './components/MonitoringView';
 import { type ExportTaskInfo } from './components/TaskManager';
 import { VaultGate } from './components/VaultGate';
+import { UpdatePrompt } from './components/UpdatePrompt';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
 import { buildRunnableCommand } from './lib/mongoCommand';
@@ -1227,6 +1228,8 @@ function Workspace() {
           onClose={() => setDocumentModal(null)}
           onSave={handleSaveDocument}
         />
+
+        <UpdatePrompt />
 
         {/* Main Work Area */}
         <div className="mql-content">
