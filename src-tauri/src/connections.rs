@@ -28,6 +28,9 @@ fn default_openai_model() -> String {
 fn default_gemini_model() -> String {
     "gemini-1.5-flash".to_string()
 }
+fn default_update_channel() -> String {
+    "stable".to_string()
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AppSettings {
@@ -55,6 +58,9 @@ pub struct AppSettings {
     // Extra instructions appended to the generated system prompt for any provider.
     #[serde(default)]
     pub ai_custom_instructions: String,
+    // Auto-update channel: "stable" (default) or "dev".
+    #[serde(default = "default_update_channel")]
+    pub update_channel: String,
 }
 
 impl Default for AppSettings {
@@ -70,6 +76,7 @@ impl Default for AppSettings {
             gemini_model: default_gemini_model(),
             local_commands: std::collections::HashMap::new(),
             ai_custom_instructions: String::new(),
+            update_channel: default_update_channel(),
         }
     }
 }
