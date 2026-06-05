@@ -1475,9 +1475,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 error scrolls inside it instead of growing the dialog. */}
             {(testing || testResult) && (
               <div style={{ flexShrink: 0, margin: '0 12px', padding: '10px', maxHeight: 200, overflowY: 'auto', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                   <span className="mql-label" style={{ fontSize: 9 }}>Connection Test Progress</span>
-                  <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent-blue)', fontWeight: 600 }}>{testProgress}%</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent-blue)', fontWeight: 600 }}>{testProgress}%</span>
+                    {testResult && !testing && (
+                      <button
+                        type="button"
+                        data-testid="test-dismiss"
+                        aria-label="Dismiss test result"
+                        title="Dismiss"
+                        onClick={() => { setTestResult(null); setShowErrDetail(false); setTestProgress(0); }}
+                        style={{ display: 'inline-flex', background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--text-muted)' }}
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 
                 {/* Progress bar fill */}

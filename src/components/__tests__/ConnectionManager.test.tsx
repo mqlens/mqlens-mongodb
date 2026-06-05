@@ -518,6 +518,10 @@ describe('ConnectionManager Component', () => {
     }, { timeout: 4000 });
     fireEvent.click(screen.getByTestId('test-error-details-toggle'));
     expect(screen.getByTestId('test-error-detail')).toHaveTextContent('Connection timed out');
+
+    // The result can be dismissed.
+    fireEvent.click(screen.getByTestId('test-dismiss'));
+    expect(screen.queryByTestId('test-result-summary')).toBeNull();
   });
 
   it('calls connect_db and triggers onConnect callback when Connect is clicked', async () => {
