@@ -9,7 +9,7 @@ import { ConnectionCard } from './ConnectionCard';
 interface QuickStartProps {
   onConnect: () => void;
   onOpenSettings: () => void;
-  onQuickConnect: (profile: ConnectionProfile) => void;
+  onQuickConnect: (profile: ConnectionProfile) => Promise<void>;
   onLoadSampleData: () => void;
   activeConnections: { profileId: string }[];
   /** Bumped by App after the connection manager adds/removes a profile, to force a reload. */
@@ -39,11 +39,15 @@ export const QuickStart: React.FC<QuickStartProps> = ({
   const isEmpty = sorted.length === 0;
   const activeIds = new Set(activeConnections.map((c) => c.profileId));
 
-  const handleQuickConnect = (p: ConnectionProfile) => {
+  const handleQuickConnect = async (p: ConnectionProfile) => {
     setConnectingId(p.id);
-    onQuickConnect(p);
-    // App clears connecting state by updating activeConnections; reset defensively.
-    setTimeout(() => setConnectingId((id) => (id === p.id ? null : id)), 8000);
+    try {
+      await onQuickConnect(p);
+    } finally {
+      // On success the card becomes `connected` via activeConnections; on failure
+      // this clears the spinner immediately instead of leaving it stuck.
+      setConnectingId((id) => (id === p.id ? null : id));
+    }
   };
 
   return (
