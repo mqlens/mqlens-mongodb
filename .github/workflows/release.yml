@@ -1,9 +1,12 @@
 name: Release
 
-# dev  branch  -> rolling pre-release tagged `dev`
-# main branch  -> stable release tagged `mqlens-v<version>` (bump the version
-#                 in src-tauri/tauri.conf.json + package.json before merging,
-#                 or the tag will already exist and the run will fail)
+# dev  branch  -> rolling pre-release tagged `mqlens-v<version>-dev.<sha>`
+# main branch  -> the version is derived AUTOMATICALLY from Conventional Commits
+#                 since the last stable tag (feat -> minor, fix/perf -> patch,
+#                 BREAKING CHANGE or `!` -> major). The version files are bumped +
+#                 committed back to main with [skip ci], then a stable
+#                 `mqlens-v<version>` release is built. No manual bump needed; if
+#                 there are no releasable commits the release is skipped.
 on:
   push:
     branches: [main, dev]
@@ -13,8 +16,74 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: write
+
 jobs:
+  # Auto-versioning (main only): compute the next semver from Conventional
+  # Commits, bump the version files, and commit the bump back to main ([skip ci]
+  # so it doesn't re-trigger). Outputs the new version + whether to release.
+  version:
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      release: ${{ steps.compute.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Compute + commit next version
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+          LAST_TAG=$(git tag --list 'mqlens-v*' | grep -v -- '-dev\.' | sort -V | tail -1 || true)
+          RANGE=""
+          [ -n "$LAST_TAG" ] && RANGE="${LAST_TAG}..HEAD"
+          SUBJECTS=$(git log --no-merges --pretty=%B ${RANGE})
+          if echo "$SUBJECTS" | grep -qiE '(^|[[:space:]])BREAKING[ -]CHANGE' \
+             || echo "$SUBJECTS" | grep -qE '^[a-z]+(\([^)]*\))?!:'; then
+            BUMP=major
+          elif echo "$SUBJECTS" | grep -qE '^feat(\([^)]*\))?:'; then
+            BUMP=minor
+          elif echo "$SUBJECTS" | grep -qE '^(fix|perf)(\([^)]*\))?:'; then
+            BUMP=patch
+          else
+            BUMP=none
+          fi
+          echo "Detected bump since ${LAST_TAG:-<start>}: $BUMP"
+          if [ "$BUMP" = "none" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "No releasable (feat/fix/perf/breaking) commits — skipping release."
+            exit 0
+          fi
+          CUR=$(node -p "require('./package.json').version")
+          NEW=$(node -e 'const p=process.argv[1].split(".").map(Number);const k=process.argv[2];if(k==="major"){p[0]++;p[1]=0;p[2]=0}else if(k==="minor"){p[1]++;p[2]=0}else{p[2]++}process.stdout.write(p.join("."))' "$CUR" "$BUMP")
+          echo "Releasing $CUR -> $NEW"
+          node -e '
+            const fs=require("fs");const v=process.argv[1];
+            const sub=(p,re,to)=>{const s=fs.readFileSync(p,"utf8");const n=s.replace(re,to);if(n===s)throw new Error("no version match in "+p);fs.writeFileSync(p,n)};
+            sub("package.json",/("version":\s*)"[^"]+"/,`$1"${v}"`);
+            sub("src-tauri/tauri.conf.json",/("version":\s*)"[^"]+"/,`$1"${v}"`);
+            sub("src-tauri/Cargo.toml",/^version = "[^"]+"/m,`version = "${v}"`);
+            sub("src-tauri/Cargo.lock",/(name = "tauri-app"\nversion = ")[^"]+(")/,`$1${v}$2`);
+          ' "$NEW"
+          git config user.name "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git commit -am "chore(release): mqlens-v${NEW} [skip ci]"
+          git push origin HEAD:main
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: version
+    # Always run on dev (prereleases); on main only when the version job
+    # determined there is something to release.
+    if: ${{ always() && (github.ref_name != 'main' || needs.version.outputs.release == 'true') }}
     permissions:
       contents: write
     env:
@@ -41,6 +110,9 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On main, the version job already pushed the bump commit — build it.
+          ref: ${{ github.ref_name == 'main' && 'main' || github.sha }}
 
       # Tauri v2 + GSSAPI (mongodb gssapi-auth) build dependencies.
       - name: Install Linux dependencies
@@ -158,6 +230,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.ref_name == 'main' && 'main' || github.sha }}
       - name: Compose and publish release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -208,6 +281,8 @@ jobs:
       ENABLE_GPG: ${{ secrets.GPG_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name == 'main' && 'main' || github.sha }}
       - name: Import GPG key
         if: env.ENABLE_GPG == 'true'
         run: echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode | gpg --batch --import
@@ -250,6 +325,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         if: env.ENABLE_WIN_SIGNING == 'true'
+        with:
+          ref: ${{ github.ref_name == 'main' && 'main' || github.sha }}
 
       - name: Download Windows installers from the release
         if: env.ENABLE_WIN_SIGNING == 'true'
