@@ -67,6 +67,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
   const [ops, setOps] = useState<CurrentOp[]>([]);
   const [samples, setSamples] = useState<Sample[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [section, setSection] = useState<'ops' | 'profiler'>('ops');
 
   // Profiler state
   const [dbs, setDbs] = useState<string[]>([]);
@@ -234,51 +235,65 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
         />
       </div>
 
-      {/* Current operations */}
-      <div className="mql-mon-section">
-        <div className="mql-mon-section-head">
-          <span>Current operations ({ops.length})</span>
-        </div>
-        {ops.length === 0 ? (
-          <div className="mql-mon-empty">No active operations.</div>
-        ) : (
-          <table className="mql-mon-table" data-testid="current-ops-table">
-            <thead>
-              <tr>
-                <th>opid</th><th>op</th><th>ns</th><th>secs</th><th>client</th><th>command</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {ops.map((op) => (
-                <tr key={op.opid}>
-                  <td>{op.opid}</td>
-                  <td>{op.op}</td>
-                  <td className="mql-mon-ns">{op.ns}</td>
-                  <td>{op.secsRunning}</td>
-                  <td>{op.client}</td>
-                  <td className="mql-mon-cmd" title={op.command}>{op.command}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className="mql-mon-kill"
-                      title="Kill operation"
-                      data-testid={`kill-op-${op.opid}`}
-                      onClick={() => handleKill(op)}
-                    >
-                      <Skull size={12} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      {/* Tabs: Current operations | Profiler */}
+      <div className="mql-mon-tabs">
+        <button
+          type="button"
+          className={`mql-mon-tab${section === 'ops' ? ' is-active' : ''}`}
+          data-testid="mon-tab-ops"
+          onClick={() => setSection('ops')}
+        >
+          Current operations ({ops.length})
+        </button>
+        <button
+          type="button"
+          className={`mql-mon-tab${section === 'profiler' ? ' is-active' : ''}`}
+          data-testid="mon-tab-profiler"
+          onClick={() => setSection('profiler')}
+        >
+          Profiler &amp; slow queries
+        </button>
       </div>
 
-      {/* Profiler / slow queries */}
-      <div className="mql-mon-section">
-        <div className="mql-mon-section-head">
-          <span>Profiler &amp; slow queries</span>
+      {section === 'ops' ? (
+        <div className="mql-mon-section" data-testid="mon-panel-ops">
+          {ops.length === 0 ? (
+            <div className="mql-mon-empty">No active operations.</div>
+          ) : (
+            <table className="mql-mon-table" data-testid="current-ops-table">
+              <thead>
+                <tr>
+                  <th>opid</th><th>op</th><th>ns</th><th>secs</th><th>client</th><th>command</th><th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {ops.map((op) => (
+                  <tr key={op.opid}>
+                    <td>{op.opid}</td>
+                    <td>{op.op}</td>
+                    <td className="mql-mon-ns">{op.ns}</td>
+                    <td>{op.secsRunning}</td>
+                    <td>{op.client}</td>
+                    <td className="mql-mon-cmd" title={op.command}>{op.command}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="mql-mon-kill"
+                        title="Kill operation"
+                        data-testid={`kill-op-${op.opid}`}
+                        onClick={() => handleKill(op)}
+                      >
+                        <Skull size={12} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : (
+        <div className="mql-mon-section" data-testid="mon-panel-profiler">
           <div className="mql-mon-profiler-controls">
             <select
               value={profilerDb}
@@ -307,32 +322,32 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
               <RefreshCw size={12} className={profileLoading ? 'animate-spin' : ''} />
             </button>
           </div>
+          {profile.length === 0 ? (
+            <div className="mql-mon-empty">
+              {profiling?.level === 0
+                ? 'Profiling is off for this database. Set level 1 (slow ops) or 2 (all ops) to collect entries.'
+                : 'No profiled operations yet.'}
+            </div>
+          ) : (
+            <table className="mql-mon-table" data-testid="profile-table">
+              <thead>
+                <tr><th>millis</th><th>op</th><th>ns</th><th>plan</th><th>command</th></tr>
+              </thead>
+              <tbody>
+                {profile.map((p, i) => (
+                  <tr key={i}>
+                    <td className={p.millis >= 100 ? 'mql-mon-slow' : ''}>{p.millis}</td>
+                    <td>{p.op}</td>
+                    <td className="mql-mon-ns">{p.ns}</td>
+                    <td>{p.planSummary}</td>
+                    <td className="mql-mon-cmd" title={p.command}>{p.command}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
-        {profile.length === 0 ? (
-          <div className="mql-mon-empty">
-            {profiling?.level === 0
-              ? 'Profiling is off for this database. Set level 1 (slow ops) or 2 (all ops) to collect entries.'
-              : 'No profiled operations yet.'}
-          </div>
-        ) : (
-          <table className="mql-mon-table" data-testid="profile-table">
-            <thead>
-              <tr><th>millis</th><th>op</th><th>ns</th><th>plan</th><th>command</th></tr>
-            </thead>
-            <tbody>
-              {profile.map((p, i) => (
-                <tr key={i}>
-                  <td className={p.millis >= 100 ? 'mql-mon-slow' : ''}>{p.millis}</td>
-                  <td>{p.op}</td>
-                  <td className="mql-mon-ns">{p.ns}</td>
-                  <td>{p.planSummary}</td>
-                  <td className="mql-mon-cmd" title={p.command}>{p.command}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      )}
     </div>
   );
 };

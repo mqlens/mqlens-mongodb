@@ -62,10 +62,21 @@ describe('MonitoringView', () => {
     });
   });
 
-  it('sets the profiling level via the controls', async () => {
+  it('switches between the Current operations and Profiler tabs', async () => {
     render(<MonitoringView connectionId="conn-1" />);
-    const lvl1 = await screen.findByTestId('profiler-level-1');
-    fireEvent.click(lvl1);
+    // Current operations is the default tab.
+    expect(await screen.findByTestId('current-ops-table')).toBeInTheDocument();
+    expect(screen.queryByTestId('mon-panel-profiler')).toBeNull();
+    // Switch to the Profiler tab.
+    fireEvent.click(screen.getByTestId('mon-tab-profiler'));
+    expect(await screen.findByTestId('mon-panel-profiler')).toBeInTheDocument();
+    expect(screen.queryByTestId('current-ops-table')).toBeNull();
+  });
+
+  it('sets the profiling level via the controls (on the Profiler tab)', async () => {
+    render(<MonitoringView connectionId="conn-1" />);
+    fireEvent.click(await screen.findByTestId('mon-tab-profiler'));
+    fireEvent.click(await screen.findByTestId('profiler-level-1'));
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('set_profiling_level', expect.objectContaining({ id: 'conn-1', level: 1 }));
     });
