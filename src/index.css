@@ -5484,7 +5484,7 @@ button, input, select, textarea {
 .mql-update-progress-pct { display: block; margin-top: 6px; font-size: 11px; color: var(--text-dim); }
 
 /* ===== Quick Start (welcome dashboard) ===== */
-.mql-quickstart { height: 100%; overflow: auto; padding: 36px 36px 56px; box-sizing: border-box; }
+.mql-quickstart { display: block; height: 100%; overflow: auto; padding: 36px 36px 56px; box-sizing: border-box; background: var(--bg-base); }
 .mql-qs-page { max-width: 1280px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
 .mql-qs-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .mql-qs-side { display: flex; flex-direction: column; gap: 20px; }
