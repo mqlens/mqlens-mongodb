@@ -996,7 +996,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </nav>
 
             {/* Editor dialog body views */}
-            <div className="mql-ncd-body" style={{ flex: 1, padding: 12, overflowY: 'auto' }}>
+            <div className="mql-ncd-body" style={{ flex: 1, minHeight: 0, padding: 12, overflowY: 'auto' }}>
               {activeEditorTab === 'server' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1471,9 +1471,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
             </div>
 
-            {/* Test progress strip */}
+            {/* Test progress strip — pinned above the footer, capped so a long
+                error scrolls inside it instead of growing the dialog. */}
             {(testing || testResult) && (
-              <div style={{ margin: '0 12px', padding: '10px', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ flexShrink: 0, margin: '0 12px', padding: '10px', maxHeight: 200, overflowY: 'auto', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span className="mql-label" style={{ fontSize: 9 }}>Connection Test Progress</span>
                   <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent-blue)', fontWeight: 600 }}>{testProgress}%</span>
@@ -1528,7 +1529,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             {showErrDetail ? 'Hide details' : 'Show details'}
                           </button>
                           {showErrDetail && (
-                            <pre data-testid="test-error-detail" style={{ marginTop: 6, marginBottom: 0, maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 10, lineHeight: 1.5, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                            <pre data-testid="test-error-detail" style={{ marginTop: 6, marginBottom: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 10, lineHeight: 1.5, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
                               {testResult.message}
                             </pre>
                           )}
