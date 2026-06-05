@@ -34,6 +34,10 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
 }));
 
+vi.mock('@tauri-apps/api/app', () => ({
+  getVersion: () => Promise.resolve('0.3.1'),
+}));
+
 const saveMock = vi.fn();
 const openMock = vi.fn();
 const writeTextFileMock = vi.fn();
@@ -87,8 +91,9 @@ describe('App Component', () => {
     const bottomBar = screen.getByTestId('bottom-bar');
     expect(bottomBar).toBeInTheDocument();
     expect(screen.getByText('MQLens Engine Online')).toBeInTheDocument();
-    expect(screen.getByText('Tauri v2.0.0')).toBeInTheDocument();
-    expect(screen.getByText('v0.1.0')).toBeInTheDocument();
+    // App version comes from getVersion() (no longer hardcoded); Tauri version removed.
+    expect(await screen.findByText('MQLens v0.3.1')).toBeInTheDocument();
+    expect(screen.queryByText(/Tauri v/)).toBeNull();
   });
 
   it('opens collection tab and index tab, and shows REAL index details (not fabricated)', async () => {
