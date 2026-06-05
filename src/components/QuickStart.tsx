@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Plus, Download, Settings, ExternalLink, Search, FolderOpen } from 'lucide-react';
-import logoMark from '../assets/logo-mark.svg';
+import brandMark from '../assets/mqlens-mark.png';
 import type { ConnectionProfile } from '../lib/connection';
 import { ConnectionCard } from './ConnectionCard';
 
@@ -56,7 +56,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
         {/* Left rail */}
         <aside className="mql-qs-rail">
           <div className="mql-qs-brand">
-            <img src={logoMark} alt="" className="mql-qs-logo" />
+            <img src={brandMark} alt="MQLens" className="mql-qs-logo" />
             <div>
               <div className="mql-qs-brand-name">MQLens</div>
               {version && <div className="mql-qs-brand-ver">v{version}</div>}
