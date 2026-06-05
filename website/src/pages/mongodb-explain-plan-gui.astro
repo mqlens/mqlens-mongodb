@@ -1,0 +1,25 @@
+---
+import WorkflowLanding from '../components/WorkflowLanding.astro';
+---
+<WorkflowLanding
+  title="MongoDB explain plan GUI"
+  description="Read MongoDB explain plans as a visual tree for find and aggregate — see index usage, collection scans, and stage costs at a glance. Free native GUI, Apache-2.0, zero telemetry."
+  eyebrow="Visual explain plans"
+  h1="See exactly what your MongoDB query does."
+  grad="Explain plans as a visual tree."
+  lede="Raw <code>explain()</code> output is a deeply nested JSON blob. MQLens renders the winning plan as a readable tree for both <code>find</code> and <code>aggregate</code> — so index usage, <code>COLLSCAN</code>s, in-memory sorts, and stage costs are obvious at a glance."
+  screenshot={{ src: '/screenshots/mqlens-index-detail.png', alt: 'MQLens query analysis and index detail view' }}
+  stepsTitle="Read an explain plan"
+  steps={[
+    { title: 'Run your query', body: 'Execute a <code>find</code> or aggregation with your filters, sort, and projection.' },
+    { title: 'Open the explain view', body: 'Switch to Explain to render the winning plan as a tree.' },
+    { title: 'Spot the problem', body: 'Collection scans and unindexed sorts stand out immediately, with the documents examined vs returned.' },
+    { title: 'Add the right index', body: 'Create indexes from the GUI with real key patterns and unique / sparse flags, then re-explain to confirm the win.' },
+  ]}
+  featuresTitle="Tune queries without leaving the GUI"
+  features={[
+    { h3: 'Find + aggregate explain', p: 'Visual plan tree for both query types, not just a JSON dump.' },
+    { h3: 'Index management', p: 'Create, inspect, and drop indexes with real key patterns and unique/sparse flags.' },
+    { h3: 'Embedded mongosh', p: 'A real shell wired to your connection for the moments a GUI can’t reach.' },
+  ]}
+/>

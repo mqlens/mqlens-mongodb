@@ -1,0 +1,25 @@
+---
+import WorkflowLanding from '../components/WorkflowLanding.astro';
+---
+<WorkflowLanding
+  title="MongoDB schema analysis tool"
+  description="Analyze MongoDB schema from a GUI — per-field types, presence/coverage, and nested paths — by sampling a collection. Free native tool, Apache-2.0, zero telemetry."
+  eyebrow="Schema analysis"
+  h1="Understand your MongoDB schema."
+  grad="Without writing scripts."
+  lede="MongoDB is schemaless, so the real shape of a collection lives in the data. MQLens samples a collection and reports per-field types, presence / coverage, and nested paths — surfacing mixed types and optional fields you’d otherwise discover the hard way."
+  screenshot={{ src: '/screenshots/mqlens-schema.png', alt: 'MQLens schema analysis showing per-field types and coverage' }}
+  stepsTitle="Analyze a collection"
+  steps={[
+    { title: 'Open a collection', body: 'Pick the collection whose shape you want to understand.' },
+    { title: 'Run schema analysis', body: 'Choose a sample size and let MQLens scan the documents.' },
+    { title: 'Read types &amp; coverage', body: 'See each field’s types and how often it’s present, including nested paths.' },
+    { title: 'Act on it', body: 'Spot mixed types, missing fields, and stragglers — then add indexes or fix data from the same app.' },
+  ]}
+  featuresTitle="See the real shape of your data"
+  features={[
+    { h3: 'Per-field types + coverage', p: 'Exactly which types appear in each field, and in what percentage of documents.' },
+    { h3: 'Nested paths', p: 'Coverage for embedded documents and arrays, not just top-level fields.' },
+    { h3: 'Fix what you find', p: 'Pairs with visual explain plans and index management to act on the gaps.' },
+  ]}
+/>

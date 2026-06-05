@@ -1,0 +1,26 @@
+---
+import WorkflowLanding from '../components/WorkflowLanding.astro';
+---
+<WorkflowLanding
+  title="MongoDB SSH tunnel GUI"
+  description="Connect to MongoDB through an SSH tunnel from a native GUI — bastion / jump host, key or password auth, no manual port-forwarding. MQLens is free, Apache-2.0, zero telemetry."
+  eyebrow="SSH tunnel · Bastion / jump host"
+  h1="Connect to MongoDB through an SSH tunnel."
+  grad="No manual port-forwarding."
+  lede="Many production MongoDB deployments only accept connections from inside a private network. MQLens opens the SSH tunnel for you — through your bastion / jump host, with key or password auth — and points the driver at the forwarded port automatically. No <code>ssh -L</code> juggling in a side terminal."
+  screenshot={{ src: '/screenshots/mqlens-connection-manager.png', alt: 'MQLens connection manager with an SSH tunnel configured' }}
+  stepsTitle="Connect over SSH in under a minute"
+  steps={[
+    { title: 'Create a connection', body: 'Open the connection manager and enter your MongoDB URI as seen <em>from the jump host</em> (e.g. <code>mongodb://localhost:27017</code>).' },
+    { title: 'Enable the SSH tunnel', body: 'Toggle SSH on and enter the bastion host and port.' },
+    { title: 'Add your credentials', body: 'Authenticate to the bastion with an SSH private key (optional passphrase) or a password.' },
+    { title: 'Test the connection', body: 'The staged tester reports each real phase — parse → DNS → connect → ping — so you see exactly where a failure happens.' },
+    { title: 'Browse your data', body: 'Once it goes green, browse databases and collections, run queries, and build pipelines as usual — all over the tunnel.' },
+  ]}
+  featuresTitle="Built for locked-down deployments"
+  features={[
+    { h3: 'Key or password auth', p: 'Reach the bastion with an SSH private key (with passphrase) or a password. Credentials are encrypted locally with AES-256-GCM.' },
+    { h3: 'TLS + SOCKS5 too', p: 'Stack TLS (system / custom CA / client cert) on top of the tunnel, or route through a SOCKS5 proxy when everything must go through one.' },
+    { h3: 'Native &amp; private', p: 'A ~14 MB native app (Tauri/Rust, not Electron) with zero telemetry — nothing about your hosts or queries leaves your machine.' },
+  ]}
+/>

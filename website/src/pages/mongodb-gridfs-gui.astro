@@ -1,0 +1,25 @@
+---
+import WorkflowLanding from '../components/WorkflowLanding.astro';
+---
+<WorkflowLanding
+  title="MongoDB GridFS GUI"
+  description="Browse and download MongoDB GridFS files from a native GUI — buckets, metadata, downloads — no shell scripts. MQLens is free, Apache-2.0, zero telemetry."
+  eyebrow="GridFS browser"
+  h1="Browse MongoDB GridFS files."
+  grad="No shell scripts."
+  lede="GridFS spreads each file across <code>.files</code> and <code>.chunks</code> collections, which is awkward to inspect by hand. MQLens shows GridFS buckets as a first-class part of the database tree — browse files, read metadata, and download them to disk straight from the GUI."
+  screenshot={{ src: '/screenshots/mqlens-gridfs.png', alt: 'MQLens GridFS browser showing files in a bucket' }}
+  stepsTitle="Work with GridFS in the GUI"
+  steps={[
+    { title: 'Connect to your database', body: 'Open any connection that has GridFS buckets.' },
+    { title: 'Open a bucket', body: 'GridFS buckets appear in the sidebar tree alongside collections.' },
+    { title: 'Inspect files', body: 'See file name, size, upload date, and stored metadata.' },
+    { title: 'Download to disk', body: 'Pull any stored file back to your machine in one click.' },
+  ]}
+  featuresTitle="One app for the whole workflow"
+  features={[
+    { h3: 'First-class buckets', p: 'GridFS lives in the tree, not behind a script.' },
+    { h3: 'Direct downloads', p: 'Reconstruct and save files without touching the shell.' },
+    { h3: 'Everything else too', p: 'Queries, aggregation pipelines, schema analysis, and an embedded mongosh in the same app.' },
+  ]}
+/>
