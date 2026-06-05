@@ -55,8 +55,8 @@ const cards = [
     match: 'win',
     requires: 'Windows 10 or later (x64)',
     install: 'Download the installer, run it, and launch MQLens from the Start menu.',
-    primary: { label: '.exe (recommended)', ...dl((n) => n.endsWith('.exe'), '~8 MB') },
-    secondary: { label: '.msi', ...dl((n) => n.endsWith('.msi'), '~12 MB') },
+    primary: { label: '.exe (recommended)', key: 'exe', ...dl((n) => n.endsWith('.exe'), '~8 MB') },
+    secondary: { label: '.msi', key: 'msi', ...dl((n) => n.endsWith('.msi'), '~12 MB') },
   },
   {
     icon: 'apple',
@@ -64,8 +64,8 @@ const cards = [
     match: 'mac',
     requires: 'macOS 11 (Big Sur) or later',
     install: 'Download the .dmg, open it, and drag MQLens to your Applications folder.',
-    primary: { label: '.dmg (Apple Silicon)', ...dl((n) => n.endsWith('.dmg') && /(aarch64|arm64|aarch)/.test(n), '~13 MB') },
-    secondary: { label: '.dmg (Intel)', ...dl((n) => n.endsWith('.dmg') && /(x64|x86_64|intel)/.test(n), '~14 MB') },
+    primary: { label: '.dmg (Apple Silicon)', key: 'dmg-arm', ...dl((n) => n.endsWith('.dmg') && /(aarch64|arm64|aarch)/.test(n), '~13 MB') },
+    secondary: { label: '.dmg (Intel)', key: 'dmg-intel', ...dl((n) => n.endsWith('.dmg') && /(x64|x86_64|intel)/.test(n), '~14 MB') },
   },
   {
     icon: 'linux',
@@ -73,8 +73,8 @@ const cards = [
     match: 'linux',
     requires: 'Ubuntu 20.04+, Fedora 36+, or equivalent (x64)',
     install: 'Debian/Ubuntu: install the .deb. Fedora/RHEL: install the .rpm. An AppImage is also available.',
-    primary: { label: '.deb (Ubuntu/Debian)', ...dl((n) => n.endsWith('.deb'), '~15 MB') },
-    secondary: { label: '.rpm (Fedora/RHEL)', ...dl((n) => n.endsWith('.rpm'), '~15 MB') },
+    primary: { label: '.deb (Ubuntu/Debian)', key: 'deb', ...dl((n) => n.endsWith('.deb'), '~15 MB') },
+    secondary: { label: '.rpm (Fedora/RHEL)', key: 'rpm', ...dl((n) => n.endsWith('.rpm'), '~15 MB') },
   },
 ];
 ---
@@ -105,11 +105,11 @@ const cards = [
         </div>
 
         <div class="dl-actions">
-          <a class="dl-btn dl-btn-primary" href={c.primary.href} download target="_blank" rel="noopener">
+          <a class="dl-btn dl-btn-primary" href={c.primary.href} data-dl={c.primary.key} download target="_blank" rel="noopener">
             <span>{c.primary.label}</span>
             <span class="dl-size">{c.primary.size}</span>
           </a>
-          <a class="dl-btn dl-btn-secondary" href={c.secondary.href} download target="_blank" rel="noopener">
+          <a class="dl-btn dl-btn-secondary" href={c.secondary.href} data-dl={c.secondary.key} download target="_blank" rel="noopener">
             <span>{c.secondary.label}</span>
             <span class="dl-size">{c.secondary.size}</span>
           </a>
@@ -142,6 +142,40 @@ const cards = [
       }
     });
   }
+
+  // Always point the buttons at the CURRENT latest stable release, resolved at
+  // runtime so they never go stale between site deploys. Build-time hrefs remain
+  // as the fallback if this fetch fails (offline / rate-limited).
+  type Asset = { name: string; size: number; browser_download_url: string };
+  const matchers: Record<string, (n: string) => boolean> = {
+    exe: (n) => n.endsWith('.exe'),
+    msi: (n) => n.endsWith('.msi'),
+    'dmg-arm': (n) => n.endsWith('.dmg') && /(aarch64|arm64|aarch)/.test(n),
+    'dmg-intel': (n) => n.endsWith('.dmg') && /(x64|x86_64|intel)/.test(n),
+    deb: (n) => n.endsWith('.deb'),
+    rpm: (n) => n.endsWith('.rpm'),
+  };
+  const fmtSize = (b: number) =>
+    b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
+
+  fetch('https://api.github.com/repos/mqlens/mqlens-mongodb/releases/latest', {
+    headers: { Accept: 'application/vnd.github+json' },
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((rel: any) => {
+      const assets: Asset[] = Array.isArray(rel?.assets) ? rel.assets : [];
+      if (!assets.length) return;
+      document.querySelectorAll<HTMLAnchorElement>('a.dl-btn[data-dl]').forEach((btn) => {
+        const test = matchers[btn.dataset.dl || ''];
+        if (!test) return;
+        const a = assets.find((x) => typeof x.name === 'string' && test(x.name.toLowerCase()));
+        if (!a) return;
+        btn.href = a.browser_download_url;
+        const sizeEl = btn.querySelector<HTMLElement>('.dl-size');
+        if (sizeEl) sizeEl.textContent = fmtSize(a.size);
+      });
+    })
+    .catch(() => { /* keep build-time fallback hrefs */ });
 </script>
 
 <style>
