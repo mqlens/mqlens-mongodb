@@ -1,10 +1,12 @@
 ---
 import { SITE } from '../consts';
 
-// Total downloads across all GitHub release assets, summed at build time. Counts
-// real artifacts only (skips the .asc signature files). Falls back to null on any
-// error so the label is simply hidden offline / when the API is unreachable.
-async function fetchTotalDownloads(): Promise<number | null> {
+interface Asset { name: string; size: number; browser_download_url: string; download_count: number }
+
+// At build time, pull the latest release: its assets (for direct download links +
+// real sizes) and the total download count across all releases. Everything degrades
+// gracefully — on any error the buttons fall back to the releases page.
+async function fetchRelease(): Promise<{ totalDownloads: number | null; assets: Asset[] }> {
   try {
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',
@@ -16,25 +18,36 @@ async function fetchTotalDownloads(): Promise<number | null> {
       'https://api.github.com/repos/mqlens/mqlens-mongodb/releases?per_page=100',
       { headers },
     );
-    if (!res.ok) return null;
+    if (!res.ok) return { totalDownloads: null, assets: [] };
     const releases: any = await res.json();
-    if (!Array.isArray(releases)) return null;
+    if (!Array.isArray(releases) || releases.length === 0) return { totalDownloads: null, assets: [] };
     const total = releases
       .flatMap((r) => (Array.isArray(r.assets) ? r.assets : []))
       .filter((a) => a && typeof a.name === 'string' && !a.name.endsWith('.asc'))
       .reduce((sum, a) => sum + (Number(a.download_count) || 0), 0);
-    return total > 0 ? total : null;
+    const latest = releases.find((r) => !r.draft && !r.prerelease) ?? releases[0];
+    const assets: Asset[] = Array.isArray(latest?.assets) ? latest.assets : [];
+    return { totalDownloads: total > 0 ? total : null, assets };
   } catch {
-    return null;
+    return { totalDownloads: null, assets: [] };
   }
 }
 
-const totalDownloads = await fetchTotalDownloads();
+const { totalDownloads, assets } = await fetchRelease();
 const downloadsLabel = totalDownloads != null ? totalDownloads.toLocaleString('en-US') : null;
 
-// Asset filenames are version-stamped, so direct "latest" links aren't stable;
-// each button points at the latest release page. Sizes are approximate and from
-// the current release. Client-side JS highlights the visitor's detected OS.
+const fmtSize = (bytes: number): string =>
+  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+// Resolve a download button to the matching latest-release asset (direct URL +
+// real size), or fall back to the releases page with an approximate size.
+const dl = (test: (name: string) => boolean, fallbackSize: string) => {
+  const a = assets.find((x) => typeof x.name === 'string' && test(x.name.toLowerCase()));
+  return a
+    ? { href: a.browser_download_url, size: fmtSize(a.size) }
+    : { href: SITE.releasesLatest, size: fallbackSize };
+};
+
 const cards = [
   {
     icon: 'windows',
@@ -42,8 +55,8 @@ const cards = [
     match: 'win',
     requires: 'Windows 10 or later (x64)',
     install: 'Download the installer, run it, and launch MQLens from the Start menu.',
-    primary: { label: '.exe (recommended)', size: '~8 MB' },
-    secondary: { label: '.msi', size: '~12 MB' },
+    primary: { label: '.exe (recommended)', ...dl((n) => n.endsWith('.exe'), '~8 MB') },
+    secondary: { label: '.msi', ...dl((n) => n.endsWith('.msi'), '~12 MB') },
   },
   {
     icon: 'apple',
@@ -51,8 +64,8 @@ const cards = [
     match: 'mac',
     requires: 'macOS 11 (Big Sur) or later',
     install: 'Download the .dmg, open it, and drag MQLens to your Applications folder.',
-    primary: { label: '.dmg (Apple Silicon)', size: '~13 MB' },
-    secondary: { label: '.dmg (Intel)', size: '~14 MB' },
+    primary: { label: '.dmg (Apple Silicon)', ...dl((n) => n.endsWith('.dmg') && /(aarch64|arm64|aarch)/.test(n), '~13 MB') },
+    secondary: { label: '.dmg (Intel)', ...dl((n) => n.endsWith('.dmg') && /(x64|x86_64|intel)/.test(n), '~14 MB') },
   },
   {
     icon: 'linux',
@@ -60,8 +73,8 @@ const cards = [
     match: 'linux',
     requires: 'Ubuntu 20.04+, Fedora 36+, or equivalent (x64)',
     install: 'Debian/Ubuntu: install the .deb. Fedora/RHEL: install the .rpm. An AppImage is also available.',
-    primary: { label: '.deb (Ubuntu/Debian)', size: '~15 MB' },
-    secondary: { label: '.rpm (Fedora/RHEL)', size: '~15 MB' },
+    primary: { label: '.deb (Ubuntu/Debian)', ...dl((n) => n.endsWith('.deb'), '~15 MB') },
+    secondary: { label: '.rpm (Fedora/RHEL)', ...dl((n) => n.endsWith('.rpm'), '~15 MB') },
   },
 ];
 ---
@@ -92,11 +105,11 @@ const cards = [
         </div>
 
         <div class="dl-actions">
-          <a class="dl-btn dl-btn-primary" href={SITE.releasesLatest} target="_blank" rel="noopener">
+          <a class="dl-btn dl-btn-primary" href={c.primary.href} download target="_blank" rel="noopener">
             <span>{c.primary.label}</span>
             <span class="dl-size">{c.primary.size}</span>
           </a>
-          <a class="dl-btn dl-btn-secondary" href={SITE.releasesLatest} target="_blank" rel="noopener">
+          <a class="dl-btn dl-btn-secondary" href={c.secondary.href} download target="_blank" rel="noopener">
             <span>{c.secondary.label}</span>
             <span class="dl-size">{c.secondary.size}</span>
           </a>
