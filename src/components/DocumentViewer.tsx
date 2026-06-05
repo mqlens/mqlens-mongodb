@@ -13,21 +13,23 @@ import {
 } from '../lib/queryStore';
 import {
   Play, 
-  AlertCircle, 
-  Cpu, 
-  User, 
-  Server, 
-  Database, 
-  ChevronRight, 
-  ChevronUp, 
-  FolderOpen, 
+  AlertCircle,
+  Cpu,
+  User,
+  Server,
+  Database,
+  ChevronRight,
+  ChevronUp,
+  FolderOpen,
+  Layers,
   Save, 
   History, 
   Anchor, 
   ExternalLink, 
   Sparkles, 
   DatabaseZap, 
-  Trash2, 
+  Trash2,
+  Eraser,
   ArrowUpDown,
   Check,
   ChevronDown,
@@ -96,6 +98,8 @@ export function builderStateToQuery(state: BuilderState): GeneratedQuery {
 interface DocumentViewerProps {
   connectionId?: string;
   connectionName: string;
+  /** Auth username parsed from the connection URI; empty when the connection has no credentials. */
+  connectionUser?: string;
   databaseName: string;
   collectionName: string;
   onExecute: (query: { filter: string; sort: string; projection: string; limit: number; skip: number }) => void;
@@ -362,6 +366,7 @@ export const DocumentViewerContext = React.createContext<DocumentViewerContextTy
 export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   connectionId,
   connectionName,
+  connectionUser,
   databaseName,
   collectionName,
   onExecute,
@@ -1081,27 +1086,36 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       {/* 1. Breadcrumbs Bar */}
       <div className="mql-breadcrumbs">
         <div className="mql-bc-group">
-          <div className="mql-bc-item" style={{ color: 'var(--accent-blue)' }}>
-            <User size={12} />
-            <span style={{ fontWeight: 600 }}>cmi-dev-devesh</span>
+          <div
+            className="mql-bc-item"
+            style={{ color: connectionUser ? 'var(--accent-blue)' : 'var(--text-dim)' }}
+          >
+            <User size={12} className="flex-shrink-0" />
+            <span
+              className="truncate font-medium"
+              style={{ fontWeight: 600, fontStyle: connectionUser ? 'normal' : 'italic' }}
+              title={connectionUser ? `Authenticated as ${connectionUser}` : 'Connection has no authentication'}
+            >
+              {connectionUser || 'no auth'}
+            </span>
           </div>
           <ChevronRight size={10} className="text-[var(--text-dim)] flex-shrink-0" />
-          
+
           <div className="mql-bc-item">
             <Server size={12} className="text-[var(--accent-blue)] flex-shrink-0" />
-            <span className="truncate font-mono font-medium">{connectionName} ({connectionName}-user@4 servers)</span>
+            <span className="truncate font-mono font-medium" title={connectionName}>{connectionName}</span>
           </div>
           <ChevronRight size={10} className="text-[var(--text-dim)] flex-shrink-0" />
 
           <div className="mql-bc-item">
             <Database size={12} className="text-amber-500 flex-shrink-0" />
-            <span className="truncate font-semibold">{databaseName}</span>
+            <span className="truncate font-semibold" title={databaseName}>{databaseName}</span>
           </div>
           <ChevronRight size={10} className="text-[var(--text-dim)] flex-shrink-0" />
 
           <div className="mql-bc-item">
-            <FolderOpen size={12} className="text-emerald-500 flex-shrink-0" />
-            <span className="truncate font-mono font-medium">{collectionName}</span>
+            <Layers size={12} className="text-[var(--accent-green)] flex-shrink-0" />
+            <span className="truncate font-mono font-medium" title={collectionName}>{collectionName}</span>
           </div>
         </div>
 
@@ -1441,7 +1455,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                       className="query-plane-icon-btn mr-1"
                       title="Clear Filter"
                     >
-                      <Trash2 size={11} />
+                      <Eraser size={11} />
                     </button>
                   </div>
                 </div>
@@ -1472,7 +1486,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                       className="query-plane-icon-btn mr-1"
                       title="Clear Projection"
                     >
-                      <Trash2 size={11} />
+                      <Eraser size={11} />
                     </button>
                   </div>
 
@@ -1511,7 +1525,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                       className="query-plane-icon-btn mr-1"
                       title="Clear Sort"
                     >
-                      <Trash2 size={11} />
+                      <Eraser size={11} />
                     </button>
                   </div>
                 </div>
@@ -1535,7 +1549,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         className="query-plane-icon-btn mr-1"
                         title="Reset Skip"
                       >
-                        <Trash2 size={11} />
+                        <Eraser size={11} />
                       </button>
                     )}
                   </div>
@@ -1557,7 +1571,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         className="query-plane-icon-btn mr-1"
                         title="Reset Limit"
                       >
-                        <Trash2 size={11} />
+                        <Eraser size={11} />
                       </button>
                     )}
                   </div>

@@ -35,6 +35,7 @@ describe('DocumentViewer Component', () => {
     render(
       <DocumentViewer
         connectionName="test-conn"
+        connectionUser="app-user"
         databaseName="test-db"
         collectionName="test-coll"
         onExecute={mockOnExecute}
@@ -43,8 +44,8 @@ describe('DocumentViewer Component', () => {
       />
     );
 
-    // Verify breadcrumbs
-    expect(screen.getByText('cmi-dev-devesh')).toBeInTheDocument();
+    // Verify breadcrumbs — the user crumb is driven by the connectionUser prop
+    expect(screen.getByText('app-user')).toBeInTheDocument();
     expect(screen.getByText(/test-conn/)).toBeInTheDocument();
     expect(screen.getByText('test-db')).toBeInTheDocument();
     expect(screen.getByText('test-coll')).toBeInTheDocument();

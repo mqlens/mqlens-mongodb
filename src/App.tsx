@@ -100,6 +100,16 @@ interface ActiveConnection {
   uri: string;
 }
 
+/** Extract the auth username from a MongoDB connection URI; '' when there are no credentials. */
+function usernameFromUri(uri: string): string {
+  try {
+    const { username } = new URL(uri);
+    return username ? decodeURIComponent(username) : '';
+  } catch {
+    return '';
+  }
+}
+
 const QUICK_START_TAB_ID = 'quickstart';
 
 const createQuickStartTab = (): QueryTab => ({
@@ -135,7 +145,7 @@ function Workspace() {
   } | null>(null);
   const [indexMutationTrigger, setIndexMutationTrigger] = useState(0);
   const [collectionMutationTrigger, setCollectionMutationTrigger] = useState(0);
-  const [sidebarWidth, setSidebarWidth] = useState(260);
+  const [sidebarWidth, setSidebarWidth] = useState(300);
   const [isResizing, setIsResizing] = useState(false);
 
   const startResizing = (mouseDownEvent: React.MouseEvent) => {
@@ -1342,10 +1352,12 @@ function Workspace() {
               {activeTab && activeTab.type === 'collection' && (() => {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
                 const connectionName = activeConnection ? activeConnection.name : 'cmi-dev';
+                const connectionUser = activeConnection ? usernameFromUri(activeConnection.uri) : '';
                 return (
                   <DocumentViewer
                     connectionId={activeTab.connectionId}
                     connectionName={connectionName}
+                    connectionUser={connectionUser}
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
                     onExecute={handleExecuteQuery}
