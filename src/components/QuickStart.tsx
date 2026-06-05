@@ -52,74 +52,81 @@ export const QuickStart: React.FC<QuickStartProps> = ({
 
   return (
     <div className="mql-quickstart" data-testid="quickstart-tab">
-      <div className="mql-qs-grid">
-        {/* Header on top */}
-        <header className="mql-qs-top">
-          <div className="mql-qs-brand">
-            <img src={brandMark} alt="MQLens" className="mql-qs-logo" />
-            <div>
-              <div className="mql-qs-brand-name">MQLens</div>
-              {version && <div className="mql-qs-brand-ver">v{version}</div>}
-            </div>
-          </div>
-          <div className="mql-qs-actions">
-            {isEmpty && (
-              <button className="mql-qs-btn is-ghost" data-testid="qs-load-sample" onClick={onLoadSampleData}>
-                <Download size={14} /> Load Sample Data
-              </button>
-            )}
-            <button className="mql-qs-btn is-primary" onClick={onConnect}>
-              <Plus size={14} /> New Connection
-            </button>
+      <div className="mql-qs-page">
+        {/* Hero */}
+        <header className="mql-qs-hero">
+          <img src={brandMark} alt="" className="mql-qs-logo" />
+          <div>
+            <h1 className="mql-qs-title">Welcome to MQLens</h1>
+            <p className="mql-qs-subtitle">
+              Browse clusters, inspect indexes, and run queries{version ? ` · v${version}` : ''}.
+            </p>
           </div>
         </header>
 
-        <div className="mql-qs-meta">
-          <div className="mql-qs-tips-row">
-            <span className="mql-qs-label">Tips</span>
-            <div className="mql-qs-tip"><kbd className="mql-qs-kbd">⌘ ↵</kbd><span>Run query</span></div>
-            <div className="mql-qs-tip"><kbd className="mql-qs-kbd">⌘ F</kbd><span>Search tree</span></div>
-            <div className="mql-qs-tip"><FolderOpen size={13} /><span>Open a collection for indexes &amp; plans</span></div>
-          </div>
-          <div className="mql-qs-rail-links">
-            <a className="mql-qs-link" href={DOCS_URL} target="_blank" rel="noreferrer">
-              Docs <ExternalLink size={11} />
-            </a>
-            <button className="mql-qs-link" onClick={onOpenSettings}>
-              <Settings size={11} /> Settings
-            </button>
-          </div>
-        </div>
+        <div className="mql-qs-cols">
+          {/* Left: connections */}
+          <section className="mql-qs-col">
+            <div className="mql-qs-conns-head">
+              <h2 className="mql-qs-h">Saved connections</h2>
+              {!isEmpty && <span className="mql-qs-count">{sorted.length} saved</span>}
+            </div>
+            <p className="mql-qs-coldesc">Reconnect to a saved cluster, or add a new one.</p>
 
-        {/* Saved connections below */}
-        <section className="mql-qs-conns">
-          <div className="mql-qs-conns-head">
-            <span className="mql-qs-label">Saved connections</span>
-            {!isEmpty && <span className="mql-qs-count">{sorted.length} saved</span>}
-          </div>
-
-          {isEmpty ? (
-            <div className="mql-qs-empty">
-              <div className="mql-qs-empty-ico"><Search size={22} /></div>
-              <div className="mql-qs-empty-title">No saved connections yet</div>
-              <div className="mql-qs-empty-sub">
-                Add a MongoDB cluster, or explore the built-in sample dataset — both are above.
+            {isEmpty ? (
+              <div className="mql-qs-empty">
+                <div className="mql-qs-empty-ico"><Search size={22} /></div>
+                <div className="mql-qs-empty-title">No saved connections yet</div>
+                <div className="mql-qs-empty-sub">
+                  Add a MongoDB cluster, or explore the built-in sample dataset.
+                </div>
               </div>
+            ) : (
+              <div className="mql-qs-conns-list">
+                {sorted.map((p) => (
+                  <ConnectionCard
+                    key={p.id}
+                    profile={p}
+                    connected={activeIds.has(p.id)}
+                    connecting={connectingId === p.id}
+                    onConnect={handleQuickConnect}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className="mql-qs-actions-list">
+              <button className="mql-qs-action" onClick={onConnect}>
+                <Plus size={16} /> <span>New Connection</span>
+              </button>
+              {isEmpty && (
+                <button className="mql-qs-action" data-testid="qs-load-sample" onClick={onLoadSampleData}>
+                  <Download size={16} /> <span>Load Sample Data</span>
+                </button>
+              )}
             </div>
-          ) : (
-            <div className="mql-qs-conns-list">
-              {sorted.map((p) => (
-                <ConnectionCard
-                  key={p.id}
-                  profile={p}
-                  connected={activeIds.has(p.id)}
-                  connecting={connectingId === p.id}
-                  onConnect={handleQuickConnect}
-                />
-              ))}
+          </section>
+
+          {/* Right: getting started */}
+          <aside className="mql-qs-col">
+            <h2 className="mql-qs-h">Getting started</h2>
+            <div className="mql-qs-tips">
+              <div className="mql-qs-tip"><kbd className="mql-qs-kbd">⌘ ↵</kbd><span>Run the current query</span></div>
+              <div className="mql-qs-tip"><kbd className="mql-qs-kbd">⌘ F</kbd><span>Search the sidebar tree</span></div>
+              <div className="mql-qs-tip"><FolderOpen size={14} /><span>Open a collection for indexes &amp; plans</span></div>
             </div>
-          )}
-        </section>
+
+            <a className="mql-qs-banner" href={DOCS_URL} target="_blank" rel="noreferrer">
+              <div className="mql-qs-banner-kicker">MQLens</div>
+              <div className="mql-qs-banner-title">Quick-start guide</div>
+              <div className="mql-qs-banner-sub">Docs, tips &amp; keyboard shortcuts <ExternalLink size={12} /></div>
+            </a>
+
+            <button className="mql-qs-action" onClick={onOpenSettings}>
+              <Settings size={16} /> <span>Settings</span>
+            </button>
+          </aside>
+        </div>
       </div>
     </div>
   );

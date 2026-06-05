@@ -88,8 +88,8 @@ describe('App Component', () => {
 
     // VaultGate resolves asynchronously — wait for workspace to mount.
     expect(await screen.findByTestId('quickstart-tab')).toBeInTheDocument();
-    // New two-column QuickStart: brand name + primary CTA text.
-    expect(screen.getByText('MQLens')).toBeInTheDocument();
+    // Quick Start welcome hero + primary CTA text.
+    expect(screen.getByText('Welcome to MQLens')).toBeInTheDocument();
     expect(screen.getByText('New Connection')).toBeInTheDocument();
 
     // Check Bottom status bar
