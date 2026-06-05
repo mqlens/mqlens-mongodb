@@ -7,6 +7,20 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
 }));
 
+// Monaco does not render a usable DOM under jsdom. The aggregation stage editor
+// (QueryEditor) wraps @monaco-editor/react, so mock it with a plain <textarea>
+// that round-trips value/onChange — this keeps the existing stage tests, which
+// drive `pipeline-stage-N textarea`, working against the real component shape.
+vi.mock('@monaco-editor/react', () => ({
+  default: ({ value, onChange, wrapperProps }: { value: string; onChange?: (v: string) => void; wrapperProps?: Record<string, unknown> }) => (
+    <textarea
+      data-testid={wrapperProps?.['data-testid'] as string | undefined}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+    />
+  ),
+}));
+
 describe('DocumentViewer Component', () => {
   const mockOnExecute = vi.fn();
   const mockOnExecuteAggregate = vi.fn();
@@ -41,6 +55,28 @@ describe('DocumentViewer Component', () => {
     expect(screen.getByText('Sort')).toBeInTheDocument();
     expect(screen.getByText('Skip')).toBeInTheDocument();
     expect(screen.getByText('Limit')).toBeInTheDocument();
+  });
+
+  it('renders Export/Import in the top toolbar and fires their handlers', () => {
+    const onOpenExport = vi.fn();
+    const onImport = vi.fn();
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={mockOnExecute}
+        onExplain={mockOnExplain}
+        onOpenExport={onOpenExport}
+        onImport={onImport}
+        loading={false}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(onOpenExport).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId('import-btn'));
+    expect(onImport).toHaveBeenCalledTimes(1);
   });
 
   it('performs JSON validation on typing', async () => {

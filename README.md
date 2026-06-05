@@ -17,6 +17,18 @@ queries actually do — from a single cross-platform desktop app.
 > indexes and views, analyze schemas, browse GridFS, and run an embedded
 > `mongosh` — with credentials encrypted behind a master password.
 
+## Demo
+
+![MQLens demo: connect to MongoDB, run a find, build an aggregation, and read an explain plan](assets/demo.gif)
+
+## Screenshots
+
+[![MQLens browsing MongoDB documents](website/public/screenshots/mqlens-documents.png)](website/public/screenshots/mqlens-documents.png)
+
+| Query tools | GridFS |
+| --- | --- |
+| [![MQLens visual query builder](website/public/screenshots/mqlens-visual-builder.png)](website/public/screenshots/mqlens-visual-builder.png) | [![MQLens GridFS browser](website/public/screenshots/mqlens-gridfs.png)](website/public/screenshots/mqlens-gridfs.png) |
+
 ## Features
 
 - **Connections** — standalone, replica set, or raw connection string; TLS
@@ -48,6 +60,33 @@ queries actually do — from a single cross-platform desktop app.
 - **Encrypted credentials** — a master password gates the app; connection
   profiles and settings are encrypted at rest with AES-256-GCM (Argon2id key
   derivation).
+
+## Install
+
+Grab the latest build for your OS from
+**[Releases](https://github.com/mqlens/mqlens-mongodb/releases/latest)**:
+
+- **macOS** — download the `.dmg` (Apple-notarized; Touch ID unlock supported).
+- **Windows** — download the `.msi` or `.exe` (signed via Azure Trusted Signing).
+- **Linux** — download the `.AppImage` (`chmod +x` and run) or install the `.deb`.
+
+No account, no sign-up, no telemetry.
+
+## MQLens vs. the alternatives
+
+| | MQLens | Compass | Studio 3T |
+|---|---|---|---|
+| Price | **Free (Apache-2.0)** | Free | Paid |
+| Engine | **Native (Tauri/Rust)** | Electron | Java |
+| All auth (X.509 / AWS / Kerberos / LDAP) | ✅ | partial | ✅ |
+| SSH tunnel / SOCKS5 proxy | ✅ | ❌ | ✅ |
+| Aggregation + explain tree | ✅ | ✅ | ✅ |
+| Embedded `mongosh` | ✅ | ✅ | ✅ |
+| AI query assistant (bring-your-own key) | ✅ | ✅ | partial |
+| Encrypted creds + biometric unlock | ✅ | ❌ | partial |
+| Telemetry | **None** | yes | yes |
+
+*Comparison reflects publicly documented behavior at time of writing; tools change — corrections welcome via an issue.*
 
 ## Tech stack
 

@@ -12,7 +12,8 @@ export const SITE = {
 } as const;
 
 export const NAV = [
-  { label: 'Features', href: '/#features' },
+  { label: 'Features', href: '/features/' },
+  { label: 'Gallery', href: '/#gallery' },
   { label: 'Docs', href: '/docs/' },
   { label: 'Changelog', href: '/changelog/' },
   { label: 'GitHub', href: SITE.repo, external: true },

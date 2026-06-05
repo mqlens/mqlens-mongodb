@@ -1,0 +1,214 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Download from '../components/Download.astro';
+import { SITE } from '../consts';
+
+const sections = [
+  {
+    id: 'connections',
+    nav: 'Connections',
+    title: 'Connect to any MongoDB',
+    body: 'Standalone, replica set, or raw connection string — with the TLS and network options real deployments need, and a connection test that tells you exactly where it failed.',
+    bullets: [
+      'TLS with system CA, custom CA file, or client certificate',
+      'SSH tunnel and SOCKS5 proxy for databases behind a bastion',
+      'Staged Test Connection: parse → DNS resolve → connect → ping',
+      'Configurable connect / server-selection timeouts',
+    ],
+    img: '/screenshots/mqlens-connection-manager.png',
+    alt: 'MQLens connection manager with a saved local MongoDB connection',
+  },
+  {
+    id: 'auth',
+    nav: 'Auth',
+    title: 'Every authentication mechanism',
+    body: 'The full auth matrix you usually only get in paid tools — with the correct $external plumbing handled for you.',
+    bullets: [
+      'SCRAM-SHA-1 and SCRAM-SHA-256',
+      'X.509 client certificates',
+      'MONGODB-AWS (IAM, including session token)',
+      'GSSAPI / Kerberos and LDAP (PLAIN)',
+    ],
+    img: '/screenshots/mqlens-new-connection.png',
+    alt: 'MQLens new connection dialog configured for a local MongoDB',
+  },
+  {
+    id: 'query',
+    nav: 'Query',
+    title: 'Query visually or in code',
+    body: 'Run find with full controls and build queries with a visual builder — without ever losing the editable raw query.',
+    bullets: [
+      'Filter, sort, projection, skip, limit, and pagination',
+      'Visual query builder with rule-based filters',
+      'Switch between the builder and the raw query freely',
+    ],
+    img: '/screenshots/mqlens-visual-builder.png',
+    alt: 'MQLens visual query builder beside MongoDB documents',
+  },
+  {
+    id: 'explain',
+    nav: 'Explain',
+    title: 'Explain plans & index management',
+    body: 'Understand what a query actually does — for both find and full aggregation pipelines — and manage the indexes that make it fast.',
+    bullets: [
+      'Visual explain-plan tree for find and aggregate',
+      'Create, inspect, and drop indexes with real key patterns',
+      'See unique / sparse flags and operational status',
+      'Create, drop, and rename collections, databases, and views',
+    ],
+    img: '/screenshots/mqlens-index-detail.png',
+    alt: 'MQLens index detail view with definition and raw BSON metadata',
+  },
+  {
+    id: 'documents',
+    nav: 'Documents',
+    title: 'Browse and edit data — safely',
+    body: 'Inspect documents as a table, tree, or JSON, and make changes with guardrails so a bulk operation never touches more than you intended.',
+    bullets: [
+      'View, insert, edit, and delete documents',
+      'Guarded bulk update-many / delete-many with a counted confirmation',
+      'Schema analysis: per-field types and coverage, including nested paths',
+    ],
+    img: '/screenshots/mqlens-documents.png',
+    alt: 'MQLens browsing MongoDB customer documents',
+  },
+  {
+    id: 'gridfs',
+    nav: 'GridFS',
+    title: 'GridFS & import / export',
+    body: 'Work with file storage and move data in and out — including large, full-collection jobs that run in the background.',
+    bullets: [
+      'Browse GridFS buckets and download stored files',
+      'Import and export JSON and CSV',
+      'Full-collection background exports',
+    ],
+    img: '/screenshots/mqlens-gridfs.png',
+    alt: 'MQLens GridFS browser showing files in a bucket',
+  },
+  {
+    id: 'mongosh',
+    nav: 'mongosh',
+    title: 'Embedded mongosh',
+    body: 'For the moments a GUI cannot reach, drop into a real shell — backed by an actual mongosh binary — without leaving the workspace.',
+    bullets: [
+      'Real mongosh, not a re-implementation',
+      'Run ad-hoc commands and inspect returned documents inline',
+      'Stay in the same connected workspace',
+    ],
+    img: '/screenshots/mqlens-mongosh.png',
+    alt: 'MQLens embedded mongosh shell',
+  },
+  {
+    id: 'ai',
+    nav: 'AI',
+    title: 'AI query assistant',
+    body: 'Describe what you want in plain language and get MQL back — with the generated query always visible and editable.',
+    bullets: [
+      'Natural language → MQL',
+      'Your choice of provider: Anthropic, OpenAI, Gemini, or local agent CLIs',
+      'Bring your own key — it stays in the backend, out of the frontend',
+    ],
+    img: '/screenshots/mqlens-ai-assistant.png',
+    alt: 'MQLens AI query assistant panel beside MongoDB documents',
+  },
+  {
+    id: 'security',
+    nav: 'Security',
+    title: 'Private by design',
+    body: 'Your credentials never sit in plaintext and nothing phones home — privacy is built into the architecture, not bolted on.',
+    bullets: [
+      'Connection profiles encrypted at rest with AES-256-GCM (Argon2id key derivation)',
+      'Gated behind a master password, with Touch ID unlock on macOS',
+      'Disabling TLS validation is explicit and warned — never silent',
+      'Zero telemetry',
+    ],
+    img: '/screenshots/mqlens-connection-manager.png',
+    alt: 'MQLens connection manager showing a saved connection profile and metadata',
+  },
+];
+---
+
+<BaseLayout
+  title="Features — every MongoDB workflow in one native GUI"
+  description="MQLens features: every auth mode, TLS/SSH/SOCKS5, visual query builder, aggregation pipelines with explain plans, bulk edit, schema analysis, GridFS, embedded mongosh, an AI query assistant, and an encrypted local vault — free and native.">
+  <section class="page-head">
+    <div class="container">
+      <span class="eyebrow">Features</span>
+      <h1>Everything {SITE.name} does</h1>
+      <p class="lede">A full-power MongoDB GUI in a tiny native app — the connection coverage, query tooling, and safety features you usually pay for, free and private.</p>
+      <nav class="feature-nav" aria-label="Jump to feature">
+        {sections.map((s) => <a href={`#${s.id}`}>{s.nav}</a>)}
+      </nav>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <div class="feature-rows">
+        {sections.map((s) => (
+          <article class="feature-row" id={s.id}>
+            <div class="feature-text">
+              <h2>{s.title}</h2>
+              <p>{s.body}</p>
+              <ul class="feature-bullets">
+                {s.bullets.map((b) => <li>{b}</li>)}
+              </ul>
+            </div>
+            <a class="feature-media" href={s.img} target="_blank" rel="noopener" aria-label={`Open full-size screenshot: ${s.title}`}>
+              <img src={s.img.replace('.png', '.webp')} alt={s.alt} loading="lazy" decoding="async" width="1600" height="1000" />
+            </a>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="section-tight" id="download">
+    <div class="container">
+      <div class="sec-head">
+        <span class="eyebrow">Download</span>
+        <h2>Get {SITE.name}</h2>
+        <p>Free, open source, and yours to inspect. macOS, Windows, and Linux.</p>
+      </div>
+      <Download />
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    padding: 72px 0 8px;
+    text-align: center;
+    background:
+      radial-gradient(1000px 420px at 50% -120px, hsla(200, 90%, 50%, 0.16), transparent 70%);
+  }
+  .page-head h1 { font-size: clamp(2rem, 5vw, 3.1rem); margin: 18px 0 0; letter-spacing: -0.025em; }
+  .page-head .lede { color: var(--text-dim); font-size: 1.1rem; max-width: 640px; margin: 18px auto 0; line-height: 1.7; }
+
+  .feature-nav {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin: 34px auto 0;
+    max-width: 760px;
+  }
+  .feature-nav a {
+    padding: 7px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    background: var(--bg-card);
+  }
+  .feature-nav a:hover { border-color: var(--accent); color: var(--accent-bright); text-decoration: none; }
+
+  /* Offset anchor targets for the sticky nav */
+  .feature-row { scroll-margin-top: 90px; }
+  .feature-text h2 { font-size: clamp(1.4rem, 2.6vw, 1.95rem); margin: 0 0 14px; letter-spacing: -0.02em; }
+
+  .sec-head { text-align: center; max-width: 640px; margin: 0 auto 36px; }
+  .sec-head h2 { font-size: clamp(1.6rem, 3.5vw, 2.2rem); margin: 12px 0 0; }
+  .sec-head p { color: var(--text-dim); margin-top: 14px; }
+</style>

@@ -5,6 +5,7 @@ import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, Sparkles, Terminal }
 import { AIChatPanel } from './AIChatPanel';
 import { buildRunnableCommand, guardScriptRun, type GeneratedQuery } from '../lib/mongoCommand';
 import { DataGrid } from './DataGrid';
+import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
 
 type ShellTab = 'console' | 'viewer';
 
@@ -220,6 +221,18 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const wrapRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<() => void>(() => {});
   const autoRunRef = useRef(false);
+  // Tracks the latest result docs so the Monaco completion provider (registered
+  // once in onMount) can derive field names from the current results.
+  const viewerRef = useRef<{ docs: Record<string, any>[] } | null>(null);
+  // Collection names for the current db, for `db.<coll>` completions in the shell.
+  const collectionsRef = useRef<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    invoke<Array<{ name: string }>>('list_collections', { id: connectionId, db: currentDb })
+      .then((cols) => { if (alive) collectionsRef.current = cols.map((c) => c.name); })
+      .catch(() => { if (alive) collectionsRef.current = []; });
+    return () => { alive = false; };
+  }, [connectionId, currentDb]);
 
   useEffect(() => {
     setCommand(defaultCommand);
@@ -542,6 +555,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   };
 
   runRef.current = () => runCommand();
+  viewerRef.current = viewer;
 
   useEffect(() => {
     if (!initialCommand || autoRunRef.current || !sessionAttempted || !sessionId) return;
@@ -657,10 +671,39 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               automaticLayout: true,
               tabSize: 2,
               contextmenu: false,
+              // Enter accepts an open suggestion; otherwise inserts a newline.
+              acceptSuggestionOnEnter: 'on',
             }}
             onMount={(editor, monaco) => {
-              editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runRef.current());
+              // Enter accepts an open suggestion, else newline. Ctrl/Cmd+Enter
+              // runs — scoped via onKeyDown (not addCommand, which leaks globally).
+              editor.onKeyDown((e) => {
+                if ((e.ctrlKey || e.metaKey) && e.keyCode === monaco.KeyCode.Enter) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  runRef.current();
+                }
+              });
               editor.focus();
+              registerMongoCompletionProvider(monaco);
+              const model = editor.getModel();
+              if (model) {
+                const uri = model.uri.toString();
+                setModelMeta(uri, {
+                  surface: 'shell',
+                  getFields: () => {
+                    const docs = viewerRef.current?.docs ?? [];
+                    const keys = new Set<string>(['_id']);
+                    docs.forEach((d) => {
+                      if (d && typeof d === 'object') Object.keys(d).forEach((k) => keys.add(k));
+                    });
+                    return Array.from(keys);
+                  },
+                  getSchema: () => undefined,
+                  getCollections: () => collectionsRef.current,
+                });
+                editor.onDidDispose(() => clearModelMeta(uri));
+              }
             }}
             loading={
               <div className="mql-shell-monaco-loading">

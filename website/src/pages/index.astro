@@ -3,163 +3,153 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import Download from '../components/Download.astro';
 import { SITE } from '../consts';
 
-const features = [
+const featureBlocks = [
   {
-    // Lucide: cable
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a1 1 0 0 1-1-1v-1a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1a1 1 0 0 1-1 1"/><path d="M19 15V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V9"/><path d="M21 21v-2h-4"/><path d="M3 5h4V3"/><path d="M7 5a1 1 0 0 1 1 1v1a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1V3"/></svg>',
-    title: 'Every connection mode',
-    body: 'Standalone, replica set, or raw connection string. TLS with system CA, custom CA, or client certificate; SSH tunnel; SOCKS5 proxy. A staged Test Connection reports each real phase: parse → DNS → connect → ping.',
+    title: 'Connect to anything',
+    body: 'Standalone, replica set, or connection string — with every auth mechanism and the network plumbing real deployments actually need.',
+    bullets: [
+      'All auth modes: SCRAM, X.509, MONGODB-AWS (IAM), Kerberos, and LDAP — with the correct $external handling',
+      'TLS (system / custom CA, client cert), SSH tunnel, and SOCKS5 proxy',
+      'Staged Test Connection reports each real phase: parse → DNS → connect → ping',
+    ],
+    img: '/screenshots/mqlens-connection-manager.png',
+    alt: 'MQLens connection manager with a saved local MongoDB connection',
   },
   {
-    // Lucide: shield-check
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>',
-    title: 'All the auth mechanisms',
-    body: 'SCRAM-SHA-1/256, X.509, MONGODB-AWS (IAM with session token), GSSAPI/Kerberos, and LDAP (PLAIN) — with the correct $external plumbing.',
+    title: 'Query and aggregate — visually or in code',
+    body: 'Run find with full controls, build queries with a visual builder, and compose complete aggregation pipelines without leaving the raw view.',
+    bullets: [
+      'Filter, sort, projection, skip, limit, and pagination',
+      'Visual query builder alongside the editable raw query',
+      'Full aggregation pipelines',
+    ],
+    img: '/screenshots/mqlens-visual-builder.png',
+    alt: 'MQLens visual query builder beside MongoDB documents',
   },
   {
-    // Lucide: search
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>',
-    title: 'Query & aggregate',
-    body: 'find with filter, sort, projection, skip, limit and pagination. A visual query builder, full aggregation pipelines, and explain plans for both find and aggregate rendered as a visual plan tree.',
+    title: 'See exactly what your query does',
+    body: 'Explain plans for both find and aggregate, rendered as a visual tree — plus full index, collection, and view management.',
+    bullets: [
+      'Visual explain-plan tree for find and aggregate',
+      'Create, inspect, and drop indexes with real key patterns and unique / sparse flags',
+      'Create, drop, and rename collections and databases, and build aggregation-backed views',
+    ],
+    img: '/screenshots/mqlens-index-detail.png',
+    alt: 'MQLens index detail view with definition and raw BSON metadata',
   },
   {
-    // Lucide: square-pen
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>',
-    title: 'Edit documents — in bulk',
-    body: 'View, insert, edit, and delete documents. Run update-many / delete-many by filter with a counted, guarded confirmation so you never touch more than you meant to.',
+    title: 'Browse and edit data — safely',
+    body: 'Inspect documents as a table, tree, or JSON, and make changes with guardrails so you never touch more than you meant to.',
+    bullets: [
+      'View, insert, edit, and delete documents',
+      'Guarded bulk update-many / delete-many with a counted confirmation',
+      'Schema analysis: per-field types and coverage, including nested paths',
+    ],
+    img: '/screenshots/mqlens-documents.png',
+    alt: 'MQLens browsing MongoDB customer documents',
   },
   {
-    // Lucide: list-tree
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/><path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/></svg>',
-    title: 'Indexes, collections & views',
-    body: 'Create, inspect, and drop indexes with real key patterns and unique/sparse flags. Create, drop, and rename collections and databases, and build aggregation-backed views.',
-  },
-  {
-    // Lucide: git-branch
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>',
-    title: 'Schema analysis',
-    body: 'Sample a collection and see per-field types and presence/coverage — including nested paths — to understand what your data actually looks like.',
-  },
-  {
-    // Lucide: folder-tree
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M3 5a2 2 0 0 0 2 2h3"/><path d="M3 3v13a2 2 0 0 0 2 2h3"/></svg>',
-    title: 'GridFS & import/export',
-    body: 'Browse files in a GridFS bucket and download them to disk. Import and export JSON and CSV, including full-collection background exports.',
-  },
-  {
-    // Lucide: square-terminal
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>',
-    title: 'Embedded mongosh',
-    body: 'A real shell backed by an actual mongosh binary, right inside the app — for the moments a GUI cannot reach.',
-  },
-  {
-    // Lucide: sparkles
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg>',
-    title: 'AI query assistant',
-    body: 'Natural language → MQL, with your choice of provider (Anthropic, OpenAI, Gemini, or local agent CLIs). The API key stays in the backend, out of the frontend.',
+    title: 'Power tools: GridFS, mongosh, and AI',
+    body: 'The extras that round out real workflows — embedded shell, file storage, and an optional AI assistant — without leaving the app.',
+    bullets: [
+      'Browse and download GridFS files; import / export JSON & CSV with background tasks',
+      'Embedded mongosh backed by a real mongosh binary',
+      'AI query assistant with your own provider key, held in the backend',
+    ],
+    img: '/screenshots/mqlens-mongosh.png',
+    alt: 'MQLens embedded mongosh shell',
   },
 ];
 
-// Literal braces/quotes here would be parsed as Astro/JSX expressions in markup,
-// so the query and result JSON are authored as strings and injected via set:html.
-const heroQuery =
-  'db.orders.find(<span class="tok-p">&#123;</span> <span class="tok-key">status</span><span class="tok-p">:</span> <span class="tok-str">"shipped"</span> <span class="tok-p">&#125;</span>)<span class="tok-p">.</span>sort(<span class="tok-p">&#123;</span> <span class="tok-key">createdAt</span><span class="tok-p">:</span> <span class="tok-num">-1</span> <span class="tok-p">&#125;</span>)';
+const screenshots = [
+  {
+    src: '/screenshots/mqlens-quick-start.png',
+    alt: 'MQLens quick start screen with connection and settings cards',
+    title: 'Start from a clean workspace',
+    body: 'The first screen gets users straight to connecting a MongoDB database or tuning settings.',
+  },
+  {
+    src: '/screenshots/mqlens-ai-assistant.png',
+    alt: 'MQLens AI query assistant panel beside MongoDB customer documents',
+    title: 'Ask for MQL in plain language',
+    body: 'Draft queries with the AI assistant while keeping the generated query visible and editable.',
+  },
+  {
+    src: '/screenshots/mqlens-schema.png',
+    alt: 'MQLens schema analysis showing per-field types and coverage',
+    title: 'Analyze your schema',
+    body: 'Sample a collection to see per-field types and presence/coverage at a glance.',
+  },
+  {
+    src: '/screenshots/mqlens-tree.png',
+    alt: 'MQLens documents shown in an expandable tree view with field types',
+    title: 'Explore documents as a tree',
+    body: 'Drill into nested fields with a typed tree view — or switch to table or raw JSON.',
+  },
+  {
+    src: '/screenshots/mqlens-json.png',
+    alt: 'MQLens documents rendered as syntax-highlighted JSON',
+    title: 'Read raw JSON',
+    body: 'Inspect documents as syntax-highlighted JSON with ObjectId and ISODate types.',
+  },
+  {
+    src: '/screenshots/mqlens-gridfs.png',
+    alt: 'MQLens GridFS browser showing files in the mqlens_demo fs bucket',
+    title: 'Manage GridFS files',
+    body: 'Browse GridFS buckets and download stored files from the same database tree.',
+  },
+];
 
-const heroDoc = `<span class="tok-p">&#123;</span>
-  <span class="tok-key">_id</span><span class="tok-p">:</span> <span class="tok-fn">ObjectId</span><span class="tok-p">(</span><span class="tok-str">"66f1a2c4e9b…"</span><span class="tok-p">)</span><span class="tok-p">,</span>
-  <span class="tok-key">status</span><span class="tok-p">:</span> <span class="tok-str">"shipped"</span><span class="tok-p">,</span>
-  <span class="tok-key">total</span><span class="tok-p">:</span> <span class="tok-num">248.50</span><span class="tok-p">,</span>
-  <span class="tok-key">paid</span><span class="tok-p">:</span> <span class="tok-bool">true</span><span class="tok-p">,</span>
-  <span class="tok-key">items</span><span class="tok-p">:</span> <span class="tok-p">[</span> <span class="tok-num">3</span> <span class="tok-p">]</span><span class="tok-p">,</span>
-  <span class="tok-key">shippedAt</span><span class="tok-p">:</span> <span class="tok-fn">ISODate</span><span class="tok-p">(</span><span class="tok-str">"2026-05-31"</span><span class="tok-p">)</span>
-<span class="tok-p">&#125;</span>`;
 ---
 
 <BaseLayout>
   <!-- Hero -->
   <section class="hero">
-    <div class="container hero-inner">
-      <span class="eyebrow">Open source · {SITE.license}</span>
-      <h1>The MongoDB GUI<br />that does it all.<span class="grad">Free, native, and private.</span></h1>
-      <p class="lede">
-        {SITE.name} is a full-power MongoDB GUI — every auth mode, TLS/SSH/proxy,
-        aggregation pipelines with explain plans, bulk edit, schema analysis, GridFS,
-        an embedded <code>mongosh</code>, and an AI query assistant — in a tiny native
-        app (Tauri/Rust, not Electron). Credentials stay encrypted on your machine.
-        Apache-2.0, $0.
-      </p>
-      <div class="hero-cta">
-        <a class="btn btn-primary" href="#download">Download for free</a>
-        <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">Star on GitHub ★</a>
-      </div>
-      <div class="app-mock" role="img" aria-label="MQLens querying a prod-cluster: db.orders.find({ status: 'shipped' }) returning a shipped order document with an IXSCAN explain plan">
-        <div class="app-mock-chrome">
-          <div class="app-mock-dots" aria-hidden="true">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-amber"></span>
-            <span class="dot dot-green"></span>
-          </div>
-          <div class="app-mock-title">
-            <span class="am-title-name">MQLens</span>
-            <span class="am-title-sep">·</span>
-            <span class="am-title-live"><span class="am-live-dot"></span> prod-cluster · replica set</span>
-          </div>
+    <div class="container hero-grid">
+      <div class="hero-copy">
+        <span class="hero-badge">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Tiny native app · macOS · Windows · Linux
+        </span>
+        <h1>The MongoDB GUI that does it all.<span class="grad">Free, native, and private.</span></h1>
+        <p class="lede">
+          Every auth mode, TLS/SSH/proxy, aggregation pipelines with explain plans,
+          bulk edit, schema analysis, GridFS, an embedded <code>mongosh</code>, and an
+          AI query assistant — in a tiny native app (Tauri/Rust, not Electron).
+          Credentials stay encrypted on your machine.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#download">Download for free</a>
+          <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">View on GitHub</a>
         </div>
-        <div class="app-mock-body">
-          <aside class="app-mock-side">
-            <div class="am-side-conn"><span class="am-conn-dot"></span> prod-cluster</div>
-            <div class="am-tree">
-              <div class="am-node am-node-db">
-                <span class="am-db-glyph"></span>
-                <span class="am-caret">▾</span> ecommerce <span class="am-count">· 6</span>
-              </div>
-              <div class="am-children">
-                <div class="am-coll"><span class="am-coll-name">users</span><span class="am-docs">1.2k</span></div>
-                <div class="am-coll is-active"><span class="am-coll-name">orders</span><span class="am-docs">248</span></div>
-                <div class="am-index"><span class="am-idx-glyph">⚿</span> status_-1_createdAt_-1</div>
-                <div class="am-coll"><span class="am-coll-name">products</span><span class="am-docs">89</span></div>
-              </div>
-              <div class="am-node am-node-db">
-                <span class="am-db-glyph"></span>
-                <span class="am-caret">▸</span> analytics
-              </div>
-            </div>
-          </aside>
-          <div class="app-mock-main">
-            <div class="main-tabs" role="tablist">
-              <span class="tab is-active">Documents <span class="tab-pill">248</span></span>
-              <span class="tab">Aggregation</span>
-              <span class="tab">Explain</span>
-              <span class="tab">Indexes</span>
-            </div>
-            <div class="query-bar">
-              <div class="am-seg" aria-hidden="true">
-                <span class="am-seg-item is-active">Find</span>
-                <span class="am-seg-item">Aggregate</span>
-              </div>
-              <code class="query-code" set:html={heroQuery}></code>
-              <button class="am-run" type="button" aria-hidden="true">Run</button>
-            </div>
-            <pre class="result-json"><code set:html={heroDoc}></code></pre>
-            <div class="am-status">
-              <span class="am-status-left">248 documents <span class="am-status-sep">·</span> 12 ms</span>
-              <span class="explain-chip">IXSCAN <span class="chip-sep">·</span> 1,204 examined <span class="chip-sep">·</span> 1,204 returned</span>
-            </div>
-          </div>
-        </div>
+        <p class="hero-note">Free &amp; open source (Apache-2.0) · No telemetry · No account.</p>
       </div>
-      <div class="hero-meta">
-        <span>✓ macOS · Windows · Linux</span>
-        <span>✓ GPG-signed &amp; notarized builds</span>
-        <span>✓ No telemetry</span>
+      <div class="hero-shot">
+        <video
+          autoplay
+          muted
+          loop
+          playsinline
+          preload="metadata"
+          poster="/demo-poster.jpg"
+          width="1280"
+          height="822"
+          aria-label="MQLens demo: connect to MongoDB, run a find, build an aggregation, and read an explain plan"
+        >
+          <source src="/demo.mp4" type="video/mp4" />
+        </video>
       </div>
     </div>
   </section>
 
   <!-- Download -->
-  <section class="section-tight">
+  <section class="section-tight" id="download">
     <div class="container">
-      <h2 class="dl-heading">Download {SITE.name}</h2>
+      <div class="sec-head">
+        <span class="eyebrow">Download</span>
+        <h2>Download {SITE.name}</h2>
+        <p>Free and open source — no account, no email, no telemetry. Just download and connect.</p>
+      </div>
       <Download />
     </div>
   </section>
@@ -172,13 +162,44 @@ const heroDoc = `<span class="tok-p">&#123;</span>
         <h2>Everything you need to work with MongoDB</h2>
         <p>One cross-platform desktop app — no Atlas account required, no cloud round-trip for your data.</p>
       </div>
-      <div class="feat-grid">
-        {features.map((f) => (
-          <article class="feat-card">
-            <span class="feat-icon" set:html={f.icon} aria-hidden="true"></span>
-            <h3>{f.title}</h3>
-            <p>{f.body}</p>
+      <div class="feature-rows">
+        {featureBlocks.map((f) => (
+          <article class="feature-row">
+            <div class="feature-text">
+              <h3>{f.title}</h3>
+              <p>{f.body}</p>
+              <ul class="feature-bullets">
+                {f.bullets.map((b) => <li>{b}</li>)}
+              </ul>
+            </div>
+            <a class="feature-media" href={f.img} target="_blank" rel="noopener" aria-label={`Open full-size screenshot: ${f.title}`}>
+              <img src={f.img.replace('.png', '.webp')} alt={f.alt} loading="lazy" decoding="async" width="1600" height="1000" />
+            </a>
           </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Gallery -->
+  <section class="section gallery" id="gallery">
+    <div class="container">
+      <div class="sec-head">
+        <span class="eyebrow">Gallery</span>
+        <h2>More of the workspace</h2>
+        <p>Captured from the running desktop app against a seeded local MongoDB database — quick start, the AI assistant, schema analysis, the tree and JSON views, and GridFS.</p>
+      </div>
+      <div class="shot-grid">
+        {screenshots.map((shot) => (
+          <figure class="shot-card">
+            <a href={shot.src} target="_blank" rel="noopener" aria-label={`Open full-size screenshot: ${shot.title}`}>
+              <img src={shot.src.replace('.png', '.webp')} alt={shot.alt} loading="lazy" decoding="async" width="1600" height="1000" />
+            </a>
+            <figcaption>
+              <strong>{shot.title}</strong>
+              <span>{shot.body}</span>
+            </figcaption>
+          </figure>
         ))}
       </div>
     </div>
@@ -216,24 +237,44 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
 
 <style>
   .hero {
-    padding: 96px 0 88px;
+    padding: 84px 0 80px;
     background:
-      radial-gradient(1100px 480px at 50% -140px, hsla(200, 90%, 50%, 0.20), transparent 70%),
-      radial-gradient(900px 460px at 92% 120%, hsla(268, 85%, 65%, 0.12), transparent 70%);
+      radial-gradient(1100px 520px at 80% -120px, hsla(200, 90%, 50%, 0.18), transparent 70%),
+      radial-gradient(800px 460px at 6% 130%, hsla(268, 85%, 65%, 0.10), transparent 70%);
     border-bottom: 1px solid var(--border);
   }
-  .hero-inner { text-align: center; max-width: 900px; margin: 0 auto; }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.12fr;
+    gap: 56px;
+    align-items: center;
+  }
+  .hero-copy { text-align: left; }
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .hero-badge svg { color: var(--accent-bright); }
   .hero h1 {
-    font-size: clamp(2.3rem, 6vw, 3.6rem);
+    font-size: clamp(2rem, 4vw, 3.3rem);
     line-height: 1.08;
     letter-spacing: -0.025em;
-    margin: 26px 0 0;
+    margin: 22px 0 0;
     font-weight: 700;
     text-wrap: balance;
+    overflow-wrap: break-word;
   }
   .grad {
     display: block;
-    margin-top: 0.22em;
+    margin-top: 0.18em;
     line-height: 1.1;
     padding-bottom: 0.08em;
     background: linear-gradient(100deg, var(--accent-bright), var(--accent-teal));
@@ -241,11 +282,76 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
     background-clip: text;
     color: transparent;
   }
-  .lede { font-size: 1.12rem; line-height: 1.72; color: var(--text-dim); margin: 30px auto 0; max-width: 640px; }
-  .hero-cta { display: flex; gap: 12px; justify-content: center; margin-top: 38px; flex-wrap: wrap; }
-  .hero-meta {
-    display: flex; gap: 22px; justify-content: center; flex-wrap: wrap;
-    margin-top: 28px; color: var(--text-dim); font-size: 0.9rem;
+  .lede { font-size: 1.08rem; line-height: 1.7; color: var(--text-dim); margin: 22px 0 0; max-width: 540px; }
+  .hero-cta { display: flex; gap: 12px; justify-content: flex-start; margin-top: 30px; flex-wrap: wrap; }
+  .hero-note { color: var(--text-faint); font-size: 0.88rem; margin: 16px 0 0; }
+  .hero-shot {
+    display: block;
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--bg-card);
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+  }
+  .hero-shot img,
+  .hero-shot video {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  @media (max-width: 900px) {
+    .hero { padding: 52px 0 56px; }
+    .hero-grid { grid-template-columns: 1fr; gap: 34px; }
+    .hero-copy { text-align: center; }
+    .hero h1 { font-size: clamp(1.9rem, 7vw, 2.9rem); }
+    .lede { margin-left: auto; margin-right: auto; }
+    .hero-cta { justify-content: center; }
+  }
+
+  .gallery {
+    padding-top: 72px;
+    background: linear-gradient(180deg, rgba(14, 23, 32, 0.72), rgba(7, 12, 18, 0));
+  }
+  .shot-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 34px;
+  }
+  .shot-card {
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-card);
+  }
+  .shot-card a {
+    display: block;
+  }
+  .shot-card a:hover {
+    text-decoration: none;
+  }
+  .shot-card img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-bottom: 1px solid var(--border);
+  }
+  .shot-card figcaption {
+    display: grid;
+    gap: 8px;
+    padding: 16px;
+  }
+  .shot-card strong {
+    color: var(--text);
+    font-size: 1rem;
+  }
+  .shot-card span {
+    color: var(--text-dim);
+    line-height: 1.55;
+    font-size: 0.94rem;
   }
 
   .dl-heading { text-align: center; margin: 0 0 28px; font-size: 1.6rem; }
@@ -254,21 +360,6 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
   .sec-head h2 { font-size: clamp(1.8rem, 4vw, 2.4rem); margin: 12px 0 0; }
   .sec-head p { color: var(--text-dim); margin-top: 14px; }
 
-  .feat-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 18px;
-  }
-  .feat-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 24px;
-    transition: border-color 0.15s ease, transform 0.08s ease;
-  }
-  .feat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
-  .feat-card h3 { margin: 0 0 10px; font-size: 1.12rem; }
-  .feat-card p { margin: 0; color: var(--text-dim); font-size: 0.95rem; }
 
   .security { background: var(--bg-soft); border-block: 1px solid var(--border); }
   .sec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
@@ -283,5 +374,22 @@ gpg --verify MQLens_0.1.0_amd64.deb.asc \
 
   @media (max-width: 820px) {
     .sec-grid { grid-template-columns: 1fr; gap: 28px; }
+    .shot-grid { grid-template-columns: 1fr; }
   }
 </style>
+
+<script>
+  // Respect prefers-reduced-motion: swap the autoplaying hero video for its static poster.
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.querySelectorAll<HTMLVideoElement>('.hero-shot video').forEach((v) => {
+      v.pause();
+      const img = document.createElement('img');
+      img.src = v.getAttribute('poster') || '';
+      img.alt = v.getAttribute('aria-label') || '';
+      img.width = 1280;
+      img.height = 822;
+      img.decoding = 'async';
+      v.replaceWith(img);
+    });
+  }
+</script>

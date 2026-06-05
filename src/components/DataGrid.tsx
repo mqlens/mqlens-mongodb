@@ -1,7 +1,9 @@
 import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Download, Upload, Table2 } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3 } from 'lucide-react';
+import { ChartView } from './ChartView';
+import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { EJSON, ObjectId, Long, Decimal128, Int32, Double, Binary, Timestamp } from 'bson';
 
 interface DataGridProps {
@@ -13,9 +15,8 @@ interface DataGridProps {
   queryCode?: string | null;
   onInsertDocument?: () => void;
   onEditDocument?: (doc: Record<string, any>) => void;
+  onDuplicateDocument?: (doc: Record<string, any>) => void;
   onDeleteDocument?: (doc: Record<string, any>) => void;
-  onOpenExport?: () => void;
-  onImport?: () => void;
   onAnalyzeSchema?: () => void;
   onUpdateMany?: () => void;
   onDeleteMany?: () => void;
@@ -28,7 +29,7 @@ interface DataGridProps {
   onPageSizeChange?: (newLimit: number) => void;
 }
 
-type ViewMode = 'table' | 'tree' | 'json';
+type ViewMode = 'table' | 'tree' | 'json' | 'chart';
 
 interface ExplainNode {
   name: string;
@@ -323,9 +324,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   queryCode = null,
   onInsertDocument,
   onEditDocument,
+  onDuplicateDocument,
   onDeleteDocument,
-  onOpenExport,
-  onImport,
   onAnalyzeSchema,
   onUpdateMany,
   onDeleteMany,
@@ -337,6 +337,44 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onPageChange,
   onPageSizeChange,
 }) => {
+  // Right-click context menu shared by all result views (Table / Tree / JSON).
+  const [ctxMenu, setCtxMenu] = useState<
+    { x: number; y: number; doc: Record<string, any>; field?: string; value?: any } | null
+  >(null);
+
+  const writeClipboard = (text: string) => {
+    try { navigator.clipboard?.writeText(text); } catch { /* clipboard unavailable */ }
+  };
+  const valueToText = (v: any): string => {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'object') {
+      try { return EJSON.stringify(v); } catch { return JSON.stringify(v); }
+    }
+    return String(v);
+  };
+  const openCtxMenu = (
+    e: React.MouseEvent,
+    doc: Record<string, any> | undefined,
+    field?: string,
+    value?: any,
+  ) => {
+    if (!doc) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY, doc, field, value });
+  };
+  const buildCtxItems = (m: NonNullable<typeof ctxMenu>): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = [];
+    if (onEditDocument) items.push({ label: 'Edit document', icon: <Edit size={13} />, onClick: () => onEditDocument(m.doc) });
+    if (onDuplicateDocument) items.push({ label: 'Duplicate document', icon: <Plus size={13} />, onClick: () => onDuplicateDocument(m.doc) });
+    items.push({ label: 'Copy document (JSON)', icon: <Copy size={13} />, onClick: () => writeClipboard(JSON.stringify(m.doc, null, 2)) });
+    if (m.field) {
+      items.push({ label: 'Copy value', icon: <Copy size={13} />, separatorBefore: true, onClick: () => writeClipboard(valueToText(m.value)) });
+      items.push({ label: 'Copy field name', icon: <Copy size={13} />, onClick: () => writeClipboard(m.field!) });
+    }
+    if (onDeleteDocument) items.push({ label: 'Delete document', icon: <Trash2 size={13} />, danger: true, separatorBefore: true, onClick: () => onDeleteDocument(m.doc) });
+    return items;
+  };
   const docViewerContext = useContext(DocumentViewerContext);
   const [viewMode, setViewMode] = useState<ViewMode>('json');
   const [activeTab, setActiveTab] = useState<'results' | 'explain' | 'query'>('results');
@@ -405,16 +443,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
     });
     return Array.from(keys);
   }, [documents]);
-
-  const renderCellContent = (val: any): string => {
-    if (val === null || val === undefined) return '';
-    if (typeof val === 'object') {
-      if (val.$oid) return val.$oid;
-      if (val.$date) return typeof val.$date === 'string' ? val.$date : JSON.stringify(val.$date);
-      return JSON.stringify(val);
-    }
-    return String(val);
-  };
 
   const isBsonObject = (val: any): boolean => {
     if (val === null || val === undefined) return false;
@@ -502,6 +530,34 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <span className="text-syntax-number">{val.toString()}</span>)
         </>
       );
+    }
+    return <span>{String(val)}</span>;
+  };
+
+  // Colored Table cell — same syntax palette as the Tree/JSON views (strings,
+  // numbers, booleans, BSON types) so the Table is visually consistent.
+  const renderColoredCell = (val: any): React.ReactNode => {
+    if (val === null || val === undefined) return '';
+    if (typeof val === 'string') return <span className="text-syntax-string">{val}</span>;
+    if (typeof val === 'number') return <span className="text-syntax-number">{String(val)}</span>;
+    if (typeof val === 'boolean') return <span className="text-syntax-boolean font-bold">{val ? 'true' : 'false'}</span>;
+    if (typeof val === 'object') {
+      if (isBsonObject(val)) return renderBsonValueNode(val);
+      if (typeof val.$oid === 'string') return <span className="text-syntax-string">{val.$oid}</span>;
+      if (val.$date !== undefined) {
+        const s =
+          typeof val.$date === 'string'
+            ? val.$date
+            : val.$date?.$numberLong
+              ? new Date(Number(val.$date.$numberLong)).toISOString()
+              : JSON.stringify(val.$date);
+        return <span className="text-syntax-string">{s}</span>;
+      }
+      if (val.$numberLong !== undefined) return <span className="text-syntax-number">{String(val.$numberLong)}</span>;
+      if (val.$numberDecimal !== undefined) return <span className="text-syntax-number">{String(val.$numberDecimal)}</span>;
+      if (val.$numberInt !== undefined) return <span className="text-syntax-number">{String(val.$numberInt)}</span>;
+      if (val.$numberDouble !== undefined) return <span className="text-syntax-number">{String(val.$numberDouble)}</span>;
+      return <span className="text-[var(--text-dim)]">{JSON.stringify(val)}</span>;
     }
     return <span>{String(val)}</span>;
   };
@@ -806,9 +862,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
     // Table mode
     return (
-      <div 
-        style={style} 
+      <div
+        style={style}
         className="border-b border-[var(--border-color)] flex items-center hover:bg-[var(--bg-item-hover)] font-mono text-xs"
+        onContextMenu={(e) => openCtxMenu(e, rawDoc)}
       >
         <div className="flex items-center h-full border-r border-[var(--border-color)] justify-center select-none text-[var(--text-dim)] text-[10px] w-12 flex-shrink-0">
           {index + 1}
@@ -818,8 +875,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
             key={col}
             className="px-3 border-r border-[var(--border-color)] h-full flex items-center truncate text-[var(--text-main)]"
             style={{ width: '180px', flexShrink: 0 }}
+            onContextMenu={(e) => openCtxMenu(e, rawDoc, col, rawDoc[col])}
           >
-            {renderCellContent(rawDoc[col])}
+            {renderColoredCell(rawDoc[col])}
           </div>
         ))}
         {hasRowActions && (
@@ -862,6 +920,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         style={style}
         className={`mql-jsonview-line${line.isDocRoot && line.docIndex > 0 ? ' mql-jsonview-doc-start' : ''}`}
         data-doc-even={line.docIndex % 2 === 0}
+        onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value)}
       >
         <span className="mql-jsonview-num">{line.num}</span>
         <span className="mql-jsonview-fold">
@@ -906,6 +965,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         style={style}
         className={`mql-treetable-row${row.isDocRoot && row.docIndex > 0 ? ' mql-treetable-doc-start' : ''}`}
         data-doc-even={row.docIndex % 2 === 0}
+        onContextMenu={(e) => openCtxMenu(e, documents[row.docIndex], row.kind === 'scalar' ? row.keyName : undefined, row.value)}
       >
         <div className="mql-treetable-key" style={{ paddingLeft: 6 + row.depth * 14 }}>
           {row.foldId !== undefined ? (
@@ -989,29 +1049,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <span>Insert</span>
             </button>
           )}
-          {activeTab === 'results' && onOpenExport && (
-            <button
-              type="button"
-              onClick={onOpenExport}
-              className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-item-hover)] cursor-pointer transition-all"
-              title="Open export workspace"
-              data-testid="export-btn"
-            >
-              <Download size={12} />
-              <span>Export</span>
-            </button>
-          )}
-          {activeTab === 'results' && onImport && (
-            <button
-              onClick={onImport}
-              className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-item-hover)] cursor-pointer transition-all"
-              title="Import documents from a file"
-              data-testid="import-btn"
-            >
-              <Upload size={12} />
-              <span>Import</span>
-            </button>
-          )}
           {activeTab === 'results' && onAnalyzeSchema && (
             <button
               type="button"
@@ -1080,6 +1117,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 <Braces size={12} />
                 <span>JSON</span>
               </button>
+
+              <button
+                role="button"
+                aria-label="Chart"
+                onClick={() => setViewMode('chart')}
+                className={`px-2 py-1 rounded flex items-center gap-1.5 text-[11px] font-medium transition-all cursor-pointer ${viewMode === 'chart' ? 'bg-[var(--bg-item-active)] text-[var(--accent-blue)]' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
+              >
+                <BarChart3 size={12} />
+                <span>Chart</span>
+              </button>
             </div>
           ) : activeTab === 'explain' ? (
             /* Explain Tools */
@@ -1147,6 +1194,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
               />
             </div>
           </div>
+        ) : viewMode === 'chart' ? (
+          <ChartView documents={parsedDocs} columns={columns} density={density} />
         ) : (
           <div className="flex-1 overflow-auto flex flex-col min-w-0">
             {viewMode === 'table' && (
@@ -1305,6 +1354,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
           </div>
         );
       })()}
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={buildCtxItems(ctxMenu)}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
     </div>
   );
 };

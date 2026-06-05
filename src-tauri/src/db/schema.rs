@@ -17,6 +17,8 @@ pub struct FieldStat {
     pub types: Vec<TypeCount>,
     pub presence: usize,
     pub coverage: f64,
+    #[serde(rename = "enumValues", skip_serializing_if = "Option::is_none")]
+    pub enum_values: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -51,43 +53,82 @@ fn bson_type_label(b: &mongodb::bson::Bson) -> &'static str {
     }
 }
 
+const ENUM_MAX: usize = 25;
+
+/// Returns the canonical string form of a scalar value eligible for enum
+/// detection (string/number/bool), or None for anything else (objects, arrays,
+/// ObjectId, dates, null, etc. are not enum candidates).
+fn enum_scalar(b: &mongodb::bson::Bson) -> Option<String> {
+    use mongodb::bson::Bson;
+    match b {
+        Bson::String(s) => Some(s.clone()),
+        Bson::Int32(n) => Some(n.to_string()),
+        Bson::Int64(n) => Some(n.to_string()),
+        Bson::Double(n) => Some(n.to_string()),
+        Bson::Boolean(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
 /// Infer a per-field schema (dotted nested paths, type counts, coverage) from a
 /// sample of documents. Pure and deterministic (fields sorted by path).
 pub fn infer_schema(docs: &[mongodb::bson::Document]) -> SchemaReport {
     use mongodb::bson::Bson;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
-    // path -> documents containing it; path -> (type label -> count)
     let mut presence: BTreeMap<String, usize> = BTreeMap::new();
     let mut type_counts: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    // Enum tracking: distinct scalar values per path; disqualified = saw a
+    // non-enumerable value (object/array/objectId/date/...) or exceeded ENUM_MAX.
+    let mut values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut disqualified: BTreeSet<String> = BTreeSet::new();
 
     fn walk(
         prefix: &str,
         doc: &mongodb::bson::Document,
         presence: &mut BTreeMap<String, usize>,
         type_counts: &mut BTreeMap<String, BTreeMap<String, usize>>,
+        values: &mut BTreeMap<String, BTreeSet<String>>,
+        disqualified: &mut BTreeSet<String>,
     ) {
         for (k, v) in doc.iter() {
-            let path = if prefix.is_empty() {
-                k.clone()
-            } else {
-                format!("{}.{}", prefix, k)
-            };
+            let path = if prefix.is_empty() { k.clone() } else { format!("{}.{}", prefix, k) };
             *presence.entry(path.clone()).or_insert(0) += 1;
             *type_counts
                 .entry(path.clone())
                 .or_default()
                 .entry(bson_type_label(v).to_string())
                 .or_insert(0) += 1;
-            // Recurse into embedded documents; arrays are not recursed (YAGNI).
+
+            if !disqualified.contains(&path) {
+                match enum_scalar(v) {
+                    Some(s) => {
+                        let set = values.entry(path.clone()).or_default();
+                        set.insert(s);
+                        if set.len() > ENUM_MAX {
+                            disqualified.insert(path.clone());
+                            values.remove(&path);
+                        }
+                    }
+                    None => {
+                        // Null neither adds nor disqualifies; everything else (object,
+                        // array, objectId, date, ...) disqualifies the field as an enum.
+                        if !matches!(v, Bson::Null) {
+                            disqualified.insert(path.clone());
+                            values.remove(&path);
+                        }
+                    }
+                }
+            }
+
             if let Bson::Document(sub) = v {
-                walk(&path, sub, presence, type_counts);
+                walk(&path, sub, presence, type_counts, values, disqualified);
             }
         }
     }
 
     for d in docs {
-        walk("", d, &mut presence, &mut type_counts);
+        walk("", d, &mut presence, &mut type_counts, &mut values, &mut disqualified);
     }
 
     let sampled = docs.len();
@@ -98,24 +139,18 @@ pub fn infer_schema(docs: &[mongodb::bson::Document]) -> SchemaReport {
                 .get(&path)
                 .map(|m| {
                     m.iter()
-                        .map(|(t, c)| TypeCount {
-                            type_name: t.clone(),
-                            count: *c,
-                        })
+                        .map(|(t, c)| TypeCount { type_name: t.clone(), count: *c })
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let coverage = if sampled == 0 {
-                0.0
+            let coverage = if sampled == 0 { 0.0 } else { pres as f64 / sampled as f64 };
+            let enum_values = if disqualified.contains(&path) {
+                None
             } else {
-                pres as f64 / sampled as f64
+                values.get(&path).filter(|s| !s.is_empty() && s.len() <= ENUM_MAX)
+                    .map(|s| s.iter().cloned().collect::<Vec<_>>())
             };
-            FieldStat {
-                path,
-                types,
-                presence: pres,
-                coverage,
-            }
+            FieldStat { path, types, presence: pres, coverage, enum_values }
         })
         .collect();
 
@@ -168,4 +203,49 @@ pub async fn analyze_schema_impl(
 
     let report = infer_schema(&docs);
     serde_json::to_string(&report).map_err(|e| format!("Serialization error: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::infer_schema;
+    use mongodb::bson::doc;
+
+    fn field<'a>(r: &'a super::SchemaReport, path: &str) -> &'a super::FieldStat {
+        r.fields.iter().find(|f| f.path == path).expect("field present")
+    }
+
+    #[test]
+    fn detects_low_cardinality_string_enum() {
+        let docs = vec![
+            doc! {"plan": "Free"}, doc! {"plan": "Team"},
+            doc! {"plan": "Free"}, doc! {"plan": "Business"},
+        ];
+        let r = infer_schema(&docs);
+        let e = field(&r, "plan").enum_values.clone().expect("enum");
+        assert_eq!(e, vec!["Business".to_string(), "Free".to_string(), "Team".to_string()]);
+    }
+
+    #[test]
+    fn no_enum_when_too_many_distinct() {
+        let docs: Vec<_> = (0..30).map(|i| doc! {"name": format!("n{}", i)}).collect();
+        let r = infer_schema(&docs);
+        assert!(field(&r, "name").enum_values.is_none());
+    }
+
+    #[test]
+    fn no_enum_for_non_scalar_or_complex_leaf() {
+        let docs = vec![doc! {"tags": ["a", "b"]}, doc! {"addr": {"zip": "1"}}];
+        let r = infer_schema(&docs);
+        assert!(field(&r, "tags").enum_values.is_none());     // array
+        assert!(field(&r, "addr").enum_values.is_none());     // object
+        assert!(field(&r, "addr.zip").enum_values.is_some()); // nested scalar still enumerates
+    }
+
+    #[test]
+    fn enumerates_numbers_and_bools() {
+        let docs = vec![doc! {"seats": 3i32, "active": true}, doc! {"seats": 4i32, "active": false}];
+        let r = infer_schema(&docs);
+        assert_eq!(field(&r, "seats").enum_values.clone().unwrap(), vec!["3".to_string(), "4".to_string()]);
+        assert_eq!(field(&r, "active").enum_values.clone().unwrap(), vec!["false".to_string(), "true".to_string()]);
+    }
 }

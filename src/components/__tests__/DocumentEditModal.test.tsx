@@ -1,5 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+
+// The modal's JSON editor wraps @monaco-editor/react; mock it with a plain
+// <textarea> that exposes the test id via wrapperProps and round-trips value.
+vi.mock('@monaco-editor/react', () => ({
+  default: ({ value, onChange, wrapperProps }: any) => (
+    <textarea
+      data-testid={wrapperProps?.['data-testid']}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+    />
+  ),
+}));
+
 import { DocumentEditModal } from '../DocumentEditModal';
 
 describe('DocumentEditModal', () => {
@@ -60,6 +73,27 @@ describe('DocumentEditModal', () => {
 
     expect(onSave).not.toHaveBeenCalled();
     expect(screen.getByTestId('document-edit-error')).toBeInTheDocument();
+  });
+
+  it('accepts shell types and saves converted Extended JSON', () => {
+    const onSave = vi.fn();
+    render(<DocumentEditModal isOpen mode="insert" initialJson="{}" onClose={() => {}} onSave={onSave} />);
+    fireEvent.change(screen.getByTestId('document-json-input'), {
+      target: { value: '{ "_id": ObjectId("507f1f77bcf86cd799439011") }' },
+    });
+    expect(screen.queryByTestId('document-edit-error')).toBeNull();
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+    expect(onSave).toHaveBeenCalledWith('{ "_id": {"$oid":"507f1f77bcf86cd799439011"} }');
+  });
+
+  it('flags malformed input (live) and disables Save', () => {
+    const onSave = vi.fn();
+    render(<DocumentEditModal isOpen mode="edit" initialJson="{}" onClose={() => {}} onSave={onSave} />);
+    fireEvent.change(screen.getByTestId('document-json-input'), { target: { value: '{ "a": 1, j }' } });
+    expect(screen.getByTestId('document-edit-error')).toBeInTheDocument();
+    expect(screen.getByTestId('document-save-btn')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it('does not render when closed', () => {

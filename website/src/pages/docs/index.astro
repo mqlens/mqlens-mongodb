@@ -50,6 +50,12 @@ const toc = [
           <li>Hit <strong>Test Connection</strong>. The staged check reports each real phase: parse → DNS resolve → connect → ping.</li>
           <li>Connect, then browse databases, collections, views, and GridFS buckets in the tree and start querying.</li>
         </ol>
+        <figure class="doc-shot">
+          <a href="/screenshots/mqlens-documents.png" target="_blank" rel="noopener">
+            <img src="/screenshots/mqlens-documents.png" alt="MQLens connected to the mqlens_demo MongoDB database and browsing filtered orders" loading="lazy" decoding="async" />
+          </a>
+          <figcaption>A connected workspace with the seeded <code>mqlens_demo</code> database, filtered documents, and the database tree visible.</figcaption>
+        </figure>
 
         <h2 id="verifying">Verifying downloads</h2>
         <p>Every release asset ships with a detached GPG signature (<code>.asc</code>), and macOS bundles are additionally Apple-notarized. To verify a download:</p>
@@ -115,6 +121,25 @@ npm run tauri build    # produce a platform installer / bundle</code></pre>
     color: var(--text-dim);
     background: var(--accent-soft);
     border-radius: 0 8px 8px 0;
+  }
+  .doc-shot {
+    margin: 26px 0 8px;
+  }
+  .doc-shot img {
+    display: block;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+  }
+  .doc-shot a:hover {
+    text-decoration: none;
+  }
+  .doc-shot figcaption {
+    color: var(--text-dim);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    margin-top: 10px;
   }
   .prose hr { border: none; border-top: 1px solid var(--border); margin: 40px 0 22px; }
   .help { color: var(--text-dim); }

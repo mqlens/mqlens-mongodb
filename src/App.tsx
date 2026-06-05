@@ -13,22 +13,24 @@ import { ExportView } from './components/ExportView';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
 import { GridFsView } from './components/GridFsView';
+import { MonitoringView } from './components/MonitoringView';
 import { type ExportTaskInfo } from './components/TaskManager';
 import { VaultGate } from './components/VaultGate';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
 import { buildRunnableCommand } from './lib/mongoCommand';
+import { docToShell } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries } from './lib/queryStore';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
 import { invoke } from '@tauri-apps/api/core';
-import { FolderCode, X, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive } from 'lucide-react';
+import { FolderCode, X, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'schema' | 'create-view' | 'gridfs';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'schema' | 'create-view' | 'gridfs' | 'monitoring';
   connectionId: string;
   db: string;
   collection: string;
@@ -497,6 +499,24 @@ function Workspace() {
     setActiveTabId(tabId);
   };
 
+  const handleOpenMonitoringTab = (connectionId: string) => {
+    const tabId = `monitoring.${connectionId}`;
+    if (!tabs.some((t) => t.id === tabId)) {
+      setTabs((prev) => [...prev, {
+        id: tabId,
+        type: 'monitoring',
+        connectionId,
+        db: '',
+        collection: '',
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      }]);
+    }
+    setActiveTabId(tabId);
+  };
+
   const handleCollectionRenamed = (
     connectionId: string,
     dbName: string,
@@ -909,7 +929,13 @@ function Workspace() {
   };
 
   const handleEditDocument = (doc: Record<string, any>) => {
-    setDocumentModal({ mode: 'edit', initialJson: JSON.stringify(doc, null, 2), targetDoc: doc });
+    setDocumentModal({ mode: 'edit', initialJson: docToShell(doc), targetDoc: doc });
+  };
+
+  // Duplicate: open the insert modal pre-filled with the document minus its _id.
+  const handleDuplicateDocument = (doc: Record<string, any>) => {
+    const { _id, ...rest } = doc;
+    setDocumentModal({ mode: 'insert', initialJson: docToShell(rest), targetDoc: null });
   };
 
   const handleDeleteDocument = async (doc: Record<string, any>) => {
@@ -1127,6 +1153,7 @@ function Workspace() {
             onCreateIndex={handleOpenIndexModalForCreate}
             onDeleteIndex={handleDeleteIndex}
             onOpenShell={handleOpenShell}
+            onOpenMonitoring={handleOpenMonitoringTab}
             onAnalyzeSchema={handleOpenSchemaTab}
             onCreateView={handleOpenCreateViewTab}
             onOpenGridfs={handleOpenGridfsTab}
@@ -1231,6 +1258,8 @@ function Workspace() {
                         <Eye size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
                       ) : tab.type === 'gridfs' ? (
                         <HardDrive size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
+                      ) : tab.type === 'monitoring' ? (
+                        <Activity size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
                       ) : (
                         <FolderCode size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
                       )}
@@ -1251,7 +1280,9 @@ function Workspace() {
                                     ? `New View: ${tab.db}`
                                     : tab.type === 'gridfs'
                                       ? `GridFS: ${tab.collection}`
-                                      : tab.collection}
+                                      : tab.type === 'monitoring'
+                                        ? `Monitor: ${connectionNameFor(tab.connectionId)}`
+                                        : tab.collection}
                       </span>
                       <span
                         onClick={(e) => handleCloseTab(e, tab.id)}
@@ -1296,7 +1327,8 @@ function Workspace() {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
                 const connectionName = activeConnection ? activeConnection.name : 'cmi-dev';
                 return (
-                  <DocumentViewer 
+                  <DocumentViewer
+                    connectionId={activeTab.connectionId}
                     connectionName={connectionName}
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
@@ -1305,6 +1337,8 @@ function Workspace() {
                     onExplain={handleExplainQuery}
                     onExplainAggregate={handleExplainAggregate}
                     onOpenShell={(command) => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection, command)}
+                    onOpenExport={() => handleOpenExportTab(activeTab)}
+                    onImport={handleImport}
                     loading={activeTab.loading}
                     availableFields={availableFields}
                   >
@@ -1329,9 +1363,8 @@ function Workspace() {
                           queryCode={buildTabQueryCode(activeTab)}
                           onInsertDocument={handleInsertDocument}
                           onEditDocument={handleEditDocument}
+                          onDuplicateDocument={handleDuplicateDocument}
                           onDeleteDocument={handleDeleteDocument}
-                          onOpenExport={() => handleOpenExportTab(activeTab)}
-                          onImport={handleImport}
                           onAnalyzeSchema={() => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection)}
                           onUpdateMany={handleUpdateMany}
                           onDeleteMany={handleDeleteMany}
@@ -1373,6 +1406,9 @@ function Workspace() {
                   databaseName={activeTab.db}
                   bucket={activeTab.collection}
                 />
+              )}
+              {activeTab && activeTab.type === 'monitoring' && (
+                <MonitoringView connectionId={activeTab.connectionId} />
               )}
               {activeTab && activeTab.type === 'export' && (() => {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);

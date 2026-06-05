@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AIChatPanel } from './AIChatPanel';
+import { QueryEditor } from './QueryEditor';
+import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
 import {
   loadCollectionQueries,
@@ -30,6 +32,8 @@ import {
   Check,
   ChevronDown,
   Plus,
+  Download,
+  Upload,
   X
 } from 'lucide-react';
 
@@ -90,6 +94,7 @@ export function builderStateToQuery(state: BuilderState): GeneratedQuery {
 }
 
 interface DocumentViewerProps {
+  connectionId?: string;
   connectionName: string;
   databaseName: string;
   collectionName: string;
@@ -99,6 +104,8 @@ interface DocumentViewerProps {
   // Explain a full aggregation pipeline (M1). Receives the pipeline as a JSON string.
   onExplainAggregate?: (pipeline: string) => Promise<string>;
   onOpenShell?: (command: string) => void;
+  onOpenExport?: () => void;
+  onImport?: () => void;
   loading: boolean;
   availableFields?: string[];
   children?: React.ReactNode;
@@ -352,7 +359,8 @@ export interface DocumentViewerContextType {
 
 export const DocumentViewerContext = React.createContext<DocumentViewerContextType | null>(null);
 
-export const DocumentViewer: React.FC<DocumentViewerProps> = ({ 
+export const DocumentViewer: React.FC<DocumentViewerProps> = ({
+  connectionId,
   connectionName,
   databaseName,
   collectionName,
@@ -361,10 +369,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onExplain,
   onExplainAggregate,
   onOpenShell,
+  onOpenExport,
+  onImport,
   loading,
   availableFields = [],
   children
 }) => {
+  const { schema } = useCollectionSchema(connectionId, databaseName, collectionName);
   const [filterQuery, setFilterQuery] = useState('{}');
   const [projectionQuery, setProjectionQuery] = useState('{}');
   const [sortQuery, setSortQuery] = useState('{}');
@@ -1305,7 +1316,31 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
         {/* AI Helper & Visual query builder */}
         <div className="flex items-center gap-1.5">
-          <button 
+          {onOpenExport && (
+            <button
+              type="button"
+              onClick={onOpenExport}
+              className="query-plane-btn"
+              data-testid="export-btn"
+              title="Open export workspace"
+            >
+              <Download size={11} />
+              <span>Export</span>
+            </button>
+          )}
+          {onImport && (
+            <button
+              type="button"
+              onClick={onImport}
+              className="query-plane-btn"
+              data-testid="import-btn"
+              title="Import documents from a file"
+            >
+              <Upload size={11} />
+              <span>Import</span>
+            </button>
+          )}
+          <button
             onClick={() => {
               const newOpen = !isAIHelperOpen;
               setIsAIHelperOpen(newOpen);
@@ -1385,13 +1420,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 <div className="mql-qrow">
                   <div className={`mql-qcol ${!isFilterValid ? 'is-invalid' : ''}`}>
                     <div className="mql-qbadge">Query</div>
-                    <input
-                      type="text"
+                    <QueryEditor
+                      singleLine
+                      surface="filter"
+                      onRun={handleRun}
                       value={filterQuery}
-                      onChange={(e) => setFilterQuery(e.target.value)}
-                      placeholder="{}"
+                      onChange={setFilterQuery}
+                      fields={fields}
+                      schema={schema}
                       className="mql-qinput"
-                      spellCheck="false"
                       data-testid="query-filter-input"
                     />
                     {!isFilterValid && (
@@ -1414,13 +1451,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   {/* Projection */}
                   <div className={`mql-qcol ${!isProjectionValid ? 'is-invalid' : ''}`}>
                     <div className="mql-qbadge">Projection</div>
-                    <input
-                      type="text"
+                    <QueryEditor
+                      singleLine
+                      surface="projection"
+                      onRun={handleRun}
                       value={projectionQuery}
-                      onChange={(e) => setProjectionQuery(e.target.value)}
-                      placeholder="{}"
+                      onChange={setProjectionQuery}
+                      fields={fields}
+                      schema={schema}
                       className="mql-qinput"
-                      spellCheck="false"
                       data-testid="projection-query-input"
                     />
                     {!isProjectionValid && (
@@ -1440,13 +1479,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   {/* Sort */}
                   <div className={`mql-qcol ${!isSortValid ? 'is-invalid' : ''}`}>
                     <div className="mql-qbadge">Sort</div>
-                    <input
-                      type="text"
+                    <QueryEditor
+                      singleLine
+                      surface="sort"
+                      onRun={handleRun}
                       value={sortQuery}
-                      onChange={(e) => setSortQuery(e.target.value)}
-                      placeholder="{}"
+                      onChange={setSortQuery}
+                      fields={fields}
+                      schema={schema}
                       className="mql-qinput"
-                      spellCheck="false"
                       data-testid="sort-query-input"
                     />
                     {!isSortValid && (
@@ -1574,12 +1615,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                             <Trash2 size={11} />
                           </button>
                         </div>
-                        <textarea
+                        <QueryEditor
+                          surface="aggStage"
+                          onRun={handleRun}
                           value={stage.content}
-                          onChange={(e) => updateStageContent(stage.id, e.target.value)}
-                          className="mql-stage-body"
-                          rows={3}
-                          spellCheck={false}
+                          onChange={(v) => updateStageContent(stage.id, v)}
+                          fields={fields}
+                          schema={schema}
+                          height={120}
                         />
                       </div>
                       {index < stages.length - 1 && (

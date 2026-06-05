@@ -1,4 +1,9 @@
 ---
+// Self-hosted fonts — no render-blocking external request, no third-party.
+import '@fontsource-variable/inter';
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/500.css';
+import '@fontsource/jetbrains-mono/600.css';
 import '../styles/global.css';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
@@ -24,13 +29,7 @@ const ogImage = new URL('/og.png', SITE.url).href;
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <meta name="theme-color" content="#0a8fd0" />
 
-    <!-- Match the desktop app's type system: Inter (UI) + JetBrains Mono (code) -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Type system (self-hosted): Inter (UI) + JetBrains Mono (code) -->
 
     <title>{fullTitle}</title>
     <meta name="description" content={description} />
@@ -60,8 +59,7 @@ const ogImage = new URL('/og.png', SITE.url).href;
       "description": SITE.description,
     })} />
 
-    <!-- Privacy-friendly analytics (no cookies, no in-app telemetry) -->
-    <script defer data-domain="mqlens.com" src="https://plausible.io/js/script.outbound-links.js"></script>
+    <!-- Privacy-friendly analytics: handled by Cloudflare Web Analytics (auto-injected for the proxied site; no cookies, no in-app telemetry) -->
   </head>
   <body>
     <Nav />
