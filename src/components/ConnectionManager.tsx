@@ -207,6 +207,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [activeEditorTab, setActiveEditorTab] = useState('server');
   const [showPassword, setShowPassword] = useState(false);
   const [revealUri, setRevealUri] = useState(false);
+  const [revealDetailUri, setRevealDetailUri] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -284,6 +285,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
+    setRevealDetailUri(false);
     setError(null);
     setTestResult(null);
   };
@@ -759,9 +761,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
-                    <span className="mql-label" style={{ fontSize: 9 }}>Connection URI</span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span className="mql-label" style={{ fontSize: 9 }}>Connection URI</span>
+                      {maskUriPassword(selectedProfile.uri) !== selectedProfile.uri && (
+                        <button
+                          type="button"
+                          onClick={() => setRevealDetailUri(v => !v)}
+                          title={revealDetailUri ? 'Hide password' : 'Show password'}
+                          aria-label={revealDetailUri ? 'Hide password' : 'Show password'}
+                          style={{ display: 'inline-flex', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}
+                        >
+                          {revealDetailUri ? <EyeOff size={13} /> : <Eye size={13} />}
+                        </button>
+                      )}
+                    </div>
                     <div style={{ padding: 10, background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: 11, wordBreak: 'break-all', userSelect: 'text' }}>
-                      {selectedProfile.uri}
+                      {revealDetailUri ? selectedProfile.uri : maskUriPassword(selectedProfile.uri)}
                     </div>
                   </div>
 
