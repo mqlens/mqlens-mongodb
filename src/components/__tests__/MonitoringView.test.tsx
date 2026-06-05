@@ -101,6 +101,16 @@ describe('MonitoringView', () => {
     expect(screen.queryByText('admin.$cmd')).toBeNull();
   });
 
+  it('opens a detail modal when an operation row is clicked', async () => {
+    render(<MonitoringView connectionId="conn-1" />);
+    fireEvent.click(await screen.findByTestId('op-row-42'));
+    const modal = await screen.findByTestId('monitoring-detail');
+    expect(modal).toBeInTheDocument();
+    expect(screen.getByText('Operation details')).toBeInTheDocument();
+    // The detail modal shows the full command in its own code block.
+    expect(modal.querySelector('.mql-mon-detail-cmd')).toBeTruthy();
+  });
+
   it('switches between the Current operations and Profiler tabs', async () => {
     render(<MonitoringView connectionId="conn-1" />);
     // Current operations is the default tab.

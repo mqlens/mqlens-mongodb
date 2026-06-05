@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
-import { Activity, RefreshCw, Skull, Lock, Network, Gauge, MemoryStick, Database, ArrowDownUp, Search } from 'lucide-react';
+import { Activity, RefreshCw, Skull, Lock, Network, Gauge, MemoryStick, Database, ArrowDownUp, Search, X } from 'lucide-react';
 import { formatBytes } from '../lib/format';
 import {
   serverStatus,
@@ -140,6 +140,56 @@ const HighlightedCommand: React.FC<{ text: string }> = ({ text }) => {
   return <>{nodes}</>;
 };
 
+const fmtTs = (ms: number): string => {
+  if (!ms) return '—';
+  try { return new Date(ms).toLocaleString(); } catch { return String(ms); }
+};
+
+const DetailRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+  <div className="mql-mon-detail-row">
+    <span className="mql-mon-detail-label">{label}</span>
+    <span className="mql-mon-detail-val">{children}</span>
+  </div>
+);
+
+const MonitoringDetail: React.FC<{
+  detail: { kind: 'op'; data: CurrentOp } | { kind: 'profile'; data: ProfileEntry };
+  onClose: () => void;
+}> = ({ detail, onClose }) => (
+  <div className="nested-modal-overlay" data-testid="monitoring-detail" onClick={onClose}>
+    <div className="index-modal-container index-modal-container--wide" onClick={(e) => e.stopPropagation()}>
+      <div className="mql-mon-detail-head">
+        <h2>{detail.kind === 'op' ? 'Operation details' : 'Profiled operation'}</h2>
+        <button type="button" onClick={onClose} aria-label="Close" className="mql-mon-detail-close">
+          <X size={14} />
+        </button>
+      </div>
+      <div className="mql-mon-detail-fields">
+        {detail.kind === 'op' ? (
+          <>
+            <DetailRow label="opid">{detail.data.opid}</DetailRow>
+            <DetailRow label="op"><OpBadge op={detail.data.op} /></DetailRow>
+            <DetailRow label="ns">{detail.data.ns}</DetailRow>
+            <DetailRow label="running">{detail.data.secsRunning}s</DetailRow>
+            <DetailRow label="client">{detail.data.client}</DetailRow>
+            <DetailRow label="desc">{detail.data.desc || '—'}</DetailRow>
+          </>
+        ) : (
+          <>
+            <DetailRow label="op"><OpBadge op={detail.data.op} /></DetailRow>
+            <DetailRow label="ns">{detail.data.ns}</DetailRow>
+            <DetailRow label="duration">{detail.data.millis} ms</DetailRow>
+            <DetailRow label="plan">{detail.data.planSummary || '—'}</DetailRow>
+            <DetailRow label="time">{fmtTs(detail.data.tsMs)}</DetailRow>
+          </>
+        )}
+      </div>
+      <div className="mql-mon-detail-cmd-label">Command</div>
+      <pre className="mql-mon-detail-cmd"><HighlightedCommand text={detail.data.command} /></pre>
+    </div>
+  </div>
+);
+
 // MongoDB error 13 / "not authorized" → the user lacks the privilege.
 const isAuthError = (msg: string): boolean =>
   /not authorized|unauthorized|requires authentication|\(13\)|code 13/i.test(msg);
@@ -170,6 +220,9 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
   const [opsErr, setOpsErr] = useState<string | null>(null);
   const [profilerErr, setProfilerErr] = useState<string | null>(null);
   const [section, setSection] = useState<'ops' | 'profiler'>('ops');
+  const [detail, setDetail] = useState<
+    { kind: 'op'; data: CurrentOp } | { kind: 'profile'; data: ProfileEntry } | null
+  >(null);
 
   // Filters
   const [opsSearch, setOpsSearch] = useState('');
@@ -433,7 +486,12 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                   </thead>
                   <tbody>
                     {filteredOps.map((op) => (
-                      <tr key={op.opid}>
+                      <tr
+                        key={op.opid}
+                        className="mql-mon-clickable"
+                        data-testid={`op-row-${op.opid}`}
+                        onClick={() => setDetail({ kind: 'op', data: op })}
+                      >
                         <td>{op.opid}</td>
                         <td><OpBadge op={op.op} /></td>
                         <td className="mql-mon-ns">{op.ns}</td>
@@ -446,7 +504,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                             className="mql-mon-kill"
                             title="Kill operation"
                             data-testid={`kill-op-${op.opid}`}
-                            onClick={() => handleKill(op)}
+                            onClick={(e) => { e.stopPropagation(); handleKill(op); }}
                           >
                             <Skull size={12} />
                           </button>
@@ -533,7 +591,12 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                   </thead>
                   <tbody>
                     {filteredProfile.map((p, i) => (
-                      <tr key={i}>
+                      <tr
+                        key={i}
+                        className="mql-mon-clickable"
+                        data-testid={`profile-row-${i}`}
+                        onClick={() => setDetail({ kind: 'profile', data: p })}
+                      >
                         <td className={p.millis >= 100 ? 'mql-mon-slow' : ''}>{p.millis}</td>
                         <td><OpBadge op={p.op} /></td>
                         <td className="mql-mon-ns">{p.ns}</td>
@@ -548,6 +611,8 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
           )}
         </div>
       )}
+
+      {detail && <MonitoringDetail detail={detail} onClose={() => setDetail(null)} />}
     </div>
   );
 };

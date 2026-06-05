@@ -5401,3 +5401,22 @@ button, input, select, textarea {
 }
 .mql-mon-count { font-size: 11px; color: var(--text-dim); margin-left: auto; }
 
+/* Clickable rows + detail modal */
+.mql-mon-clickable { cursor: pointer; }
+.mql-mon-clickable:hover { background: var(--bg-item-hover); }
+.mql-mon-detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.mql-mon-detail-head h2 { font-size: 14px; font-weight: 600; color: var(--text-main); margin: 0; }
+.mql-mon-detail-close { display: inline-flex; padding: 4px; border-radius: 5px; color: var(--text-muted); cursor: pointer; }
+.mql-mon-detail-close:hover { color: var(--text-main); background: var(--bg-item-hover); }
+.mql-mon-detail-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 18px; margin-bottom: 14px; }
+.mql-mon-detail-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mql-mon-detail-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
+.mql-mon-detail-val { font-size: 12.5px; color: var(--text-main); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.mql-mon-detail-cmd-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin-bottom: 4px; }
+.mql-mon-detail-cmd {
+  max-height: 360px; overflow: auto; margin: 0;
+  background: var(--bg-base); border: 1px solid var(--border-color); border-radius: 6px;
+  padding: 10px 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word; color: var(--text-main);
+}
+

@@ -151,15 +151,10 @@ pub struct CurrentOp {
     pub command: String,
 }
 
-/// Curate one `inprog` entry into a CurrentOp row.
+/// Curate one `inprog` entry into a CurrentOp row. The full command is kept (the
+/// UI ellipsizes it in the table and shows it in full in the detail view).
 pub fn curate_current_op(d: &Document) -> CurrentOp {
-    let command = d
-        .get("command")
-        .map(|c| {
-            let s = c.to_string();
-            if s.len() > 300 { format!("{}…", &s[..300]) } else { s }
-        })
-        .unwrap_or_default();
+    let command = d.get("command").map(|c| c.to_string()).unwrap_or_default();
     CurrentOp {
         opid: num(d, "opid"),
         op: d.get_str("op").unwrap_or_default().to_string(),
@@ -195,13 +190,7 @@ pub fn curate_profile_entry(d: &Document) -> ProfileEntry {
         Some(Bson::DateTime(dt)) => dt.timestamp_millis(),
         _ => 0,
     };
-    let command = d
-        .get("command")
-        .map(|c| {
-            let s = c.to_string();
-            if s.len() > 300 { format!("{}…", &s[..300]) } else { s }
-        })
-        .unwrap_or_default();
+    let command = d.get("command").map(|c| c.to_string()).unwrap_or_default();
     ProfileEntry {
         op: d.get_str("op").unwrap_or_default().to_string(),
         ns: d.get_str("ns").unwrap_or_default().to_string(),
@@ -392,14 +381,14 @@ mod tests {
     }
 
     #[test]
-    fn curates_current_op_and_truncates_command() {
+    fn curates_current_op_keeps_full_command() {
         let long = "x".repeat(400);
-        let d = doc! { "opid": 99i32, "op": "query", "ns": "db.c", "secs_running": 4i64, "client": "1.2.3.4", "desc": "conn1", "command": { "find": long } };
+        let d = doc! { "opid": 99i32, "op": "query", "ns": "db.c", "secs_running": 4i64, "client": "1.2.3.4", "desc": "conn1", "command": { "find": long.clone() } };
         let op = curate_current_op(&d);
         assert_eq!(op.opid, 99);
         assert_eq!(op.ns, "db.c");
         assert_eq!(op.secs_running, 4);
-        assert!(op.command.ends_with('…'), "long command is truncated");
+        assert!(op.command.contains(&long), "full command is preserved");
     }
 
     #[test]
