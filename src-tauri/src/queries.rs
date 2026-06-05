@@ -176,3 +176,53 @@ pub async fn set_default_query(
     store.collections.entry(key).or_default().default = default;
     save_store_to_file(&path, &store)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn entry(q: serde_json::Value, at: &str) -> HistoryEntry {
+        HistoryEntry { query: q, ran_at: at.into() }
+    }
+
+    #[test]
+    fn collection_key_is_stable_and_distinct() {
+        assert_eq!(collection_key("conn", "db", "c"), "conn::db::c");
+        assert_ne!(collection_key("conn", "db", "a"), collection_key("conn", "db", "b"));
+    }
+
+    #[test]
+    fn push_history_prepends_and_caps() {
+        let mut h: Vec<HistoryEntry> = Vec::new();
+        for i in 0..(HISTORY_CAP + 5) {
+            h = push_history(h, entry(json!({ "n": i }), &format!("t{i}")), HISTORY_CAP);
+        }
+        assert_eq!(h.len(), HISTORY_CAP);
+        // Most recent first.
+        assert_eq!(h[0].query, json!({ "n": HISTORY_CAP + 4 }));
+    }
+
+    #[test]
+    fn push_history_dedupes_identical_query_bodies() {
+        let mut h = Vec::new();
+        h = push_history(h, entry(json!({ "filter": { "a": 1 } }), "t1"), HISTORY_CAP);
+        h = push_history(h, entry(json!({ "filter": { "b": 2 } }), "t2"), HISTORY_CAP);
+        h = push_history(h, entry(json!({ "filter": { "a": 1 } }), "t3"), HISTORY_CAP); // dup of t1
+        assert_eq!(h.len(), 2, "identical query collapses to one entry");
+        assert_eq!(h[0].ran_at, "t3", "re-running moves it to the front");
+        assert_eq!(h[1].ran_at, "t2");
+    }
+
+    #[test]
+    fn store_round_trips_through_json() {
+        let mut store = QueryStore::default();
+        let key = collection_key("c", "db", "coll");
+        let cq = store.collections.entry(key.clone()).or_default();
+        cq.saved.push(SavedQuery { id: "1".into(), name: "A".into(), query: json!({}), created_at: "t".into() });
+        cq.default = Some(json!({ "filter": {} }));
+        let text = serde_json::to_string(&store).unwrap();
+        let back: QueryStore = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, store);
+    }
+}
