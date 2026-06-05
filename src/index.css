@@ -5293,3 +5293,62 @@ button, input, select, textarea {
 .mql-context-item.is-danger .mql-context-icon { color: var(--accent-red); }
 .mql-context-sep { height: 1px; margin: 4px 6px; background: var(--border-color); }
 
+/* ── Cluster monitoring view ─────────────────────────────────────────────── */
+.mql-mon { flex: 1; min-height: 0; overflow: auto; background: var(--bg-base); padding: 16px; }
+.mql-mon-header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.mql-mon-title { font-size: 13px; font-weight: 600; color: var(--text-main); }
+.mql-mon-meta { font-size: 11px; color: var(--text-dim); }
+.mql-mon-error {
+  margin-bottom: 12px; padding: 8px 10px; border-radius: 6px;
+  background: hsla(0, 70%, 50%, 0.12); color: var(--accent-red); font-size: 12px;
+}
+.mql-mon-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px; margin-bottom: 18px;
+}
+.mql-mon-card {
+  border: 1px solid var(--border-color); border-radius: 8px;
+  background: var(--bg-panel); padding: 12px 14px;
+}
+.mql-mon-card-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+.mql-mon-card-value { font-size: 22px; font-weight: 700; color: var(--text-main); margin-top: 2px; }
+.mql-mon-card-sub { font-size: 11px; color: var(--text-muted); }
+.mql-mon-spark { height: 34px; margin-top: 6px; }
+.mql-mon-spark-empty { height: 34px; }
+
+.mql-mon-section { margin-bottom: 18px; }
+.mql-mon-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; font-weight: 600; color: var(--text-main);
+  padding: 6px 2px; border-bottom: 1px solid var(--border-color); margin-bottom: 6px;
+}
+.mql-mon-empty { font-size: 12px; color: var(--text-dim); font-style: italic; padding: 8px 2px; }
+.mql-mon-table { width: 100%; border-collapse: collapse; font-size: 11.5px; font-family: var(--font-mono); }
+.mql-mon-table th {
+  text-align: left; font-weight: 600; color: var(--text-dim); text-transform: uppercase;
+  font-size: 10px; letter-spacing: 0.05em; padding: 4px 8px; border-bottom: 1px solid var(--border-color);
+}
+.mql-mon-table td { padding: 4px 8px; border-bottom: 1px solid var(--border-color); color: var(--text-main); vertical-align: top; }
+.mql-mon-ns { color: var(--accent-blue); }
+.mql-mon-cmd { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.mql-mon-slow { color: var(--accent-red); font-weight: 700; }
+.mql-mon-kill {
+  display: inline-flex; align-items: center; justify-content: center; padding: 3px;
+  border-radius: 4px; color: var(--text-dim); cursor: pointer;
+}
+.mql-mon-kill:hover { color: var(--accent-red); background: hsla(0, 70%, 50%, 0.12); }
+.mql-mon-profiler-controls { display: flex; align-items: center; gap: 10px; font-weight: 400; font-size: 11.5px; color: var(--text-muted); }
+.mql-mon-select {
+  background: var(--bg-dropdown-solid); color: var(--text-main);
+  border: 1px solid var(--border-color); border-radius: 5px; padding: 2px 6px; font-size: 11.5px;
+}
+.mql-mon-level { display: inline-flex; align-items: center; gap: 4px; }
+.mql-mon-level-btn {
+  width: 22px; height: 20px; border: 1px solid var(--border-color); border-radius: 4px;
+  color: var(--text-muted); cursor: pointer; font-size: 11px;
+}
+.mql-mon-level-btn.is-active { background: var(--accent-blue); color: #fff; border-color: var(--accent-blue); }
+.mql-mon-slowms { color: var(--text-dim); }
+.mql-mon-refresh { display: inline-flex; padding: 3px; border-radius: 4px; color: var(--text-dim); cursor: pointer; }
+.mql-mon-refresh:hover { color: var(--text-main); background: var(--bg-item-hover); }
+

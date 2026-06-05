@@ -22,7 +22,8 @@ import {
   Archive,
   Cog,
   Pencil,
-  Table2
+  Table2,
+  Activity
 } from 'lucide-react';
 
 // Mirrors the backend CollectionInfo struct returned by `list_collections`.
@@ -57,6 +58,7 @@ interface SidebarProps {
   onCreateIndex?: (connectionId: string, dbName: string, collName: string) => void;
   onDeleteIndex?: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
   onOpenShell?: (connectionId: string, dbName: string, collName?: string, initialCommand?: string) => void;
+  onOpenMonitoring?: (connectionId: string) => void;
   onAnalyzeSchema?: (connectionId: string, dbName: string, collName: string) => void;
   onCreateView?: (connectionId: string, dbName: string) => void;
   onOpenGridfs?: (connectionId: string, dbName: string, bucket: string) => void;
@@ -133,6 +135,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCreateIndex,
   onDeleteIndex,
   onOpenShell,
+  onOpenMonitoring,
   onAnalyzeSchema,
   onCreateView,
   onOpenGridfs,
@@ -1237,6 +1240,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <Server size={12} />
                 <span>Manage Connections</span>
+              </div>
+              <div
+                className="mql-ctx-item"
+                data-testid="ctx-monitor"
+                onClick={() => {
+                  onOpenMonitoring?.(contextMenu.connectionId!);
+                  setContextMenu(null);
+                }}
+              >
+                <Activity size={12} />
+                <span>Monitor cluster</span>
               </div>
               <div className="mql-ctx-sep" />
               <div 
