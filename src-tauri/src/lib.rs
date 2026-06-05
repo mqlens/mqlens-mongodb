@@ -18,6 +18,7 @@ pub mod path_env;
 pub mod queries;
 pub mod ssh_tunnel;
 mod state;
+pub mod updater;
 mod vault;
 mod window;
 pub mod biometric;
@@ -1364,7 +1365,9 @@ pub fn run() {
             kill_op,
             get_profiling_status,
             set_profiling_level,
-            read_profile
+            read_profile,
+            updater::update_check,
+            updater::update_install
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

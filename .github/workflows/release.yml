@@ -24,7 +24,6 @@ jobs:
   # Commits, bump the version files, and commit the bump back to main ([skip ci]
   # so it doesn't re-trigger). Outputs the new version + whether to release.
   version:
-    if: github.ref_name == 'main'
     runs-on: ubuntu-22.04
     outputs:
       version: ${{ steps.compute.outputs.version }}
@@ -42,6 +41,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Dev branch: derive a monotonic pre-release version that sorts ABOVE the
+          # current stable (semver prereleases sort below their release, so we bump
+          # the patch first): 0.4.0 -> 0.4.1-dev.<run>. Not committed; the build
+          # job writes it into the version files locally before building.
+          if [ "${{ github.ref_name }}" != "main" ]; then
+            CUR=$(node -p "require('./package.json').version")
+            BASE=${CUR%%-*}
+            NEXT=$(node -e 'const p=process.argv[1].split(".").map(Number);p[2]++;process.stdout.write(p.join("."))' "$BASE")
+            DEVV="${NEXT}-dev.${GITHUB_RUN_NUMBER}"
+            echo "version=$DEVV" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "Dev build version: $DEVV"
+            exit 0
+          fi
           LAST_TAG=$(git tag --list 'mqlens-v*' | grep -v -- '-dev\.' | sort -V | tail -1 || true)
           RANGE=""
           [ -n "$LAST_TAG" ] && RANGE="${LAST_TAG}..HEAD"
@@ -160,6 +173,23 @@ jobs:
 
       - run: npm ci
 
+      # Write the resolved version into the bundle version files so the built app
+      # and its updater manifest carry it. On main the version job already
+      # committed this value (idempotent here); on dev it's <next>-dev.<run>.
+      - name: Set build version
+        shell: bash
+        run: |
+          V="${{ needs.version.outputs.version }}"
+          node -e '
+            const fs=require("fs");const v=process.argv[1];
+            const sub=(p,re,to)=>{const s=fs.readFileSync(p,"utf8");if(!re.test(s))throw new Error("no version field in "+p);fs.writeFileSync(p,s.replace(re,to))};
+            sub("package.json",/("version":\s*)"[^"]+"/,`$1"${v}"`);
+            sub("src-tauri/tauri.conf.json",/("version":\s*)"[^"]+"/,`$1"${v}"`);
+            sub("src-tauri/Cargo.toml",/^version = "[^"]+"/m,`version = "${v}"`);
+            sub("src-tauri/Cargo.lock",/(name = "tauri-app"\nversion = ")[^"]+(")/,`$1${v}$2`);
+          ' "$V"
+          echo "Built version: $V"
+
       # Notarization uses an App Store Connect API key (.p8). Materialize it to
       # a file on the runner; tauri-action reads APPLE_API_KEY_PATH from there.
       - name: Prepare Apple API key (macOS signing)
@@ -190,18 +220,13 @@ jobs:
       # Stable -> mqlens-v<version>. Dev -> a unique semver pre-release carrying
       # the build's short SHA (e.g. mqlens-v0.1.0-dev.a1b2c3d) so every dev build
       # gets its own tag and nothing collides with the `dev` branch name.
+      # Unified tag: the version (dev already carries -dev.<run>) drives the tag
+      # for every job, so build, notes, signing and the manifest agree.
       - name: Compute release tag
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            echo "REL_TAG=mqlens-v${VERSION}" >> "$GITHUB_ENV"
-            echo "REL_NAME=MQLens v${VERSION}" >> "$GITHUB_ENV"
-          else
-            SHA="${GITHUB_SHA:0:7}"
-            echo "REL_TAG=mqlens-v${VERSION}-dev.${SHA}" >> "$GITHUB_ENV"
-            echo "REL_NAME=MQLens v${VERSION}-dev.${SHA}" >> "$GITHUB_ENV"
-          fi
+          echo "REL_TAG=mqlens-v${{ needs.version.outputs.version }}" >> "$GITHUB_ENV"
+          echo "REL_NAME=MQLens v${{ needs.version.outputs.version }}" >> "$GITHUB_ENV"
 
       - name: Build app & publish release
         uses: tauri-apps/tauri-action@v0
@@ -231,6 +256,11 @@ jobs:
           releaseBody: ${{ needs.version.outputs.notes || 'Generating release notes…' }}
           prerelease: ${{ github.ref_name != 'main' }}
           args: ${{ matrix.args }}
+          # Each matrix job uploads its own binaries + signatures, but NOT
+          # latest.json — the parallel jobs would race on that single asset
+          # (causing "Not Found - update-a-release-asset"). The updater-manifest
+          # job below assembles and uploads latest.json once, after all builds.
+          uploadUpdaterJson: false
 
   # Replace the placeholder body with real notes once the bundles are uploaded:
   # an auto-generated changelog for stable (main) releases, or a recent-commit
@@ -238,7 +268,7 @@ jobs:
   # Dev only: stable (main) notes are written by the version job and already in
   # latest.json. This fills the dev pre-release body + prunes old dev releases.
   release-notes:
-    needs: build
+    needs: [version, build]
     if: github.ref_name != 'main'
     runs-on: ubuntu-22.04
     permissions:
@@ -253,13 +283,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION="${{ needs.version.outputs.version }}"
+          TAG="mqlens-v${VERSION}"
           if [ "${{ github.ref_name }}" = "main" ]; then
-            TAG="mqlens-v${VERSION}"
             gh api --method POST "repos/${{ github.repository }}/releases/generate-notes" \
               -f tag_name="$TAG" --jq '.body' > notes.md
           else
-            TAG="mqlens-v${VERSION}-dev.${GITHUB_SHA:0:7}"
             {
               echo "Development pre-release — unstable, not for production."
               echo ""
@@ -290,7 +319,7 @@ jobs:
   # verify authenticity (`gpg --verify file.asc file`). Activates automatically
   # once the GPG_PRIVATE_KEY secret is set; otherwise it's a no-op.
   sign-artifacts:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -310,12 +339,8 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            TAG="mqlens-v${VERSION}"
-          else
-            TAG="mqlens-v${VERSION}-dev.${GITHUB_SHA:0:7}"
-          fi
+          VERSION="${{ needs.version.outputs.version }}"
+          TAG="mqlens-v${VERSION}"
           KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/ {print $5; exit}')
           mkdir -p _assets && cd _assets
           gh release download "$TAG" --repo "${{ github.repository }}" --clobber
@@ -333,7 +358,7 @@ jobs:
   # replace the unsigned assets on the release. Activates once the AZURE_*
   # secrets are set; otherwise a no-op.
   sign-windows:
-    needs: build
+    needs: [version, build]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -351,12 +376,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            TAG="mqlens-v${VERSION}"
-          else
-            TAG="mqlens-v${VERSION}-dev.${GITHUB_SHA:0:7}"
-          fi
+          VERSION="${{ needs.version.outputs.version }}"
+          TAG="mqlens-v${VERSION}"
           echo "REL_TAG=$TAG" >> "$GITHUB_ENV"
           mkdir -p win-assets
           gh release download "$TAG" --repo "${{ github.repository }}" \
@@ -384,3 +405,43 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: gh release upload "$REL_TAG" win-assets/*.exe win-assets/*.msi --repo "${{ github.repository }}" --clobber
+
+  # Assemble latest.json ONCE from the per-platform signatures the matrix uploaded
+  # (the matrix set uploadUpdaterJson:false so the parallel jobs never race on it),
+  # then publish it per channel:
+  #   stable (main) -> the release itself, served at releases/latest/download/latest.json
+  #   dev           -> the permanent `dev-channel` pre-release, giving the in-app
+  #                    dev channel a stable URL that points at this build's assets.
+  updater-manifest:
+    needs: [version, build]
+    if: ${{ always() && needs.build.result == 'success' && (github.ref_name != 'main' || needs.version.outputs.release == 'true') }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name == 'main' && 'main' || github.sha }}
+      - name: Compose and publish updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.version.outputs.version }}
+          NOTES: ${{ needs.version.outputs.notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export REL_TAG="mqlens-v${VERSION}"
+          mkdir -p sigs
+          gh release download "$REL_TAG" --repo "$REPO" --pattern '*.sig' --dir sigs --clobber
+          node .github/scripts/compose-latest.cjs
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            gh release upload "$REL_TAG" latest.json --repo "$REPO" --clobber
+          else
+            gh release view dev-channel --repo "$REPO" >/dev/null 2>&1 || \
+              gh release create dev-channel --repo "$REPO" --prerelease \
+                --title "Dev channel" \
+                --notes "Rolling dev-channel updater manifest. Do not delete." \
+                --target "$GITHUB_SHA"
+            gh release upload dev-channel latest.json --repo "$REPO" --clobber
+          fi

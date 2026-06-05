@@ -1,18 +1,39 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { check, type Update } from '@tauri-apps/plugin-updater';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ArrowUpCircle } from 'lucide-react';
 
 // Event other components (e.g. Settings) dispatch to trigger a manual check.
 export const CHECK_UPDATE_EVENT = 'mqlens:check-update';
 
+// Mirrors the Rust updater::UpdateMeta returned by the `update_check` command.
+interface UpdateMeta {
+  version: string;
+  current_version: string;
+  notes: string | null;
+  date: string | null;
+}
+
 type Phase = 'idle' | 'checking' | 'available' | 'downloading' | 'uptodate' | 'error';
 
+/** The user's selected update channel, read from app settings. */
+async function currentChannel(): Promise<string> {
+  try {
+    const s = await invoke<{ update_channel?: string }>('load_app_settings');
+    return s.update_channel === 'dev' ? 'dev' : 'stable';
+  } catch {
+    return 'stable';
+  }
+}
+
 // Auto-checks for an update a few seconds after launch (silent), and on demand
-// via the CHECK_UPDATE_EVENT. An available update is only ever downloaded and
-// installed after the user clicks "Update now" — human approval is required.
+// via the CHECK_UPDATE_EVENT. The check + install run against the channel the
+// user picked in Settings (stable | dev) via the Rust updater commands — Tauri's
+// static endpoints can't be switched at runtime. An available update is only ever
+// downloaded and installed after the user clicks "Update now".
 export const UpdatePrompt: React.FC = () => {
-  const [update, setUpdate] = useState<Update | null>(null);
+  const [update, setUpdate] = useState<UpdateMeta | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
   const [pct, setPct] = useState(0);
@@ -23,9 +44,10 @@ export const UpdatePrompt: React.FC = () => {
     setError(null);
     setPhase('checking');
     try {
-      const u = await check();
-      if (u) {
-        setUpdate(u);
+      const channel = await currentChannel();
+      const meta = await invoke<UpdateMeta | null>('update_check', { channel });
+      if (meta) {
+        setUpdate(meta);
         setPhase('available');
       } else {
         setPhase(isManual ? 'uptodate' : 'idle');
@@ -51,20 +73,23 @@ export const UpdatePrompt: React.FC = () => {
     if (!update) return;
     setPhase('downloading');
     setPct(0);
-    let total = 0;
-    let got = 0;
+    let unlisten: (() => void) | undefined;
     try {
-      await update.downloadAndInstall((ev: any) => {
-        if (ev.event === 'Started') total = ev.data?.contentLength ?? 0;
-        else if (ev.event === 'Progress') {
-          got += ev.data?.chunkLength ?? 0;
-          if (total > 0) setPct(Math.min(100, Math.round((got / total) * 100)));
+      unlisten = await listen<{ downloaded: number; total: number | null }>(
+        'update://progress',
+        (ev) => {
+          const { downloaded, total } = ev.payload;
+          if (total && total > 0) setPct(Math.min(100, Math.round((downloaded / total) * 100)));
         }
-      });
+      );
+      const channel = await currentChannel();
+      await invoke('update_install', { channel });
       await relaunch();
     } catch (e: any) {
       setError(String(e?.message || e));
       setPhase('error');
+    } finally {
+      unlisten?.();
     }
   };
 
@@ -119,10 +144,10 @@ export const UpdatePrompt: React.FC = () => {
 
         <p className="text-[13px] text-[var(--text-main)]" data-testid="update-version">
           MQLens <strong>{update?.version}</strong> is available
-          {update?.currentVersion ? <> (you have {update.currentVersion})</> : null}.
+          {update?.current_version ? <> (you have {update.current_version})</> : null}.
         </p>
-        {update?.body && (
-          <pre className="mql-update-notes">{update.body}</pre>
+        {update?.notes && (
+          <pre className="mql-update-notes">{update.notes}</pre>
         )}
 
         {downloading ? (
