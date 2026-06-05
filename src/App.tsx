@@ -26,6 +26,7 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { FolderCode, X, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
@@ -183,6 +184,13 @@ function Workspace() {
     };
   }, []);
 
+  // App + connected MongoDB versions for the status bar.
+  const [appVersion, setAppVersion] = useState('');
+  const [mongoVersion, setMongoVersion] = useState<string | null>(null);
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => undefined);
+  }, []);
+
   const [exportTasks, setExportTasks] = useState<ExportTaskInfo[]>([]);
   const loadExportTasks = React.useCallback(async () => {
     try {
@@ -241,6 +249,20 @@ function Workspace() {
   }, [isResizing]);
 
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
+
+  // MongoDB server version of the active connection, for the status bar.
+  const activeConnId = activeTab && activeConnections.some(c => c.id === activeTab.connectionId) ? activeTab.connectionId : null;
+  useEffect(() => {
+    if (!activeConnId) {
+      setMongoVersion(null);
+      return;
+    }
+    let alive = true;
+    invoke<string>('get_mongodb_version', { id: activeConnId })
+      .then((v) => { if (alive) setMongoVersion(v || null); })
+      .catch(() => { if (alive) setMongoVersion(null); });
+    return () => { alive = false; };
+  }, [activeConnId]);
 
   const connectionNameFor = (connectionId: string): string =>
     activeConnections.find((c) => c.id === connectionId)?.name || connectionId;
@@ -1502,8 +1524,16 @@ function Workspace() {
           <span data-testid="status-mem" title="App memory (resident set size)">
             RAM {resUsage ? formatBytes(resUsage.memory_bytes) : '—'}
           </span>
-          <span>Tauri v2.0.0</span>
-          <span>v0.1.0</span>
+          {mongoVersion && (
+            <span data-testid="status-mongodb" title="Connected MongoDB server version">
+              MongoDB {mongoVersion}
+            </span>
+          )}
+          {appVersion && (
+            <span data-testid="status-app-version" title="MQLens version">
+              MQLens v{appVersion}
+            </span>
+          )}
         </div>
       </footer>
     </div>
