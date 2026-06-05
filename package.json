@@ -1,7 +1,7 @@
 {
   "name": "mqlens",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A native desktop GUI for MongoDB, built with Tauri and React.",
   "homepage": "https://mqlens.com",
   "author": "Devesh Kumar <vrshu112@gmail.com>",
@@ -23,6 +23,8 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "bson": "^7.2.0",
     "lucide-react": "^1.16.0",
     "react": "^19.1.0",
