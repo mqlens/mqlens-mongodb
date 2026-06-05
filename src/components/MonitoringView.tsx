@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
 import { Activity, RefreshCw, Skull, Lock, Network, Gauge, MemoryStick, Database, ArrowDownUp, Search, X } from 'lucide-react';
@@ -20,7 +20,17 @@ interface MonitoringViewProps {
   connectionId: string;
 }
 
-const POLL_MS = 3000;
+// Refresh-interval choices. "Off" (0) pauses auto-refresh — important on large/
+// busy clusters where each poll pulls server status + the current-op list.
+const REFRESH_OPTIONS: { label: string; ms: number }[] = [
+  { label: '2s', ms: 2000 },
+  { label: '5s', ms: 5000 },
+  { label: '10s', ms: 10000 },
+  { label: '30s', ms: 30000 },
+  { label: '1m', ms: 60000 },
+  { label: 'Off', ms: 0 },
+];
+const DEFAULT_POLL_MS = 5000;
 const MAX_SAMPLES = 40;
 
 interface Sample {
@@ -240,37 +250,48 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
   const [profile, setProfile] = useState<ProfileEntry[]>([]);
   const [profileLoading, setProfileLoading] = useState(false);
 
-  // ── Metrics + current-ops polling (paused when the window is hidden) ──────────
+  // ── Metrics + current-ops polling ────────────────────────────────────────────
+  // Auto-refresh cadence is user-selectable (and pausable) so a large/busy cluster
+  // can't be polled faster than it can answer.
+  const [pollMs, setPollMs] = useState(DEFAULT_POLL_MS);
+  const aliveRef = useRef(true);
+
+  const pollOnce = useCallback(async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    // Independent: a user may have currentOp but not serverStatus (or vice versa).
+    const [sRes, oRes] = await Promise.allSettled([serverStatus(connectionId), currentOps(connectionId)]);
+    if (!aliveRef.current) return;
+    if (sRes.status === 'fulfilled') {
+      setStatus(sRes.value);
+      setMetricsErr(null);
+      setSamples((prev) => [...prev, { t: Date.now(), status: sRes.value }].slice(-MAX_SAMPLES));
+    } else {
+      setMetricsErr(String((sRes.reason as any)?.message || sRes.reason));
+    }
+    if (oRes.status === 'fulfilled') {
+      setOps(oRes.value);
+      setOpsErr(null);
+    } else {
+      setOpsErr(String((oRes.reason as any)?.message || oRes.reason));
+    }
+  }, [connectionId]);
+
   useEffect(() => {
-    let alive = true;
+    aliveRef.current = true;
     setSamples([]);
     setStatus(null);
-    const tick = async () => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      // Independent: a user may have currentOp but not serverStatus (or vice versa).
-      const [sRes, oRes] = await Promise.allSettled([serverStatus(connectionId), currentOps(connectionId)]);
-      if (!alive) return;
-      if (sRes.status === 'fulfilled') {
-        setStatus(sRes.value);
-        setMetricsErr(null);
-        setSamples((prev) => [...prev, { t: Date.now(), status: sRes.value }].slice(-MAX_SAMPLES));
-      } else {
-        setMetricsErr(String((sRes.reason as any)?.message || sRes.reason));
-      }
-      if (oRes.status === 'fulfilled') {
-        setOps(oRes.value);
-        setOpsErr(null);
-      } else {
-        setOpsErr(String((oRes.reason as any)?.message || oRes.reason));
-      }
-    };
-    tick();
-    const iv = setInterval(tick, POLL_MS);
+    void pollOnce();
+    if (pollMs <= 0) {
+      return () => {
+        aliveRef.current = false;
+      };
+    }
+    const iv = setInterval(() => void pollOnce(), pollMs);
     return () => {
-      alive = false;
+      aliveRef.current = false;
       clearInterval(iv);
     };
-  }, [connectionId]);
+  }, [pollOnce, pollMs]);
 
   // ── Profiler: load db list once, then status + slow queries for the chosen db ─
   useEffect(() => {
@@ -387,6 +408,31 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
             {status.replSet ? ` · ${status.replSet}` : ''} · up {Math.floor(status.uptimeSeconds / 3600)}h
           </span>
         )}
+        <div className="mql-mon-refresh-ctl">
+          <button
+            type="button"
+            className="mql-mon-refresh"
+            onClick={() => void pollOnce()}
+            title="Refresh now"
+            aria-label="Refresh now"
+            data-testid="monitoring-refresh-now"
+          >
+            <RefreshCw size={13} />
+          </button>
+          <label className="mql-mon-minms" title="Auto-refresh interval">
+            Refresh
+            <select
+              className="mql-mon-select"
+              value={pollMs}
+              onChange={(e) => setPollMs(Number(e.target.value))}
+              data-testid="monitoring-refresh-interval"
+            >
+              {REFRESH_OPTIONS.map((o) => (
+                <option key={o.label} value={o.ms}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       {/* Metric cards (or an access-required panel when serverStatus is denied) */}

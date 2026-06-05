@@ -151,8 +151,26 @@ pub struct CurrentOp {
     pub command: String,
 }
 
-/// Curate one `inprog` entry into a CurrentOp row. The full command is kept (the
-/// UI ellipsizes it in the table and shows it in full in the detail view).
+/// Keep the current-op payload bounded so a busy/large cluster can't flood the
+/// IPC boundary and hang the UI: retain at most `MAX_OPS` ops (the caller sorts
+/// longest-running first) and truncate each command string to `MAX_CMD_CHARS`.
+const MAX_OPS: usize = 200;
+const MAX_CMD_CHARS: usize = 2000;
+
+pub fn cap_current_ops(mut ops: Vec<CurrentOp>) -> Vec<CurrentOp> {
+    ops.truncate(MAX_OPS);
+    for o in &mut ops {
+        if o.command.chars().count() > MAX_CMD_CHARS {
+            // char-boundary safe (commands can contain multibyte UTF-8).
+            let truncated: String = o.command.chars().take(MAX_CMD_CHARS).collect();
+            o.command = format!("{truncated}…");
+        }
+    }
+    ops
+}
+
+/// Curate one `inprog` entry into a CurrentOp row. The full command is kept here;
+/// `cap_current_ops` bounds it for transport. The UI ellipsizes it in the table.
 pub fn curate_current_op(d: &Document) -> CurrentOp {
     let command = d.get("command").map(|c| c.to_string()).unwrap_or_default();
     CurrentOp {
@@ -259,7 +277,7 @@ pub async fn current_ops_impl(state: &AppState, id: &str) -> Result<Vec<CurrentO
         .map(curate_current_op)
         .collect();
     ops.sort_by(|a, b| b.secs_running.cmp(&a.secs_running));
-    Ok(ops)
+    Ok(cap_current_ops(ops))
 }
 
 pub async fn kill_op_impl(state: &AppState, id: &str, opid: i64) -> Result<(), String> {
@@ -389,6 +407,41 @@ mod tests {
         assert_eq!(op.ns, "db.c");
         assert_eq!(op.secs_running, 4);
         assert!(op.command.contains(&long), "full command is preserved");
+    }
+
+    #[test]
+    fn cap_current_ops_limits_count_and_command_length() {
+        let big = "x".repeat(5000);
+        let ops: Vec<CurrentOp> = (0..300)
+            .map(|i| CurrentOp {
+                opid: i,
+                op: "query".into(),
+                ns: "db.c".into(),
+                secs_running: 0,
+                client: String::new(),
+                desc: String::new(),
+                command: big.clone(),
+            })
+            .collect();
+        let capped = cap_current_ops(ops);
+        assert_eq!(capped.len(), 200, "op count is capped");
+        assert_eq!(capped[0].command.chars().count(), 2001, "command truncated to MAX + ellipsis");
+        assert!(capped[0].command.ends_with('…'));
+    }
+
+    #[test]
+    fn cap_current_ops_leaves_short_commands_intact() {
+        let ops = vec![CurrentOp {
+            opid: 1,
+            op: "query".into(),
+            ns: "db.c".into(),
+            secs_running: 0,
+            client: String::new(),
+            desc: String::new(),
+            command: "{ find: \"c\" }".into(),
+        }];
+        let capped = cap_current_ops(ops);
+        assert_eq!(capped[0].command, "{ find: \"c\" }");
     }
 
     #[test]

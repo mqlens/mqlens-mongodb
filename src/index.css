@@ -5296,6 +5296,7 @@ button, input, select, textarea {
 /* ── Cluster monitoring view ─────────────────────────────────────────────── */
 .mql-mon { flex: 1; min-height: 0; overflow: auto; background: var(--bg-base); padding: 16px; }
 .mql-mon-header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.mql-mon-refresh-ctl { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .mql-mon-title { font-size: 13px; font-weight: 600; color: var(--text-main); }
 .mql-mon-meta { font-size: 11px; color: var(--text-dim); }
 .mql-mon-error {
