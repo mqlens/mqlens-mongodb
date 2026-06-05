@@ -444,7 +444,8 @@ describe('App Component', () => {
 
     expect(await screen.findByTestId('settings-view')).toBeInTheDocument();
     expect(screen.getAllByText('Settings').length).toBeGreaterThan(0);
-    expect(screen.getByTestId('mongosh-path-input')).toHaveValue('/usr/local/bin/mongosh');
+    fireEvent.click(screen.getByTestId('settings-tab-mongosh'));
+    expect(await screen.findByTestId('mongosh-path-input')).toHaveValue('/usr/local/bin/mongosh');
   });
 
   it('runs an aggregation pipeline via execute_aggregate, not a collapsed find (C4)', async () => {

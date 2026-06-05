@@ -5586,3 +5586,18 @@ button, input, select, textarea {
   .mql-qs-page { grid-template-columns: 1fr; }
   .mql-quickstart { padding: 28px 20px 44px; }
 }
+
+/* ===== Settings (tabbed two-pane) ===== */
+.mql-settings-layout { flex: 1; min-height: 0; display: flex; gap: 20px; padding: 18px; overflow: hidden; }
+.mql-settings-tabs { flex: 0 0 196px; display: flex; flex-direction: column; gap: 2px; }
+.mql-settings-tab { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: none; border: none; padding: 9px 12px; border-radius: 9px; cursor: pointer;
+  color: var(--text-muted); font-size: 13px; font-weight: 500; }
+.mql-settings-tab:hover { background: var(--bg-item-hover); color: var(--text-main); }
+.mql-settings-tab.is-active { background: var(--bg-item-active); color: var(--text-main); font-weight: 600; }
+.mql-settings-tab svg { color: var(--text-dim); flex: 0 0 auto; }
+.mql-settings-tab.is-active svg { color: var(--accent-blue); }
+.mql-settings-panel { flex: 1; min-width: 0; max-width: 720px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 16px; }
+.mql-settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 6px; }
+.mql-settings-footer-msg { display: flex; align-items: center; gap: 12px; min-width: 0; }

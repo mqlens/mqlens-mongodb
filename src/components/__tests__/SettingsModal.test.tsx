@@ -57,6 +57,7 @@ describe('SettingsView Component', () => {
     expect(screen.getByText('Balanced padding and standard grid heights (recommended).')).toBeInTheDocument();
     expect(screen.getByTestId('density-check-cozy')).toBeInTheDocument();
 
+    fireEvent.click(screen.getByTestId('settings-tab-mongosh'));
     const pathInput = await screen.findByTestId('mongosh-path-input') as HTMLInputElement;
     expect(pathInput.value).toBe('/usr/local/bin/mongosh');
   });
@@ -85,6 +86,7 @@ describe('SettingsView Component', () => {
       />
     );
 
+    fireEvent.click(screen.getByTestId('settings-tab-mongosh'));
     const pathInput = await screen.findByTestId('mongosh-path-input') as HTMLInputElement;
     fireEvent.change(pathInput, { target: { value: '/opt/homebrew/bin/mongosh' } });
 
@@ -93,8 +95,8 @@ describe('SettingsView Component', () => {
       expect(mockInvoke).toHaveBeenCalledWith('test_mongosh_path', { path: '/opt/homebrew/bin/mongosh' });
     });
 
-    // Two "Save" buttons (mongosh + AI sections) both persist all settings.
-    fireEvent.click(screen.getAllByRole('button', { name: /^save$/i })[0]);
+    // One shared Save button in the panel footer persists all settings.
+    fireEvent.click(screen.getByTestId('settings-save-btn'));
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('save_app_settings', {
         settings: expect.objectContaining({
@@ -116,6 +118,7 @@ describe('SettingsView Component', () => {
     mockChangeVaultPassword.mockResolvedValue(undefined);
     render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
 
+    fireEvent.click(screen.getByTestId('settings-tab-security'));
     fireEvent.change(await screen.findByTestId('sec-old-pw'), { target: { value: 'oldpass' } });
     fireEvent.change(screen.getByTestId('sec-new-pw'), { target: { value: 'newpass' } });
     fireEvent.change(screen.getByTestId('sec-new-pw2'), { target: { value: 'newpass' } });
@@ -130,6 +133,7 @@ describe('SettingsView Component', () => {
   it('shows error when new passwords do not match (H7)', async () => {
     render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
 
+    fireEvent.click(screen.getByTestId('settings-tab-security'));
     fireEvent.change(await screen.findByTestId('sec-old-pw'), { target: { value: 'oldpass' } });
     fireEvent.change(screen.getByTestId('sec-new-pw'), { target: { value: 'newpass' } });
     fireEvent.change(screen.getByTestId('sec-new-pw2'), { target: { value: 'different' } });
@@ -143,6 +147,7 @@ describe('SettingsView Component', () => {
     mockBiometricStatus.mockResolvedValue({ available: true, biometryType: 2, enrolled: false });
     mockBiometricEnable.mockResolvedValue(undefined);
     render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
+    fireEvent.click(screen.getByTestId('settings-tab-security'));
     const toggle = await screen.findByTestId('sec-biometric-toggle');
     fireEvent.click(toggle);
     await waitFor(() => expect(mockBiometricEnable).toHaveBeenCalledTimes(1));
@@ -151,6 +156,7 @@ describe('SettingsView Component', () => {
   it('hides the biometric toggle when unavailable', async () => {
     mockBiometricStatus.mockResolvedValue({ available: false, biometryType: 0, enrolled: false });
     render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
+    fireEvent.click(screen.getByTestId('settings-tab-security'));
     await screen.findByTestId('sec-change-pw-btn');
     expect(screen.queryByTestId('sec-biometric-toggle')).not.toBeInTheDocument();
   });
@@ -171,6 +177,7 @@ describe('SettingsView Component', () => {
 
     render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
 
+    fireEvent.click(screen.getByTestId('settings-tab-ai'));
     const select = await screen.findByTestId('ai-provider-select');
 
     // Cloud provider shows key + model.
