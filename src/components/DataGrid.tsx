@@ -444,16 +444,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return Array.from(keys);
   }, [documents]);
 
-  const renderCellContent = (val: any): string => {
-    if (val === null || val === undefined) return '';
-    if (typeof val === 'object') {
-      if (val.$oid) return val.$oid;
-      if (val.$date) return typeof val.$date === 'string' ? val.$date : JSON.stringify(val.$date);
-      return JSON.stringify(val);
-    }
-    return String(val);
-  };
-
   const isBsonObject = (val: any): boolean => {
     if (val === null || val === undefined) return false;
     return (
@@ -540,6 +530,34 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <span className="text-syntax-number">{val.toString()}</span>)
         </>
       );
+    }
+    return <span>{String(val)}</span>;
+  };
+
+  // Colored Table cell — same syntax palette as the Tree/JSON views (strings,
+  // numbers, booleans, BSON types) so the Table is visually consistent.
+  const renderColoredCell = (val: any): React.ReactNode => {
+    if (val === null || val === undefined) return '';
+    if (typeof val === 'string') return <span className="text-syntax-string">{val}</span>;
+    if (typeof val === 'number') return <span className="text-syntax-number">{String(val)}</span>;
+    if (typeof val === 'boolean') return <span className="text-syntax-boolean font-bold">{val ? 'true' : 'false'}</span>;
+    if (typeof val === 'object') {
+      if (isBsonObject(val)) return renderBsonValueNode(val);
+      if (typeof val.$oid === 'string') return <span className="text-syntax-string">{val.$oid}</span>;
+      if (val.$date !== undefined) {
+        const s =
+          typeof val.$date === 'string'
+            ? val.$date
+            : val.$date?.$numberLong
+              ? new Date(Number(val.$date.$numberLong)).toISOString()
+              : JSON.stringify(val.$date);
+        return <span className="text-syntax-string">{s}</span>;
+      }
+      if (val.$numberLong !== undefined) return <span className="text-syntax-number">{String(val.$numberLong)}</span>;
+      if (val.$numberDecimal !== undefined) return <span className="text-syntax-number">{String(val.$numberDecimal)}</span>;
+      if (val.$numberInt !== undefined) return <span className="text-syntax-number">{String(val.$numberInt)}</span>;
+      if (val.$numberDouble !== undefined) return <span className="text-syntax-number">{String(val.$numberDouble)}</span>;
+      return <span className="text-[var(--text-dim)]">{JSON.stringify(val)}</span>;
     }
     return <span>{String(val)}</span>;
   };
@@ -859,7 +877,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             style={{ width: '180px', flexShrink: 0 }}
             onContextMenu={(e) => openCtxMenu(e, rawDoc, col, rawDoc[col])}
           >
-            {renderCellContent(rawDoc[col])}
+            {renderColoredCell(rawDoc[col])}
           </div>
         ))}
         {hasRowActions && (
