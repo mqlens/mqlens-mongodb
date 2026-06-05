@@ -5505,7 +5505,7 @@ button, input, select, textarea {
 
 /* Stat cards */
 .mql-qs-stats { display: flex; gap: 14px; flex-wrap: wrap; }
-.mql-qs-stat { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 150px;
+.mql-qs-stat { display: flex; align-items: center; gap: 12px; flex: 0 1 240px;
   border: 1px solid var(--border-color); border-radius: 12px; padding: 14px 16px; background: var(--bg-base); }
 .mql-qs-stat-ico { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center;
   justify-content: center; color: var(--accent-blue); background: var(--bg-item-hover); flex: 0 0 auto; }
@@ -5550,9 +5550,9 @@ button, input, select, textarea {
 
 /* Badges */
 .mql-qs-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px; letter-spacing: .03em; }
-.mql-qs-badge.is-srv { background: var(--soft-green-bg, #14361f); color: var(--accent-green); }
-.mql-qs-badge.is-ssh { background: #2a2440; color: #a78bfa; }
-.mql-qs-badge.is-live { background: #14361f; color: var(--accent-green); display: inline-flex; align-items: center; gap: 4px; }
+.mql-qs-badge.is-srv { background: rgba(34, 197, 94, .14); color: var(--accent-green); }
+.mql-qs-badge.is-ssh { background: rgba(124, 92, 250, .16); color: #7c5cff; }
+.mql-qs-badge.is-live { background: rgba(34, 197, 94, .14); color: var(--accent-green); display: inline-flex; align-items: center; gap: 4px; }
 .mql-qs-badge.is-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); }
 
 /* Tips */
