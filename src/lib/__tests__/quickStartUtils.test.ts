@@ -1,5 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { hostFromUri, avatarColor, initial, AVATAR_PALETTE } from '../quickStartUtils';
+import { hostFromUri, avatarColor, initial, topology, AVATAR_PALETTE } from '../quickStartUtils';
+
+describe('topology', () => {
+  it('labels srv uris as SRV cluster', () => {
+    expect(topology('mongodb+srv://c.x9k2.mongodb.net/db')).toBe('SRV cluster');
+  });
+  it('counts replica-set nodes from a multi-host uri', () => {
+    expect(topology('mongodb://h1:27017,h2:27017,h3:27017/db')).toBe('Replica set · 3 nodes');
+  });
+  it('labels a single host as standalone', () => {
+    expect(topology('mongodb://localhost:27017')).toBe('Standalone');
+  });
+});
 
 describe('hostFromUri', () => {
   it('returns host:port for a standard uri', () => {

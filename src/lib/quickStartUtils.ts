@@ -24,6 +24,15 @@ export function initial(name: string): string {
   return m ? m[0].toUpperCase() : '?';
 }
 
+/** Short topology label derived from a mongodb URI: SRV cluster, replica set, or standalone. */
+export function topology(uri: string): string {
+  if (/^mongodb\+srv:\/\//i.test(uri)) return 'SRV cluster';
+  const m = uri.match(/mongodb:\/\/(?:[^@/]*@)?([^/?]+)/i);
+  if (!m) return '';
+  const hosts = m[1].split(',').filter(Boolean);
+  return hosts.length > 1 ? `Replica set · ${hosts.length} nodes` : 'Standalone';
+}
+
 /** Deterministic palette color from a name (FNV-1a hash). */
 export function avatarColor(name: string): string {
   let h = 0x811c9dc5;
