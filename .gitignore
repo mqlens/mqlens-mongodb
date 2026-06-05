@@ -28,6 +28,7 @@ dist-ssr
 # Local-only: internal design/process docs + AI-assistant tooling
 # (kept on disk, intentionally not published)
 docs/superpowers/
+.superpowers/
 GO-LIVE.md
 .claude/
 CLAUDE.md
