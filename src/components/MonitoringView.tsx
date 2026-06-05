@@ -82,6 +82,64 @@ const OpBadge: React.FC<{ op: string }> = ({ op }) => (
   <span className="mql-mon-op" style={{ ['--op-color' as any]: opColor(op) }}>{op}</span>
 );
 
+// Lightweight syntax highlighter for the (mongosh-ish) command strings shown in
+// the ops/profiler tables — keys, strings, numbers, keywords, and constructor
+// names (ObjectId/ISODate/…) get the same palette as the result views.
+const HighlightedCommand: React.FC<{ text: string }> = ({ text }) => {
+  const nodes = useMemo<React.ReactNode[]>(() => {
+    const out: React.ReactNode[] = [];
+    const n = text.length;
+    let i = 0;
+    let k = 0;
+    const span = (cls: string | undefined, s: string) =>
+      out.push(cls ? <span key={k++} className={cls}>{s}</span> : <React.Fragment key={k++}>{s}</React.Fragment>);
+    while (i < n) {
+      const c = text[i];
+      if (c === '"') {
+        let j = i + 1;
+        while (j < n) {
+          if (text[j] === '\\') { j += 2; continue; }
+          if (text[j] === '"') { j++; break; }
+          j++;
+        }
+        const str = text.slice(i, j);
+        let p = j;
+        while (p < n && /\s/.test(text[p])) p++;
+        span(text[p] === ':' ? 'text-syntax-key' : 'text-syntax-string', str);
+        i = j;
+        continue;
+      }
+      if (/[0-9]/.test(c) || (c === '-' && /[0-9]/.test(text[i + 1] || ''))) {
+        let j = i + 1;
+        while (j < n && /[0-9.]/.test(text[j])) j++;
+        span('text-syntax-number', text.slice(i, j));
+        i = j;
+        continue;
+      }
+      if (/[A-Za-z_$]/.test(c)) {
+        let j = i + 1;
+        while (j < n && /[\w$]/.test(text[j])) j++;
+        const word = text.slice(i, j);
+        if (word === 'true' || word === 'false') span('text-syntax-boolean', word);
+        else if (word === 'null') span('text-syntax-null', word);
+        else {
+          let p = j;
+          while (p < n && /\s/.test(text[p])) p++;
+          span(text[p] === '(' ? 'text-syntax-boolean' : undefined, word);
+        }
+        i = j;
+        continue;
+      }
+      let j = i + 1;
+      while (j < n && !/["0-9A-Za-z_$-]/.test(text[j])) j++;
+      span('text-[var(--text-dim)]', text.slice(i, j));
+      i = j;
+    }
+    return out;
+  }, [text]);
+  return <>{nodes}</>;
+};
+
 // MongoDB error 13 / "not authorized" → the user lacks the privilege.
 const isAuthError = (msg: string): boolean =>
   /not authorized|unauthorized|requires authentication|\(13\)|code 13/i.test(msg);
@@ -381,7 +439,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                         <td className="mql-mon-ns">{op.ns}</td>
                         <td className={op.secsRunning >= 5 ? 'mql-mon-slow' : ''}>{op.secsRunning}</td>
                         <td>{op.client}</td>
-                        <td className="mql-mon-cmd" title={op.command}>{op.command}</td>
+                        <td className="mql-mon-cmd" title={op.command}><HighlightedCommand text={op.command} /></td>
                         <td>
                           <button
                             type="button"
@@ -480,7 +538,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                         <td><OpBadge op={p.op} /></td>
                         <td className="mql-mon-ns">{p.ns}</td>
                         <td>{p.planSummary}</td>
-                        <td className="mql-mon-cmd" title={p.command}>{p.command}</td>
+                        <td className="mql-mon-cmd" title={p.command}><HighlightedCommand text={p.command} /></td>
                       </tr>
                     ))}
                   </tbody>
