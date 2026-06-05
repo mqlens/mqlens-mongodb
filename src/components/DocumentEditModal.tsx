@@ -1,7 +1,24 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { X, FileJson } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { shellToEjson } from '../lib/shellDoc';
+
+// Validate the (shell-syntax) document text: convert to Extended JSON and parse.
+// Returns an error message, or null when valid. Shell types (ISODate/ObjectId/…)
+// are accepted; genuinely malformed input (stray tokens, bad EJSON) is rejected.
+function validateDocument(text: string): string | null {
+  if (!text.trim()) return 'Document is empty.';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(shellToEjson(text));
+  } catch (e: any) {
+    return `Invalid document: ${e?.message || 'syntax error'}`;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return 'A document must be an object (e.g. { "field": value }).';
+  }
+  return null;
+}
 
 interface DocumentEditModalProps {
   isOpen: boolean;
@@ -21,6 +38,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   const [json, setJson] = useState(initialJson);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const validationError = useMemo(() => validateDocument(json), [json]);
   const theme =
     typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light'
       ? 'light'
@@ -37,20 +55,12 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   if (!isOpen) return null;
 
   const handleSave = async () => {
-    // The editor shows mongosh shell types (ISODate(...), ObjectId(...), …);
-    // convert them to Extended JSON before validating and saving.
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    // Convert the shell types (ISODate(...), ObjectId(...), …) to Extended JSON.
     const ejson = shellToEjson(json);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(ejson);
-    } catch (err: any) {
-      setError(`Invalid document: ${err.message || 'syntax error'}`);
-      return;
-    }
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      setError('A document must be an object (e.g. { "field": value }).');
-      return;
-    }
     setError(null);
     setSaving(true);
     try {
@@ -63,7 +73,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
 
   return (
     <div className="nested-modal-overlay select-none" data-testid="document-edit-modal" onClick={onClose}>
-      <div className="index-modal-container" onClick={(e) => e.stopPropagation()}>
+      <div className="index-modal-container index-modal-container--wide" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3 mb-4 select-none">
           <div className="flex items-center gap-2">
@@ -87,10 +97,22 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
             <Editor
               height={360}
               defaultLanguage="javascript"
+              language="javascript"
               theme={theme}
               value={json}
               onChange={(v) => setJson(v ?? '')}
               wrapperProps={{ 'data-testid': 'document-json-input' }}
+              onMount={(_editor, monaco) => {
+                // The document is shown in mongosh shell syntax (ISODate(...),
+                // ObjectId(...)), which is neither valid JSON nor resolvable JS,
+                // so silence both validators to avoid spurious red squiggles.
+                monaco.languages.typescript?.javascriptDefaults?.setDiagnosticsOptions({
+                  noSemanticValidation: true,
+                  noSyntaxValidation: true,
+                  noSuggestionDiagnostics: true,
+                });
+                monaco.languages.json?.jsonDefaults?.setDiagnosticsOptions({ validate: false });
+              }}
               options={{
                 minimap: { enabled: false },
                 lineNumbers: 'on',
@@ -100,10 +122,16 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
                 fontSize: 12.5,
                 tabSize: 2,
                 automaticLayout: true,
-                fixedOverflowWidgets: true,
                 overviewRulerLanes: 0,
                 renderLineHighlight: 'line',
                 padding: { top: 8, bottom: 8 },
+                // No autocomplete in the document editor (avoids stray JS/JSON
+                // suggestions like `JSON` and the mispositioned widget).
+                quickSuggestions: false,
+                suggestOnTriggerCharacters: false,
+                wordBasedSuggestions: 'off',
+                parameterHints: { enabled: false },
+                hover: { enabled: false },
               }}
             />
           </div>
@@ -113,9 +141,9 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
           </span>
         </div>
 
-        {error && (
+        {(error || validationError) && (
           <div className="index-modal-error" data-testid="document-edit-error">
-            {error}
+            {error || validationError}
           </div>
         )}
 
@@ -126,7 +154,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
           <button
             type="button"
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !!validationError}
             className="index-modal-btn-primary"
             data-testid="document-save-btn"
           >

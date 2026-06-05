@@ -4683,6 +4683,8 @@ button, input, select, textarea {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
+/* Wider variant for the document (JSON/shell) editor modal */
+.index-modal-container--wide { width: min(820px, 92vw); }
 
 .index-modal-form {
   display: flex;
