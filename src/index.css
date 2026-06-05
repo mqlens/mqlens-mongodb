@@ -5499,7 +5499,7 @@ button, input, select, textarea {
   width: 100%; border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 600;
   cursor: pointer; border: 1px solid transparent; margin-bottom: 9px; }
 .mql-qs-btn.is-primary { background: var(--accent-blue); color: #fff; }
-.mql-qs-btn.is-ghost { background: var(--bg-item); color: var(--text); border-color: var(--border); }
+.mql-qs-btn.is-ghost { background: var(--bg-item-hover); color: var(--text-main); border-color: var(--border-color); }
 .mql-qs-btn:hover { filter: brightness(1.08); }
 
 .mql-qs-rail-section { margin-top: 18px; }
@@ -5509,8 +5509,8 @@ button, input, select, textarea {
   color: var(--text-muted); margin-top: 9px; }
 .mql-qs-tip svg { color: var(--accent-blue); flex: 0 0 auto; }
 .mql-qs-kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
-  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
-  padding: 1px 6px; color: var(--text); background: var(--bg-item); white-space: nowrap; }
+  border: 1px solid var(--border-color); border-bottom-width: 2px; border-radius: 5px;
+  padding: 1px 6px; color: var(--text-main); background: var(--bg-item-hover); white-space: nowrap; }
 .mql-qs-rail-links { display: flex; gap: 16px; margin-top: 18px; }
 .mql-qs-link { display: inline-flex; align-items: center; gap: 5px; background: none; border: none;
   color: var(--accent-blue); font-size: 12px; cursor: pointer; padding: 0; text-decoration: none; }
@@ -5521,8 +5521,8 @@ button, input, select, textarea {
 .mql-qs-conns-list { display: flex; flex-direction: column; gap: 9px; }
 
 .mql-qs-card { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
-  padding: 11px 13px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-panel);
-  cursor: pointer; color: var(--text); }
+  padding: 11px 13px; border: 1px solid var(--border-color); border-radius: 11px; background: var(--bg-panel);
+  cursor: pointer; color: var(--text-main); }
 .mql-qs-card:hover:not(:disabled) { border-color: var(--accent-blue); }
 .mql-qs-card.is-connected { cursor: default; }
 .mql-qs-card:disabled { cursor: default; }
@@ -5542,9 +5542,9 @@ button, input, select, textarea {
 .mql-qs-badge.is-live { background: #14361f; color: var(--accent-green); display: inline-flex; align-items: center; gap: 4px; }
 .mql-qs-badge.is-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); }
 
-.mql-qs-empty { border: 1.5px dashed var(--border); border-radius: 13px; padding: 30px 22px; text-align: center; }
+.mql-qs-empty { border: 1.5px dashed var(--border-color); border-radius: 13px; padding: 30px 22px; text-align: center; }
 .mql-qs-empty-ico { color: var(--text-dim); margin-bottom: 8px; }
-.mql-qs-empty-title { color: var(--text); font-weight: 600; margin-bottom: 4px; }
+.mql-qs-empty-title { color: var(--text-main); font-weight: 600; margin-bottom: 4px; }
 .mql-qs-empty-sub { font-size: 12.5px; color: var(--text-muted); max-width: 320px; margin: 0 auto; }
 
 @media (max-width: 720px) {
