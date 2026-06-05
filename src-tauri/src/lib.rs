@@ -13,6 +13,7 @@ pub mod ai;
 pub mod connections;
 mod db;
 pub(crate) mod mock_db;
+pub mod monitoring;
 pub mod queries;
 pub mod ssh_tunnel;
 mod state;
@@ -684,6 +685,59 @@ async fn list_indexes(
     list_indexes_impl(&state, &id, &db, &collection).await
 }
 
+// ── Cluster monitoring ────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn server_status(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<monitoring::ServerStatus, String> {
+    monitoring::server_status_impl(&state, &id).await
+}
+
+#[tauri::command]
+async fn current_ops(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<Vec<monitoring::CurrentOp>, String> {
+    monitoring::current_ops_impl(&state, &id).await
+}
+
+#[tauri::command]
+async fn kill_op(state: tauri::State<'_, AppState>, id: String, opid: i64) -> Result<(), String> {
+    monitoring::kill_op_impl(&state, &id, opid).await
+}
+
+#[tauri::command]
+async fn get_profiling_status(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+) -> Result<monitoring::ProfilingStatus, String> {
+    monitoring::profiling_status_impl(&state, &id, &database).await
+}
+
+#[tauri::command]
+async fn set_profiling_level(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    level: i32,
+    slow_ms: i32,
+) -> Result<monitoring::ProfilingStatus, String> {
+    monitoring::set_profiling_level_impl(&state, &id, &database, level, slow_ms).await
+}
+
+#[tauri::command]
+async fn read_profile(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    limit: i64,
+) -> Result<Vec<monitoring::ProfileEntry>, String> {
+    monitoring::read_profile_impl(&state, &id, &database, limit).await
+}
+
 #[tauri::command]
 async fn execute_mql_query(
     state: tauri::State<'_, AppState>,
@@ -1269,7 +1323,13 @@ pub fn run() {
             queries::save_query,
             queries::delete_saved_query,
             queries::record_history,
-            queries::set_default_query
+            queries::set_default_query,
+            server_status,
+            current_ops,
+            kill_op,
+            get_profiling_status,
+            set_profiling_level,
+            read_profile
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
