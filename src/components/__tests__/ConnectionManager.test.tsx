@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactElement } from 'react';
 import { render as rtlRender, screen, fireEvent, waitFor } from '@testing-library/react';
-import { ConnectionManager, buildUri, buildSshConfig, parseUriIntoFields } from '../ConnectionManager';
+import { ConnectionManager, buildUri, buildSshConfig, parseUriIntoFields, summarizeConnectionError } from '../ConnectionManager';
 import { DialogProvider } from '../dialogs/DialogProvider';
 
 // ConnectionManager now uses the in-app dialog system, so it must render inside a provider.
@@ -41,6 +41,33 @@ const baseConn = {
   appName: '',
   defaultDb: '',
 } as any;
+
+describe('summarizeConnectionError', () => {
+  it('reports a TLS trust problem buried inside a server-selection timeout', () => {
+    const raw = 'Kind: Server selection timeout: No available servers. Topology: { Servers: [ { Address: 1.2.3.4:27017, Type: Unknown, Error: Kind: I/O error: invalid peer certificate: UnknownIssuer } ] }';
+    const { summary, hint } = summarizeConnectionError(raw);
+    expect(summary).toMatch(/certificate not trusted/i);
+    expect(hint).toMatch(/CA file|invalid certificates/i);
+  });
+
+  it('detects authentication failures', () => {
+    expect(summarizeConnectionError('Authentication failed. (18)').summary).toMatch(/authentication failed/i);
+  });
+
+  it('detects connection refused', () => {
+    expect(summarizeConnectionError('Kind: I/O error: Connection refused (os error 61)').summary).toMatch(/refused/i);
+  });
+
+  it('falls back to a trimmed first line for unknown errors', () => {
+    const { summary, hint } = summarizeConnectionError('Kind: some weird failure\nwith more lines');
+    expect(summary).toBe('some weird failure');
+    expect(hint).toBeUndefined();
+  });
+
+  it('summarizes a bare server-selection timeout when no deeper cause is present', () => {
+    expect(summarizeConnectionError('Server selection timeout: No available servers').summary).toMatch(/selection timed out/i);
+  });
+});
 
 describe('parseUriIntoFields (import → form)', () => {
   it('extracts credentials, host/port, and default db into editable fields', () => {
@@ -485,10 +512,12 @@ describe('ConnectionManager Component', () => {
     const testBtn = screen.getByRole('button', { name: /test connection/i });
     fireEvent.click(testBtn);
 
-    // Verify error feedback is displayed
+    // Verify summarized error feedback is displayed (raw error lives behind "Show details").
     await waitFor(() => {
-      expect(screen.getByText('Connection timed out')).toBeInTheDocument();
+      expect(screen.getByTestId('test-result-summary')).toHaveTextContent(/timed out/i);
     }, { timeout: 4000 });
+    fireEvent.click(screen.getByTestId('test-error-details-toggle'));
+    expect(screen.getByTestId('test-error-detail')).toHaveTextContent('Connection timed out');
   });
 
   it('calls connect_db and triggers onConnect callback when Connect is clicked', async () => {

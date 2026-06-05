@@ -107,6 +107,33 @@ const TABS = [
 export const maskUriPassword = (uri: string): string =>
   uri.replace(/(\/\/[^/:@\s]+:)([^@/\s]+)(@)/, (_m, a, _p, c) => `${a}••••••${c}`);
 
+// Turn a raw mongodb driver error (often a huge "server selection timeout" with
+// the full topology dump) into a concise root-cause headline + actionable hint.
+// TLS/auth/refused/DNS are checked first because those causes are usually buried
+// inside the topology of a wrapping "server selection timeout".
+export const summarizeConnectionError = (raw: string): { summary: string; hint?: string } => {
+  const e = (raw || '').toLowerCase();
+  if (/invalid peer certificate|unknownissuer|certnotvalidfor|certificate verify failed|self.?signed/.test(e))
+    return {
+      summary: 'TLS certificate not trusted.',
+      hint: 'Provide the cluster’s CA file under TLS, or enable “Allow invalid certificates” for self-signed / dev clusters.',
+    };
+  if (/authentication failed|\(18\)|bad auth|authenticationfailed/.test(e))
+    return { summary: 'Authentication failed.', hint: 'Check the username, password, and authentication database.' };
+  if (/connection refused|os error 61|os error 111|actively refused/.test(e))
+    return { summary: 'Connection refused.', hint: 'Is the server running and the host/port reachable from this machine?' };
+  if (/failed to lookup|name or service not known|no such host|nodename nor servname|dns error/.test(e))
+    return { summary: 'Host not found (DNS lookup failed).', hint: 'Check the hostname; for private hosts you may need an SSH tunnel.' };
+  if (/server selection timeout|no available servers|no suitable servers/.test(e))
+    return {
+      summary: 'Couldn’t reach any server (selection timed out).',
+      hint: 'Check the host/port and TLS settings, and that this machine can reach the cluster.',
+    };
+  if (/timed out|timeout/.test(e)) return { summary: 'Connection timed out.' };
+  const firstLine = (raw || 'Connection failed').replace(/^kind:\s*/i, '').split(/\n|\. /)[0].trim();
+  return { summary: firstLine.length > 160 ? `${firstLine.slice(0, 160)}…` : firstLine };
+};
+
 // Parse a mongodb URI into structured editor fields so the form (hosts / auth /
 // TLS) can be edited interactively. Used both when editing a saved profile and
 // when "Parse into form" is clicked on a pasted URI.
@@ -256,6 +283,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     { name: 'Verify Connection (Ping)', status: 'pending' },
   ]);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [showErrDetail, setShowErrDetail] = useState(false);
 
   // Initialize folders and load connection profiles
   useEffect(() => {
@@ -523,6 +551,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const runTestStepSequence = async () => {
     setTesting(true);
     setTestResult(null);
+    setShowErrDetail(false);
     setTestProgress(0);
 
     const steps: TestStep[] = [
@@ -1470,17 +1499,44 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   ))}
                 </div>
 
-                {/* Final status feedback pill */}
-                {testResult && (
-                  <div style={{ padding: '6px 8px', borderRadius: '4px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: 6, border: '1px solid transparent', 
-                    background: testResult.success ? 'var(--soft-green-bg)' : 'var(--soft-red-bg)', 
-                    borderColor: testResult.success ? 'var(--soft-green-bd)' : 'var(--soft-red-bd)',
-                    color: testResult.success ? 'var(--accent-green)' : 'var(--accent-red)'
-                  }}>
-                    {testResult.success ? <Check size={12} /> : <AlertCircle size={12} />}
-                    <span style={{ fontWeight: 500 }}>{testResult.message}</span>
-                  </div>
-                )}
+                {/* Final status feedback */}
+                {testResult && (() => {
+                  const info = testResult.success
+                    ? { summary: testResult.message, hint: undefined as string | undefined }
+                    : summarizeConnectionError(testResult.message);
+                  return (
+                    <div style={{ padding: '8px 10px', borderRadius: '4px', fontSize: '11px', border: '1px solid transparent',
+                      background: testResult.success ? 'var(--soft-green-bg)' : 'var(--soft-red-bg)',
+                      borderColor: testResult.success ? 'var(--soft-green-bd)' : 'var(--soft-red-bd)',
+                      color: testResult.success ? 'var(--accent-green)' : 'var(--accent-red)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                        {testResult.success ? <Check size={12} style={{ flex: 'none', marginTop: 1 }} /> : <AlertCircle size={12} style={{ flex: 'none', marginTop: 1 }} />}
+                        <span style={{ fontWeight: 600 }} data-testid="test-result-summary">{info.summary}</span>
+                      </div>
+                      {info.hint && (
+                        <div style={{ marginTop: 4, marginLeft: 18, color: 'var(--text-muted)', fontWeight: 400 }}>{info.hint}</div>
+                      )}
+                      {!testResult.success && (
+                        <>
+                          <button
+                            type="button"
+                            data-testid="test-error-details-toggle"
+                            onClick={() => setShowErrDetail(v => !v)}
+                            style={{ marginTop: 6, marginLeft: 18, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10, textDecoration: 'underline' }}
+                          >
+                            {showErrDetail ? 'Hide details' : 'Show details'}
+                          </button>
+                          {showErrDetail && (
+                            <pre data-testid="test-error-detail" style={{ marginTop: 6, marginBottom: 0, maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 10, lineHeight: 1.5, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                              {testResult.message}
+                            </pre>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
