@@ -14,6 +14,7 @@ pub mod connections;
 mod db;
 pub(crate) mod mock_db;
 pub mod monitoring;
+pub mod path_env;
 pub mod queries;
 pub mod ssh_tunnel;
 mod state;
@@ -1260,6 +1261,11 @@ async fn vault_change_password(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Resolve the user's real shell PATH before anything spawns child processes,
+    // so the packaged app finds CLI tools (claude, codex, mongosh, …) like the
+    // terminal does. Must run here on the main thread before worker threads start.
+    path_env::ensure_user_path();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
