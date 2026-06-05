@@ -2,6 +2,10 @@
 
 [![CI](https://github.com/mqlens/mqlens-mongodb/actions/workflows/ci.yml/badge.svg)](https://github.com/mqlens/mqlens-mongodb/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-enabled-brightgreen.svg)](.github/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/mqlens/mqlens-mongodb)](https://github.com/mqlens/mqlens-mongodb/releases)
+[![Downloads](https://img.shields.io/github/downloads/mqlens/mqlens-mongodb/total)](https://github.com/mqlens/mqlens-mongodb/releases)
+[![Stars](https://img.shields.io/github/stars/mqlens/mqlens-mongodb?style=flat)](https://github.com/mqlens/mqlens-mongodb/stargazers)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **A fast, native desktop GUI for MongoDB** — built with [Tauri](https://tauri.app)
 (Rust) and React + TypeScript.
@@ -72,18 +76,28 @@ Grab the latest build for your OS from
 
 No account, no sign-up, no telemetry.
 
+## Trust & privacy
+
+- **No telemetry** — nothing is tracked or phoned home.
+- **No account required** — just download and connect.
+- **Credentials encrypted locally** with AES-256-GCM and Argon2id key derivation.
+- **Signed release assets** (detached signatures on every artifact).
+- **macOS notarized** builds and **Windows signed** installers.
+- **Apache-2.0** — fully open source.
+
 ## MQLens vs. the alternatives
 
 | | MQLens | Compass | Studio 3T |
 |---|---|---|---|
 | Price | **Free (Apache-2.0)** | Free | Paid |
 | Engine | **Native (Tauri/Rust)** | Electron | Java |
-| All auth (X.509 / AWS / Kerberos / LDAP) | ✅ | partial | ✅ |
-| SSH tunnel / SOCKS5 proxy | ✅ | ❌ | ✅ |
+| Enterprise auth (X.509 / AWS / Kerberos / LDAP) | ✅ | ✅ | ✅ |
+| SSH tunnel | ✅ | ✅ | ✅ |
+| SOCKS5 proxy | ✅ | Not clearly exposed | Varies |
 | Aggregation + explain tree | ✅ | ✅ | ✅ |
 | Embedded `mongosh` | ✅ | ✅ | ✅ |
 | AI query assistant (bring-your-own key) | ✅ | ✅ | partial |
-| Encrypted creds + biometric unlock | ✅ | ❌ | partial |
+| Biometric-unlocked encrypted vault | ✅ | ❌ | partial |
 | Telemetry | **None** | yes | yes |
 
 *Comparison reflects publicly documented behavior at time of writing; tools change — corrections welcome via an issue.*
