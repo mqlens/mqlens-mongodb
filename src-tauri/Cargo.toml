@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "0.2.0"
+version = "0.3.0"
 description = "MQLens — a native desktop GUI for MongoDB."
 authors = ["Devesh Kumar <vrshu112@gmail.com>"]
 license = "Apache-2.0"
@@ -27,6 +27,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-biometry = "0.2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 mongodb = { version = "3.0.0", features = ["aws-auth", "gssapi-auth"] }

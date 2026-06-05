@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Check, LayoutGrid, Save, Terminal, Sparkles, ShieldCheck } from 'lucide-react';
+import { Check, LayoutGrid, Save, Terminal, Sparkles, ShieldCheck, ArrowUpCircle } from 'lucide-react';
 import { changeVaultPassword, resetVault, biometricStatus, biometricEnable, biometricDisable, type BiometricStatus } from '../lib/vault';
+import { CHECK_UPDATE_EVENT } from './UpdatePrompt';
 
 interface AppSettings {
   mongosh_path: string;
@@ -228,6 +229,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               );
             })}
           </div>
+        </section>
+
+        <section className="mql-settings-section">
+          <div className="mql-settings-section-h">
+            <ArrowUpCircle size={13} color="var(--accent-blue)" />
+            <span className="mql-label">Updates</span>
+          </div>
+          <div className="mql-settings-option-copy" style={{ marginBottom: 8 }}>
+            MQLens checks for updates on launch and installs only after you approve. You can also check now.
+          </div>
+          <button
+            type="button"
+            className="mql-btn mql-btn-secondary"
+            data-testid="check-updates-btn"
+            onClick={() => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT))}
+          >
+            <ArrowUpCircle size={13} /> Check for updates
+          </button>
         </section>
 
         <section className="mql-settings-section">
