@@ -107,6 +107,41 @@ const TABS = [
 export const maskUriPassword = (uri: string): string =>
   uri.replace(/(\/\/[^/:@\s]+:)([^@/\s]+)(@)/, (_m, a, _p, c) => `${a}••••••${c}`);
 
+// Parse a mongodb URI into structured editor fields so the form (hosts / auth /
+// TLS) can be edited interactively. Used both when editing a saved profile and
+// when "Parse into form" is clicked on a pasted URI.
+export const parseUriIntoFields = (uri: string) => {
+  const m = uri.match(/mongodb(?:\+srv)?:\/\/(?:([^:@]+):([^@]*)@)?([^/?]+)(?:\/([^?]+))?(?:\?(.*))?/);
+  let authUser = '';
+  let authPass = '';
+  let hostStr = 'localhost:27017';
+  let defaultDb = '';
+  let tlsMode = 'off';
+  let authMethod = 'none';
+  if (m) {
+    authUser = m[1] ? decodeURIComponent(m[1]) : '';
+    authPass = m[2] ? decodeURIComponent(m[2]) : '';
+    hostStr = m[3] || 'localhost:27017';
+    defaultDb = m[4] || '';
+    const q = m[5] || '';
+    if (q.includes('tls=true') || q.includes('ssl=true')) tlsMode = 'system';
+    if (authUser) authMethod = 'scram-256';
+  }
+  const hosts = hostStr.split(',').map((h) => {
+    const [host, port] = h.split(':');
+    return { host: host || 'localhost', port: port || '27017' };
+  });
+  return {
+    authUser,
+    authPass,
+    authMethod,
+    tlsMode,
+    defaultDb,
+    hosts: hosts.length > 0 ? hosts : [{ host: 'localhost', port: '27017' }],
+    topology: uri.includes('replicaSet=') ? 'replicaSet' : 'standalone',
+  };
+};
+
 export const buildUri = (s: typeof BLANK_CONN) => {
   if (s.topology === 'uri') return s.uri;
   const hosts = s.hosts.filter(h => h.host).map(h => `${h.host}:${h.port || 27017}`).join(',');
@@ -311,35 +346,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     if (!profile) return;
     
     setEditMode('edit');
-    
-    // Attempt to extract structured fields if URI is standard standalone/replicaSet
-    const hostMatch = profile.uri.match(/mongodb:\/\/(?:([^:]+):([^@]+)@)?([^/]+)(?:\/([^?]+))?(?:\?(.*))?/);
-    let authUser = '';
-    let authPass = '';
-    let hostStr = 'localhost:27017';
-    let defaultDb = '';
-    let tlsMode = 'off';
-    let authMethod = 'none';
 
-    if (hostMatch) {
-      authUser = hostMatch[1] ? decodeURIComponent(hostMatch[1]) : '';
-      authPass = hostMatch[2] ? decodeURIComponent(hostMatch[2]) : '';
-      hostStr = hostMatch[3] || 'localhost:27017';
-      defaultDb = hostMatch[4] || '';
-      
-      const queryParams = hostMatch[5] || '';
-      if (queryParams.includes('tls=true') || queryParams.includes('ssl=true')) {
-        tlsMode = 'system';
-      }
-      if (authUser) {
-        authMethod = 'scram-256';
-      }
-    }
-
-    const hosts = hostStr.split(',').map(h => {
-      const [host, port] = h.split(':');
-      return { host: host || 'localhost', port: port || '27017' };
-    });
+    // Extract structured fields so the form is editable for standalone/replicaSet.
+    const parsed = parseUriIntoFields(profile.uri);
 
     // Restore structured SSH config persisted with the profile.
     const ssh = profile.ssh || null;
@@ -362,13 +371,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       ...BLANK_CONN,
       name: profile.name,
       uri: profile.uri,
-      topology: profile.uri.includes('replicaSet=') ? 'replicaSet' : 'standalone',
-      hosts: hosts.length > 0 ? hosts : [{ host: 'localhost', port: '27017' }],
-      authUser,
-      authPass,
-      authMethod,
-      tlsMode,
-      defaultDb,
+      ...parsed,
       folder: profileFolderMap[profile.id] || '',
       ...sshFields,
     });
@@ -969,35 +972,36 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <label htmlFor="connection-uri" className="mql-label">Connection URI</label>
-                    {(() => {
-                      const masked = maskUriPassword(editorState.uri);
-                      const hasSecret = masked !== editorState.uri;
-                      return (
-                        <div className="mql-password-field">
-                          <input
-                            id="connection-uri"
-                            type="text"
-                            value={revealUri || !hasSecret ? editorState.uri : masked}
-                            readOnly={hasSecret && !revealUri}
-                            onChange={e => setEditorState(prev => ({ ...prev, uri: e.target.value, topology: 'uri' }))}
-                            placeholder="mongodb://localhost:27017"
-                            className="mql-ncd-input font-mono"
-                          />
-                          {hasSecret && (
-                            <button
-                              type="button"
-                              className="mql-password-toggle"
-                              aria-label={revealUri ? 'Hide password' : 'Show password'}
-                              title={revealUri ? 'Hide password' : 'Show password to edit'}
-                              onClick={() => setRevealUri(v => !v)}
-                              tabIndex={-1}
-                            >
-                              {revealUri ? <EyeOff size={13} /> : <Eye size={13} />}
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })()}
+                    <div className="mql-password-field">
+                      <input
+                        id="connection-uri"
+                        type={revealUri ? 'text' : 'password'}
+                        value={editorState.uri}
+                        onChange={e => setEditorState(prev => ({ ...prev, uri: e.target.value, topology: 'uri' }))}
+                        placeholder="mongodb://localhost:27017"
+                        className="mql-ncd-input font-mono"
+                      />
+                      <button
+                        type="button"
+                        className="mql-password-toggle"
+                        aria-label={revealUri ? 'Hide URI' : 'Show URI'}
+                        title={revealUri ? 'Hide' : 'Show'}
+                        onClick={() => setRevealUri(v => !v)}
+                        tabIndex={-1}
+                      >
+                        {revealUri ? <EyeOff size={13} /> : <Eye size={13} />}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="mql-ncd-parse-btn"
+                      data-testid="parse-uri-btn"
+                      disabled={!editorState.uri.trim()}
+                      onClick={() => setEditorState(prev => ({ ...prev, ...parseUriIntoFields(prev.uri) }))}
+                      title="Fill the Server and Auth form fields from this URI so you can edit them"
+                    >
+                      <LayoutGrid size={12} /> Parse into form fields
+                    </button>
                   </div>
 
                   <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 10, display: 'flex', gap: 12 }}>

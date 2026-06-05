@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactElement } from 'react';
 import { render as rtlRender, screen, fireEvent, waitFor } from '@testing-library/react';
-import { ConnectionManager, buildUri, buildSshConfig } from '../ConnectionManager';
+import { ConnectionManager, buildUri, buildSshConfig, parseUriIntoFields } from '../ConnectionManager';
 import { DialogProvider } from '../dialogs/DialogProvider';
 
 // ConnectionManager now uses the in-app dialog system, so it must render inside a provider.
@@ -41,6 +41,49 @@ const baseConn = {
   appName: '',
   defaultDb: '',
 } as any;
+
+describe('parseUriIntoFields (import → form)', () => {
+  it('extracts credentials, host/port, and default db into editable fields', () => {
+    const f = parseUriIntoFields('mongodb://alice:s3cr3t@db.example.com:27018/shop?tls=true');
+    expect(f.authUser).toBe('alice');
+    expect(f.authPass).toBe('s3cr3t');
+    expect(f.authMethod).toBe('scram-256');
+    expect(f.tlsMode).toBe('system');
+    expect(f.defaultDb).toBe('shop');
+    expect(f.hosts).toEqual([{ host: 'db.example.com', port: '27018' }]);
+    expect(f.topology).toBe('standalone');
+  });
+
+  it('splits multiple hosts and detects a replica set', () => {
+    const f = parseUriIntoFields('mongodb://h1:27017,h2:27017,h3:27017/?replicaSet=rs0');
+    expect(f.hosts).toEqual([
+      { host: 'h1', port: '27017' },
+      { host: 'h2', port: '27017' },
+      { host: 'h3', port: '27017' },
+    ]);
+    expect(f.topology).toBe('replicaSet');
+  });
+
+  it('handles a bare host with no credentials', () => {
+    const f = parseUriIntoFields('mongodb://localhost:27017');
+    expect(f.authUser).toBe('');
+    expect(f.authMethod).toBe('none');
+    expect(f.hosts).toEqual([{ host: 'localhost', port: '27017' }]);
+  });
+
+  it('decodes percent-encoded credentials', () => {
+    const f = parseUriIntoFields('mongodb://user%40corp:p%40ss@localhost:27017/');
+    expect(f.authUser).toBe('user@corp');
+    expect(f.authPass).toBe('p@ss');
+  });
+
+  it('round-trips with buildUri back to a standalone form', () => {
+    const f = parseUriIntoFields('mongodb://alice:s3cr3t@db.example.com:27018/shop');
+    const uri = buildUri({ ...baseConn, ...f, authPass: f.authPass });
+    expect(uri).toContain('db.example.com:27018');
+    expect(uri).toContain('alice');
+  });
+});
 
 describe('buildUri TLS handling (C8)', () => {
   it('adds tlsCAFile when TLS mode is "file" and a CA path is set', () => {
