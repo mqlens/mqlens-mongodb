@@ -2377,6 +2377,14 @@ button { cursor: pointer; }
   display: flex; align-items: center; gap: 8px;
 }
 .mql-ncd-meta-row .mql-ncd-input { flex: 1; min-width: 0; }
+.mql-ncd-parse-btn {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  background: var(--bg-item-hover); color: var(--text-main);
+  border: 1px solid var(--border-color); border-radius: 6px;
+}
+.mql-ncd-parse-btn:hover:not(:disabled) { border-color: var(--accent-blue); color: var(--accent-blue); }
+.mql-ncd-parse-btn:disabled { opacity: 0.5; cursor: default; }
 
 .mql-ncd-uri-row {
   display: flex; align-items: center; gap: 8px;
