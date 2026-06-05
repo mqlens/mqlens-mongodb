@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { PasswordInput } from './PasswordInput';
 import {
   getVaultStatus,
   initializeVault,
@@ -127,8 +128,7 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
             ? 'Your saved connections and API keys are encrypted with this password. There is no recovery if you forget it.'
             : 'Enter your master password to decrypt your saved credentials.'}
         </p>
-        <input
-          type="password"
+        <PasswordInput
           data-testid="vault-password"
           placeholder="Master password"
           value={password}
@@ -136,8 +136,7 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
           onKeyDown={(e) => e.key === 'Enter' && !isSetup && submit()}
         />
         {isSetup && (
-          <input
-            type="password"
+          <PasswordInput
             data-testid="vault-confirm"
             placeholder="Confirm password"
             value={confirm}
