@@ -2377,6 +2377,14 @@ button { cursor: pointer; }
   display: flex; align-items: center; gap: 8px;
 }
 .mql-ncd-meta-row .mql-ncd-input { flex: 1; min-width: 0; }
+.mql-ncd-parse-btn {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  background: var(--bg-item-hover); color: var(--text-main);
+  border: 1px solid var(--border-color); border-radius: 6px;
+}
+.mql-ncd-parse-btn:hover:not(:disabled) { border-color: var(--accent-blue); color: var(--accent-blue); }
+.mql-ncd-parse-btn:disabled { opacity: 0.5; cursor: default; }
 
 .mql-ncd-uri-row {
   display: flex; align-items: center; gap: 8px;
@@ -5083,9 +5091,10 @@ button, input, select, textarea {
   margin: 0 0 4px;
 }
 
-.mql-vault-card input[type="password"] {
+.mql-vault-card input[type="password"],
+.mql-vault-card .mql-password-field input {
   width: 100%;
-  padding: 8px 10px;
+  padding: 8px 34px 8px 10px;
   background: var(--bg-input-blend);
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -5097,11 +5106,13 @@ button, input, select, textarea {
   transition: border-color 0.12s ease;
 }
 
-.mql-vault-card input[type="password"]:focus {
+.mql-vault-card input[type="password"]:focus,
+.mql-vault-card .mql-password-field input:focus {
   border-color: var(--accent-blue);
 }
 
-.mql-vault-card button[type="button"]:not(.mql-vault-link) {
+/* The show/hide eye must stay a subtle inline icon, not the gradient button. */
+.mql-vault-card button[type="button"]:not(.mql-vault-link):not(.mql-password-toggle) {
   padding: 9px 16px;
   background: var(--brand-gradient);
   border: none;
@@ -5239,6 +5250,11 @@ button, input, select, textarea {
   font-size: 12px;
 }
 .dialog-input:focus { outline: none; border-color: var(--accent-blue); }
+.dialog-input--multiline {
+  height: auto; min-height: 110px; padding: 8px 10px; resize: vertical;
+  font-family: var(--font-mono); line-height: 1.5;
+  white-space: pre-wrap; word-break: break-all;
+}
 .dialog-error { font-size: 11px; color: var(--accent-red); }
 .dialog-choices { display: flex; flex-direction: column; gap: 6px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
@@ -5296,6 +5312,7 @@ button, input, select, textarea {
 /* ── Cluster monitoring view ─────────────────────────────────────────────── */
 .mql-mon { flex: 1; min-height: 0; overflow: auto; background: var(--bg-base); padding: 16px; }
 .mql-mon-header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.mql-mon-refresh-ctl { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .mql-mon-title { font-size: 13px; font-weight: 600; color: var(--text-main); }
 .mql-mon-meta { font-size: 11px; color: var(--text-dim); }
 .mql-mon-error {

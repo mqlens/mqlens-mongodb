@@ -18,6 +18,8 @@ export interface PromptRequest {
   confirmLabel?: string;
   cancelLabel?: string;
   validate?: (value: string) => string | null;
+  /** Render a multi-line textarea instead of a single-line input. */
+  multiline?: boolean;
 }
 
 export interface ChooseRequest {
@@ -38,7 +40,7 @@ interface DialogModalProps {
 export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) => {
   const [value, setValue] = useState(request.type === 'prompt' ? request.defaultValue ?? '' : '');
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
 
   // Cancelling means: confirm → false, prompt/choose → null.
@@ -93,23 +95,45 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
 
         {request.type === 'prompt' && (
           <>
-            <input
-              ref={inputRef}
-              className="dialog-input"
-              data-testid="dialog-input"
-              value={value}
-              placeholder={request.placeholder}
-              onChange={(e) => {
-                setValue(e.target.value);
-                if (error) setError(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  submitPrompt();
-                }
-              }}
-            />
+            {request.multiline ? (
+              <textarea
+                ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+                className="dialog-input dialog-input--multiline"
+                data-testid="dialog-input"
+                value={value}
+                rows={5}
+                placeholder={request.placeholder}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  if (error) setError(null);
+                }}
+                onKeyDown={(e) => {
+                  // Cmd/Ctrl+Enter submits; plain Enter inserts a newline.
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    submitPrompt();
+                  }
+                }}
+              />
+            ) : (
+              <input
+                ref={inputRef as React.RefObject<HTMLInputElement>}
+                className="dialog-input"
+                data-testid="dialog-input"
+                value={value}
+                placeholder={request.placeholder}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  if (error) setError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submitPrompt();
+                  }
+                }}
+              />
+            )}
             {error && (
               <div className="dialog-error" data-testid="dialog-error">
                 {error}

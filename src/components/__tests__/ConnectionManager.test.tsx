@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactElement } from 'react';
 import { render as rtlRender, screen, fireEvent, waitFor } from '@testing-library/react';
-import { ConnectionManager, buildUri, buildSshConfig } from '../ConnectionManager';
+import { ConnectionManager, buildUri, buildSshConfig, parseUriIntoFields, summarizeConnectionError } from '../ConnectionManager';
 import { DialogProvider } from '../dialogs/DialogProvider';
 
 // ConnectionManager now uses the in-app dialog system, so it must render inside a provider.
@@ -41,6 +41,136 @@ const baseConn = {
   appName: '',
   defaultDb: '',
 } as any;
+
+describe('summarizeConnectionError', () => {
+  it('reports a TLS trust problem buried inside a server-selection timeout', () => {
+    const raw = 'Kind: Server selection timeout: No available servers. Topology: { Servers: [ { Address: 1.2.3.4:27017, Type: Unknown, Error: Kind: I/O error: invalid peer certificate: UnknownIssuer } ] }';
+    const { summary, hint } = summarizeConnectionError(raw);
+    expect(summary).toMatch(/certificate not trusted/i);
+    expect(hint).toMatch(/CA file|invalid certificates/i);
+  });
+
+  it('detects authentication failures', () => {
+    expect(summarizeConnectionError('Authentication failed. (18)').summary).toMatch(/authentication failed/i);
+  });
+
+  it('detects connection refused', () => {
+    expect(summarizeConnectionError('Kind: I/O error: Connection refused (os error 61)').summary).toMatch(/refused/i);
+  });
+
+  it('falls back to a trimmed first line for unknown errors', () => {
+    const { summary, hint } = summarizeConnectionError('Kind: some weird failure\nwith more lines');
+    expect(summary).toBe('some weird failure');
+    expect(hint).toBeUndefined();
+  });
+
+  it('summarizes a bare server-selection timeout when no deeper cause is present', () => {
+    expect(summarizeConnectionError('Server selection timeout: No available servers').summary).toMatch(/selection timed out/i);
+  });
+});
+
+describe('parseUriIntoFields (import → form)', () => {
+  it('extracts credentials, host/port, and default db into editable fields', () => {
+    const f = parseUriIntoFields('mongodb://alice:s3cr3t@db.example.com:27018/shop?tls=true');
+    expect(f.authUser).toBe('alice');
+    expect(f.authPass).toBe('s3cr3t');
+    expect(f.authMethod).toBe('scram-256');
+    expect(f.tlsMode).toBe('system');
+    expect(f.defaultDb).toBe('shop');
+    expect(f.hosts).toEqual([{ host: 'db.example.com', port: '27018' }]);
+    expect(f.topology).toBe('standalone');
+  });
+
+  it('splits multiple hosts and detects a replica set (with its name)', () => {
+    const f = parseUriIntoFields('mongodb://h1:27017,h2:27017,h3:27017/?replicaSet=rs0');
+    expect(f.hosts).toEqual([
+      { host: 'h1', port: '27017' },
+      { host: 'h2', port: '27017' },
+      { host: 'h3', port: '27017' },
+    ]);
+    expect(f.topology).toBe('replicaSet');
+    expect(f.replicaSetName).toBe('rs0');
+    expect(f.protocol).toBe('mongodb');
+  });
+
+  it('detects a sharded cluster from multiple hosts without a replicaSet', () => {
+    const f = parseUriIntoFields('mongodb://m1:27017,m2:27017/admin');
+    expect(f.topology).toBe('sharded');
+  });
+
+  it('detects a direct/standalone connection from directConnection=true', () => {
+    const f = parseUriIntoFields('mongodb://h1:27017,h2:27017/?directConnection=true');
+    expect(f.topology).toBe('standalone');
+    expect(f.directConnection).toBe(true);
+  });
+
+  it('maps TLS options (CA file, tlsInsecure) into the form', () => {
+    const f = parseUriIntoFields('mongodb://h:27017/?tls=true&tlsCAFile=%2Fetc%2Fca.pem&tlsInsecure=true');
+    expect(f.tlsMode).toBe('file');
+    expect(f.tlsCa).toBe('/etc/ca.pem');
+    expect(f.tlsAllowInvalidCerts).toBe(true);
+    expect(f.tlsAllowInvalidHosts).toBe(true);
+  });
+
+  it('maps individual allow-invalid TLS flags', () => {
+    const f = parseUriIntoFields('mongodb://h:27017/?tls=true&tlsAllowInvalidCertificates=true');
+    expect(f.tlsMode).toBe('system');
+    expect(f.tlsAllowInvalidCerts).toBe(true);
+    expect(f.tlsAllowInvalidHosts).toBe(false);
+  });
+
+  it('detects mongodb+srv: protocol, port-less host, sharded topology', () => {
+    const f = parseUriIntoFields('mongodb+srv://user:pw@cluster0.abcd.mongodb.net/app');
+    expect(f.protocol).toBe('mongodb+srv');
+    expect(f.hosts).toEqual([{ host: 'cluster0.abcd.mongodb.net', port: '' }]);
+    expect(f.topology).toBe('sharded');
+    expect(f.defaultDb).toBe('app');
+  });
+
+  it('handles a bare host with no credentials', () => {
+    const f = parseUriIntoFields('mongodb://localhost:27017');
+    expect(f.authUser).toBe('');
+    expect(f.authMethod).toBe('none');
+    expect(f.hosts).toEqual([{ host: 'localhost', port: '27017' }]);
+  });
+
+  it('decodes percent-encoded credentials', () => {
+    const f = parseUriIntoFields('mongodb://user%40corp:p%40ss@localhost:27017/');
+    expect(f.authUser).toBe('user@corp');
+    expect(f.authPass).toBe('p@ss');
+  });
+
+  it('round-trips with buildUri back to a standalone form', () => {
+    const f = parseUriIntoFields('mongodb://alice:s3cr3t@db.example.com:27018/shop');
+    const uri = buildUri({ ...baseConn, ...f, authPass: f.authPass });
+    expect(uri).toContain('db.example.com:27018');
+    expect(uri).toContain('alice');
+  });
+});
+
+describe('buildUri protocol + topology', () => {
+  it('emits a mongodb+srv:// scheme with port-less hosts', () => {
+    const uri = buildUri({ ...baseConn, protocol: 'mongodb+srv', topology: 'sharded', hosts: [{ host: 'cluster0.abcd.mongodb.net', port: '' }] });
+    expect(uri.startsWith('mongodb+srv://')).toBe(true);
+    expect(uri).toContain('cluster0.abcd.mongodb.net');
+    expect(uri).not.toContain(':27017');
+    expect(uri).not.toContain('directConnection');
+  });
+
+  it('sharded topology joins the host list without a replicaSet param', () => {
+    const uri = buildUri({ ...baseConn, topology: 'sharded', hosts: [{ host: 'm1', port: '27017' }, { host: 'm2', port: '27017' }] });
+    expect(uri).toContain('m1:27017,m2:27017');
+    expect(uri).not.toContain('replicaSet');
+    expect(uri).not.toContain('directConnection');
+  });
+
+  it('only emits directConnection for a single-host standalone', () => {
+    const single = buildUri({ ...baseConn, topology: 'standalone', directConnection: true, hosts: [{ host: 'h1', port: '27017' }] });
+    expect(single).toContain('directConnection=true');
+    const multi = buildUri({ ...baseConn, topology: 'standalone', directConnection: true, hosts: [{ host: 'h1', port: '27017' }, { host: 'h2', port: '27017' }] });
+    expect(multi).not.toContain('directConnection');
+  });
+});
 
 describe('buildUri TLS handling (C8)', () => {
   it('adds tlsCAFile when TLS mode is "file" and a CA path is set', () => {
@@ -293,6 +423,7 @@ describe('ConnectionManager Component', () => {
     expect(screen.getByText('New Connection')).toBeInTheDocument();
 
     const nameInput = screen.getByLabelText(/display name/i);
+    fireEvent.change(screen.getByTestId('topology-select'), { target: { value: 'uri' } });
     const uriInput = screen.getByLabelText(/connection uri/i);
 
     fireEvent.change(nameInput, { target: { value: 'Staging DB' } });
@@ -382,6 +513,7 @@ describe('ConnectionManager Component', () => {
     const newBtn = await screen.findByRole('button', { name: /new\.\.\./i });
     fireEvent.click(newBtn);
 
+    fireEvent.change(screen.getByTestId('topology-select'), { target: { value: 'uri' } });
     const uriInput = screen.getByLabelText(/connection uri/i);
     fireEvent.change(uriInput, { target: { value: 'mongodb://mock' } });
 
@@ -435,6 +567,7 @@ describe('ConnectionManager Component', () => {
     const newBtn = await screen.findByRole('button', { name: /new\.\.\./i });
     fireEvent.click(newBtn);
 
+    fireEvent.change(screen.getByTestId('topology-select'), { target: { value: 'uri' } });
     const uriInput = screen.getByLabelText(/connection uri/i);
     fireEvent.change(uriInput, { target: { value: 'mongodb://invalid' } });
 
@@ -442,10 +575,16 @@ describe('ConnectionManager Component', () => {
     const testBtn = screen.getByRole('button', { name: /test connection/i });
     fireEvent.click(testBtn);
 
-    // Verify error feedback is displayed
+    // Verify summarized error feedback is displayed (raw error lives behind "Show details").
     await waitFor(() => {
-      expect(screen.getByText('Connection timed out')).toBeInTheDocument();
+      expect(screen.getByTestId('test-result-summary')).toHaveTextContent(/timed out/i);
     }, { timeout: 4000 });
+    fireEvent.click(screen.getByTestId('test-error-details-toggle'));
+    expect(screen.getByTestId('test-error-detail')).toHaveTextContent('Connection timed out');
+
+    // The result can be dismissed.
+    fireEvent.click(screen.getByTestId('test-dismiss'));
+    expect(screen.queryByTestId('test-result-summary')).toBeNull();
   });
 
   it('calls connect_db and triggers onConnect callback when Connect is clicked', async () => {

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { invoke, Channel } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
   Folder, FolderPlus, FolderOpen, Search, ChevronDown, ChevronRight,
-  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid
+  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste
 } from 'lucide-react';
 
 // Mirrors the backend ssh_tunnel::SshConfig (auth is internally tagged).
@@ -54,6 +55,7 @@ const generateUUID = () => {
 
 const BLANK_CONN = {
   topology: 'standalone',
+  protocol: 'mongodb',
   hosts: [{ host: 'localhost', port: '27017' }],
   replicaSetName: '',
   directConnection: true,
@@ -107,9 +109,129 @@ const TABS = [
 export const maskUriPassword = (uri: string): string =>
   uri.replace(/(\/\/[^/:@\s]+:)([^@/\s]+)(@)/, (_m, a, _p, c) => `${a}••••••${c}`);
 
+// Turn a raw mongodb driver error (often a huge "server selection timeout" with
+// the full topology dump) into a concise root-cause headline + actionable hint.
+// TLS/auth/refused/DNS are checked first because those causes are usually buried
+// inside the topology of a wrapping "server selection timeout".
+export const summarizeConnectionError = (raw: string): { summary: string; hint?: string } => {
+  const e = (raw || '').toLowerCase();
+  if (/invalid peer certificate|unknownissuer|certnotvalidfor|certificate verify failed|self.?signed/.test(e))
+    return {
+      summary: 'TLS certificate not trusted.',
+      hint: 'Provide the cluster’s CA file under TLS, or enable “Allow invalid certificates” for self-signed / dev clusters.',
+    };
+  if (/authentication failed|\(18\)|bad auth|authenticationfailed/.test(e))
+    return { summary: 'Authentication failed.', hint: 'Check the username, password, and authentication database.' };
+  if (/connection refused|os error 61|os error 111|actively refused/.test(e))
+    return { summary: 'Connection refused.', hint: 'Is the server running and the host/port reachable from this machine?' };
+  if (/failed to lookup|name or service not known|no such host|nodename nor servname|dns error/.test(e))
+    return { summary: 'Host not found (DNS lookup failed).', hint: 'Check the hostname; for private hosts you may need an SSH tunnel.' };
+  if (/server selection timeout|no available servers|no suitable servers/.test(e))
+    return {
+      summary: 'Couldn’t reach any server (selection timed out).',
+      hint: 'Check the host/port and TLS settings, and that this machine can reach the cluster.',
+    };
+  if (/timed out|timeout/.test(e)) return { summary: 'Connection timed out.' };
+  const firstLine = (raw || 'Connection failed').replace(/^kind:\s*/i, '').split(/\n|\. /)[0].trim();
+  return { summary: firstLine.length > 160 ? `${firstLine.slice(0, 160)}…` : firstLine };
+};
+
+// Parse a mongodb URI into structured editor fields so the form (protocol / hosts
+// / auth / TLS) can be edited interactively, auto-detecting the deployment type.
+// Used both when editing a saved profile and when importing a pasted URI.
+export const parseUriIntoFields = (uri: string) => {
+  const isSrv = /^mongodb\+srv:\/\//i.test(uri);
+  const m = uri.match(/mongodb(?:\+srv)?:\/\/(?:([^:@]+):([^@]*)@)?([^/?]+)(?:\/([^?]*))?(?:\?(.*))?/i);
+  let authUser = '';
+  let authPass = '';
+  let hostStr = isSrv ? 'localhost' : 'localhost:27017';
+  let defaultDb = '';
+  let tlsMode = 'off';
+  let tlsCa = '';
+  let tlsClientCert = '';
+  let tlsAllowInvalidCerts = false;
+  let tlsAllowInvalidHosts = false;
+  let authMethod = 'none';
+  let query = '';
+  if (m) {
+    authUser = m[1] ? decodeURIComponent(m[1]) : '';
+    authPass = m[2] ? decodeURIComponent(m[2]) : '';
+    hostStr = m[3] || hostStr;
+    defaultDb = m[4] || '';
+    query = m[5] || '';
+    const param = (name: string): string | null => {
+      const mm = query.match(new RegExp(`(?:^|&)${name}=([^&]*)`, 'i'));
+      return mm ? decodeURIComponent(mm[1]) : null;
+    };
+    const caFile = param('tlsCAFile') || param('sslCertificateAuthorityFile');
+    if (caFile) {
+      tlsMode = 'file';
+      tlsCa = caFile;
+    } else if (/(?:^|&)(?:tls|ssl)=true/i.test(query)) {
+      tlsMode = 'system';
+    }
+    tlsClientCert = param('tlsCertificateKeyFile') || param('sslClientCertificateKeyFile') || '';
+    // tlsInsecure implies both allow-invalid relaxations.
+    const insecure = /(?:^|&)tlsInsecure=true/i.test(query);
+    tlsAllowInvalidCerts = insecure || /(?:^|&)tlsAllowInvalidCertificates=true/i.test(query);
+    tlsAllowInvalidHosts = insecure || /(?:^|&)tlsAllowInvalidHostnames=true/i.test(query);
+    if (authUser) authMethod = 'scram-256';
+  }
+  const hosts = hostStr.split(',').map((h) => {
+    const [host, port] = h.split(':');
+    return { host: host || 'localhost', port: port || (isSrv ? '' : '27017') };
+  });
+  const rsMatch = query.match(/(?:^|&)replicaSet=([^&]+)/i);
+  const directConnection = /directConnection=true/i.test(query);
+  // Auto-detect the deployment type from the URI shape:
+  //  replicaSet= → replica set · directConnection=true → single direct node ·
+  //  +srv or multiple hosts → cluster (sharded/mongos) · otherwise standalone.
+  let topology: string;
+  if (rsMatch) topology = 'replicaSet';
+  else if (directConnection) topology = 'standalone';
+  else if (isSrv || hosts.length > 1) topology = 'sharded';
+  else topology = 'standalone';
+  return {
+    protocol: isSrv ? 'mongodb+srv' : 'mongodb',
+    authUser,
+    authPass,
+    authMethod,
+    tlsMode,
+    tlsCa,
+    tlsClientCert,
+    tlsAllowInvalidCerts,
+    tlsAllowInvalidHosts,
+    defaultDb,
+    hosts: hosts.length > 0 ? hosts : [{ host: 'localhost', port: isSrv ? '' : '27017' }],
+    topology,
+    replicaSetName: rsMatch ? decodeURIComponent(rsMatch[1]) : '',
+    directConnection,
+  };
+};
+
+// Host list <-> "host:port, host:port" text for the editable Host List field.
+export const hostsToText = (hosts: { host: string; port: string }[], isSrv: boolean): string =>
+  hosts.filter((h) => h.host).map((h) => (isSrv || !h.port ? h.host : `${h.host}:${h.port}`)).join(', ');
+
+export const textToHosts = (text: string): { host: string; port: string }[] => {
+  const list = text
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((h) => {
+      const [host, port] = h.split(':');
+      return { host: host || '', port: port || '' };
+    });
+  return list.length ? list : [{ host: '', port: '' }];
+};
+
 export const buildUri = (s: typeof BLANK_CONN) => {
   if (s.topology === 'uri') return s.uri;
-  const hosts = s.hosts.filter(h => h.host).map(h => `${h.host}:${h.port || 27017}`).join(',');
+  const isSrv = s.protocol === 'mongodb+srv';
+  // SRV records resolve the port set, so a +srv URI carries hostnames only.
+  const hosts = isSrv
+    ? s.hosts.filter(h => h.host).map(h => h.host).join(',')
+    : s.hosts.filter(h => h.host).map(h => `${h.host}:${h.port || 27017}`).join(',');
   let creds = '';
   if (s.authMethod !== 'none' && s.authUser) {
     const u = encodeURIComponent(s.authUser);
@@ -120,7 +242,9 @@ export const buildUri = (s: typeof BLANK_CONN) => {
   }
   const params = [];
   if (s.topology === 'replicaSet' && s.replicaSetName) params.push(`replicaSet=${s.replicaSetName}`);
-  if (s.topology === 'standalone' && s.directConnection) params.push('directConnection=true');
+  // directConnection only makes sense for a single-host, non-SRV standalone.
+  if (s.topology === 'standalone' && s.directConnection && !isSrv && s.hosts.filter(h => h.host).length <= 1)
+    params.push('directConnection=true');
   if (s.tlsMode !== 'off') params.push('tls=true');
   // Custom CA file (and optional client cert/key file) must be passed to the driver.
   if (s.tlsMode === 'file' && s.tlsCa) params.push(`tlsCAFile=${encodeURIComponent(s.tlsCa)}`);
@@ -161,7 +285,8 @@ export const buildUri = (s: typeof BLANK_CONN) => {
     if (s.proxyPass) params.push(`proxyPassword=${encodeURIComponent(s.proxyPass)}`);
   }
   const dbPath = s.defaultDb ? `/${s.defaultDb}` : '';
-  return `mongodb://${creds}${hosts}${dbPath}${params.length ? '?' + params.join('&') : ''}`;
+  const scheme = isSrv ? 'mongodb+srv' : 'mongodb';
+  return `${scheme}://${creds}${hosts}${dbPath}${params.length ? '?' + params.join('&') : ''}`;
 };
 
 // Build the structured SSH tunnel config the backend expects, or null when disabled.
@@ -186,7 +311,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   onConnect,
   activeConnections = [],
 }) => {
-  const { confirm } = useDialogs();
+  const { confirm, prompt } = useDialogs();
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -221,6 +346,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     { name: 'Verify Connection (Ping)', status: 'pending' },
   ]);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [showErrDetail, setShowErrDetail] = useState(false);
 
   // Initialize folders and load connection profiles
   useEffect(() => {
@@ -311,35 +437,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     if (!profile) return;
     
     setEditMode('edit');
-    
-    // Attempt to extract structured fields if URI is standard standalone/replicaSet
-    const hostMatch = profile.uri.match(/mongodb:\/\/(?:([^:]+):([^@]+)@)?([^/]+)(?:\/([^?]+))?(?:\?(.*))?/);
-    let authUser = '';
-    let authPass = '';
-    let hostStr = 'localhost:27017';
-    let defaultDb = '';
-    let tlsMode = 'off';
-    let authMethod = 'none';
 
-    if (hostMatch) {
-      authUser = hostMatch[1] ? decodeURIComponent(hostMatch[1]) : '';
-      authPass = hostMatch[2] ? decodeURIComponent(hostMatch[2]) : '';
-      hostStr = hostMatch[3] || 'localhost:27017';
-      defaultDb = hostMatch[4] || '';
-      
-      const queryParams = hostMatch[5] || '';
-      if (queryParams.includes('tls=true') || queryParams.includes('ssl=true')) {
-        tlsMode = 'system';
-      }
-      if (authUser) {
-        authMethod = 'scram-256';
-      }
-    }
-
-    const hosts = hostStr.split(',').map(h => {
-      const [host, port] = h.split(':');
-      return { host: host || 'localhost', port: port || '27017' };
-    });
+    // Extract structured fields so the form is editable for standalone/replicaSet.
+    const parsed = parseUriIntoFields(profile.uri);
 
     // Restore structured SSH config persisted with the profile.
     const ssh = profile.ssh || null;
@@ -362,13 +462,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       ...BLANK_CONN,
       name: profile.name,
       uri: profile.uri,
-      topology: profile.uri.includes('replicaSet=') ? 'replicaSet' : 'standalone',
-      hosts: hosts.length > 0 ? hosts : [{ host: 'localhost', port: '27017' }],
-      authUser,
-      authPass,
-      authMethod,
-      tlsMode,
-      defaultDb,
+      ...parsed,
       folder: profileFolderMap[profile.id] || '',
       ...sshFields,
     });
@@ -517,9 +611,44 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     }
   };
 
+  // Native file picker for TLS certificate paths.
+  const pickTlsFile = async (field: 'tlsCa' | 'tlsClientCert') => {
+    try {
+      const path = await open({
+        multiple: false,
+        directory: false,
+        title: 'Select certificate file',
+        filters: [
+          { name: 'Certificates', extensions: ['pem', 'crt', 'cer', 'key', 'p12', 'pfx'] },
+          { name: 'All files', extensions: ['*'] },
+        ],
+      });
+      if (typeof path === 'string') setEditorState(prev => ({ ...prev, [field]: path }));
+    } catch {
+      /* user cancelled */
+    }
+  };
+
+  // Paste a connection string → auto-detect protocol, hosts, auth, and topology.
+  const handleImportUri = async () => {
+    const uri = await prompt({
+      title: 'Import Connection URI',
+      message: 'Paste a mongodb:// or mongodb+srv:// connection string. Protocol, hosts, auth, TLS, and topology are detected automatically. (⌘/Ctrl+Enter to import)',
+      placeholder: 'mongodb://user:pass@host1:27017,host2:27017/?replicaSet=rs0&tls=true',
+      confirmLabel: 'Import',
+      multiline: true,
+      validate: (v) => (/^mongodb(\+srv)?:\/\//i.test(v.trim()) ? null : 'Enter a mongodb:// or mongodb+srv:// URI'),
+    });
+    if (!uri || !uri.trim()) return;
+    const clean = uri.trim();
+    setEditorState(prev => ({ ...prev, uri: clean, ...parseUriIntoFields(clean) }));
+    setActiveEditorTab('server');
+  };
+
   const runTestStepSequence = async () => {
     setTesting(true);
     setTestResult(null);
+    setShowErrDetail(false);
     setTestProgress(0);
 
     const steps: TestStep[] = [
@@ -938,7 +1067,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
               <div className="mql-ncd-uri-row">
                 <span className="mql-ncd-uri-badge">URI</span>
-                <code className="mql-ncd-uri">{buildUri(editorState)}</code>
+                <code className="mql-ncd-uri">{maskUriPassword(buildUri(editorState))}</code>
                 <button className="mql-ncd-copy" onClick={() => navigator.clipboard?.writeText(buildUri(editorState))}>
                   <Copy size={11} />
                   <span>Copy</span>
@@ -964,21 +1093,27 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </nav>
 
             {/* Editor dialog body views */}
-            <div className="mql-ncd-body" style={{ flex: 1, padding: 12, overflowY: 'auto' }}>
+            <div className="mql-ncd-body" style={{ flex: 1, minHeight: 0, padding: 12, overflowY: 'auto' }}>
               {activeEditorTab === 'server' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {editorState.topology === 'uri' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <label htmlFor="connection-uri" className="mql-label">Connection URI</label>
                     {(() => {
+                      // Show the readable URI (protocol/host/db) with only the
+                      // password masked. Focusing the field — or the eye — reveals
+                      // the full string so it stays editable.
                       const masked = maskUriPassword(editorState.uri);
                       const hasSecret = masked !== editorState.uri;
+                      const showMasked = hasSecret && !revealUri;
                       return (
                         <div className="mql-password-field">
                           <input
                             id="connection-uri"
                             type="text"
-                            value={revealUri || !hasSecret ? editorState.uri : masked}
-                            readOnly={hasSecret && !revealUri}
+                            value={showMasked ? masked : editorState.uri}
+                            readOnly={showMasked}
+                            onFocus={() => { if (hasSecret) setRevealUri(true); }}
                             onChange={e => setEditorState(prev => ({ ...prev, uri: e.target.value, topology: 'uri' }))}
                             placeholder="mongodb://localhost:27017"
                             className="mql-ncd-input font-mono"
@@ -998,19 +1133,65 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         </div>
                       );
                     })()}
+                    <button
+                      type="button"
+                      className="mql-ncd-parse-btn"
+                      data-testid="parse-uri-btn"
+                      disabled={!editorState.uri.trim()}
+                      onClick={() => setEditorState(prev => ({ ...prev, ...parseUriIntoFields(prev.uri) }))}
+                      title="Fill the Server and Auth form fields from this URI so you can edit them"
+                    >
+                      <LayoutGrid size={12} /> Parse into form fields
+                    </button>
                   </div>
+                  )}
+
+                  {editorState.topology !== 'uri' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <span className="mql-label">
+                        Host List {editorState.protocol === 'mongodb+srv' ? '(hostname only)' : '(host:port, comma-separated)'}
+                      </span>
+                      <input
+                        type="text"
+                        data-testid="host-list"
+                        value={hostsToText(editorState.hosts, editorState.protocol === 'mongodb+srv')}
+                        onChange={e => setEditorState(prev => ({ ...prev, hosts: textToHosts(e.target.value) }))}
+                        placeholder={editorState.protocol === 'mongodb+srv' ? 'cluster0.abcd.mongodb.net' : '172.18.19.60:27017, 172.18.19.61:27017'}
+                        className="mql-ncd-input font-mono"
+                      />
+                    </div>
+                  )}
 
                   <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 10, display: 'flex', gap: 12 }}>
+                    {editorState.topology !== 'uri' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+                        <span className="mql-label">Protocol</span>
+                        <div className="mql-ncd-select-wrap">
+                          <select
+                            className="mql-ncd-select"
+                            data-testid="protocol-select"
+                            value={editorState.protocol}
+                            onChange={e => setEditorState(prev => ({ ...prev, protocol: e.target.value }))}
+                          >
+                            <option value="mongodb">mongodb://</option>
+                            <option value="mongodb+srv">mongodb+srv://</option>
+                          </select>
+                          <ChevronDown size={10} color="var(--text-dim)" />
+                        </div>
+                      </div>
+                    )}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
                       <span className="mql-label">Topology</span>
                       <div className="mql-ncd-select-wrap">
-                        <select 
-                          className="mql-ncd-select" 
-                          value={editorState.topology} 
+                        <select
+                          className="mql-ncd-select"
+                          data-testid="topology-select"
+                          value={editorState.topology}
                           onChange={e => setEditorState(prev => ({ ...prev, topology: e.target.value }))}
                         >
-                          <option value="standalone">Standalone Connection</option>
-                          <option value="replicaSet">Replica Set Cluster</option>
+                          <option value="standalone">Standalone / Direct</option>
+                          <option value="replicaSet">Replica Set</option>
+                          <option value="sharded">Sharded Cluster (mongos)</option>
                           <option value="uri">Full URI String Only</option>
                         </select>
                         <ChevronDown size={10} color="var(--text-dim)" />
@@ -1179,13 +1360,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   {editorState.tlsMode === 'file' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, borderTop: '1px solid var(--border-color)', paddingTop: 10 }}>
                       <span className="mql-label">CA File Path</span>
-                      <input
-                        type="text"
-                        value={editorState.tlsCa}
-                        onChange={e => setEditorState(prev => ({ ...prev, tlsCa: e.target.value }))}
-                        placeholder="/path/to/ca.pem"
-                        className="mql-ncd-input font-mono"
-                      />
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <input
+                          type="text"
+                          value={editorState.tlsCa}
+                          onChange={e => setEditorState(prev => ({ ...prev, tlsCa: e.target.value }))}
+                          placeholder="/path/to/ca.pem"
+                          className="mql-ncd-input font-mono"
+                          style={{ flex: 1 }}
+                        />
+                        <button
+                          type="button"
+                          className="mql-btn mql-btn-ghost mql-btn-outlined"
+                          data-testid="ca-file-browse"
+                          onClick={() => pickTlsFile('tlsCa')}
+                        >
+                          Browse…
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -1424,12 +1616,27 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
             </div>
 
-            {/* Test progress strip */}
+            {/* Test progress strip — pinned above the footer, capped so a long
+                error scrolls inside it instead of growing the dialog. */}
             {(testing || testResult) && (
-              <div style={{ margin: '0 12px', padding: '10px', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ flexShrink: 0, margin: '0 12px', padding: '10px', maxHeight: 200, overflowY: 'auto', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                   <span className="mql-label" style={{ fontSize: 9 }}>Connection Test Progress</span>
-                  <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent-blue)', fontWeight: 600 }}>{testProgress}%</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent-blue)', fontWeight: 600 }}>{testProgress}%</span>
+                    {testResult && !testing && (
+                      <button
+                        type="button"
+                        data-testid="test-dismiss"
+                        aria-label="Dismiss test result"
+                        title="Dismiss"
+                        onClick={() => { setTestResult(null); setShowErrDetail(false); setTestProgress(0); }}
+                        style={{ display: 'inline-flex', background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--text-muted)' }}
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 
                 {/* Progress bar fill */}
@@ -1452,26 +1659,59 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   ))}
                 </div>
 
-                {/* Final status feedback pill */}
-                {testResult && (
-                  <div style={{ padding: '6px 8px', borderRadius: '4px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: 6, border: '1px solid transparent', 
-                    background: testResult.success ? 'var(--soft-green-bg)' : 'var(--soft-red-bg)', 
-                    borderColor: testResult.success ? 'var(--soft-green-bd)' : 'var(--soft-red-bd)',
-                    color: testResult.success ? 'var(--accent-green)' : 'var(--accent-red)'
-                  }}>
-                    {testResult.success ? <Check size={12} /> : <AlertCircle size={12} />}
-                    <span style={{ fontWeight: 500 }}>{testResult.message}</span>
-                  </div>
-                )}
+                {/* Final status feedback */}
+                {testResult && (() => {
+                  const info = testResult.success
+                    ? { summary: testResult.message, hint: undefined as string | undefined }
+                    : summarizeConnectionError(testResult.message);
+                  return (
+                    <div style={{ padding: '8px 10px', borderRadius: '4px', fontSize: '11px', border: '1px solid transparent',
+                      background: testResult.success ? 'var(--soft-green-bg)' : 'var(--soft-red-bg)',
+                      borderColor: testResult.success ? 'var(--soft-green-bd)' : 'var(--soft-red-bd)',
+                      color: testResult.success ? 'var(--accent-green)' : 'var(--accent-red)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                        {testResult.success ? <Check size={12} style={{ flex: 'none', marginTop: 1 }} /> : <AlertCircle size={12} style={{ flex: 'none', marginTop: 1 }} />}
+                        <span style={{ fontWeight: 600 }} data-testid="test-result-summary">{info.summary}</span>
+                      </div>
+                      {info.hint && (
+                        <div style={{ marginTop: 4, marginLeft: 18, color: 'var(--text-muted)', fontWeight: 400 }}>{info.hint}</div>
+                      )}
+                      {!testResult.success && (
+                        <>
+                          <button
+                            type="button"
+                            data-testid="test-error-details-toggle"
+                            onClick={() => setShowErrDetail(v => !v)}
+                            style={{ marginTop: 6, marginLeft: 18, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10, textDecoration: 'underline' }}
+                          >
+                            {showErrDetail ? 'Hide details' : 'Show details'}
+                          </button>
+                          {showErrDetail && (
+                            <pre data-testid="test-error-detail" style={{ marginTop: 6, marginBottom: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 10, lineHeight: 1.5, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                              {testResult.message}
+                            </pre>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
             {/* Dialog Footer */}
             <footer className="mql-ncd-foot">
-              <button className="mql-btn mql-btn-ghost mql-btn-outlined" onClick={runTestStepSequence} disabled={testing}>
-                <RefreshCw size={11} className={`mr-1 ${testing ? 'animate-spin' : ''}`} />
-                <span>Test Connection</span>
-              </button>
+              <div className="mql-row" style={{ gap: 8 }}>
+                <button className="mql-btn mql-btn-ghost mql-btn-outlined" onClick={runTestStepSequence} disabled={testing}>
+                  <RefreshCw size={11} className={`mr-1 ${testing ? 'animate-spin' : ''}`} />
+                  <span>Test Connection</span>
+                </button>
+                <button className="mql-btn mql-btn-ghost mql-btn-outlined" onClick={handleImportUri} data-testid="import-uri-btn">
+                  <ClipboardPaste size={11} className="mr-1" />
+                  <span>Import URI</span>
+                </button>
+              </div>
               <div className="mql-row" style={{ gap: 8 }}>
                 <button className="mql-btn mql-btn-ghost mql-btn-outlined" onClick={() => setShowEditDialog(false)}>Cancel</button>
                 <button className="mql-btn mql-btn-primary" onClick={handleSave} disabled={loading || testing}>
