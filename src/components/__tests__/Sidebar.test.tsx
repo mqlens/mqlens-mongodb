@@ -41,6 +41,43 @@ describe('Sidebar Component', () => {
     expect(handleOpenModal).toHaveBeenCalledTimes(1);
   });
 
+  it('filters the tree by the search box (database names)', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases') {
+        if (args.id === 'conn-1') return Promise.resolve(['sales_db', 'user_analytics']);
+      }
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB 1', uri: 'mongodb://mock1' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        theme="dark"
+        onToggleTheme={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    // Both databases visible before filtering.
+    expect(await screen.findByText('sales_db')).toBeInTheDocument();
+    expect(await screen.findByText('user_analytics')).toBeInTheDocument();
+
+    // Typing "sales" hides the non-matching database.
+    fireEvent.change(screen.getByTestId('sidebar-search'), { target: { value: 'sales' } });
+    expect(screen.getByText('sales_db')).toBeInTheDocument();
+    expect(screen.queryByText('user_analytics')).toBeNull();
+
+    // Clearing restores everything.
+    fireEvent.click(screen.getByRole('button', { name: /clear search/i }));
+    expect(screen.getByText('user_analytics')).toBeInTheDocument();
+  });
+
   it('handles rendering multiple connections, databases, collections, and indexes', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases') {

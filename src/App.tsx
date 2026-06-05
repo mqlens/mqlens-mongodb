@@ -1158,15 +1158,6 @@ function Workspace() {
 
   return (
     <div className="mql-app">
-      <div className="mql-titlebar" data-tauri-drag-region="true">
-        <span style={{ flex: 1 }}/>
-        <span className="mql-titlebar-brand">
-          <img src={logoMark} alt="" className="mql-titlebar-logo" />
-          MQLens — {activeConnections[0]?.name || 'No connection'}
-        </span>
-        <span style={{ flex: 1 }}/>
-      </div>
-
       <div className="mql-main">
         {/* Sidebar Explorer */}
         <div className="mql-sidebar-wrap" style={{ width: sidebarWidth }}>

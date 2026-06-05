@@ -572,6 +572,23 @@ button { cursor: pointer; }
   padding: 8px;
   display: flex; flex-direction: column; gap: 4px;
 }
+.mql-tree-search {
+  display: flex; align-items: center; gap: 6px;
+  margin: 6px 8px 0; padding: 4px 8px;
+  border: 1px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-base);
+}
+.mql-tree-search-icon { color: var(--text-dim); flex: none; }
+.mql-tree-search input {
+  flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+  color: var(--text-main); font-size: 12px;
+}
+.mql-tree-search input::placeholder { color: var(--text-dim); }
+.mql-tree-search-clear {
+  display: inline-flex; background: none; border: none; color: var(--text-dim);
+  cursor: pointer; padding: 0; flex: none;
+}
+.mql-tree-search-clear:hover { color: var(--text-main); }
 .mql-tree-node { display: flex; flex-direction: column; }
 .mql-tree-children {
   margin-left: 12px; padding-left: 4px;
