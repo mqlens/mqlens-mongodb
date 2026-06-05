@@ -5083,9 +5083,10 @@ button, input, select, textarea {
   margin: 0 0 4px;
 }
 
-.mql-vault-card input[type="password"] {
+.mql-vault-card input[type="password"],
+.mql-vault-card .mql-password-field input {
   width: 100%;
-  padding: 8px 10px;
+  padding: 8px 34px 8px 10px;
   background: var(--bg-input-blend);
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -5097,11 +5098,13 @@ button, input, select, textarea {
   transition: border-color 0.12s ease;
 }
 
-.mql-vault-card input[type="password"]:focus {
+.mql-vault-card input[type="password"]:focus,
+.mql-vault-card .mql-password-field input:focus {
   border-color: var(--accent-blue);
 }
 
-.mql-vault-card button[type="button"]:not(.mql-vault-link) {
+/* The show/hide eye must stay a subtle inline icon, not the gradient button. */
+.mql-vault-card button[type="button"]:not(.mql-vault-link):not(.mql-password-toggle) {
   padding: 9px 16px;
   background: var(--brand-gradient);
   border: none;
