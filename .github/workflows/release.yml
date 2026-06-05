@@ -29,6 +29,7 @@ jobs:
     outputs:
       version: ${{ steps.compute.outputs.version }}
       release: ${{ steps.compute.outputs.release }}
+      notes: ${{ steps.compute.outputs.notes }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,6 +73,17 @@ jobs:
             sub("src-tauri/Cargo.toml",/^version = "[^"]+"/m,`version = "${v}"`);
             sub("src-tauri/Cargo.lock",/(name = "tauri-app"\nversion = ")[^"]+(")/,`$1${v}$2`);
           ' "$NEW"
+          # Grouped changelog → release body AND latest.json notes (so the in-app
+          # update dialog shows real notes, not a placeholder).
+          strip='s/^[a-z]+(\([^)]*\))?!?:[[:space:]]*//'
+          FEATS=$(git log --no-merges --pretty=%s ${RANGE} | grep -E '^feat' | sed -E "$strip" | sed 's/^/- /' || true)
+          FIXES=$(git log --no-merges --pretty=%s ${RANGE} | grep -E '^(fix|perf)' | sed -E "$strip" | sed 's/^/- /' || true)
+          {
+            echo "notes<<__NOTES_EOF__"
+            [ -n "$FEATS" ] && printf '### Features\n%s\n\n' "$FEATS"
+            [ -n "$FIXES" ] && printf '### Fixes\n%s\n\n' "$FIXES"
+            echo "__NOTES_EOF__"
+          } >> "$GITHUB_OUTPUT"
           git config user.name "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
           git commit -am "chore(release): mqlens-v${NEW} [skip ci]"
@@ -214,15 +226,20 @@ jobs:
         with:
           tagName: ${{ env.REL_TAG }}
           releaseName: ${{ env.REL_NAME }}
-          releaseBody: 'Generating release notes…'
+          # On main, real notes are computed in the version job and baked into
+          # latest.json here; dev keeps a placeholder filled in by release-notes.
+          releaseBody: ${{ needs.version.outputs.notes || 'Generating release notes…' }}
           prerelease: ${{ github.ref_name != 'main' }}
           args: ${{ matrix.args }}
 
   # Replace the placeholder body with real notes once the bundles are uploaded:
   # an auto-generated changelog for stable (main) releases, or a recent-commit
   # list for rolling dev builds.
+  # Dev only: stable (main) notes are written by the version job and already in
+  # latest.json. This fills the dev pre-release body + prunes old dev releases.
   release-notes:
     needs: build
+    if: github.ref_name != 'main'
     runs-on: ubuntu-22.04
     permissions:
       contents: write
