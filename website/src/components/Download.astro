@@ -23,7 +23,11 @@ async function fetchRelease(): Promise<{ totalDownloads: number | null; assets: 
     if (!Array.isArray(releases) || releases.length === 0) return { totalDownloads: null, assets: [] };
     const total = releases
       .flatMap((r) => (Array.isArray(r.assets) ? r.assets : []))
-      .filter((a) => a && typeof a.name === 'string' && !a.name.endsWith('.asc'))
+      // Count real installer downloads only — not signatures (.sig), checksums
+      // (.asc), the updater manifest (latest.json), or .app.tar.gz updater bundles.
+      .filter(
+        (a) => a && typeof a.name === 'string' && /\.(dmg|msi|exe|deb|rpm|AppImage)$/i.test(a.name),
+      )
       .reduce((sum, a) => sum + (Number(a.download_count) || 0), 0);
     const latest = releases.find((r) => !r.draft && !r.prerelease) ?? releases[0];
     const assets: Asset[] = Array.isArray(latest?.assets) ? latest.assets : [];

@@ -7,6 +7,11 @@ on:
     paths:
       - 'website/**'
       - '.github/workflows/website.yml'
+  # The download counter is computed at build time, so rebuild periodically to
+  # keep it fresh (every 6 hours). Scheduled runs use this file on the default
+  # branch (dev).
+  schedule:
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 # Allow only one concurrent deployment; let an in-progress run finish.
@@ -38,6 +43,10 @@ jobs:
 
       - name: Build
         run: npm run build
+        # Authenticate the build-time GitHub API call (download counts) to avoid
+        # the unauthenticated 60-req/hour rate limit.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/upload-pages-artifact@v3
         with:
