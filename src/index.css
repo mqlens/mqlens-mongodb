@@ -4871,11 +4871,20 @@ button, input, select, textarea {
   border-color: var(--accent-blue);
 }
 
+/* Monaco-backed JSON editor inside the insert/edit document modal */
+.index-modal-editor {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+.index-modal-editor:focus-within { border-color: var(--accent-blue); }
+
 .index-modal-textarea {
   background: var(--bg-input-blend);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  color: hsl(200, 90%, 75%);
+  color: var(--text-main);
   font-size: 12px;
   font-family: var(--font-mono);
   padding: 12px;
@@ -5249,4 +5258,36 @@ button, input, select, textarea {
 .dialog-btn--destructive:hover { filter: brightness(1.1); }
 /* choose lays its action buttons full-width for easy tapping */
 .dialog-choices .dialog-btn { width: 100%; }
+
+/* Right-click context menu (result views) */
+.mql-context-menu {
+  position: fixed;
+  z-index: 100000;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--bg-dropdown-solid);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px hsla(0, 0%, 0%, 0.35);
+  font-size: 12.5px;
+  user-select: none;
+}
+.mql-context-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 5px;
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+}
+.mql-context-item:hover:not(:disabled) { background: var(--bg-item-hover); }
+.mql-context-item:disabled { opacity: 0.45; cursor: default; }
+.mql-context-item.is-danger { color: var(--accent-red); }
+.mql-context-item.is-danger:hover:not(:disabled) { background: hsla(0, 70%, 50%, 0.12); }
+.mql-context-icon { display: inline-flex; color: var(--text-dim); }
+.mql-context-item.is-danger .mql-context-icon { color: var(--accent-red); }
+.mql-context-sep { height: 1px; margin: 4px 6px; background: var(--border-color); }
 

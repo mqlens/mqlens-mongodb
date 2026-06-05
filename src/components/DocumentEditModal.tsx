@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, FileJson } from 'lucide-react';
+import Editor from '@monaco-editor/react';
+import { shellToEjson } from '../lib/shellDoc';
 
 interface DocumentEditModalProps {
   isOpen: boolean;
@@ -19,6 +21,10 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   const [json, setJson] = useState(initialJson);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const theme =
+    typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light'
+      ? 'light'
+      : 'vs-dark';
 
   useEffect(() => {
     if (isOpen) {
@@ -31,21 +37,24 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   if (!isOpen) return null;
 
   const handleSave = async () => {
+    // The editor shows mongosh shell types (ISODate(...), ObjectId(...), …);
+    // convert them to Extended JSON before validating and saving.
+    const ejson = shellToEjson(json);
     let parsed: unknown;
     try {
-      parsed = JSON.parse(json);
+      parsed = JSON.parse(ejson);
     } catch (err: any) {
-      setError(`Invalid JSON: ${err.message || 'syntax error'}`);
+      setError(`Invalid document: ${err.message || 'syntax error'}`);
       return;
     }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      setError('A document must be a JSON object (e.g. { "field": value }).');
+      setError('A document must be an object (e.g. { "field": value }).');
       return;
     }
     setError(null);
     setSaving(true);
     try {
-      await onSave(json);
+      await onSave(ejson);
     } catch (err: any) {
       setError(String(err?.message || err));
       setSaving(false);
@@ -73,19 +82,34 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="index-modal-label">Document (JSON)</label>
-          <textarea
-            value={json}
-            onChange={(e) => setJson(e.target.value)}
-            rows={14}
-            spellCheck={false}
-            className="index-modal-textarea font-mono"
-            data-testid="document-json-input"
-            placeholder='{ "field": "value" }'
-          />
+          <label className="index-modal-label">Document</label>
+          <div className="index-modal-editor">
+            <Editor
+              height={360}
+              defaultLanguage="javascript"
+              theme={theme}
+              value={json}
+              onChange={(v) => setJson(v ?? '')}
+              wrapperProps={{ 'data-testid': 'document-json-input' }}
+              options={{
+                minimap: { enabled: false },
+                lineNumbers: 'on',
+                folding: true,
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                fontSize: 12.5,
+                tabSize: 2,
+                automaticLayout: true,
+                fixedOverflowWidgets: true,
+                overviewRulerLanes: 0,
+                renderLineHighlight: 'line',
+                padding: { top: 8, bottom: 8 },
+              }}
+            />
+          </div>
           <span className="index-modal-help-text">
-            MongoDB Extended JSON is supported (e.g. {'{ "_id": { "$oid": "..." } }'}). Editing
-            replaces the entire document.
+            Shell types are supported (e.g. {'ObjectId("..."), ISODate("..."), NumberLong("...")'}).
+            Editing replaces the entire document.
           </span>
         </div>
 

@@ -18,6 +18,7 @@ import { VaultGate } from './components/VaultGate';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
 import { buildRunnableCommand } from './lib/mongoCommand';
+import { docToShell } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries } from './lib/queryStore';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
@@ -909,7 +910,13 @@ function Workspace() {
   };
 
   const handleEditDocument = (doc: Record<string, any>) => {
-    setDocumentModal({ mode: 'edit', initialJson: JSON.stringify(doc, null, 2), targetDoc: doc });
+    setDocumentModal({ mode: 'edit', initialJson: docToShell(doc), targetDoc: doc });
+  };
+
+  // Duplicate: open the insert modal pre-filled with the document minus its _id.
+  const handleDuplicateDocument = (doc: Record<string, any>) => {
+    const { _id, ...rest } = doc;
+    setDocumentModal({ mode: 'insert', initialJson: docToShell(rest), targetDoc: null });
   };
 
   const handleDeleteDocument = async (doc: Record<string, any>) => {
@@ -1332,6 +1339,7 @@ function Workspace() {
                           queryCode={buildTabQueryCode(activeTab)}
                           onInsertDocument={handleInsertDocument}
                           onEditDocument={handleEditDocument}
+                          onDuplicateDocument={handleDuplicateDocument}
                           onDeleteDocument={handleDeleteDocument}
                           onAnalyzeSchema={() => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection)}
                           onUpdateMany={handleUpdateMany}
