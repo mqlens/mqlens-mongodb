@@ -37,4 +37,9 @@ describe('ConnectionCard', () => {
     fireEvent.click(screen.getByTestId('conn-card-p1'));
     expect(onConnect).not.toHaveBeenCalled();
   });
+
+  it('disables the button while connecting', () => {
+    render(<ConnectionCard profile={base} connected={false} connecting={true} onConnect={vi.fn()} />);
+    expect(screen.getByTestId('conn-card-p1')).toBeDisabled();
+  });
 });
