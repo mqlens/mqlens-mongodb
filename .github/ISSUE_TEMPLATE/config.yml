@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://mqlens.com/docs/
+    about: Guides and feature documentation.
+  - name: Website & downloads
+    url: https://mqlens.com
+    about: Installers, comparisons, and changelog.

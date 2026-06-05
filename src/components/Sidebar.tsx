@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { useDialogs } from './dialogs/DialogProvider';
 import {
   Database,
-  Folder, 
-  FolderOpen, 
-  Server, 
-  RefreshCw, 
-  Trash2, 
-  Plus, 
+  Folder,
+  FolderOpen,
+  Server,
+  RefreshCw,
+  Trash2,
+  Plus,
   LogOut,
   Layers,
   KeyRound,
@@ -25,8 +26,21 @@ import {
   Table2,
   Activity,
   Search,
+  HelpCircle,
+  Bug,
+  Lightbulb,
+  Star,
+  BookOpen,
   X
 } from 'lucide-react';
+
+const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
+const HELP_LINKS = [
+  { Icon: Bug, label: 'Report a bug', url: `${REPO_URL}/issues/new?template=bug_report.yml` },
+  { Icon: Lightbulb, label: 'Request a feature', url: `${REPO_URL}/issues/new?template=feature_request.yml` },
+  { Icon: BookOpen, label: 'Documentation', url: 'https://mqlens.com/docs/' },
+  { Icon: Star, label: 'Star on GitHub', url: `${REPO_URL}/stargazers` },
+];
 
 // Mirrors the backend CollectionInfo struct returned by `list_collections`.
 export interface CollectionInfo {
@@ -150,6 +164,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { toast, confirm, prompt } = useDialogs();
   // Tree filter: matches connection / database / (loaded) collection names.
   const [filterQuery, setFilterQuery] = useState('');
+  const [helpOpen, setHelpOpen] = useState(false);
   // key: connectionId, value: database names list
   const [databases, setDatabases] = useState<{ [connectionId: string]: string[] }>({});
   
@@ -836,6 +851,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <Settings size={13} />
           </button>
+          <span style={{ position: 'relative', display: 'inline-flex' }}>
+            <button
+              onClick={() => setHelpOpen((o) => !o)}
+              className="mql-icon-btn"
+              title="Help & feedback"
+              aria-label="Help and feedback"
+              aria-haspopup="menu"
+              aria-expanded={helpOpen}
+              data-testid="help-menu-btn"
+            >
+              <HelpCircle size={13} />
+            </button>
+            {helpOpen && (
+              <>
+                <div
+                  onClick={() => setHelpOpen(false)}
+                  style={{ position: 'fixed', inset: 0, zIndex: 60 }}
+                  aria-hidden="true"
+                />
+                <div className="mql-help-menu" role="menu">
+                  {HELP_LINKS.map(({ Icon, label, url }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setHelpOpen(false); void openUrl(url); }}
+                    >
+                      <Icon size={13} /> <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </span>
           <button
             onClick={onOpenConnectionManager}
             className="mql-icon-btn"

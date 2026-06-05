@@ -1,0 +1,22 @@
+name: Feature / workflow request
+description: Suggest an improvement or a workflow MQLens should support
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What workflow is painful today?
+      placeholder: Describe the task and where MQLens (or another tool) gets in your way.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like MQLens to do?
+    validations:
+      required: true
+  - type: input
+    id: deployment
+    attributes:
+      label: MongoDB deployment (if relevant)
+      placeholder: Local / Atlas / Self-hosted / DocumentDB

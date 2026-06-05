@@ -1,0 +1,57 @@
+name: Bug / workflow issue
+description: Something didn't work the way you expected
+labels: [bug]
+body:
+  - type: textarea
+    id: trying
+    attributes:
+      label: What were you trying to do?
+      placeholder: e.g. Connect to a replica set over an SSH tunnel and browse a collection
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: MongoDB deployment
+      options:
+        - Local
+        - Atlas
+        - Self-hosted
+        - DocumentDB
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: auth
+    attributes:
+      label: Auth mode (if relevant)
+      placeholder: SCRAM / X.509 / MONGODB-AWS / Kerberos / LDAP / none
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: MQLens version
+      placeholder: e.g. 0.4.0
+    validations:
+      required: true

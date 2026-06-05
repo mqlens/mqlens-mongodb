@@ -5601,3 +5601,13 @@ button, input, select, textarea {
   display: flex; flex-direction: column; gap: 16px; }
 .mql-settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 6px; }
 .mql-settings-footer-msg { display: flex; align-items: center; gap: 12px; min-width: 0; }
+
+/* ===== Sidebar help & feedback menu ===== */
+.mql-help-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 70; min-width: 196px;
+  background: var(--bg-dropdown-solid); border: 1px solid var(--border-color); border-radius: 10px;
+  padding: 5px; box-shadow: var(--shadow-panel); display: flex; flex-direction: column; }
+.mql-help-menu button { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  background: none; border: none; padding: 8px 10px; border-radius: 7px; color: var(--text-main);
+  font-size: 12.5px; cursor: pointer; }
+.mql-help-menu button:hover { background: var(--bg-item-hover); }
+.mql-help-menu button svg { color: var(--accent-blue); flex: 0 0 auto; }
