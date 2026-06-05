@@ -84,7 +84,7 @@ jobs:
             sub("package.json",/("version":\s*)"[^"]+"/,`$1"${v}"`);
             sub("src-tauri/tauri.conf.json",/("version":\s*)"[^"]+"/,`$1"${v}"`);
             sub("src-tauri/Cargo.toml",/^version = "[^"]+"/m,`version = "${v}"`);
-            sub("src-tauri/Cargo.lock",/(name = "tauri-app"\nversion = ")[^"]+(")/,`$1${v}$2`);
+            sub("src-tauri/Cargo.lock",/(name = "tauri-app"\r?\nversion = ")[^"]+(")/,`$1${v}$2`);
           ' "$NEW"
           # Grouped changelog → release body AND latest.json notes (so the in-app
           # update dialog shows real notes, not a placeholder).
@@ -186,7 +186,7 @@ jobs:
             sub("package.json",/("version":\s*)"[^"]+"/,`$1"${v}"`);
             sub("src-tauri/tauri.conf.json",/("version":\s*)"[^"]+"/,`$1"${v}"`);
             sub("src-tauri/Cargo.toml",/^version = "[^"]+"/m,`version = "${v}"`);
-            sub("src-tauri/Cargo.lock",/(name = "tauri-app"\nversion = ")[^"]+(")/,`$1${v}$2`);
+            sub("src-tauri/Cargo.lock",/(name = "tauri-app"\r?\nversion = ")[^"]+(")/,`$1${v}$2`);
           ' "$V"
           echo "Built version: $V"
 
@@ -260,7 +260,7 @@ jobs:
           # latest.json — the parallel jobs would race on that single asset
           # (causing "Not Found - update-a-release-asset"). The updater-manifest
           # job below assembles and uploads latest.json once, after all builds.
-          uploadUpdaterJson: false
+          includeUpdaterJson: false
 
   # Replace the placeholder body with real notes once the bundles are uploaded:
   # an auto-generated changelog for stable (main) releases, or a recent-commit
@@ -407,7 +407,7 @@ jobs:
         run: gh release upload "$REL_TAG" win-assets/*.exe win-assets/*.msi --repo "${{ github.repository }}" --clobber
 
   # Assemble latest.json ONCE from the per-platform signatures the matrix uploaded
-  # (the matrix set uploadUpdaterJson:false so the parallel jobs never race on it),
+  # (the matrix set includeUpdaterJson:false so the parallel jobs never race on it),
   # then publish it per channel:
   #   stable (main) -> the release itself, served at releases/latest/download/latest.json
   #   dev           -> the permanent `dev-channel` pre-release, giving the in-app
