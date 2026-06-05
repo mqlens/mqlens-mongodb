@@ -101,6 +101,15 @@ describe('MonitoringView', () => {
     expect(screen.queryByText('admin.$cmd')).toBeNull();
   });
 
+  it('filters current ops by minimum duration (secs)', async () => {
+    render(<MonitoringView connectionId="conn-1" />);
+    expect(await screen.findByTestId('current-ops-table')).toBeInTheDocument();
+    // The seeded op runs for 3s; require ≥ 5s and it drops out.
+    fireEvent.change(screen.getByTestId('ops-min-secs'), { target: { value: '5' } });
+    expect(screen.queryByTestId('current-ops-table')).toBeNull();
+    expect(screen.getByText('No operations match the filter.')).toBeInTheDocument();
+  });
+
   it('opens a detail modal when an operation row is clicked', async () => {
     render(<MonitoringView connectionId="conn-1" />);
     fireEvent.click(await screen.findByTestId('op-row-42'));

@@ -227,8 +227,11 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
   // Filters
   const [opsSearch, setOpsSearch] = useState('');
   const [opsType, setOpsType] = useState('');
+  const [opsDb, setOpsDb] = useState('');
+  const [opsMinSecs, setOpsMinSecs] = useState(0);
   const [profSearch, setProfSearch] = useState('');
   const [profMinMs, setProfMinMs] = useState(0);
+  const [profOp, setProfOp] = useState('');
 
   // Profiler state
   const [dbs, setDbs] = useState<string[]>([]);
@@ -345,21 +348,29 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
     return { conns, resident, cachePct, opsPerSec, netPerSec };
   }, [samples]);
 
+  const dbOf = (ns: string) => ns.split('.')[0] || '';
   const opTypes = useMemo(() => Array.from(new Set(ops.map((o) => o.op))).sort(), [ops]);
+  const opsDbs = useMemo(() => Array.from(new Set(ops.map((o) => dbOf(o.ns)).filter(Boolean))).sort(), [ops]);
+  const profOpTypes = useMemo(() => Array.from(new Set(profile.map((p) => p.op))).sort(), [profile]);
   const filteredOps = useMemo(() => {
     const q = opsSearch.trim().toLowerCase();
     return ops.filter(
       (o) =>
         (!opsType || o.op === opsType) &&
+        (!opsDb || dbOf(o.ns) === opsDb) &&
+        o.secsRunning >= opsMinSecs &&
         (!q || `${o.ns} ${o.client} ${o.op} ${o.command}`.toLowerCase().includes(q)),
     );
-  }, [ops, opsSearch, opsType]);
+  }, [ops, opsSearch, opsType, opsDb, opsMinSecs]);
   const filteredProfile = useMemo(() => {
     const q = profSearch.trim().toLowerCase();
     return profile.filter(
-      (p) => p.millis >= profMinMs && (!q || `${p.ns} ${p.op} ${p.planSummary} ${p.command}`.toLowerCase().includes(q)),
+      (p) =>
+        p.millis >= profMinMs &&
+        (!profOp || p.op === profOp) &&
+        (!q || `${p.ns} ${p.op} ${p.planSummary} ${p.command}`.toLowerCase().includes(q)),
     );
-  }, [profile, profSearch, profMinMs]);
+  }, [profile, profSearch, profMinMs, profOp]);
 
   const latestOpsPerSec = series.opsPerSec.length ? series.opsPerSec[series.opsPerSec.length - 1] : 0;
   const latestNetPerSec = series.netPerSec.length ? series.netPerSec[series.netPerSec.length - 1] : 0;
@@ -473,6 +484,21 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                   <option value="">All ops</option>
                   {opTypes.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
+                <select value={opsDb} onChange={(e) => setOpsDb(e.target.value)} className="mql-mon-select" data-testid="ops-db-filter">
+                  <option value="">All dbs</option>
+                  {opsDbs.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+                <label className="mql-mon-minms">
+                  ≥
+                  <input
+                    type="number"
+                    min={0}
+                    value={opsMinSecs}
+                    onChange={(e) => setOpsMinSecs(Number(e.target.value) || 0)}
+                    data-testid="ops-min-secs"
+                  />
+                  s
+                </label>
                 <span className="mql-mon-count">{filteredOps.length} / {ops.length}</span>
               </div>
               {filteredOps.length === 0 ? (
@@ -569,6 +595,10 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                     data-testid="profiler-search"
                   />
                 </div>
+                <select value={profOp} onChange={(e) => setProfOp(e.target.value)} className="mql-mon-select" data-testid="profiler-type-filter">
+                  <option value="">All ops</option>
+                  {profOpTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
                 <label className="mql-mon-minms">
                   ≥
                   <input
