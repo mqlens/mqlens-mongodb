@@ -5483,3 +5483,71 @@ button, input, select, textarea {
 .mql-update-progress-bar > span { display: block; height: 100%; background: var(--accent-blue); transition: width 0.2s ease; }
 .mql-update-progress-pct { display: block; margin-top: 6px; font-size: 11px; color: var(--text-dim); }
 
+/* ===== Quick Start (two-column start page) ===== */
+.mql-quickstart { height: 100%; overflow: auto; padding: 28px; }
+.mql-qs-grid { display: flex; gap: 28px; max-width: 980px; margin: 0 auto; align-items: flex-start; }
+.mql-qs-rail { flex: 0 0 240px; }
+.mql-qs-conns { flex: 1; min-width: 0; }
+
+.mql-qs-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.mql-qs-logo { width: 36px; height: 36px; }
+.mql-qs-brand-name { font-weight: 700; font-size: 15px; }
+.mql-qs-brand-ver { font-size: 11px; color: var(--text-dim); }
+.mql-qs-tagline { color: var(--text-muted); font-size: 12.5px; margin: 0 0 14px; }
+
+.mql-qs-btn { display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 600;
+  cursor: pointer; border: 1px solid transparent; margin-bottom: 9px; }
+.mql-qs-btn.is-primary { background: var(--accent-blue); color: #fff; }
+.mql-qs-btn.is-ghost { background: var(--bg-item); color: var(--text); border-color: var(--border); }
+.mql-qs-btn:hover { filter: brightness(1.08); }
+
+.mql-qs-rail-section { margin-top: 18px; }
+.mql-qs-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-dim); font-weight: 600; }
+.mql-qs-tip { display: flex; align-items: center; gap: 9px; font-size: 12.5px;
+  color: var(--text-muted); margin-top: 9px; }
+.mql-qs-tip svg { color: var(--accent-blue); flex: 0 0 auto; }
+.mql-qs-kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
+  padding: 1px 6px; color: var(--text); background: var(--bg-item); white-space: nowrap; }
+.mql-qs-rail-links { display: flex; gap: 16px; margin-top: 18px; }
+.mql-qs-link { display: inline-flex; align-items: center; gap: 5px; background: none; border: none;
+  color: var(--accent-blue); font-size: 12px; cursor: pointer; padding: 0; text-decoration: none; }
+.mql-qs-link:hover { text-decoration: underline; }
+
+.mql-qs-conns-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
+.mql-qs-count { font-size: 11.5px; color: var(--text-dim); }
+.mql-qs-conns-list { display: flex; flex-direction: column; gap: 9px; }
+
+.mql-qs-card { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  padding: 11px 13px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-panel);
+  cursor: pointer; color: var(--text); }
+.mql-qs-card:hover:not(:disabled) { border-color: var(--accent-blue); }
+.mql-qs-card.is-connected { cursor: default; }
+.mql-qs-card:disabled { cursor: default; }
+.mql-qs-card-av { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center;
+  justify-content: center; font-weight: 700; font-size: 13px; color: #fff; flex: 0 0 auto; }
+.mql-qs-card-main { display: flex; flex-direction: column; min-width: 0; }
+.mql-qs-card-name { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 7px; }
+.mql-qs-card-host { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mql-qs-card-go { margin-left: auto; color: var(--text-dim); flex: 0 0 auto; }
+.mql-qs-spin { margin-left: auto; color: var(--accent-blue); animation: mql-qs-rot 0.8s linear infinite; }
+@keyframes mql-qs-rot { to { transform: rotate(360deg); } }
+
+.mql-qs-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px; letter-spacing: .03em; }
+.mql-qs-badge.is-srv { background: var(--soft-green-bg, #14361f); color: var(--accent-green); }
+.mql-qs-badge.is-ssh { background: #2a2440; color: #a78bfa; }
+.mql-qs-badge.is-live { background: #14361f; color: var(--accent-green); display: inline-flex; align-items: center; gap: 4px; }
+.mql-qs-badge.is-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); }
+
+.mql-qs-empty { border: 1.5px dashed var(--border); border-radius: 13px; padding: 30px 22px; text-align: center; }
+.mql-qs-empty-ico { color: var(--text-dim); margin-bottom: 8px; }
+.mql-qs-empty-title { color: var(--text); font-weight: 600; margin-bottom: 4px; }
+.mql-qs-empty-sub { font-size: 12.5px; color: var(--text-muted); max-width: 320px; margin: 0 auto; }
+
+@media (max-width: 720px) {
+  .mql-qs-grid { flex-direction: column; }
+  .mql-qs-rail { flex-basis: auto; width: 100%; }
+}
