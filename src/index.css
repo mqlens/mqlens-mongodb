@@ -5250,6 +5250,11 @@ button, input, select, textarea {
   font-size: 12px;
 }
 .dialog-input:focus { outline: none; border-color: var(--accent-blue); }
+.dialog-input--multiline {
+  height: auto; min-height: 110px; padding: 8px 10px; resize: vertical;
+  font-family: var(--font-mono); line-height: 1.5;
+  white-space: pre-wrap; word-break: break-all;
+}
 .dialog-error { font-size: 11px; color: var(--accent-red); }
 .dialog-choices { display: flex; flex-direction: column; gap: 6px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }

@@ -19,6 +19,8 @@ export interface PromptOptions {
   cancelLabel?: string;
   /** Return an error string to block submit, or null to allow it. */
   validate?: (value: string) => string | null;
+  /** Render a multi-line textarea instead of a single-line input. */
+  multiline?: boolean;
 }
 
 export interface ChooseOptions {
