@@ -10,6 +10,16 @@ mod tests {
         rename_database_impl, start_collection_export_impl, update_document_impl,
     };
 
+    #[test]
+    fn test_resource_usage_sums_process_tree() {
+        // The current (test) process always exists, so the summed tree memory
+        // must be non-zero. Guards against the walk returning an empty set.
+        let state = AppState::new();
+        let usage = crate::resource_usage_impl(&state);
+        assert!(usage.memory_bytes > 0, "process-tree memory should be > 0");
+        assert!(usage.cpu_percent >= 0.0);
+    }
+
     #[tokio::test]
     async fn test_mock_connection_lifecycle() {
         let state = AppState::new();

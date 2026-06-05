@@ -62,8 +62,10 @@ pub fn apply_main_timeouts(opts: &mut mongodb::options::ClientOptions) {
     }
 }
 
-/// Sample this process's CPU% and resident memory. CPU is a delta since the
-/// previous sample, so the first call after startup typically reports 0.
+/// Sample the whole app's CPU% and resident memory — the main process plus all
+/// descendant processes (the WebView/renderer helpers), so the total matches
+/// what Activity Monitor / Task Manager shows rather than the backend alone.
+/// CPU is a delta since the previous sample, so the first call reports ~0.
 pub fn resource_usage_impl(state: &AppState) -> ResourceUsage {
     let pid = match sysinfo::get_current_pid() {
         Ok(pid) => pid,
@@ -75,16 +77,41 @@ pub fn resource_usage_impl(state: &AppState) -> ResourceUsage {
         }
     };
     let mut sys = state.sys.lock().unwrap_or_else(|p| p.into_inner());
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
-    match sys.process(pid) {
-        Some(proc_) => ResourceUsage {
-            cpu_percent: proc_.cpu_usage(),
-            memory_bytes: proc_.memory(),
-        },
-        None => ResourceUsage {
-            cpu_percent: 0.0,
-            memory_bytes: 0,
-        },
+    // Refresh every process so we can discover our descendants by parent PID.
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+    // Collect our process tree: start at our PID and keep absorbing any process
+    // whose parent is already in the set until it stops growing.
+    let mut tree: std::collections::HashSet<sysinfo::Pid> = std::collections::HashSet::new();
+    tree.insert(pid);
+    loop {
+        let mut added = false;
+        for (cpid, proc_) in sys.processes() {
+            if !tree.contains(cpid) {
+                if let Some(parent) = proc_.parent() {
+                    if tree.contains(&parent) {
+                        tree.insert(*cpid);
+                        added = true;
+                    }
+                }
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+
+    let mut memory_bytes: u64 = 0;
+    let mut cpu_percent: f32 = 0.0;
+    for p in &tree {
+        if let Some(proc_) = sys.process(*p) {
+            memory_bytes += proc_.memory();
+            cpu_percent += proc_.cpu_usage();
+        }
+    }
+    ResourceUsage {
+        cpu_percent,
+        memory_bytes,
     }
 }
 
