@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { appConfigDir } from '@tauri-apps/api/path';
-import { Plus, Download, Settings, ExternalLink, Search, FolderOpen, Database, Activity } from 'lucide-react';
+import { Plus, Download, Settings, ExternalLink, Search, FolderOpen, Database, Activity, Github } from 'lucide-react';
 import brandMark from '../assets/mqlens-mark.png';
 import type { ConnectionProfile } from '../lib/connection';
 import { ConnectionCard } from './ConnectionCard';
@@ -16,7 +16,8 @@ interface QuickStartProps {
   profilesRefreshKey: number;
 }
 
-const DOCS_URL = 'https://github.com/mqlens/mqlens';
+const DOCS_URL = 'https://mqlens.com';
+const GITHUB_URL = 'https://github.com/mqlens/mqlens-mongodb';
 
 export const QuickStart: React.FC<QuickStartProps> = ({
   onConnect, onOpenSettings, onQuickConnect, onLoadSampleData, activeConnections, profilesRefreshKey,
@@ -136,6 +137,9 @@ export const QuickStart: React.FC<QuickStartProps> = ({
               </button>
               <a className="mql-qs-action" href={DOCS_URL} target="_blank" rel="noreferrer">
                 <ExternalLink size={16} /> <span>Documentation</span>
+              </a>
+              <a className="mql-qs-action" href={GITHUB_URL} target="_blank" rel="noreferrer">
+                <Github size={16} /> <span>GitHub</span>
               </a>
             </div>
           </section>
