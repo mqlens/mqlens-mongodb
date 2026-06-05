@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { useDialogs } from './dialogs/DialogProvider';
-import { 
+import { PasswordInput } from './PasswordInput';
+import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
   Folder, FolderPlus, FolderOpen, Search, ChevronDown, ChevronRight,
   Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid
@@ -100,6 +101,11 @@ const TABS = [
   { id: 'proxy', label: 'Proxy', icon: RefreshCw },
   { id: 'adv', label: 'Advanced', icon: LayoutGrid },
 ];
+
+// Replace the password in a mongodb URI (//user:PASSWORD@host) with dots, so the
+// connection string can be shown without exposing the credential.
+export const maskUriPassword = (uri: string): string =>
+  uri.replace(/(\/\/[^/:@\s]+:)([^@/\s]+)(@)/, (_m, a, _p, c) => `${a}••••••${c}`);
 
 export const buildUri = (s: typeof BLANK_CONN) => {
   if (s.topology === 'uri') return s.uri;
@@ -200,6 +206,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [editorState, setEditorState] = useState<typeof BLANK_CONN>(BLANK_CONN);
   const [activeEditorTab, setActiveEditorTab] = useState('server');
   const [showPassword, setShowPassword] = useState(false);
+  const [revealUri, setRevealUri] = useState(false);
+  const [revealDetailUri, setRevealDetailUri] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -277,6 +285,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
+    setRevealDetailUri(false);
     setError(null);
     setTestResult(null);
   };
@@ -752,9 +761,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
-                    <span className="mql-label" style={{ fontSize: 9 }}>Connection URI</span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span className="mql-label" style={{ fontSize: 9 }}>Connection URI</span>
+                      {maskUriPassword(selectedProfile.uri) !== selectedProfile.uri && (
+                        <button
+                          type="button"
+                          onClick={() => setRevealDetailUri(v => !v)}
+                          title={revealDetailUri ? 'Hide password' : 'Show password'}
+                          aria-label={revealDetailUri ? 'Hide password' : 'Show password'}
+                          style={{ display: 'inline-flex', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}
+                        >
+                          {revealDetailUri ? <EyeOff size={13} /> : <Eye size={13} />}
+                        </button>
+                      )}
+                    </div>
                     <div style={{ padding: 10, background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: 11, wordBreak: 'break-all', userSelect: 'text' }}>
-                      {selectedProfile.uri}
+                      {revealDetailUri ? selectedProfile.uri : maskUriPassword(selectedProfile.uri)}
                     </div>
                   </div>
 
@@ -947,15 +969,35 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <label htmlFor="connection-uri" className="mql-label">Connection URI</label>
-                    <input 
-                      id="connection-uri"
-                      type="text" 
-                      value={editorState.uri}
-                      onChange={e => setEditorState(prev => ({ ...prev, uri: e.target.value, topology: 'uri' }))}
-                      placeholder="mongodb://localhost:27017"
-                      className="mql-ncd-input font-mono"
-                      style={{ width: '100%' }}
-                    />
+                    {(() => {
+                      const masked = maskUriPassword(editorState.uri);
+                      const hasSecret = masked !== editorState.uri;
+                      return (
+                        <div className="mql-password-field">
+                          <input
+                            id="connection-uri"
+                            type="text"
+                            value={revealUri || !hasSecret ? editorState.uri : masked}
+                            readOnly={hasSecret && !revealUri}
+                            onChange={e => setEditorState(prev => ({ ...prev, uri: e.target.value, topology: 'uri' }))}
+                            placeholder="mongodb://localhost:27017"
+                            className="mql-ncd-input font-mono"
+                          />
+                          {hasSecret && (
+                            <button
+                              type="button"
+                              className="mql-password-toggle"
+                              aria-label={revealUri ? 'Hide password' : 'Show password'}
+                              title={revealUri ? 'Hide password' : 'Show password to edit'}
+                              onClick={() => setRevealUri(v => !v)}
+                              tabIndex={-1}
+                            >
+                              {revealUri ? <EyeOff size={13} /> : <Eye size={13} />}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 10, display: 'flex', gap: 12 }}>
@@ -1253,8 +1295,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                             <span className="mql-label">Key Passphrase (optional)</span>
-                            <input
-                              type="password"
+                            <PasswordInput
                               value={editorState.sshPass}
                               onChange={e => setEditorState(prev => ({ ...prev, sshPass: e.target.value }))}
                               placeholder="Leave blank if the key is unencrypted"
@@ -1265,8 +1306,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                           <span className="mql-label">SSH Password</span>
-                          <input
-                            type="password"
+                          <PasswordInput
                             value={editorState.sshPass}
                             onChange={e => setEditorState(prev => ({ ...prev, sshPass: e.target.value }))}
                             placeholder="••••••••"
