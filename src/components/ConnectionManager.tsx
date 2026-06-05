@@ -972,26 +972,40 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <label htmlFor="connection-uri" className="mql-label">Connection URI</label>
-                    <div className="mql-password-field">
-                      <input
-                        id="connection-uri"
-                        type={revealUri ? 'text' : 'password'}
-                        value={editorState.uri}
-                        onChange={e => setEditorState(prev => ({ ...prev, uri: e.target.value, topology: 'uri' }))}
-                        placeholder="mongodb://localhost:27017"
-                        className="mql-ncd-input font-mono"
-                      />
-                      <button
-                        type="button"
-                        className="mql-password-toggle"
-                        aria-label={revealUri ? 'Hide URI' : 'Show URI'}
-                        title={revealUri ? 'Hide' : 'Show'}
-                        onClick={() => setRevealUri(v => !v)}
-                        tabIndex={-1}
-                      >
-                        {revealUri ? <EyeOff size={13} /> : <Eye size={13} />}
-                      </button>
-                    </div>
+                    {(() => {
+                      // Show the readable URI (protocol/host/db) with only the
+                      // password masked. Focusing the field — or the eye — reveals
+                      // the full string so it stays editable.
+                      const masked = maskUriPassword(editorState.uri);
+                      const hasSecret = masked !== editorState.uri;
+                      const showMasked = hasSecret && !revealUri;
+                      return (
+                        <div className="mql-password-field">
+                          <input
+                            id="connection-uri"
+                            type="text"
+                            value={showMasked ? masked : editorState.uri}
+                            readOnly={showMasked}
+                            onFocus={() => { if (hasSecret) setRevealUri(true); }}
+                            onChange={e => setEditorState(prev => ({ ...prev, uri: e.target.value, topology: 'uri' }))}
+                            placeholder="mongodb://localhost:27017"
+                            className="mql-ncd-input font-mono"
+                          />
+                          {hasSecret && (
+                            <button
+                              type="button"
+                              className="mql-password-toggle"
+                              aria-label={revealUri ? 'Hide password' : 'Show password'}
+                              title={revealUri ? 'Hide password' : 'Show password to edit'}
+                              onClick={() => setRevealUri(v => !v)}
+                              tabIndex={-1}
+                            >
+                              {revealUri ? <EyeOff size={13} /> : <Eye size={13} />}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <button
                       type="button"
                       className="mql-ncd-parse-btn"
