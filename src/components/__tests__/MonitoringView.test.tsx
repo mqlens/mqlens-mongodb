@@ -62,6 +62,25 @@ describe('MonitoringView', () => {
     });
   });
 
+  it('shows "Access required" when serverStatus is unauthorized, but still lists ops', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'server_status') return Promise.reject('serverStatus failed: not authorized on admin (Unauthorized)');
+      if (cmd === 'current_ops') return Promise.resolve([
+        { opid: 1, op: 'command', ns: 'admin.$cmd', secsRunning: 0, client: 'x', desc: '', command: '{}' },
+      ]);
+      if (cmd === 'list_databases') return Promise.resolve(['admin']);
+      if (cmd === 'get_profiling_status') return Promise.resolve({ level: 0, slowMs: 100 });
+      if (cmd === 'read_profile') return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+    render(<MonitoringView connectionId="conn-1" />);
+    expect(await screen.findByTestId('access-required')).toBeInTheDocument();
+    // Metric cards are hidden behind the access notice.
+    expect(screen.queryByText('Connections')).toBeNull();
+    // Current operations still work (independent privilege).
+    expect(await screen.findByTestId('current-ops-table')).toBeInTheDocument();
+  });
+
   it('switches between the Current operations and Profiler tabs', async () => {
     render(<MonitoringView connectionId="conn-1" />);
     // Current operations is the default tab.

@@ -5358,4 +5358,13 @@ button, input, select, textarea {
 .mql-mon-slowms { color: var(--text-dim); }
 .mql-mon-refresh { display: inline-flex; padding: 3px; border-radius: 4px; color: var(--text-dim); cursor: pointer; }
 .mql-mon-refresh:hover { color: var(--text-main); background: var(--bg-item-hover); }
+.mql-mon-denied {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 16px 18px; border: 1px solid var(--border-color); border-radius: 8px;
+  background: var(--bg-panel); color: var(--text-muted); font-size: 12.5px;
+}
+.mql-mon-denied > svg { color: #f59e0b; flex: none; margin-top: 1px; }
+.mql-mon-denied strong { color: var(--text-main); display: block; margin-bottom: 3px; }
+.mql-mon-denied p { margin: 0; line-height: 1.55; }
+.mql-mon-denied code { background: var(--bg-item-hover); padding: 1px 5px; border-radius: 4px; font-family: var(--font-mono); font-size: 11.5px; }
 

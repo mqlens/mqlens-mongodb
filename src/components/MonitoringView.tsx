@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
-import { Activity, RefreshCw, Skull } from 'lucide-react';
+import { Activity, RefreshCw, Skull, Lock } from 'lucide-react';
 import { formatBytes } from '../lib/format';
 import {
   serverStatus,
@@ -62,11 +62,35 @@ const MetricCard: React.FC<{ label: string; value: string; sub?: string; series:
   </div>
 );
 
+// MongoDB error 13 / "not authorized" → the user lacks the privilege.
+const isAuthError = (msg: string): boolean =>
+  /not authorized|unauthorized|requires authentication|\(13\)|code 13/i.test(msg);
+
+const AccessNote: React.FC<{ what: string; role?: string }> = ({ what, role = 'clusterMonitor' }) => (
+  <div className="mql-mon-denied" data-testid="access-required">
+    <Lock size={15} />
+    <div>
+      <strong>Access required</strong>
+      <p>
+        This connection&apos;s user isn&apos;t authorized to {what}. Grant the <code>{role}</code> role
+        (or equivalent privilege) to enable it.
+      </p>
+    </div>
+  </div>
+);
+
+const errLine = (msg: string): string => {
+  const first = msg.split('\n')[0];
+  return first.length > 200 ? `${first.slice(0, 200)}…` : first;
+};
+
 export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) => {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [ops, setOps] = useState<CurrentOp[]>([]);
   const [samples, setSamples] = useState<Sample[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [metricsErr, setMetricsErr] = useState<string | null>(null);
+  const [opsErr, setOpsErr] = useState<string | null>(null);
+  const [profilerErr, setProfilerErr] = useState<string | null>(null);
   const [section, setSection] = useState<'ops' | 'profiler'>('ops');
 
   // Profiler state
@@ -83,15 +107,21 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
     setStatus(null);
     const tick = async () => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      try {
-        const [s, o] = await Promise.all([serverStatus(connectionId), currentOps(connectionId)]);
-        if (!alive) return;
-        setStatus(s);
-        setOps(o);
-        setError(null);
-        setSamples((prev) => [...prev, { t: Date.now(), status: s }].slice(-MAX_SAMPLES));
-      } catch (e: any) {
-        if (alive) setError(String(e?.message || e));
+      // Independent: a user may have currentOp but not serverStatus (or vice versa).
+      const [sRes, oRes] = await Promise.allSettled([serverStatus(connectionId), currentOps(connectionId)]);
+      if (!alive) return;
+      if (sRes.status === 'fulfilled') {
+        setStatus(sRes.value);
+        setMetricsErr(null);
+        setSamples((prev) => [...prev, { t: Date.now(), status: sRes.value }].slice(-MAX_SAMPLES));
+      } else {
+        setMetricsErr(String((sRes.reason as any)?.message || sRes.reason));
+      }
+      if (oRes.status === 'fulfilled') {
+        setOps(oRes.value);
+        setOpsErr(null);
+      } else {
+        setOpsErr(String((oRes.reason as any)?.message || oRes.reason));
       }
     };
     tick();
@@ -127,8 +157,9 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
       ]);
       setProfiling(st);
       setProfile(entries);
+      setProfilerErr(null);
     } catch (e: any) {
-      setError(String(e?.message || e));
+      setProfilerErr(String(e?.message || e));
     } finally {
       setProfileLoading(false);
     }
@@ -144,7 +175,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
       await killOp(connectionId, op.opid);
       setOps(await currentOps(connectionId));
     } catch (e: any) {
-      setError(String(e?.message || e));
+      setOpsErr(String(e?.message || e));
     }
   };
 
@@ -154,7 +185,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
       setProfiling(st);
       void refreshProfiler();
     } catch (e: any) {
-      setError(String(e?.message || e));
+      setProfilerErr(String(e?.message || e));
     }
   };
 
@@ -194,46 +225,51 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
         )}
       </div>
 
-      {error && <div className="mql-mon-error" data-testid="monitoring-error">{error}</div>}
-
-      {/* Metric cards */}
-      <div className="mql-mon-cards">
-        <MetricCard
-          label="Connections"
-          value={status ? String(status.connections.current) : '—'}
-          sub={status ? `${status.connections.available.toLocaleString()} available` : undefined}
-          series={series.conns}
-          color="var(--accent-blue)"
-        />
-        <MetricCard
-          label="Ops / sec"
-          value={status ? Math.round(latestOpsPerSec).toLocaleString() : '—'}
-          sub="all opcounters"
-          series={series.opsPerSec}
-          color="#34d399"
-        />
-        <MetricCard
-          label="Resident memory"
-          value={status ? `${status.memory.residentMb.toLocaleString()} MB` : '—'}
-          sub={status ? `${status.memory.virtualMb.toLocaleString()} MB virtual` : undefined}
-          series={series.resident}
-          color="#f59e0b"
-        />
-        <MetricCard
-          label="Cache used"
-          value={cachePctNow != null ? `${cachePctNow.toFixed(0)}%` : 'n/a'}
-          sub={status?.cache ? `${formatBytes(status.cache.bytesInCache)} / ${formatBytes(status.cache.maxBytes)}` : undefined}
-          series={series.cachePct}
-          color="#a78bfa"
-        />
-        <MetricCard
-          label="Network"
-          value={status ? `${formatBytes(latestNetPerSec)}/s` : '—'}
-          sub={status ? `${formatBytes(status.network.bytesIn + status.network.bytesOut)} total` : undefined}
-          series={series.netPerSec}
-          color="#22d3ee"
-        />
-      </div>
+      {/* Metric cards (or an access-required panel when serverStatus is denied) */}
+      {metricsErr && isAuthError(metricsErr) ? (
+        <AccessNote what="read server metrics (serverStatus)" />
+      ) : (
+        <>
+          {metricsErr && <div className="mql-mon-error" data-testid="monitoring-error">{errLine(metricsErr)}</div>}
+          <div className="mql-mon-cards">
+            <MetricCard
+              label="Connections"
+              value={status ? String(status.connections.current) : '—'}
+              sub={status ? `${status.connections.available.toLocaleString()} available` : undefined}
+              series={series.conns}
+              color="var(--accent-blue)"
+            />
+            <MetricCard
+              label="Ops / sec"
+              value={status ? Math.round(latestOpsPerSec).toLocaleString() : '—'}
+              sub="all opcounters"
+              series={series.opsPerSec}
+              color="#34d399"
+            />
+            <MetricCard
+              label="Resident memory"
+              value={status ? `${status.memory.residentMb.toLocaleString()} MB` : '—'}
+              sub={status ? `${status.memory.virtualMb.toLocaleString()} MB virtual` : undefined}
+              series={series.resident}
+              color="#f59e0b"
+            />
+            <MetricCard
+              label="Cache used"
+              value={cachePctNow != null ? `${cachePctNow.toFixed(0)}%` : 'n/a'}
+              sub={status?.cache ? `${formatBytes(status.cache.bytesInCache)} / ${formatBytes(status.cache.maxBytes)}` : undefined}
+              series={series.cachePct}
+              color="#a78bfa"
+            />
+            <MetricCard
+              label="Network"
+              value={status ? `${formatBytes(latestNetPerSec)}/s` : '—'}
+              sub={status ? `${formatBytes(status.network.bytesIn + status.network.bytesOut)} total` : undefined}
+              series={series.netPerSec}
+              color="#22d3ee"
+            />
+          </div>
+        </>
+      )}
 
       {/* Tabs: Current operations | Profiler */}
       <div className="mql-mon-tabs">
@@ -257,7 +293,11 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
 
       {section === 'ops' ? (
         <div className="mql-mon-section" data-testid="mon-panel-ops">
-          {ops.length === 0 ? (
+          {opsErr && isAuthError(opsErr) ? (
+            <AccessNote what="inspect current operations ($currentOp)" role="inprog / clusterMonitor" />
+          ) : opsErr ? (
+            <div className="mql-mon-error">{errLine(opsErr)}</div>
+          ) : ops.length === 0 ? (
             <div className="mql-mon-empty">No active operations.</div>
           ) : (
             <table className="mql-mon-table" data-testid="current-ops-table">
@@ -322,7 +362,11 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
               <RefreshCw size={12} className={profileLoading ? 'animate-spin' : ''} />
             </button>
           </div>
-          {profile.length === 0 ? (
+          {profilerErr && isAuthError(profilerErr) ? (
+            <AccessNote what="read the profiler for this database (system.profile)" role="dbAdmin / read" />
+          ) : profilerErr ? (
+            <div className="mql-mon-error">{errLine(profilerErr)}</div>
+          ) : profile.length === 0 ? (
             <div className="mql-mon-empty">
               {profiling?.level === 0
                 ? 'Profiling is off for this database. Set level 1 (slow ops) or 2 (all ops) to collect entries.'
