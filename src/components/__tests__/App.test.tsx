@@ -77,6 +77,10 @@ vi.mock('../Sidebar', () => ({
 describe('App Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Provide a safe default so invoke() calls that are not explicitly mocked
+    // (e.g. load_connection_profiles, get_resource_usage) return a resolved
+    // promise rather than undefined, preventing ".then() of undefined" crashes.
+    mockInvoke.mockResolvedValue([]);
   });
 
   it('opens the Quick Start tab by default and shows bottom status bar with version info', async () => {
@@ -84,8 +88,9 @@ describe('App Component', () => {
 
     // VaultGate resolves asynchronously — wait for workspace to mount.
     expect(await screen.findByTestId('quickstart-tab')).toBeInTheDocument();
-    expect(screen.getByText('Welcome to MQLens')).toBeInTheDocument();
-    expect(screen.getByText('Connect to a Database')).toBeInTheDocument();
+    // New two-column QuickStart: brand name + primary CTA text.
+    expect(screen.getByText('MQLens')).toBeInTheDocument();
+    expect(screen.getByText('New Connection')).toBeInTheDocument();
 
     // Check Bottom status bar
     const bottomBar = screen.getByTestId('bottom-bar');

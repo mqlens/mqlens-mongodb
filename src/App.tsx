@@ -130,7 +130,36 @@ function Workspace() {
   const [tabs, setTabs] = useState<QueryTab[]>([createQuickStartTab()]);
   const [activeTabId, setActiveTabId] = useState<string | null>(QUICK_START_TAB_ID);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
+  const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+
+  /** Record a newly-connected connection. Dedupes by profileId. */
+  const addActiveConnection = (id: string, name: string, uri: string, profileId: string) => {
+    setActiveConnections((prev) =>
+      prev.some((c) => c.profileId === profileId) ? prev : [...prev, { id, profileId, name, uri }]
+    );
+  };
+
+  const handleQuickConnect = async (profile: { id: string; name: string; uri: string; ssh?: unknown }) => {
+    if (activeConnections.some((c) => c.profileId === profile.id)) return; // already connected
+    try {
+      const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
+      addActiveConnection(id, profile.name, profile.uri, profile.id);
+    } catch (e) {
+      toast(`Could not connect to ${profile.name}: ${String(e)}`, 'error');
+    }
+  };
+
+  const handleLoadSampleData = async () => {
+    const SAMPLE_ID = '__sample__';
+    if (activeConnections.some((c) => c.profileId === SAMPLE_ID)) return;
+    try {
+      const id = await invoke<string>('connect_db', { uri: 'mongodb://mock', ssh: null });
+      addActiveConnection(id, 'Sample (mqlens_demo)', 'mongodb://mock', SAMPLE_ID);
+    } catch (e) {
+      toast(`Could not load sample data: ${String(e)}`, 'error');
+    }
+  };
   const [isIndexModalOpen, setIsIndexModalOpen] = useState(false);
   const [indexModalTarget, setIndexModalTarget] = useState<{
     connectionId: string;
@@ -1222,13 +1251,11 @@ function Workspace() {
 
         <ConnectionManager
           isOpen={isConnectionModalOpen}
-          onClose={() => setIsConnectionModalOpen(false)}
+          onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
           onConnect={(id, name, uri, profileId) => {
-            setActiveConnections(prev => {
-              if (prev.some(c => c.profileId === profileId)) return prev;
-              return [...prev, { id, profileId, name, uri }];
-            });
+            addActiveConnection(id, name, uri, profileId);
             setIsConnectionModalOpen(false);
+            setProfilesRefreshKey((k) => k + 1);
           }}
           activeConnections={activeConnections}
         />
@@ -1487,7 +1514,10 @@ function Workspace() {
                 <QuickStart
                   onConnect={() => setIsConnectionModalOpen(true)}
                   onOpenSettings={handleOpenSettingsTab}
-                  hasConnections={activeConnections.length > 0}
+                  onQuickConnect={handleQuickConnect}
+                  onLoadSampleData={handleLoadSampleData}
+                  activeConnections={activeConnections}
+                  profilesRefreshKey={profilesRefreshKey}
                 />
               )}
             </>
