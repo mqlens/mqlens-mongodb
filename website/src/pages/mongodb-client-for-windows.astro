@@ -1,0 +1,21 @@
+---
+import WorkflowLanding from '../components/WorkflowLanding.astro';
+---
+<WorkflowLanding
+  title="MongoDB client for Windows"
+  description="A fast native MongoDB client for Windows — signed .msi/.exe installer, every auth mode, SSH/TLS, aggregation pipelines, explain plans. Free, Apache-2.0, zero telemetry."
+  eyebrow="Windows 10 / 11"
+  h1="A native MongoDB client for Windows."
+  grad="Signed, lightweight, complete."
+  ctaLabel="Download for Windows"
+  lede="MQLens is a small native Windows app (Tauri + WebView2, not Electron) with a code-signed <code>.msi</code> / <code>.exe</code> installer. Every feature is here: all auth modes, TLS / SSH / SOCKS5, aggregation pipelines, visual explain plans, schema analysis, GridFS, and an embedded mongosh."
+  screenshot={{ src: '/screenshots/mqlens-documents.png', alt: 'MQLens running on Windows browsing MongoDB documents' }}
+  featuresTitle="Everything, in a tiny signed installer"
+  features={[
+    { h3: 'Signed installer', p: 'Code-signed <code>.msi</code> / <code>.exe</code> via Azure Trusted Signing.' },
+    { h3: 'Every connection mode', p: 'All auth mechanisms (SCRAM, X.509, AWS IAM, Kerberos, LDAP) plus TLS / SSH / SOCKS5.' },
+    { h3: 'Encrypted vault', p: 'Connection credentials encrypted locally with AES-256-GCM and Argon2id.' },
+    { h3: 'Full feature set', p: 'Aggregation pipelines, explain plans, schema analysis, GridFS, and embedded mongosh.' },
+    { h3: 'Private &amp; free', p: 'Zero telemetry, no account, Apache-2.0.' },
+  ]}
+/>

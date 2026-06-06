@@ -1,0 +1,21 @@
+---
+import WorkflowLanding from '../components/WorkflowLanding.astro';
+---
+<WorkflowLanding
+  title="MongoDB client for Mac"
+  description="A fast native MongoDB client for macOS — Apple Silicon & Intel, notarized .dmg, Touch ID unlock, every auth mode, SSH/TLS, explain plans. Free, Apache-2.0, zero telemetry."
+  eyebrow="macOS · Apple Silicon & Intel"
+  h1="A native MongoDB client for Mac."
+  grad="Notarized, tiny, Touch ID."
+  ctaLabel="Download for macOS"
+  lede="MQLens is a ~14 MB native macOS app (Tauri/Rust, not Electron) — an Apple-notarized <code>.dmg</code> for Apple Silicon and Intel, with Touch ID unlock for your encrypted credential vault. Every feature is here: all auth modes, TLS / SSH / SOCKS5, aggregation pipelines, visual explain plans, schema analysis, GridFS, and an embedded mongosh."
+  screenshot={{ src: '/screenshots/mqlens-documents.png', alt: 'MQLens running on macOS browsing MongoDB documents' }}
+  featuresTitle="Everything, the Mac-native way"
+  features={[
+    { h3: 'Apple Silicon + Intel', p: 'Notarized universal-friendly <code>.dmg</code> builds for both architectures.' },
+    { h3: 'Touch ID unlock', p: 'Unlock your AES-256-GCM credential vault with Touch ID.' },
+    { h3: 'Every connection mode', p: 'All auth mechanisms (SCRAM, X.509, AWS IAM, Kerberos, LDAP) plus TLS / SSH / SOCKS5.' },
+    { h3: 'Full feature set', p: 'Aggregation pipelines, explain plans, schema analysis, GridFS, and embedded mongosh.' },
+    { h3: 'Private &amp; free', p: 'Zero telemetry, no account, Apache-2.0.' },
+  ]}
+/>

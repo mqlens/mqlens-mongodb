@@ -1,0 +1,25 @@
+---
+import WorkflowLanding from '../components/WorkflowLanding.astro';
+---
+<WorkflowLanding
+  title="MongoDB aggregation pipeline GUI"
+  description="Build and run MongoDB aggregation pipelines in a multi-stage editor with a visual query builder and explain plans. Free native GUI, Apache-2.0, zero telemetry."
+  eyebrow="Aggregation pipelines"
+  h1="Build MongoDB aggregation pipelines."
+  grad="Visually or in code."
+  lede="Compose multi-stage aggregation pipelines in a stage editor, keep the raw pipeline editable, and run it against real documents — then read the explain plan to see how each stage executes."
+  screenshot={{ src: '/screenshots/mqlens-visual-builder.png', alt: 'MQLens visual query builder beside MongoDB documents' }}
+  stepsTitle="From idea to result"
+  steps={[
+    { title: 'Pick a collection', body: 'Start a new pipeline against any collection.' },
+    { title: 'Add stages', body: 'Chain <code>$match</code>, <code>$group</code>, <code>$lookup</code>, <code>$project</code>, and more in the multi-stage editor.' },
+    { title: 'Run and iterate', body: 'Execute against live data and refine stages as you go — the raw pipeline stays editable.' },
+    { title: 'Explain the pipeline', body: 'Render the explain plan to see stage-by-stage execution and index usage.' },
+  ]}
+  featuresTitle="A real pipeline workbench"
+  features={[
+    { h3: 'Multi-stage editor', p: 'Build pipelines stage by stage, with the editable raw view right alongside.' },
+    { h3: 'Visual query builder', p: 'For <code>find</code>, build filters/sort/projection visually next to the raw query.' },
+    { h3: 'Explain for aggregate', p: 'Visual plan tree for aggregations, so you can actually tune them.' },
+  ]}
+/>

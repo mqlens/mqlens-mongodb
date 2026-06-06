@@ -1,0 +1,166 @@
+---
+// Reusable SEO landing-page template for workflow / platform keyword pages.
+// Keeps every page on one shared layout + style so the set stays consistent.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Download from './Download.astro';
+import { SITE } from '../consts';
+
+interface Step { title: string; body: string }
+interface Feature { h3: string; p: string }
+interface Props {
+  title: string;
+  description: string;
+  eyebrow: string;
+  h1: string;
+  grad: string;
+  lede: string;
+  ctaLabel?: string;
+  screenshot?: { src: string; alt: string };
+  stepsTitle?: string;
+  steps?: Step[];
+  featuresTitle?: string;
+  features?: Feature[];
+}
+const {
+  title, description, eyebrow, h1, grad, lede,
+  ctaLabel = 'Download for free',
+  screenshot, stepsTitle, steps = [], featuresTitle, features = [],
+} = Astro.props as Props;
+---
+
+<BaseLayout title={title} description={description}>
+  <section class="hero">
+    <div class="container hero-inner">
+      <span class="eyebrow">{eyebrow}</span>
+      <h1>{h1} <span class="grad">{grad}</span></h1>
+      <p class="lede" set:html={lede} />
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#download">{ctaLabel}</a>
+        <a class="btn btn-ghost" href={SITE.repo} target="_blank" rel="noopener">Star on GitHub ★</a>
+      </div>
+      <p class="hero-note">Free &amp; open source (Apache-2.0) · No telemetry · No account.</p>
+    </div>
+  </section>
+
+  {screenshot && (
+    <section class="section-tight">
+      <div class="container shot-wrap">
+        <a href={screenshot.src} target="_blank" rel="noopener" aria-label="Open full-size screenshot">
+          <img src={screenshot.src} alt={screenshot.alt} loading="lazy" width="1280" height="800" />
+        </a>
+      </div>
+    </section>
+  )}
+
+  {steps.length > 0 && (
+    <section class="section">
+      <div class="container">
+        <div class="sec-head">
+          <span class="eyebrow">Step by step</span>
+          <h2>{stepsTitle}</h2>
+        </div>
+        <ol class="steps">
+          {steps.map((s) => (
+            <li>
+              <h3>{s.title}</h3>
+              <p set:html={s.body} />
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
+  )}
+
+  {features.length > 0 && (
+    <section class="section">
+      <div class="container">
+        <div class="sec-head">
+          <span class="eyebrow">Why MQLens</span>
+          <h2>{featuresTitle}</h2>
+        </div>
+        <div class="feat-grid">
+          {features.map((f) => (
+            <article class="feat-card">
+              <h3>{f.h3}</h3>
+              <p set:html={f.p} />
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+
+  <section class="section-tight" id="download">
+    <div class="container">
+      <h2 class="dl-heading">Download {SITE.name} — it's free</h2>
+      <Download />
+    </div>
+  </section>
+
+  <section class="section cta">
+    <div class="container cta-inner">
+      <h2>Point {SITE.name} at your MongoDB cluster.</h2>
+      <p>Free, open source, native — yours to inspect and run.</p>
+      <a class="btn btn-primary" href="#download">{ctaLabel}</a>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .hero {
+    padding: 96px 0 64px;
+    background:
+      radial-gradient(1100px 480px at 50% -140px, hsla(200, 90%, 50%, 0.20), transparent 70%),
+      radial-gradient(900px 460px at 92% 120%, hsla(268, 85%, 65%, 0.12), transparent 70%);
+    border-bottom: 1px solid var(--border);
+  }
+  .hero-inner { text-align: center; max-width: 820px; margin: 0 auto; }
+  .hero h1 { font-size: clamp(2.1rem, 5.5vw, 3.2rem); margin: 18px 0 0; font-weight: 700; }
+  .grad {
+    background: linear-gradient(100deg, var(--accent-bright), var(--accent-teal));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .lede { font-size: 1.12rem; color: var(--text-dim); margin: 22px auto 0; max-width: 700px; }
+  .hero-cta { display: flex; gap: 12px; justify-content: center; margin-top: 30px; flex-wrap: wrap; }
+  .hero-note { color: var(--text-dim); font-size: 0.9rem; margin-top: 22px; }
+
+  .shot-wrap { max-width: 960px; }
+  .shot-wrap img {
+    width: 100%; height: auto; border-radius: var(--radius);
+    border: 1px solid var(--border); box-shadow: var(--shadow, 0 20px 50px rgba(0,0,0,0.25));
+  }
+
+  .dl-heading { text-align: center; margin: 0 0 28px; font-size: 1.6rem; }
+  .sec-head { text-align: center; max-width: 640px; margin: 0 auto 40px; }
+  .sec-head h2 { font-size: clamp(1.8rem, 4vw, 2.4rem); margin: 12px 0 0; }
+
+  .steps { counter-reset: step; list-style: none; padding: 0; margin: 0 auto; max-width: 760px; display: flex; flex-direction: column; gap: 14px; }
+  .steps li {
+    position: relative; padding: 20px 22px 20px 64px;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .steps li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 20px; top: 20px;
+    width: 28px; height: 28px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-soft); color: var(--accent-bright); font-weight: 700; font-size: 0.95rem;
+  }
+  .steps h3 { margin: 0 0 6px; font-size: 1.05rem; }
+  .steps p { margin: 0; color: var(--text-dim); font-size: 0.95rem; }
+
+  .feat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+  .feat-card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 24px; transition: border-color 0.15s ease, transform 0.08s ease;
+  }
+  .feat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .feat-card h3 { margin: 0 0 10px; font-size: 1.12rem; }
+  .feat-card p { margin: 0; color: var(--text-dim); font-size: 0.95rem; }
+
+  .cta-inner { text-align: center; }
+  .cta-inner h2 { font-size: clamp(1.8rem, 4vw, 2.6rem); margin: 0; }
+  .cta-inner p { color: var(--text-dim); margin: 14px 0 26px; }
+</style>
