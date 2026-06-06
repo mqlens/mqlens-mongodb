@@ -43,19 +43,22 @@ jobs:
           set -euo pipefail
           # Dev branch: derive a monotonic pre-release version that sorts ABOVE the
           # current stable (semver prereleases sort below their release, so we bump
-          # the patch first): 0.4.0 -> 0.4.1-dev.<run>. Not committed; the build
-          # job writes it into the version files locally before building.
+          # the patch first): 0.4.0 -> 0.4.1-<run>. The prerelease identifier must be
+          # numeric-only (and <= 65535) so the Windows MSI target accepts it, so we
+          # use the run number alone (no "dev" word). Not committed; the build job
+          # writes it into the version files locally before building.
           if [ "${{ github.ref_name }}" != "main" ]; then
             CUR=$(node -p "require('./package.json').version")
             BASE=${CUR%%-*}
             NEXT=$(node -e 'const p=process.argv[1].split(".").map(Number);p[2]++;process.stdout.write(p.join("."))' "$BASE")
-            DEVV="${NEXT}-dev.${GITHUB_RUN_NUMBER}"
+            DEVV="${NEXT}-${GITHUB_RUN_NUMBER}"
             echo "version=$DEVV" >> "$GITHUB_OUTPUT"
             echo "release=true" >> "$GITHUB_OUTPUT"
             echo "Dev build version: $DEVV"
             exit 0
           fi
-          LAST_TAG=$(git tag --list 'mqlens-v*' | grep -v -- '-dev\.' | sort -V | tail -1 || true)
+          # Latest STABLE tag only (mqlens-vX.Y.Z with no prerelease suffix).
+          LAST_TAG=$(git tag --list 'mqlens-v*' | grep -E '^mqlens-v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
           RANGE=""
           [ -n "$LAST_TAG" ] && RANGE="${LAST_TAG}..HEAD"
           SUBJECTS=$(git log --no-merges --pretty=%B ${RANGE})
@@ -302,14 +305,15 @@ jobs:
           gh release edit "$TAG" --notes-file notes.md
 
       # Keep the Releases page tidy: on dev, keep only the 10 newest dev
-      # pre-releases (tags like mqlens-v*-dev.*) and delete the rest + their tags.
+      # pre-releases (tags like mqlens-vX.Y.Z-<run>) and delete the rest + their
+      # tags. Excludes the permanent `dev-channel` manifest release.
       - name: Prune old dev pre-releases
         if: github.ref_name != 'main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release list --limit 100 --json tagName,createdAt,isPrerelease \
-            --jq '[.[] | select(.isPrerelease and (.tagName | test("-dev\\.")))]
+            --jq '[.[] | select(.isPrerelease and (.tagName | test("-[0-9]+$")))]
                   | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' \
           | while read -r t; do
               [ -n "$t" ] && gh release delete "$t" --cleanup-tag --yes
