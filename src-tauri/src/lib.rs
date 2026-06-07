@@ -18,6 +18,7 @@ pub mod path_env;
 pub mod queries;
 pub mod ssh_tunnel;
 mod state;
+pub mod server_client;
 pub mod updater;
 mod vault;
 mod window;
@@ -1367,7 +1368,12 @@ pub fn run() {
             set_profiling_level,
             read_profile,
             updater::update_check,
-            updater::update_install
+            updater::update_install,
+            server_client::server_login,
+            server_client::server_list_connections,
+            server_client::server_list_databases,
+            server_client::server_list_collections,
+            server_client::server_count
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
