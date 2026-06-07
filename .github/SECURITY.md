@@ -18,7 +18,7 @@ Report privately, using either:
 1. **GitHub Private Vulnerability Reporting** (preferred) — on the repository's
    **Security** tab, click **Report a vulnerability**. This keeps the report
    confidential until a fix is released.
-2. **Email** — **vrshu112@gmail.com** with subject `MQLens security`.
+2. **Email** — **dev@mqlens.com** with subject `MQLens security`.
 
 Please include:
 
