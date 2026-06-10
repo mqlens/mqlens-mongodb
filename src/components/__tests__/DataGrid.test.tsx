@@ -273,4 +273,20 @@ describe('DataGrid Component', () => {
     expect(screen.getByTestId('context-menu')).toBeInTheDocument();
     expect(screen.getByText('Edit document')).toBeInTheDocument();
   });
+
+  it('copies a document as pretty-printed JSON via the copy button and shows a confirmation', () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    // No edit/delete handlers: the copy control must still be present on every document.
+    render(<DataGrid documents={mockDocuments} />);
+    // Table view renders one row (and one copy control) per document.
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    const copyButtons = screen.getAllByTestId('copy-doc-btn');
+    expect(copyButtons).toHaveLength(mockDocuments.length);
+
+    fireEvent.click(copyButtons[0]);
+    expect(writeText).toHaveBeenCalledWith(JSON.stringify(mockDocuments[0], null, 2));
+    // The control flips to a "Copied" confirmation state.
+    expect(screen.getAllByLabelText('Copied').length).toBeGreaterThan(0);
+  });
 });

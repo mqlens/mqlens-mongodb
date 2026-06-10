@@ -888,6 +888,14 @@ button { cursor: pointer; }
   padding-right: 16px;
   color: var(--text-main);
 }
+/* Opt out of the global `user-select: none` so the JSON can be selected and
+   copied with the mouse/keyboard. Line numbers (.mql-jsonview-num) stay
+   unselectable so a drag-copy yields clean JSON without gutter numbers. */
+.mql-jsonview-content,
+.mql-jsonview-content * {
+  user-select: text;
+  -webkit-user-select: text;
+}
 .mql-jsonview-actions {
   display: inline-flex;
   margin-left: 10px;

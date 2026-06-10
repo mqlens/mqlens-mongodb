@@ -818,13 +818,39 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return <span className="text-[var(--text-dim)]">{`{ ${row.childCount} ${row.childCount === 1 ? 'field' : 'fields'} }`}</span>;
   };
 
-  const hasRowActions = Boolean(onEditDocument || onDeleteDocument);
+  // Every document now carries at least a copy control, so the actions
+  // area is always present; edit/delete remain gated on their handlers.
+  const hasRowActions = true;
 
-  // Per-row edit/delete controls, shared across all view modes.
+  // One-click "Copy JSON" for a single document, with a brief "Copied"
+  // confirmation. Copies the pretty-printed (2-space) document, matching the
+  // "Copy document (JSON)" context-menu action.
+  const CopyDocButton = ({ doc }: { doc: Record<string, any> }) => {
+    const [copied, setCopied] = useState(false);
+    const handleCopy = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      writeClipboard(JSON.stringify(doc, null, 2));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    };
+    return (
+      <button
+        onClick={handleCopy}
+        className="p-1 rounded text-[var(--text-dim)] hover:text-[var(--accent-blue)] hover:bg-[var(--bg-item-active)] cursor-pointer"
+        title={copied ? 'Copied' : 'Copy document (JSON)'}
+        aria-label={copied ? 'Copied' : 'Copy document'}
+        data-testid="copy-doc-btn"
+      >
+        {copied ? <Check size={12} className="text-[var(--accent-green)]" /> : <Copy size={12} />}
+      </button>
+    );
+  };
+
+  // Per-row copy/edit/delete controls, shared across all view modes.
   const RowActions = ({ doc }: { doc: Record<string, any> }) => {
-    if (!hasRowActions) return null;
     return (
       <div className="flex items-center gap-1 flex-shrink-0">
+        <CopyDocButton doc={doc} />
         {onEditDocument && (
           <button
             onClick={(e) => {
