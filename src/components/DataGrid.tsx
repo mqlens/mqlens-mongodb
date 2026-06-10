@@ -317,6 +317,87 @@ interface TreeRow {
   doc?: Record<string, any>;
 }
 
+// Extra (per-render) data handed to the JSON view's virtualized rows.
+interface JsonRowExtra {
+  lines: JsonLine[];
+  collapsedFolds: Set<number>;
+  toggleFold: (id: number) => void;
+  documents: Array<Record<string, any>>;
+  openCtxMenu: (
+    e: React.MouseEvent,
+    doc: Record<string, any> | undefined,
+    field?: string,
+    value?: any,
+  ) => void;
+  renderContent: (line: JsonLine) => React.ReactNode;
+  hasRowActions: boolean;
+  RowActions: React.ComponentType<{ doc: Record<string, any> }>;
+}
+
+// Virtualized row for the JSON view (one descriptor per row).
+//
+// Defined at module scope on purpose: react-window remounts every row whenever
+// the `rowComponent` reference changes, and a remount replaces the row's DOM —
+// which silently wipes out any active text selection. When this lived inline in
+// DataGrid it was a brand-new function on each render, so any unrelated
+// re-render dropped the user's selection mid-copy. A stable identity lets
+// re-renders reconcile in place, so the selection survives. Per-render data is
+// passed through `rowProps` instead of closures.
+const JsonRow = ({
+  index,
+  style,
+  lines,
+  collapsedFolds,
+  toggleFold,
+  documents,
+  openCtxMenu,
+  renderContent,
+  hasRowActions,
+  RowActions,
+}: { index: number; style: React.CSSProperties } & JsonRowExtra) => {
+  const line = lines[index];
+  if (!line) return null;
+  const folded = line.foldId !== undefined && collapsedFolds.has(line.foldId);
+  return (
+    <div
+      style={style}
+      className={`mql-jsonview-line${line.isDocRoot && line.docIndex > 0 ? ' mql-jsonview-doc-start' : ''}`}
+      data-doc-even={line.docIndex % 2 === 0}
+      onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value)}
+    >
+      <span className="mql-jsonview-num" data-num={line.num} aria-hidden="true" />
+      <span className="mql-jsonview-fold">
+        {line.foldId !== undefined && (
+          <button
+            type="button"
+            onClick={() => toggleFold(line.foldId!)}
+            className="mql-jsonview-fold-btn"
+            data-testid="json-fold-btn"
+            aria-label={folded ? 'Expand' : 'Collapse'}
+          >
+            {folded ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+          </button>
+        )}
+      </span>
+      <span className="mql-jsonview-content" style={{ paddingLeft: line.depth * 18 }}>
+        {renderContent(line)}
+        {folded && (
+          <span className="text-[var(--text-dim)]">
+            {' … '}
+            {line.closeChar}
+            {line.hasComma ? ',' : ''}
+          </span>
+        )}
+        {line.isDocRoot && hasRowActions && line.doc && (
+          <span className="mql-jsonview-actions">
+            <RowActions doc={line.doc} />
+          </span>
+        )}
+      </span>
+    </div>
+  );
+};
+
 export const DataGrid: React.FC<DataGridProps> = ({
   documents,
   density = 'cozy',
@@ -818,13 +899,39 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return <span className="text-[var(--text-dim)]">{`{ ${row.childCount} ${row.childCount === 1 ? 'field' : 'fields'} }`}</span>;
   };
 
-  const hasRowActions = Boolean(onEditDocument || onDeleteDocument);
+  // Every document now carries at least a copy control, so the actions
+  // area is always present; edit/delete remain gated on their handlers.
+  const hasRowActions = true;
 
-  // Per-row edit/delete controls, shared across all view modes.
+  // One-click "Copy JSON" for a single document, with a brief "Copied"
+  // confirmation. Copies the pretty-printed (2-space) document, matching the
+  // "Copy document (JSON)" context-menu action.
+  const CopyDocButton = ({ doc }: { doc: Record<string, any> }) => {
+    const [copied, setCopied] = useState(false);
+    const handleCopy = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      writeClipboard(JSON.stringify(doc, null, 2));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    };
+    return (
+      <button
+        onClick={handleCopy}
+        className="p-1 rounded text-[var(--text-dim)] hover:text-[var(--accent-blue)] hover:bg-[var(--bg-item-active)] cursor-pointer"
+        title={copied ? 'Copied' : 'Copy document (JSON)'}
+        aria-label={copied ? 'Copied' : 'Copy document'}
+        data-testid="copy-doc-btn"
+      >
+        {copied ? <Check size={12} className="text-[var(--accent-green)]" /> : <Copy size={12} />}
+      </button>
+    );
+  };
+
+  // Per-row copy/edit/delete controls, shared across all view modes.
   const RowActions = ({ doc }: { doc: Record<string, any> }) => {
-    if (!hasRowActions) return null;
     return (
       <div className="flex items-center gap-1 flex-shrink-0">
+        <CopyDocButton doc={doc} />
         {onEditDocument && (
           <button
             onClick={(e) => {
@@ -908,51 +1015,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (density === 'roomy') return 32;
     if (density === 'compact') return 20;
     return 24; // cozy
-  };
-
-  // Virtualized row for the JSON view (one descriptor per row).
-  const JsonRow = ({ index, style }: { index: number; style: React.CSSProperties }) => {
-    const line = visibleJsonLines[index];
-    if (!line) return null;
-    const folded = line.foldId !== undefined && collapsedFolds.has(line.foldId);
-    return (
-      <div
-        style={style}
-        className={`mql-jsonview-line${line.isDocRoot && line.docIndex > 0 ? ' mql-jsonview-doc-start' : ''}`}
-        data-doc-even={line.docIndex % 2 === 0}
-        onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value)}
-      >
-        <span className="mql-jsonview-num">{line.num}</span>
-        <span className="mql-jsonview-fold">
-          {line.foldId !== undefined && (
-            <button
-              type="button"
-              onClick={() => toggleFold(line.foldId!)}
-              className="mql-jsonview-fold-btn"
-              data-testid="json-fold-btn"
-              aria-label={folded ? 'Expand' : 'Collapse'}
-            >
-              {folded ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
-            </button>
-          )}
-        </span>
-        <span className="mql-jsonview-content" style={{ paddingLeft: line.depth * 18 }}>
-          {renderJsonLineContent(line)}
-          {folded && (
-            <span className="text-[var(--text-dim)]">
-              {' … '}
-              {line.closeChar}
-              {line.hasComma ? ',' : ''}
-            </span>
-          )}
-          {line.isDocRoot && hasRowActions && line.doc && (
-            <span className="mql-jsonview-actions">
-              <RowActions doc={line.doc} />
-            </span>
-          )}
-        </span>
-      </div>
-    );
   };
 
   // Virtualized row for the tree-table view (Key | Value | Type).
@@ -1167,11 +1229,20 @@ export const DataGrid: React.FC<DataGridProps> = ({
           /* Virtualized, line-numbered, collapsible JSON code panel */
           <div className="mql-jsonview flex-1 flex flex-col min-h-0 min-w-0" data-testid="json-view">
             <div className="flex-1 min-w-0 overflow-auto">
-              <List<{}>
+              <List<JsonRowExtra>
                 rowCount={visibleJsonLines.length}
                 rowHeight={getRowHeight()}
                 rowComponent={JsonRow}
-                rowProps={{}}
+                rowProps={{
+                  lines: visibleJsonLines,
+                  collapsedFolds,
+                  toggleFold,
+                  documents,
+                  openCtxMenu,
+                  renderContent: renderJsonLineContent,
+                  hasRowActions,
+                  RowActions,
+                }}
                 style={{ height: '100%', width: `${jsonMaxWidthPx}px`, minWidth: '100%' }}
               />
             </div>
