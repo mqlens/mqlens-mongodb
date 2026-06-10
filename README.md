@@ -72,7 +72,29 @@ Grab the latest build for your OS from
 
 - **macOS** — download the `.dmg` (Apple-notarized; Touch ID unlock supported).
 - **Windows** — download the `.msi` or `.exe` (signed via Azure Trusted Signing).
-- **Linux** — download the `.AppImage` (`chmod +x` and run) or install the `.deb`.
+
+### Linux
+
+Download the `.deb` or `.AppImage` from the
+[latest release](https://github.com/mqlens/mqlens-mongodb/releases/latest).
+
+**Debian / Ubuntu (.deb)**
+
+```bash
+sudo apt install ./MQLens_*.deb
+# or:
+sudo dpkg -i MQLens_*.deb
+```
+
+**Any distro (.AppImage)**
+
+```bash
+chmod +x MQLens_*.AppImage
+./MQLens_*.AppImage
+```
+
+If the AppImage won't start ("Permission denied"), the execute bit was likely
+stripped on download — run `chmod +x` on the file again.
 
 No account, no sign-up, no telemetry.
 

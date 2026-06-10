@@ -34,12 +34,31 @@ const toc = [
         </p>
 
         <h2 id="install">Install</h2>
-        <p>Download the build for your platform from the <a href="/#download">download section</a> or the <a href={SITE.releases} target="_blank" rel="noopener">releases page</a>:</p>
+        <p>Download the build for your platform from the <a href="/#download">download section</a> or the <a href={SITE.releasesLatest} target="_blank" rel="noopener">latest release</a>:</p>
         <ul>
           <li><strong>macOS</strong> — open the <code>.dmg</code> and drag {SITE.name} to Applications. Builds are Apple-notarized, so Gatekeeper will let it run.</li>
           <li><strong>Windows</strong> — run the <code>.msi</code> or <code>.exe</code> installer. Installers are Azure Trusted Signing–signed.</li>
-          <li><strong>Linux</strong> — install the <code>.deb</code> (<code>sudo apt install ./MQLens_*.deb</code>) or make the <code>.AppImage</code> executable and run it.</li>
         </ul>
+
+        <h3>Linux</h3>
+        <p>
+          Grab the <code>.deb</code> or <code>.AppImage</code> from the
+          <a href={SITE.releasesLatest} target="_blank" rel="noopener">latest release page</a>.
+        </p>
+        <p><strong>Debian / Ubuntu (.deb)</strong></p>
+        <pre><code>sudo apt install ./MQLens_*.deb
+# or:
+sudo dpkg -i MQLens_*.deb</code></pre>
+        <p><strong>Any distro (.AppImage)</strong></p>
+        <pre><code>chmod +x MQLens_*.AppImage
+./MQLens_*.AppImage</code></pre>
+        <p>
+          <strong>Troubleshooting:</strong> if the AppImage says "Permission denied" or
+          refuses to start, the execute bit was probably lost during download — run
+          <code>chmod +x</code> on the file again. Some browsers save AppImages without
+          the executable flag until you set it manually.
+        </p>
+
         <p>To use the embedded shell you'll also need <a href="https://www.mongodb.com/docs/mongodb-shell/" target="_blank" rel="noopener"><code>mongosh</code></a> on your <code>PATH</code>.</p>
 
         <h2 id="first-connection">Your first connection</h2>
