@@ -317,6 +317,87 @@ interface TreeRow {
   doc?: Record<string, any>;
 }
 
+// Extra (per-render) data handed to the JSON view's virtualized rows.
+interface JsonRowExtra {
+  lines: JsonLine[];
+  collapsedFolds: Set<number>;
+  toggleFold: (id: number) => void;
+  documents: Array<Record<string, any>>;
+  openCtxMenu: (
+    e: React.MouseEvent,
+    doc: Record<string, any> | undefined,
+    field?: string,
+    value?: any,
+  ) => void;
+  renderContent: (line: JsonLine) => React.ReactNode;
+  hasRowActions: boolean;
+  RowActions: React.ComponentType<{ doc: Record<string, any> }>;
+}
+
+// Virtualized row for the JSON view (one descriptor per row).
+//
+// Defined at module scope on purpose: react-window remounts every row whenever
+// the `rowComponent` reference changes, and a remount replaces the row's DOM —
+// which silently wipes out any active text selection. When this lived inline in
+// DataGrid it was a brand-new function on each render, so any unrelated
+// re-render dropped the user's selection mid-copy. A stable identity lets
+// re-renders reconcile in place, so the selection survives. Per-render data is
+// passed through `rowProps` instead of closures.
+const JsonRow = ({
+  index,
+  style,
+  lines,
+  collapsedFolds,
+  toggleFold,
+  documents,
+  openCtxMenu,
+  renderContent,
+  hasRowActions,
+  RowActions,
+}: { index: number; style: React.CSSProperties } & JsonRowExtra) => {
+  const line = lines[index];
+  if (!line) return null;
+  const folded = line.foldId !== undefined && collapsedFolds.has(line.foldId);
+  return (
+    <div
+      style={style}
+      className={`mql-jsonview-line${line.isDocRoot && line.docIndex > 0 ? ' mql-jsonview-doc-start' : ''}`}
+      data-doc-even={line.docIndex % 2 === 0}
+      onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value)}
+    >
+      <span className="mql-jsonview-num" data-num={line.num} aria-hidden="true" />
+      <span className="mql-jsonview-fold">
+        {line.foldId !== undefined && (
+          <button
+            type="button"
+            onClick={() => toggleFold(line.foldId!)}
+            className="mql-jsonview-fold-btn"
+            data-testid="json-fold-btn"
+            aria-label={folded ? 'Expand' : 'Collapse'}
+          >
+            {folded ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+          </button>
+        )}
+      </span>
+      <span className="mql-jsonview-content" style={{ paddingLeft: line.depth * 18 }}>
+        {renderContent(line)}
+        {folded && (
+          <span className="text-[var(--text-dim)]">
+            {' … '}
+            {line.closeChar}
+            {line.hasComma ? ',' : ''}
+          </span>
+        )}
+        {line.isDocRoot && hasRowActions && line.doc && (
+          <span className="mql-jsonview-actions">
+            <RowActions doc={line.doc} />
+          </span>
+        )}
+      </span>
+    </div>
+  );
+};
+
 export const DataGrid: React.FC<DataGridProps> = ({
   documents,
   density = 'cozy',
@@ -936,51 +1017,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return 24; // cozy
   };
 
-  // Virtualized row for the JSON view (one descriptor per row).
-  const JsonRow = ({ index, style }: { index: number; style: React.CSSProperties }) => {
-    const line = visibleJsonLines[index];
-    if (!line) return null;
-    const folded = line.foldId !== undefined && collapsedFolds.has(line.foldId);
-    return (
-      <div
-        style={style}
-        className={`mql-jsonview-line${line.isDocRoot && line.docIndex > 0 ? ' mql-jsonview-doc-start' : ''}`}
-        data-doc-even={line.docIndex % 2 === 0}
-        onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value)}
-      >
-        <span className="mql-jsonview-num" data-num={line.num} aria-hidden="true" />
-        <span className="mql-jsonview-fold">
-          {line.foldId !== undefined && (
-            <button
-              type="button"
-              onClick={() => toggleFold(line.foldId!)}
-              className="mql-jsonview-fold-btn"
-              data-testid="json-fold-btn"
-              aria-label={folded ? 'Expand' : 'Collapse'}
-            >
-              {folded ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
-            </button>
-          )}
-        </span>
-        <span className="mql-jsonview-content" style={{ paddingLeft: line.depth * 18 }}>
-          {renderJsonLineContent(line)}
-          {folded && (
-            <span className="text-[var(--text-dim)]">
-              {' … '}
-              {line.closeChar}
-              {line.hasComma ? ',' : ''}
-            </span>
-          )}
-          {line.isDocRoot && hasRowActions && line.doc && (
-            <span className="mql-jsonview-actions">
-              <RowActions doc={line.doc} />
-            </span>
-          )}
-        </span>
-      </div>
-    );
-  };
-
   // Virtualized row for the tree-table view (Key | Value | Type).
   const TreeRowComponent = ({ index, style }: { index: number; style: React.CSSProperties }) => {
     const row = visibleTreeRows[index];
@@ -1193,11 +1229,20 @@ export const DataGrid: React.FC<DataGridProps> = ({
           /* Virtualized, line-numbered, collapsible JSON code panel */
           <div className="mql-jsonview flex-1 flex flex-col min-h-0 min-w-0" data-testid="json-view">
             <div className="flex-1 min-w-0 overflow-auto">
-              <List<{}>
+              <List<JsonRowExtra>
                 rowCount={visibleJsonLines.length}
                 rowHeight={getRowHeight()}
                 rowComponent={JsonRow}
-                rowProps={{}}
+                rowProps={{
+                  lines: visibleJsonLines,
+                  collapsedFolds,
+                  toggleFold,
+                  documents,
+                  openCtxMenu,
+                  renderContent: renderJsonLineContent,
+                  hasRowActions,
+                  RowActions,
+                }}
                 style={{ height: '100%', width: `${jsonMaxWidthPx}px`, minWidth: '100%' }}
               />
             </div>
