@@ -948,7 +948,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         data-doc-even={line.docIndex % 2 === 0}
         onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value)}
       >
-        <span className="mql-jsonview-num">{line.num}</span>
+        <span className="mql-jsonview-num" data-num={line.num} aria-hidden="true" />
         <span className="mql-jsonview-fold">
           {line.foldId !== undefined && (
             <button

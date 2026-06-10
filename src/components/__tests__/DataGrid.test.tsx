@@ -93,9 +93,14 @@ describe('DataGrid Component', () => {
     fireEvent.click(screen.getByRole('button', { name: /json/i }));
 
     // The continuous, line-numbered code panel (not per-document boxes).
-    expect(screen.getByTestId('json-view')).toBeInTheDocument();
-    // Line-number gutter starts at 1.
-    expect(screen.getByText('1')).toBeInTheDocument();
+    const jsonView = screen.getByTestId('json-view');
+    expect(jsonView).toBeInTheDocument();
+    // Line-number gutter starts at 1. The number is exposed via data-num and
+    // rendered through a ::before pseudo-element (not a text node) so that
+    // selecting and copying JSON never picks up the gutter numbers.
+    const firstGutter = jsonView.querySelector('.mql-jsonview-num');
+    expect(firstGutter).toHaveAttribute('data-num', '1');
+    expect(firstGutter).toBeEmptyDOMElement();
 
     // Foldable: each object/array opens a collapse toggle.
     const folds = screen.getAllByTestId('json-fold-btn');

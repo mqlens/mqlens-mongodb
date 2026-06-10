@@ -857,7 +857,16 @@ button { cursor: pointer; }
   text-align: right;
   color: var(--text-dim);
   user-select: none;
+  -webkit-user-select: none;
   background: inherit;
+}
+/* Render the line number as generated content so it is never part of the
+   document text: WebKit (the macOS Tauri webview) still copies the text of
+   `user-select: none` nodes when a selection spans them, so a real text node
+   here would leak gutter numbers into copied JSON. Pseudo-element content is
+   excluded from selection/copy in every engine. */
+.mql-jsonview-num::before {
+  content: attr(data-num);
 }
 .mql-jsonview-fold {
   position: sticky;
