@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { fuzzyMatch } from './fuzzyMatch';
 
 // Lazily-built namespace index for the command palette: databases and
 // collections per active connection, cached per connection id so opening the
@@ -11,10 +12,30 @@ export interface NamespaceEntry {
   collections: string[];
 }
 
-const cache = new Map<string, Promise<NamespaceEntry[]>>();
+export interface NamespaceScopeTarget {
+  connectionName: string;
+  db: string;
+  collection: string;
+}
 
-export function __clearNamespaceIndex() {
-  cache.clear();
+interface CacheEntry {
+  loadedAt: number;
+  promise: Promise<NamespaceEntry[]>;
+}
+
+export const NAMESPACE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const cache = new Map<string, CacheEntry>();
+
+export function clearNamespaceIndex(connectionId?: string) {
+  if (connectionId) cache.delete(connectionId);
+  else cache.clear();
+}
+
+export function matchesNamespaceScope(scope: string, target: NamespaceScopeTarget): boolean {
+  const q = scope.trim();
+  if (!q) return true;
+  return fuzzyMatch(q, `${target.connectionName} ${target.db} ${target.collection}`);
 }
 
 async function fetchConnection(id: string, name: string): Promise<NamespaceEntry[]> {
@@ -35,16 +56,22 @@ async function fetchConnection(id: string, name: string): Promise<NamespaceEntry
 
 export async function loadNamespaceIndex(
   connections: { id: string; name: string }[],
+  options: { forceRefresh?: boolean; ttlMs?: number } = {},
 ): Promise<NamespaceEntry[]> {
+  const now = Date.now();
+  const ttlMs = options.ttlMs ?? NAMESPACE_CACHE_TTL_MS;
   const perConnection = await Promise.all(
     connections.map((c) => {
       let entry = cache.get(c.id);
-      if (!entry) {
-        entry = fetchConnection(c.id, c.name);
+      const isExpired = entry ? now - entry.loadedAt > ttlMs : true;
+      if (!entry || options.forceRefresh || isExpired) {
+        entry = { loadedAt: now, promise: fetchConnection(c.id, c.name) };
         cache.set(c.id, entry);
       }
-      return entry;
+      return entry.promise;
     }),
   );
   return perConnection.flat();
 }
+
+export const __clearNamespaceIndex = clearNamespaceIndex;

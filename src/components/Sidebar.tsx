@@ -82,6 +82,8 @@ interface SidebarProps {
   onCollectionRenamed?: (connectionId: string, dbName: string, oldName: string, newName: string) => void;
   onDatabaseDropped?: (connectionId: string, dbName: string) => void;
   onDatabaseRenamed?: (connectionId: string, oldName: string, newName: string) => void;
+  onNamespaceMutated?: (connectionId?: string) => void;
+  onFilterQueryChange?: (query: string) => void;
   indexMutationTrigger?: number;
   collectionMutationTrigger?: number;
 }
@@ -159,12 +161,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCollectionRenamed,
   onDatabaseDropped,
   onDatabaseRenamed,
+  onNamespaceMutated,
+  onFilterQueryChange,
   indexMutationTrigger,
   collectionMutationTrigger,
 }) => {
   const { toast, confirm, prompt } = useDialogs();
   // Tree filter: matches connection / database / (loaded) collection names.
   const [filterQuery, setFilterQuery] = useState('');
+  useEffect(() => {
+    onFilterQueryChange?.(filterQuery);
+  }, [filterQuery, onFilterQueryChange]);
   const [helpOpen, setHelpOpen] = useState(false);
   // key: connectionId, value: database names list
   const [databases, setDatabases] = useState<{ [connectionId: string]: string[] }>({});
@@ -390,6 +397,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ...prev,
         [connectionId]: [...(prev[connectionId] || []), name],
       }));
+      onNamespaceMutated?.(connectionId);
       return;
     }
 
@@ -404,6 +412,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     try {
       await invoke('create_collection', { id: connectionId, database: name, collection: firstColl });
       await loadDatabases(connectionId);
+      onNamespaceMutated?.(connectionId);
     } catch (err) {
       toast(`Failed to create database: ${err}`, 'error');
     }
@@ -443,12 +452,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ...prev,
         [key]: [...(prev[key] || []), { name, type: 'collection' }],
       }));
+      onNamespaceMutated?.(connectionId);
       return;
     }
 
     try {
       await invoke('create_collection', { id: connectionId, database: dbName, collection: name });
       await handleRefreshDb(connectionId, dbName);
+      onNamespaceMutated?.(connectionId);
     } catch (err) {
       toast(`Failed to create collection: ${err}`, 'error');
     }
@@ -484,6 +495,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         [key]: (prev[key] || []).filter((c) => c.name !== collName),
       }));
       clearActiveIfDropped();
+      onNamespaceMutated?.(connectionId);
       return;
     }
 
@@ -491,6 +503,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       await invoke('drop_collection', { id: connectionId, database: dbName, collection: collName });
       clearActiveIfDropped();
       await handleRefreshDb(connectionId, dbName);
+      onNamespaceMutated?.(connectionId);
     } catch (err) {
       toast(`Failed to drop collection: ${err}`, 'error');
     }
@@ -548,6 +561,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return next;
       });
       onCollectionRenamed?.(connectionId, dbName, collName, newName);
+      onNamespaceMutated?.(connectionId);
     };
 
     if (isMock) {
@@ -627,6 +641,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return next;
       });
       onDatabaseDropped?.(connectionId, dbName);
+      onNamespaceMutated?.(connectionId);
     };
 
     if (isMock) {
@@ -719,6 +734,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return next;
       });
       onDatabaseRenamed?.(connectionId, dbName, newName);
+      onNamespaceMutated?.(connectionId);
     };
 
     if (isMock) {

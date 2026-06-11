@@ -14,7 +14,11 @@ interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
   actions: PaletteAction[];
+  scopeLabel?: string;
+  onQueryChange?: (query: string) => void;
 }
+
+const MAX_VISIBLE_ACTIONS = 80;
 
 // Rank by fuzzy score: title matches outrank keyword-only matches. An empty
 // query scores everything 0, so the caller's original order is kept.
@@ -25,17 +29,19 @@ const scoreAction = (query: string, action: PaletteAction): number | null => {
   return Math.max(title ?? -Infinity, keywords !== null ? keywords - 50 : -Infinity);
 };
 
-export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, actions }) => {
+export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, actions, scopeLabel = '', onQueryChange }) => {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const visible = useMemo(() => {
     const q = query.trim();
+    if (!q) return actions.slice(0, MAX_VISIBLE_ACTIONS);
     return actions
       .map((a) => ({ a, score: scoreAction(q, a) }))
       .filter((x): x is { a: PaletteAction; score: number } => x.score !== null)
       .sort((x, y) => y.score - x.score)
+      .slice(0, MAX_VISIBLE_ACTIONS)
       .map((x) => x.a);
   }, [actions, query]);
 
@@ -49,6 +55,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, a
   }, [open]);
 
   useEffect(() => { setSelected(0); }, [query]);
+  useEffect(() => { onQueryChange?.(query); }, [onQueryChange, query]);
+  useEffect(() => {
+    setSelected((s) => Math.min(s, Math.max(visible.length - 1, 0)));
+  }, [visible.length]);
 
   if (!open) return null;
 
@@ -81,6 +91,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, a
             aria-label="Command palette"
           />
         </div>
+        {scopeLabel.trim() && (
+          <div className="mql-palette-scope" title={`Sidebar filter: ${scopeLabel}`}>
+            <span className="mql-palette-scope-label">Sidebar</span>
+            <span className="mql-palette-scope-value">{scopeLabel}</span>
+          </div>
+        )}
         <div className="mql-palette-list" role="listbox">
           {visible.length === 0 && <div className="mql-palette-empty">No matching commands</div>}
           {visible.map((a, i) => (
