@@ -37,7 +37,10 @@ import {
   Plus,
   Download,
   Upload,
-  X
+  X,
+  Eye,
+  EyeOff,
+  GripVertical
 } from 'lucide-react';
 
 interface VisualRule {
@@ -66,7 +69,7 @@ interface BuilderState {
   projectionQuery: string;
   limit: string;
   skip: string;
-  stages: { id: string; operator: string; content: string }[];
+  stages: { id: string; operator: string; content: string; disabled?: boolean }[];
 }
 
 // Serialize the current builder state into a GeneratedQuery — the same value
@@ -82,7 +85,7 @@ export function builderStateToQuery(state: BuilderState): GeneratedQuery {
   };
   if (state.queryMode === 'aggregate') {
     const pipeline = state.stages
-      .filter((stage) => stage.content.trim())
+      .filter((stage) => !stage.disabled && stage.content.trim())
       .map((stage) => ({ [stage.operator]: parseShellJson(stage.content) }));
     return { queryType: 'aggregate', pipeline };
   }
@@ -415,6 +418,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     id: string;
     operator: string;
     content: string;
+    // Disabled stages stay in the builder but are excluded from every
+    // pipeline build (run, run-to-here, explain, shell command, saved query).
+    disabled?: boolean;
   }
   const [stages, setStages] = useState<PipelineStage[]>([
     { id: 'stage-1', operator: '$match', content: '{\n  \n}' }
@@ -442,6 +448,39 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
   const updateStageContent = (id: string, content: string) => {
     setStages(prev => prev.map(s => s.id === id ? { ...s, content } : s));
+  };
+
+  const toggleStageDisabled = (id: string) => {
+    setStages(prev => prev.map(s => s.id === id ? { ...s, disabled: !s.disabled } : s));
+  };
+
+  // Drag-to-reorder: header is the drag handle; dropping on a stage moves the
+  // dragged stage to that position.
+  const [dragStageIndex, setDragStageIndex] = useState<number | null>(null);
+  const dropStageAt = (target: number) => {
+    setStages(prev => {
+      if (dragStageIndex === null || dragStageIndex === target) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(dragStageIndex, 1);
+      next.splice(target, 0, moved);
+      return next;
+    });
+    setDragStageIndex(null);
+  };
+
+  // Run the pipeline truncated after `index` (enabled stages only) — a quick
+  // preview of what the data looks like at that point.
+  const runToStage = (index: number) => {
+    if (!onExecuteAggregate) return;
+    setError(null);
+    try {
+      const pipeline = stages.slice(0, index + 1)
+        .filter(s => !s.disabled && s.content.trim())
+        .map(s => ({ [s.operator]: parseShellJson(s.content) }));
+      onExecuteAggregate(pipeline);
+    } catch (e: any) {
+      setError(`Invalid JSON syntax: ${e.message}`);
+    }
   };
 
   const moveStageUp = (index: number) => {
@@ -935,7 +974,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // Shared by Run and Explain so both act on the full pipeline.
   const buildAggregatePipeline = (): Record<string, unknown>[] =>
     stages
-      .filter(stage => stage.content.trim())
+      .filter(stage => !stage.disabled && stage.content.trim())
       .map(stage => ({ [stage.operator]: parseShellJson(stage.content) }));
 
   const handleRun = () => {
@@ -970,7 +1009,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         let compiledSkip = 0;
 
         stages.forEach(stage => {
-          if (!stage.content.trim()) return;
+          if (stage.disabled || !stage.content.trim()) return;
           const body = parseShellJson(stage.content);
           if (stage.operator === '$match') {
             compiledFilter = { ...compiledFilter, ...body };
@@ -1001,7 +1040,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
     if (queryMode === 'aggregate') {
       const pipeline = stages
-        .filter((stage) => stage.content.trim())
+        .filter((stage) => !stage.disabled && stage.content.trim())
         .map((stage) => {
           try {
             return { [stage.operator]: parseShellJson(stage.content) };
@@ -1045,7 +1084,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         // Fallback (no aggregate explainer wired): approximate with the $match stages.
         let compiledFilter = {};
         stages.forEach(stage => {
-          if (stage.operator === '$match' && stage.content.trim()) {
+          if (!stage.disabled && stage.operator === '$match' && stage.content.trim()) {
             try {
               const body = parseShellJson(stage.content);
               compiledFilter = { ...compiledFilter, ...body };
@@ -1599,9 +1638,24 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 {stages.map((stage, index) => {
                   const isValid = checkIsValidJson(stage.content);
                   return (
-                    <React.Fragment key={stage.id}>
-                      <div className={`mql-stage ${!isValid ? 'is-invalid' : ''}`} data-testid={`pipeline-stage-${index}`}>
-                        <div className="mql-stage-h">
+                    // Keyed by position, NOT stage.id: with id keys a reorder makes
+                    // React move the mounted Monaco editor's DOM subtree, which
+                    // crashes Monaco's scheduled renders ("this.domNode.domNode").
+                    // With index keys a reorder is just a value-prop update.
+                    <React.Fragment key={index}>
+                      <div
+                        className={`mql-stage ${!isValid ? 'is-invalid' : ''}${stage.disabled ? ' is-disabled' : ''}`}
+                        data-testid={`pipeline-stage-${index}`}
+                        onDragOver={(e) => { if (dragStageIndex !== null) e.preventDefault(); }}
+                        onDrop={() => dropStageAt(index)}
+                      >
+                        <div
+                          className="mql-stage-h"
+                          draggable
+                          onDragStart={() => setDragStageIndex(index)}
+                          onDragEnd={() => setDragStageIndex(null)}
+                        >
+                          <GripVertical size={11} className="mql-stage-grip" aria-hidden="true" />
                           <span className="mql-stage-num">{index + 1}</span>
                           <div className="mql-stage-op-wrap">
                             <select
@@ -1620,13 +1674,30 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                             <ChevronDown size={10} className="mql-stage-op-caret text-[var(--text-dim)]" />
                           </div>
                           <div style={{ flexGrow: 1 }} />
-                          <button onClick={() => moveStageUp(index)} disabled={index === 0} className="query-plane-icon-btn">
+                          <button
+                            onClick={() => runToStage(index)}
+                            disabled={loading || stage.disabled}
+                            className="query-plane-icon-btn"
+                            title={`Run pipeline to stage ${index + 1}`}
+                            aria-label={`Run pipeline to stage ${index + 1}`}
+                          >
+                            <Play size={11} />
+                          </button>
+                          <button
+                            onClick={() => toggleStageDisabled(stage.id)}
+                            className="query-plane-icon-btn"
+                            title={stage.disabled ? `Enable stage ${index + 1}` : `Disable stage ${index + 1}`}
+                            aria-label={stage.disabled ? `Enable stage ${index + 1}` : `Disable stage ${index + 1}`}
+                          >
+                            {stage.disabled ? <EyeOff size={11} /> : <Eye size={11} />}
+                          </button>
+                          <button onClick={() => moveStageUp(index)} disabled={index === 0} className="query-plane-icon-btn" aria-label={`Move stage ${index + 1} up`}>
                             <ChevronUp size={11} />
                           </button>
-                          <button onClick={() => moveStageDown(index)} disabled={index === stages.length - 1} className="query-plane-icon-btn">
+                          <button onClick={() => moveStageDown(index)} disabled={index === stages.length - 1} className="query-plane-icon-btn" aria-label={`Move stage ${index + 1} down`}>
                             <ChevronDown size={11} />
                           </button>
-                          <button onClick={() => removeStage(stage.id)} className="query-plane-icon-btn text-rose-400">
+                          <button onClick={() => removeStage(stage.id)} className="query-plane-icon-btn text-rose-400" aria-label={`Remove stage ${index + 1}`}>
                             <Trash2 size={11} />
                           </button>
                         </div>

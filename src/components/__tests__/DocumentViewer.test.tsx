@@ -1019,3 +1019,57 @@ describe('DocumentViewer query persistence (H1)', () => {
     });
   });
 });
+
+describe('Aggregation builder stage controls', () => {
+  const renderAgg = () => {
+    const onExecute = vi.fn();
+    const onExecuteAggregate = vi.fn();
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={onExecute}
+        onExecuteAggregate={onExecuteAggregate}
+        onExplain={vi.fn()}
+        loading={false}
+      />
+    );
+    fireEvent.click(screen.getByTestId('mode-aggregate-tab'));
+    return { onExecute, onExecuteAggregate };
+  };
+
+  it('excludes disabled stages from Run and dims them', () => {
+    const { onExecuteAggregate } = renderAgg();
+    fireEvent.click(screen.getByRole('button', { name: /add stage/i }));
+    const stage1 = screen.getByTestId('pipeline-stage-1');
+    fireEvent.change(stage1.querySelector('select')!, { target: { value: '$limit' } });
+    fireEvent.change(stage1.querySelector('textarea')!, { target: { value: '5' } });
+
+    fireEvent.click(screen.getByLabelText('Disable stage 1'));
+    expect(screen.getByTestId('pipeline-stage-0').className).toContain('is-disabled');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(onExecuteAggregate).toHaveBeenCalledWith([{ $limit: 5 }]);
+  });
+
+  it('re-enabling a stage includes it again', () => {
+    const { onExecuteAggregate } = renderAgg();
+    fireEvent.click(screen.getByLabelText('Disable stage 1'));
+    fireEvent.click(screen.getByLabelText('Enable stage 1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(onExecuteAggregate).toHaveBeenCalledWith([{ $match: {} }]);
+  });
+
+  it('run-to-here executes only stages up to and including the clicked one', () => {
+    const { onExecuteAggregate } = renderAgg();
+    fireEvent.click(screen.getByRole('button', { name: /add stage/i }));
+    const stage1 = screen.getByTestId('pipeline-stage-1');
+    fireEvent.change(stage1.querySelector('select')!, { target: { value: '$limit' } });
+    fireEvent.change(stage1.querySelector('textarea')!, { target: { value: '5' } });
+
+    fireEvent.click(screen.getByLabelText('Run pipeline to stage 1'));
+    expect(onExecuteAggregate).toHaveBeenCalledWith([{ $match: {} }]);
+    expect(onExecuteAggregate).not.toHaveBeenCalledWith([{ $match: {} }, { $limit: 5 }]);
+  });
+});
