@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getCompletions, type CompletionCtx } from '../mongoCompletions';
+import { getCompletions, TYPE_VALUE_SCAFFOLDS, type CompletionCtx } from '../mongoCompletions';
 
 const base = (over: Partial<CompletionCtx>): CompletionCtx => ({
   surface: 'filter', textBeforeCursor: '', token: '', fields: ['region', 'plan', '_id'], ...over,
@@ -206,6 +206,101 @@ describe('getCompletions — projection operators & EJSON', () => {
     const items = getCompletions(base({ surface: 'projection', textBeforeCursor: '{ ', token: '' }));
     expect(labels(items)).toEqual(expect.arrayContaining(['region', 'plan', '_id']));
     expect(labels(items)).not.toContain('$slice');
+  });
+});
+
+describe('getCompletions — typed field scaffolds at key position', () => {
+  const schema = new Map([
+    ['_id', { type: 'objectId' }],
+    ['createdTime', { type: 'date' }],
+    ['region', { type: 'string' }],
+  ]);
+  it('objectId field inserts the full key + $oid wrapper as a snippet', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ ', token: '', schema, fields: ['_id', 'createdTime', 'region'] }));
+    const id = items.find((i) => i.label === '_id')!;
+    expect(id.isSnippet).toBe(true);
+    expect(id.insertText).toContain('"_id": {"\\$oid": "${1:');
+  });
+  it('date field inserts the full key + $date wrapper as a snippet', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ ', token: '', schema, fields: ['_id', 'createdTime', 'region'] }));
+    const created = items.find((i) => i.label === 'createdTime')!;
+    expect(created.isSnippet).toBe(true);
+    expect(created.insertText).toContain('"createdTime": {"\\$date": "${1:');
+  });
+  it('string fields scaffold a quoted value', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ ', token: '', schema, fields: ['_id', 'createdTime', 'region'] }));
+    const region = items.find((i) => i.label === 'region')!;
+    expect(region.isSnippet).toBe(true);
+    expect(region.insertText).toBe('"region": "${1:value}"');
+  });
+  it('fields without schema info keep the plain quoted-key insert', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ ', token: '', schema, fields: ['unknownField'] }));
+    expect(items.find((i) => i.label === 'unknownField')!.insertText).toBe('"unknownField"');
+  });
+  it('covers every BSON type label the schema analyzer emits', () => {
+    const labels = ['double', 'string', 'object', 'array', 'bool', 'null', 'regex', 'int', 'long',
+      'timestamp', 'binary', 'objectId', 'date', 'decimal', 'javascript', 'symbol',
+      'minKey', 'maxKey', 'undefined', 'dbPointer'];
+    for (const t of labels) {
+      expect(TYPE_VALUE_SCAFFOLDS[t], `missing scaffold for type "${t}"`).toBeDefined();
+      expect(TYPE_VALUE_SCAFFOLDS[t].json).toBeTruthy();
+      expect(TYPE_VALUE_SCAFFOLDS[t].shell).toBeTruthy();
+    }
+  });
+  it('numeric types scaffold correctly (int plain, long/decimal wrapped)', () => {
+    const numSchema = new Map([
+      ['age', { type: 'int' }],
+      ['views', { type: 'long' }],
+      ['price', { type: 'decimal' }],
+      ['score', { type: 'double' }],
+    ]);
+    const items = getCompletions(base({ textBeforeCursor: '{ ', token: '', schema: numSchema, fields: ['age', 'views', 'price', 'score'] }));
+    expect(items.find((i) => i.label === 'age')!.insertText).toBe('"age": ${1:0}');
+    expect(items.find((i) => i.label === 'views')!.insertText).toBe('"views": {"\\$numberLong": "${1:0}"}');
+    expect(items.find((i) => i.label === 'price')!.insertText).toBe('"price": {"\\$numberDecimal": "${1:0}"}');
+    expect(items.find((i) => i.label === 'score')!.insertText).toBe('"score": ${1:0.0}');
+  });
+  it('bool, regex, and binary scaffold their EJSON shapes', () => {
+    const s = new Map([
+      ['active', { type: 'bool' }],
+      ['pattern', { type: 'regex' }],
+      ['blob', { type: 'binary' }],
+    ]);
+    const items = getCompletions(base({ textBeforeCursor: '{ ', token: '', schema: s, fields: ['active', 'pattern', 'blob'] }));
+    expect(items.find((i) => i.label === 'active')!.insertText).toBe('"active": ${1:true}');
+    expect(items.find((i) => i.label === 'pattern')!.insertText).toContain('"\\$regularExpression"');
+    expect(items.find((i) => i.label === 'blob')!.insertText).toContain('"\\$binary"');
+  });
+  it('shell uses native literals for numeric and regex types', () => {
+    const s = new Map([
+      ['views', { type: 'long' }],
+      ['pattern', { type: 'regex' }],
+    ]);
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.c.find({ ', token: '', schema: s, fields: ['views', 'pattern'] }));
+    expect(items.find((i) => i.label === 'views')!.insertText).toBe('views: NumberLong("${1:0}")');
+    expect(items.find((i) => i.label === 'pattern')!.insertText).toBe('pattern: /${1:pattern}/${2:i}');
+  });
+  it('completes the scaffold without doubling the quote when already inside one', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ "_i', token: '_i', schema, fields: ['_id'] }));
+    const id = items.find((i) => i.label === '_id')!;
+    expect(id.insertText.startsWith('_id": {"\\$oid"')).toBe(true);
+  });
+  it('uses shell constructors for typed fields in the shell surface', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.c.find({ ', token: '', schema, fields: ['_id', 'createdTime'] }));
+    expect(items.find((i) => i.label === '_id')!.insertText).toContain('_id: ObjectId("${1:');
+    expect(items.find((i) => i.label === 'createdTime')!.insertText).toContain('createdTime: ISODate("${1:');
+  });
+  it('scaffolds typed fields inside $elemMatch bodies too', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ "refs": { "$elemMatch": { ', token: '', schema, fields: ['_id'] }));
+    expect(items.find((i) => i.label === '_id')!.insertText).toContain('"_id": {"\\$oid"');
+  });
+  it('does NOT scaffold values in projection (value must stay 1/0)', () => {
+    const items = getCompletions(base({ surface: 'projection', textBeforeCursor: '{ ', token: '', schema, fields: ['_id'] }));
+    expect(items.find((i) => i.label === '_id')!.insertText).toBe('"_id"');
+  });
+  it('does NOT scaffold values in sort', () => {
+    const items = getCompletions(base({ surface: 'sort', textBeforeCursor: '{ ', token: '', schema, fields: ['createdTime'] }));
+    expect(items.find((i) => i.label === 'createdTime')!.insertText).toBe('"createdTime"');
   });
 });
 

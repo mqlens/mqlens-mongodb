@@ -130,6 +130,51 @@ function fieldItems(ctx: CompletionCtx): CompletionItem[] {
   });
 }
 
+// Value scaffolds per schema type, keyed by the labels the backend schema
+// analyzer emits (src-tauri/src/db/schema.rs bson_type_label). `json` is for
+// the EJSON surfaces, `shell` for mongosh. Every label must have an entry.
+export const TYPE_VALUE_SCAFFOLDS: Record<string, { json: string; shell: string }> = {
+  objectId: { json: '{"\\$oid": "${1:objectId}"}', shell: 'ObjectId("${1:objectId}")' },
+  date: { json: '{"\\$date": "${1:2024-01-01T00:00:00Z}"}', shell: 'ISODate("${1:2024-01-01T00:00:00Z}")' },
+  string: { json: '"${1:value}"', shell: '"${1:value}"' },
+  int: { json: '${1:0}', shell: '${1:0}' },
+  long: { json: '{"\\$numberLong": "${1:0}"}', shell: 'NumberLong("${1:0}")' },
+  double: { json: '${1:0.0}', shell: '${1:0.0}' },
+  decimal: { json: '{"\\$numberDecimal": "${1:0}"}', shell: 'NumberDecimal("${1:0}")' },
+  bool: { json: '${1:true}', shell: '${1:true}' },
+  null: { json: 'null', shell: 'null' },
+  array: { json: '[$1]', shell: '[$1]' },
+  object: { json: '{$1}', shell: '{$1}' },
+  regex: { json: '{"\\$regularExpression": {"pattern": "${1:pattern}", "options": "${2:i}"}}', shell: '/${1:pattern}/${2:i}' },
+  timestamp: { json: '{"\\$timestamp": {"t": ${1:0}, "i": ${2:1}}}', shell: 'Timestamp(${1:0}, ${2:1})' },
+  binary: { json: '{"\\$binary": {"base64": "${1:base64}", "subType": "${2:00}"}}', shell: 'BinData(${1:0}, "${2:base64}")' },
+  javascript: { json: '{"\\$code": "${1:code}"}', shell: 'Code("${1:code}")' },
+  symbol: { json: '{"\\$symbol": "${1:symbol}"}', shell: '"${1:symbol}"' },
+  minKey: { json: '{"\\$minKey": 1}', shell: 'MinKey()' },
+  maxKey: { json: '{"\\$maxKey": 1}', shell: 'MaxKey()' },
+  undefined: { json: '{"\\$undefined": true}', shell: 'undefined' },
+  dbPointer: { json: '{"\\$dbPointer": {"\\$ref": "${1:collection}", "\\$id": {"\\$oid": "${2:objectId}"}}}', shell: 'DBPointer("${1:collection}", ObjectId("${2:objectId}"))' },
+};
+
+// Field completions for filter-like key positions: a schema-typed field
+// inserts the whole `"field": <typed value scaffold>` (shell: `field: …`) so
+// the user lands directly in the value placeholder. Untyped fields insert the
+// plain key, leaving operator choice open.
+function typedFieldItems(ctx: CompletionCtx): CompletionItem[] {
+  return ctx.fields.map((name) => {
+    const fs = ctx.schema?.get(name);
+    const shell = ctx.surface === 'shell';
+    const scaffold = fs?.type ? TYPE_VALUE_SCAFFOLDS[fs.type] : undefined;
+    if (!scaffold) {
+      return { label: name, kind: 'field' as const, insertText: keyInsert(ctx, name), detail: fs?.type };
+    }
+    // keyInsert semantics inline: shell keys are bare; in JSON we open a quote
+    // unless the user already typed one, and always close it before the colon.
+    const key = shell ? name : inQuote(ctx.textBeforeCursor) ? `${name}"` : `"${name}"`;
+    return { label: name, kind: 'field' as const, insertText: `${key}: ${shell ? scaffold.shell : scaffold.json}`, detail: fs?.type, isSnippet: true };
+  });
+}
+
 function quoteForType(value: string, type?: string): string {
   // string/objectId/date → quoted; numeric/bool → raw.
   if (type === 'int' || type === 'long' || type === 'double' || type === 'decimal' || type === 'bool') return value;
@@ -226,7 +271,7 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     }
     const parent = atKeyPosition(textBeforeCursor) ? parentKeyOfOpenObject(textBeforeCursor) : null;
     if (parent === '$elemMatch') {
-      return byPrefix([...fieldItems(ctx), ...opItems(ctx, QUERY_OPERATORS, 'query operator')], token);
+      return byPrefix([...typedFieldItems(ctx), ...opItems(ctx, QUERY_OPERATORS, 'query operator')], token);
     }
     if (parent) {
       return byPrefix([...keyItems(ctx, PROJECTION_OPERATORS), ...opItems(ctx, QUERY_OPERATORS, 'query operator'), ...keyItems(ctx, EJSON_TYPES)], token);
@@ -293,10 +338,10 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
       return byPrefix([...opItems(ctx, QUERY_OPERATORS, 'query operator'), ...keyItems(ctx, EJSON_TYPES)], token);
     }
     if (parent.startsWith('$')) {
-      return byPrefix([...fieldItems(ctx), ...opItems(ctx, QUERY_OPERATORS, 'query operator')], token);
+      return byPrefix([...typedFieldItems(ctx), ...opItems(ctx, QUERY_OPERATORS, 'query operator')], token);
     }
     return byPrefix([...opItems(ctx, QUERY_OPERATORS, 'query operator'), ...keyItems(ctx, EJSON_TYPES)], token);
   }
   // top-level key position
-  return byPrefix([...fieldItems(ctx), ...opItems(ctx, LOGICAL_OPERATORS, 'logical')], token);
+  return byPrefix([...typedFieldItems(ctx), ...opItems(ctx, LOGICAL_OPERATORS, 'logical')], token);
 }
