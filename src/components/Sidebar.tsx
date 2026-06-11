@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useDialogs } from './dialogs/DialogProvider';
+import { fuzzyMatch } from '../lib/fuzzyMatch';
 import {
   Database,
   Folder,
@@ -931,15 +932,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {activeConnections.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {activeConnections.map((conn) => {
-              const q = filterQuery.trim().toLowerCase();
+              const q = filterQuery.trim();
               const filterActive = q.length > 0;
               const connDbs = databases[conn.id] || [];
-              const connNameMatch = filterActive && conn.name.toLowerCase().includes(q);
+              const connNameMatch = filterActive && fuzzyMatch(q, conn.name);
               const visibleDbs = connDbs.filter((dbName) =>
                 !filterActive ||
                 connNameMatch ||
-                dbName.toLowerCase().includes(q) ||
-                (collections[`${conn.id}/${dbName}`] || []).some((c) => c.name.toLowerCase().includes(q))
+                fuzzyMatch(q, dbName) ||
+                (collections[`${conn.id}/${dbName}`] || []).some((c) => fuzzyMatch(q, c.name))
               );
               // Hide a connection entirely when nothing under it matches.
               if (filterActive && !connNameMatch && visibleDbs.length === 0) return null;
@@ -949,8 +950,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               return (
                 <div key={conn.id} className="mql-tree-node">
                   {/* Connection Node */}
-                  <div 
+                  <div
                     className="mql-conn-row"
+                    role="button"
+                    aria-expanded={isConnExpanded}
+                    aria-label={`Connection ${conn.name}`}
                     onClick={() => setExpandedConnections((prev) => ({ ...prev, [conn.id]: !prev[conn.id] }))}
                     onContextMenu={(e) => handleContextMenu(e, conn.id, undefined, undefined, undefined, false, true)}
                   >
@@ -987,9 +991,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         // When filtering and neither the connection nor the db name
                         // matches, narrow the db's collections to the matches and
                         // auto-expand so they're visible.
-                        const dbNameMatch = filterActive && (connNameMatch || dbName.toLowerCase().includes(q));
+                        const dbNameMatch = filterActive && (connNameMatch || fuzzyMatch(q, dbName));
                         const dbColls = filterActive && !dbNameMatch
-                          ? rawColls.filter((c) => c.name.toLowerCase().includes(q))
+                          ? rawColls.filter((c) => fuzzyMatch(q, c.name))
                           : rawColls;
                         const autoExpandDb = filterActive && !dbNameMatch && dbColls.length > 0;
                         const isDbExpanded = expandedDbs[dbKey] || autoExpandDb;
@@ -1034,8 +1038,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         return (
                           <div key={dbName} className="mql-tree-node">
                             {/* Database Node */}
-                            <div 
+                            <div
                               className="mql-row-h mql-tree-row"
+                              role="button"
+                              aria-expanded={isDbExpanded}
+                              aria-label={`Database ${dbName}`}
                               onClick={() => toggleDb(conn.id, dbName)}
                               onContextMenu={(e) => handleContextMenu(e, conn.id, dbName)}
                             >
