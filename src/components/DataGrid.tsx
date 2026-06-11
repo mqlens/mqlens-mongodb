@@ -459,6 +459,47 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const docViewerContext = useContext(DocumentViewerContext);
   const [viewMode, setViewMode] = useState<ViewMode>('json');
   const [activeTab, setActiveTab] = useState<'results' | 'explain' | 'query'>('results');
+
+  // Column resize: table view keeps per-column widths (session-scoped — the
+  // column set changes per collection); the tree view's key column persists.
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const colWidth = (col: string) => colWidths[col] ?? 180;
+  const [treeKeyWidth, setTreeKeyWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('mqlens-treekey-width'));
+    return saved >= 140 && saved <= 800 ? saved : 320;
+  });
+  useEffect(() => { localStorage.setItem('mqlens-treekey-width', String(treeKeyWidth)); }, [treeKeyWidth]);
+
+  const clampCol = (w: number, min = 80, max = 800) => Math.min(max, Math.max(min, w));
+  const startColResize = (e: React.MouseEvent, startWidth: number, apply: (w: number) => void, min = 80) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const move = (ev: MouseEvent) => apply(clampCol(startWidth + ev.clientX - startX, min));
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+  // Shared handle: drag or focus + arrow keys. A render helper (not a nested
+  // component) so re-renders update the same DOM node instead of remounting.
+  const renderColResizer = (label: string, width: number, apply: (w: number) => void, min = 80) => (
+    <div
+      className="mql-col-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize ${label} column`}
+      tabIndex={0}
+      onMouseDown={(e) => startColResize(e, width, apply, min)}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        apply(clampCol(width + (e.key === 'ArrowRight' ? 16 : -16), min));
+      }}
+    />
+  );
   const [copied, setCopied] = useState(false);
   const [queryCopied, setQueryCopied] = useState(false);
 
@@ -981,7 +1022,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <div
             key={col}
             className="px-3 border-r border-[var(--border-color)] h-full flex items-center truncate text-[var(--text-main)]"
-            style={{ width: '180px', flexShrink: 0 }}
+            style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
             onContextMenu={(e) => openCtxMenu(e, rawDoc, col, rawDoc[col])}
           >
             {renderColoredCell(rawDoc[col])}
@@ -1249,9 +1290,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
           </div>
         ) : viewMode === 'tree' ? (
           /* Virtualized tree-table: Key | Value | Type */
-          <div className="mql-treetable flex-1 flex flex-col min-h-0 min-w-0" data-testid="tree-view">
+          <div
+            className="mql-treetable flex-1 flex flex-col min-h-0 min-w-0"
+            data-testid="tree-view"
+            style={{ '--treetable-keyw': `${treeKeyWidth}px` } as React.CSSProperties}
+          >
             <div className="mql-treetable-head">
-              <div className="mql-treetable-key">Key</div>
+              <div className="mql-treetable-key relative">
+                Key
+                {renderColResizer('key', treeKeyWidth, setTreeKeyWidth, 140)}
+              </div>
               <div className="mql-treetable-value">Value</div>
               <div className="mql-treetable-type">Type</div>
             </div>
@@ -1278,10 +1326,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 {columns.map((col) => (
                   <div
                     key={col}
-                    className="px-3 border-r border-[var(--border-color)] flex items-center truncate"
-                    style={{ width: '180px', flexShrink: 0 }}
+                    className="px-3 border-r border-[var(--border-color)] flex items-center truncate relative"
+                    style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
                   >
                     {col}
+                    {renderColResizer(col, colWidth(col), (w) => setColWidths((p) => ({ ...p, [col]: w })))}
                   </div>
                 ))}
                 {hasRowActions && (
@@ -1299,7 +1348,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 rowHeight={getRowHeight()}
                 rowComponent={Row}
                 rowProps={{}}
-                style={{ height: '100%', width: '100%', minWidth: viewMode === 'table' ? `${(columns.length * 180) + 48 + (hasRowActions ? 72 : 0)}px` : '100%' }}
+                style={{ height: '100%', width: '100%', minWidth: viewMode === 'table' ? `${columns.reduce((s, c) => s + colWidth(c), 0) + 48 + (hasRowActions ? 72 : 0)}px` : '100%' }}
               />
             </div>
           </div>

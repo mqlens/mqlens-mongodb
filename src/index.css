@@ -818,12 +818,13 @@ select:focus-visible {
 .mql-treetable-doc-start {
   border-top: 1px solid var(--border-color);
 }
-/* Shared column geometry between header and rows. */
+/* Shared column geometry between header and rows. The key column width is a
+   variable so the header drag-handle resizes every (virtualized) row with it. */
 .mql-treetable-key {
   display: flex;
   align-items: center;
   gap: 4px;
-  width: 320px;
+  width: var(--treetable-keyw, 320px);
   flex-shrink: 0;
   min-width: 0;
   padding-right: 10px;
@@ -860,6 +861,20 @@ select:focus-visible {
 }
 .mql-treetable-fold-btn:hover { color: var(--text-main); }
 .mql-treetable-fold-spacer { display: inline-block; width: 11px; flex-shrink: 0; }
+/* Column drag handle on header cells (also keyboard-focusable: arrow keys resize). */
+.mql-col-resizer {
+  position: absolute;
+  top: 0; right: -4px;
+  width: 8px; height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+.mql-col-resizer:hover,
+.mql-col-resizer:focus-visible {
+  background: var(--accent-blue);
+  opacity: 0.45;
+  outline: none;
+}
 .mql-treetable-row:hover .mql-jsonview-actions { opacity: 1; }
 .mql-jsonview-num {
   position: sticky;
@@ -3201,12 +3216,17 @@ select:focus-visible {
 }
 .mql-stage:focus-within { box-shadow: 0 0 0 1px var(--accent-blue); border-color: var(--accent-blue); }
 .mql-stage.is-invalid    { box-shadow: 0 0 0 1px var(--accent-red);  border-color: var(--accent-red); }
+/* Disabled stages stay editable but read as excluded from the pipeline. */
+.mql-stage.is-disabled { opacity: 0.55; }
 .mql-stage-h {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 6px 5px 8px;
   background: hsla(0,0%,50%,0.04);
   border-bottom: 1px solid var(--border-color);
+  cursor: grab;
 }
+.mql-stage-h:active { cursor: grabbing; }
+.mql-stage-grip { color: var(--text-dim); flex: none; }
 .mql-stage-num {
   width: 18px; height: 18px; flex: none;
   display: inline-flex; align-items: center; justify-content: center;
@@ -3905,8 +3925,7 @@ button, input, select, textarea {
 [data-density="compact"] .mql-qinput { height: 24px; padding: 0 8px; font-size: 11px; }
 [data-density="compact"] .mql-btn { height: 22px; padding: 0 8px; font-size: 10.5px; gap: 5px; }
 [data-density="compact"] .query-plane-btn { padding: 2.5px 8px; font-size: 10.5px; gap: 5px; }
-[data-density="compact"] .mql-th { padding: 3px 10px; font-size: 9.5px; }
-[data-density="compact"] .mql-td { padding: 3px 10px; }
+[data-density="compact"] .mql-treetable-head { font-size: 9.5px; }
 [data-density="compact"] .mql-statusbar { padding: 0 10px; }
 
 [data-density="roomy"] .mql-toolbar { padding: 9px 16px; gap: 10px; }
@@ -3916,8 +3935,7 @@ button, input, select, textarea {
 [data-density="roomy"] .mql-qinput { height: 34px; padding: 0 12px; font-size: 12px; }
 [data-density="roomy"] .mql-btn { height: 30px; padding: 0 12px; font-size: 12px; }
 [data-density="roomy"] .query-plane-btn { padding: 6.5px 12px; font-size: 12px; }
-[data-density="roomy"] .mql-th { padding: 8px 12px; font-size: 10.5px; }
-[data-density="roomy"] .mql-td { padding: 8px 12px; }
+[data-density="roomy"] .mql-treetable-head { font-size: 10.5px; }
 [data-density="roomy"] .mql-statusbar { padding: 0 14px; }
 
 /* Query Plane Styles */

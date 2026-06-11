@@ -295,3 +295,38 @@ describe('DataGrid Component', () => {
     expect(screen.getAllByLabelText('Copied').length).toBeGreaterThan(0);
   });
 });
+
+describe('DataGrid column resize', () => {
+  it('renders a resize handle per table column and resizes with the keyboard', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    const handle = screen.getByLabelText('Resize name column');
+    const headerCell = handle.parentElement as HTMLElement;
+    expect(headerCell.style.width).toBe('180px');
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(headerCell.style.width).toBe('196px');
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(headerCell.style.width).toBe('164px');
+  });
+
+  it('resizes the tree view key column with the keyboard', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+    const handle = screen.getByLabelText('Resize key column');
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    const tree = screen.getByTestId('tree-view');
+    expect(tree.style.getPropertyValue('--treetable-keyw')).toBe('336px');
+  });
+
+  it('resizes a table column by mouse drag', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    const handle = screen.getByLabelText('Resize name column');
+    const headerCell = handle.parentElement as HTMLElement;
+    fireEvent.mouseDown(handle, { clientX: 300 });
+    fireEvent.mouseMove(window, { clientX: 360 });
+    fireEvent.mouseUp(window);
+    expect(headerCell.style.width).toBe('240px');
+  });
+});
