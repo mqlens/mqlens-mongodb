@@ -457,6 +457,19 @@ button { cursor: pointer; }
   box-shadow: var(--shadow-btn-hover);
 }
 .mql-btn-primary:disabled, .mql-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Disabled buttons must not react to hover — a dead control that highlights reads as broken. */
+.mql-btn:disabled:hover { background: transparent; color: var(--text-muted); border-color: transparent; }
+.mql-btn-primary:disabled:hover { background: var(--brand-gradient); box-shadow: var(--shadow-btn); }
+
+/* Unified keyboard-focus ring across interactive controls (mouse clicks don't trigger :focus-visible). */
+.mql-btn:focus-visible,
+.mql-btn-primary:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
 .mql-btn-outlined { border: 1px solid var(--border-color); color: var(--text-main); }
 .mql-btn-danger { color: var(--accent-red); }
 .mql-btn-danger:hover { color: var(--soft-red-text); background: var(--soft-red-bg); border-color: var(--soft-red-bd); }
@@ -805,12 +818,13 @@ button { cursor: pointer; }
 .mql-treetable-doc-start {
   border-top: 1px solid var(--border-color);
 }
-/* Shared column geometry between header and rows. */
+/* Shared column geometry between header and rows. The key column width is a
+   variable so the header drag-handle resizes every (virtualized) row with it. */
 .mql-treetable-key {
   display: flex;
   align-items: center;
   gap: 4px;
-  width: 320px;
+  width: var(--treetable-keyw, 320px);
   flex-shrink: 0;
   min-width: 0;
   padding-right: 10px;
@@ -847,6 +861,20 @@ button { cursor: pointer; }
 }
 .mql-treetable-fold-btn:hover { color: var(--text-main); }
 .mql-treetable-fold-spacer { display: inline-block; width: 11px; flex-shrink: 0; }
+/* Column drag handle on header cells (also keyboard-focusable: arrow keys resize). */
+.mql-col-resizer {
+  position: absolute;
+  top: 0; right: -4px;
+  width: 8px; height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+.mql-col-resizer:hover,
+.mql-col-resizer:focus-visible {
+  background: var(--accent-blue);
+  opacity: 0.45;
+  outline: none;
+}
 .mql-treetable-row:hover .mql-jsonview-actions { opacity: 1; }
 .mql-jsonview-num {
   position: sticky;
@@ -1413,6 +1441,94 @@ button { cursor: pointer; }
   display: flex; align-items: center; justify-content: center;
   z-index: 1000;
   animation: mql-fade-up var(--dur-slow) var(--ease-out);
+}
+
+/* Command palette (Cmd/Ctrl+K) */
+.mql-palette-backdrop {
+  position: fixed; inset: 0;
+  background: var(--surface-modal-overlay);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 12vh;
+  z-index: 1100;
+  animation: mql-fade-up var(--dur-fast) var(--ease-out);
+}
+.mql-palette {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  width: 480px; max-height: 60vh;
+  display: flex; flex-direction: column;
+  box-shadow: var(--shadow-large);
+  overflow: hidden;
+  backdrop-filter: blur(20px);
+}
+.mql-palette-search {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+.mql-palette-search:focus-within {
+  border-bottom-color: var(--accent-blue);
+  box-shadow: inset 0 -1px 0 var(--accent-blue);
+}
+.mql-palette-search-icon { color: var(--text-dim); flex: none; }
+.mql-palette-input {
+  flex: 1; height: 36px;
+  border: none; background: transparent; outline: none;
+  font-size: 13px; color: var(--text-main);
+}
+.mql-palette-input:focus-visible { outline: none; }
+.mql-palette-input::placeholder { color: var(--text-dim); }
+.mql-palette-scope {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 24px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-sidebar);
+  font-size: 10.5px;
+  line-height: 1;
+  color: var(--text-dim);
+  min-width: 0;
+}
+.mql-palette-scope-label {
+  color: var(--text-dim);
+  flex: none;
+}
+.mql-palette-scope-value {
+  display: inline-flex; align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-main);
+  font-weight: 500;
+}
+.mql-palette-list { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+.mql-palette-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 12px; color: var(--text-main);
+  cursor: pointer;
+  user-select: none;
+}
+.mql-palette-item.is-selected { background: var(--bg-item-active); color: var(--accent-blue); }
+.mql-palette-hint {
+  font-size: 10.5px; color: var(--text-dim);
+  font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mql-palette-empty { padding: 14px; text-align: center; font-size: 12px; color: var(--text-dim); }
+.mql-palette-footer {
+  display: flex; gap: 14px;
+  padding: 5px 12px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-sidebar);
+  font-size: 10px; color: var(--text-dim);
+  user-select: none;
 }
 .mql-modal {
   background: var(--bg-panel);
@@ -3118,6 +3234,10 @@ button { cursor: pointer; }
   padding: 10px 12px;
   max-height: 340px; overflow-y: auto;
 }
+/* Stages must keep their height once the list exceeds the max-height —
+   flex items default to shrink, which squashes every stage flat instead
+   of letting the container scroll. */
+.mql-pipeline-stages > * { flex-shrink: 0; }
 .mql-pipeline-flow {
   display: flex; justify-content: center;
   padding: 2px 0; color: var(--text-dim);
@@ -3132,12 +3252,36 @@ button { cursor: pointer; }
 }
 .mql-stage:focus-within { box-shadow: 0 0 0 1px var(--accent-blue); border-color: var(--accent-blue); }
 .mql-stage.is-invalid    { box-shadow: 0 0 0 1px var(--accent-red);  border-color: var(--accent-red); }
+/* Disabled stages stay editable but read as excluded from the pipeline. */
+.mql-stage.is-disabled { opacity: 0.55; }
+/* $lookup form helper: the four common parameters as labeled inputs. */
+.mql-lookup-form {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+  background: hsla(0,0%,50%,0.03);
+}
+.mql-lookup-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mql-lookup-field span {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-dim);
+}
+.mql-lookup-field input {
+  height: 22px; padding: 0 6px;
+  font-size: 11px; font-family: var(--font-mono);
+  background: var(--bg-base); border: 1px solid var(--border-color);
+  border-radius: 4px; color: var(--text-main);
+  outline: none; min-width: 0;
+}
 .mql-stage-h {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 6px 5px 8px;
   background: hsla(0,0%,50%,0.04);
   border-bottom: 1px solid var(--border-color);
+  cursor: grab;
 }
+.mql-stage-h:active { cursor: grabbing; }
+.mql-stage-grip { color: var(--text-dim); flex: none; }
 .mql-stage-num {
   width: 18px; height: 18px; flex: none;
   display: inline-flex; align-items: center; justify-content: center;
@@ -3823,6 +3967,31 @@ button, input, select, textarea {
 [data-density="roomy"] .mql-quickstart-card-title { font-size: 13.5px; }
 [data-density="roomy"] .mql-quickstart-card-desc { font-size: 12px; }
 [data-density="roomy"] .mql-quickstart-tip { font-size: 12.5px; }
+
+/* Density: query toolbar, query bar, buttons, table chrome, status bar.
+   (Tree/table/JSON result rows scale in JS — DataGrid getRowHeight.) */
+[data-density="compact"] { --h-statusbar: 20px; }
+[data-density="roomy"]   { --h-statusbar: 26px; }
+
+[data-density="compact"] .mql-toolbar { padding: 3px 10px; gap: 6px; }
+[data-density="compact"] .query-plane-toolbar,
+[data-density="compact"] .query-plane-breadcrumbs { padding: 3px 10px; }
+[data-density="compact"] .mql-qbadge { height: 24px; padding: 0 8px; min-width: 76px; font-size: 9px; }
+[data-density="compact"] .mql-qinput { height: 24px; padding: 0 8px; font-size: 11px; }
+[data-density="compact"] .mql-btn { height: 22px; padding: 0 8px; font-size: 10.5px; gap: 5px; }
+[data-density="compact"] .query-plane-btn { padding: 2.5px 8px; font-size: 10.5px; gap: 5px; }
+[data-density="compact"] .mql-treetable-head { font-size: 9.5px; }
+[data-density="compact"] .mql-statusbar { padding: 0 10px; }
+
+[data-density="roomy"] .mql-toolbar { padding: 9px 16px; gap: 10px; }
+[data-density="roomy"] .query-plane-toolbar,
+[data-density="roomy"] .query-plane-breadcrumbs { padding: 9px 16px; }
+[data-density="roomy"] .mql-qbadge { height: 34px; padding: 0 12px; }
+[data-density="roomy"] .mql-qinput { height: 34px; padding: 0 12px; font-size: 12px; }
+[data-density="roomy"] .mql-btn { height: 30px; padding: 0 12px; font-size: 12px; }
+[data-density="roomy"] .query-plane-btn { padding: 6.5px 12px; font-size: 12px; }
+[data-density="roomy"] .mql-treetable-head { font-size: 10.5px; }
+[data-density="roomy"] .mql-statusbar { padding: 0 14px; }
 
 /* Query Plane Styles */
 .query-plane-breadcrumbs {

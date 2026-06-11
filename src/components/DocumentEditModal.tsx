@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X, FileJson } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { shellToEjson } from '../lib/shellDoc';
+import { useMonacoTheme } from '../lib/useMonacoTheme';
+import { useEscapeClose } from '../lib/useEscapeClose';
 
 // Validate the (shell-syntax) document text: convert to Extended JSON and parse.
 // Returns an error message, or null when valid. Shell types (ISODate/ObjectId/…)
@@ -39,10 +41,8 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const validationError = useMemo(() => validateDocument(json), [json]);
-  const theme =
-    typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light'
-      ? 'light'
-      : 'vs-dark';
+  const theme = useMonacoTheme();
+  useEscapeClose(isOpen, onClose);
 
   useEffect(() => {
     if (isOpen) {

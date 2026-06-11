@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AIChatPanel } from './AIChatPanel';
 import { QueryEditor } from './QueryEditor';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
+import { parseShellJson } from '../lib/shellDoc';
 import {
   loadCollectionQueries,
   saveQuery,
@@ -36,7 +37,12 @@ import {
   Plus,
   Download,
   Upload,
-  X
+  X,
+  Eye,
+  EyeOff,
+  GripVertical,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 
 interface VisualRule {
@@ -65,7 +71,7 @@ interface BuilderState {
   projectionQuery: string;
   limit: string;
   skip: string;
-  stages: { id: string; operator: string; content: string }[];
+  stages: { id: string; operator: string; content: string; disabled?: boolean }[];
 }
 
 // Serialize the current builder state into a GeneratedQuery — the same value
@@ -74,15 +80,15 @@ interface BuilderState {
 export function builderStateToQuery(state: BuilderState): GeneratedQuery {
   const parse = (s: string): unknown => {
     try {
-      return s.trim() ? JSON.parse(s) : {};
+      return s.trim() ? parseShellJson(s) : {};
     } catch {
       return {};
     }
   };
   if (state.queryMode === 'aggregate') {
     const pipeline = state.stages
-      .filter((stage) => stage.content.trim())
-      .map((stage) => ({ [stage.operator]: JSON.parse(stage.content) }));
+      .filter((stage) => !stage.disabled && stage.content.trim())
+      .map((stage) => ({ [stage.operator]: parseShellJson(stage.content) }));
     return { queryType: 'aggregate', pipeline };
   }
   return {
@@ -159,6 +165,48 @@ const STAGE_OPERATORS: { group: string; stages: string[] }[] = [
     stages: ['$documents', '$out', '$merge'],
   },
 ];
+
+// Runnable starter body per stage operator, inserted when the user switches
+// the operator on a stage whose body they haven't edited yet.
+const STAGE_BODY_TEMPLATES: Record<string, string> = {
+  '$match': '{\n  \n}',
+  '$project': '{\n  \n}',
+  '$addFields': '{\n  \n}',
+  '$set': '{\n  \n}',
+  '$unset': '"field"',
+  '$replaceRoot': '{\n  "newRoot": "$field"\n}',
+  '$replaceWith': '"$field"',
+  '$redact': '{\n  \n}',
+  '$group': '{\n  "_id": null\n}',
+  '$bucket': '{\n  "groupBy": "$field",\n  "boundaries": [0, 10],\n  "default": "other"\n}',
+  '$bucketAuto': '{\n  "groupBy": "$field",\n  "buckets": 5\n}',
+  '$sortByCount': '"$field"',
+  '$count': '"count"',
+  '$facet': '{\n  \n}',
+  '$sort': '{\n  \n}',
+  '$limit': '10',
+  '$skip': '0',
+  '$sample': '{\n  "size": 10\n}',
+  '$unwind': '"$field"',
+  '$lookup': '{\n  "from": "collection",\n  "localField": "field",\n  "foreignField": "field",\n  "as": "joined"\n}',
+  '$graphLookup': '{\n  "from": "collection",\n  "startWith": "$field",\n  "connectFromField": "field",\n  "connectToField": "field",\n  "as": "linked"\n}',
+  '$unionWith': '"collection"',
+  '$setWindowFields': '{\n  "sortBy": {},\n  "output": {}\n}',
+  '$densify': '{\n  "field": "field",\n  "range": { "step": 1, "bounds": "full" }\n}',
+  '$fill': '{\n  "output": {}\n}',
+  '$geoNear': '{\n  "near": { "type": "Point", "coordinates": [0, 0] },\n  "distanceField": "distance"\n}',
+  '$documents': '[\n  \n]',
+  '$out': '"collection"',
+  '$merge': '{\n  "into": "collection"\n}',
+};
+
+// A body the user hasn't meaningfully edited: empty, bare braces, or exactly
+// one of the templates above (so switching operators keeps replacing it).
+const isUntouchedStageBody = (content: string): boolean => {
+  const flat = content.replace(/\s/g, '');
+  if (flat === '' || flat === '{}') return true;
+  return Object.values(STAGE_BODY_TEMPLATES).some((tpl) => tpl.replace(/\s/g, '') === flat);
+};
 
 const parseValue = (val: string): any => {
   const trimmed = val.trim();
@@ -289,7 +337,7 @@ const parseFieldQuery = (field: string, value: any): VisualRule[] => {
 
 const syncRulesFromQuery = (jsonStr: string): { rules: VisualRule[], matchType: 'and' | 'or' } => {
   try {
-    const query = JSON.parse(jsonStr);
+    const query = parseShellJson(jsonStr);
     if (!query || typeof query !== 'object' || Array.isArray(query)) {
       return { rules: [], matchType: 'and' };
     }
@@ -318,7 +366,7 @@ const syncRulesFromQuery = (jsonStr: string): { rules: VisualRule[], matchType: 
 
 const syncProjectionFromQuery = (jsonStr: string): ProjectionRule[] => {
   try {
-    const query = JSON.parse(jsonStr);
+    const query = parseShellJson(jsonStr);
     if (!query || typeof query !== 'object' || Array.isArray(query)) {
       return [];
     }
@@ -338,7 +386,7 @@ const syncProjectionFromQuery = (jsonStr: string): ProjectionRule[] => {
 
 const syncSortFromQuery = (jsonStr: string): SortRule[] => {
   try {
-    const query = JSON.parse(jsonStr);
+    const query = parseShellJson(jsonStr);
     if (!query || typeof query !== 'object' || Array.isArray(query)) {
       return [];
     }
@@ -414,6 +462,11 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     id: string;
     operator: string;
     content: string;
+    // Disabled stages stay in the builder but are excluded from every
+    // pipeline build (run, run-to-here, explain, shell command, saved query).
+    disabled?: boolean;
+    // Collapsed stages hide their body editor; purely visual.
+    collapsed?: boolean;
   }
   const [stages, setStages] = useState<PipelineStage[]>([
     { id: 'stage-1', operator: '$match', content: '{\n  \n}' }
@@ -422,47 +475,138 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // AI chat assistant — open/close only; the panel owns its own chat state.
   const [isAIHelperOpen, setIsAIHelperOpen] = useState(false);
 
+  // Pipeline undo/redo: every stage mutation goes through commitStages, which
+  // snapshots the previous list. Keystroke-level content edits coalesce via a
+  // key so undo steps back over whole edits, not single characters.
+  const stagesPast = useRef<PipelineStage[][]>([]);
+  const stagesFuture = useRef<PipelineStage[][]>([]);
+  const lastStageEditRef = useRef<string | null>(null);
+  const commitStages = (next: PipelineStage[], coalesceKey?: string) => {
+    if (!coalesceKey || lastStageEditRef.current !== coalesceKey) {
+      stagesPast.current = [...stagesPast.current.slice(-99), stages];
+      stagesFuture.current = [];
+    }
+    lastStageEditRef.current = coalesceKey ?? null;
+    setStages(next);
+  };
+  const undoStages = () => {
+    const prev = stagesPast.current.pop();
+    if (!prev) return;
+    stagesFuture.current.push(stages);
+    lastStageEditRef.current = null;
+    setStages(prev);
+  };
+  const redoStages = () => {
+    const next = stagesFuture.current.pop();
+    if (!next) return;
+    stagesPast.current.push(stages);
+    lastStageEditRef.current = null;
+    setStages(next);
+  };
+
   const addStage = () => {
     const newStage = {
       id: `stage-${Math.random().toString(36).substr(2, 9)}`,
       operator: '$match',
       content: '{\n  \n}'
     };
-    setStages(prev => [...prev, newStage]);
+    commitStages([...stages, newStage]);
   };
 
   const removeStage = (id: string) => {
-    setStages(prev => prev.filter(s => s.id !== id));
+    commitStages(stages.filter(s => s.id !== id));
   };
 
   const updateStageOperator = (id: string, operator: string) => {
-    setStages(prev => prev.map(s => s.id === id ? { ...s, operator } : s));
+    commitStages(stages.map(s => s.id === id
+      ? {
+          ...s,
+          operator,
+          // Seed the new operator's starter body unless the user already wrote one.
+          content: isUntouchedStageBody(s.content) ? (STAGE_BODY_TEMPLATES[operator] ?? '{\n  \n}') : s.content,
+        }
+      : s));
   };
 
   const updateStageContent = (id: string, content: string) => {
-    setStages(prev => prev.map(s => s.id === id ? { ...s, content } : s));
+    commitStages(stages.map(s => s.id === id ? { ...s, content } : s), `content:${id}`);
+  };
+
+  const toggleStageDisabled = (id: string) => {
+    commitStages(stages.map(s => s.id === id ? { ...s, disabled: !s.disabled } : s));
+  };
+
+  // Collapse is visual only — collapsed stages still run.
+  const toggleStageCollapsed = (id: string) => {
+    commitStages(stages.map(s => s.id === id ? { ...s, collapsed: !s.collapsed } : s));
+  };
+
+  // $lookup form helper: read/write the four common parameters directly in the
+  // stage body so the user doesn't have to hand-edit the JSON.
+  const lookupFieldValue = (stage: PipelineStage, key: string): string => {
+    try {
+      const body = parseShellJson(stage.content);
+      return body && typeof body === 'object' && typeof (body as Record<string, unknown>)[key] === 'string'
+        ? (body as Record<string, string>)[key]
+        : '';
+    } catch {
+      return '';
+    }
+  };
+  const updateLookupField = (id: string, key: string, value: string) => {
+    const stage = stages.find(s => s.id === id);
+    if (!stage) return;
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = parseShellJson(stage.content);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed as Record<string, unknown>;
+    } catch { /* unparseable body — rebuild from the form */ }
+    body[key] = value;
+    commitStages(
+      stages.map(s => s.id === id ? { ...s, content: JSON.stringify(body, null, 2) } : s),
+      `lookup:${id}:${key}`,
+    );
+  };
+
+  // Drag-to-reorder: header is the drag handle; dropping on a stage moves the
+  // dragged stage to that position.
+  const [dragStageIndex, setDragStageIndex] = useState<number | null>(null);
+  const dropStageAt = (target: number) => {
+    if (dragStageIndex === null || dragStageIndex === target) { setDragStageIndex(null); return; }
+    const next = [...stages];
+    const [moved] = next.splice(dragStageIndex, 1);
+    next.splice(target, 0, moved);
+    commitStages(next);
+    setDragStageIndex(null);
+  };
+
+  // Run the pipeline truncated after `index` (enabled stages only) — a quick
+  // preview of what the data looks like at that point.
+  const runToStage = (index: number) => {
+    if (!onExecuteAggregate) return;
+    setError(null);
+    try {
+      const pipeline = stages.slice(0, index + 1)
+        .filter(s => !s.disabled && s.content.trim())
+        .map(s => ({ [s.operator]: parseShellJson(s.content) }));
+      onExecuteAggregate(pipeline);
+    } catch (e: any) {
+      setError(`Invalid JSON syntax: ${e.message}`);
+    }
   };
 
   const moveStageUp = (index: number) => {
     if (index === 0) return;
-    setStages(prev => {
-      const next = [...prev];
-      const temp = next[index];
-      next[index] = next[index - 1];
-      next[index - 1] = temp;
-      return next;
-    });
+    const next = [...stages];
+    [next[index - 1], next[index]] = [next[index], next[index - 1]];
+    commitStages(next);
   };
 
   const moveStageDown = (index: number) => {
-    setStages(prev => {
-      if (index === prev.length - 1) return prev;
-      const next = [...prev];
-      const temp = next[index];
-      next[index] = next[index + 1];
-      next[index + 1] = temp;
-      return next;
-    });
+    if (index === stages.length - 1) return;
+    const next = [...stages];
+    [next[index], next[index + 1]] = [next[index + 1], next[index]];
+    commitStages(next);
   };
 
   // Build pipeline stages ({id, operator, content}) from a MongoDB pipeline array.
@@ -481,7 +625,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const handleInsertQuery = (query: GeneratedQuery) => {
     if (query.queryType === 'aggregate') {
       const pipeline = query.pipeline && query.pipeline.length > 0 ? query.pipeline : [{ $match: {} }];
-      setStages(stagesFromPipeline(pipeline));
+      commitStages(stagesFromPipeline(pipeline));
       setQueryMode('aggregate');
       triggerNotification('Aggregation pipeline applied');
     } else {
@@ -584,7 +728,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   useEffect(() => {
     try {
       if (filterQuery.trim()) {
-        JSON.parse(filterQuery);
+        parseShellJson(filterQuery);
       }
       setIsFilterValid(true);
     } catch {
@@ -595,7 +739,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   useEffect(() => {
     try {
       if (projectionQuery.trim()) {
-        JSON.parse(projectionQuery);
+        parseShellJson(projectionQuery);
       }
       setIsProjectionValid(true);
     } catch {
@@ -606,7 +750,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   useEffect(() => {
     try {
       if (sortQuery.trim()) {
-        JSON.parse(sortQuery);
+        parseShellJson(sortQuery);
       }
       setIsSortValid(true);
     } catch {
@@ -633,7 +777,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         return;
       }
       try {
-        const parsedCurrent = JSON.parse(filterQuery);
+        const parsedCurrent = parseShellJson(filterQuery);
         const compiledCurrent = JSON.parse(compileRulesToQuery(rules, queryMatchType));
         if (JSON.stringify(parsedCurrent) !== JSON.stringify(compiledCurrent)) {
           const synced = syncRulesFromQuery(filterQuery);
@@ -659,7 +803,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         return;
       }
       try {
-        const parsedCurrent = JSON.parse(projectionQuery);
+        const parsedCurrent = parseShellJson(projectionQuery);
         const compiledCurrent = JSON.parse(compileProjectionRules(projectionRules));
         if (JSON.stringify(parsedCurrent) !== JSON.stringify(compiledCurrent)) {
           const synced = syncProjectionFromQuery(projectionQuery);
@@ -684,7 +828,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         return;
       }
       try {
-        const parsedCurrent = JSON.parse(sortQuery);
+        const parsedCurrent = parseShellJson(sortQuery);
         const compiledCurrent = JSON.parse(compileSortRules(sortRules));
         if (JSON.stringify(parsedCurrent) !== JSON.stringify(compiledCurrent)) {
           const synced = syncSortFromQuery(sortQuery);
@@ -934,19 +1078,19 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // Shared by Run and Explain so both act on the full pipeline.
   const buildAggregatePipeline = (): Record<string, unknown>[] =>
     stages
-      .filter(stage => stage.content.trim())
-      .map(stage => ({ [stage.operator]: JSON.parse(stage.content) }));
+      .filter(stage => !stage.disabled && stage.content.trim())
+      .map(stage => ({ [stage.operator]: parseShellJson(stage.content) }));
 
   const handleRun = () => {
     setError(null);
     try {
       if (queryMode === 'find') {
-        const parsedFilter = filterQuery.trim() ? JSON.parse(filterQuery) : {};
-        const parsedSort = sortQuery.trim() ? JSON.parse(sortQuery) : {};
+        const parsedFilter = filterQuery.trim() ? parseShellJson(filterQuery) : {};
+        const parsedSort = sortQuery.trim() ? parseShellJson(sortQuery) : {};
         // Only send a projection when the user has enabled one.
         const parsedProjection =
           isProjectionEnabled && projectionQuery.trim() && projectionQuery.trim() !== '{}'
-            ? JSON.parse(projectionQuery)
+            ? parseShellJson(projectionQuery)
             : {};
 
         onExecute({
@@ -969,8 +1113,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         let compiledSkip = 0;
 
         stages.forEach(stage => {
-          if (!stage.content.trim()) return;
-          const body = JSON.parse(stage.content);
+          if (stage.disabled || !stage.content.trim()) return;
+          const body = parseShellJson(stage.content);
           if (stage.operator === '$match') {
             compiledFilter = { ...compiledFilter, ...body };
           } else if (stage.operator === '$sort') {
@@ -1000,10 +1144,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
     if (queryMode === 'aggregate') {
       const pipeline = stages
-        .filter((stage) => stage.content.trim())
+        .filter((stage) => !stage.disabled && stage.content.trim())
         .map((stage) => {
           try {
-            return { [stage.operator]: JSON.parse(stage.content) };
+            return { [stage.operator]: parseShellJson(stage.content) };
           } catch {
             return { [stage.operator]: stage.content };
           }
@@ -1014,9 +1158,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     let parsedFilter: unknown = {};
     let parsedProjection: unknown = {};
     let parsedSort: unknown = {};
-    try { parsedFilter = filterQuery.trim() ? JSON.parse(filterQuery) : {}; } catch { parsedFilter = filterQuery; }
-    try { parsedProjection = projectionQuery.trim() ? JSON.parse(projectionQuery) : {}; } catch { parsedProjection = projectionQuery; }
-    try { parsedSort = sortQuery.trim() ? JSON.parse(sortQuery) : {}; } catch { parsedSort = sortQuery; }
+    try { parsedFilter = filterQuery.trim() ? parseShellJson(filterQuery) : {}; } catch { parsedFilter = filterQuery; }
+    try { parsedProjection = projectionQuery.trim() ? parseShellJson(projectionQuery) : {}; } catch { parsedProjection = projectionQuery; }
+    try { parsedSort = sortQuery.trim() ? parseShellJson(sortQuery) : {}; } catch { parsedSort = sortQuery; }
 
     const projectionPart =
       parsedProjection && typeof parsedProjection === 'object' && Object.keys(parsedProjection as Record<string, unknown>).length > 0
@@ -1035,7 +1179,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     setExplainLoading(true);
     try {
       if (queryMode === 'find') {
-        const parsedFilter = filterQuery.trim() ? JSON.parse(filterQuery) : {};
+        const parsedFilter = filterQuery.trim() ? parseShellJson(filterQuery) : {};
         await onExplain(JSON.stringify(parsedFilter));
       } else if (onExplainAggregate) {
         // Explain the FULL pipeline (M1), not just a collapsed $match.
@@ -1044,9 +1188,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         // Fallback (no aggregate explainer wired): approximate with the $match stages.
         let compiledFilter = {};
         stages.forEach(stage => {
-          if (stage.operator === '$match' && stage.content.trim()) {
+          if (!stage.disabled && stage.operator === '$match' && stage.content.trim()) {
             try {
-              const body = JSON.parse(stage.content);
+              const body = parseShellJson(stage.content);
               compiledFilter = { ...compiledFilter, ...body };
             } catch {
               // Ignore invalid JSON inside match stage during explain preview
@@ -1137,7 +1281,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 onClick={handleRun}
                 disabled={loading || explainLoading}
                 className="query-plane-btn query-plane-btn-primary"
-                title="Execute Query"
+                title="Execute query (Ctrl/⌘ + Enter)"
               >
                 <Play size={11} fill="white" />
                 <span>Run</span>
@@ -1591,6 +1735,24 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   <Plus size={11} />
                   <span>Add Stage</span>
                 </button>
+                <button
+                  onClick={undoStages}
+                  disabled={stagesPast.current.length === 0}
+                  className="query-plane-icon-btn"
+                  aria-label="Undo pipeline change"
+                  title="Undo pipeline change"
+                >
+                  <Undo2 size={11} />
+                </button>
+                <button
+                  onClick={redoStages}
+                  disabled={stagesFuture.current.length === 0}
+                  className="query-plane-icon-btn"
+                  aria-label="Redo pipeline change"
+                  title="Redo pipeline change"
+                >
+                  <Redo2 size={11} />
+                </button>
                 <div style={{ flexGrow: 1 }} />
               </header>
 
@@ -1598,9 +1760,41 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 {stages.map((stage, index) => {
                   const isValid = checkIsValidJson(stage.content);
                   return (
-                    <React.Fragment key={stage.id}>
-                      <div className={`mql-stage ${!isValid ? 'is-invalid' : ''}`} data-testid={`pipeline-stage-${index}`}>
-                        <div className="mql-stage-h">
+                    // Keyed by position, NOT stage.id: with id keys a reorder makes
+                    // React move the mounted Monaco editor's DOM subtree, which
+                    // crashes Monaco's scheduled renders ("this.domNode.domNode").
+                    // With index keys a reorder is just a value-prop update.
+                    <React.Fragment key={index}>
+                      <div
+                        className={`mql-stage ${!isValid ? 'is-invalid' : ''}${stage.disabled ? ' is-disabled' : ''}`}
+                        data-testid={`pipeline-stage-${index}`}
+                        onDragOver={(e) => {
+                          if (dragStageIndex === null) return;
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                        }}
+                        onDrop={(e) => { e.preventDefault(); dropStageAt(index); }}
+                      >
+                        <div
+                          className="mql-stage-h"
+                          draggable
+                          onDragStart={(e) => {
+                            // WebKit refuses to start a drag without payload data.
+                            e.dataTransfer.setData('text/plain', String(index));
+                            e.dataTransfer.effectAllowed = 'move';
+                            setDragStageIndex(index);
+                          }}
+                          onDragEnd={() => setDragStageIndex(null)}
+                        >
+                          <GripVertical size={11} className="mql-stage-grip" aria-hidden="true" />
+                          <button
+                            onClick={() => toggleStageCollapsed(stage.id)}
+                            className="query-plane-icon-btn"
+                            aria-label={stage.collapsed ? `Expand stage ${index + 1}` : `Collapse stage ${index + 1}`}
+                            title={stage.collapsed ? `Expand stage ${index + 1}` : `Collapse stage ${index + 1}`}
+                          >
+                            {stage.collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+                          </button>
                           <span className="mql-stage-num">{index + 1}</span>
                           <div className="mql-stage-op-wrap">
                             <select
@@ -1619,25 +1813,59 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                             <ChevronDown size={10} className="mql-stage-op-caret text-[var(--text-dim)]" />
                           </div>
                           <div style={{ flexGrow: 1 }} />
-                          <button onClick={() => moveStageUp(index)} disabled={index === 0} className="query-plane-icon-btn">
+                          <button
+                            onClick={() => runToStage(index)}
+                            disabled={loading || stage.disabled}
+                            className="query-plane-icon-btn"
+                            title={`Run pipeline to stage ${index + 1}`}
+                            aria-label={`Run pipeline to stage ${index + 1}`}
+                          >
+                            <Play size={11} />
+                          </button>
+                          <button
+                            onClick={() => toggleStageDisabled(stage.id)}
+                            className="query-plane-icon-btn"
+                            title={stage.disabled ? `Enable stage ${index + 1}` : `Disable stage ${index + 1}`}
+                            aria-label={stage.disabled ? `Enable stage ${index + 1}` : `Disable stage ${index + 1}`}
+                          >
+                            {stage.disabled ? <EyeOff size={11} /> : <Eye size={11} />}
+                          </button>
+                          <button onClick={() => moveStageUp(index)} disabled={index === 0} className="query-plane-icon-btn" aria-label={`Move stage ${index + 1} up`}>
                             <ChevronUp size={11} />
                           </button>
-                          <button onClick={() => moveStageDown(index)} disabled={index === stages.length - 1} className="query-plane-icon-btn">
+                          <button onClick={() => moveStageDown(index)} disabled={index === stages.length - 1} className="query-plane-icon-btn" aria-label={`Move stage ${index + 1} down`}>
                             <ChevronDown size={11} />
                           </button>
-                          <button onClick={() => removeStage(stage.id)} className="query-plane-icon-btn text-rose-400">
+                          <button onClick={() => removeStage(stage.id)} className="query-plane-icon-btn text-rose-400" aria-label={`Remove stage ${index + 1}`}>
                             <Trash2 size={11} />
                           </button>
                         </div>
-                        <QueryEditor
-                          surface="aggStage"
-                          onRun={handleRun}
-                          value={stage.content}
-                          onChange={(v) => updateStageContent(stage.id, v)}
-                          fields={fields}
-                          schema={schema}
-                          height={120}
-                        />
+                        {stage.operator === '$lookup' && !stage.collapsed && (
+                          <div className="mql-lookup-form" data-testid={`lookup-form-${index}`}>
+                            {(['from', 'localField', 'foreignField', 'as'] as const).map((key) => (
+                              <label key={key} className="mql-lookup-field">
+                                <span>{key}</span>
+                                <input
+                                  value={lookupFieldValue(stage, key)}
+                                  onChange={(e) => updateLookupField(stage.id, key, e.target.value)}
+                                  aria-label={`$lookup ${key}`}
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                        {!stage.collapsed && (
+                          <QueryEditor
+                            surface="aggStage"
+                            stageOperator={stage.operator}
+                            onRun={handleRun}
+                            value={stage.content}
+                            onChange={(v) => updateStageContent(stage.id, v)}
+                            fields={fields}
+                            schema={schema}
+                            height={120}
+                          />
+                        )}
                       </div>
                       {index < stages.length - 1 && (
                         <div className="mql-pipeline-flow">

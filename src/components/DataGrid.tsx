@@ -4,15 +4,18 @@ import { List } from 'react-window';
 import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3 } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
+import Editor from '@monaco-editor/react';
+import { generateQueryCode, CODE_LANGUAGES, CODE_LANGUAGE_MONACO_IDS, type CodeLanguage, type QueryCodeSpec } from '../lib/queryCodeGen';
+import { useMonacoTheme } from '../lib/useMonacoTheme';
 import { EJSON, ObjectId, Long, Decimal128, Int32, Double, Binary, Timestamp } from 'bson';
 
 interface DataGridProps {
   documents: Array<Record<string, any>>;
   density?: 'roomy' | 'cozy' | 'compact';
   explainResult?: string | null;
-  // The full mongosh-runnable command for the query that produced these results,
-  // shown formatted in the "Query Code" tab. Null when no query has run yet.
-  queryCode?: string | null;
+  // The query that produced these results, rendered as runnable driver code
+  // (per selected language) in the "Query Code" tab. Null before any run.
+  querySpec?: QueryCodeSpec | null;
   onInsertDocument?: () => void;
   onEditDocument?: (doc: Record<string, any>) => void;
   onDuplicateDocument?: (doc: Record<string, any>) => void;
@@ -402,7 +405,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   documents,
   density = 'cozy',
   explainResult = null,
-  queryCode = null,
+  querySpec = null,
   onInsertDocument,
   onEditDocument,
   onDuplicateDocument,
@@ -459,8 +462,61 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const docViewerContext = useContext(DocumentViewerContext);
   const [viewMode, setViewMode] = useState<ViewMode>('json');
   const [activeTab, setActiveTab] = useState<'results' | 'explain' | 'query'>('results');
+
+  // Column resize: table view keeps per-column widths (session-scoped — the
+  // column set changes per collection); the tree view's key column persists.
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const colWidth = (col: string) => colWidths[col] ?? 180;
+  const [treeKeyWidth, setTreeKeyWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('mqlens-treekey-width'));
+    return saved >= 140 && saved <= 800 ? saved : 320;
+  });
+  useEffect(() => { localStorage.setItem('mqlens-treekey-width', String(treeKeyWidth)); }, [treeKeyWidth]);
+
+  const clampCol = (w: number, min = 80, max = 800) => Math.min(max, Math.max(min, w));
+  const startColResize = (e: React.MouseEvent, startWidth: number, apply: (w: number) => void, min = 80) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const move = (ev: MouseEvent) => apply(clampCol(startWidth + ev.clientX - startX, min));
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+  // Shared handle: drag or focus + arrow keys. A render helper (not a nested
+  // component) so re-renders update the same DOM node instead of remounting.
+  const renderColResizer = (label: string, width: number, apply: (w: number) => void, min = 80) => (
+    <div
+      className="mql-col-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize ${label} column`}
+      tabIndex={0}
+      onMouseDown={(e) => startColResize(e, width, apply, min)}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        apply(clampCol(width + (e.key === 'ArrowRight' ? 16 : -16), min));
+      }}
+    />
+  );
   const [copied, setCopied] = useState(false);
   const [queryCopied, setQueryCopied] = useState(false);
+
+  // Query Code tab: generate runnable driver code in the selected language.
+  const monacoTheme = useMonacoTheme();
+  const [codeLang, setCodeLang] = useState<CodeLanguage>(() => {
+    const saved = localStorage.getItem('mqlens-codegen-lang') as CodeLanguage | null;
+    return saved && (CODE_LANGUAGES as readonly string[]).includes(saved) ? saved : 'mongosh';
+  });
+  useEffect(() => { localStorage.setItem('mqlens-codegen-lang', codeLang); }, [codeLang]);
+  const queryCode = useMemo(
+    () => (querySpec ? generateQueryCode(codeLang, querySpec) : null),
+    [querySpec, codeLang],
+  );
 
   const handleCopyQueryCode = () => {
     if (!queryCode) return;
@@ -981,7 +1037,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <div
             key={col}
             className="px-3 border-r border-[var(--border-color)] h-full flex items-center truncate text-[var(--text-main)]"
-            style={{ width: '180px', flexShrink: 0 }}
+            style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
             onContextMenu={(e) => openCtxMenu(e, rawDoc, col, rawDoc[col])}
           >
             {renderColoredCell(rawDoc[col])}
@@ -1205,15 +1261,28 @@ export const DataGrid: React.FC<DataGridProps> = ({
           ) : (
             /* Query Code Tools */
             queryCode && (
-              <button
-                onClick={handleCopyQueryCode}
-                className="px-2.5 py-1 rounded bg-[var(--bg-item-active)] hover:bg-[var(--bg-item-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] border border-[var(--border-color)] flex items-center gap-1.5 text-[11px] font-semibold transition-all cursor-pointer"
-                title="Copy query code"
-                data-testid="copy-query-code-btn"
-              >
-                {queryCopied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
-                <span>{queryCopied ? 'Copied!' : 'Copy'}</span>
-              </button>
+              <>
+                <select
+                  value={codeLang}
+                  onChange={(e) => setCodeLang(e.target.value as CodeLanguage)}
+                  className="px-2 py-1 rounded bg-[var(--bg-base)] text-[var(--text-main)] border border-[var(--border-color)] text-[11px] font-medium cursor-pointer"
+                  aria-label="Code language"
+                  data-testid="query-code-lang"
+                >
+                  {CODE_LANGUAGES.map((lang) => (
+                    <option key={lang} value={lang}>{lang}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleCopyQueryCode}
+                  className="px-2.5 py-1 rounded bg-[var(--bg-item-active)] hover:bg-[var(--bg-item-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] border border-[var(--border-color)] flex items-center gap-1.5 text-[11px] font-semibold transition-all cursor-pointer"
+                  title="Copy query code"
+                  data-testid="copy-query-code-btn"
+                >
+                  {queryCopied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+                  <span>{queryCopied ? 'Copied!' : 'Copy'}</span>
+                </button>
+              </>
             )
           )}
         </div>
@@ -1249,9 +1318,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
           </div>
         ) : viewMode === 'tree' ? (
           /* Virtualized tree-table: Key | Value | Type */
-          <div className="mql-treetable flex-1 flex flex-col min-h-0 min-w-0" data-testid="tree-view">
+          <div
+            className="mql-treetable flex-1 flex flex-col min-h-0 min-w-0"
+            data-testid="tree-view"
+            style={{ '--treetable-keyw': `${treeKeyWidth}px` } as React.CSSProperties}
+          >
             <div className="mql-treetable-head">
-              <div className="mql-treetable-key">Key</div>
+              <div className="mql-treetable-key relative">
+                Key
+                {renderColResizer('key', treeKeyWidth, setTreeKeyWidth, 140)}
+              </div>
               <div className="mql-treetable-value">Value</div>
               <div className="mql-treetable-type">Type</div>
             </div>
@@ -1278,10 +1354,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 {columns.map((col) => (
                   <div
                     key={col}
-                    className="px-3 border-r border-[var(--border-color)] flex items-center truncate"
-                    style={{ width: '180px', flexShrink: 0 }}
+                    className="px-3 border-r border-[var(--border-color)] flex items-center truncate relative"
+                    style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
                   >
                     {col}
+                    {renderColResizer(col, colWidth(col), (w) => setColWidths((p) => ({ ...p, [col]: w })))}
                   </div>
                 ))}
                 {hasRowActions && (
@@ -1299,7 +1376,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 rowHeight={getRowHeight()}
                 rowComponent={Row}
                 rowProps={{}}
-                style={{ height: '100%', width: '100%', minWidth: viewMode === 'table' ? `${(columns.length * 180) + 48 + (hasRowActions ? 72 : 0)}px` : '100%' }}
+                style={{ height: '100%', width: '100%', minWidth: viewMode === 'table' ? `${columns.reduce((s, c) => s + colWidth(c), 0) + 48 + (hasRowActions ? 72 : 0)}px` : '100%' }}
               />
             </div>
           </div>
@@ -1351,7 +1428,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 </div>
               ) : (
                 <div className="flex-1 overflow-auto bg-[var(--bg-base)] p-4 select-text">
-                  <pre className="text-[11px] text-sky-200 font-mono select-text leading-relaxed whitespace-pre-wrap">
+                  <pre className="text-[11px] text-[var(--syntax-key)] font-mono select-text leading-relaxed whitespace-pre-wrap">
                     {explainResult}
                   </pre>
                 </div>
@@ -1370,13 +1447,29 @@ export const DataGrid: React.FC<DataGridProps> = ({
         /* Query Code Workspace */
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden" data-testid="query-code-panel">
           {queryCode ? (
-            <div className="flex-1 overflow-auto bg-[var(--bg-base)] p-4 select-text">
-              <pre
-                className="text-[11px] text-sky-200 font-mono select-text leading-relaxed whitespace-pre-wrap"
-                data-testid="query-code-content"
-              >
-                {queryCode}
-              </pre>
+            <div className="flex-1 min-h-0 bg-[var(--bg-base)]">
+              <Editor
+                height="100%"
+                language={CODE_LANGUAGE_MONACO_IDS[codeLang]}
+                value={queryCode}
+                theme={monacoTheme}
+                wrapperProps={{ 'data-testid': 'query-code-content' }}
+                options={{
+                  readOnly: true,
+                  domReadOnly: true,
+                  minimap: { enabled: false },
+                  lineNumbers: 'on',
+                  lineNumbersMinChars: 3,
+                  scrollBeyondLastLine: false,
+                  wordWrap: 'on',
+                  fontSize: 12,
+                  fontFamily: 'JetBrains Mono, SF Mono, Consolas, monospace',
+                  renderLineHighlight: 'none',
+                  automaticLayout: true,
+                  contextmenu: false,
+                  padding: { top: 10 },
+                }}
+              />
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-[var(--text-muted)] select-none p-6 bg-[var(--bg-base)]">

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useDialogs } from './dialogs/DialogProvider';
+import { fuzzyMatch } from '../lib/fuzzyMatch';
 import {
   Database,
   Folder,
@@ -81,6 +82,8 @@ interface SidebarProps {
   onCollectionRenamed?: (connectionId: string, dbName: string, oldName: string, newName: string) => void;
   onDatabaseDropped?: (connectionId: string, dbName: string) => void;
   onDatabaseRenamed?: (connectionId: string, oldName: string, newName: string) => void;
+  onNamespaceMutated?: (connectionId?: string) => void;
+  onFilterQueryChange?: (query: string) => void;
   indexMutationTrigger?: number;
   collectionMutationTrigger?: number;
 }
@@ -158,12 +161,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCollectionRenamed,
   onDatabaseDropped,
   onDatabaseRenamed,
+  onNamespaceMutated,
+  onFilterQueryChange,
   indexMutationTrigger,
   collectionMutationTrigger,
 }) => {
   const { toast, confirm, prompt } = useDialogs();
   // Tree filter: matches connection / database / (loaded) collection names.
   const [filterQuery, setFilterQuery] = useState('');
+  useEffect(() => {
+    onFilterQueryChange?.(filterQuery);
+  }, [filterQuery, onFilterQueryChange]);
   const [helpOpen, setHelpOpen] = useState(false);
   // key: connectionId, value: database names list
   const [databases, setDatabases] = useState<{ [connectionId: string]: string[] }>({});
@@ -389,6 +397,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ...prev,
         [connectionId]: [...(prev[connectionId] || []), name],
       }));
+      onNamespaceMutated?.(connectionId);
       return;
     }
 
@@ -403,6 +412,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     try {
       await invoke('create_collection', { id: connectionId, database: name, collection: firstColl });
       await loadDatabases(connectionId);
+      onNamespaceMutated?.(connectionId);
     } catch (err) {
       toast(`Failed to create database: ${err}`, 'error');
     }
@@ -442,12 +452,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ...prev,
         [key]: [...(prev[key] || []), { name, type: 'collection' }],
       }));
+      onNamespaceMutated?.(connectionId);
       return;
     }
 
     try {
       await invoke('create_collection', { id: connectionId, database: dbName, collection: name });
       await handleRefreshDb(connectionId, dbName);
+      onNamespaceMutated?.(connectionId);
     } catch (err) {
       toast(`Failed to create collection: ${err}`, 'error');
     }
@@ -483,6 +495,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         [key]: (prev[key] || []).filter((c) => c.name !== collName),
       }));
       clearActiveIfDropped();
+      onNamespaceMutated?.(connectionId);
       return;
     }
 
@@ -490,6 +503,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       await invoke('drop_collection', { id: connectionId, database: dbName, collection: collName });
       clearActiveIfDropped();
       await handleRefreshDb(connectionId, dbName);
+      onNamespaceMutated?.(connectionId);
     } catch (err) {
       toast(`Failed to drop collection: ${err}`, 'error');
     }
@@ -547,6 +561,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return next;
       });
       onCollectionRenamed?.(connectionId, dbName, collName, newName);
+      onNamespaceMutated?.(connectionId);
     };
 
     if (isMock) {
@@ -626,6 +641,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return next;
       });
       onDatabaseDropped?.(connectionId, dbName);
+      onNamespaceMutated?.(connectionId);
     };
 
     if (isMock) {
@@ -718,6 +734,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return next;
       });
       onDatabaseRenamed?.(connectionId, dbName, newName);
+      onNamespaceMutated?.(connectionId);
     };
 
     if (isMock) {
@@ -931,15 +948,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {activeConnections.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {activeConnections.map((conn) => {
-              const q = filterQuery.trim().toLowerCase();
+              const q = filterQuery.trim();
               const filterActive = q.length > 0;
               const connDbs = databases[conn.id] || [];
-              const connNameMatch = filterActive && conn.name.toLowerCase().includes(q);
+              const connNameMatch = filterActive && fuzzyMatch(q, conn.name);
               const visibleDbs = connDbs.filter((dbName) =>
                 !filterActive ||
                 connNameMatch ||
-                dbName.toLowerCase().includes(q) ||
-                (collections[`${conn.id}/${dbName}`] || []).some((c) => c.name.toLowerCase().includes(q))
+                fuzzyMatch(q, dbName) ||
+                (collections[`${conn.id}/${dbName}`] || []).some((c) => fuzzyMatch(q, c.name))
               );
               // Hide a connection entirely when nothing under it matches.
               if (filterActive && !connNameMatch && visibleDbs.length === 0) return null;
@@ -949,8 +966,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               return (
                 <div key={conn.id} className="mql-tree-node">
                   {/* Connection Node */}
-                  <div 
+                  <div
                     className="mql-conn-row"
+                    role="button"
+                    aria-expanded={isConnExpanded}
+                    aria-label={`Connection ${conn.name}`}
                     onClick={() => setExpandedConnections((prev) => ({ ...prev, [conn.id]: !prev[conn.id] }))}
                     onContextMenu={(e) => handleContextMenu(e, conn.id, undefined, undefined, undefined, false, true)}
                   >
@@ -987,9 +1007,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         // When filtering and neither the connection nor the db name
                         // matches, narrow the db's collections to the matches and
                         // auto-expand so they're visible.
-                        const dbNameMatch = filterActive && (connNameMatch || dbName.toLowerCase().includes(q));
+                        const dbNameMatch = filterActive && (connNameMatch || fuzzyMatch(q, dbName));
                         const dbColls = filterActive && !dbNameMatch
-                          ? rawColls.filter((c) => c.name.toLowerCase().includes(q))
+                          ? rawColls.filter((c) => fuzzyMatch(q, c.name))
                           : rawColls;
                         const autoExpandDb = filterActive && !dbNameMatch && dbColls.length > 0;
                         const isDbExpanded = expandedDbs[dbKey] || autoExpandDb;
@@ -1034,8 +1054,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         return (
                           <div key={dbName} className="mql-tree-node">
                             {/* Database Node */}
-                            <div 
+                            <div
                               className="mql-row-h mql-tree-row"
+                              role="button"
+                              aria-expanded={isDbExpanded}
+                              aria-label={`Database ${dbName}`}
                               onClick={() => toggleDb(conn.id, dbName)}
                               onContextMenu={(e) => handleContextMenu(e, conn.id, dbName)}
                             >

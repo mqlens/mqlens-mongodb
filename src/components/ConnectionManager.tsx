@@ -3,6 +3,7 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
+import { useEscapeClose } from '../lib/useEscapeClose';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
   Folder, FolderPlus, FolderOpen, Search, ChevronDown, ChevronRight,
@@ -355,6 +356,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       loadFoldersFromStorage();
     }
   }, [isOpen]);
+
+  useEscapeClose(isOpen, onClose);
 
   const loadFoldersFromStorage = () => {
     try {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ObjectId, Long, Decimal128, Int32 } from 'bson';
-import { docToShell, shellToEjson } from '../shellDoc';
+import { docToShell, shellToEjson, parseShellJson } from '../shellDoc';
 
 describe('docToShell', () => {
   it('renders EJSON-shaped values as shell constructors', () => {
@@ -56,5 +56,27 @@ describe('shellToEjson', () => {
   it('round-trips docToShell -> shellToEjson', () => {
     const doc = { _id: { $oid: '507f1f77bcf86cd799439011' }, when: { $date: '2025-01-04T00:00:00.000Z' }, tags: ['a', 'b'] };
     expect(JSON.parse(shellToEjson(docToShell(doc)))).toEqual(doc);
+  });
+});
+
+describe('parseShellJson', () => {
+  it('parses plain JSON', () => {
+    expect(parseShellJson('{"a": 1}')).toEqual({ a: 1 });
+  });
+  it('parses shell constructors into EJSON shapes', () => {
+    expect(parseShellJson('{"_id": ObjectId("507f1f77bcf86cd799439011")}'))
+      .toEqual({ _id: { $oid: '507f1f77bcf86cd799439011' } });
+    expect(parseShellJson('{"when": {"$gte": ISODate("2025-01-04T00:00:00.000Z")}}'))
+      .toEqual({ when: { $gte: { $date: '2025-01-04T00:00:00.000Z' } } });
+  });
+  it('leaves EJSON wrappers untouched', () => {
+    expect(parseShellJson('{"_id": {"$oid": "507f1f77bcf86cd799439011"}}'))
+      .toEqual({ _id: { $oid: '507f1f77bcf86cd799439011' } });
+  });
+  it('does not convert constructor-like text inside strings', () => {
+    expect(parseShellJson('{"note": "ObjectId(fake)"}')).toEqual({ note: 'ObjectId(fake)' });
+  });
+  it('throws on invalid input', () => {
+    expect(() => parseShellJson('{nope')).toThrow();
   });
 });

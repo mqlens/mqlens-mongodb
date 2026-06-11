@@ -1,5 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+
+// Monaco renders the Query Code panel; mock it as a plain textarea (same shape
+// as the other component tests) so assertions can read the generated code.
+vi.mock('@monaco-editor/react', () => ({
+  default: ({ value, wrapperProps }: { value: string; wrapperProps?: Record<string, unknown> }) => (
+    <textarea data-testid={wrapperProps?.['data-testid'] as string | undefined} value={value} readOnly />
+  ),
+}));
+
 import { DataGrid, getExplainTree } from '../DataGrid';
 
 // Collect every node name in the tree (depth-first) for assertions.
@@ -190,17 +199,28 @@ describe('DataGrid Component', () => {
     expect(screen.getByText(/"David Miller"/)).toBeInTheDocument();
   });
 
-  it('shows a Query Code tab with the formatted runnable command when queryCode is provided', () => {
-    const code = 'db.products.aggregate([\n  {\n    "$count": "n"\n  }\n])';
-    render(<DataGrid documents={mockDocuments} queryCode={code} />);
+  it('shows a Query Code tab rendering the query spec in the selected language', () => {
+    const spec = {
+      db: 'shop',
+      collection: 'products',
+      query: { queryType: 'aggregate' as const, pipeline: [{ $count: 'n' }] },
+    };
+    render(<DataGrid documents={mockDocuments} querySpec={spec} />);
 
-    // The tab appears and opens the formatted query code.
+    // The tab appears and opens with the mongosh command by default.
     fireEvent.click(screen.getByTestId('query-code-tab'));
     expect(screen.getByTestId('query-code-panel')).toBeInTheDocument();
-    expect(screen.getByTestId('query-code-content').textContent).toBe(code);
+    const content = () => (screen.getByTestId('query-code-content') as HTMLTextAreaElement).value;
+    expect(content()).toContain('db.products.aggregate(');
+    expect(content()).toContain('$count');
+
+    // Switching the language regenerates the code.
+    fireEvent.change(screen.getByTestId('query-code-lang'), { target: { value: 'Python' } });
+    expect(content()).toContain('from pymongo import MongoClient');
+    fireEvent.change(screen.getByTestId('query-code-lang'), { target: { value: 'mongosh' } });
   });
 
-  it('hides the Query Code tab when no queryCode is provided', () => {
+  it('hides the Query Code tab when no query spec is provided', () => {
     render(<DataGrid documents={mockDocuments} />);
     expect(screen.queryByTestId('query-code-tab')).toBeNull();
   });
@@ -293,5 +313,40 @@ describe('DataGrid Component', () => {
     expect(writeText).toHaveBeenCalledWith(JSON.stringify(mockDocuments[0], null, 2));
     // The control flips to a "Copied" confirmation state.
     expect(screen.getAllByLabelText('Copied').length).toBeGreaterThan(0);
+  });
+});
+
+describe('DataGrid column resize', () => {
+  it('renders a resize handle per table column and resizes with the keyboard', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    const handle = screen.getByLabelText('Resize name column');
+    const headerCell = handle.parentElement as HTMLElement;
+    expect(headerCell.style.width).toBe('180px');
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(headerCell.style.width).toBe('196px');
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(headerCell.style.width).toBe('164px');
+  });
+
+  it('resizes the tree view key column with the keyboard', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+    const handle = screen.getByLabelText('Resize key column');
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    const tree = screen.getByTestId('tree-view');
+    expect(tree.style.getPropertyValue('--treetable-keyw')).toBe('336px');
+  });
+
+  it('resizes a table column by mouse drag', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    const handle = screen.getByLabelText('Resize name column');
+    const headerCell = handle.parentElement as HTMLElement;
+    fireEvent.mouseDown(handle, { clientX: 300 });
+    fireEvent.mouseMove(window, { clientX: 360 });
+    fireEvent.mouseUp(window);
+    expect(headerCell.style.width).toBe('240px');
   });
 });

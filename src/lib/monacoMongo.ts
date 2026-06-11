@@ -2,7 +2,7 @@ import type { Monaco } from '@monaco-editor/react';
 import { getCompletions, type Surface, type CompletionKind } from './mongoCompletions';
 import type { SchemaMap } from './useCollectionSchema';
 
-interface ModelMeta { surface: Surface; getFields: () => string[]; getSchema: () => SchemaMap | undefined; getCollections?: () => string[]; }
+interface ModelMeta { surface: Surface; getFields: () => string[]; getSchema: () => SchemaMap | undefined; getCollections?: () => string[]; getStageOperator?: () => string | undefined; }
 const modelMeta = new Map<string, ModelMeta>();
 let registered = false;
 
@@ -17,6 +17,7 @@ function kindToMonaco(monaco: Monaco, kind: CompletionKind) {
     case 'stage': return k.Keyword;
     case 'method': return k.Method;
     case 'enum': return k.EnumMember;
+    case 'ejson': return k.Struct;
     default: return k.Text;
   }
 }
@@ -44,10 +45,11 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
   }
 
   const provider = {
-    // Only trigger on word-starting characters — '.' (db.<coll>, field paths)
-    // and '$' (operators). NOT space/brace/quote, so the dropdown doesn't pop
-    // until you actually start typing a word.
-    triggerCharacters: ['.', '$'],
+    // Word-starting characters: '.' (db.<coll>, field paths), '$' (operators),
+    // and '"' — in the JSON surfaces every key starts with a quote, so without
+    // it the dropdown never opens for field names (Monaco's quickSuggestions
+    // are disabled inside strings by default).
+    triggerCharacters: ['.', '$', '"'],
     provideCompletionItems(model: any, position: any) {
       const meta = modelMeta.get(model.uri.toString());
       if (!meta) return { suggestions: [] };
@@ -59,15 +61,22 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
       const items = getCompletions({
         surface: meta.surface, textBeforeCursor, token,
         fields: meta.getFields(), schema: meta.getSchema(), collections: meta.getCollections?.(),
+        stageOperator: meta.getStageOperator?.(),
       });
       const range = {
         startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
         startColumn: position.column - token.length, endColumn: position.column,
       };
       return {
-        suggestions: items.map((it) => ({
+        // sortText preserves getCompletions' intentional order (e.g. the
+        // schema-matched EJSON wrapper first) against Monaco's default sort.
+        suggestions: items.map((it, idx) => ({
           label: it.label, kind: kindToMonaco(monaco, it.kind),
           insertText: it.insertText, detail: it.detail, range,
+          sortText: String(idx).padStart(4, '0'),
+          insertTextRules: it.isSnippet
+            ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+            : undefined,
         })),
       };
     },

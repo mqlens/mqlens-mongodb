@@ -77,6 +77,12 @@ function ctorToEjson(name: string, arg: string): string {
   }
 }
 
+// Parse user query text that may mix JSON, EJSON wrappers, and shell
+// constructors (ObjectId(…), ISODate(…)) — the query bar accepts all three.
+export function parseShellJson(text: string): any {
+  return JSON.parse(shellToEjson(text));
+}
+
 // shell-style source text -> Extended JSON string. String literals are copied
 // verbatim so e.g. a value "call ISODate()" is not mangled.
 export function shellToEjson(text: string): string {

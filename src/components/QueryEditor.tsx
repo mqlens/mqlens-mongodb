@@ -3,6 +3,7 @@ import Editor, { type Monaco } from '@monaco-editor/react';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
 import type { Surface } from '../lib/mongoCompletions';
 import type { SchemaMap } from '../lib/useCollectionSchema';
+import { useMonacoTheme } from '../lib/useMonacoTheme';
 
 // A single body-level node where Monaco renders overflow widgets (the suggest
 // dropdown). Without this, the widget is trapped inside the query-row's stacking
@@ -32,6 +33,9 @@ interface QueryEditorProps {
   singleLine?: boolean;
   className?: string;
   onRun?: () => void;
+  // For aggStage editors that hold a single stage's body: drives
+  // operator-specific completions ($group → accumulators, $lookup → keys, …).
+  stageOperator?: string;
   'data-testid'?: string;
 }
 
@@ -45,17 +49,24 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
   singleLine = false,
   className,
   onRun,
+  stageOperator,
   'data-testid': testid,
 }) => {
   const fieldsRef = useRef(fields); fieldsRef.current = fields;
   const schemaRef = useRef(schema); schemaRef.current = schema;
   const onRunRef = useRef(onRun); onRunRef.current = onRun;
+  const stageOperatorRef = useRef(stageOperator); stageOperatorRef.current = stageOperator;
   const uriRef = useRef<string | null>(null);
-  const theme = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'vs-dark';
+  const theme = useMonacoTheme();
 
   const editorHeight = height ?? (singleLine ? 22 : 120);
 
   const overflowWidgetsDomNode = getOverflowNode();
+
+  // JSON keys live inside string literals, where Monaco suppresses
+  // quick suggestions by default — enable them so field/operator
+  // completions keep filtering while the user types a quoted key.
+  const quickSuggestions = { other: true, comments: false, strings: true };
 
   const multiLineOptions = {
     minimap: { enabled: false }, lineNumbers: 'off' as const, folding: false,
@@ -63,6 +74,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
     scrollbar: { vertical: 'auto' as const, horizontal: 'auto' as const }, overviewRulerLanes: 0,
     renderLineHighlight: 'none' as const, tabSize: 2,
     fixedOverflowWidgets: true, overflowWidgetsDomNode,
+    quickSuggestions,
     // Enter accepts an open suggestion; otherwise inserts a newline.
     acceptSuggestionOnEnter: 'on' as const,
   };
@@ -92,6 +104,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
     fixedOverflowWidgets: true,
     overflowWidgetsDomNode,
     tabSize: 2,
+    quickSuggestions,
   };
 
   const editor = (
@@ -136,6 +149,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
             surface,
             getFields: () => fieldsRef.current,
             getSchema: () => schemaRef.current,
+            getStageOperator: () => stageOperatorRef.current,
           });
           ed.onDidDispose(() => { if (uriRef.current) clearModelMeta(uriRef.current); });
         }
