@@ -1115,3 +1115,78 @@ describe('Aggregation stage body templates', () => {
     expect((stage0.querySelector('textarea') as HTMLTextAreaElement).value).toBe('10');
   });
 });
+
+describe('Aggregation builder: collapse, undo/redo, $lookup form (#89)', () => {
+  const renderAgg3 = () => {
+    const onExecuteAggregate = vi.fn();
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={vi.fn()}
+        onExecuteAggregate={onExecuteAggregate}
+        onExplain={vi.fn()}
+        loading={false}
+      />
+    );
+    fireEvent.click(screen.getByTestId('mode-aggregate-tab'));
+    return { onExecuteAggregate };
+  };
+
+  it('collapses a stage body without removing it from the pipeline', () => {
+    const { onExecuteAggregate } = renderAgg3();
+    const stage0 = screen.getByTestId('pipeline-stage-0');
+    expect(stage0.querySelector('textarea')).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('Collapse stage 1'));
+    expect(screen.getByTestId('pipeline-stage-0').querySelector('textarea')).toBeNull();
+
+    // Collapsed is visual only — the stage still runs.
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(onExecuteAggregate).toHaveBeenCalledWith([{ $match: {} }]);
+
+    fireEvent.click(screen.getByLabelText('Expand stage 1'));
+    expect(screen.getByTestId('pipeline-stage-0').querySelector('textarea')).toBeTruthy();
+  });
+
+  it('undoes and redoes pipeline changes', () => {
+    renderAgg3();
+    expect(screen.getByText('1 stage')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /add stage/i }));
+    expect(screen.getByText('2 stages')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Undo pipeline change'));
+    expect(screen.getByText('1 stage')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Redo pipeline change'));
+    expect(screen.getByText('2 stages')).toBeInTheDocument();
+  });
+
+  it('undo restores a removed stage', () => {
+    renderAgg3();
+    fireEvent.click(screen.getByRole('button', { name: /add stage/i }));
+    fireEvent.click(screen.getByLabelText('Remove stage 2'));
+    expect(screen.getByText('1 stage')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Undo pipeline change'));
+    expect(screen.getByText('2 stages')).toBeInTheDocument();
+  });
+
+  it('shows a $lookup form whose inputs sync into the stage body', () => {
+    renderAgg3();
+    const stage0 = screen.getByTestId('pipeline-stage-0');
+    fireEvent.change(stage0.querySelector('select')!, { target: { value: '$lookup' } });
+
+    // Form reflects the template body.
+    const fromInput = screen.getByLabelText('$lookup from') as HTMLInputElement;
+    expect(fromInput.value).toBe('collection');
+
+    fireEvent.change(fromInput, { target: { value: 'orders' } });
+    fireEvent.change(screen.getByLabelText('$lookup as'), { target: { value: 'userOrders' } });
+
+    const body = (screen.getByTestId('pipeline-stage-0').querySelector('textarea') as HTMLTextAreaElement).value;
+    expect(body).toContain('"from": "orders"');
+    expect(body).toContain('"as": "userOrders"');
+  });
+});

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AIChatPanel } from './AIChatPanel';
 import { QueryEditor } from './QueryEditor';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
@@ -40,7 +40,9 @@ import {
   X,
   Eye,
   EyeOff,
-  GripVertical
+  GripVertical,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 
 interface VisualRule {
@@ -463,6 +465,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     // Disabled stages stay in the builder but are excluded from every
     // pipeline build (run, run-to-here, explain, shell command, saved query).
     disabled?: boolean;
+    // Collapsed stages hide their body editor; purely visual.
+    collapsed?: boolean;
   }
   const [stages, setStages] = useState<PipelineStage[]>([
     { id: 'stage-1', operator: '$match', content: '{\n  \n}' }
@@ -471,21 +475,50 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // AI chat assistant — open/close only; the panel owns its own chat state.
   const [isAIHelperOpen, setIsAIHelperOpen] = useState(false);
 
+  // Pipeline undo/redo: every stage mutation goes through commitStages, which
+  // snapshots the previous list. Keystroke-level content edits coalesce via a
+  // key so undo steps back over whole edits, not single characters.
+  const stagesPast = useRef<PipelineStage[][]>([]);
+  const stagesFuture = useRef<PipelineStage[][]>([]);
+  const lastStageEditRef = useRef<string | null>(null);
+  const commitStages = (next: PipelineStage[], coalesceKey?: string) => {
+    if (!coalesceKey || lastStageEditRef.current !== coalesceKey) {
+      stagesPast.current = [...stagesPast.current.slice(-99), stages];
+      stagesFuture.current = [];
+    }
+    lastStageEditRef.current = coalesceKey ?? null;
+    setStages(next);
+  };
+  const undoStages = () => {
+    const prev = stagesPast.current.pop();
+    if (!prev) return;
+    stagesFuture.current.push(stages);
+    lastStageEditRef.current = null;
+    setStages(prev);
+  };
+  const redoStages = () => {
+    const next = stagesFuture.current.pop();
+    if (!next) return;
+    stagesPast.current.push(stages);
+    lastStageEditRef.current = null;
+    setStages(next);
+  };
+
   const addStage = () => {
     const newStage = {
       id: `stage-${Math.random().toString(36).substr(2, 9)}`,
       operator: '$match',
       content: '{\n  \n}'
     };
-    setStages(prev => [...prev, newStage]);
+    commitStages([...stages, newStage]);
   };
 
   const removeStage = (id: string) => {
-    setStages(prev => prev.filter(s => s.id !== id));
+    commitStages(stages.filter(s => s.id !== id));
   };
 
   const updateStageOperator = (id: string, operator: string) => {
-    setStages(prev => prev.map(s => s.id === id
+    commitStages(stages.map(s => s.id === id
       ? {
           ...s,
           operator,
@@ -496,24 +529,54 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   };
 
   const updateStageContent = (id: string, content: string) => {
-    setStages(prev => prev.map(s => s.id === id ? { ...s, content } : s));
+    commitStages(stages.map(s => s.id === id ? { ...s, content } : s), `content:${id}`);
   };
 
   const toggleStageDisabled = (id: string) => {
-    setStages(prev => prev.map(s => s.id === id ? { ...s, disabled: !s.disabled } : s));
+    commitStages(stages.map(s => s.id === id ? { ...s, disabled: !s.disabled } : s));
+  };
+
+  // Collapse is visual only — collapsed stages still run.
+  const toggleStageCollapsed = (id: string) => {
+    commitStages(stages.map(s => s.id === id ? { ...s, collapsed: !s.collapsed } : s));
+  };
+
+  // $lookup form helper: read/write the four common parameters directly in the
+  // stage body so the user doesn't have to hand-edit the JSON.
+  const lookupFieldValue = (stage: PipelineStage, key: string): string => {
+    try {
+      const body = parseShellJson(stage.content);
+      return body && typeof body === 'object' && typeof (body as Record<string, unknown>)[key] === 'string'
+        ? (body as Record<string, string>)[key]
+        : '';
+    } catch {
+      return '';
+    }
+  };
+  const updateLookupField = (id: string, key: string, value: string) => {
+    const stage = stages.find(s => s.id === id);
+    if (!stage) return;
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = parseShellJson(stage.content);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed as Record<string, unknown>;
+    } catch { /* unparseable body — rebuild from the form */ }
+    body[key] = value;
+    commitStages(
+      stages.map(s => s.id === id ? { ...s, content: JSON.stringify(body, null, 2) } : s),
+      `lookup:${id}:${key}`,
+    );
   };
 
   // Drag-to-reorder: header is the drag handle; dropping on a stage moves the
   // dragged stage to that position.
   const [dragStageIndex, setDragStageIndex] = useState<number | null>(null);
   const dropStageAt = (target: number) => {
-    setStages(prev => {
-      if (dragStageIndex === null || dragStageIndex === target) return prev;
-      const next = [...prev];
-      const [moved] = next.splice(dragStageIndex, 1);
-      next.splice(target, 0, moved);
-      return next;
-    });
+    if (dragStageIndex === null || dragStageIndex === target) { setDragStageIndex(null); return; }
+    const next = [...stages];
+    const [moved] = next.splice(dragStageIndex, 1);
+    next.splice(target, 0, moved);
+    commitStages(next);
     setDragStageIndex(null);
   };
 
@@ -534,24 +597,16 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
   const moveStageUp = (index: number) => {
     if (index === 0) return;
-    setStages(prev => {
-      const next = [...prev];
-      const temp = next[index];
-      next[index] = next[index - 1];
-      next[index - 1] = temp;
-      return next;
-    });
+    const next = [...stages];
+    [next[index - 1], next[index]] = [next[index], next[index - 1]];
+    commitStages(next);
   };
 
   const moveStageDown = (index: number) => {
-    setStages(prev => {
-      if (index === prev.length - 1) return prev;
-      const next = [...prev];
-      const temp = next[index];
-      next[index] = next[index + 1];
-      next[index + 1] = temp;
-      return next;
-    });
+    if (index === stages.length - 1) return;
+    const next = [...stages];
+    [next[index], next[index + 1]] = [next[index + 1], next[index]];
+    commitStages(next);
   };
 
   // Build pipeline stages ({id, operator, content}) from a MongoDB pipeline array.
@@ -570,7 +625,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const handleInsertQuery = (query: GeneratedQuery) => {
     if (query.queryType === 'aggregate') {
       const pipeline = query.pipeline && query.pipeline.length > 0 ? query.pipeline : [{ $match: {} }];
-      setStages(stagesFromPipeline(pipeline));
+      commitStages(stagesFromPipeline(pipeline));
       setQueryMode('aggregate');
       triggerNotification('Aggregation pipeline applied');
     } else {
@@ -1680,6 +1735,24 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   <Plus size={11} />
                   <span>Add Stage</span>
                 </button>
+                <button
+                  onClick={undoStages}
+                  disabled={stagesPast.current.length === 0}
+                  className="query-plane-icon-btn"
+                  aria-label="Undo pipeline change"
+                  title="Undo pipeline change"
+                >
+                  <Undo2 size={11} />
+                </button>
+                <button
+                  onClick={redoStages}
+                  disabled={stagesFuture.current.length === 0}
+                  className="query-plane-icon-btn"
+                  aria-label="Redo pipeline change"
+                  title="Redo pipeline change"
+                >
+                  <Redo2 size={11} />
+                </button>
                 <div style={{ flexGrow: 1 }} />
               </header>
 
@@ -1714,6 +1787,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                           onDragEnd={() => setDragStageIndex(null)}
                         >
                           <GripVertical size={11} className="mql-stage-grip" aria-hidden="true" />
+                          <button
+                            onClick={() => toggleStageCollapsed(stage.id)}
+                            className="query-plane-icon-btn"
+                            aria-label={stage.collapsed ? `Expand stage ${index + 1}` : `Collapse stage ${index + 1}`}
+                            title={stage.collapsed ? `Expand stage ${index + 1}` : `Collapse stage ${index + 1}`}
+                          >
+                            {stage.collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+                          </button>
                           <span className="mql-stage-num">{index + 1}</span>
                           <div className="mql-stage-op-wrap">
                             <select
@@ -1759,16 +1840,32 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                             <Trash2 size={11} />
                           </button>
                         </div>
-                        <QueryEditor
-                          surface="aggStage"
-                          stageOperator={stage.operator}
-                          onRun={handleRun}
-                          value={stage.content}
-                          onChange={(v) => updateStageContent(stage.id, v)}
-                          fields={fields}
-                          schema={schema}
-                          height={120}
-                        />
+                        {stage.operator === '$lookup' && !stage.collapsed && (
+                          <div className="mql-lookup-form" data-testid={`lookup-form-${index}`}>
+                            {(['from', 'localField', 'foreignField', 'as'] as const).map((key) => (
+                              <label key={key} className="mql-lookup-field">
+                                <span>{key}</span>
+                                <input
+                                  value={lookupFieldValue(stage, key)}
+                                  onChange={(e) => updateLookupField(stage.id, key, e.target.value)}
+                                  aria-label={`$lookup ${key}`}
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                        {!stage.collapsed && (
+                          <QueryEditor
+                            surface="aggStage"
+                            stageOperator={stage.operator}
+                            onRun={handleRun}
+                            value={stage.content}
+                            onChange={(v) => updateStageContent(stage.id, v)}
+                            fields={fields}
+                            schema={schema}
+                            height={120}
+                          />
+                        )}
                       </div>
                       {index < stages.length - 1 && (
                         <div className="mql-pipeline-flow">

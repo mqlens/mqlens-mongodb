@@ -3222,6 +3222,25 @@ select:focus-visible {
 .mql-stage.is-invalid    { box-shadow: 0 0 0 1px var(--accent-red);  border-color: var(--accent-red); }
 /* Disabled stages stay editable but read as excluded from the pipeline. */
 .mql-stage.is-disabled { opacity: 0.55; }
+/* $lookup form helper: the four common parameters as labeled inputs. */
+.mql-lookup-form {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+  background: hsla(0,0%,50%,0.03);
+}
+.mql-lookup-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mql-lookup-field span {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-dim);
+}
+.mql-lookup-field input {
+  height: 22px; padding: 0 6px;
+  font-size: 11px; font-family: var(--font-mono);
+  background: var(--bg-base); border: 1px solid var(--border-color);
+  border-radius: 4px; color: var(--text-main);
+  outline: none; min-width: 0;
+}
 .mql-stage-h {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 6px 5px 8px;
