@@ -1393,12 +1393,14 @@ function Workspace() {
                                         ? `Monitor: ${connectionNameFor(tab.connectionId)}`
                                         : tab.collection}
                       </span>
-                      <span
+                      <button
                         onClick={(e) => handleCloseTab(e, tab.id)}
                         className="mql-tab-close"
+                        aria-label="Close tab"
+                        title="Close tab"
                       >
                         <X size={10} />
-                      </span>
+                      </button>
                     </div>
                   );
                 })}
