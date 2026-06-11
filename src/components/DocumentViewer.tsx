@@ -1137,7 +1137,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 onClick={handleRun}
                 disabled={loading || explainLoading}
                 className="query-plane-btn query-plane-btn-primary"
-                title="Execute Query"
+                title="Execute query (Ctrl/⌘ + Enter)"
               >
                 <Play size={11} fill="white" />
                 <span>Run</span>

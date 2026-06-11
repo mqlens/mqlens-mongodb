@@ -28,7 +28,7 @@ import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
-import { FolderCode, X, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity } from 'lucide-react';
+import { FolderCode, X, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity, Copy } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
@@ -1400,8 +1400,16 @@ function Workspace() {
                   >
                     <div className="flex-grow flex flex-col min-h-0 min-w-0">
                       {activeTab.error && (
-                        <div className="p-3 bg-rose-950/20 border-b border-[var(--border-color)] text-rose-400 font-mono text-[11px] select-text">
-                          Error loading dataset: {activeTab.error}
+                        <div className="p-3 bg-rose-950/20 border-b border-[var(--border-color)] text-rose-400 font-mono text-[11px] select-text flex items-start gap-2">
+                          <span className="flex-grow">Error loading dataset: {activeTab.error}</span>
+                          <button
+                            className="mql-btn flex-shrink-0"
+                            title="Copy error message"
+                            onClick={() => { try { navigator.clipboard?.writeText(String(activeTab.error)); } catch { /* clipboard unavailable */ } }}
+                          >
+                            <Copy size={11} />
+                            <span>Copy</span>
+                          </button>
                         </div>
                       )}
                       {activeTab.loading ? (

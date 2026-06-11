@@ -457,6 +457,19 @@ button { cursor: pointer; }
   box-shadow: var(--shadow-btn-hover);
 }
 .mql-btn-primary:disabled, .mql-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Disabled buttons must not react to hover — a dead control that highlights reads as broken. */
+.mql-btn:disabled:hover { background: transparent; color: var(--text-muted); border-color: transparent; }
+.mql-btn-primary:disabled:hover { background: var(--brand-gradient); box-shadow: var(--shadow-btn); }
+
+/* Unified keyboard-focus ring across interactive controls (mouse clicks don't trigger :focus-visible). */
+.mql-btn:focus-visible,
+.mql-btn-primary:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
 .mql-btn-outlined { border: 1px solid var(--border-color); color: var(--text-main); }
 .mql-btn-danger { color: var(--accent-red); }
 .mql-btn-danger:hover { color: var(--soft-red-text); background: var(--soft-red-bg); border-color: var(--soft-red-bd); }
@@ -3823,6 +3836,33 @@ button, input, select, textarea {
 [data-density="roomy"] .mql-quickstart-card-title { font-size: 13.5px; }
 [data-density="roomy"] .mql-quickstart-card-desc { font-size: 12px; }
 [data-density="roomy"] .mql-quickstart-tip { font-size: 12.5px; }
+
+/* Density: query toolbar, query bar, buttons, table chrome, status bar.
+   (Tree/table/JSON result rows scale in JS — DataGrid getRowHeight.) */
+[data-density="compact"] { --h-statusbar: 20px; }
+[data-density="roomy"]   { --h-statusbar: 26px; }
+
+[data-density="compact"] .mql-toolbar { padding: 3px 10px; gap: 6px; }
+[data-density="compact"] .query-plane-toolbar,
+[data-density="compact"] .query-plane-breadcrumbs { padding: 3px 10px; }
+[data-density="compact"] .mql-qbadge { height: 24px; padding: 0 8px; min-width: 76px; font-size: 9px; }
+[data-density="compact"] .mql-qinput { height: 24px; padding: 0 8px; font-size: 11px; }
+[data-density="compact"] .mql-btn { height: 22px; padding: 0 8px; font-size: 10.5px; gap: 5px; }
+[data-density="compact"] .query-plane-btn { padding: 2.5px 8px; font-size: 10.5px; gap: 5px; }
+[data-density="compact"] .mql-th { padding: 3px 10px; font-size: 9.5px; }
+[data-density="compact"] .mql-td { padding: 3px 10px; }
+[data-density="compact"] .mql-statusbar { padding: 0 10px; }
+
+[data-density="roomy"] .mql-toolbar { padding: 9px 16px; gap: 10px; }
+[data-density="roomy"] .query-plane-toolbar,
+[data-density="roomy"] .query-plane-breadcrumbs { padding: 9px 16px; }
+[data-density="roomy"] .mql-qbadge { height: 34px; padding: 0 12px; }
+[data-density="roomy"] .mql-qinput { height: 34px; padding: 0 12px; font-size: 12px; }
+[data-density="roomy"] .mql-btn { height: 30px; padding: 0 12px; font-size: 12px; }
+[data-density="roomy"] .query-plane-btn { padding: 6.5px 12px; font-size: 12px; }
+[data-density="roomy"] .mql-th { padding: 8px 12px; font-size: 10.5px; }
+[data-density="roomy"] .mql-td { padding: 8px 12px; }
+[data-density="roomy"] .mql-statusbar { padding: 0 14px; }
 
 /* Query Plane Styles */
 .query-plane-breadcrumbs {
