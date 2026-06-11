@@ -85,3 +85,26 @@ describe('CommandPalette', () => {
     expect(screen.getByText('shop.users')).toBeTruthy();
   });
 });
+
+describe('CommandPalette ranking', () => {
+  it('ranks stronger matches first (prefix beats subsequence)', () => {
+    const actions: PaletteAction[] = [
+      { id: 'a', title: 'Disconnect server', run: () => {} },
+      { id: 'b', title: 'Settings', run: () => {} },
+    ];
+    render(<CommandPalette open onClose={() => {}} actions={actions} />);
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'set' } });
+    const options = screen.getAllByRole('option');
+    expect(options[0].textContent).toContain('Settings');
+  });
+
+  it('keeps the original order on an empty query', () => {
+    const actions: PaletteAction[] = [
+      { id: 'a', title: 'Zeta', run: () => {} },
+      { id: 'b', title: 'Alpha', run: () => {} },
+    ];
+    render(<CommandPalette open onClose={() => {}} actions={actions} />);
+    const options = screen.getAllByRole('option');
+    expect(options[0].textContent).toContain('Zeta');
+  });
+});

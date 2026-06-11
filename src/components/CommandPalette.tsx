@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
+import { fuzzyScore } from '../lib/fuzzyMatch';
 
 export interface PaletteAction {
   id: string;
@@ -15,11 +16,13 @@ interface CommandPaletteProps {
   actions: PaletteAction[];
 }
 
-const matches = (query: string, action: PaletteAction): boolean => {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  const haystack = `${action.title} ${action.keywords ?? ''}`.toLowerCase();
-  return q.split(/\s+/).every((part) => haystack.includes(part));
+// Rank by fuzzy score: title matches outrank keyword-only matches. An empty
+// query scores everything 0, so the caller's original order is kept.
+const scoreAction = (query: string, action: PaletteAction): number | null => {
+  const title = fuzzyScore(query, action.title);
+  const keywords = action.keywords ? fuzzyScore(query, action.keywords) : null;
+  if (title === null && keywords === null) return null;
+  return Math.max(title ?? -Infinity, keywords !== null ? keywords - 50 : -Infinity);
 };
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, actions }) => {
@@ -27,7 +30,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, a
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const visible = useMemo(() => actions.filter((a) => matches(query, a)), [actions, query]);
+  const visible = useMemo(() => {
+    const q = query.trim();
+    return actions
+      .map((a) => ({ a, score: scoreAction(q, a) }))
+      .filter((x): x is { a: PaletteAction; score: number } => x.score !== null)
+      .sort((x, y) => y.score - x.score)
+      .map((x) => x.a);
+  }, [actions, query]);
 
   useEffect(() => {
     if (open) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fuzzyMatch } from '../fuzzyMatch';
+import { fuzzyMatch, fuzzyScore } from '../fuzzyMatch';
 
 describe('fuzzyMatch', () => {
   it('matches plain substrings', () => {
@@ -27,5 +27,29 @@ describe('fuzzyMatch', () => {
   });
   it('does not match an empty target with a non-empty query', () => {
     expect(fuzzyMatch('a', '')).toBe(false);
+  });
+});
+
+describe('fuzzyScore', () => {
+  it('returns null when there is no match', () => {
+    expect(fuzzyScore('xyz', 'Billing')).toBeNull();
+  });
+  it('returns 0 for an empty query (no preference)', () => {
+    expect(fuzzyScore('', 'anything')).toBe(0);
+  });
+  it('ranks exact > prefix > substring > subsequence', () => {
+    const exact = fuzzyScore('billing', 'Billing')!;
+    const prefix = fuzzyScore('bill', 'Billing')!;
+    const substring = fuzzyScore('illing', 'Billing')!;
+    const subsequence = fuzzyScore('blng', 'Billing')!;
+    expect(exact).toBeGreaterThan(prefix);
+    expect(prefix).toBeGreaterThan(substring);
+    expect(substring).toBeGreaterThan(subsequence);
+  });
+  it('prefers shorter targets for the same prefix', () => {
+    expect(fuzzyScore('bill', 'Billing')!).toBeGreaterThan(fuzzyScore('bill', 'Billing_QuotaOverUsage')!);
+  });
+  it('penalizes scattered subsequences against tight ones', () => {
+    expect(fuzzyScore('bil', 'Billing')!).toBeGreaterThan(fuzzyScore('bqu', 'Billing_QuotaOverUsage')!);
   });
 });

@@ -22,7 +22,9 @@ import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider'
 import { formatBytes } from './lib/format';
 import type { QueryCodeSpec } from './lib/queryCodeGen';
 import { docToShell } from './lib/shellDoc';
-import { recordHistory, loadCollectionQueries } from './lib/queryStore';
+import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib/queryStore';
+import { loadNamespaceIndex } from './lib/paletteIndex';
+import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
 import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
@@ -318,36 +320,45 @@ function Workspace() {
     }
   }, [tabs.length]);
 
-  const handleSelectCollection = async (connectionId: string, dbName: string, collName: string) => {
+  // savedQuery (palette "jump to saved query") runs instead of the pinned
+  // default — for existing tabs it re-runs in place.
+  const handleSelectCollection = async (connectionId: string, dbName: string, collName: string, savedQuery?: SavedQueryBody) => {
     if (!connectionId || !dbName || !collName) return;
 
     const tabId = `${connectionId}.${dbName}.${collName}`;
     const tabExists = tabs.some(t => t.id === tabId);
 
-    if (!tabExists) {
-      const newTab: QueryTab = {
-        id: tabId,
-        type: 'collection',
-        connectionId,
-        db: dbName,
-        collection: collName,
-        results: [],
-        loading: true,
-        error: null,
-        explainResult: null,
-        lastQuery: DEFAULT_QUERY,
-      };
-      setTabs(prev => [...prev, newTab]);
+    if (!tabExists || savedQuery) {
+      if (!tabExists) {
+        const newTab: QueryTab = {
+          id: tabId,
+          type: 'collection',
+          connectionId,
+          db: dbName,
+          collection: collName,
+          results: [],
+          loading: true,
+          error: null,
+          explainResult: null,
+          lastQuery: DEFAULT_QUERY,
+        };
+        setTabs(prev => [...prev, newTab]);
+      } else {
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, loading: true, error: null } : t));
+      }
       setActiveTabId(tabId);
 
       try {
-        // A pinned default query loads instead of the plain {} find.
-        let def: any = null;
-        try {
-          const cq = await loadCollectionQueries(connectionNameFor(connectionId), dbName, collName);
-          def = cq.default;
-        } catch {
-          def = null;
+        // A saved query (palette) wins; otherwise a pinned default query loads
+        // instead of the plain {} find.
+        let def: any = savedQuery ?? null;
+        if (!def) {
+          try {
+            const cq = await loadCollectionQueries(connectionNameFor(connectionId), dbName, collName);
+            def = cq.default;
+          } catch {
+            def = null;
+          }
         }
 
         if (def && def.queryType === 'aggregate') {
@@ -812,6 +823,48 @@ function Workspace() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Dynamic palette items, loaded when the palette opens: every database and
+  // collection of the active connections (cached per connection), plus saved
+  // queries of the collections that have open tabs.
+  const [paletteDynamicItems, setPaletteDynamicItems] = useState<PaletteAction[]>([]);
+  useEffect(() => {
+    if (!isPaletteOpen) return;
+    let alive = true;
+    (async () => {
+      const items: PaletteAction[] = [];
+      const namespaces = await loadNamespaceIndex(activeConnections.map(c => ({ id: c.id, name: c.name })));
+      for (const ns of namespaces) {
+        for (const coll of ns.collections) {
+          items.push({
+            id: `coll:${ns.connectionId}:${ns.db}:${coll}`,
+            title: coll,
+            hint: `${ns.connectionName} · ${ns.db}`,
+            keywords: `collection ${ns.db} ${ns.connectionName}`,
+            run: () => { void handleSelectCollection(ns.connectionId, ns.db, coll); },
+          });
+        }
+      }
+      const collTabs = tabs.filter(t => t.type === 'collection');
+      await Promise.all(collTabs.map(async (t) => {
+        try {
+          const cq = await loadCollectionQueries(connectionNameFor(t.connectionId), t.db, t.collection);
+          for (const s of cq.saved) {
+            items.push({
+              id: `saved:${t.id}:${s.id}`,
+              title: `Saved query: ${s.name}`,
+              hint: `${t.db}.${t.collection}`,
+              keywords: `saved query ${t.collection} ${t.db}`,
+              run: () => { void handleSelectCollection(t.connectionId, t.db, t.collection, s.query); },
+            });
+          }
+        } catch { /* store unavailable — skip */ }
+      }));
+      if (alive) setPaletteDynamicItems(items);
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPaletteOpen]);
+
   const paletteActions: PaletteAction[] = [
     { id: 'new-connection', title: 'New Connection…', keywords: 'connect database add server', run: () => setIsConnectionModalOpen(true) },
     { id: 'toggle-theme', title: 'Toggle Light/Dark Theme', keywords: 'appearance color mode', run: toggleTheme },
@@ -830,6 +883,14 @@ function Workspace() {
       { id: 'next-tab', title: 'Next Tab', keywords: 'tab switch', run: () => cycleTab(1) },
       { id: 'prev-tab', title: 'Previous Tab', keywords: 'tab switch', run: () => cycleTab(-1) },
     ] : []),
+    ...activeConnections.map(c => ({
+      id: `monitoring:${c.id}`,
+      title: `Open Monitoring: ${c.name}`,
+      keywords: 'monitoring metrics server status profiler',
+      run: () => handleOpenMonitoringTab(c.id),
+    })),
+    { id: 'check-updates', title: 'Check for Updates', keywords: 'version upgrade release', run: () => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT)) },
+    ...paletteDynamicItems,
   ];
 
   const handleExecuteQuery = async (query: { filter: string; sort: string; projection: string; limit: number; skip: number }) => {
