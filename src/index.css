@@ -3202,6 +3202,10 @@ select:focus-visible {
   padding: 10px 12px;
   max-height: 340px; overflow-y: auto;
 }
+/* Stages must keep their height once the list exceeds the max-height —
+   flex items default to shrink, which squashes every stage flat instead
+   of letting the container scroll. */
+.mql-pipeline-stages > * { flex-shrink: 0; }
 .mql-pipeline-flow {
   display: flex; justify-content: center;
   padding: 2px 0; color: var(--text-dim);
