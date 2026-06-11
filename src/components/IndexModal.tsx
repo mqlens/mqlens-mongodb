@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Trash2, Code, Layers } from 'lucide-react';
+import { useEscapeClose } from '../lib/useEscapeClose';
 
 interface IndexKeyRule {
   field: string;
@@ -37,6 +38,8 @@ export const IndexModal: React.FC<IndexModalProps> = ({
   // Raw JSON Mode State
   const [rawKeysJson, setRawKeysJson] = useState('{\n  "_id": 1\n}');
   const [jsonError, setJsonError] = useState<string | null>(null);
+
+  useEscapeClose(isOpen, onClose);
 
   // Sync state with initial data (when editing) or reset (when creating)
   useEffect(() => {

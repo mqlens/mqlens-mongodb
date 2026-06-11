@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
+import { CommandPalette, type PaletteAction } from './components/CommandPalette';
 import { DocumentViewer } from './components/DocumentViewer';
 import { DataGrid } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
@@ -19,16 +20,18 @@ import { VaultGate } from './components/VaultGate';
 import { UpdatePrompt } from './components/UpdatePrompt';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
-import { buildRunnableCommand } from './lib/mongoCommand';
+import type { QueryCodeSpec } from './lib/queryCodeGen';
 import { docToShell } from './lib/shellDoc';
-import { recordHistory, loadCollectionQueries } from './lib/queryStore';
+import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib/queryStore';
+import { loadNamespaceIndex } from './lib/paletteIndex';
+import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
 import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
-import { FolderCode, X, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity } from 'lucide-react';
+import { FolderCode, X, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity, Copy } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
@@ -61,9 +64,9 @@ const isEmptyFilter = (s: string): boolean => {
   return t === '' || t === '{}';
 };
 
-// Build the full mongosh-runnable command for whatever a tab last executed,
-// shown formatted in the DataGrid "Query Code" tab. Returns null before any run.
-const buildTabQueryCode = (tab: QueryTab): string | null => {
+// Describe whatever a tab last executed, for the DataGrid "Query Code" tab
+// (rendered there as runnable driver code per language). Null before any run.
+const buildTabQuerySpec = (tab: QueryTab): QueryCodeSpec | null => {
   const parse = (s: string): unknown => {
     try {
       return s.trim() ? JSON.parse(s) : {};
@@ -72,15 +75,18 @@ const buildTabQueryCode = (tab: QueryTab): string | null => {
     }
   };
   if (tab.lastAggregate) {
-    return buildRunnableCommand(
-      { queryType: 'aggregate', pipeline: tab.lastAggregate },
-      tab.collection
-    );
+    return {
+      db: tab.db,
+      collection: tab.collection,
+      query: { queryType: 'aggregate', pipeline: tab.lastAggregate },
+    };
   }
   if (tab.lastQuery) {
     const q = tab.lastQuery;
-    return buildRunnableCommand(
-      {
+    return {
+      db: tab.db,
+      collection: tab.collection,
+      query: {
         queryType: 'find',
         filter: parse(q.filter),
         sort: parse(q.sort),
@@ -88,8 +94,7 @@ const buildTabQueryCode = (tab: QueryTab): string | null => {
         limit: q.limit,
         skip: q.skip,
       },
-      tab.collection
-    );
+    };
   }
   return null;
 };
@@ -315,36 +320,45 @@ function Workspace() {
     }
   }, [tabs.length]);
 
-  const handleSelectCollection = async (connectionId: string, dbName: string, collName: string) => {
+  // savedQuery (palette "jump to saved query") runs instead of the pinned
+  // default — for existing tabs it re-runs in place.
+  const handleSelectCollection = async (connectionId: string, dbName: string, collName: string, savedQuery?: SavedQueryBody) => {
     if (!connectionId || !dbName || !collName) return;
 
     const tabId = `${connectionId}.${dbName}.${collName}`;
     const tabExists = tabs.some(t => t.id === tabId);
 
-    if (!tabExists) {
-      const newTab: QueryTab = {
-        id: tabId,
-        type: 'collection',
-        connectionId,
-        db: dbName,
-        collection: collName,
-        results: [],
-        loading: true,
-        error: null,
-        explainResult: null,
-        lastQuery: DEFAULT_QUERY,
-      };
-      setTabs(prev => [...prev, newTab]);
+    if (!tabExists || savedQuery) {
+      if (!tabExists) {
+        const newTab: QueryTab = {
+          id: tabId,
+          type: 'collection',
+          connectionId,
+          db: dbName,
+          collection: collName,
+          results: [],
+          loading: true,
+          error: null,
+          explainResult: null,
+          lastQuery: DEFAULT_QUERY,
+        };
+        setTabs(prev => [...prev, newTab]);
+      } else {
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, loading: true, error: null } : t));
+      }
       setActiveTabId(tabId);
 
       try {
-        // A pinned default query loads instead of the plain {} find.
-        let def: any = null;
-        try {
-          const cq = await loadCollectionQueries(connectionNameFor(connectionId), dbName, collName);
-          def = cq.default;
-        } catch {
-          def = null;
+        // A saved query (palette) wins; otherwise a pinned default query loads
+        // instead of the plain {} find.
+        let def: any = savedQuery ?? null;
+        if (!def) {
+          try {
+            const cq = await loadCollectionQueries(connectionNameFor(connectionId), dbName, collName);
+            def = cq.default;
+          } catch {
+            def = null;
+          }
         }
 
         if (def && def.queryType === 'aggregate') {
@@ -767,11 +781,10 @@ function Workspace() {
     }
   };
 
-  const handleCloseTab = (e: React.MouseEvent, tabId: string) => {
-    e.stopPropagation();
+  const closeTabById = (tabId: string) => {
     const updatedTabs = tabs.filter(t => t.id !== tabId);
     setTabs(updatedTabs);
-    
+
     if (activeTabId === tabId) {
       if (updatedTabs.length > 0) {
         setActiveTabId(updatedTabs[updatedTabs.length - 1].id);
@@ -780,6 +793,105 @@ function Workspace() {
       }
     }
   };
+
+  const handleCloseTab = (e: React.MouseEvent, tabId: string) => {
+    e.stopPropagation();
+    closeTabById(tabId);
+  };
+
+  const cycleTab = (dir: 1 | -1) => {
+    if (tabs.length < 2) return;
+    const idx = tabs.findIndex(t => t.id === activeTabId);
+    setActiveTabId(tabs[(idx + dir + tabs.length) % tabs.length].id);
+  };
+
+  const openQuickStartTab = () => {
+    setTabs(prev => prev.some(t => t.id === QUICK_START_TAB_ID) ? prev : [...prev, createQuickStartTab()]);
+    setActiveTabId(QUICK_START_TAB_ID);
+  };
+
+  // Command palette: Cmd/Ctrl+K from anywhere in the workspace.
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsPaletteOpen(v => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Dynamic palette items, loaded when the palette opens: every database and
+  // collection of the active connections (cached per connection), plus saved
+  // queries of the collections that have open tabs.
+  const [paletteDynamicItems, setPaletteDynamicItems] = useState<PaletteAction[]>([]);
+  useEffect(() => {
+    if (!isPaletteOpen) return;
+    let alive = true;
+    (async () => {
+      const items: PaletteAction[] = [];
+      const namespaces = await loadNamespaceIndex(activeConnections.map(c => ({ id: c.id, name: c.name })));
+      for (const ns of namespaces) {
+        for (const coll of ns.collections) {
+          items.push({
+            id: `coll:${ns.connectionId}:${ns.db}:${coll}`,
+            title: coll,
+            hint: `${ns.connectionName} · ${ns.db}`,
+            keywords: `collection ${ns.db} ${ns.connectionName}`,
+            run: () => { void handleSelectCollection(ns.connectionId, ns.db, coll); },
+          });
+        }
+      }
+      const collTabs = tabs.filter(t => t.type === 'collection');
+      await Promise.all(collTabs.map(async (t) => {
+        try {
+          const cq = await loadCollectionQueries(connectionNameFor(t.connectionId), t.db, t.collection);
+          for (const s of cq.saved) {
+            items.push({
+              id: `saved:${t.id}:${s.id}`,
+              title: `Saved query: ${s.name}`,
+              hint: `${t.db}.${t.collection}`,
+              keywords: `saved query ${t.collection} ${t.db}`,
+              run: () => { void handleSelectCollection(t.connectionId, t.db, t.collection, s.query); },
+            });
+          }
+        } catch { /* store unavailable — skip */ }
+      }));
+      if (alive) setPaletteDynamicItems(items);
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPaletteOpen]);
+
+  const paletteActions: PaletteAction[] = [
+    { id: 'new-connection', title: 'New Connection…', keywords: 'connect database add server', run: () => setIsConnectionModalOpen(true) },
+    { id: 'toggle-theme', title: 'Toggle Light/Dark Theme', keywords: 'appearance color mode', run: toggleTheme },
+    { id: 'open-settings', title: 'Open Settings', keywords: 'preferences config density', run: handleOpenSettingsTab },
+    { id: 'open-quickstart', title: 'Open Quick Start', keywords: 'welcome home help', run: openQuickStartTab },
+    { id: 'density-roomy', title: 'Density: Roomy', keywords: 'layout spacing', run: () => setDensity('roomy') },
+    { id: 'density-cozy', title: 'Density: Cozy', keywords: 'layout spacing', run: () => setDensity('cozy') },
+    { id: 'density-compact', title: 'Density: Compact', keywords: 'layout spacing dense', run: () => setDensity('compact') },
+    ...(activeTab && activeTab.type === 'collection' ? [
+      { id: 'open-shell', title: 'Open mongosh Shell', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'terminal mongosh script', run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) },
+      { id: 'export-collection', title: 'Export Collection…', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'download json csv import', run: () => handleOpenExportTab(activeTab) },
+      { id: 'analyze-schema', title: 'Analyze Schema', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'fields types', run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
+    ] : []),
+    ...(activeTabId ? [{ id: 'close-tab', title: 'Close Tab', keywords: 'tab', run: () => closeTabById(activeTabId) }] : []),
+    ...(tabs.length > 1 ? [
+      { id: 'next-tab', title: 'Next Tab', keywords: 'tab switch', run: () => cycleTab(1) },
+      { id: 'prev-tab', title: 'Previous Tab', keywords: 'tab switch', run: () => cycleTab(-1) },
+    ] : []),
+    ...activeConnections.map(c => ({
+      id: `monitoring:${c.id}`,
+      title: `Open Monitoring: ${c.name}`,
+      keywords: 'monitoring metrics server status profiler',
+      run: () => handleOpenMonitoringTab(c.id),
+    })),
+    { id: 'check-updates', title: 'Check for Updates', keywords: 'version upgrade release', run: () => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT)) },
+    ...paletteDynamicItems,
+  ];
 
   const handleExecuteQuery = async (query: { filter: string; sort: string; projection: string; limit: number; skip: number }) => {
     if (!activeTab) return;
@@ -1250,6 +1362,12 @@ function Workspace() {
           data-testid="sidebar-resizer"
         />
 
+        <CommandPalette
+          open={isPaletteOpen}
+          onClose={() => setIsPaletteOpen(false)}
+          actions={paletteActions}
+        />
+
         <ConnectionManager
           isOpen={isConnectionModalOpen}
           onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
@@ -1338,12 +1456,14 @@ function Workspace() {
                                         ? `Monitor: ${connectionNameFor(tab.connectionId)}`
                                         : tab.collection}
                       </span>
-                      <span
+                      <button
                         onClick={(e) => handleCloseTab(e, tab.id)}
                         className="mql-tab-close"
+                        aria-label="Close tab"
+                        title="Close tab"
                       >
                         <X size={10} />
-                      </span>
+                      </button>
                     </div>
                   );
                 })}
@@ -1400,8 +1520,16 @@ function Workspace() {
                   >
                     <div className="flex-grow flex flex-col min-h-0 min-w-0">
                       {activeTab.error && (
-                        <div className="p-3 bg-rose-950/20 border-b border-[var(--border-color)] text-rose-400 font-mono text-[11px] select-text">
-                          Error loading dataset: {activeTab.error}
+                        <div className="p-3 bg-rose-950/20 border-b border-[var(--border-color)] text-rose-400 font-mono text-[11px] select-text flex items-start gap-2">
+                          <span className="flex-grow">Error loading dataset: {activeTab.error}</span>
+                          <button
+                            className="mql-btn flex-shrink-0"
+                            title="Copy error message"
+                            onClick={() => { try { navigator.clipboard?.writeText(String(activeTab.error)); } catch { /* clipboard unavailable */ } }}
+                          >
+                            <Copy size={11} />
+                            <span>Copy</span>
+                          </button>
                         </div>
                       )}
                       {activeTab.loading ? (
@@ -1416,7 +1544,7 @@ function Workspace() {
                           documents={activeTab.results}
                           density={density}
                           explainResult={activeTab.explainResult}
-                          queryCode={buildTabQueryCode(activeTab)}
+                          querySpec={buildTabQuerySpec(activeTab)}
                           onInsertDocument={handleInsertDocument}
                           onEditDocument={handleEditDocument}
                           onDuplicateDocument={handleDuplicateDocument}

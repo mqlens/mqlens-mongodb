@@ -1019,3 +1019,174 @@ describe('DocumentViewer query persistence (H1)', () => {
     });
   });
 });
+
+describe('Aggregation builder stage controls', () => {
+  const renderAgg = () => {
+    const onExecute = vi.fn();
+    const onExecuteAggregate = vi.fn();
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={onExecute}
+        onExecuteAggregate={onExecuteAggregate}
+        onExplain={vi.fn()}
+        loading={false}
+      />
+    );
+    fireEvent.click(screen.getByTestId('mode-aggregate-tab'));
+    return { onExecute, onExecuteAggregate };
+  };
+
+  it('excludes disabled stages from Run and dims them', () => {
+    const { onExecuteAggregate } = renderAgg();
+    fireEvent.click(screen.getByRole('button', { name: /add stage/i }));
+    const stage1 = screen.getByTestId('pipeline-stage-1');
+    fireEvent.change(stage1.querySelector('select')!, { target: { value: '$limit' } });
+    fireEvent.change(stage1.querySelector('textarea')!, { target: { value: '5' } });
+
+    fireEvent.click(screen.getByLabelText('Disable stage 1'));
+    expect(screen.getByTestId('pipeline-stage-0').className).toContain('is-disabled');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(onExecuteAggregate).toHaveBeenCalledWith([{ $limit: 5 }]);
+  });
+
+  it('re-enabling a stage includes it again', () => {
+    const { onExecuteAggregate } = renderAgg();
+    fireEvent.click(screen.getByLabelText('Disable stage 1'));
+    fireEvent.click(screen.getByLabelText('Enable stage 1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(onExecuteAggregate).toHaveBeenCalledWith([{ $match: {} }]);
+  });
+
+  it('run-to-here executes only stages up to and including the clicked one', () => {
+    const { onExecuteAggregate } = renderAgg();
+    fireEvent.click(screen.getByRole('button', { name: /add stage/i }));
+    const stage1 = screen.getByTestId('pipeline-stage-1');
+    fireEvent.change(stage1.querySelector('select')!, { target: { value: '$limit' } });
+    fireEvent.change(stage1.querySelector('textarea')!, { target: { value: '5' } });
+
+    fireEvent.click(screen.getByLabelText('Run pipeline to stage 1'));
+    expect(onExecuteAggregate).toHaveBeenCalledWith([{ $match: {} }]);
+    expect(onExecuteAggregate).not.toHaveBeenCalledWith([{ $match: {} }, { $limit: 5 }]);
+  });
+});
+
+describe('Aggregation stage body templates', () => {
+  const renderAgg2 = () => {
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={vi.fn()}
+        onExecuteAggregate={vi.fn()}
+        onExplain={vi.fn()}
+        loading={false}
+      />
+    );
+    fireEvent.click(screen.getByTestId('mode-aggregate-tab'));
+  };
+
+  it('inserts a template body when the operator changes on an untouched stage', () => {
+    renderAgg2();
+    const stage0 = screen.getByTestId('pipeline-stage-0');
+    fireEvent.change(stage0.querySelector('select')!, { target: { value: '$lookup' } });
+    const body = (stage0.querySelector('textarea') as HTMLTextAreaElement).value;
+    expect(body).toContain('"from"');
+    expect(body).toContain('"localField"');
+  });
+
+  it('keeps user-edited content when the operator changes', () => {
+    renderAgg2();
+    const stage0 = screen.getByTestId('pipeline-stage-0');
+    fireEvent.change(stage0.querySelector('textarea')!, { target: { value: '{ "region": "EU" }' } });
+    fireEvent.change(stage0.querySelector('select')!, { target: { value: '$lookup' } });
+    expect((stage0.querySelector('textarea') as HTMLTextAreaElement).value).toBe('{ "region": "EU" }');
+  });
+
+  it('replaces a previous untouched template when switching operators again', () => {
+    renderAgg2();
+    const stage0 = screen.getByTestId('pipeline-stage-0');
+    fireEvent.change(stage0.querySelector('select')!, { target: { value: '$lookup' } });
+    fireEvent.change(stage0.querySelector('select')!, { target: { value: '$limit' } });
+    expect((stage0.querySelector('textarea') as HTMLTextAreaElement).value).toBe('10');
+  });
+});
+
+describe('Aggregation builder: collapse, undo/redo, $lookup form (#89)', () => {
+  const renderAgg3 = () => {
+    const onExecuteAggregate = vi.fn();
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={vi.fn()}
+        onExecuteAggregate={onExecuteAggregate}
+        onExplain={vi.fn()}
+        loading={false}
+      />
+    );
+    fireEvent.click(screen.getByTestId('mode-aggregate-tab'));
+    return { onExecuteAggregate };
+  };
+
+  it('collapses a stage body without removing it from the pipeline', () => {
+    const { onExecuteAggregate } = renderAgg3();
+    const stage0 = screen.getByTestId('pipeline-stage-0');
+    expect(stage0.querySelector('textarea')).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('Collapse stage 1'));
+    expect(screen.getByTestId('pipeline-stage-0').querySelector('textarea')).toBeNull();
+
+    // Collapsed is visual only — the stage still runs.
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(onExecuteAggregate).toHaveBeenCalledWith([{ $match: {} }]);
+
+    fireEvent.click(screen.getByLabelText('Expand stage 1'));
+    expect(screen.getByTestId('pipeline-stage-0').querySelector('textarea')).toBeTruthy();
+  });
+
+  it('undoes and redoes pipeline changes', () => {
+    renderAgg3();
+    expect(screen.getByText('1 stage')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /add stage/i }));
+    expect(screen.getByText('2 stages')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Undo pipeline change'));
+    expect(screen.getByText('1 stage')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Redo pipeline change'));
+    expect(screen.getByText('2 stages')).toBeInTheDocument();
+  });
+
+  it('undo restores a removed stage', () => {
+    renderAgg3();
+    fireEvent.click(screen.getByRole('button', { name: /add stage/i }));
+    fireEvent.click(screen.getByLabelText('Remove stage 2'));
+    expect(screen.getByText('1 stage')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Undo pipeline change'));
+    expect(screen.getByText('2 stages')).toBeInTheDocument();
+  });
+
+  it('shows a $lookup form whose inputs sync into the stage body', () => {
+    renderAgg3();
+    const stage0 = screen.getByTestId('pipeline-stage-0');
+    fireEvent.change(stage0.querySelector('select')!, { target: { value: '$lookup' } });
+
+    // Form reflects the template body.
+    const fromInput = screen.getByLabelText('$lookup from') as HTMLInputElement;
+    expect(fromInput.value).toBe('collection');
+
+    fireEvent.change(fromInput, { target: { value: 'orders' } });
+    fireEvent.change(screen.getByLabelText('$lookup as'), { target: { value: 'userOrders' } });
+
+    const body = (screen.getByTestId('pipeline-stage-0').querySelector('textarea') as HTMLTextAreaElement).value;
+    expect(body).toContain('"from": "orders"');
+    expect(body).toContain('"as": "userOrders"');
+  });
+});

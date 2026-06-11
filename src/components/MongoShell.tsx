@@ -6,6 +6,7 @@ import { AIChatPanel } from './AIChatPanel';
 import { buildRunnableCommand, guardScriptRun, type GeneratedQuery } from '../lib/mongoCommand';
 import { DataGrid } from './DataGrid';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
+import { useMonacoTheme } from '../lib/useMonacoTheme';
 
 type ShellTab = 'console' | 'viewer';
 
@@ -203,6 +204,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     [collectionName, initialCommand]
   );
   const [command, setCommand] = useState(defaultCommand);
+  const monacoTheme = useMonacoTheme();
   const [isAIOpen, setIsAIOpen] = useState(false);
   const [pendingDestructive, setPendingDestructive] =
     useState<{ command: string; operation: string } | null>(null);
@@ -657,7 +659,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
             value={command}
             onChange={(value) => setCommand(value || '')}
             defaultLanguage="javascript"
-            theme="vs-dark"
+            theme={monacoTheme}
             options={{
               fontFamily: 'JetBrains Mono, SF Mono, Consolas, monospace',
               fontSize: 13,
