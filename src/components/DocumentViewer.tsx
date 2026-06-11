@@ -1695,13 +1695,22 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                       <div
                         className={`mql-stage ${!isValid ? 'is-invalid' : ''}${stage.disabled ? ' is-disabled' : ''}`}
                         data-testid={`pipeline-stage-${index}`}
-                        onDragOver={(e) => { if (dragStageIndex !== null) e.preventDefault(); }}
-                        onDrop={() => dropStageAt(index)}
+                        onDragOver={(e) => {
+                          if (dragStageIndex === null) return;
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                        }}
+                        onDrop={(e) => { e.preventDefault(); dropStageAt(index); }}
                       >
                         <div
                           className="mql-stage-h"
                           draggable
-                          onDragStart={() => setDragStageIndex(index)}
+                          onDragStart={(e) => {
+                            // WebKit refuses to start a drag without payload data.
+                            e.dataTransfer.setData('text/plain', String(index));
+                            e.dataTransfer.effectAllowed = 'move';
+                            setDragStageIndex(index);
+                          }}
                           onDragEnd={() => setDragStageIndex(null)}
                         >
                           <GripVertical size={11} className="mql-stage-grip" aria-hidden="true" />
