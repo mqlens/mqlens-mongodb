@@ -63,12 +63,18 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
 
   const overflowWidgetsDomNode = getOverflowNode();
 
+  // JSON keys live inside string literals, where Monaco suppresses
+  // quick suggestions by default — enable them so field/operator
+  // completions keep filtering while the user types a quoted key.
+  const quickSuggestions = { other: true, comments: false, strings: true };
+
   const multiLineOptions = {
     minimap: { enabled: false }, lineNumbers: 'off' as const, folding: false,
     scrollBeyondLastLine: false, wordWrap: 'on' as const, fontSize: 12,
     scrollbar: { vertical: 'auto' as const, horizontal: 'auto' as const }, overviewRulerLanes: 0,
     renderLineHighlight: 'none' as const, tabSize: 2,
     fixedOverflowWidgets: true, overflowWidgetsDomNode,
+    quickSuggestions,
     // Enter accepts an open suggestion; otherwise inserts a newline.
     acceptSuggestionOnEnter: 'on' as const,
   };
@@ -98,6 +104,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
     fixedOverflowWidgets: true,
     overflowWidgetsDomNode,
     tabSize: 2,
+    quickSuggestions,
   };
 
   const editor = (
