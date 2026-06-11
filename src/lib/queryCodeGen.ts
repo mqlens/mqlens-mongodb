@@ -14,6 +14,16 @@ export interface QueryCodeSpec {
 export const CODE_LANGUAGES = ['mongosh', 'Node.js', 'Python', 'Java', 'C#', 'Go'] as const;
 export type CodeLanguage = (typeof CODE_LANGUAGES)[number];
 
+// Monaco language ids for syntax highlighting in the Query Code tab.
+export const CODE_LANGUAGE_MONACO_IDS: Record<CodeLanguage, string> = {
+  mongosh: 'javascript',
+  'Node.js': 'javascript',
+  Python: 'python',
+  Java: 'java',
+  'C#': 'csharp',
+  Go: 'go',
+};
+
 const URI = 'mongodb://host:port/';
 
 const isEmptyDoc = (v: unknown): boolean =>

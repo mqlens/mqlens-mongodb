@@ -1,5 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+
+// Monaco renders the Query Code panel; mock it as a plain textarea (same shape
+// as the other component tests) so assertions can read the generated code.
+vi.mock('@monaco-editor/react', () => ({
+  default: ({ value, wrapperProps }: { value: string; wrapperProps?: Record<string, unknown> }) => (
+    <textarea data-testid={wrapperProps?.['data-testid'] as string | undefined} value={value} readOnly />
+  ),
+}));
+
 import { DataGrid, getExplainTree } from '../DataGrid';
 
 // Collect every node name in the tree (depth-first) for assertions.
@@ -201,12 +210,13 @@ describe('DataGrid Component', () => {
     // The tab appears and opens with the mongosh command by default.
     fireEvent.click(screen.getByTestId('query-code-tab'));
     expect(screen.getByTestId('query-code-panel')).toBeInTheDocument();
-    expect(screen.getByTestId('query-code-content').textContent).toContain('db.products.aggregate(');
-    expect(screen.getByTestId('query-code-content').textContent).toContain('$count');
+    const content = () => (screen.getByTestId('query-code-content') as HTMLTextAreaElement).value;
+    expect(content()).toContain('db.products.aggregate(');
+    expect(content()).toContain('$count');
 
     // Switching the language regenerates the code.
     fireEvent.change(screen.getByTestId('query-code-lang'), { target: { value: 'Python' } });
-    expect(screen.getByTestId('query-code-content').textContent).toContain('from pymongo import MongoClient');
+    expect(content()).toContain('from pymongo import MongoClient');
     fireEvent.change(screen.getByTestId('query-code-lang'), { target: { value: 'mongosh' } });
   });
 

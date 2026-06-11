@@ -4,7 +4,9 @@ import { List } from 'react-window';
 import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3 } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
-import { generateQueryCode, CODE_LANGUAGES, type CodeLanguage, type QueryCodeSpec } from '../lib/queryCodeGen';
+import Editor from '@monaco-editor/react';
+import { generateQueryCode, CODE_LANGUAGES, CODE_LANGUAGE_MONACO_IDS, type CodeLanguage, type QueryCodeSpec } from '../lib/queryCodeGen';
+import { useMonacoTheme } from '../lib/useMonacoTheme';
 import { EJSON, ObjectId, Long, Decimal128, Int32, Double, Binary, Timestamp } from 'bson';
 
 interface DataGridProps {
@@ -505,6 +507,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [queryCopied, setQueryCopied] = useState(false);
 
   // Query Code tab: generate runnable driver code in the selected language.
+  const monacoTheme = useMonacoTheme();
   const [codeLang, setCodeLang] = useState<CodeLanguage>(() => {
     const saved = localStorage.getItem('mqlens-codegen-lang') as CodeLanguage | null;
     return saved && (CODE_LANGUAGES as readonly string[]).includes(saved) ? saved : 'mongosh';
@@ -1444,13 +1447,29 @@ export const DataGrid: React.FC<DataGridProps> = ({
         /* Query Code Workspace */
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden" data-testid="query-code-panel">
           {queryCode ? (
-            <div className="flex-1 overflow-auto bg-[var(--bg-base)] p-4 select-text">
-              <pre
-                className="text-[11px] text-[var(--syntax-key)] font-mono select-text leading-relaxed whitespace-pre-wrap"
-                data-testid="query-code-content"
-              >
-                {queryCode}
-              </pre>
+            <div className="flex-1 min-h-0 bg-[var(--bg-base)]">
+              <Editor
+                height="100%"
+                language={CODE_LANGUAGE_MONACO_IDS[codeLang]}
+                value={queryCode}
+                theme={monacoTheme}
+                wrapperProps={{ 'data-testid': 'query-code-content' }}
+                options={{
+                  readOnly: true,
+                  domReadOnly: true,
+                  minimap: { enabled: false },
+                  lineNumbers: 'on',
+                  lineNumbersMinChars: 3,
+                  scrollBeyondLastLine: false,
+                  wordWrap: 'on',
+                  fontSize: 12,
+                  fontFamily: 'JetBrains Mono, SF Mono, Consolas, monospace',
+                  renderLineHighlight: 'none',
+                  automaticLayout: true,
+                  contextmenu: false,
+                  padding: { top: 10 },
+                }}
+              />
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-[var(--text-muted)] select-none p-6 bg-[var(--bg-base)]">
