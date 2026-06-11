@@ -23,7 +23,7 @@ import { formatBytes } from './lib/format';
 import type { QueryCodeSpec } from './lib/queryCodeGen';
 import { docToShell } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib/queryStore';
-import { loadNamespaceIndex } from './lib/paletteIndex';
+import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from './lib/paletteIndex';
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
 import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
@@ -180,6 +180,7 @@ function Workspace() {
   } | null>(null);
   const [indexMutationTrigger, setIndexMutationTrigger] = useState(0);
   const [collectionMutationTrigger, setCollectionMutationTrigger] = useState(0);
+  const [sidebarFilterQuery, setSidebarFilterQuery] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [isResizing, setIsResizing] = useState(false);
 
@@ -621,9 +622,11 @@ function Workspace() {
       const current = tabs.find(t => t.id === prev);
       return current ? renameTab(current).id : prev;
     });
+    invalidatePaletteNamespaceIndex(connectionId);
   };
 
   const handleDatabaseDropped = (connectionId: string, dbName: string) => {
+    invalidatePaletteNamespaceIndex(connectionId);
     setTabs(prev => {
       const updated = prev.filter(t => t.connectionId !== connectionId || t.db !== dbName);
       const activeWasDropped = activeTabId
@@ -674,6 +677,7 @@ function Workspace() {
       const current = tabs.find(t => t.id === prev);
       return current ? renameTab(current).id : prev;
     });
+    invalidatePaletteNamespaceIndex(connectionId);
   };
 
   const handleOpenIndexModalForCreate = (connectionId: string, dbName: string, collName: string) => {
@@ -823,18 +827,45 @@ function Workspace() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Dynamic palette items, loaded when the palette opens: every database and
-  // collection of the active connections (cached per connection), plus saved
-  // queries of the collections that have open tabs.
+  // Dynamic palette items load only after the user starts searching, so opening
+  // command mode does not immediately inventory every connected cluster.
   const [paletteDynamicItems, setPaletteDynamicItems] = useState<PaletteAction[]>([]);
+  const [paletteQuery, setPaletteQuery] = useState('');
+  const paletteDynamicLoadKey = React.useRef<string | null>(null);
+  const paletteNamespaceScope = sidebarFilterQuery.trim();
+  const shouldLoadPaletteDynamic =
+    isPaletteOpen && (paletteQuery.trim().length >= 2 || paletteNamespaceScope.length >= 2);
+  const invalidatePaletteNamespaceIndex = React.useCallback((connectionId?: string) => {
+    clearNamespaceIndex(connectionId);
+    paletteDynamicLoadKey.current = null;
+    setPaletteDynamicItems(prev => prev.length === 0 ? prev : []);
+  }, []);
   useEffect(() => {
-    if (!isPaletteOpen) return;
+    if (collectionMutationTrigger > 0) invalidatePaletteNamespaceIndex();
+  }, [collectionMutationTrigger, invalidatePaletteNamespaceIndex]);
+  useEffect(() => {
+    if (!shouldLoadPaletteDynamic) {
+      paletteDynamicLoadKey.current = null;
+      setPaletteDynamicItems(prev => prev.length === 0 ? prev : []);
+      return;
+    }
+    const collTabs = tabs.filter(t => t.type === 'collection');
+    const loadKey = [
+      activeConnections.map(c => `${c.id}:${c.name}`).join('|'),
+      collTabs.map(t => `${t.id}:${t.connectionId}:${t.db}:${t.collection}`).join('|'),
+      paletteNamespaceScope,
+    ].join('::');
+    if (paletteDynamicLoadKey.current === loadKey) return;
+    paletteDynamicLoadKey.current = loadKey;
     let alive = true;
     (async () => {
       const items: PaletteAction[] = [];
       const namespaces = await loadNamespaceIndex(activeConnections.map(c => ({ id: c.id, name: c.name })));
       for (const ns of namespaces) {
         for (const coll of ns.collections) {
+          if (!matchesNamespaceScope(paletteNamespaceScope, { connectionName: ns.connectionName, db: ns.db, collection: coll })) {
+            continue;
+          }
           items.push({
             id: `coll:${ns.connectionId}:${ns.db}:${coll}`,
             title: coll,
@@ -844,10 +875,13 @@ function Workspace() {
           });
         }
       }
-      const collTabs = tabs.filter(t => t.type === 'collection');
       await Promise.all(collTabs.map(async (t) => {
         try {
-          const cq = await loadCollectionQueries(connectionNameFor(t.connectionId), t.db, t.collection);
+          const connectionName = connectionNameFor(t.connectionId);
+          if (!matchesNamespaceScope(paletteNamespaceScope, { connectionName, db: t.db, collection: t.collection })) {
+            return;
+          }
+          const cq = await loadCollectionQueries(connectionName, t.db, t.collection);
           for (const s of cq.saved) {
             items.push({
               id: `saved:${t.id}:${s.id}`,
@@ -863,13 +897,14 @@ function Workspace() {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPaletteOpen]);
+  }, [shouldLoadPaletteDynamic, activeConnections, tabs, paletteNamespaceScope]);
 
   const paletteActions: PaletteAction[] = [
     { id: 'new-connection', title: 'New Connection…', keywords: 'connect database add server', run: () => setIsConnectionModalOpen(true) },
     { id: 'toggle-theme', title: 'Toggle Light/Dark Theme', keywords: 'appearance color mode', run: toggleTheme },
     { id: 'open-settings', title: 'Open Settings', keywords: 'preferences config density', run: handleOpenSettingsTab },
     { id: 'open-quickstart', title: 'Open Quick Start', keywords: 'welcome home help', run: openQuickStartTab },
+    { id: 'refresh-palette-index', title: 'Refresh Command Palette Index', keywords: 'reload databases collections namespaces cache stale', run: () => invalidatePaletteNamespaceIndex() },
     { id: 'density-roomy', title: 'Density: Roomy', keywords: 'layout spacing', run: () => setDensity('roomy') },
     { id: 'density-cozy', title: 'Density: Cozy', keywords: 'layout spacing', run: () => setDensity('cozy') },
     { id: 'density-compact', title: 'Density: Compact', keywords: 'layout spacing dense', run: () => setDensity('compact') },
@@ -1327,6 +1362,8 @@ function Workspace() {
             onCollectionRenamed={handleCollectionRenamed}
             onDatabaseDropped={handleDatabaseDropped}
             onDatabaseRenamed={handleDatabaseRenamed}
+            onNamespaceMutated={invalidatePaletteNamespaceIndex}
+            onFilterQueryChange={setSidebarFilterQuery}
             indexMutationTrigger={indexMutationTrigger}
             activeCollection={activeTab ? { connectionId: activeTab.connectionId, db: activeTab.db, collection: activeTab.collection, indexName: activeTab.indexName } : null}
             activeConnections={activeConnections}
@@ -1364,8 +1401,13 @@ function Workspace() {
 
         <CommandPalette
           open={isPaletteOpen}
-          onClose={() => setIsPaletteOpen(false)}
+          onClose={() => {
+            setIsPaletteOpen(false);
+            setPaletteQuery('');
+          }}
           actions={paletteActions}
+          scopeLabel={paletteNamespaceScope}
+          onQueryChange={setPaletteQuery}
         />
 
         <ConnectionManager

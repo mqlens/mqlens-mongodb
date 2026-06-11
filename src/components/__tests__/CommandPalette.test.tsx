@@ -43,6 +43,15 @@ describe('CommandPalette', () => {
     expect(screen.queryByText('Toggle Theme')).toBeNull();
   });
 
+  it('shows sidebar scope separately without putting it in the search input', () => {
+    const { actions } = makeActions();
+    render(<CommandPalette open onClose={() => {}} actions={actions} scopeLabel="widas" />);
+    expect(screen.getByTestId('command-palette-input')).toHaveValue('');
+    expect(screen.getByText('Sidebar')).toBeTruthy();
+    expect(screen.getByText('widas')).toBeTruthy();
+    expect(screen.getByText('Toggle Theme')).toBeTruthy();
+  });
+
   it('runs the selected action and closes on Enter', () => {
     const { actions, ran } = makeActions();
     const onClose = vi.fn();
@@ -83,6 +92,18 @@ describe('CommandPalette', () => {
     const { actions } = makeActions();
     render(<CommandPalette open onClose={() => {}} actions={actions} />);
     expect(screen.getByText('shop.users')).toBeTruthy();
+  });
+
+  it('limits large empty-query lists so the palette does not render every namespace', () => {
+    const actions = Array.from({ length: 120 }, (_, i) => ({
+      id: `action-${i}`,
+      title: `Action ${i}`,
+      run: () => {},
+    }));
+    render(<CommandPalette open onClose={() => {}} actions={actions} />);
+    expect(screen.getAllByRole('option')).toHaveLength(80);
+    expect(screen.getByText('Action 0')).toBeTruthy();
+    expect(screen.queryByText('Action 119')).toBeNull();
   });
 });
 
