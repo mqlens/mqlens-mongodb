@@ -3,6 +3,7 @@ import { AIChatPanel } from './AIChatPanel';
 import { QueryEditor } from './QueryEditor';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
+import { parseShellJson } from '../lib/shellDoc';
 import {
   loadCollectionQueries,
   saveQuery,
@@ -74,7 +75,7 @@ interface BuilderState {
 export function builderStateToQuery(state: BuilderState): GeneratedQuery {
   const parse = (s: string): unknown => {
     try {
-      return s.trim() ? JSON.parse(s) : {};
+      return s.trim() ? parseShellJson(s) : {};
     } catch {
       return {};
     }
@@ -82,7 +83,7 @@ export function builderStateToQuery(state: BuilderState): GeneratedQuery {
   if (state.queryMode === 'aggregate') {
     const pipeline = state.stages
       .filter((stage) => stage.content.trim())
-      .map((stage) => ({ [stage.operator]: JSON.parse(stage.content) }));
+      .map((stage) => ({ [stage.operator]: parseShellJson(stage.content) }));
     return { queryType: 'aggregate', pipeline };
   }
   return {
@@ -289,7 +290,7 @@ const parseFieldQuery = (field: string, value: any): VisualRule[] => {
 
 const syncRulesFromQuery = (jsonStr: string): { rules: VisualRule[], matchType: 'and' | 'or' } => {
   try {
-    const query = JSON.parse(jsonStr);
+    const query = parseShellJson(jsonStr);
     if (!query || typeof query !== 'object' || Array.isArray(query)) {
       return { rules: [], matchType: 'and' };
     }
@@ -318,7 +319,7 @@ const syncRulesFromQuery = (jsonStr: string): { rules: VisualRule[], matchType: 
 
 const syncProjectionFromQuery = (jsonStr: string): ProjectionRule[] => {
   try {
-    const query = JSON.parse(jsonStr);
+    const query = parseShellJson(jsonStr);
     if (!query || typeof query !== 'object' || Array.isArray(query)) {
       return [];
     }
@@ -338,7 +339,7 @@ const syncProjectionFromQuery = (jsonStr: string): ProjectionRule[] => {
 
 const syncSortFromQuery = (jsonStr: string): SortRule[] => {
   try {
-    const query = JSON.parse(jsonStr);
+    const query = parseShellJson(jsonStr);
     if (!query || typeof query !== 'object' || Array.isArray(query)) {
       return [];
     }
@@ -584,7 +585,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   useEffect(() => {
     try {
       if (filterQuery.trim()) {
-        JSON.parse(filterQuery);
+        parseShellJson(filterQuery);
       }
       setIsFilterValid(true);
     } catch {
@@ -595,7 +596,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   useEffect(() => {
     try {
       if (projectionQuery.trim()) {
-        JSON.parse(projectionQuery);
+        parseShellJson(projectionQuery);
       }
       setIsProjectionValid(true);
     } catch {
@@ -606,7 +607,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   useEffect(() => {
     try {
       if (sortQuery.trim()) {
-        JSON.parse(sortQuery);
+        parseShellJson(sortQuery);
       }
       setIsSortValid(true);
     } catch {
@@ -633,7 +634,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         return;
       }
       try {
-        const parsedCurrent = JSON.parse(filterQuery);
+        const parsedCurrent = parseShellJson(filterQuery);
         const compiledCurrent = JSON.parse(compileRulesToQuery(rules, queryMatchType));
         if (JSON.stringify(parsedCurrent) !== JSON.stringify(compiledCurrent)) {
           const synced = syncRulesFromQuery(filterQuery);
@@ -659,7 +660,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         return;
       }
       try {
-        const parsedCurrent = JSON.parse(projectionQuery);
+        const parsedCurrent = parseShellJson(projectionQuery);
         const compiledCurrent = JSON.parse(compileProjectionRules(projectionRules));
         if (JSON.stringify(parsedCurrent) !== JSON.stringify(compiledCurrent)) {
           const synced = syncProjectionFromQuery(projectionQuery);
@@ -684,7 +685,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         return;
       }
       try {
-        const parsedCurrent = JSON.parse(sortQuery);
+        const parsedCurrent = parseShellJson(sortQuery);
         const compiledCurrent = JSON.parse(compileSortRules(sortRules));
         if (JSON.stringify(parsedCurrent) !== JSON.stringify(compiledCurrent)) {
           const synced = syncSortFromQuery(sortQuery);
@@ -935,18 +936,18 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const buildAggregatePipeline = (): Record<string, unknown>[] =>
     stages
       .filter(stage => stage.content.trim())
-      .map(stage => ({ [stage.operator]: JSON.parse(stage.content) }));
+      .map(stage => ({ [stage.operator]: parseShellJson(stage.content) }));
 
   const handleRun = () => {
     setError(null);
     try {
       if (queryMode === 'find') {
-        const parsedFilter = filterQuery.trim() ? JSON.parse(filterQuery) : {};
-        const parsedSort = sortQuery.trim() ? JSON.parse(sortQuery) : {};
+        const parsedFilter = filterQuery.trim() ? parseShellJson(filterQuery) : {};
+        const parsedSort = sortQuery.trim() ? parseShellJson(sortQuery) : {};
         // Only send a projection when the user has enabled one.
         const parsedProjection =
           isProjectionEnabled && projectionQuery.trim() && projectionQuery.trim() !== '{}'
-            ? JSON.parse(projectionQuery)
+            ? parseShellJson(projectionQuery)
             : {};
 
         onExecute({
@@ -970,7 +971,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
         stages.forEach(stage => {
           if (!stage.content.trim()) return;
-          const body = JSON.parse(stage.content);
+          const body = parseShellJson(stage.content);
           if (stage.operator === '$match') {
             compiledFilter = { ...compiledFilter, ...body };
           } else if (stage.operator === '$sort') {
@@ -1003,7 +1004,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         .filter((stage) => stage.content.trim())
         .map((stage) => {
           try {
-            return { [stage.operator]: JSON.parse(stage.content) };
+            return { [stage.operator]: parseShellJson(stage.content) };
           } catch {
             return { [stage.operator]: stage.content };
           }
@@ -1014,9 +1015,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     let parsedFilter: unknown = {};
     let parsedProjection: unknown = {};
     let parsedSort: unknown = {};
-    try { parsedFilter = filterQuery.trim() ? JSON.parse(filterQuery) : {}; } catch { parsedFilter = filterQuery; }
-    try { parsedProjection = projectionQuery.trim() ? JSON.parse(projectionQuery) : {}; } catch { parsedProjection = projectionQuery; }
-    try { parsedSort = sortQuery.trim() ? JSON.parse(sortQuery) : {}; } catch { parsedSort = sortQuery; }
+    try { parsedFilter = filterQuery.trim() ? parseShellJson(filterQuery) : {}; } catch { parsedFilter = filterQuery; }
+    try { parsedProjection = projectionQuery.trim() ? parseShellJson(projectionQuery) : {}; } catch { parsedProjection = projectionQuery; }
+    try { parsedSort = sortQuery.trim() ? parseShellJson(sortQuery) : {}; } catch { parsedSort = sortQuery; }
 
     const projectionPart =
       parsedProjection && typeof parsedProjection === 'object' && Object.keys(parsedProjection as Record<string, unknown>).length > 0
@@ -1035,7 +1036,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     setExplainLoading(true);
     try {
       if (queryMode === 'find') {
-        const parsedFilter = filterQuery.trim() ? JSON.parse(filterQuery) : {};
+        const parsedFilter = filterQuery.trim() ? parseShellJson(filterQuery) : {};
         await onExplain(JSON.stringify(parsedFilter));
       } else if (onExplainAggregate) {
         // Explain the FULL pipeline (M1), not just a collapsed $match.
@@ -1046,7 +1047,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         stages.forEach(stage => {
           if (stage.operator === '$match' && stage.content.trim()) {
             try {
-              const body = JSON.parse(stage.content);
+              const body = parseShellJson(stage.content);
               compiledFilter = { ...compiledFilter, ...body };
             } catch {
               // Ignore invalid JSON inside match stage during explain preview
