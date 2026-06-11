@@ -17,6 +17,7 @@ function kindToMonaco(monaco: Monaco, kind: CompletionKind) {
     case 'stage': return k.Keyword;
     case 'method': return k.Method;
     case 'enum': return k.EnumMember;
+    case 'ejson': return k.Struct;
     default: return k.Text;
   }
 }
@@ -65,9 +66,15 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
         startColumn: position.column - token.length, endColumn: position.column,
       };
       return {
-        suggestions: items.map((it) => ({
+        // sortText preserves getCompletions' intentional order (e.g. the
+        // schema-matched EJSON wrapper first) against Monaco's default sort.
+        suggestions: items.map((it, idx) => ({
           label: it.label, kind: kindToMonaco(monaco, it.kind),
           insertText: it.insertText, detail: it.detail, range,
+          sortText: String(idx).padStart(4, '0'),
+          insertTextRules: it.isSnippet
+            ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+            : undefined,
         })),
       };
     },

@@ -1,5 +1,5 @@
 export type Surface = 'filter' | 'projection' | 'sort' | 'aggStage' | 'shell';
-export type CompletionKind = 'field' | 'operator' | 'stage' | 'method' | 'enum';
+export type CompletionKind = 'field' | 'operator' | 'stage' | 'method' | 'enum' | 'ejson';
 
 export interface FieldSchema { type?: string; enumValues?: string[]; }
 
@@ -17,6 +17,8 @@ export interface CompletionItem {
   kind: CompletionKind;
   insertText: string;
   detail?: string;
+  // Monaco snippet syntax: `${1:placeholder}` tab stops, literal `$` escaped as `\$`.
+  isSnippet?: boolean;
 }
 
 export const QUERY_OPERATORS = [
@@ -52,6 +54,50 @@ export const DB_METHODS = [
 export const SHELL_GLOBALS = [
   'db', 'print', 'printjson', 'ObjectId', 'ISODate', 'UUID', 'Date',
   'NumberLong', 'NumberInt', 'NumberDecimal', 'BinData', 'sleep', 'load', 'quit', 'version', 'use',
+];
+
+// Extended JSON (EJSON v2) type wrappers. `value` is the full wrapper object as
+// a Monaco snippet; `key` is offered when the user has already opened the
+// wrapper object themselves ({"_id": {"$oi…). The relaxed `$date` (ISO string)
+// form is used because the backend's serde_json→bson path accepts it.
+export interface EjsonType { key: string; detail: string; value: string; }
+export const EJSON_TYPES: EjsonType[] = [
+  { key: '$oid', detail: 'EJSON ObjectId', value: '{"\\$oid": "${1:objectId}"}' },
+  { key: '$date', detail: 'EJSON Date (ISO-8601)', value: '{"\\$date": "${1:2024-01-01T00:00:00Z}"}' },
+  { key: '$numberInt', detail: 'EJSON Int32', value: '{"\\$numberInt": "${1:0}"}' },
+  { key: '$numberLong', detail: 'EJSON Int64', value: '{"\\$numberLong": "${1:0}"}' },
+  { key: '$numberDouble', detail: 'EJSON Double', value: '{"\\$numberDouble": "${1:0.0}"}' },
+  { key: '$numberDecimal', detail: 'EJSON Decimal128', value: '{"\\$numberDecimal": "${1:0}"}' },
+  { key: '$regularExpression', detail: 'EJSON Regex', value: '{"\\$regularExpression": {"pattern": "${1:pattern}", "options": "${2:i}"}}' },
+  { key: '$timestamp', detail: 'EJSON Timestamp', value: '{"\\$timestamp": {"t": ${1:0}, "i": ${2:1}}}' },
+  { key: '$binary', detail: 'EJSON Binary', value: '{"\\$binary": {"base64": "${1:base64}", "subType": "${2:00}"}}' },
+  { key: '$uuid', detail: 'EJSON UUID', value: '{"\\$uuid": "${1:00000000-0000-0000-0000-000000000000}"}' },
+  { key: '$code', detail: 'EJSON JavaScript code', value: '{"\\$code": "${1:code}"}' },
+  { key: '$symbol', detail: 'EJSON Symbol', value: '{"\\$symbol": "${1:symbol}"}' },
+  { key: '$undefined', detail: 'EJSON Undefined', value: '{"\\$undefined": true}' },
+  { key: '$minKey', detail: 'EJSON MinKey', value: '{"\\$minKey": 1}' },
+  { key: '$maxKey', detail: 'EJSON MaxKey', value: '{"\\$maxKey": 1}' },
+  { key: '$dbPointer', detail: 'EJSON DBPointer', value: '{"\\$dbPointer": {"\\$ref": "${1:collection}", "\\$id": {"\\$oid": "${2:objectId}"}}}' },
+];
+
+// Projection-only operators ({field: {$slice: …}}).
+export const PROJECTION_OPERATORS: EjsonType[] = [
+  { key: '$slice', detail: 'array slice', value: '{"\\$slice": ${1:5}}' },
+  { key: '$elemMatch', detail: 'first matching element', value: '{"\\$elemMatch": {$1}}' },
+  { key: '$meta', detail: 'text score', value: '{"\\$meta": "${1:textScore}"}' },
+];
+
+// mongosh does NOT parse EJSON wrappers as types, so the shell surface offers
+// constructor calls at value positions instead.
+export const SHELL_VALUE_CTORS: EjsonType[] = [
+  { key: 'ObjectId', detail: 'ObjectId', value: 'ObjectId("${1:objectId}")' },
+  { key: 'ISODate', detail: 'Date', value: 'ISODate("${1:2024-01-01T00:00:00Z}")' },
+  { key: 'NumberInt', detail: 'Int32', value: 'NumberInt(${1:0})' },
+  { key: 'NumberLong', detail: 'Int64', value: 'NumberLong("${1:0}")' },
+  { key: 'NumberDecimal', detail: 'Decimal128', value: 'NumberDecimal("${1:0}")' },
+  { key: 'UUID', detail: 'UUID', value: 'UUID("${1:00000000-0000-0000-0000-000000000000}")' },
+  { key: 'BinData', detail: 'Binary', value: 'BinData(${1:0}, "${2:base64}")' },
+  { key: 'Timestamp', detail: 'Timestamp', value: 'Timestamp(${1:0}, ${2:1})' },
 ];
 
 function byPrefix<T extends { label: string }>(items: T[], token: string): T[] {
@@ -119,15 +165,84 @@ function atValuePosition(text: string): boolean {
   return /:\s*["']?[\w.$]*$/.test(text) && !atKeyPosition(text);
 }
 
+// Index of the innermost still-open `{`, skipping braces inside string literals.
+function lastOpenBraceIndex(text: string): number {
+  const stack: number[] = [];
+  let quote: string | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+    else if (c === '{') stack.push(i);
+    else if (c === '}') stack.pop();
+  }
+  return stack.length ? stack[stack.length - 1] : -1;
+}
+
+// The key whose value the innermost open object is, e.g. `_id` for
+// `{"_id": {` — null when the open object is the top level or an array element.
+function parentKeyOfOpenObject(text: string): string | null {
+  const idx = lastOpenBraceIndex(text);
+  if (idx <= 0) return null;
+  const m = text.slice(0, idx).match(/["']?([\w$.]+)["']?\s*:\s*$/);
+  return m ? m[1] : null;
+}
+
+function snippetItems(list: EjsonType[], kind: CompletionKind): CompletionItem[] {
+  return list.map((t) => ({ label: t.key, kind, insertText: t.value, detail: t.detail, isSnippet: true }));
+}
+
+// EJSON wrapper snippets for a value position; the wrapper matching the
+// field's schema type (objectId/date) ranks first.
+function ejsonValueItems(ctx: CompletionCtx): CompletionItem[] {
+  const items = snippetItems(EJSON_TYPES, 'ejson');
+  const field = lastFieldKey(ctx.textBeforeCursor);
+  const type = field ? ctx.schema?.get(field)?.type : undefined;
+  const first = type === 'objectId' ? '$oid' : type === 'date' ? '$date' : null;
+  if (!first) return items;
+  return [...items.filter((i) => i.label === first), ...items.filter((i) => i.label !== first)];
+}
+
+// Bare `$key` completions for when the user already opened the wrapper object.
+function keyItems(ctx: CompletionCtx, list: EjsonType[]): CompletionItem[] {
+  return list.map((t) => ({ label: t.key, kind: 'ejson' as const, insertText: keyInsert(ctx, t.key), detail: t.detail }));
+}
+
 export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
   const { surface, textBeforeCursor, token } = ctx;
 
   if (surface === 'projection') {
+    if (atValuePosition(textBeforeCursor)) {
+      return byPrefix([
+        { label: '1', kind: 'operator' as const, insertText: '1', detail: 'include' },
+        { label: '0', kind: 'operator' as const, insertText: '0', detail: 'exclude' },
+        ...snippetItems(PROJECTION_OPERATORS, 'operator'),
+        ...ejsonValueItems(ctx),
+      ], token);
+    }
+    const parent = atKeyPosition(textBeforeCursor) ? parentKeyOfOpenObject(textBeforeCursor) : null;
+    if (parent === '$elemMatch') {
+      return byPrefix([...fieldItems(ctx), ...opItems(ctx, QUERY_OPERATORS, 'query operator')], token);
+    }
+    if (parent) {
+      return byPrefix([...keyItems(ctx, PROJECTION_OPERATORS), ...opItems(ctx, QUERY_OPERATORS, 'query operator'), ...keyItems(ctx, EJSON_TYPES)], token);
+    }
     return byPrefix([...fieldItems(ctx),
       { label: '1', kind: 'operator', insertText: '1', detail: 'include' },
       { label: '0', kind: 'operator', insertText: '0', detail: 'exclude' }], token);
   }
   if (surface === 'sort') {
+    if (atValuePosition(textBeforeCursor)) {
+      return byPrefix([
+        { label: '1', kind: 'operator' as const, insertText: '1', detail: 'ascending' },
+        { label: '-1', kind: 'operator' as const, insertText: '-1', detail: 'descending' },
+        { label: '$meta', kind: 'operator' as const, insertText: '{"\\$meta": "${1:textScore}"}', detail: 'sort by text score', isSnippet: true },
+      ], token);
+    }
     return byPrefix([...fieldItems(ctx),
       { label: '1', kind: 'operator', insertText: '1', detail: 'ascending' },
       { label: '-1', kind: 'operator', insertText: '-1', detail: 'descending' }], token);
@@ -153,6 +268,7 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
   }
 
   const aggStageStart = surface === 'aggStage' && atKeyPosition(textBeforeCursor)
+    && parentKeyOfOpenObject(textBeforeCursor) === null
     && !/\$group/.test(textBeforeCursor.slice(textBeforeCursor.indexOf('{')));
 
   if (aggStageStart) {
@@ -162,10 +278,25 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     return byPrefix([...opItems(ctx, GROUP_ACCUMULATORS, 'accumulator'), ...fieldItems(ctx)], token);
   }
 
-  // filter (and shell-inside-find, and agg $match body)
+  // filter (and shell-inside-find, and agg $match body) — value position:
+  // enum values, EJSON type wrappers (shell constructors in the JS shell), operators.
   if (atValuePosition(textBeforeCursor)) {
-    return byPrefix([...enumItemsForLastField(ctx), ...opItems(ctx, QUERY_OPERATORS, 'query operator')], token);
+    const typed = surface === 'shell' ? snippetItems(SHELL_VALUE_CTORS, 'method') : ejsonValueItems(ctx);
+    return byPrefix([...enumItemsForLastField(ctx), ...typed, ...opItems(ctx, QUERY_OPERATORS, 'query operator')], token);
   }
-  // key position
+  // key position inside an open value object ({"_id": { …): the keys are
+  // operators or EJSON wrappers, not field names — except filter-document
+  // bodies ($elemMatch, $match, …) where fields apply again.
+  const parent = atKeyPosition(textBeforeCursor) ? parentKeyOfOpenObject(textBeforeCursor) : null;
+  if (parent) {
+    if (parent === '$not') {
+      return byPrefix([...opItems(ctx, QUERY_OPERATORS, 'query operator'), ...keyItems(ctx, EJSON_TYPES)], token);
+    }
+    if (parent.startsWith('$')) {
+      return byPrefix([...fieldItems(ctx), ...opItems(ctx, QUERY_OPERATORS, 'query operator')], token);
+    }
+    return byPrefix([...opItems(ctx, QUERY_OPERATORS, 'query operator'), ...keyItems(ctx, EJSON_TYPES)], token);
+  }
+  // top-level key position
   return byPrefix([...fieldItems(ctx), ...opItems(ctx, LOGICAL_OPERATORS, 'logical')], token);
 }
