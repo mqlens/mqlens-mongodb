@@ -70,9 +70,9 @@ describe('getCompletions — JSON key quoting', () => {
     const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.customers.find({ ', token: '', fields: ['region'] }));
     expect(items.find((i) => i.label === 'region')!.insertText).toBe('region');
   });
-  it('quotes $operator keys in filter', () => {
+  it('quotes $operator keys in filter and scaffolds their value shape', () => {
     const items = getCompletions(base({ surface: 'filter', textBeforeCursor: '{ ', token: '$' }));
-    expect(items.find((i) => i.label === '$and')!.insertText).toBe('"$and"');
+    expect(items.find((i) => i.label === '$and')!.insertText).toBe('"\\$and": [{$1}]');
   });
 });
 
@@ -141,13 +141,13 @@ describe('getCompletions — EJSON in filter', () => {
     expect(labels(items)).toEqual(expect.arrayContaining(['$eq', '$gt', '$oid', '$date']));
     expect(labels(items)).not.toContain('region');
   });
-  it('quotes EJSON keys in the JSON surface', () => {
+  it('quotes EJSON keys in the JSON surface and scaffolds their value', () => {
     const items = getCompletions(base({ textBeforeCursor: '{ "_id": { ', token: '$o' }));
-    expect(items.find((i) => i.label === '$oid')!.insertText).toBe('"$oid"');
+    expect(items.find((i) => i.label === '$oid')!.insertText).toBe('"\\$oid": "${1:objectId}"');
   });
   it('does not double-quote EJSON keys when already inside a quote', () => {
     const items = getCompletions(base({ textBeforeCursor: '{ "_id": { "$o', token: '$o' }));
-    expect(items.find((i) => i.label === '$oid')!.insertText).toBe('$oid');
+    expect(items.find((i) => i.label === '$oid')!.insertText).toBe('\\$oid": "${1:objectId}"');
   });
   it('offers fields + operators inside $elemMatch', () => {
     const items = getCompletions(base({ textBeforeCursor: '{ "tags": { "$elemMatch": { ', token: '' }));
@@ -193,10 +193,10 @@ describe('getCompletions — projection operators & EJSON', () => {
     const items = getCompletions(base({ surface: 'projection', textBeforeCursor: '{ "comments": ', token: '' }));
     expect(labels(items)).toEqual(expect.arrayContaining(['$oid', '$date']));
   });
-  it('offers projection operator keys inside a field value object', () => {
+  it('offers projection operator keys with value scaffolds inside a field value object', () => {
     const items = getCompletions(base({ surface: 'projection', textBeforeCursor: '{ "comments": { ', token: '' }));
     expect(labels(items)).toEqual(expect.arrayContaining(['$slice', '$elemMatch', '$meta']));
-    expect(items.find((i) => i.label === '$slice')!.insertText).toBe('"$slice"');
+    expect(items.find((i) => i.label === '$slice')!.insertText).toBe('"\\$slice": ${1:5}');
   });
   it('offers fields + query operators inside a projection $elemMatch', () => {
     const items = getCompletions(base({ surface: 'projection', textBeforeCursor: '{ "comments": { "$elemMatch": { ', token: '' }));
@@ -206,6 +206,72 @@ describe('getCompletions — projection operators & EJSON', () => {
     const items = getCompletions(base({ surface: 'projection', textBeforeCursor: '{ ', token: '' }));
     expect(labels(items)).toEqual(expect.arrayContaining(['region', 'plan', '_id']));
     expect(labels(items)).not.toContain('$slice');
+  });
+});
+
+describe('getCompletions — operator value scaffolds', () => {
+  it('array operators scaffold an array value ($in/$nin/$all)', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ "qty": { ', token: '$' }));
+    expect(items.find((i) => i.label === '$in')!.insertText).toBe('"\\$in": [$1]');
+    expect(items.find((i) => i.label === '$all')!.insertText).toBe('"\\$all": [$1]');
+  });
+  it('logical operators scaffold an array of condition objects', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ ', token: '$' }));
+    expect(items.find((i) => i.label === '$or')!.insertText).toBe('"\\$or": [{$1}]');
+    expect(items.find((i) => i.label === '$nor')!.insertText).toBe('"\\$nor": [{$1}]');
+  });
+  it('object operators scaffold an object value ($elemMatch, $not)', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ "tags": { ', token: '$' }));
+    expect(items.find((i) => i.label === '$elemMatch')!.insertText).toBe('"\\$elemMatch": {$1}');
+    expect(items.find((i) => i.label === '$not')!.insertText).toBe('"\\$not": {$1}');
+  });
+  it('scalar operators scaffold typed placeholders ($exists, $regex, $mod, $size)', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ "x": { ', token: '$' }));
+    expect(items.find((i) => i.label === '$exists')!.insertText).toBe('"\\$exists": ${1:true}');
+    expect(items.find((i) => i.label === '$regex')!.insertText).toBe('"\\$regex": "${1:pattern}"');
+    expect(items.find((i) => i.label === '$mod')!.insertText).toBe('"\\$mod": [${1:divisor}, ${2:remainder}]');
+    expect(items.find((i) => i.label === '$size')!.insertText).toBe('"\\$size": ${1:0}');
+  });
+  it('comparison operators use the field schema type for their value', () => {
+    const schema = new Map([['createdTime', { type: 'date' }]]);
+    const items = getCompletions(base({ textBeforeCursor: '{ "createdTime": { ', token: '$g', schema }));
+    expect(items.find((i) => i.label === '$gt')!.insertText).toBe('"\\$gt": {"\\$date": "${1:2024-01-01T00:00:00Z}"}');
+  });
+  it('operator chosen at a value position wraps itself in an object', () => {
+    const schema = new Map([['createdTime', { type: 'date' }]]);
+    const items = getCompletions(base({ textBeforeCursor: '{ "createdTime": ', token: '$gt', schema }));
+    expect(items.find((i) => i.label === '$gt')!.insertText).toBe('{"\\$gt": {"\\$date": "${1:2024-01-01T00:00:00Z}"}}');
+  });
+  it('comparison operators fall back to a bare tab stop without schema', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ "x": { ', token: '$gt' }));
+    expect(items.find((i) => i.label === '$gt')!.insertText).toBe('"\\$gt": $1');
+  });
+  it('shell surface scaffolds operators with bare keys', () => {
+    const items = getCompletions(base({ surface: 'shell', textBeforeCursor: 'db.c.find({ qty: { ', token: '$' }));
+    expect(items.find((i) => i.label === '$in')!.insertText).toBe('\\$in: [$1]');
+  });
+  it('agg stages scaffold their body shape', () => {
+    const items = getCompletions(base({ surface: 'aggStage', textBeforeCursor: '{ ', token: '$' }));
+    expect(items.find((i) => i.label === '$match')!.insertText).toBe('"\\$match": {$1}');
+    expect(items.find((i) => i.label === '$limit')!.insertText).toBe('"\\$limit": ${1:10}');
+    expect(items.find((i) => i.label === '$unwind')!.insertText).toBe('"\\$unwind": "\\$${1:field}"');
+    expect(items.find((i) => i.label === '$lookup')!.insertText).toContain('"from": "${1:collection}"');
+  });
+  it('group accumulators scaffold their value', () => {
+    const items = getCompletions(base({ surface: 'aggStage', textBeforeCursor: '{ "$group": { "_id": "$region", "t": { ', token: '$' }));
+    expect(items.find((i) => i.label === '$sum')!.insertText).toBe('"\\$sum": ${1:1}');
+    expect(items.find((i) => i.label === '$push')!.insertText).toBe('"\\$push": "\\$${1:field}"');
+  });
+});
+
+describe('getCompletions — shell constructors in the JSON query bar', () => {
+  it('offers shell constructors at a filter value position (query bar parses them)', () => {
+    const items = getCompletions(base({ textBeforeCursor: '{ "x": ', token: '' }));
+    const ctor = items.find((i) => i.label === 'ObjectId')!;
+    expect(ctor).toBeDefined();
+    expect(ctor.isSnippet).toBe(true);
+    expect(ctor.insertText).toBe('ObjectId("${1:objectId}")');
+    expect(labels(items)).toEqual(expect.arrayContaining(['ISODate', 'NumberLong', 'UUID']));
   });
 });
 
