@@ -190,17 +190,27 @@ describe('DataGrid Component', () => {
     expect(screen.getByText(/"David Miller"/)).toBeInTheDocument();
   });
 
-  it('shows a Query Code tab with the formatted runnable command when queryCode is provided', () => {
-    const code = 'db.products.aggregate([\n  {\n    "$count": "n"\n  }\n])';
-    render(<DataGrid documents={mockDocuments} queryCode={code} />);
+  it('shows a Query Code tab rendering the query spec in the selected language', () => {
+    const spec = {
+      db: 'shop',
+      collection: 'products',
+      query: { queryType: 'aggregate' as const, pipeline: [{ $count: 'n' }] },
+    };
+    render(<DataGrid documents={mockDocuments} querySpec={spec} />);
 
-    // The tab appears and opens the formatted query code.
+    // The tab appears and opens with the mongosh command by default.
     fireEvent.click(screen.getByTestId('query-code-tab'));
     expect(screen.getByTestId('query-code-panel')).toBeInTheDocument();
-    expect(screen.getByTestId('query-code-content').textContent).toBe(code);
+    expect(screen.getByTestId('query-code-content').textContent).toContain('db.products.aggregate(');
+    expect(screen.getByTestId('query-code-content').textContent).toContain('$count');
+
+    // Switching the language regenerates the code.
+    fireEvent.change(screen.getByTestId('query-code-lang'), { target: { value: 'Python' } });
+    expect(screen.getByTestId('query-code-content').textContent).toContain('from pymongo import MongoClient');
+    fireEvent.change(screen.getByTestId('query-code-lang'), { target: { value: 'mongosh' } });
   });
 
-  it('hides the Query Code tab when no queryCode is provided', () => {
+  it('hides the Query Code tab when no query spec is provided', () => {
     render(<DataGrid documents={mockDocuments} />);
     expect(screen.queryByTestId('query-code-tab')).toBeNull();
   });

@@ -4,15 +4,16 @@ import { List } from 'react-window';
 import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3 } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
+import { generateQueryCode, CODE_LANGUAGES, type CodeLanguage, type QueryCodeSpec } from '../lib/queryCodeGen';
 import { EJSON, ObjectId, Long, Decimal128, Int32, Double, Binary, Timestamp } from 'bson';
 
 interface DataGridProps {
   documents: Array<Record<string, any>>;
   density?: 'roomy' | 'cozy' | 'compact';
   explainResult?: string | null;
-  // The full mongosh-runnable command for the query that produced these results,
-  // shown formatted in the "Query Code" tab. Null when no query has run yet.
-  queryCode?: string | null;
+  // The query that produced these results, rendered as runnable driver code
+  // (per selected language) in the "Query Code" tab. Null before any run.
+  querySpec?: QueryCodeSpec | null;
   onInsertDocument?: () => void;
   onEditDocument?: (doc: Record<string, any>) => void;
   onDuplicateDocument?: (doc: Record<string, any>) => void;
@@ -402,7 +403,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   documents,
   density = 'cozy',
   explainResult = null,
-  queryCode = null,
+  querySpec = null,
   onInsertDocument,
   onEditDocument,
   onDuplicateDocument,
@@ -502,6 +503,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
   );
   const [copied, setCopied] = useState(false);
   const [queryCopied, setQueryCopied] = useState(false);
+
+  // Query Code tab: generate runnable driver code in the selected language.
+  const [codeLang, setCodeLang] = useState<CodeLanguage>(() => {
+    const saved = localStorage.getItem('mqlens-codegen-lang') as CodeLanguage | null;
+    return saved && (CODE_LANGUAGES as readonly string[]).includes(saved) ? saved : 'mongosh';
+  });
+  useEffect(() => { localStorage.setItem('mqlens-codegen-lang', codeLang); }, [codeLang]);
+  const queryCode = useMemo(
+    () => (querySpec ? generateQueryCode(codeLang, querySpec) : null),
+    [querySpec, codeLang],
+  );
 
   const handleCopyQueryCode = () => {
     if (!queryCode) return;
@@ -1246,15 +1258,28 @@ export const DataGrid: React.FC<DataGridProps> = ({
           ) : (
             /* Query Code Tools */
             queryCode && (
-              <button
-                onClick={handleCopyQueryCode}
-                className="px-2.5 py-1 rounded bg-[var(--bg-item-active)] hover:bg-[var(--bg-item-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] border border-[var(--border-color)] flex items-center gap-1.5 text-[11px] font-semibold transition-all cursor-pointer"
-                title="Copy query code"
-                data-testid="copy-query-code-btn"
-              >
-                {queryCopied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
-                <span>{queryCopied ? 'Copied!' : 'Copy'}</span>
-              </button>
+              <>
+                <select
+                  value={codeLang}
+                  onChange={(e) => setCodeLang(e.target.value as CodeLanguage)}
+                  className="px-2 py-1 rounded bg-[var(--bg-base)] text-[var(--text-main)] border border-[var(--border-color)] text-[11px] font-medium cursor-pointer"
+                  aria-label="Code language"
+                  data-testid="query-code-lang"
+                >
+                  {CODE_LANGUAGES.map((lang) => (
+                    <option key={lang} value={lang}>{lang}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleCopyQueryCode}
+                  className="px-2.5 py-1 rounded bg-[var(--bg-item-active)] hover:bg-[var(--bg-item-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] border border-[var(--border-color)] flex items-center gap-1.5 text-[11px] font-semibold transition-all cursor-pointer"
+                  title="Copy query code"
+                  data-testid="copy-query-code-btn"
+                >
+                  {queryCopied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+                  <span>{queryCopied ? 'Copied!' : 'Copy'}</span>
+                </button>
+              </>
             )
           )}
         </div>

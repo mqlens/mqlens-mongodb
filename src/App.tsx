@@ -20,7 +20,7 @@ import { VaultGate } from './components/VaultGate';
 import { UpdatePrompt } from './components/UpdatePrompt';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
-import { buildRunnableCommand } from './lib/mongoCommand';
+import type { QueryCodeSpec } from './lib/queryCodeGen';
 import { docToShell } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries } from './lib/queryStore';
 import type { ConnectionProfile } from './lib/connection';
@@ -62,9 +62,9 @@ const isEmptyFilter = (s: string): boolean => {
   return t === '' || t === '{}';
 };
 
-// Build the full mongosh-runnable command for whatever a tab last executed,
-// shown formatted in the DataGrid "Query Code" tab. Returns null before any run.
-const buildTabQueryCode = (tab: QueryTab): string | null => {
+// Describe whatever a tab last executed, for the DataGrid "Query Code" tab
+// (rendered there as runnable driver code per language). Null before any run.
+const buildTabQuerySpec = (tab: QueryTab): QueryCodeSpec | null => {
   const parse = (s: string): unknown => {
     try {
       return s.trim() ? JSON.parse(s) : {};
@@ -73,15 +73,18 @@ const buildTabQueryCode = (tab: QueryTab): string | null => {
     }
   };
   if (tab.lastAggregate) {
-    return buildRunnableCommand(
-      { queryType: 'aggregate', pipeline: tab.lastAggregate },
-      tab.collection
-    );
+    return {
+      db: tab.db,
+      collection: tab.collection,
+      query: { queryType: 'aggregate', pipeline: tab.lastAggregate },
+    };
   }
   if (tab.lastQuery) {
     const q = tab.lastQuery;
-    return buildRunnableCommand(
-      {
+    return {
+      db: tab.db,
+      collection: tab.collection,
+      query: {
         queryType: 'find',
         filter: parse(q.filter),
         sort: parse(q.sort),
@@ -89,8 +92,7 @@ const buildTabQueryCode = (tab: QueryTab): string | null => {
         limit: q.limit,
         skip: q.skip,
       },
-      tab.collection
-    );
+    };
   }
   return null;
 };
@@ -1481,7 +1483,7 @@ function Workspace() {
                           documents={activeTab.results}
                           density={density}
                           explainResult={activeTab.explainResult}
-                          queryCode={buildTabQueryCode(activeTab)}
+                          querySpec={buildTabQuerySpec(activeTab)}
                           onInsertDocument={handleInsertDocument}
                           onEditDocument={handleEditDocument}
                           onDuplicateDocument={handleDuplicateDocument}
