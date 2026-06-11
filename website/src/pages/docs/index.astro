@@ -37,8 +37,28 @@ const toc = [
         <p>Download the build for your platform from the <a href="/#download">download section</a> or the <a href={SITE.releasesLatest} target="_blank" rel="noopener">latest release</a>:</p>
         <ul>
           <li><strong>macOS</strong> — open the <code>.dmg</code> and drag {SITE.name} to Applications. Builds are Apple-notarized, so Gatekeeper will let it run.</li>
-          <li><strong>Windows</strong> — run the <code>.msi</code> or <code>.exe</code> installer. Installers are Azure Trusted Signing–signed.</li>
         </ul>
+
+        <h3>Windows</h3>
+        <p>
+          Download the <code>.exe</code> or <code>.msi</code> installer from the
+          <a href={SITE.releasesLatest} target="_blank" rel="noopener">latest release page</a>.
+          Requires Windows 10 or later (x64). Installers are Azure Trusted Signing–signed.
+        </p>
+        <p><strong>Setup (.exe, recommended)</strong></p>
+        <ol>
+          <li>Double-click <code>MQLens_*_x64-setup.exe</code>.</li>
+          <li>Approve the UAC prompt if Windows asks for permission.</li>
+          <li>Follow the setup wizard, then launch <strong>{SITE.name}</strong> from the Start menu.</li>
+        </ol>
+        <p><strong>Setup (.msi)</strong></p>
+        <p>Double-click <code>MQLens_*.msi</code> and follow the prompts, or install from an elevated Command Prompt or PowerShell:</p>
+        <pre><code>msiexec /i MQLens_*.msi</code></pre>
+        <p>
+          <strong>Troubleshooting:</strong> if SmartScreen shows "Windows protected your PC",
+          choose <strong>More info</strong> → <strong>Run anyway</strong>. The installer is signed;
+          SmartScreen may still warn on first download until reputation builds.
+        </p>
 
         <h3>Linux</h3>
         <p>
