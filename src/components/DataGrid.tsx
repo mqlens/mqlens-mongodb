@@ -1400,7 +1400,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 </div>
               ) : (
                 <div className="flex-1 overflow-auto bg-[var(--bg-base)] p-4 select-text">
-                  <pre className="text-[11px] text-sky-200 font-mono select-text leading-relaxed whitespace-pre-wrap">
+                  <pre className="text-[11px] text-[var(--syntax-key)] font-mono select-text leading-relaxed whitespace-pre-wrap">
                     {explainResult}
                   </pre>
                 </div>
@@ -1421,7 +1421,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           {queryCode ? (
             <div className="flex-1 overflow-auto bg-[var(--bg-base)] p-4 select-text">
               <pre
-                className="text-[11px] text-sky-200 font-mono select-text leading-relaxed whitespace-pre-wrap"
+                className="text-[11px] text-[var(--syntax-key)] font-mono select-text leading-relaxed whitespace-pre-wrap"
                 data-testid="query-code-content"
               >
                 {queryCode}
