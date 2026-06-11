@@ -185,6 +185,18 @@ function fieldItems(ctx: CompletionCtx): CompletionItem[] {
   });
 }
 
+// Field completions for projection/sort key positions: the value is a fixed
+// choice (include/exclude or direction), offered as a snippet choice dropdown.
+function choiceFieldItems(ctx: CompletionCtx, choices: string): CompletionItem[] {
+  return ctx.fields.map((name) => {
+    const fs = ctx.schema?.get(name);
+    const key = inQuote(ctx.textBeforeCursor) ? `${name}"` : `"${name}"`;
+    return { label: name, kind: 'field' as const, insertText: `${key}: \${1|${choices}|}`, detail: fs?.type, isSnippet: true };
+  });
+}
+
+const SORT_META: EjsonType = { key: '$meta', detail: 'sort by text score', inner: '"${1:textScore}"' };
+
 // Value scaffolds per schema type, keyed by the labels the backend schema
 // analyzer emits (src-tauri/src/db/schema.rs bson_type_label). `json` is for
 // the EJSON surfaces, `shell` for mongosh. Every label must have an entry.
@@ -345,9 +357,7 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
         ...keyScaffoldItems(ctx, EJSON_TYPES, 'ejson'),
       ], token);
     }
-    return byPrefix([...fieldItems(ctx),
-      { label: '1', kind: 'operator', insertText: '1', detail: 'include' },
-      { label: '0', kind: 'operator', insertText: '0', detail: 'exclude' }], token);
+    return byPrefix(choiceFieldItems(ctx, '1,0'), token);
   }
   if (surface === 'sort') {
     if (atValuePosition(textBeforeCursor)) {
@@ -357,9 +367,10 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
         { label: '$meta', kind: 'operator' as const, insertText: '{"\\$meta": "${1:textScore}"}', detail: 'sort by text score', isSnippet: true },
       ], token);
     }
-    return byPrefix([...fieldItems(ctx),
-      { label: '1', kind: 'operator', insertText: '1', detail: 'ascending' },
-      { label: '-1', kind: 'operator', insertText: '-1', detail: 'descending' }], token);
+    if (atKeyPosition(textBeforeCursor) && parentKeyOfOpenObject(textBeforeCursor)) {
+      return byPrefix(keyScaffoldItems(ctx, [SORT_META], 'operator'), token);
+    }
+    return byPrefix(choiceFieldItems(ctx, '1,-1'), token);
   }
   if (surface === 'shell') {
     // db.<partial> (collection slot — exactly one dot after db) → collection names + db methods

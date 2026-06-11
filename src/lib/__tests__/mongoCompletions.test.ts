@@ -360,13 +360,17 @@ describe('getCompletions — typed field scaffolds at key position', () => {
     const items = getCompletions(base({ textBeforeCursor: '{ "refs": { "$elemMatch": { ', token: '', schema, fields: ['_id'] }));
     expect(items.find((i) => i.label === '_id')!.insertText).toContain('"_id": {"\\$oid"');
   });
-  it('does NOT scaffold values in projection (value must stay 1/0)', () => {
+  it('projection fields scaffold an include/exclude choice instead of a typed value', () => {
     const items = getCompletions(base({ surface: 'projection', textBeforeCursor: '{ ', token: '', schema, fields: ['_id'] }));
-    expect(items.find((i) => i.label === '_id')!.insertText).toBe('"_id"');
+    const id = items.find((i) => i.label === '_id')!;
+    expect(id.isSnippet).toBe(true);
+    expect(id.insertText).toBe('"_id": ${1|1,0|}');
   });
-  it('does NOT scaffold values in sort', () => {
+  it('sort fields scaffold a direction choice instead of a typed value', () => {
     const items = getCompletions(base({ surface: 'sort', textBeforeCursor: '{ ', token: '', schema, fields: ['createdTime'] }));
-    expect(items.find((i) => i.label === 'createdTime')!.insertText).toBe('"createdTime"');
+    const created = items.find((i) => i.label === 'createdTime')!;
+    expect(created.isSnippet).toBe(true);
+    expect(created.insertText).toBe('"createdTime": ${1|1,-1|}');
   });
 });
 
@@ -374,6 +378,14 @@ describe('getCompletions — sort $meta', () => {
   it('offers 1, -1 and $meta at a sort value position', () => {
     const items = getCompletions(base({ surface: 'sort', textBeforeCursor: '{ "score": ', token: '' }));
     expect(labels(items)).toEqual(expect.arrayContaining(['1', '-1', '$meta']));
+  });
+  it('offers the $meta key with its value inside a sort value object', () => {
+    const items = getCompletions(base({ surface: 'sort', textBeforeCursor: '{ "score": { ', token: '$' }));
+    expect(items.find((i) => i.label === '$meta')!.insertText).toBe('"\\$meta": "${1:textScore}"');
+  });
+  it('does not double-quote sort fields when already inside a quote', () => {
+    const items = getCompletions(base({ surface: 'sort', textBeforeCursor: '{ "reg', token: 'reg' }));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('region": ${1|1,-1|}');
   });
 });
 
