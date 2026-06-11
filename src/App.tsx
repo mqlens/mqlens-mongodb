@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
+import { CommandPalette, type PaletteAction } from './components/CommandPalette';
 import { DocumentViewer } from './components/DocumentViewer';
 import { DataGrid } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
@@ -767,11 +768,10 @@ function Workspace() {
     }
   };
 
-  const handleCloseTab = (e: React.MouseEvent, tabId: string) => {
-    e.stopPropagation();
+  const closeTabById = (tabId: string) => {
     const updatedTabs = tabs.filter(t => t.id !== tabId);
     setTabs(updatedTabs);
-    
+
     if (activeTabId === tabId) {
       if (updatedTabs.length > 0) {
         setActiveTabId(updatedTabs[updatedTabs.length - 1].id);
@@ -780,6 +780,55 @@ function Workspace() {
       }
     }
   };
+
+  const handleCloseTab = (e: React.MouseEvent, tabId: string) => {
+    e.stopPropagation();
+    closeTabById(tabId);
+  };
+
+  const cycleTab = (dir: 1 | -1) => {
+    if (tabs.length < 2) return;
+    const idx = tabs.findIndex(t => t.id === activeTabId);
+    setActiveTabId(tabs[(idx + dir + tabs.length) % tabs.length].id);
+  };
+
+  const openQuickStartTab = () => {
+    setTabs(prev => prev.some(t => t.id === QUICK_START_TAB_ID) ? prev : [...prev, createQuickStartTab()]);
+    setActiveTabId(QUICK_START_TAB_ID);
+  };
+
+  // Command palette: Cmd/Ctrl+K from anywhere in the workspace.
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsPaletteOpen(v => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const paletteActions: PaletteAction[] = [
+    { id: 'new-connection', title: 'New Connection…', keywords: 'connect database add server', run: () => setIsConnectionModalOpen(true) },
+    { id: 'toggle-theme', title: 'Toggle Light/Dark Theme', keywords: 'appearance color mode', run: toggleTheme },
+    { id: 'open-settings', title: 'Open Settings', keywords: 'preferences config density', run: handleOpenSettingsTab },
+    { id: 'open-quickstart', title: 'Open Quick Start', keywords: 'welcome home help', run: openQuickStartTab },
+    { id: 'density-roomy', title: 'Density: Roomy', keywords: 'layout spacing', run: () => setDensity('roomy') },
+    { id: 'density-cozy', title: 'Density: Cozy', keywords: 'layout spacing', run: () => setDensity('cozy') },
+    { id: 'density-compact', title: 'Density: Compact', keywords: 'layout spacing dense', run: () => setDensity('compact') },
+    ...(activeTab && activeTab.type === 'collection' ? [
+      { id: 'open-shell', title: 'Open mongosh Shell', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'terminal mongosh script', run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) },
+      { id: 'export-collection', title: 'Export Collection…', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'download json csv import', run: () => handleOpenExportTab(activeTab) },
+      { id: 'analyze-schema', title: 'Analyze Schema', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'fields types', run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
+    ] : []),
+    ...(activeTabId ? [{ id: 'close-tab', title: 'Close Tab', keywords: 'tab', run: () => closeTabById(activeTabId) }] : []),
+    ...(tabs.length > 1 ? [
+      { id: 'next-tab', title: 'Next Tab', keywords: 'tab switch', run: () => cycleTab(1) },
+      { id: 'prev-tab', title: 'Previous Tab', keywords: 'tab switch', run: () => cycleTab(-1) },
+    ] : []),
+  ];
 
   const handleExecuteQuery = async (query: { filter: string; sort: string; projection: string; limit: number; skip: number }) => {
     if (!activeTab) return;
@@ -1248,6 +1297,12 @@ function Workspace() {
           className="mql-resizer"
           onMouseDown={startResizing}
           data-testid="sidebar-resizer"
+        />
+
+        <CommandPalette
+          open={isPaletteOpen}
+          onClose={() => setIsPaletteOpen(false)}
+          actions={paletteActions}
         />
 
         <ConnectionManager
