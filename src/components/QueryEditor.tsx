@@ -3,6 +3,7 @@ import Editor, { type Monaco } from '@monaco-editor/react';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
 import type { Surface } from '../lib/mongoCompletions';
 import type { SchemaMap } from '../lib/useCollectionSchema';
+import { useMonacoTheme } from '../lib/useMonacoTheme';
 
 // A single body-level node where Monaco renders overflow widgets (the suggest
 // dropdown). Without this, the widget is trapped inside the query-row's stacking
@@ -51,7 +52,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
   const schemaRef = useRef(schema); schemaRef.current = schema;
   const onRunRef = useRef(onRun); onRunRef.current = onRun;
   const uriRef = useRef<string | null>(null);
-  const theme = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'vs-dark';
+  const theme = useMonacoTheme();
 
   const editorHeight = height ?? (singleLine ? 22 : 120);
 
