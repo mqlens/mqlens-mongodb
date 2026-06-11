@@ -33,6 +33,9 @@ interface QueryEditorProps {
   singleLine?: boolean;
   className?: string;
   onRun?: () => void;
+  // For aggStage editors that hold a single stage's body: drives
+  // operator-specific completions ($group → accumulators, $lookup → keys, …).
+  stageOperator?: string;
   'data-testid'?: string;
 }
 
@@ -46,11 +49,13 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
   singleLine = false,
   className,
   onRun,
+  stageOperator,
   'data-testid': testid,
 }) => {
   const fieldsRef = useRef(fields); fieldsRef.current = fields;
   const schemaRef = useRef(schema); schemaRef.current = schema;
   const onRunRef = useRef(onRun); onRunRef.current = onRun;
+  const stageOperatorRef = useRef(stageOperator); stageOperatorRef.current = stageOperator;
   const uriRef = useRef<string | null>(null);
   const theme = useMonacoTheme();
 
@@ -137,6 +142,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
             surface,
             getFields: () => fieldsRef.current,
             getSchema: () => schemaRef.current,
+            getStageOperator: () => stageOperatorRef.current,
           });
           ed.onDidDispose(() => { if (uriRef.current) clearModelMeta(uriRef.current); });
         }

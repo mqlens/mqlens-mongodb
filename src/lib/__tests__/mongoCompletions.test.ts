@@ -400,3 +400,53 @@ describe('getCompletions — aggStage position awareness', () => {
     expect(labels(items)).toEqual(expect.arrayContaining(['$oid', '$eq']));
   });
 });
+
+describe('getCompletions — per-stage body editor (stageOperator)', () => {
+  const stage = (op: string, text: string, token = '', extra: Partial<CompletionCtx> = {}) =>
+    base({ surface: 'aggStage', stageOperator: op, textBeforeCursor: text, token, ...extra });
+
+  it('$match body suggests fields, never stage names', () => {
+    const items = getCompletions(stage('$match', '{ '));
+    expect(labels(items)).toEqual(expect.arrayContaining(['region', 'plan']));
+    expect(labels(items)).not.toContain('$lookup');
+    expect(labels(items)).not.toContain('$match');
+  });
+  it('$match body value position offers EJSON and operators', () => {
+    const items = getCompletions(stage('$match', '{ "_id": '));
+    expect(labels(items)).toEqual(expect.arrayContaining(['$oid', '$eq']));
+  });
+  it('$sort body behaves like the sort surface', () => {
+    const items = getCompletions(stage('$sort', '{ '));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('"region": ${1|1,-1|}');
+  });
+  it('$project body behaves like the projection surface', () => {
+    const items = getCompletions(stage('$project', '{ '));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('"region": ${1|1,0|}');
+  });
+  it('$group body suggests _id at the top-level key position', () => {
+    const items = getCompletions(stage('$group', '{ '));
+    expect(labels(items)).toContain('_id');
+    expect(labels(items)).not.toContain('$lookup');
+  });
+  it('$group body offers accumulators at a value position', () => {
+    const items = getCompletions(stage('$group', '{ "total": ', '$s'));
+    expect(items.find((i) => i.label === '$sum')!.insertText).toBe('{"\\$sum": ${1:1}}');
+  });
+  it('$group body offers field path refs at a value position', () => {
+    const items = getCompletions(stage('$group', '{ "_id": ', '$reg'));
+    expect(items.find((i) => i.label === '$region')!.insertText).toBe('"$region"');
+  });
+  it('$lookup body suggests its parameter keys with value scaffolds', () => {
+    const items = getCompletions(stage('$lookup', '{ '));
+    expect(labels(items)).toEqual(expect.arrayContaining(['from', 'localField', 'foreignField', 'as']));
+    expect(items.find((i) => i.label === 'from')!.insertText).toBe('"from": "${1:collection}"');
+  });
+  it('$lookup localField value offers field names as strings', () => {
+    const items = getCompletions(stage('$lookup', '{ "localField": ', 'reg'));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('"region"');
+  });
+  it('$unwind body suggests field path refs', () => {
+    const items = getCompletions(stage('$unwind', '', '$reg'));
+    expect(items.find((i) => i.label === '$region')!.insertText).toBe('"$region"');
+  });
+});

@@ -1073,3 +1073,45 @@ describe('Aggregation builder stage controls', () => {
     expect(onExecuteAggregate).not.toHaveBeenCalledWith([{ $match: {} }, { $limit: 5 }]);
   });
 });
+
+describe('Aggregation stage body templates', () => {
+  const renderAgg2 = () => {
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={vi.fn()}
+        onExecuteAggregate={vi.fn()}
+        onExplain={vi.fn()}
+        loading={false}
+      />
+    );
+    fireEvent.click(screen.getByTestId('mode-aggregate-tab'));
+  };
+
+  it('inserts a template body when the operator changes on an untouched stage', () => {
+    renderAgg2();
+    const stage0 = screen.getByTestId('pipeline-stage-0');
+    fireEvent.change(stage0.querySelector('select')!, { target: { value: '$lookup' } });
+    const body = (stage0.querySelector('textarea') as HTMLTextAreaElement).value;
+    expect(body).toContain('"from"');
+    expect(body).toContain('"localField"');
+  });
+
+  it('keeps user-edited content when the operator changes', () => {
+    renderAgg2();
+    const stage0 = screen.getByTestId('pipeline-stage-0');
+    fireEvent.change(stage0.querySelector('textarea')!, { target: { value: '{ "region": "EU" }' } });
+    fireEvent.change(stage0.querySelector('select')!, { target: { value: '$lookup' } });
+    expect((stage0.querySelector('textarea') as HTMLTextAreaElement).value).toBe('{ "region": "EU" }');
+  });
+
+  it('replaces a previous untouched template when switching operators again', () => {
+    renderAgg2();
+    const stage0 = screen.getByTestId('pipeline-stage-0');
+    fireEvent.change(stage0.querySelector('select')!, { target: { value: '$lookup' } });
+    fireEvent.change(stage0.querySelector('select')!, { target: { value: '$limit' } });
+    expect((stage0.querySelector('textarea') as HTMLTextAreaElement).value).toBe('10');
+  });
+});

@@ -2,7 +2,7 @@ import type { Monaco } from '@monaco-editor/react';
 import { getCompletions, type Surface, type CompletionKind } from './mongoCompletions';
 import type { SchemaMap } from './useCollectionSchema';
 
-interface ModelMeta { surface: Surface; getFields: () => string[]; getSchema: () => SchemaMap | undefined; getCollections?: () => string[]; }
+interface ModelMeta { surface: Surface; getFields: () => string[]; getSchema: () => SchemaMap | undefined; getCollections?: () => string[]; getStageOperator?: () => string | undefined; }
 const modelMeta = new Map<string, ModelMeta>();
 let registered = false;
 
@@ -60,6 +60,7 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
       const items = getCompletions({
         surface: meta.surface, textBeforeCursor, token,
         fields: meta.getFields(), schema: meta.getSchema(), collections: meta.getCollections?.(),
+        stageOperator: meta.getStageOperator?.(),
       });
       const range = {
         startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,

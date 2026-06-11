@@ -10,6 +10,10 @@ export interface CompletionCtx {
   fields: string[];
   schema?: Map<string, FieldSchema>;
   collections?: string[];   // collection names, for `db.<coll>` in the shell
+  // Set for the per-stage aggregation body editors: the editor holds the
+  // OPERATOR'S BODY (e.g. the object after "$group":), so completions are
+  // driven by the operator instead of guessing from the text.
+  stageOperator?: string;
 }
 
 export interface CompletionItem {
@@ -79,6 +83,16 @@ export const EJSON_TYPES: EjsonType[] = [
   { key: '$minKey', detail: 'EJSON MinKey', inner: '1' },
   { key: '$maxKey', detail: 'EJSON MaxKey', inner: '1' },
   { key: '$dbPointer', detail: 'EJSON DBPointer', inner: '{"\\$ref": "${1:collection}", "\\$id": {"\\$oid": "${2:objectId}"}}' },
+];
+
+// $lookup body parameters with value scaffolds.
+export const LOOKUP_KEYS: EjsonType[] = [
+  { key: 'from', detail: 'source collection', inner: '"${1:collection}"' },
+  { key: 'localField', detail: 'field in this collection', inner: '"${1:field}"' },
+  { key: 'foreignField', detail: 'field in the source collection', inner: '"${1:field}"' },
+  { key: 'as', detail: 'output array field', inner: '"${1:joined}"' },
+  { key: 'let', detail: 'pipeline variables', inner: '{$1}' },
+  { key: 'pipeline', detail: 'sub-pipeline', inner: '[$1]' },
 ];
 
 // Projection-only operators ({field: {$slice: …}}).
@@ -334,8 +348,53 @@ function keyScaffoldItems(ctx: CompletionCtx, list: EjsonType[], kind: Completio
   }));
 }
 
+// `"$field"` aggregation path references (for $group/$unwind/$sortByCount bodies).
+function fieldRefItems(ctx: CompletionCtx): CompletionItem[] {
+  return ctx.fields.map((name) => ({
+    label: `$${name}`, kind: 'field' as const, insertText: `"$${name}"`, detail: 'field path',
+  }));
+}
+
+// Field names as plain string values ($lookup localField/foreignField).
+function fieldStringItems(ctx: CompletionCtx): CompletionItem[] {
+  return ctx.fields.map((name) => ({
+    label: name, kind: 'field' as const, insertText: `"${name}"`, detail: ctx.schema?.get(name)?.type,
+  }));
+}
+
 export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
   const { surface, textBeforeCursor, token } = ctx;
+
+  // Per-stage aggregation body editor: the text is the operator's body, so
+  // route by operator instead of the generic stage heuristics.
+  if (surface === 'aggStage' && ctx.stageOperator) {
+    const op = ctx.stageOperator;
+    if (op === '$sort') return getCompletions({ ...ctx, surface: 'sort', stageOperator: undefined });
+    if (op === '$project') return getCompletions({ ...ctx, surface: 'projection', stageOperator: undefined });
+    if (op === '$group') {
+      if (atValuePosition(textBeforeCursor)) {
+        return byPrefix([
+          ...fieldRefItems(ctx),
+          ...opScaffoldItems(ctx, GROUP_ACCUMULATORS, 'accumulator', 'value', ACCUMULATOR_SCAFFOLDS),
+        ], token);
+      }
+      const parent = atKeyPosition(textBeforeCursor) ? parentKeyOfOpenObject(textBeforeCursor) : null;
+      if (parent) {
+        return byPrefix(opScaffoldItems(ctx, GROUP_ACCUMULATORS, 'accumulator', 'key', ACCUMULATOR_SCAFFOLDS), token);
+      }
+      return byPrefix([{ label: '_id', kind: 'field' as const, insertText: keyInsert(ctx, '_id'), detail: 'group key' }], token);
+    }
+    if (op === '$lookup') {
+      if (atValuePosition(textBeforeCursor)) return byPrefix(fieldStringItems(ctx), token);
+      return byPrefix(keyScaffoldItems(ctx, LOOKUP_KEYS, 'field'), token);
+    }
+    if (op === '$unwind' || op === '$sortByCount') {
+      return byPrefix(fieldRefItems(ctx), token);
+    }
+    // $match, $addFields, $set, and the rest: filter-like semantics — fall
+    // through to the shared filter logic below (the legacy stage-name and
+    // $group-text heuristics are skipped because stageOperator is set).
+  }
 
   if (surface === 'projection') {
     if (atValuePosition(textBeforeCursor)) {
@@ -392,14 +451,14 @@ export function getCompletions(ctx: CompletionCtx): CompletionItem[] {
     // otherwise (inside find({...}), aggregate([...])) → behave like a filter (fall through)
   }
 
-  const aggStageStart = surface === 'aggStage' && atKeyPosition(textBeforeCursor)
+  const aggStageStart = surface === 'aggStage' && !ctx.stageOperator && atKeyPosition(textBeforeCursor)
     && parentKeyOfOpenObject(textBeforeCursor) === null
     && !/\$group/.test(textBeforeCursor.slice(textBeforeCursor.indexOf('{')));
 
   if (aggStageStart) {
     return byPrefix(opScaffoldItems(ctx, AGG_STAGES, 'stage', 'key', STAGE_SCAFFOLDS, 'stage'), token);
   }
-  if (surface === 'aggStage' && /\$group/.test(textBeforeCursor) && atKeyPosition(textBeforeCursor)) {
+  if (surface === 'aggStage' && !ctx.stageOperator && /\$group/.test(textBeforeCursor) && atKeyPosition(textBeforeCursor)) {
     return byPrefix([...opScaffoldItems(ctx, GROUP_ACCUMULATORS, 'accumulator', 'key', ACCUMULATOR_SCAFFOLDS), ...fieldItems(ctx)], token);
   }
 

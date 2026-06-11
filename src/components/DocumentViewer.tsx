@@ -164,6 +164,48 @@ const STAGE_OPERATORS: { group: string; stages: string[] }[] = [
   },
 ];
 
+// Runnable starter body per stage operator, inserted when the user switches
+// the operator on a stage whose body they haven't edited yet.
+const STAGE_BODY_TEMPLATES: Record<string, string> = {
+  '$match': '{\n  \n}',
+  '$project': '{\n  \n}',
+  '$addFields': '{\n  \n}',
+  '$set': '{\n  \n}',
+  '$unset': '"field"',
+  '$replaceRoot': '{\n  "newRoot": "$field"\n}',
+  '$replaceWith': '"$field"',
+  '$redact': '{\n  \n}',
+  '$group': '{\n  "_id": null\n}',
+  '$bucket': '{\n  "groupBy": "$field",\n  "boundaries": [0, 10],\n  "default": "other"\n}',
+  '$bucketAuto': '{\n  "groupBy": "$field",\n  "buckets": 5\n}',
+  '$sortByCount': '"$field"',
+  '$count': '"count"',
+  '$facet': '{\n  \n}',
+  '$sort': '{\n  \n}',
+  '$limit': '10',
+  '$skip': '0',
+  '$sample': '{\n  "size": 10\n}',
+  '$unwind': '"$field"',
+  '$lookup': '{\n  "from": "collection",\n  "localField": "field",\n  "foreignField": "field",\n  "as": "joined"\n}',
+  '$graphLookup': '{\n  "from": "collection",\n  "startWith": "$field",\n  "connectFromField": "field",\n  "connectToField": "field",\n  "as": "linked"\n}',
+  '$unionWith': '"collection"',
+  '$setWindowFields': '{\n  "sortBy": {},\n  "output": {}\n}',
+  '$densify': '{\n  "field": "field",\n  "range": { "step": 1, "bounds": "full" }\n}',
+  '$fill': '{\n  "output": {}\n}',
+  '$geoNear': '{\n  "near": { "type": "Point", "coordinates": [0, 0] },\n  "distanceField": "distance"\n}',
+  '$documents': '[\n  \n]',
+  '$out': '"collection"',
+  '$merge': '{\n  "into": "collection"\n}',
+};
+
+// A body the user hasn't meaningfully edited: empty, bare braces, or exactly
+// one of the templates above (so switching operators keeps replacing it).
+const isUntouchedStageBody = (content: string): boolean => {
+  const flat = content.replace(/\s/g, '');
+  if (flat === '' || flat === '{}') return true;
+  return Object.values(STAGE_BODY_TEMPLATES).some((tpl) => tpl.replace(/\s/g, '') === flat);
+};
+
 const parseValue = (val: string): any => {
   const trimmed = val.trim();
   if (trimmed === '') return '';
@@ -443,7 +485,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   };
 
   const updateStageOperator = (id: string, operator: string) => {
-    setStages(prev => prev.map(s => s.id === id ? { ...s, operator } : s));
+    setStages(prev => prev.map(s => s.id === id
+      ? {
+          ...s,
+          operator,
+          // Seed the new operator's starter body unless the user already wrote one.
+          content: isUntouchedStageBody(s.content) ? (STAGE_BODY_TEMPLATES[operator] ?? '{\n  \n}') : s.content,
+        }
+      : s));
   };
 
   const updateStageContent = (id: string, content: string) => {
@@ -1703,6 +1752,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         </div>
                         <QueryEditor
                           surface="aggStage"
+                          stageOperator={stage.operator}
                           onRun={handleRun}
                           value={stage.content}
                           onChange={(v) => updateStageContent(stage.id, v)}
