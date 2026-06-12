@@ -158,7 +158,8 @@ export const IndexModal: React.FC<IndexModalProps> = ({
   };
 
   return (
-    <div className="nested-modal-overlay select-none" data-testid="index-modal" onClick={onClose}>
+    // No click-outside close: dismiss only via the X button, Cancel, or Escape.
+    <div className="nested-modal-overlay select-none" data-testid="index-modal">
       <div className="index-modal-container" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3 mb-4 select-none">

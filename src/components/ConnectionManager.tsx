@@ -357,7 +357,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     }
   }, [isOpen]);
 
-  useEscapeClose(isOpen, onClose);
+  // Escape closes the topmost layer: the nested editor dialog when it is
+  // open, otherwise the manager itself.
+  useEscapeClose(isOpen && showEditDialog, () => setShowEditDialog(false));
+  useEscapeClose(isOpen && !showEditDialog, onClose);
 
   const loadFoldersFromStorage = () => {
     try {
@@ -726,7 +729,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay mql-modal-overlay" onClick={onClose}>
+    // No click-outside close: dismiss only via the X button or Escape.
+    <div className="modal-overlay mql-modal-overlay">
       <div className="modal-container mql-ncd" style={{ width: '820px', height: '620px', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
         {/* Header */}
         <header className="mql-ncd-titlebar">
@@ -1023,7 +1027,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
       {/* Editor Dialog nested modal */}
       {showEditDialog && (
-        <div className="nested-modal-overlay mql-modal-overlay" style={{ zIndex: 110 }} onClick={() => setShowEditDialog(false)}>
+        <div className="nested-modal-overlay mql-modal-overlay" style={{ zIndex: 110 }}>
           <div className="nested-modal-container mql-ncd" style={{ width: '680px', height: '520px', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
             {/* Dialog Header */}
             <header className="mql-ncd-titlebar">

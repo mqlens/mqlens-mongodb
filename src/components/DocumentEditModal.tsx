@@ -72,7 +72,8 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   };
 
   return (
-    <div className="nested-modal-overlay select-none" data-testid="document-edit-modal" onClick={onClose}>
+    // No click-outside close: unsaved document edits are too easy to lose.
+    <div className="nested-modal-overlay select-none" data-testid="document-edit-modal">
       <div className="index-modal-container index-modal-container--wide" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3 mb-4 select-none">

@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ArrowUpCircle } from 'lucide-react';
+import { useEscapeClose } from '../lib/useEscapeClose';
 
 // Event other components (e.g. Settings) dispatch to trigger a manual check.
 export const CHECK_UPDATE_EVENT = 'mqlens:check-update';
@@ -98,6 +99,10 @@ export const UpdatePrompt: React.FC = () => {
     setError(null);
   };
 
+  // The approval modal no longer closes on backdrop click; Escape still
+  // dismisses it (except mid-download, like the disabled close button).
+  useEscapeClose(phase === 'available', dismiss);
+
   // Transient toasts (manual feedback) ────────────────────────────────────────
   if (phase === 'checking' && manual) {
     return (
@@ -128,7 +133,7 @@ export const UpdatePrompt: React.FC = () => {
 
   const downloading = phase === 'downloading';
   return (
-    <div className="nested-modal-overlay" data-testid="update-dialog" onClick={downloading ? undefined : dismiss}>
+    <div className="nested-modal-overlay" data-testid="update-dialog">
       <div className="index-modal-container" onClick={(e) => e.stopPropagation()} style={{ width: 'min(520px, 92vw)' }}>
         <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3 mb-4">
           <div className="flex items-center gap-2">
