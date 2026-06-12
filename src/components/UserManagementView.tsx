@@ -28,12 +28,18 @@ const ALL_DBS = '__all__';
 
 interface UserManagementViewProps {
   connectionId: string;
+  /** Optional initial database scope (e.g. opened from a database's context menu). */
+  database?: string;
 }
 
 interface EditorState {
   mode: 'create' | 'edit';
   user?: MongoUser;
 }
+
+/** Merge a current value into a dropdown's option list so it is always selectable. */
+const withValue = (options: string[], value: string): string[] =>
+  value && !options.includes(value) ? [value, ...options] : options;
 
 // ── User editor modal (shared by create & edit) ───────────────────────────────
 
@@ -55,7 +61,9 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
   const { toast } = useDialogs();
   const isEdit = editor.mode === 'edit';
   const [username, setUsername] = useState(editor.user?.user ?? '');
-  const [authDb, setAuthDb] = useState(editor.user?.db ?? (databases[0] || 'admin'));
+  const [authDb, setAuthDb] = useState(
+    editor.user?.db ?? (databases.includes('admin') ? 'admin' : databases[0] || 'admin')
+  );
   const [password, setPassword] = useState('');
   const [roles, setRoles] = useState<RoleSpec[]>(
     editor.user?.roles?.length ? editor.user.roles.map((r) => ({ ...r })) : []
@@ -66,7 +74,7 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
 
   useEscapeClose(true, onClose);
 
-  // Role-name suggestions for the picker; built-in names are db-agnostic.
+  // Role options for the pickers; built-in role names are db-agnostic.
   useEffect(() => {
     let cancelled = false;
     listRoles(connectionId, authDb || 'admin')
@@ -75,12 +83,14 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
         setRoleNames([...new Set(rs.map((r) => r.role))]);
       })
       .catch(() => {
-        // Suggestions are best-effort; free-text role entry still works.
+        // Role options are best-effort; existing selections remain selectable.
       });
     return () => {
       cancelled = true;
     };
   }, [connectionId, authDb]);
+
+  const dbOptions = withValue(databases, authDb);
 
   const setRole = (idx: number, updates: Partial<RoleSpec>) =>
     setRoles((prev) => prev.map((r, i) => (i === idx ? { ...r, ...updates } : r)));
@@ -118,8 +128,11 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
   };
 
   return (
-    <div className="nested-modal-overlay select-none" data-testid="user-editor-modal" onClick={onClose}>
-      <div className="index-modal-container" onClick={(e) => e.stopPropagation()}>
+    // Deliberately no click-outside close: a half-filled user form (with a
+    // typed password) is too easy to lose to a stray click. Close via the X
+    // button, Cancel, or Escape.
+    <div className="nested-modal-overlay select-none" data-testid="user-editor-modal">
+      <div className="index-modal-container">
         <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3 mb-4 select-none">
           <div className="flex items-center gap-2">
             <Users size={16} className="text-[var(--accent-blue)]" />
@@ -131,6 +144,7 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
             onClick={onClose}
             className="p-1 hover:bg-[var(--bg-item-hover)] rounded text-[var(--text-muted)] hover:text-[var(--text-main)] cursor-pointer flex items-center justify-center"
             aria-label="Close modal"
+            data-testid="close-user-editor"
           >
             <X size={14} />
           </button>
@@ -153,22 +167,20 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
 
           <div className="flex flex-col gap-1">
             <label className="index-modal-label">Authentication Database</label>
-            <input
-              type="text"
-              list="user-auth-dbs"
+            <select
               value={authDb}
               onChange={(e) => setAuthDb(e.target.value)}
-              placeholder="admin"
               disabled={isEdit}
               required
               className="index-modal-input"
               data-testid="user-authdb-input"
-            />
-            <datalist id="user-auth-dbs">
-              {databases.map((d) => (
-                <option key={d} value={d} />
+            >
+              {dbOptions.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
               ))}
-            </datalist>
+            </select>
             <span className="index-modal-help-text">The database the user authenticates against.</span>
           </div>
 
@@ -190,23 +202,34 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
             <div className="index-modal-keys-list">
               {roles.map((rule, idx) => (
                 <div key={idx} className="index-modal-key-row">
-                  <input
-                    type="text"
-                    list="user-role-names"
+                  <select
                     value={rule.role}
                     onChange={(e) => setRole(idx, { role: e.target.value })}
-                    placeholder="Role (e.g. readWrite)"
-                    className="index-modal-key-field"
-                  />
+                    className="index-modal-key-select"
+                    data-testid={`role-select-${idx}`}
+                  >
+                    <option value="" disabled>
+                      Select role…
+                    </option>
+                    {withValue(roleNames, rule.role).map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
                   <div className="index-modal-key-divider" />
-                  <input
-                    type="text"
-                    list="user-auth-dbs"
+                  <select
                     value={rule.db}
                     onChange={(e) => setRole(idx, { db: e.target.value })}
-                    placeholder={`Database (default: ${authDb || 'admin'})`}
-                    className="index-modal-key-field"
-                  />
+                    className="index-modal-key-select"
+                    data-testid={`role-db-select-${idx}`}
+                  >
+                    {withValue(databases, rule.db).map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
                   <div className="index-modal-key-divider" />
                   <button
                     type="button"
@@ -218,11 +241,6 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
                   </button>
                 </div>
               ))}
-              <datalist id="user-role-names">
-                {roleNames.map((r) => (
-                  <option key={r} value={r} />
-                ))}
-              </datalist>
               <button
                 type="button"
                 onClick={() => setRoles((prev) => [...prev, { role: '', db: authDb }])}
@@ -258,15 +276,20 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
 
 // ── Main view ─────────────────────────────────────────────────────────────────
 
-export const UserManagementView: React.FC<UserManagementViewProps> = ({ connectionId }) => {
+export const UserManagementView: React.FC<UserManagementViewProps> = ({ connectionId, database }) => {
   const { toast, confirm } = useDialogs();
   const [users, setUsers] = useState<MongoUser[]>([]);
   const [databases, setDatabases] = useState<string[]>([]);
-  const [scope, setScope] = useState<string>(ALL_DBS);
+  const [scope, setScope] = useState<string>(database || ALL_DBS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
+
+  // Follow re-opens scoped to another database (sidebar db context menu).
+  useEffect(() => {
+    if (database) setScope(database);
+  }, [database]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -304,7 +327,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
         if (!cancelled) setDatabases(dbs);
       })
       .catch(() => {
-        // Database list is only used for the scope selector / suggestions.
+        // Database list is only used for the scope selector / role db options.
       });
     return () => {
       cancelled = true;
@@ -343,7 +366,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
             title="Database scope"
           >
             <option value={ALL_DBS}>All databases</option>
-            {databases.map((d) => (
+            {withValue(databases, scope === ALL_DBS ? '' : scope).map((d) => (
               <option key={d} value={d}>
                 {d}
               </option>
@@ -391,72 +414,57 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
         </div>
       ) : (
         <div className="flex-1 overflow-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="sticky top-0 bg-[var(--bg-panel)]">
-              <tr className="text-[var(--text-dim)] border-b border-[var(--border-color)]">
-                <th className="px-4 py-2 font-medium">User</th>
-                <th className="px-4 py-2 font-medium">Auth DB</th>
-                <th className="px-4 py-2 font-medium">Roles</th>
-                <th className="px-4 py-2 font-medium">Mechanisms</th>
-                <th className="px-4 py-2 font-medium w-20">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr
-                  key={`${u.db}.${u.user}`}
-                  className="border-b border-[var(--border-color)] hover:bg-[var(--bg-item-hover)]"
-                  data-testid={`user-row-${u.db}.${u.user}`}
-                >
-                  <td className="px-4 py-2 font-mono text-[var(--text-main)]">
-                    <span className="flex items-center gap-1.5">
-                      <KeyRound size={11} className="text-[var(--text-dim)]" />
-                      {u.user}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 font-mono text-[var(--text-muted)]">{u.db}</td>
-                  <td className="px-4 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      {u.roles.length === 0 ? (
-                        <span className="text-[var(--text-dim)]">—</span>
-                      ) : (
-                        u.roles.map((r, i) => (
-                          <span
-                            key={i}
-                            className="px-1.5 py-0.5 rounded bg-[var(--bg-item-hover)] font-mono text-[11px] text-[var(--text-muted)]"
-                          >
-                            {r.role}
-                            <span className="text-[var(--text-dim)]">@{r.db}</span>
-                          </span>
-                        ))
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-2 font-mono text-[var(--text-dim)]">{u.mechanisms.join(', ') || '—'}</td>
-                  <td className="px-4 py-2">
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => setEditor({ mode: 'edit', user: u })}
-                        className="p-1 hover:bg-[var(--bg-item-hover)] rounded text-[var(--text-muted)] hover:text-[var(--text-main)] cursor-pointer"
-                        title="Edit user"
-                        data-testid={`edit-user-${u.user}`}
-                      >
-                        <Pencil size={12} />
-                      </button>
-                      <button
-                        onClick={() => handleDrop(u)}
-                        className="p-1 hover:bg-[var(--bg-item-hover)] rounded text-[var(--text-muted)] hover:text-rose-400 cursor-pointer"
-                        title="Drop user"
-                        data-testid={`drop-user-${u.user}`}
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="mql-users-table">
+            <div className="mql-users-h">
+              <div className="mql-users-th">User</div>
+              <div className="mql-users-th">Auth DB</div>
+              <div className="mql-users-th">Roles</div>
+              <div className="mql-users-th">Mechanisms</div>
+              <div className="mql-users-th" />
+            </div>
+            {users.map((u) => (
+              <div className="mql-users-tr" key={`${u.db}.${u.user}`} data-testid={`user-row-${u.db}.${u.user}`}>
+                <div className="mql-users-td">
+                  <span className="flex items-center gap-1.5 text-[var(--text-main)]">
+                    <KeyRound size={11} className="text-[var(--text-dim)]" />
+                    {u.user}
+                  </span>
+                </div>
+                <div className="mql-users-td text-[var(--text-muted)]">{u.db}</div>
+                <div className="mql-users-td mql-users-td-wrap">
+                  {u.roles.length === 0 ? (
+                    <span className="text-[var(--text-dim)]">—</span>
+                  ) : (
+                    u.roles.map((r, i) => (
+                      <span key={i} className="mql-users-role">
+                        {r.role}
+                        <span className="text-[var(--text-dim)]">@{r.db}</span>
+                      </span>
+                    ))
+                  )}
+                </div>
+                <div className="mql-users-td text-[var(--text-dim)]">{u.mechanisms.join(', ') || '—'}</div>
+                <div className="mql-users-td mql-users-actions">
+                  <button
+                    onClick={() => setEditor({ mode: 'edit', user: u })}
+                    className="p-1 hover:bg-[var(--bg-item-hover)] rounded text-[var(--text-muted)] hover:text-[var(--text-main)] cursor-pointer"
+                    title="Edit user"
+                    data-testid={`edit-user-${u.user}`}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    onClick={() => handleDrop(u)}
+                    className="p-1 hover:bg-[var(--bg-item-hover)] rounded text-[var(--text-muted)] hover:text-rose-400 cursor-pointer"
+                    title="Drop user"
+                    data-testid={`drop-user-${u.user}`}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

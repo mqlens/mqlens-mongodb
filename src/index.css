@@ -1094,6 +1094,50 @@ select:focus-visible {
 }
 .mql-td:last-child { border-right: none; }
 
+/* ────────────────────────────────────────── User management table
+   Same visual language as the data table view (mql-table): mono font,
+   uppercase sticky header, bordered cells, row hover. */
+.mql-users-table { display: flex; flex-direction: column; font-family: var(--font-mono); font-size: 11.5px; }
+.mql-users-h {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 2fr 1fr 72px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-color);
+  position: sticky; top: 0; z-index: 1;
+}
+.mql-users-th {
+  padding: 6px 12px;
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-right: 1px solid var(--border-color);
+}
+.mql-users-th:last-child { border-right: none; }
+.mql-users-tr {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 2fr 1fr 72px;
+  border-bottom: 1px solid var(--border-color);
+}
+.mql-users-tr:hover { background: var(--bg-item-hover); }
+.mql-users-td {
+  padding: 6px 12px;
+  border-right: 1px solid var(--border-color);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: flex; align-items: center;
+}
+.mql-users-td:last-child { border-right: none; }
+.mql-users-td-wrap { flex-wrap: wrap; gap: 4px; white-space: normal; }
+.mql-users-role {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-item-hover);
+  border: 1px solid var(--border-color);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.mql-users-actions { gap: 4px; justify-content: flex-end; }
+
 /* ────────────────────────────────────────── Welcome */
 .mql-welcome {
   flex: 1;

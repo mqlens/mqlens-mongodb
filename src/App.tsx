@@ -596,20 +596,23 @@ function Workspace() {
     setActiveTabId(tabId);
   };
 
-  const handleOpenUsersTab = (connectionId: string) => {
+  const handleOpenUsersTab = (connectionId: string, db?: string) => {
     const tabId = `users.${connectionId}`;
     if (!tabs.some((t) => t.id === tabId)) {
       setTabs((prev) => [...prev, {
         id: tabId,
         type: 'users',
         connectionId,
-        db: '',
+        db: db ?? '',
         collection: '',
         results: [],
         loading: false,
         error: null,
         explainResult: null,
       }]);
+    } else if (db) {
+      // Re-opened scoped to a database (sidebar db menu): refocus the scope.
+      setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, db } : t)));
     }
     setActiveTabId(tabId);
   };
@@ -1667,7 +1670,7 @@ function Workspace() {
                 <MonitoringView connectionId={activeTab.connectionId} />
               )}
               {activeTab && activeTab.type === 'users' && (
-                <UserManagementView connectionId={activeTab.connectionId} />
+                <UserManagementView connectionId={activeTab.connectionId} database={activeTab.db || undefined} />
               )}
               {activeTab && activeTab.type === 'export' && (() => {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
