@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   Users,
+  User,
   RefreshCw,
   Plus,
   Pencil,
@@ -9,9 +10,11 @@ import {
   Loader2,
   AlertCircle,
   X,
-  KeyRound,
+  ChevronRight,
+  ScrollText,
   ShieldCheck,
 } from 'lucide-react';
+import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { useDialogs } from './dialogs/DialogProvider';
 import { useEscapeClose } from '../lib/useEscapeClose';
 import {
@@ -285,6 +288,18 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [menu, setMenu] = useState<{ x: number; y: number; user: MongoUser | null } | null>(null);
+
+  const userKey = (u: MongoUser) => `${u.db}.${u.user}`;
+
+  const toggleExpanded = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   // Follow re-opens scoped to another database (sidebar db context menu).
   useEffect(() => {
@@ -408,64 +423,102 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
           </div>
         </div>
       ) : users.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-full gap-2 text-[var(--text-muted)] text-sm">
+        <div
+          className="flex flex-col items-center justify-center h-full gap-2 text-[var(--text-muted)] text-sm"
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ x: e.clientX, y: e.clientY, user: null });
+          }}
+        >
           <ShieldCheck size={24} className="opacity-50" />
           <span>No users found{scope !== ALL_DBS ? ` in ${scope}` : ''}.</span>
         </div>
       ) : (
-        <div className="flex-1 overflow-auto">
-          <div className="mql-users-table">
-            <div className="mql-users-h">
-              <div className="mql-users-th">User</div>
-              <div className="mql-users-th">Auth DB</div>
-              <div className="mql-users-th">Roles</div>
-              <div className="mql-users-th">Mechanisms</div>
-              <div className="mql-users-th" />
-            </div>
-            {users.map((u) => (
-              <div className="mql-users-tr" key={`${u.db}.${u.user}`} data-testid={`user-row-${u.db}.${u.user}`}>
-                <div className="mql-users-td">
-                  <span className="flex items-center gap-1.5 text-[var(--text-main)]">
-                    <KeyRound size={11} className="text-[var(--text-dim)]" />
-                    {u.user}
+        <div
+          className="flex-1 overflow-auto mql-users-tree"
+          data-testid="users-tree"
+          onContextMenu={(e) => {
+            // Empty-space right click → create; rows stopPropagation below.
+            e.preventDefault();
+            setMenu({ x: e.clientX, y: e.clientY, user: null });
+          }}
+        >
+          {users.map((u) => {
+            const key = userKey(u);
+            const isOpen = expanded.has(key);
+            return (
+              <div key={key} className="mql-users-node">
+                <div
+                  className="mql-users-row"
+                  data-testid={`user-row-${key}`}
+                  onClick={() => toggleExpanded(key)}
+                  onDoubleClick={() => setEditor({ mode: 'edit', user: u })}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setMenu({ x: e.clientX, y: e.clientY, user: u });
+                  }}
+                >
+                  <ChevronRight size={12} className={`mql-users-chev${isOpen ? ' is-open' : ''}`} />
+                  <User size={13} className="text-[var(--accent-blue)] flex-shrink-0" />
+                  <span className="mql-users-name">{u.user}</span>
+                  <span className="mql-users-meta">
+                    @{u.db}
+                    {u.mechanisms.length > 0 ? ` · ${u.mechanisms.join(', ')}` : ''}
                   </span>
                 </div>
-                <div className="mql-users-td text-[var(--text-muted)]">{u.db}</div>
-                <div className="mql-users-td mql-users-td-wrap">
-                  {u.roles.length === 0 ? (
-                    <span className="text-[var(--text-dim)]">—</span>
-                  ) : (
-                    u.roles.map((r, i) => (
-                      <span key={i} className="mql-users-role">
-                        {r.role}
-                        <span className="text-[var(--text-dim)]">@{r.db}</span>
-                      </span>
-                    ))
-                  )}
-                </div>
-                <div className="mql-users-td text-[var(--text-dim)]">{u.mechanisms.join(', ') || '—'}</div>
-                <div className="mql-users-td mql-users-actions">
-                  <button
-                    onClick={() => setEditor({ mode: 'edit', user: u })}
-                    className="p-1 hover:bg-[var(--bg-item-hover)] rounded text-[var(--text-muted)] hover:text-[var(--text-main)] cursor-pointer"
-                    title="Edit user"
-                    data-testid={`edit-user-${u.user}`}
-                  >
-                    <Pencil size={12} />
-                  </button>
-                  <button
-                    onClick={() => handleDrop(u)}
-                    className="p-1 hover:bg-[var(--bg-item-hover)] rounded text-[var(--text-muted)] hover:text-rose-400 cursor-pointer"
-                    title="Drop user"
-                    data-testid={`drop-user-${u.user}`}
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
+                {isOpen && (
+                  <div className="mql-users-children">
+                    {u.roles.length === 0 ? (
+                      <div className="mql-users-role-row is-empty">No roles granted</div>
+                    ) : (
+                      u.roles.map((r, i) => (
+                        <div key={i} className="mql-users-role-row">
+                          <ScrollText size={12} className="text-[var(--text-dim)] flex-shrink-0" />
+                          <span>{`${r.role}@${r.db}`}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
+      )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={
+            [
+              ...(menu.user
+                ? [
+                    {
+                      label: 'Edit User',
+                      icon: <Pencil size={12} />,
+                      onClick: () => setEditor({ mode: 'edit', user: menu.user! }),
+                    },
+                    {
+                      label: 'Drop User',
+                      icon: <Trash2 size={12} />,
+                      danger: true,
+                      onClick: () => handleDrop(menu.user!),
+                    },
+                  ]
+                : []),
+              {
+                label: 'Create User',
+                icon: <Plus size={12} />,
+                separatorBefore: !!menu.user,
+                onClick: () => setEditor({ mode: 'create' }),
+              },
+              { label: 'Refresh', icon: <RefreshCw size={12} />, onClick: refresh },
+            ] as ContextMenuItem[]
+          }
+        />
       )}
 
       {editor && (

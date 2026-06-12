@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { UserManagementView } from '../UserManagementView';
 
 const mockInvoke = vi.fn();
@@ -52,13 +52,19 @@ describe('UserManagementView (user & role management)', () => {
     mockInvoke.mockImplementation(defaultInvoke);
   });
 
-  it('lists users with roles across all databases by default', async () => {
+  it('lists users as a tree and expands a user to show its roles', async () => {
     render(<UserManagementView connectionId="c1" />);
 
-    expect(await screen.findByTestId('user-row-admin.admin')).toBeInTheDocument();
+    const adminRow = await screen.findByTestId('user-row-admin.admin');
     expect(screen.getByText('app_user')).toBeInTheDocument();
-    expect(screen.getByText('root')).toBeInTheDocument();
     expect(mockInvoke).toHaveBeenCalledWith('list_users', { id: 'c1', database: null });
+
+    // Roles are children of the user node, shown on expand.
+    expect(screen.queryByText('root@admin')).not.toBeInTheDocument();
+    fireEvent.click(adminRow);
+    expect(screen.getByText('root@admin')).toBeInTheDocument();
+    fireEvent.click(adminRow);
+    expect(screen.queryByText('root@admin')).not.toBeInTheDocument();
   });
 
   it('filters to one database via the scope selector', async () => {
@@ -172,12 +178,13 @@ describe('UserManagementView (user & role management)', () => {
     );
   });
 
-  it('drops a user after confirmation', async () => {
+  it('drops a user via right click after confirmation', async () => {
     mockConfirm.mockResolvedValue(true);
     render(<UserManagementView connectionId="c1" />);
-    await screen.findByText('app_user');
+    const row = await screen.findByTestId('user-row-sales_db.app_user');
 
-    fireEvent.click(screen.getByTestId('drop-user-app_user'));
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText('Drop User'));
 
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith('drop_user', {
@@ -191,12 +198,37 @@ describe('UserManagementView (user & role management)', () => {
   it('does not drop when confirmation is declined', async () => {
     mockConfirm.mockResolvedValue(false);
     render(<UserManagementView connectionId="c1" />);
-    await screen.findByText('app_user');
+    const row = await screen.findByTestId('user-row-sales_db.app_user');
 
-    fireEvent.click(screen.getByTestId('drop-user-app_user'));
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText('Drop User'));
 
     await waitFor(() => expect(mockConfirm).toHaveBeenCalled());
     expect(mockInvoke).not.toHaveBeenCalledWith('drop_user', expect.anything());
+  });
+
+  it('opens the editor via right click → Edit User', async () => {
+    render(<UserManagementView connectionId="c1" />);
+    const row = await screen.findByTestId('user-row-sales_db.app_user');
+
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText('Edit User'));
+
+    expect(screen.getByTestId('user-editor-modal')).toBeInTheDocument();
+    expect((screen.getByTestId('user-name-input') as HTMLInputElement).value).toBe('app_user');
+  });
+
+  it('offers Create User on empty-space right click', async () => {
+    render(<UserManagementView connectionId="c1" />);
+    await screen.findByTestId('user-row-admin.admin');
+
+    fireEvent.contextMenu(screen.getByTestId('users-tree'));
+    const ctxMenu = await screen.findByTestId('context-menu');
+    expect(within(ctxMenu).queryByText('Edit User')).not.toBeInTheDocument();
+    fireEvent.click(within(ctxMenu).getByText('Create User'));
+
+    expect(screen.getByTestId('user-editor-modal')).toBeInTheDocument();
+    expect((screen.getByTestId('user-name-input') as HTMLInputElement).value).toBe('');
   });
 
   it('shows an error state when listing fails entirely', async () => {
