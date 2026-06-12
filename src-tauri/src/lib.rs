@@ -39,6 +39,10 @@ pub use db::metadata::{
 };
 pub use db::query::{count_documents_impl, execute_mql_query_impl, explain_mql_query_impl};
 pub use db::schema::{analyze_schema_impl, infer_schema, FieldStat, SchemaReport, TypeCount};
+pub use db::users::{
+    create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
+    MongoUser, RoleInfo, RoleSpec,
+};
 pub use db::version::get_mongodb_version_impl;
 pub use biometric::{decode_and_verify_key, encode_key, BiometricStatus};
 pub use state::{AppState, LockExt};
@@ -767,6 +771,60 @@ async fn read_profile(
     monitoring::read_profile_impl(&state, &id, &database, limit).await
 }
 
+// ── User & role management ────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn list_users(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: Option<String>,
+) -> Result<Vec<MongoUser>, String> {
+    list_users_impl(&state, &id, database.as_deref()).await
+}
+
+#[tauri::command]
+async fn create_user(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    username: String,
+    password: String,
+    roles: Vec<RoleSpec>,
+) -> Result<(), String> {
+    create_user_impl(&state, &id, &database, &username, &password, &roles).await
+}
+
+#[tauri::command]
+async fn update_user(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    username: String,
+    password: Option<String>,
+    roles: Option<Vec<RoleSpec>>,
+) -> Result<(), String> {
+    update_user_impl(&state, &id, &database, &username, password.as_deref(), roles.as_deref()).await
+}
+
+#[tauri::command]
+async fn drop_user(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    username: String,
+) -> Result<(), String> {
+    drop_user_impl(&state, &id, &database, &username).await
+}
+
+#[tauri::command]
+async fn list_roles(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+) -> Result<Vec<RoleInfo>, String> {
+    list_roles_impl(&state, &id, &database).await
+}
+
 #[tauri::command]
 async fn execute_mql_query(
     state: tauri::State<'_, AppState>,
@@ -1363,6 +1421,11 @@ pub fn run() {
             server_status,
             current_ops,
             kill_op,
+            list_users,
+            create_user,
+            update_user,
+            drop_user,
+            list_roles,
             get_profiling_status,
             set_profiling_level,
             read_profile,

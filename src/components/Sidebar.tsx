@@ -26,6 +26,7 @@ import {
   Pencil,
   Table2,
   Activity,
+  Users,
   Search,
   HelpCircle,
   Bug,
@@ -76,6 +77,7 @@ interface SidebarProps {
   onDeleteIndex?: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
   onOpenShell?: (connectionId: string, dbName: string, collName?: string, initialCommand?: string) => void;
   onOpenMonitoring?: (connectionId: string) => void;
+  onOpenUsers?: (connectionId: string) => void;
   onAnalyzeSchema?: (connectionId: string, dbName: string, collName: string) => void;
   onCreateView?: (connectionId: string, dbName: string) => void;
   onOpenGridfs?: (connectionId: string, dbName: string, bucket: string) => void;
@@ -155,6 +157,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDeleteIndex,
   onOpenShell,
   onOpenMonitoring,
+  onOpenUsers,
   onAnalyzeSchema,
   onCreateView,
   onOpenGridfs,
@@ -1372,6 +1375,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <Activity size={12} />
                 <span>Monitor cluster</span>
+              </div>
+              <div
+                className="mql-ctx-item"
+                data-testid="ctx-users"
+                onClick={() => {
+                  onOpenUsers?.(contextMenu.connectionId!);
+                  setContextMenu(null);
+                }}
+              >
+                <Users size={12} />
+                <span>Manage users</span>
               </div>
               <div className="mql-ctx-sep" />
               <div 
