@@ -13,7 +13,6 @@ import {
   ChevronRight,
   ScrollText,
   ShieldCheck,
-  Database,
 } from 'lucide-react';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { PasswordInput } from './PasswordInput';
@@ -74,7 +73,6 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
     editor.user?.roles?.length ? editor.user.roles.map((r) => ({ ...r })) : []
   );
   const [roleNames, setRoleNames] = useState<string[]>([]);
-  const [selectedRole, setSelectedRole] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -140,16 +138,11 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
     <div className="nested-modal-overlay select-none" data-testid="user-editor-modal">
       <div className="index-modal-container">
         <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3 mb-4 select-none">
-          {/* Breadcrumb-style context: who is being created/edited, and where. */}
-          <div className="mql-user-crumb">
-            <User size={13} className="text-[var(--accent-blue)]" />
-            <span className="mql-user-crumb-name">
-              {username.trim() || (isEdit ? editor.user?.user : 'New User')}
-            </span>
-            <ChevronRight size={11} className="mql-user-crumb-sep" />
-            <Database size={12} className="text-[var(--text-muted)]" />
-            <span>{authDb}</span>
-            <span className="mql-user-crumb-mode">{isEdit ? 'Edit User' : 'Add User'}</span>
+          <div className="flex items-center gap-2">
+            <User size={16} className="text-[var(--accent-blue)]" />
+            <h2 className="text-sm font-semibold text-[var(--text-main)]">
+              {isEdit ? `Edit User: ${editor.user?.user}` : 'Create New User'}
+            </h2>
           </div>
           <button
             onClick={onClose}
@@ -162,8 +155,8 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="index-modal-form">
-          <div className="mql-user-form-row">
-            <label className="mql-user-form-label">Name:</label>
+          <div className="flex flex-col gap-1">
+            <label className="index-modal-label">Username</label>
             <input
               type="text"
               value={username}
@@ -171,38 +164,33 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
               placeholder="e.g. app_user"
               disabled={isEdit}
               required
-              className="index-modal-input flex-1"
+              className="index-modal-input"
               data-testid="user-name-input"
             />
           </div>
 
-          <div className="mql-user-form-row">
-            <label className="mql-user-form-label">Password:</label>
+          <div className="flex flex-col gap-1">
+            <label className="index-modal-label">{isEdit ? 'New Password' : 'Password'}</label>
             <PasswordInput
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={isEdit ? '' : 'Password'}
+              placeholder={isEdit ? 'Leave blank to keep current password' : 'Password'}
               required={!isEdit}
-              className="index-modal-input"
+              className="index-modal-input w-full"
               data-testid="user-password-input"
             />
-          </div>
-          <div className="mql-user-form-help">
-            {isEdit
-              ? 'Leave blank to keep the current password.'
-              : 'Use the field above to set the password. The password must be set.'}
+            {!isEdit && <span className="index-modal-help-text">The password must be set.</span>}
           </div>
 
-          <div className="mql-user-form-row">
-            <label className="mql-user-form-label">Database:</label>
+          <div className="flex flex-col gap-1">
+            <label className="index-modal-label">Authentication Database</label>
             <select
               value={authDb}
               onChange={(e) => setAuthDb(e.target.value)}
               disabled={isEdit}
               required
-              className="index-modal-input flex-1"
+              className="index-modal-input"
               data-testid="user-authdb-input"
-              title="The database the user authenticates against"
             >
               {dbOptions.map((d) => (
                 <option key={d} value={d}>
@@ -210,91 +198,65 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
                 </option>
               ))}
             </select>
+            <span className="index-modal-help-text">The database the user authenticates against.</span>
           </div>
 
-          {/* Roles: bordered Role|Database panel with Grant/Revoke beside it. */}
+          {/* Granted roles — same row pattern as the index key builder. */}
           <div className="flex flex-col gap-1.5">
             <label className="index-modal-label">Roles</label>
-            <div className="mql-user-roles">
-              <div className="mql-user-roles-panel">
-                <div className="mql-user-roles-head">
-                  <span>Role</span>
-                  <span>Database</span>
+            <div className="index-modal-keys-list">
+              {roles.map((rule, idx) => (
+                <div key={idx} className="index-modal-key-row" data-testid={`role-row-${idx}`}>
+                  <select
+                    value={rule.role}
+                    onChange={(e) => setRole(idx, { role: e.target.value })}
+                    className="index-modal-key-select"
+                    style={{ flex: 1.2 }}
+                    data-testid={`role-select-${idx}`}
+                  >
+                    <option value="" disabled>
+                      Select role…
+                    </option>
+                    {withValue(roleNames, rule.role).map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="index-modal-key-divider" />
+                  <select
+                    value={rule.db}
+                    onChange={(e) => setRole(idx, { db: e.target.value })}
+                    className="index-modal-key-select"
+                    data-testid={`role-db-select-${idx}`}
+                  >
+                    {withValue(databases, rule.db).map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="index-modal-key-divider" />
+                  <button
+                    type="button"
+                    onClick={() => setRoles((prev) => prev.filter((_, i) => i !== idx))}
+                    className="index-modal-btn-delete"
+                    title="Revoke role"
+                    data-testid={`revoke-role-${idx}`}
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
-                <div className="mql-user-roles-body">
-                  {roles.length === 0 ? (
-                    <div className="mql-user-roles-empty">No roles granted — click "Grant Role".</div>
-                  ) : (
-                    roles.map((rule, idx) => (
-                      <div
-                        key={idx}
-                        className={`mql-user-roles-row${selectedRole === idx ? ' is-selected' : ''}`}
-                        onClick={() => setSelectedRole(idx)}
-                        data-testid={`role-row-${idx}`}
-                      >
-                        <span className="mql-user-roles-cell">
-                          <ScrollText size={11} className="text-[var(--text-dim)] flex-shrink-0" />
-                          <select
-                            value={rule.role}
-                            onChange={(e) => setRole(idx, { role: e.target.value })}
-                            className="mql-user-roles-select"
-                            data-testid={`role-select-${idx}`}
-                          >
-                            <option value="" disabled>
-                              Select role…
-                            </option>
-                            {withValue(roleNames, rule.role).map((r) => (
-                              <option key={r} value={r}>
-                                {r}
-                              </option>
-                            ))}
-                          </select>
-                        </span>
-                        <span className="mql-user-roles-cell">
-                          <select
-                            value={rule.db}
-                            onChange={(e) => setRole(idx, { db: e.target.value })}
-                            className="mql-user-roles-select"
-                            data-testid={`role-db-select-${idx}`}
-                          >
-                            {withValue(databases, rule.db).map((d) => (
-                              <option key={d} value={d}>
-                                {d}
-                              </option>
-                            ))}
-                          </select>
-                        </span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div className="mql-user-roles-btns">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRoles((prev) => [...prev, { role: '', db: authDb }]);
-                    setSelectedRole(roles.length);
-                  }}
-                  className="index-modal-btn-secondary"
-                  data-testid="add-role-btn"
-                >
-                  Grant Role
-                </button>
-                <button
-                  type="button"
-                  disabled={selectedRole === null}
-                  onClick={() => {
-                    if (selectedRole === null) return;
-                    setRoles((prev) => prev.filter((_, i) => i !== selectedRole));
-                    setSelectedRole(null);
-                  }}
-                  className="index-modal-btn-secondary"
-                  data-testid="revoke-role-btn"
-                >
-                  Revoke
-                </button>
-              </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setRoles((prev) => [...prev, { role: '', db: authDb }])}
+                className="index-modal-btn-add"
+                data-testid="add-role-btn"
+              >
+                <Plus size={12} />
+                <span>Grant Role</span>
+              </button>
             </div>
             {isEdit && (
               <span className="index-modal-help-text">
