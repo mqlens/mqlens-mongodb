@@ -1138,6 +1138,112 @@ select:focus-visible {
 .mql-users-role-row:hover { background: var(--bg-item-hover); }
 .mql-users-role-row.is-empty { color: var(--text-dim); font-style: italic; }
 
+/* ────────────────────────────────────────── User editor dialog */
+.mql-user-crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  min-width: 0;
+}
+.mql-user-crumb-name { font-weight: 600; }
+.mql-user-crumb-sep { color: var(--text-dim); }
+.mql-user-crumb-mode {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-item-hover);
+  border: 1px solid var(--border-color);
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.mql-user-form-row {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+.mql-user-form-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+}
+.mql-user-form-row .mql-password-field { width: 100%; }
+.mql-user-form-row .mql-password-field input { width: 100%; }
+.mql-user-form-help {
+  margin: -6px 0 0 96px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+/* Roles: bordered Role|Database panel with Grant/Revoke beside it. */
+.mql-user-roles { display: flex; gap: 8px; align-items: flex-start; }
+.mql-user-roles-panel {
+  flex: 1;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  min-width: 0;
+}
+.mql-user-roles-head {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.mql-user-roles-head span { padding: 5px 10px; }
+.mql-user-roles-head span + span { border-left: 1px solid var(--border-color); }
+.mql-user-roles-body { min-height: 96px; max-height: 180px; overflow-y: auto; }
+.mql-user-roles-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+}
+.mql-user-roles-row:nth-child(even) { background: var(--bg-panel); }
+.mql-user-roles-row:hover { background: var(--bg-item-hover); }
+.mql-user-roles-row.is-selected { background: var(--bg-item-active, var(--bg-item-hover)); }
+.mql-user-roles-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  min-width: 0;
+}
+.mql-user-roles-cell + .mql-user-roles-cell { border-left: 1px solid var(--border-color); }
+.mql-user-roles-select {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.mql-user-roles-empty {
+  padding: 12px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+.mql-user-roles-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.mql-user-roles-btns button { white-space: nowrap; }
+
 /* ────────────────────────────────────────── Welcome */
 .mql-welcome {
   flex: 1;

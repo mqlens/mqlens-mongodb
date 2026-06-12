@@ -178,6 +178,22 @@ describe('UserManagementView (user & role management)', () => {
     );
   });
 
+  it('grants and revokes roles via the side buttons', async () => {
+    render(<UserManagementView connectionId="c1" />);
+    await screen.findByTestId('user-row-admin.admin');
+
+    fireEvent.click(screen.getByTestId('create-user-btn'));
+    fireEvent.click(screen.getByTestId('add-role-btn'));
+    expect(screen.getByTestId('role-row-0')).toBeInTheDocument();
+
+    // The freshly granted row is selected, so Revoke removes it.
+    const revoke = screen.getByTestId('revoke-role-btn') as HTMLButtonElement;
+    expect(revoke.disabled).toBe(false);
+    fireEvent.click(revoke);
+    expect(screen.queryByTestId('role-row-0')).not.toBeInTheDocument();
+    expect((screen.getByTestId('revoke-role-btn') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('drops a user via right click after confirmation', async () => {
     mockConfirm.mockResolvedValue(true);
     render(<UserManagementView connectionId="c1" />);
