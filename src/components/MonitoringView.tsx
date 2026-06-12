@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
 import { Activity, RefreshCw, Skull, Lock, Network, Gauge, MemoryStick, Database, ArrowDownUp, Search, X } from 'lucide-react';
 import { formatBytes } from '../lib/format';
+import { useEscapeClose } from '../lib/useEscapeClose';
 import {
   serverStatus,
   currentOps,
@@ -165,8 +166,10 @@ const DetailRow: React.FC<{ label: string; children: React.ReactNode }> = ({ lab
 const MonitoringDetail: React.FC<{
   detail: { kind: 'op'; data: CurrentOp } | { kind: 'profile'; data: ProfileEntry };
   onClose: () => void;
-}> = ({ detail, onClose }) => (
-  <div className="nested-modal-overlay" data-testid="monitoring-detail" onClick={onClose}>
+}> = ({ detail, onClose }) => {
+  useEscapeClose(true, onClose);
+  return (
+  <div className="nested-modal-overlay" data-testid="monitoring-detail">
     <div className="index-modal-container index-modal-container--wide" onClick={(e) => e.stopPropagation()}>
       <div className="mql-mon-detail-head">
         <h2>{detail.kind === 'op' ? 'Operation details' : 'Profiled operation'}</h2>
@@ -198,7 +201,8 @@ const MonitoringDetail: React.FC<{
       <pre className="mql-mon-detail-cmd"><HighlightedCommand text={detail.data.command} /></pre>
     </div>
   </div>
-);
+  );
+};
 
 // MongoDB error 13 / "not authorized" → the user lacks the privilege.
 const isAuthError = (msg: string): boolean =>

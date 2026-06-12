@@ -9,6 +9,10 @@ mod tests {
         list_databases_impl, list_gridfs_files_impl, list_indexes_impl, rename_collection_impl,
         rename_database_impl, start_collection_export_impl, update_document_impl,
     };
+    use crate::{
+        create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
+        RoleSpec,
+    };
 
     #[test]
     fn test_resource_usage_sums_process_tree() {
@@ -1091,6 +1095,102 @@ mod tests {
         )
         .await;
         assert!(ok.is_ok());
+    }
+
+    // User management: mock listing/filtering, input validation, and the
+    // unknown-connection error path.
+    #[tokio::test]
+    async fn test_user_management_mock_and_validation() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+
+        // Mock listing: all databases vs filtered to one.
+        let all = list_users_impl(&state, &conn_id, None)
+            .await
+            .expect("list all users in mock mode");
+        assert!(all.len() >= 3, "mock should ship several demo users");
+        let sales = list_users_impl(&state, &conn_id, Some("sales_db"))
+            .await
+            .expect("list sales_db users in mock mode");
+        assert!(!sales.is_empty());
+        assert!(sales.iter().all(|u| u.db == "sales_db"));
+
+        // Roles picker data includes built-in roles.
+        let roles = list_roles_impl(&state, &conn_id, "sales_db")
+            .await
+            .expect("list roles in mock mode");
+        assert!(roles.iter().any(|r| r.role == "readWrite" && r.is_builtin));
+
+        // Validation is rejected before touching the connection.
+        let rw = vec![RoleSpec { role: "readWrite".into(), db: "sales_db".into() }];
+        assert!(create_user_impl(&state, &conn_id, "sales_db", "", "pw", &rw)
+            .await
+            .is_err());
+        assert!(create_user_impl(&state, &conn_id, "sales_db", "bob", "", &rw)
+            .await
+            .is_err());
+        assert!(update_user_impl(&state, &conn_id, "sales_db", "", Some("pw"), None)
+            .await
+            .is_err());
+        // Nothing to change: no password and no roles.
+        assert!(update_user_impl(&state, &conn_id, "sales_db", "bob", None, None)
+            .await
+            .is_err());
+        assert!(update_user_impl(&state, &conn_id, "sales_db", "bob", Some(""), None)
+            .await
+            .is_err());
+        assert!(drop_user_impl(&state, &conn_id, "sales_db", "")
+            .await
+            .is_err());
+
+        // Half-specified roles are rejected (no silent dropping).
+        let bad_role = vec![RoleSpec { role: "".into(), db: "sales_db".into() }];
+        assert!(create_user_impl(&state, &conn_id, "sales_db", "bob", "pw", &bad_role)
+            .await
+            .is_err());
+        let bad_db = vec![RoleSpec { role: "readWrite".into(), db: " ".into() }];
+        assert!(
+            update_user_impl(&state, &conn_id, "sales_db", "bob", None, Some(&bad_db))
+                .await
+                .is_err()
+        );
+
+        // Valid mutations succeed as no-ops in mock mode.
+        create_user_impl(&state, &conn_id, "sales_db", "bob", "secret", &rw)
+            .await
+            .expect("create user in mock mode");
+        update_user_impl(&state, &conn_id, "sales_db", "bob", Some("newpw"), Some(&rw))
+            .await
+            .expect("update user in mock mode");
+        update_user_impl(&state, &conn_id, "sales_db", "bob", None, Some(&[]))
+            .await
+            .expect("clearing roles alone is a valid update");
+        drop_user_impl(&state, &conn_id, "sales_db", "bob")
+            .await
+            .expect("drop user in mock mode");
+
+        // Non-mock connection without a real client reports the standard error.
+        let realish = "realish-users";
+        state
+            .mocks
+            .lock()
+            .unwrap()
+            .insert(realish.to_string(), false);
+        assert_eq!(
+            list_users_impl(&state, realish, None).await.unwrap_err(),
+            "Connection client not found"
+        );
+        assert_eq!(
+            create_user_impl(&state, realish, "sales_db", "bob", "pw", &rw)
+                .await
+                .unwrap_err(),
+            "Connection client not found"
+        );
+
+        // Unknown connection id errors on the mock check itself.
+        assert!(list_users_impl(&state, "missing", None).await.is_err());
     }
 
     // GO-LIVE C6/H6: collection/database management wiring (mock path + input validation).

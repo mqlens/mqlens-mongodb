@@ -71,20 +71,16 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
     }
   };
 
-  const onBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) cancel();
-  };
-
   const cancelLabel = (request as any).cancelLabel ?? 'Cancel';
 
   return (
+    // No backdrop-click cancel: dismiss only via the buttons or Escape.
     <div
       className="dialog-overlay"
       data-testid="dialog-overlay"
       role="dialog"
       aria-modal="true"
       aria-label={request.title}
-      onClick={onBackdropClick}
       onKeyDown={onKeyDown}
     >
       <div className="dialog-box" onClick={(e) => e.stopPropagation()}>

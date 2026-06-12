@@ -8,4 +8,5 @@ pub mod gridfs;
 pub mod metadata;
 pub mod query;
 pub mod schema;
+pub mod users;
 pub mod version;
