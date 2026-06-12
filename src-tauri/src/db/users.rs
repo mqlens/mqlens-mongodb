@@ -63,6 +63,16 @@ fn parse_user(d: &Document) -> MongoUser {
     }
 }
 
+fn validate_roles(roles: &[RoleSpec]) -> Result<(), String> {
+    if roles
+        .iter()
+        .any(|r| r.role.trim().is_empty() || r.db.trim().is_empty())
+    {
+        return Err("Every role needs both a role name and a database".to_string());
+    }
+    Ok(())
+}
+
 fn roles_to_bson(roles: &[RoleSpec]) -> Vec<Bson> {
     roles
         .iter()
@@ -165,6 +175,7 @@ pub async fn create_user_impl(
     if password.is_empty() {
         return Err("Password is required".to_string());
     }
+    validate_roles(roles)?;
     if connection_is_mock(state, id)? {
         return Ok(());
     }
@@ -196,6 +207,9 @@ pub async fn update_user_impl(
     }
     if password.map_or(true, str::is_empty) && roles.is_none() {
         return Err("Nothing to update: provide a new password and/or roles".to_string());
+    }
+    if let Some(roles) = roles {
+        validate_roles(roles)?;
     }
     if connection_is_mock(state, id)? {
         return Ok(());

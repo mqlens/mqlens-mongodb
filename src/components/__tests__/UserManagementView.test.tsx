@@ -178,6 +178,22 @@ describe('UserManagementView (user & role management)', () => {
     );
   });
 
+  it('rejects saving when a granted role row has no role selected', async () => {
+    render(<UserManagementView connectionId="c1" />);
+    await screen.findByTestId('user-row-admin.admin');
+
+    fireEvent.click(screen.getByTestId('create-user-btn'));
+    fireEvent.change(screen.getByTestId('user-name-input'), { target: { value: 'bob' } });
+    fireEvent.change(screen.getByTestId('user-password-input'), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByTestId('add-role-btn'));
+    // Role left at "Select role…" → save must be blocked with an error.
+    fireEvent.click(screen.getByTestId('save-user-btn'));
+
+    expect(await screen.findByText(/Select a role and a database for every granted role/)).toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith('create_user', expect.anything());
+    expect(screen.getByTestId('user-editor-modal')).toBeInTheDocument();
+  });
+
   it('grants and revokes roles in the editor', async () => {
     render(<UserManagementView connectionId="c1" />);
     await screen.findByTestId('user-row-admin.admin');

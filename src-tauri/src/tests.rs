@@ -1145,6 +1145,18 @@ mod tests {
             .await
             .is_err());
 
+        // Half-specified roles are rejected (no silent dropping).
+        let bad_role = vec![RoleSpec { role: "".into(), db: "sales_db".into() }];
+        assert!(create_user_impl(&state, &conn_id, "sales_db", "bob", "pw", &bad_role)
+            .await
+            .is_err());
+        let bad_db = vec![RoleSpec { role: "readWrite".into(), db: " ".into() }];
+        assert!(
+            update_user_impl(&state, &conn_id, "sales_db", "bob", None, Some(&bad_db))
+                .await
+                .is_err()
+        );
+
         // Valid mutations succeed as no-ops in mock mode.
         create_user_impl(&state, &conn_id, "sales_db", "bob", "secret", &rw)
             .await

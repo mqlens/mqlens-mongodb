@@ -112,9 +112,13 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
       setError('Password is required');
       return;
     }
-    const cleanRoles = roles
-      .map((r) => ({ role: r.role.trim(), db: r.db.trim() || authDb }))
-      .filter((r) => r.role);
+    // Every granted row must be fully specified — silently dropping a
+    // half-filled row would grant fewer privileges than the form shows.
+    const cleanRoles = roles.map((r) => ({ role: r.role.trim(), db: r.db.trim() }));
+    if (cleanRoles.some((r) => !r.role || !r.db)) {
+      setError('Select a role and a database for every granted role');
+      return;
+    }
     setSaving(true);
     try {
       if (isEdit) {
