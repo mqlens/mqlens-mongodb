@@ -439,7 +439,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
           </button>
           <button
             onClick={() => setEditor({ mode: 'create' })}
-            className="index-modal-btn-primary flex items-center gap-1.5"
+            className="mql-users-create-btn"
             data-testid="create-user-btn"
           >
             <Plus size={12} />
@@ -485,6 +485,11 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
             setMenu({ x: e.clientX, y: e.clientY, user: null });
           }}
         >
+          <div className="mql-users-head">
+            <span className="mql-users-head-cell">User</span>
+            <span className="mql-users-head-cell">Database</span>
+            <span className="mql-users-head-cell">Auth Mechanism</span>
+          </div>
           {users.map((u) => {
             const key = userKey(u);
             const isOpen = expanded.has(key);
@@ -501,13 +506,13 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
                     setMenu({ x: e.clientX, y: e.clientY, user: u });
                   }}
                 >
-                  <ChevronRight size={12} className={`mql-users-chev${isOpen ? ' is-open' : ''}`} />
-                  <User size={13} className="text-[var(--accent-blue)] flex-shrink-0" />
-                  <span className="mql-users-name">{u.user}</span>
-                  <span className="mql-users-meta">
-                    @{u.db}
-                    {u.mechanisms.length > 0 ? ` · ${u.mechanisms.join(', ')}` : ''}
+                  <span className="mql-users-cell">
+                    <ChevronRight size={12} className={`mql-users-chev${isOpen ? ' is-open' : ''}`} />
+                    <User size={13} className="text-[var(--accent-blue)] flex-shrink-0" />
+                    <span className="mql-users-name">{u.user}</span>
                   </span>
+                  <span className="mql-users-cell text-[var(--text-muted)]">{u.db}</span>
+                  <span className="mql-users-cell text-[var(--text-dim)]">{u.mechanisms.join(', ') || '—'}</span>
                 </div>
                 {isOpen && (
                   <div className="mql-users-children">
