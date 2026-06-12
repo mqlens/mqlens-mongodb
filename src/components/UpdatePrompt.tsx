@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ArrowUpCircle } from 'lucide-react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { useEscapeClose } from '../lib/useEscapeClose';
 
 // Event other components (e.g. Settings) dispatch to trigger a manual check.
@@ -17,6 +18,71 @@ interface UpdateMeta {
 }
 
 type Phase = 'idle' | 'checking' | 'available' | 'downloading' | 'uptodate' | 'error';
+
+// Release notes arrive as GitHub-release markdown (### headings, - bullets,
+// **bold**, `code`, [links](…)). Render that subset as React nodes — no HTML
+// injection, links open in the system browser.
+const renderInline = (text: string): React.ReactNode[] => {
+  const out: React.ReactNode[] = [];
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g;
+  let last = 0;
+  let k = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith('**')) {
+      out.push(<strong key={k++}>{tok.slice(2, -2)}</strong>);
+    } else if (tok.startsWith('`')) {
+      out.push(<code key={k++}>{tok.slice(1, -1)}</code>);
+    } else {
+      const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(tok)!;
+      const url = link[2];
+      out.push(
+        <a key={k++} href={url} onClick={(e) => { e.preventDefault(); void openUrl(url); }}>
+          {link[1]}
+        </a>
+      );
+    }
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+};
+
+const ReleaseNotes: React.FC<{ markdown: string }> = ({ markdown }) => {
+  const blocks: React.ReactNode[] = [];
+  let listItems: React.ReactNode[] = [];
+  let k = 0;
+  const flushList = () => {
+    if (listItems.length) {
+      blocks.push(<ul key={k++}>{listItems}</ul>);
+      listItems = [];
+    }
+  };
+  for (const raw of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    const line = raw.trim();
+    const heading = /^#{1,6}\s+(.*)$/.exec(line);
+    const bullet = /^[-*]\s+(.*)$/.exec(line);
+    if (heading) {
+      flushList();
+      blocks.push(<h4 key={k++}>{renderInline(heading[1])}</h4>);
+    } else if (bullet) {
+      listItems.push(<li key={k++}>{renderInline(bullet[1])}</li>);
+    } else if (line === '') {
+      flushList();
+    } else {
+      flushList();
+      blocks.push(<p key={k++}>{renderInline(line)}</p>);
+    }
+  }
+  flushList();
+  return (
+    <div className="mql-update-notes" data-testid="update-notes">
+      {blocks}
+    </div>
+  );
+};
 
 /** The user's selected update channel, read from app settings. */
 async function currentChannel(): Promise<string> {
@@ -151,9 +217,7 @@ export const UpdatePrompt: React.FC = () => {
           MQLens <strong>{update?.version}</strong> is available
           {update?.current_version ? <> (you have {update.current_version})</> : null}.
         </p>
-        {update?.notes && (
-          <pre className="mql-update-notes">{update.notes}</pre>
-        )}
+        {update?.notes && <ReleaseNotes markdown={update.notes} />}
 
         {downloading ? (
           <div className="mql-update-progress" data-testid="update-progress">

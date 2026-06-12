@@ -5750,8 +5750,23 @@ button, input, select, textarea {
 .mql-update-notes {
   max-height: 200px; overflow: auto; margin: 10px 0 0;
   background: var(--bg-base); border: 1px solid var(--border-color); border-radius: 6px;
-  padding: 8px 10px; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; color: var(--text-muted);
+  padding: 8px 12px; font-size: 11.5px; line-height: 1.55; color: var(--text-muted);
 }
+.mql-update-notes h4 {
+  margin: 10px 0 4px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-main);
+}
+.mql-update-notes h4:first-child { margin-top: 2px; }
+.mql-update-notes p { margin: 4px 0; }
+.mql-update-notes ul { margin: 4px 0; padding-left: 18px; list-style: disc; }
+.mql-update-notes li { margin: 2px 0; }
+.mql-update-notes code {
+  font-family: var(--font-mono); font-size: 10.5px;
+  background: var(--bg-item-hover); border: 1px solid var(--border-color);
+  border-radius: 3px; padding: 0 4px;
+}
+.mql-update-notes a { color: var(--accent-blue); text-decoration: none; }
+.mql-update-notes a:hover { text-decoration: underline; }
 .mql-update-progress { margin-top: 14px; }
 .mql-update-progress-bar { height: 8px; background: var(--bg-base); border: 1px solid var(--border-color); border-radius: 999px; overflow: hidden; }
 .mql-update-progress-bar > span { display: block; height: 100%; background: var(--accent-blue); transition: width 0.2s ease; }

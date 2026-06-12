@@ -15,7 +15,7 @@ interface Props {
 }
 
 const { title, description = SITE.description } = Astro.props;
-const fullTitle = title ? `${title} — ${SITE.name}` : `${SITE.name} — ${SITE.tagline}`;
+const fullTitle = title ? `${title} — ${SITE.name}` : `${SITE.name} — ${SITE.titleTag}`;
 const canonical = new URL(Astro.url.pathname, SITE.url).href;
 const ogImage = new URL('/og.png', SITE.url).href;
 ---
@@ -27,6 +27,7 @@ const ogImage = new URL('/og.png', SITE.url).href;
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#0a8fd0" />
 
     <!-- Type system (self-hosted): Inter (UI) + JetBrains Mono (code) -->
@@ -38,10 +39,15 @@ const ogImage = new URL('/og.png', SITE.url).href;
 
     <!-- Open Graph / Twitter -->
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={SITE.name} />
+    <meta property="og:locale" content="en_US" />
     <meta property="og:title" content={fullTitle} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
     <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={`${SITE.name} — ${SITE.titleTag}`} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={fullTitle} />
     <meta name="twitter:description" content={description} />
@@ -50,13 +56,37 @@ const ogImage = new URL('/og.png', SITE.url).href;
     <!-- Structured data for rich results -->
     <script type="application/ld+json" set:html={JSON.stringify({
       "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      "name": SITE.name,
-      "applicationCategory": "DeveloperApplication",
-      "operatingSystem": "macOS, Windows, Linux",
-      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-      "url": SITE.url,
-      "description": SITE.description,
+      "@graph": [
+        {
+          "@type": "SoftwareApplication",
+          "@id": `${SITE.url}/#software`,
+          "name": SITE.name,
+          "applicationCategory": "DeveloperApplication",
+          "operatingSystem": "macOS, Windows, Linux",
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+          "url": SITE.url,
+          "description": SITE.description,
+          "downloadUrl": SITE.releasesLatest,
+          "license": `https://www.apache.org/licenses/LICENSE-2.0`,
+          "image": ogImage,
+          "publisher": { "@id": `${SITE.url}/#org` },
+        },
+        {
+          "@type": "Organization",
+          "@id": `${SITE.url}/#org`,
+          "name": SITE.name,
+          "url": SITE.url,
+          "logo": new URL('/apple-touch-icon.png', SITE.url).href,
+          "sameAs": [SITE.repo],
+        },
+        {
+          "@type": "WebSite",
+          "@id": `${SITE.url}/#website`,
+          "name": SITE.name,
+          "url": SITE.url,
+          "publisher": { "@id": `${SITE.url}/#org` },
+        },
+      ],
     })} />
 
     <!-- Privacy-friendly analytics: handled by Cloudflare Web Analytics (auto-injected for the proxied site; no cookies, no in-app telemetry) -->
