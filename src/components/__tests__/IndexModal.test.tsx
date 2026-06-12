@@ -46,6 +46,31 @@ describe('IndexModal Component', () => {
     expect(handleClose).toHaveBeenCalledTimes(1);
   });
 
+  it('auto-generates the index name from keys until manually overridden', () => {
+    render(
+      <IndexModal isOpen={true} onClose={() => {}} onSave={() => {}} availableFields={['_id', 'email']} />
+    );
+    const nameInput = screen.getByTestId('index-name-input') as HTMLInputElement;
+
+    // Default _id:1 key → Mongo-convention name.
+    expect(nameInput.value).toBe('_id_1');
+
+    // Changing the key field/direction regenerates the name.
+    fireEvent.change(screen.getByPlaceholderText('Field name'), { target: { value: 'email' } });
+    expect(nameInput.value).toBe('email_1');
+    fireEvent.change(screen.getByDisplayValue('Ascending (1)'), { target: { value: '-1' } });
+    expect(nameInput.value).toBe('email_-1');
+
+    // A manually typed name sticks…
+    fireEvent.change(nameInput, { target: { value: 'my_custom_name' } });
+    fireEvent.change(screen.getByDisplayValue('email'), { target: { value: 'status' } });
+    expect(nameInput.value).toBe('my_custom_name');
+
+    // …and clearing it resumes auto-generation.
+    fireEvent.change(nameInput, { target: { value: '' } });
+    expect(nameInput.value).toBe('status_-1');
+  });
+
   it('pre-populates data correctly in edit mode', () => {
     const initialData = {
       name: 'age_index',

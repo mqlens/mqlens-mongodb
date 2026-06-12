@@ -15,6 +15,7 @@ import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
 import { GridFsView } from './components/GridFsView';
 import { MonitoringView } from './components/MonitoringView';
+import { UserManagementView } from './components/UserManagementView';
 import { type ExportTaskInfo } from './components/TaskManager';
 import { VaultGate } from './components/VaultGate';
 import { UpdatePrompt } from './components/UpdatePrompt';
@@ -31,12 +32,12 @@ import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
-import { FolderCode, X, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity, Copy } from 'lucide-react';
+import { FolderCode, X, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity, Copy, Users } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'schema' | 'create-view' | 'gridfs' | 'monitoring';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users';
   connectionId: string;
   db: string;
   collection: string;
@@ -595,6 +596,27 @@ function Workspace() {
     setActiveTabId(tabId);
   };
 
+  const handleOpenUsersTab = (connectionId: string, db?: string) => {
+    const tabId = `users.${connectionId}`;
+    if (!tabs.some((t) => t.id === tabId)) {
+      setTabs((prev) => [...prev, {
+        id: tabId,
+        type: 'users',
+        connectionId,
+        db: db ?? '',
+        collection: '',
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      }]);
+    } else if (db) {
+      // Re-opened scoped to a database (sidebar db menu): refocus the scope.
+      setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, db } : t)));
+    }
+    setActiveTabId(tabId);
+  };
+
   const handleCollectionRenamed = (
     connectionId: string,
     dbName: string,
@@ -923,6 +945,12 @@ function Workspace() {
       title: `Open Monitoring: ${c.name}`,
       keywords: 'monitoring metrics server status profiler',
       run: () => handleOpenMonitoringTab(c.id),
+    })),
+    ...activeConnections.map(c => ({
+      id: `users:${c.id}`,
+      title: `Manage Users: ${c.name}`,
+      keywords: 'users roles access permissions authentication admin',
+      run: () => handleOpenUsersTab(c.id),
     })),
     { id: 'check-updates', title: 'Check for Updates', keywords: 'version upgrade release', run: () => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT)) },
     ...paletteDynamicItems,
@@ -1355,6 +1383,7 @@ function Workspace() {
             onDeleteIndex={handleDeleteIndex}
             onOpenShell={handleOpenShell}
             onOpenMonitoring={handleOpenMonitoringTab}
+            onOpenUsers={handleOpenUsersTab}
             onAnalyzeSchema={handleOpenSchemaTab}
             onCreateView={handleOpenCreateViewTab}
             onOpenGridfs={handleOpenGridfsTab}
@@ -1474,6 +1503,8 @@ function Workspace() {
                         <HardDrive size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
                       ) : tab.type === 'monitoring' ? (
                         <Activity size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
+                      ) : tab.type === 'users' ? (
+                        <Users size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
                       ) : (
                         <FolderCode size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
                       )}
@@ -1496,7 +1527,9 @@ function Workspace() {
                                       ? `GridFS: ${tab.collection}`
                                       : tab.type === 'monitoring'
                                         ? `Monitor: ${connectionNameFor(tab.connectionId)}`
-                                        : tab.collection}
+                                        : tab.type === 'users'
+                                          ? `Users: ${connectionNameFor(tab.connectionId)}`
+                                          : tab.collection}
                       </span>
                       <button
                         onClick={(e) => handleCloseTab(e, tab.id)}
@@ -1635,6 +1668,9 @@ function Workspace() {
               )}
               {activeTab && activeTab.type === 'monitoring' && (
                 <MonitoringView connectionId={activeTab.connectionId} />
+              )}
+              {activeTab && activeTab.type === 'users' && (
+                <UserManagementView connectionId={activeTab.connectionId} database={activeTab.db || undefined} />
               )}
               {activeTab && activeTab.type === 'export' && (() => {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);

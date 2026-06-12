@@ -1094,6 +1094,94 @@ select:focus-visible {
 }
 .mql-td:last-child { border-right: none; }
 
+/* ────────────────────────────────────────── User management tree
+   Tree-table list of users: expandable user nodes with their granted
+   roles as child rows. Same mono/row-hover language as the data views. */
+.mql-users-tree {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+/* Three-column tree-table: User | Database | Auth Mechanism. */
+.mql-users-head {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-color);
+  position: sticky; top: 0; z-index: 1;
+}
+.mql-users-head-cell {
+  padding: 6px 12px;
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-right: 1px solid var(--border-color);
+}
+.mql-users-head-cell:last-child { border-right: none; }
+/* Bordered rows + per-user alternating shades, like the data tree view.
+   The header is the tree's first child, so even nodes = 1st, 3rd, … users. */
+.mql-users-node { border-bottom: 1px solid var(--border-color); }
+.mql-users-node:nth-child(even) { background: var(--bg-panel); }
+.mql-users-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  align-items: stretch;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.mql-users-row:hover { background: var(--bg-item-hover); }
+.mql-users-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-right: 1px solid var(--border-color);
+  overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;
+}
+.mql-users-cell:last-child { border-right: none; }
+.mql-users-chev {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  transition: transform 0.12s ease;
+}
+.mql-users-chev.is-open { transform: rotate(90deg); }
+.mql-users-name { color: var(--text-main); font-weight: 600; }
+.mql-users-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.mql-users-children { padding-bottom: 2px; }
+.mql-users-role-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px 3px 42px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.mql-users-role-row:hover { background: var(--bg-item-hover); }
+.mql-users-role-row.is-empty { color: var(--text-dim); font-style: italic; }
+/* Compact toolbar action — sized to sit beside the scope select. */
+.mql-users-create-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 5px;
+  background: var(--accent-blue);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s ease;
+}
+.mql-users-create-btn:hover { background: var(--accent-blue-hover); }
+.mql-users-create-btn:active { filter: brightness(0.95); }
+
+
 /* ────────────────────────────────────────── Welcome */
 .mql-welcome {
   flex: 1;

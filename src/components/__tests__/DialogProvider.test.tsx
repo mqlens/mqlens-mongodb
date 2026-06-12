@@ -93,12 +93,13 @@ describe('DialogProvider — confirm', () => {
     await waitFor(() => expect(screen.getByTestId('result')).toHaveTextContent('false'));
   });
 
-  it('resolves false on backdrop click', async () => {
+  it('stays open on backdrop click (dismiss only via buttons or Escape)', async () => {
     renderHarness();
     fireEvent.click(screen.getByText('go-confirm'));
     const overlay = await screen.findByTestId('dialog-overlay');
     fireEvent.click(overlay);
-    await waitFor(() => expect(screen.getByTestId('result')).toHaveTextContent('false'));
+    expect(screen.getByTestId('dialog-overlay')).toBeInTheDocument();
+    expect(screen.getByTestId('result')).toHaveTextContent('pending');
   });
 
   it('marks the confirm button destructive when requested', async () => {
