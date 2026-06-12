@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Code, Layers } from 'lucide-react';
+import { X, Plus, Trash2, Code, Layers, ChevronDown } from 'lucide-react';
 import { useEscapeClose } from '../lib/useEscapeClose';
 
 interface IndexKeyRule {
@@ -20,6 +20,21 @@ interface IndexModalProps {
   } | null;
 }
 
+// MongoDB's default index name: the key fields joined as `field_direction`
+// (e.g. { email: 1, status: -1 } → "email_1_status_-1").
+const defaultIndexName = (json: string): string => {
+  try {
+    const parsed = JSON.parse(json);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return '';
+    return Object.entries(parsed)
+      .filter(([field]) => field.trim())
+      .map(([field, dir]) => `${field.trim()}_${dir}`)
+      .join('_');
+  } catch {
+    return '';
+  }
+};
+
 export const IndexModal: React.FC<IndexModalProps> = ({
   isOpen,
   onClose,
@@ -28,6 +43,9 @@ export const IndexModal: React.FC<IndexModalProps> = ({
   initialData,
 }) => {
   const [indexName, setIndexName] = useState('');
+  // Whether the user typed a custom name; until then the name is generated
+  // from the keys per the Mongo convention.
+  const [nameTouched, setNameTouched] = useState(false);
   const [isRawMode, setIsRawMode] = useState(false);
   const [unique, setUnique] = useState(false);
   const [sparse, setSparse] = useState(false);
@@ -65,8 +83,17 @@ export const IndexModal: React.FC<IndexModalProps> = ({
       }
       setJsonError(null);
       setIsRawMode(false);
+      setNameTouched(false);
     }
   }, [isOpen, initialData]);
+
+  // Auto-name the index from its keys until the user types a custom name;
+  // clearing the field hands naming back to the generator. Existing indexes
+  // keep their stored name.
+  useEffect(() => {
+    if (!isOpen || initialData || nameTouched) return;
+    setIndexName(defaultIndexName(rawKeysJson));
+  }, [isOpen, initialData, nameTouched, rawKeysJson]);
 
   // Synchronize keysList to raw JSON whenever it changes
   useEffect(() => {
@@ -159,54 +186,56 @@ export const IndexModal: React.FC<IndexModalProps> = ({
 
   return (
     // No click-outside close: dismiss only via the X button, Cancel, or Escape.
-    <div className="nested-modal-overlay select-none" data-testid="index-modal">
-      <div className="index-modal-container" onClick={(e) => e.stopPropagation()}>
+    <div className="nested-modal-overlay mql-modal-overlay select-none" data-testid="index-modal">
+      <div className="nested-modal-container mql-ncd" style={{ width: 560, display: 'flex', flexDirection: 'column' }}>
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3 mb-4 select-none">
-          <div className="flex items-center gap-2">
-            <Layers size={16} className="text-[var(--accent-blue)]" />
-            <h2 className="text-sm font-semibold text-[var(--text-main)]">
+        <header className="mql-ncd-titlebar">
+          <div className="mql-row" style={{ gap: 8 }}>
+            <Layers size={14} className="text-[var(--accent-blue)]" />
+            <span style={{ fontSize: 12, fontWeight: 600 }}>
               {initialData ? 'Edit Index definition' : 'Create New Index'}
-            </h2>
+            </span>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-[var(--bg-item-hover)] rounded text-[var(--text-muted)] hover:text-[var(--text-main)] cursor-pointer flex items-center justify-center"
-            aria-label="Close modal"
-          >
-            <X size={14} />
+          <button type="button" className="mql-icon-btn" onClick={onClose} aria-label="Close modal">
+            <X size={13} />
           </button>
-        </div>
+        </header>
 
         {/* Modal Body Form */}
-        <form onSubmit={handleSubmit} className="index-modal-form">
-          
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <div
+            className="mql-ncd-body"
+            style={{ flex: 1, minHeight: 0, padding: 12, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}
+          >
           {/* Index Name Input */}
-          <div className="flex flex-col gap-1">
-            <label className="index-modal-label">Index Name</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label className="mql-label">Index Name</label>
             <input
               type="text"
               value={indexName}
-              onChange={(e) => setIndexName(e.target.value)}
+              onChange={(e) => {
+                setIndexName(e.target.value);
+                setNameTouched(e.target.value !== '');
+              }}
               placeholder="e.g. email_1_status_-1"
               required
-              className="index-modal-input"
+              className="mql-ncd-input"
               data-testid="index-name-input"
             />
-            <span className="index-modal-help-text">A unique identifier to locate and optimize query plans.</span>
+            <span className="mql-ncd-fhint">
+              Auto-generated from the keys (Mongo convention) — type to override.
+            </span>
           </div>
 
           {/* Keys Specification */}
-          <div className="flex flex-col gap-1.5">
-            <div className="flex justify-between items-center mb-1">
-              <label className="index-modal-label">Index Key Definition</label>
-            </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label className="mql-label">Index Key Definition</label>
 
-            {/* Premium Segmented Control */}
-            <div className="index-modal-segmented-control">
+            {/* Builder / raw JSON mode tabs (same control as the connection dialog) */}
+            <nav className="mql-ncd-tabs">
               <button
                 type="button"
-                className={`segmented-tab ${!isRawMode ? 'active' : ''}`}
+                className={`mql-ncd-tab ${!isRawMode ? 'is-active' : ''}`}
                 onClick={() => {
                   if (isRawMode) {
                     try {
@@ -221,12 +250,12 @@ export const IndexModal: React.FC<IndexModalProps> = ({
                   }
                 }}
               >
-                <Layers size={12} />
+                <Layers size={12} style={{ marginRight: 4 }} />
                 <span>Key Builder</span>
               </button>
               <button
                 type="button"
-                className={`segmented-tab ${isRawMode ? 'active' : ''}`}
+                className={`mql-ncd-tab ${isRawMode ? 'is-active' : ''}`}
                 onClick={() => {
                   if (!isRawMode) {
                     const keysObj: Record<string, number> = {};
@@ -240,16 +269,18 @@ export const IndexModal: React.FC<IndexModalProps> = ({
                   }
                 }}
               >
-                <Code size={12} />
+                <Code size={12} style={{ marginRight: 4 }} />
                 <span>Raw JSON</span>
               </button>
-            </div>
+            </nav>
 
             {/* Builder Mode */}
             {!isRawMode ? (
-              <div className="index-modal-keys-list">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {/* Cap at ~5 rows; longer key lists scroll instead of growing the dialog. */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 170, overflowY: 'auto', paddingRight: 2 }}>
                 {keysList.map((rule, idx) => (
-                  <div key={idx} className="index-modal-key-row">
+                  <div key={idx} className="mql-row" style={{ gap: 6 }}>
                     {/* Unified row input */}
                     <input
                       type="text"
@@ -258,7 +289,8 @@ export const IndexModal: React.FC<IndexModalProps> = ({
                       onChange={(e) => handleKeyRowChange(idx, { field: e.target.value })}
                       placeholder="Field name"
                       required
-                      className="index-modal-key-field"
+                      className="mql-ncd-input"
+                      style={{ flex: 1 }}
                     />
                     <datalist id={`available-fields-${idx}`}>
                       {availableFields.map(f => (
@@ -266,116 +298,102 @@ export const IndexModal: React.FC<IndexModalProps> = ({
                       ))}
                     </datalist>
 
-                    <div className="index-modal-key-divider" />
-
                     {/* Direction Dropdown */}
-                    <select
-                      value={rule.direction}
-                      onChange={(e) => handleKeyRowChange(idx, { direction: parseInt(e.target.value, 10) as 1 | -1 })}
-                      className="index-modal-key-select"
-                    >
-                      <option value={1}>Ascending (1)</option>
-                      <option value={-1}>Descending (-1)</option>
-                    </select>
-
-                    <div className="index-modal-key-divider" />
+                    <div className="mql-ncd-select-wrap" style={{ width: 150 }}>
+                      <select
+                        value={rule.direction}
+                        onChange={(e) => handleKeyRowChange(idx, { direction: parseInt(e.target.value, 10) as 1 | -1 })}
+                        className="mql-ncd-select"
+                      >
+                        <option value={1}>Ascending (1)</option>
+                        <option value={-1}>Descending (-1)</option>
+                      </select>
+                      <ChevronDown size={10} color="var(--text-dim)" />
+                    </div>
 
                     {/* Delete row */}
                     <button
                       type="button"
                       disabled={keysList.length <= 1}
                       onClick={() => handleRemoveKeyRow(idx)}
-                      className="index-modal-btn-delete"
+                      className="mql-icon-btn mql-icon-btn-danger"
                       title="Remove Key"
                     >
                       <Trash2 size={13} />
                     </button>
                   </div>
                 ))}
+                </div>
                 <button
                   type="button"
                   onClick={handleAddKeyRow}
-                  className="index-modal-btn-add"
+                  className="mql-btn mql-btn-ghost mql-btn-outlined"
+                  style={{ alignSelf: 'flex-start', padding: '4px 8px', fontSize: 11 }}
                 >
-                  <Plus size={12} />
+                  <Plus size={12} style={{ marginRight: 4 }} />
                   <span>Add Index Key</span>
                 </button>
               </div>
             ) : (
               /* Raw JSON Editor Mode */
-              <div className="flex flex-col">
-                <textarea
-                  value={rawKeysJson}
-                  onChange={(e) => setRawKeysJson(e.target.value)}
-                  rows={4}
-                  className="index-modal-textarea"
-                  placeholder='{ "email": 1 }'
-                />
-              </div>
+              <textarea
+                value={rawKeysJson}
+                onChange={(e) => setRawKeysJson(e.target.value)}
+                rows={4}
+                className="mql-ncd-textarea font-mono"
+                placeholder='{ "email": 1 }'
+              />
             )}
           </div>
 
-          {/* Premium Constraint Cards */}
-          <div className="index-modal-constraints-grid">
-            <div 
-              onClick={() => setUnique(!unique)}
-              className={`index-modal-constraint-card ${unique ? 'active' : ''}`}
-            >
-              <div className="constraint-card-info">
-                <span className="constraint-card-title">Unique Index</span>
-                <span className="constraint-card-desc">Prevent duplicates</span>
-              </div>
-              <input
-                type="checkbox"
-                checked={unique}
-                onChange={() => {}} // onClick handles toggling
-                className="index-modal-checkbox"
-                data-testid="unique-checkbox"
-              />
-            </div>
-
-            <div 
-              onClick={() => setSparse(!sparse)}
-              className={`index-modal-constraint-card ${sparse ? 'active' : ''}`}
-            >
-              <div className="constraint-card-info">
-                <span className="constraint-card-title">Sparse Index</span>
-                <span className="constraint-card-desc">Ignore missing keys</span>
-              </div>
-              <input
-                type="checkbox"
-                checked={sparse}
-                onChange={() => {}} // onClick handles toggling
-                className="index-modal-checkbox"
-                data-testid="sparse-checkbox"
-              />
+          {/* Constraints */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label className="mql-label">Constraints</label>
+            <div className="mql-row" style={{ gap: 20 }}>
+              <label className="mql-row" style={{ gap: 6, cursor: 'pointer', fontSize: 11.5, color: 'var(--text-main)' }}>
+                <input
+                  type="checkbox"
+                  checked={unique}
+                  onChange={() => setUnique(v => !v)}
+                  data-testid="unique-checkbox"
+                />
+                <span>Unique</span>
+                <span className="mql-ncd-fhint">prevent duplicates</span>
+              </label>
+              <label className="mql-row" style={{ gap: 6, cursor: 'pointer', fontSize: 11.5, color: 'var(--text-main)' }}>
+                <input
+                  type="checkbox"
+                  checked={sparse}
+                  onChange={() => setSparse(v => !v)}
+                  data-testid="sparse-checkbox"
+                />
+                <span>Sparse</span>
+                <span className="mql-ncd-fhint">ignore missing keys</span>
+              </label>
             </div>
           </div>
-
-          {/* Error Message */}
-          {jsonError && (
-            <div className="index-modal-error">
-              {jsonError}
-            </div>
-          )}
+          </div>
 
           {/* Modal Footer Actions */}
-          <div className="flex items-center justify-end gap-2 border-t border-[var(--border-color)] pt-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="index-modal-btn-secondary"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="index-modal-btn-primary"
-              data-testid="save-index-btn"
-            >
-              {initialData ? 'Save Changes' : 'Create Index'}
-            </button>
-          </div>
+          <footer className="mql-ncd-foot">
+            <span style={{ color: 'var(--accent-red)', fontSize: 11, minWidth: 0 }}>{jsonError}</span>
+            <div className="mql-row" style={{ gap: 8 }}>
+              <button
+                type="button"
+                onClick={onClose}
+                className="mql-btn mql-btn-ghost mql-btn-outlined"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="mql-btn mql-btn-primary"
+                data-testid="save-index-btn"
+              >
+                {initialData ? 'Save Changes' : 'Create Index'}
+              </button>
+            </div>
+          </footer>
         </form>
       </div>
     </div>
