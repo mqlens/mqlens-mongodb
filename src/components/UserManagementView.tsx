@@ -11,6 +11,7 @@ import {
   AlertCircle,
   X,
   ChevronRight,
+  ChevronDown,
   ScrollText,
   ShieldCheck,
 } from 'lucide-react';
@@ -135,112 +136,118 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
     // Deliberately no click-outside close: a half-filled user form (with a
     // typed password) is too easy to lose to a stray click. Close via the X
     // button, Cancel, or Escape.
-    <div className="nested-modal-overlay select-none" data-testid="user-editor-modal">
-      <div className="index-modal-container">
-        <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3 mb-4 select-none">
-          <div className="flex items-center gap-2">
-            <User size={16} className="text-[var(--accent-blue)]" />
-            <h2 className="text-sm font-semibold text-[var(--text-main)]">
-              {isEdit ? `Edit User: ${editor.user?.user}` : 'Create New User'}
-            </h2>
+    <div className="nested-modal-overlay mql-modal-overlay select-none" data-testid="user-editor-modal">
+      <div className="nested-modal-container mql-ncd" style={{ width: 540, display: 'flex', flexDirection: 'column' }}>
+        <header className="mql-ncd-titlebar">
+          <div className="mql-row" style={{ gap: 8 }}>
+            <User size={14} className="text-[var(--accent-blue)]" />
+            <span style={{ fontSize: 12, fontWeight: 600 }}>
+              {isEdit ? `Edit User — ${editor.user?.user}` : 'New User'}
+            </span>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-[var(--bg-item-hover)] rounded text-[var(--text-muted)] hover:text-[var(--text-main)] cursor-pointer flex items-center justify-center"
-            aria-label="Close modal"
-            data-testid="close-user-editor"
-          >
-            <X size={14} />
+          <button type="button" className="mql-icon-btn" onClick={onClose} aria-label="Close modal" data-testid="close-user-editor">
+            <X size={13} />
           </button>
-        </div>
+        </header>
 
-        <form onSubmit={handleSubmit} className="index-modal-form">
-          <div className="flex flex-col gap-1">
-            <label className="index-modal-label">Username</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="e.g. app_user"
-              disabled={isEdit}
-              required
-              className="index-modal-input"
-              data-testid="user-name-input"
-            />
-          </div>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <div
+            className="mql-ncd-body"
+            style={{ flex: 1, minHeight: 0, padding: 12, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label className="mql-label">Username</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="e.g. app_user"
+                disabled={isEdit}
+                required
+                className="mql-ncd-input"
+                data-testid="user-name-input"
+              />
+            </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="index-modal-label">{isEdit ? 'New Password' : 'Password'}</label>
-            <PasswordInput
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={isEdit ? 'Leave blank to keep current password' : 'Password'}
-              required={!isEdit}
-              className="index-modal-input w-full"
-              data-testid="user-password-input"
-            />
-            {!isEdit && <span className="index-modal-help-text">The password must be set.</span>}
-          </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label className="mql-label">{isEdit ? 'New Password' : 'Password'}</label>
+              <PasswordInput
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={isEdit ? 'Leave blank to keep current password' : 'Password'}
+                required={!isEdit}
+                className="mql-ncd-input"
+                data-testid="user-password-input"
+              />
+              {!isEdit && <span className="mql-ncd-fhint">The password must be set.</span>}
+            </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="index-modal-label">Authentication Database</label>
-            <select
-              value={authDb}
-              onChange={(e) => setAuthDb(e.target.value)}
-              disabled={isEdit}
-              required
-              className="index-modal-input"
-              data-testid="user-authdb-input"
-            >
-              {dbOptions.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-            <span className="index-modal-help-text">The database the user authenticates against.</span>
-          </div>
-
-          {/* Granted roles — same row pattern as the index key builder. */}
-          <div className="flex flex-col gap-1.5">
-            <label className="index-modal-label">Roles</label>
-            <div className="index-modal-keys-list">
-              {roles.map((rule, idx) => (
-                <div key={idx} className="index-modal-key-row" data-testid={`role-row-${idx}`}>
-                  <select
-                    value={rule.role}
-                    onChange={(e) => setRole(idx, { role: e.target.value })}
-                    className="index-modal-key-select"
-                    style={{ flex: 1.2 }}
-                    data-testid={`role-select-${idx}`}
-                  >
-                    <option value="" disabled>
-                      Select role…
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label className="mql-label">Authentication Database</label>
+              <div className="mql-ncd-select-wrap is-full">
+                <select
+                  value={authDb}
+                  onChange={(e) => setAuthDb(e.target.value)}
+                  disabled={isEdit}
+                  required
+                  className="mql-ncd-select"
+                  data-testid="user-authdb-input"
+                >
+                  {dbOptions.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
                     </option>
-                    {withValue(roleNames, rule.role).map((r) => (
-                      <option key={r} value={r}>
-                        {r}
+                  ))}
+                </select>
+                <ChevronDown size={10} color="var(--text-dim)" />
+              </div>
+              <span className="mql-ncd-fhint">The database the user authenticates against.</span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label className="mql-label">Roles</label>
+              {/* Cap at ~5 rows; longer role lists scroll instead of growing the dialog. */}
+              {roles.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 170, overflowY: 'auto', paddingRight: 2 }}>
+              {roles.map((rule, idx) => (
+                <div key={idx} className="mql-row" style={{ gap: 6 }} data-testid={`role-row-${idx}`}>
+                  <div className="mql-ncd-select-wrap" style={{ flex: 1.2, minWidth: 0 }}>
+                    <select
+                      value={rule.role}
+                      onChange={(e) => setRole(idx, { role: e.target.value })}
+                      className="mql-ncd-select"
+                      data-testid={`role-select-${idx}`}
+                    >
+                      <option value="" disabled>
+                        Select role…
                       </option>
-                    ))}
-                  </select>
-                  <div className="index-modal-key-divider" />
-                  <select
-                    value={rule.db}
-                    onChange={(e) => setRole(idx, { db: e.target.value })}
-                    className="index-modal-key-select"
-                    data-testid={`role-db-select-${idx}`}
-                  >
-                    {withValue(databases, rule.db).map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="index-modal-key-divider" />
+                      {withValue(roleNames, rule.role).map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={10} color="var(--text-dim)" />
+                  </div>
+                  <div className="mql-ncd-select-wrap" style={{ flex: 1, minWidth: 0 }}>
+                    <select
+                      value={rule.db}
+                      onChange={(e) => setRole(idx, { db: e.target.value })}
+                      className="mql-ncd-select"
+                      data-testid={`role-db-select-${idx}`}
+                    >
+                      {withValue(databases, rule.db).map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={10} color="var(--text-dim)" />
+                  </div>
                   <button
                     type="button"
                     onClick={() => setRoles((prev) => prev.filter((_, i) => i !== idx))}
-                    className="index-modal-btn-delete"
+                    className="mql-icon-btn mql-icon-btn-danger"
                     title="Revoke role"
                     data-testid={`revoke-role-${idx}`}
                   >
@@ -248,33 +255,37 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
                   </button>
                 </div>
               ))}
+              </div>
+              )}
               <button
                 type="button"
                 onClick={() => setRoles((prev) => [...prev, { role: '', db: authDb }])}
-                className="index-modal-btn-add"
+                className="mql-btn mql-btn-ghost mql-btn-outlined"
+                style={{ alignSelf: 'flex-start', padding: '4px 8px', fontSize: 11 }}
                 data-testid="add-role-btn"
               >
-                <Plus size={12} />
+                <Plus size={12} style={{ marginRight: 4 }} />
                 <span>Grant Role</span>
               </button>
+              {isEdit && (
+                <span className="mql-ncd-fhint">Saving replaces the user's role set with the list above.</span>
+              )}
             </div>
-            {isEdit && (
-              <span className="index-modal-help-text">
-                Saving replaces the user's role set with the list above.
-              </span>
-            )}
           </div>
 
-          {error && <div className="index-modal-error">{error}</div>}
-
-          <div className="flex items-center justify-end gap-2 border-t border-[var(--border-color)] pt-3">
-            <button type="button" onClick={onClose} className="index-modal-btn-secondary">
-              Cancel
-            </button>
-            <button type="submit" disabled={saving} className="index-modal-btn-primary" data-testid="save-user-btn">
-              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add User'}
-            </button>
-          </div>
+          <footer className="mql-ncd-foot">
+            <span style={{ color: 'var(--accent-red)', fontSize: 11, minWidth: 0 }} data-testid="user-editor-error">
+              {error}
+            </span>
+            <div className="mql-row" style={{ gap: 8 }}>
+              <button type="button" className="mql-btn mql-btn-ghost mql-btn-outlined" onClick={onClose}>
+                Cancel
+              </button>
+              <button type="submit" disabled={saving} className="mql-btn mql-btn-primary" data-testid="save-user-btn">
+                {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add User'}
+              </button>
+            </div>
+          </footer>
         </form>
       </div>
     </div>

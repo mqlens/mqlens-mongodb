@@ -1181,10 +1181,6 @@ select:focus-visible {
 .mql-users-create-btn:hover { background: var(--accent-blue-hover); }
 .mql-users-create-btn:active { filter: brightness(0.95); }
 
-/* ────────────────────────────────────────── User editor dialog */
-/* PasswordInput inside the stacked modal form stretches like other inputs. */
-.index-modal-form .mql-password-field { width: 100%; }
-.index-modal-form .mql-password-field input { width: 100%; }
 
 /* ────────────────────────────────────────── Welcome */
 .mql-welcome {
