@@ -233,7 +233,7 @@ function Workspace() {
     if (existing) return existing.id;
     try {
       const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-      addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag);
+      addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
       return id;
     } catch (e) {
       toast(`Could not connect to ${profile.name}: ${(e as any)?.message || String(e)}`, 'error');
@@ -1536,7 +1536,7 @@ function Workspace() {
             isOpen={isConnectionModalOpen}
             onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
             onConnect={(id, name, uri, profileId, colorTag) => {
-              addActiveConnection(id, name, uri, profileId, colorTag);
+              addActiveConnection(id, name, uri, profileId, colorTag ?? undefined);
               setIsConnectionModalOpen(false);
               setProfilesRefreshKey((k) => k + 1);
             }}
