@@ -9,6 +9,7 @@ use tokio::process::{Child, ChildStdin, Command as TokioCommand};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use uuid::Uuid;
 
+pub mod limits;
 pub mod ai;
 pub mod connections;
 mod db;
@@ -68,11 +69,12 @@ pub fn apply_main_timeouts(opts: &mut mongodb::options::ClientOptions) {
     }
 }
 
-/// Sample the whole app's CPU% and resident memory — the main process plus all
-/// descendant processes (the WebView/renderer helpers), so the total matches
-/// what Activity Monitor / Task Manager shows rather than the backend alone.
-/// CPU is a delta since the previous sample, so the first call reports ~0.
+/// Sample this app's CPU% and resident memory — the main process plus descendant
+/// processes (WebView/renderer helpers). CPU is a delta since the previous sample.
 pub fn resource_usage_impl(state: &AppState) -> ResourceUsage {
+    use crate::limits::RESOURCE_TREE_REFRESH_SECS;
+    use std::collections::HashSet;
+
     let pid = match sysinfo::get_current_pid() {
         Ok(pid) => pid,
         Err(_) => {
@@ -83,33 +85,50 @@ pub fn resource_usage_impl(state: &AppState) -> ResourceUsage {
         }
     };
     let mut sys = state.sys.lock().unwrap_or_else(|p| p.into_inner());
-    // Refresh every process so we can discover our descendants by parent PID.
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
-    // Collect our process tree: start at our PID and keep absorbing any process
-    // whose parent is already in the set until it stops growing.
-    let mut tree: std::collections::HashSet<sysinfo::Pid> = std::collections::HashSet::new();
-    tree.insert(pid);
-    loop {
-        let mut added = false;
-        for (cpid, proc_) in sys.processes() {
-            if !tree.contains(cpid) {
-                if let Some(parent) = proc_.parent() {
-                    if tree.contains(&parent) {
-                        tree.insert(*cpid);
-                        added = true;
+    let rebuild_tree = {
+        let pids = state.resource_pids.lock().unwrap_or_else(|p| p.into_inner());
+        let tree_at = state.resource_tree_at.lock().unwrap_or_else(|p| p.into_inner());
+        pids.is_empty() || tree_at.elapsed().as_secs() >= RESOURCE_TREE_REFRESH_SECS
+    };
+
+    if rebuild_tree {
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
+        let mut tree: HashSet<sysinfo::Pid> = HashSet::new();
+        tree.insert(pid);
+        loop {
+            let mut added = false;
+            for (cpid, proc_) in sys.processes() {
+                if !tree.contains(cpid) {
+                    if let Some(parent) = proc_.parent() {
+                        if tree.contains(&parent) {
+                            tree.insert(*cpid);
+                            added = true;
+                        }
                     }
                 }
             }
+            if !added {
+                break;
+            }
         }
-        if !added {
-            break;
+        *state.resource_pids.lock().unwrap_or_else(|p| p.into_inner()) =
+            tree.iter().copied().collect();
+        *state
+            .resource_tree_at
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Instant::now();
+    } else {
+        let pids = state.resource_pids.lock().unwrap_or_else(|p| p.into_inner());
+        if !pids.is_empty() {
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&pids), false);
         }
     }
 
+    let pids = state.resource_pids.lock().unwrap_or_else(|p| p.into_inner());
     let mut memory_bytes: u64 = 0;
     let mut cpu_percent: f32 = 0.0;
-    for p in &tree {
+    for p in pids.iter() {
         if let Some(proc_) = sys.process(*p) {
             memory_bytes += proc_.memory();
             cpu_percent += proc_.cpu_usage();
@@ -272,8 +291,8 @@ async fn drain_mongosh_output(session: &MongoshSession) -> MongoshCommandOutput 
     loop {
         match tokio::time::timeout(Duration::from_millis(25), output.recv()).await {
             Ok(Some(line)) => match line.stream {
-                MongoshStream::Stdout => stdout.push(line.text),
-                MongoshStream::Stderr => stderr.push(line.text),
+                MongoshStream::Stdout => push_mongosh_line(&mut stdout, line.text),
+                MongoshStream::Stderr => push_mongosh_line(&mut stderr, line.text),
             },
             _ => break,
         }
@@ -330,8 +349,8 @@ async fn run_mongosh_command_on_session(
                     break;
                 }
                 match line.stream {
-                    MongoshStream::Stdout => stdout.push(line.text),
-                    MongoshStream::Stderr => stderr.push(line.text),
+                    MongoshStream::Stdout => push_mongosh_line(&mut stdout, line.text),
+                    MongoshStream::Stderr => push_mongosh_line(&mut stderr, line.text),
                 }
             }
             Ok(None) => return Err("mongosh session closed".to_string()),
@@ -340,6 +359,19 @@ async fn run_mongosh_command_on_session(
     }
 
     Ok(MongoshCommandOutput { stdout, stderr })
+}
+
+fn push_mongosh_line(lines: &mut Vec<String>, text: String) {
+    use crate::limits::{MAX_MONGOSH_LINE_CHARS, MAX_MONGOSH_LINES, MAX_MONGOSH_TOTAL_CHARS};
+    if lines.len() >= MAX_MONGOSH_LINES {
+        return;
+    }
+    let trimmed: String = text.chars().take(MAX_MONGOSH_LINE_CHARS).collect();
+    let total: usize = lines.iter().map(|l| l.len()).sum::<usize>() + trimmed.len();
+    if total > MAX_MONGOSH_TOTAL_CHARS {
+        return;
+    }
+    lines.push(trimmed);
 }
 
 fn get_mongosh_session(state: &AppState, session_id: &str) -> Result<Arc<MongoshSession>, String> {
@@ -1418,6 +1450,7 @@ pub fn run() {
             queries::delete_saved_query,
             queries::record_history,
             queries::set_default_query,
+            queries::list_all_saved_queries,
             server_status,
             current_ops,
             kill_op,

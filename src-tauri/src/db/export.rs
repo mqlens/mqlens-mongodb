@@ -36,6 +36,7 @@ fn fail_task(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>, task_id: &str, err: 
         task.error = Some(err);
         task.finished_at_ms = Some(now_ms());
     });
+    prune_export_tasks(tasks);
 }
 
 fn finish_task(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>, task_id: &str, processed: u64) {
@@ -45,6 +46,20 @@ fn finish_task(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>, task_id: &str, pro
         task.message = "Export complete".to_string();
         task.finished_at_ms = Some(now_ms());
     });
+    prune_export_tasks(tasks);
+}
+
+fn prune_export_tasks(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>) {
+    use crate::limits::MAX_TASK_HISTORY;
+    let mut guard = tasks.lock().unwrap_or_else(|p| p.into_inner());
+    if guard.len() <= MAX_TASK_HISTORY {
+        return;
+    }
+    let mut entries: Vec<(String, TaskInfo)> = guard.drain().collect();
+    entries.sort_by(|a, b| b.1.created_at_ms.cmp(&a.1.created_at_ms));
+    for (id, task) in entries.into_iter().take(MAX_TASK_HISTORY) {
+        guard.insert(id, task);
+    }
 }
 
 fn csv_escape(raw: &str) -> String {

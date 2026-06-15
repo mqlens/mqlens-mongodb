@@ -1,5 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { PasswordInput } from './PasswordInput';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 import {
   getVaultStatus,
   initializeVault,
@@ -7,6 +15,7 @@ import {
   resetVault,
   biometricStatus,
   biometricUnlock,
+  notifyVaultUnlocked,
   type VaultStatus,
   type BiometricStatus,
 } from '../lib/vault';
@@ -59,8 +68,21 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
     };
   }, []);
 
+  useEffect(() => {
+    if (status === 'unlocked') {
+      notifyVaultUnlocked();
+    }
+  }, [status]);
+
   if (status === 'loading') {
-    return <div className="mql-vault-loading" data-testid="vault-loading">Loading…</div>;
+    return (
+      <div
+        className="flex min-h-screen items-center justify-center bg-background text-muted-foreground"
+        data-testid="vault-loading"
+      >
+        Loading…
+      </div>
+    );
   }
   if (status === 'unlocked') {
     return <>{children}</>;
@@ -120,58 +142,73 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
   };
 
   return (
-    <div className="mql-vault-gate" data-testid={isSetup ? 'vault-setup' : 'vault-unlock'}>
-      <div className="mql-vault-card">
-        <h2>{isSetup ? 'Create a master password' : 'Unlock MQLens'}</h2>
-        <p className="mql-vault-copy">
-          {isSetup
-            ? 'Your saved connections and API keys are encrypted with this password. There is no recovery if you forget it.'
-            : 'Enter your master password to decrypt your saved credentials.'}
-        </p>
-        <PasswordInput
-          data-testid="vault-password"
-          placeholder="Master password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && !isSetup && submit()}
-        />
-        {isSetup && (
+    <div
+      className="flex min-h-screen items-center justify-center bg-background p-4"
+      data-testid={isSetup ? 'vault-setup' : 'vault-unlock'}
+    >
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>{isSetup ? 'Create a master password' : 'Unlock MQLens'}</CardTitle>
+          <CardDescription>
+            {isSetup
+              ? 'Your saved connections and API keys are encrypted with this password. There is no recovery if you forget it.'
+              : 'Enter your master password to decrypt your saved credentials.'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
           <PasswordInput
-            data-testid="vault-confirm"
-            placeholder="Confirm password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
+            data-testid="vault-password"
+            placeholder="Master password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !isSetup && submit()}
           />
-        )}
-        {error && (
-          <div className="mql-vault-error" data-testid="vault-error">
-            {error}
-          </div>
-        )}
-        <button
-          type="button"
-          data-testid={isSetup ? 'vault-setup-btn' : 'vault-unlock-btn'}
-          disabled={busy}
-          onClick={submit}
-        >
-          {isSetup ? 'Create & unlock' : 'Unlock'}
-        </button>
-        {!isSetup && bio?.available && bio?.enrolled && (
-          <button
+          {isSetup && (
+            <PasswordInput
+              data-testid="vault-confirm"
+              placeholder="Confirm password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+            />
+          )}
+          {error && (
+            <div className="text-sm text-destructive" data-testid="vault-error">
+              {error}
+            </div>
+          )}
+          <Button
             type="button"
-            className="mql-vault-link"
-            data-testid="vault-biometric-btn"
-            onClick={tryBiometric}
+            className="w-full"
+            data-testid={isSetup ? 'vault-setup-btn' : 'vault-unlock-btn'}
+            disabled={busy}
+            onClick={submit}
           >
-            {biometryLabel(bio.biometryType)}
-          </button>
-        )}
-        {!isSetup && (
-          <button type="button" className="mql-vault-link" data-testid="vault-reset-btn" onClick={doReset}>
-            Forgot password? Reset (deletes all saved credentials)
-          </button>
-        )}
-      </div>
+            {isSetup ? 'Create & unlock' : 'Unlock'}
+          </Button>
+          {!isSetup && bio?.available && bio?.enrolled && (
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto w-full p-0 text-sm"
+              data-testid="vault-biometric-btn"
+              onClick={tryBiometric}
+            >
+              {biometryLabel(bio.biometryType)}
+            </Button>
+          )}
+          {!isSetup && (
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto w-full p-0 text-sm text-muted-foreground"
+              data-testid="vault-reset-btn"
+              onClick={doReset}
+            >
+              Forgot password? Reset (deletes all saved credentials)
+            </Button>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 };

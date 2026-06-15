@@ -11,10 +11,28 @@ import {
   AlertCircle,
   X,
   ChevronRight,
-  ChevronDown,
   ScrollText,
   ShieldCheck,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { DraggableDialogContent } from '@/components/ui/draggable-dialog-content';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { PasswordInput } from './PasswordInput';
 import { useDialogs } from './dialogs/DialogProvider';
@@ -33,7 +51,6 @@ const ALL_DBS = '__all__';
 
 interface UserManagementViewProps {
   connectionId: string;
-  /** Optional initial database scope (e.g. opened from a database's context menu). */
   database?: string;
 }
 
@@ -42,11 +59,8 @@ interface EditorState {
   user?: MongoUser;
 }
 
-/** Merge a current value into a dropdown's option list so it is always selectable. */
 const withValue = (options: string[], value: string): string[] =>
   value && !options.includes(value) ? [value, ...options] : options;
-
-// ── User editor modal (shared by create & edit) ───────────────────────────────
 
 interface UserEditorModalProps {
   connectionId: string;
@@ -79,7 +93,6 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
 
   useEscapeClose(true, onClose);
 
-  // Role options for the pickers; built-in role names are db-agnostic.
   useEffect(() => {
     let cancelled = false;
     listRoles(connectionId, authDb || 'admin')
@@ -87,9 +100,7 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
         if (cancelled) return;
         setRoleNames([...new Set(rs.map((r) => r.role))]);
       })
-      .catch(() => {
-        // Role options are best-effort; existing selections remain selectable.
-      });
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -112,8 +123,6 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
       setError('Password is required');
       return;
     }
-    // Every granted row must be fully specified — silently dropping a
-    // half-filled row would grant fewer privileges than the form shows.
     const cleanRoles = roles.map((r) => ({ role: r.role.trim(), db: r.db.trim() }));
     if (cleanRoles.some((r) => !r.role || !r.db)) {
       setError('Select a role and a database for every granted role');
@@ -137,166 +146,167 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
   };
 
   return (
-    // Deliberately no click-outside close: a half-filled user form (with a
-    // typed password) is too easy to lose to a stray click. Close via the X
-    // button, Cancel, or Escape.
-    <div className="nested-modal-overlay mql-modal-overlay select-none" data-testid="user-editor-modal">
-      <div className="nested-modal-container mql-ncd" style={{ width: 540, display: 'flex', flexDirection: 'column' }}>
-        <header className="mql-ncd-titlebar">
-          <div className="mql-row" style={{ gap: 8 }}>
-            <User size={14} className="text-[var(--accent-blue)]" />
-            <span style={{ fontSize: 12, fontWeight: 600 }}>
-              {isEdit ? `Edit User — ${editor.user?.user}` : 'New User'}
-            </span>
-          </div>
-          <button type="button" className="mql-icon-btn" onClick={onClose} aria-label="Close modal" data-testid="close-user-editor">
+    <Dialog open onOpenChange={() => {}}>
+      <DraggableDialogContent
+        resetKey={editor}
+        defaultWidth={540}
+        defaultHeight={560}
+        minWidth={420}
+        minHeight={360}
+        hideClose
+        className="flex min-h-0 flex-col gap-0 p-0"
+        data-testid="user-editor-modal"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+      >
+        <DialogHeader
+          data-dialog-drag-handle
+          className="flex cursor-grab flex-row items-center justify-between border-b border-border px-4 py-3 active:cursor-grabbing"
+        >
+          <DialogTitle className="flex items-center gap-2 text-sm">
+            <User size={14} className="text-primary" />
+            {isEdit ? `Edit User — ${editor.user?.user}` : 'New User'}
+          </DialogTitle>
+          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="Close modal" data-testid="close-user-editor">
             <X size={13} />
-          </button>
-        </header>
+          </Button>
+        </DialogHeader>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-          <div
-            className="mql-ncd-body"
-            style={{ flex: 1, minHeight: 0, padding: 12, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label className="mql-label">Username</label>
-              <input
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="user-name-input">Username</Label>
+              <Input
+                id="user-name-input"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="e.g. app_user"
                 disabled={isEdit}
                 required
-                className="mql-ncd-input"
                 data-testid="user-name-input"
               />
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label className="mql-label">{isEdit ? 'New Password' : 'Password'}</label>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="user-password-input">{isEdit ? 'New Password' : 'Password'}</Label>
               <PasswordInput
+                id="user-password-input"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={isEdit ? 'Leave blank to keep current password' : 'Password'}
                 required={!isEdit}
-                className="mql-ncd-input"
                 data-testid="user-password-input"
               />
-              {!isEdit && <span className="mql-ncd-fhint">The password must be set.</span>}
+              {!isEdit && <span className="text-[11px] text-muted-foreground">The password must be set.</span>}
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label className="mql-label">Authentication Database</label>
-              <div className="mql-ncd-select-wrap is-full">
-                <select
-                  value={authDb}
-                  onChange={(e) => setAuthDb(e.target.value)}
-                  disabled={isEdit}
-                  required
-                  className="mql-ncd-select"
-                  data-testid="user-authdb-input"
-                >
+            <div className="flex flex-col gap-1.5">
+              <Label>Authentication Database</Label>
+              <Select value={authDb} onValueChange={setAuthDb} disabled={isEdit}>
+                <SelectTrigger data-testid="user-authdb-input">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
                   {dbOptions.map((d) => (
-                    <option key={d} value={d}>
+                    <SelectItem key={d} value={d}>
                       {d}
-                    </option>
+                    </SelectItem>
                   ))}
-                </select>
-                <ChevronDown size={10} color="var(--text-dim)" />
-              </div>
-              <span className="mql-ncd-fhint">The database the user authenticates against.</span>
+                </SelectContent>
+              </Select>
+              <span className="text-[11px] text-muted-foreground">The database the user authenticates against.</span>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label className="mql-label">Roles</label>
-              {/* Cap at ~5 rows; longer role lists scroll instead of growing the dialog. */}
+            <div className="flex flex-col gap-2">
+              <Label>Roles</Label>
               {roles.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 170, overflowY: 'auto', paddingRight: 2 }}>
-              {roles.map((rule, idx) => (
-                <div key={idx} className="mql-row" style={{ gap: 6 }} data-testid={`role-row-${idx}`}>
-                  <div className="mql-ncd-select-wrap" style={{ flex: 1.2, minWidth: 0 }}>
-                    <select
-                      value={rule.role}
-                      onChange={(e) => setRole(idx, { role: e.target.value })}
-                      className="mql-ncd-select"
-                      data-testid={`role-select-${idx}`}
-                    >
-                      <option value="" disabled>
-                        Select role…
-                      </option>
-                      {withValue(roleNames, rule.role).map((r) => (
-                        <option key={r} value={r}>
-                          {r}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown size={10} color="var(--text-dim)" />
-                  </div>
-                  <div className="mql-ncd-select-wrap" style={{ flex: 1, minWidth: 0 }}>
-                    <select
-                      value={rule.db}
-                      onChange={(e) => setRole(idx, { db: e.target.value })}
-                      className="mql-ncd-select"
-                      data-testid={`role-db-select-${idx}`}
-                    >
-                      {withValue(databases, rule.db).map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown size={10} color="var(--text-dim)" />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setRoles((prev) => prev.filter((_, i) => i !== idx))}
-                    className="mql-icon-btn mql-icon-btn-danger"
-                    title="Revoke role"
-                    data-testid={`revoke-role-${idx}`}
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                <div className="flex max-h-[170px] flex-col gap-2 overflow-y-auto pr-1">
+                  {roles.map((rule, idx) => (
+                    <div key={idx} className="flex items-center gap-2" data-testid={`role-row-${idx}`}>
+                      <Select value={rule.role || '__none__'} onValueChange={(v) => setRole(idx, { role: v === '__none__' ? '' : v })}>
+                        <SelectTrigger className="flex-[1.2]" data-testid={`role-select-${idx}`}>
+                          <SelectValue placeholder="Select role…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__" disabled>
+                            Select role…
+                          </SelectItem>
+                          {withValue(roleNames, rule.role).map((r) => (
+                            <SelectItem key={r} value={r}>
+                              {r}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select value={rule.db} onValueChange={(v) => setRole(idx, { db: v })}>
+                        <SelectTrigger className="flex-1" data-testid={`role-db-select-${idx}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {withValue(databases, rule.db).map((d) => (
+                            <SelectItem key={d} value={d}>
+                              {d}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        onClick={() => setRoles((prev) => prev.filter((_, i) => i !== idx))}
+                        title="Revoke role"
+                        data-testid={`revoke-role-${idx}`}
+                      >
+                        <Trash2 size={13} />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
-              ))}
-              </div>
               )}
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
+                className="w-fit text-xs"
                 onClick={() => setRoles((prev) => [...prev, { role: '', db: authDb }])}
-                className="mql-btn mql-btn-ghost mql-btn-outlined"
-                style={{ alignSelf: 'flex-start', padding: '4px 8px', fontSize: 11 }}
                 data-testid="add-role-btn"
               >
-                <Plus size={12} style={{ marginRight: 4 }} />
-                <span>Grant Role</span>
-              </button>
+                <Plus size={12} />
+                Grant Role
+              </Button>
               {isEdit && (
-                <span className="mql-ncd-fhint">Saving replaces the user's role set with the list above.</span>
+                <span className="text-[11px] text-muted-foreground">
+                  Saving replaces the user&apos;s role set with the list above.
+                </span>
               )}
             </div>
           </div>
 
-          <footer className="mql-ncd-foot">
-            <span style={{ color: 'var(--accent-red)', fontSize: 11, minWidth: 0 }} data-testid="user-editor-error">
+          <DialogFooter className="border-t border-border px-4 py-3 sm:justify-between">
+            <span className="min-w-0 text-[11px] text-destructive" data-testid="user-editor-error">
               {error}
             </span>
-            <div className="mql-row" style={{ gap: 8 }}>
-              <button type="button" className="mql-btn mql-btn-ghost mql-btn-outlined" onClick={onClose}>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={onClose}>
                 Cancel
-              </button>
-              <button type="submit" disabled={saving} className="mql-btn mql-btn-primary" data-testid="save-user-btn">
+              </Button>
+              <Button type="submit" disabled={saving} data-testid="save-user-btn">
                 {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add User'}
-              </button>
+              </Button>
             </div>
-          </footer>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DraggableDialogContent>
+    </Dialog>
   );
 };
-
-// ── Main view ─────────────────────────────────────────────────────────────────
 
 export const UserManagementView: React.FC<UserManagementViewProps> = ({ connectionId, database }) => {
   const { toast, confirm } = useDialogs();
@@ -320,7 +330,6 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
       return next;
     });
 
-  // Follow re-opens scoped to another database (sidebar db context menu).
   useEffect(() => {
     if (database) setScope(database);
   }, [database]);
@@ -334,7 +343,6 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
         try {
           setUsers(await listUsers(connectionId));
         } catch {
-          // forAllDBs needs cluster-wide privileges; fall back to per-database.
           const dbs = await invoke<string[]>('list_databases', { id: connectionId });
           const results = await Promise.allSettled(dbs.map((db) => listUsers(connectionId, db)));
           setUsers(results.flatMap((r) => (r.status === 'fulfilled' ? r.value : [])));
@@ -360,9 +368,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
       .then((dbs) => {
         if (!cancelled) setDatabases(dbs);
       })
-      .catch(() => {
-        // Database list is only used for the scope selector / role db options.
-      });
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -385,65 +391,55 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
   };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" data-testid="user-management-view">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-color)]">
-        <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-main)]">
-          <Users size={14} className="text-[var(--accent-blue)]" />
+    <div className="flex h-full flex-col overflow-hidden" data-testid="user-management-view">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Users size={14} className="text-primary" />
           <span>User Management</span>
         </div>
         <div className="flex items-center gap-2">
-          <select
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-            className="mql-cm-select"
-            data-testid="user-db-scope"
-            title="Database scope"
-          >
-            <option value={ALL_DBS}>All databases</option>
-            {withValue(databases, scope === ALL_DBS ? '' : scope).map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={refresh}
-            className="p-1.5 hover:bg-[var(--bg-item-hover)] rounded text-[var(--text-muted)] hover:text-[var(--text-main)] cursor-pointer"
-            title="Refresh"
-            data-testid="refresh-users-btn"
-          >
+          <Select value={scope} onValueChange={setScope}>
+            <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="user-db-scope" title="Database scope">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_DBS}>All databases</SelectItem>
+              {withValue(databases, scope === ALL_DBS ? '' : scope).map((d) => (
+                <SelectItem key={d} value={d}>
+                  {d}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={refresh} title="Refresh" data-testid="refresh-users-btn">
             <RefreshCw size={13} />
-          </button>
-          <button
-            onClick={() => setEditor({ mode: 'create' })}
-            className="mql-users-create-btn"
-            data-testid="create-user-btn"
-          >
+          </Button>
+          <Button type="button" size="sm" onClick={() => setEditor({ mode: 'create' })} data-testid="create-user-btn">
             <Plus size={12} />
-            <span>Create User</span>
-          </button>
+            Create User
+          </Button>
         </div>
       </div>
 
       {hint && (
-        <div className="px-4 py-2 text-[11px] text-amber-400 border-b border-[var(--border-color)]">{hint}</div>
+        <div className="border-b border-border px-4 py-2 text-[11px] text-warning">{hint}</div>
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center h-full text-[var(--text-muted)] gap-2 text-sm">
+        <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 size={16} className="animate-spin" />
           Loading users…
         </div>
       ) : error ? (
-        <div className="flex items-center justify-center h-full p-6">
-          <div className="flex items-center gap-2 text-rose-400 text-sm font-mono">
+        <div className="flex h-full items-center justify-center p-6">
+          <div className="flex items-center gap-2 font-mono text-sm text-destructive">
             <AlertCircle size={16} className="flex-shrink-0" />
             <span>{error}</span>
           </div>
         </div>
       ) : users.length === 0 ? (
         <div
-          className="flex flex-col items-center justify-center h-full gap-2 text-[var(--text-muted)] text-sm"
+          className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
           onContextMenu={(e) => {
             e.preventDefault();
             setMenu({ x: e.clientX, y: e.clientY, user: null });
@@ -453,62 +449,61 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
           <span>No users found{scope !== ALL_DBS ? ` in ${scope}` : ''}.</span>
         </div>
       ) : (
-        <div
-          className="flex-1 overflow-auto mql-users-tree"
-          data-testid="users-tree"
-          onContextMenu={(e) => {
-            // Empty-space right click → create; rows stopPropagation below.
-            e.preventDefault();
-            setMenu({ x: e.clientX, y: e.clientY, user: null });
-          }}
-        >
-          <div className="mql-users-head">
-            <span className="mql-users-head-cell">User</span>
-            <span className="mql-users-head-cell">Database</span>
-            <span className="mql-users-head-cell">Auth Mechanism</span>
-          </div>
-          {users.map((u) => {
-            const key = userKey(u);
-            const isOpen = expanded.has(key);
-            return (
-              <div key={key} className="mql-users-node">
-                <div
-                  className="mql-users-row"
-                  data-testid={`user-row-${key}`}
-                  onClick={() => toggleExpanded(key)}
-                  onDoubleClick={() => setEditor({ mode: 'edit', user: u })}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setMenu({ x: e.clientX, y: e.clientY, user: u });
-                  }}
-                >
-                  <span className="mql-users-cell">
-                    <ChevronRight size={12} className={`mql-users-chev${isOpen ? ' is-open' : ''}`} />
-                    <User size={13} className="text-[var(--accent-blue)] flex-shrink-0" />
-                    <span className="mql-users-name">{u.user}</span>
-                  </span>
-                  <span className="mql-users-cell text-[var(--text-muted)]">{u.db}</span>
-                  <span className="mql-users-cell text-[var(--text-dim)]">{u.mechanisms.join(', ') || '—'}</span>
-                </div>
-                {isOpen && (
-                  <div className="mql-users-children">
-                    {u.roles.length === 0 ? (
-                      <div className="mql-users-role-row is-empty">No roles granted</div>
-                    ) : (
-                      u.roles.map((r, i) => (
-                        <div key={i} className="mql-users-role-row">
-                          <ScrollText size={12} className="text-[var(--text-dim)] flex-shrink-0" />
-                          <span>{`${r.role}@${r.db}`}</span>
-                        </div>
-                      ))
-                    )}
+        <ScrollArea className="flex-1" data-testid="users-tree">
+          <div
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu({ x: e.clientX, y: e.clientY, user: null });
+            }}
+          >
+            <div className="grid grid-cols-[1.2fr_1fr_1fr] gap-2 border-b border-border bg-muted/50 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <span>User</span>
+              <span>Database</span>
+              <span>Auth Mechanism</span>
+            </div>
+            {users.map((u) => {
+              const key = userKey(u);
+              const isOpen = expanded.has(key);
+              return (
+                <div key={key} className="border-b border-border">
+                  <div
+                    className="grid cursor-pointer grid-cols-[1.2fr_1fr_1fr] gap-2 px-4 py-2 text-xs hover:bg-accent/50"
+                    data-testid={`user-row-${key}`}
+                    onClick={() => toggleExpanded(key)}
+                    onDoubleClick={() => setEditor({ mode: 'edit', user: u })}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setMenu({ x: e.clientX, y: e.clientY, user: u });
+                    }}
+                  >
+                    <span className="flex items-center gap-1.5 truncate">
+                      <ChevronRight size={12} className={cn('flex-shrink-0 transition-transform', isOpen && 'rotate-90')} />
+                      <User size={13} className="flex-shrink-0 text-primary" />
+                      <span className="truncate font-medium text-foreground">{u.user}</span>
+                    </span>
+                    <span className="truncate text-muted-foreground">{u.db}</span>
+                    <span className="truncate text-muted-foreground">{u.mechanisms.join(', ') || '—'}</span>
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  {isOpen && (
+                    <div className="border-t border-border bg-muted/20 px-4 py-1">
+                      {u.roles.length === 0 ? (
+                        <div className="py-2 pl-6 text-xs italic text-muted-foreground">No roles granted</div>
+                      ) : (
+                        u.roles.map((r, i) => (
+                          <div key={i} className="flex items-center gap-2 py-1.5 pl-6 text-xs text-foreground">
+                            <ScrollText size={12} className="flex-shrink-0 text-muted-foreground" />
+                            <span>{`${r.role}@${r.db}`}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </ScrollArea>
       )}
 
       {menu && (

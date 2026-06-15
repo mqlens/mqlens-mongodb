@@ -4,6 +4,17 @@ import {
   PieChart, Pie, Cell, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { useTheme } from '@/hooks/use-theme';
+import { getChartColors, getTokenValue } from '@/lib/themes/apply-theme';
 import {
   inferFields, buildChartData, type ChartMode, type Measure, type ChartType, type FieldInfo,
 } from '../lib/chartData';
@@ -15,22 +26,11 @@ interface ChartViewProps {
   density?: 'roomy' | 'cozy' | 'compact';
 }
 
-const ACCENT_VARS = ['--accent-blue', '--accent-teal', '--accent-green', '--accent-amber', '--accent-purple', '--accent-red'];
 const MEASURES: Measure[] = ['count', 'sum', 'avg', 'min', 'max'];
 const TYPES: ChartType[] = ['bar', 'line', 'area', 'pie', 'scatter'];
 
-function cssVar(name: string, fallback: string): string {
-  if (typeof window === 'undefined') return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
-}
-
-const selectCls =
-  'bg-[var(--bg-base)] border border-[var(--border-color)] rounded text-[11px] text-[var(--text-main)] px-1.5 py-1';
-const tabCls = (active: boolean) =>
-  `px-2 py-1 rounded text-[11px] font-medium transition-all cursor-pointer ${active ? 'bg-[var(--bg-item-active)] text-[var(--accent-blue)]' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`;
-
 export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
+  const { config, resolvedMode } = useTheme();
   const fields = useMemo<FieldInfo[]>(() => inferFields(documents, columns), [documents, columns]);
   const numericFields = useMemo(() => fields.filter((f) => f.kind === 'numeric').map((f) => f.name), [fields]);
   const firstCategorical = fields.find((f) => f.kind !== 'numeric')?.name ?? columns[0] ?? '';
@@ -43,7 +43,6 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
   const [rawYField, setRawYField] = useState<string>(numericFields[0] ?? '');
   const chartRef = useRef<HTMLDivElement>(null);
 
-  // Reset invalid selections when the result set (fields) changes.
   useEffect(() => {
     if (!columns.includes(xField)) setXField(firstCategorical);
     if (measureField && !numericFields.includes(measureField)) setMeasureField(numericFields[0] ?? '');
@@ -51,12 +50,12 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columns.join(','), numericFields.join(',')]);
 
-  const palette = useMemo(
-    () => ACCENT_VARS.map((v, i) => cssVar(v, ['#38bdf8', '#14b8a6', '#22c55e', '#f59e0b', '#a855f7', '#ef4444'][i])),
-    [],
-  );
-  const axisColor = useMemo(() => cssVar('--text-muted', '#9aa4b2'), []);
-  const gridColor = useMemo(() => cssVar('--border-color', '#2a2f3a'), []);
+  const palette = useMemo(() => getChartColors(), [config, resolvedMode]);
+  const axisColor = useMemo(() => `hsl(${getTokenValue('muted-foreground')})`, [config, resolvedMode]);
+  const gridColor = useMemo(() => `hsl(${getTokenValue('border')})`, [config, resolvedMode]);
+  const panelBg = useMemo(() => `hsl(${getTokenValue('card')})`, [config, resolvedMode]);
+  const textMain = useMemo(() => `hsl(${getTokenValue('foreground')})`, [config, resolvedMode]);
+  const bgBase = useMemo(() => `hsl(${getTokenValue('background')})`, [config, resolvedMode]);
 
   const effectiveType: ChartType = mode === 'raw' && chartType === 'pie' ? 'bar' : chartType;
   const data = useMemo(
@@ -66,7 +65,7 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
 
   if (!documents || documents.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-[var(--text-dim)] p-8" data-testid="chart-view">
+      <div className="flex flex-1 items-center justify-center p-8 text-muted-foreground" data-testid="chart-view">
         Run a query to chart its results.
       </div>
     );
@@ -78,78 +77,154 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
   const noNumericAtAll = numericFields.length === 0;
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 min-w-0" data-testid="chart-view">
-      {/* Control bar */}
-      <div className="flex items-center gap-2 flex-wrap px-3 py-2 border-b border-[var(--border-color)] text-[var(--text-muted)]">
-        <div className="flex items-center bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md p-0.5">
-          <button aria-label="Aggregate" className={tabCls(mode === 'aggregate')} onClick={() => setMode('aggregate')}>Aggregate</button>
-          <button aria-label="Raw" className={tabCls(mode === 'raw')} onClick={() => setMode('raw')}>Raw</button>
-        </div>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="chart-view">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-muted-foreground">
+        <Tabs value={mode} onValueChange={(v) => setMode(v as ChartMode)}>
+          <TabsList className="h-8">
+            <TabsTrigger
+              value="aggregate"
+              aria-label="Aggregate"
+              className="text-xs px-2 py-1"
+              onClick={() => setMode('aggregate')}
+            >
+              Aggregate
+            </TabsTrigger>
+            <TabsTrigger
+              value="raw"
+              aria-label="Raw"
+              className="text-xs px-2 py-1"
+              onClick={() => setMode('raw')}
+            >
+              Raw
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
-        <label className="flex items-center gap-1 text-[11px]">X axis
-          <select aria-label="X axis" className={selectCls} value={xField} onChange={(e) => setXField(e.target.value)}>
-            {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+        <label className="flex items-center gap-1 text-[11px]">
+          X axis
+          <Select value={xField} onValueChange={setXField}>
+            <SelectTrigger className="h-7 w-[120px] text-[11px]" aria-label="X axis">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {columns.map((c) => (
+                <SelectItem key={c} value={c}>
+                  {c}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </label>
 
         {mode === 'aggregate' ? (
           <>
-            <label className="flex items-center gap-1 text-[11px]">Measure
-              <select aria-label="Measure" className={selectCls} value={measure} onChange={(e) => setMeasure(e.target.value as Measure)}>
-                {MEASURES.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
+            <label className="flex items-center gap-1 text-[11px]">
+              Measure
+              <Select value={measure} onValueChange={(v) => setMeasure(v as Measure)}>
+                <SelectTrigger className="h-7 w-[100px] text-[11px]" aria-label="Measure">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MEASURES.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </label>
             {measure !== 'count' && (
-              <label className="flex items-center gap-1 text-[11px]">Field
-                <select aria-label="Measure field" className={selectCls} value={measureField} onChange={(e) => setMeasureField(e.target.value)}>
-                  <option value="">—</option>
-                  {numericFields.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+              <label className="flex items-center gap-1 text-[11px]">
+                Field
+                <Select
+                  value={measureField || '__none__'}
+                  onValueChange={(v) => setMeasureField(v === '__none__' ? '' : v)}
+                >
+                  <SelectTrigger className="h-7 w-[120px] text-[11px]" aria-label="Measure field">
+                    <SelectValue placeholder="—" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">—</SelectItem>
+                    {numericFields.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </label>
             )}
           </>
         ) : (
-          <label className="flex items-center gap-1 text-[11px]">Y axis
-            <select aria-label="Y axis" className={selectCls} value={rawYField} onChange={(e) => setRawYField(e.target.value)}>
-              <option value="">—</option>
-              {numericFields.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+          <label className="flex items-center gap-1 text-[11px]">
+            Y axis
+            <Select
+              value={rawYField || '__none__'}
+              onValueChange={(v) => setRawYField(v === '__none__' ? '' : v)}
+            >
+              <SelectTrigger className="h-7 w-[120px] text-[11px]" aria-label="Y axis">
+                <SelectValue placeholder="—" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">—</SelectItem>
+                {numericFields.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
         )}
 
-        <label className="flex items-center gap-1 text-[11px]">Type
-          <select aria-label="Chart type" className={selectCls} value={chartType} onChange={(e) => setChartType(e.target.value as ChartType)}>
-            {TYPES.map((t) => <option key={t} value={t} disabled={mode === 'raw' && t === 'pie'}>{t}</option>)}
-          </select>
+        <label className="flex items-center gap-1 text-[11px]">
+          Type
+          <Select value={chartType} onValueChange={(v) => setChartType(v as ChartType)}>
+            <SelectTrigger className="h-7 w-[90px] text-[11px]" aria-label="Chart type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TYPES.map((t) => (
+                <SelectItem key={t} value={t} disabled={mode === 'raw' && t === 'pie'}>
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </label>
 
-        <button
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="ml-auto h-7 text-[11px]"
           aria-label="Export PNG"
-          className="ml-auto flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--border-color)] hover:text-[var(--text-main)]"
           onClick={() => {
             const svg = chartRef.current?.querySelector('svg');
-            if (svg) exportSvgToPng(svg as SVGSVGElement, 'chart.png', cssVar('--bg-base', '#0a0e14'));
+            if (svg) exportSvgToPng(svg as SVGSVGElement, 'chart.png', bgBase);
           }}
         >
           <Download size={12} /> PNG
-        </button>
+        </Button>
       </div>
 
-      {/* Chart area */}
-      <div ref={chartRef} className="flex-1 min-h-0 min-w-0 p-3">
+      <div ref={chartRef} className="min-h-0 min-w-0 flex-1 p-3">
         {noNumericAtAll && mode === 'raw' ? (
-          <div className="h-full flex items-center justify-center text-[var(--text-dim)]">No numeric field in these results to plot.</div>
+          <div className="flex h-full items-center justify-center text-muted-foreground">
+            No numeric field in these results to plot.
+          </div>
         ) : needsNumeric ? (
-          <div className="h-full flex items-center justify-center text-[var(--text-dim)]">Pick a numeric field to chart.</div>
+          <div className="flex h-full items-center justify-center text-muted-foreground">
+            Pick a numeric field to chart.
+          </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            {renderChart(effectiveType, data.points, palette, axisColor, gridColor)}
+            {renderChart(effectiveType, data.points, palette, axisColor, gridColor, panelBg, textMain)}
           </ResponsiveContainer>
         )}
       </div>
 
-      {/* Caveat */}
-      <div className="px-3 py-1.5 border-t border-[var(--border-color)] text-[10px] text-[var(--text-dim)]">
+      <div className="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground">
         Charting {data.total} loaded document{data.total === 1 ? '' : 's'} — increase the page-size limit to chart more.
         {data.truncated > 0 && ` (+${data.truncated} more ${mode === 'aggregate' ? 'categories' : 'points'} not shown)`}
       </div>
@@ -163,13 +238,16 @@ function renderChart(
   palette: string[],
   axisColor: string,
   gridColor: string,
+  panelBg: string,
+  textMain: string,
 ): React.ReactElement {
+  const tooltipStyle = { background: panelBg, border: `1px solid ${gridColor}`, color: textMain };
   const axes = (
     <>
       <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
       <XAxis dataKey="x" stroke={axisColor} tick={{ fill: axisColor, fontSize: 11 }} />
       <YAxis stroke={axisColor} tick={{ fill: axisColor, fontSize: 11 }} />
-      <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }} />
+      <Tooltip contentStyle={tooltipStyle} />
     </>
   );
   if (type === 'line') return <LineChart data={points}>{axes}<Line type="monotone" dataKey="y" stroke={palette[0]} dot={false} isAnimationActive={false} /></LineChart>;
@@ -181,7 +259,7 @@ function renderChart(
         <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
         <XAxis dataKey="x" type={numericX ? 'number' : 'category'} stroke={axisColor} tick={{ fill: axisColor, fontSize: 11 }} />
         <YAxis dataKey="y" type="number" stroke={axisColor} tick={{ fill: axisColor, fontSize: 11 }} />
-        <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }} />
+        <Tooltip contentStyle={tooltipStyle} />
         <Scatter data={points} dataKey="y" fill={palette[0]} isAnimationActive={false} />
       </ScatterChart>
     );
@@ -189,7 +267,7 @@ function renderChart(
   if (type === 'pie') {
     return (
       <PieChart>
-        <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }} />
+        <Tooltip contentStyle={tooltipStyle} />
         <Legend />
         <Pie data={points} dataKey="y" nameKey="x" outerRadius="80%" label isAnimationActive={false}>
           {points.map((_, i) => <Cell key={i} fill={palette[i % palette.length]} />)}

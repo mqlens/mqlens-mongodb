@@ -1,5 +1,6 @@
 //! Find-style queries: execute, count, and explain MQL filters.
 
+use crate::limits::normalize_query_limit;
 use crate::state::LockExt;
 use crate::{mock_db, AppState};
 
@@ -35,7 +36,14 @@ pub async fn execute_mql_query_impl(
     };
 
     if is_mock {
-        return mock_db::execute_mock_query(database, collection, filter, sort, limit, skip);
+        return mock_db::execute_mock_query(
+            database,
+            collection,
+            filter,
+            sort,
+            normalize_query_limit(limit),
+            skip,
+        );
     }
 
     let filter_val: serde_json::Value = if filter.trim().is_empty() {
@@ -75,6 +83,7 @@ pub async fn execute_mql_query_impl(
             None
         };
 
+    let effective_limit = normalize_query_limit(limit);
     let mut find_builder = coll.find(filter_doc);
     if let Some(sort) = sort_doc {
         find_builder = find_builder.sort(sort);
@@ -82,9 +91,7 @@ pub async fn execute_mql_query_impl(
     if let Some(projection) = projection_doc {
         find_builder = find_builder.projection(projection);
     }
-    if limit > 0 {
-        find_builder = find_builder.limit(limit);
-    }
+    find_builder = find_builder.limit(effective_limit);
     if skip > 0 {
         find_builder = find_builder.skip(skip as u64);
     }

@@ -1,5 +1,6 @@
 //! Aggregation pipelines: execute and explain. Real-connection-only.
 
+use crate::limits::MAX_AGGREGATE_RESULTS;
 use crate::state::LockExt;
 use crate::AppState;
 
@@ -59,6 +60,12 @@ pub async fn execute_aggregate_impl(
     let mut results = Vec::new();
     use futures::stream::StreamExt;
     while let Some(result) = cursor.next().await {
+        if results.len() >= MAX_AGGREGATE_RESULTS {
+            return Err(format!(
+                "Aggregation result capped at {} documents — add a $limit stage for larger pipelines",
+                MAX_AGGREGATE_RESULTS
+            ));
+        }
         let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
         let json_val: serde_json::Value =
             serde_json::to_value(&doc).map_err(|e| format!("BSON to JSON error: {}", e))?;

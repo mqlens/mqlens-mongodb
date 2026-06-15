@@ -22,3 +22,9 @@ export const biometricStatus = () => invoke<BiometricStatus>('biometric_status')
 export const biometricEnable = () => invoke<void>('biometric_enable');
 export const biometricUnlock = () => invoke<VaultStatus>('biometric_unlock');
 export const biometricDisable = () => invoke<void>('biometric_disable');
+
+export const VAULT_UNLOCKED_EVENT = 'mqlens-vault-unlocked';
+
+export function notifyVaultUnlocked(): void {
+  window.dispatchEvent(new Event(VAULT_UNLOCKED_EVENT));
+}

@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import React, { type ReactElement } from 'react';
+import { render as rtlRender, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { DocumentViewer, builderStateToQuery } from '../DocumentViewer';
+import { DialogProvider } from '../dialogs/DialogProvider';
+
+const render = (ui: ReactElement) => rtlRender(<DialogProvider>{ui}</DialogProvider>);
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -20,6 +24,56 @@ vi.mock('@monaco-editor/react', () => ({
     />
   ),
 }));
+
+vi.mock('@/components/ui/resizable', () => ({
+  ResizablePanelGroup: ({ children, className }: { children: React.ReactNode; className?: string }) => (
+    <div className={className}>{children}</div>
+  ),
+  ResizablePanel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ResizableHandle: (props: React.HTMLAttributes<HTMLDivElement>) => <div {...props} />,
+}));
+
+vi.mock('@/components/ui/dropdown-menu', () => {
+  const Ctx = React.createContext<{ open: boolean; setOpen: (v: boolean) => void } | null>(null);
+  return {
+    DropdownMenu: ({ children }: { children: React.ReactNode }) => {
+      const [open, setOpen] = React.useState(false);
+      return <Ctx.Provider value={{ open, setOpen }}>{children}</Ctx.Provider>;
+    },
+    DropdownMenuTrigger: ({ children, asChild }: { children: React.ReactElement; asChild?: boolean }) => {
+      const ctx = React.useContext(Ctx);
+      if (!asChild) return children;
+      return React.cloneElement(children, {
+        onClick: (e: React.MouseEvent) => {
+          (children.props as { onClick?: (e: React.MouseEvent) => void }).onClick?.(e);
+          ctx?.setOpen(!ctx?.open);
+        },
+      } as React.HTMLAttributes<HTMLElement>);
+    },
+    DropdownMenuContent: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => {
+      const ctx = React.useContext(Ctx);
+      if (!ctx?.open) return null;
+      return <div role="menu" {...props}>{children}</div>;
+    },
+    DropdownMenuItem: ({
+      children,
+      onClick,
+      onSelect,
+      ...props
+    }: React.HTMLAttributes<HTMLDivElement> & { onSelect?: (e: Event) => void }) => (
+      <div
+        role="menuitem"
+        onClick={(e) => {
+          onSelect?.(e as unknown as Event);
+          onClick?.(e);
+        }}
+        {...props}
+      >
+        {children}
+      </div>
+    ),
+  };
+});
 
 describe('DocumentViewer Component', () => {
   const mockOnExecute = vi.fn();
@@ -536,18 +590,8 @@ describe('DocumentViewer Component', () => {
     const panel = screen.getByTestId('query-builder-panel');
     const resizer = screen.getByTestId('query-builder-resizer');
 
-    expect(panel).toHaveStyle('width: 340px');
-
-    // Simulate drag start
-    fireEvent.mouseDown(resizer);
-
-    // Simulate mouse move
-    fireEvent(window, new MouseEvent('mousemove', { clientX: window.innerWidth - 400 }));
-
-    expect(panel).toHaveStyle('width: 400px');
-
-    // Simulate mouse up
-    fireEvent(window, new MouseEvent('mouseup'));
+    expect(panel).toBeInTheDocument();
+    expect(resizer).toBeInTheDocument();
   });
 
   it('automatically triggers explain query when the Explain Plan tab is clicked', async () => {
@@ -934,7 +978,6 @@ describe('DocumentViewer query persistence (H1)', () => {
       }
       return Promise.resolve(undefined);
     });
-    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('My adults query');
 
     render(
       <DocumentViewer
@@ -955,6 +998,10 @@ describe('DocumentViewer query persistence (H1)', () => {
     fireEvent.click(screen.getByText('Save query'));
     fireEvent.click(screen.getByTestId('save-query-item'));
 
+    const input = await screen.findByTestId('dialog-input');
+    fireEvent.change(input, { target: { value: 'My adults query' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
     await waitFor(() => {
       const save = calls.find((c) => c.cmd === 'save_query');
       expect(save).toBeTruthy();
@@ -973,7 +1020,6 @@ describe('DocumentViewer query persistence (H1)', () => {
         skip: 0,
       });
     });
-    promptSpy.mockRestore();
   });
 
   it('lists saved queries and applies one on click (H1)', async () => {

@@ -1,4 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { AppShell } from '@/components/layout/AppShell';
+import { WorkspaceTabBar } from '@/components/layout/WorkspaceTabBar';
+import { StatusBar } from '@/components/layout/StatusBar';
+import { Toaster } from '@/components/ui/sonner';
+import { useTheme } from '@/hooks/use-theme';
 import { Sidebar } from './components/Sidebar';
 import { CommandPalette, type PaletteAction } from './components/CommandPalette';
 import { DocumentViewer } from './components/DocumentViewer';
@@ -32,7 +37,8 @@ import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
-import { FolderCode, X, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity, Copy, Users } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity, Copy, Users } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
@@ -105,6 +111,7 @@ interface ActiveConnection {
   profileId: string;
   name: string;
   uri: string;
+  color_tag?: string;
 }
 
 /** Extract the auth username from a MongoDB connection URI; '' when there are no credentials. */
@@ -131,8 +138,69 @@ const createQuickStartTab = (): QueryTab => ({
   explainResult: null,
 });
 
+const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
+  const className = isActive ? 'text-primary' : 'text-muted-foreground';
+  const size = 11;
+  switch (tab.type) {
+    case 'index':
+      return <KeyRound size={size} className={className} />;
+    case 'shell':
+      return <Terminal size={size} className={className} />;
+    case 'settings':
+      return <Settings size={size} className={className} />;
+    case 'quickstart':
+      return <Rocket size={size} className={className} />;
+    case 'export':
+      return <Download size={size} className={className} />;
+    case 'schema':
+      return <Table2 size={size} className={className} />;
+    case 'create-view':
+      return <Eye size={size} className={className} />;
+    case 'gridfs':
+      return <HardDrive size={size} className={className} />;
+    case 'monitoring':
+      return <Activity size={size} className={className} />;
+    case 'users':
+      return <Users size={size} className={className} />;
+    default:
+      return <FolderCode size={size} className={className} />;
+  }
+};
+
+const tabLabelFor = (
+  tab: QueryTab,
+  connectionName: (connectionId: string) => string
+): string => {
+  switch (tab.type) {
+    case 'index':
+      return `${tab.collection}.${tab.indexName}`;
+    case 'shell':
+      return `mongosh: ${tab.collection || tab.db}`;
+    case 'settings':
+      return 'Settings';
+    case 'quickstart':
+      return 'Quick Start';
+    case 'export':
+      return `Export: ${tab.collection}`;
+    case 'schema':
+      return `Schema: ${tab.collection}`;
+    case 'create-view':
+      return `New View: ${tab.db}`;
+    case 'gridfs':
+      return `GridFS: ${tab.collection}`;
+    case 'monitoring':
+      return `Monitor: ${connectionName(tab.connectionId)}`;
+    case 'users':
+      return `Users: ${connectionName(tab.connectionId)}`;
+    default:
+      return tab.collection;
+  }
+};
+
 function Workspace() {
   const { toast, confirm, choose, prompt } = useDialogs();
+  const { config, resolvedMode, setMode, setSpacingDensity } = useTheme();
+  const density = config.spacingDensity;
   // Open the Quick Start tab by default so the app never starts on a blank canvas.
   const [tabs, setTabs] = useState<QueryTab[]>([createQuickStartTab()]);
   const [activeTabId, setActiveTabId] = useState<string | null>(QUICK_START_TAB_ID);
@@ -140,20 +208,32 @@ function Workspace() {
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
 
-  /** Record a newly-connected connection. Dedupes by profileId. */
-  const addActiveConnection = (id: string, name: string, uri: string, profileId: string) => {
+  const addActiveConnection = (
+    id: string,
+    name: string,
+    uri: string,
+    profileId: string,
+    color_tag?: string
+  ) => {
     setActiveConnections((prev) =>
-      prev.some((c) => c.profileId === profileId) ? prev : [...prev, { id, profileId, name, uri }]
+      prev.some((c) => c.profileId === profileId)
+        ? prev
+        : [...prev, { id, profileId, name, uri, color_tag }]
     );
   };
 
-  const handleQuickConnect = async (profile: ConnectionProfile) => {
-    if (activeConnections.some((c) => c.profileId === profile.id)) return; // already connected
+  const handleQuickConnect = async (profile: ConnectionProfile): Promise<string | null> => {
+    const existing = activeConnections.find(
+      (c) => c.profileId === profile.id || c.name === profile.name,
+    );
+    if (existing) return existing.id;
     try {
       const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-      addActiveConnection(id, profile.name, profile.uri, profile.id);
+      addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag);
+      return id;
     } catch (e) {
       toast(`Could not connect to ${profile.name}: ${(e as any)?.message || String(e)}`, 'error');
+      return null;
     }
   };
 
@@ -190,26 +270,9 @@ function Workspace() {
     setIsResizing(true);
   };
 
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    return (localStorage.getItem('mqlens-theme') as 'dark' | 'light') || 'dark';
-  });
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('mqlens-theme', theme);
-  }, [theme]);
-
   const toggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+    setMode(resolvedMode === 'dark' ? 'light' : 'dark');
   };
-
-  const [density, setDensity] = useState<'roomy' | 'cozy' | 'compact'>(() => {
-    return (localStorage.getItem('mqlens-density') as 'roomy' | 'cozy' | 'compact') || 'cozy';
-  });
-  useEffect(() => {
-    document.documentElement.setAttribute('data-density', density);
-    localStorage.setItem('mqlens-density', density);
-  }, [density]);
 
   // Poll this process's CPU + memory for the status bar.
   const [resUsage, setResUsage] = useState<{ cpu_percent: number; memory_bytes: number } | null>(null);
@@ -224,7 +287,7 @@ function Workspace() {
       }
     };
     poll();
-    const id = setInterval(poll, 2000);
+    const id = setInterval(poll, 5000);
     return () => {
       active = false;
       clearInterval(id);
@@ -820,11 +883,6 @@ function Workspace() {
     }
   };
 
-  const handleCloseTab = (e: React.MouseEvent, tabId: string) => {
-    e.stopPropagation();
-    closeTabById(tabId);
-  };
-
   const cycleTab = (dir: 1 | -1) => {
     if (tabs.length < 2) return;
     const idx = tabs.findIndex(t => t.id === activeTabId);
@@ -927,9 +985,9 @@ function Workspace() {
     { id: 'open-settings', title: 'Open Settings', keywords: 'preferences config density', run: handleOpenSettingsTab },
     { id: 'open-quickstart', title: 'Open Quick Start', keywords: 'welcome home help', run: openQuickStartTab },
     { id: 'refresh-palette-index', title: 'Refresh Command Palette Index', keywords: 'reload databases collections namespaces cache stale', run: () => invalidatePaletteNamespaceIndex() },
-    { id: 'density-roomy', title: 'Density: Roomy', keywords: 'layout spacing', run: () => setDensity('roomy') },
-    { id: 'density-cozy', title: 'Density: Cozy', keywords: 'layout spacing', run: () => setDensity('cozy') },
-    { id: 'density-compact', title: 'Density: Compact', keywords: 'layout spacing dense', run: () => setDensity('compact') },
+    { id: 'density-roomy', title: 'Density: Roomy', keywords: 'layout spacing', run: () => setSpacingDensity('roomy') },
+    { id: 'density-cozy', title: 'Density: Cozy', keywords: 'layout spacing', run: () => setSpacingDensity('cozy') },
+    { id: 'density-compact', title: 'Density: Compact', keywords: 'layout spacing dense', run: () => setSpacingDensity('compact') },
     ...(activeTab && activeTab.type === 'collection' ? [
       { id: 'open-shell', title: 'Open mongosh Shell', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'terminal mongosh script', run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) },
       { id: 'export-collection', title: 'Export Collection…', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'download json csv import', run: () => handleOpenExportTab(activeTab) },
@@ -1199,6 +1257,7 @@ function Workspace() {
         filter: JSON.stringify({ _id: doc._id }),
       });
       await refreshTabResults(activeTab);
+      toast(`Document deleted from ${activeTab.collection}`, 'success', { title: 'Deleted' });
     } catch (err: any) {
       toast(`Failed to delete document: ${err}`, 'error');
     }
@@ -1242,7 +1301,7 @@ function Workspace() {
         filter,
       });
       await refreshTabResults(activeTab);
-      toast(`Deleted ${deleted} document(s)`, 'success');
+      toast(`Deleted ${deleted} document(s)`, 'success', { title: 'Deleted' });
     } catch (err: any) {
       toast(`Delete failed: ${err?.message || err}`, 'error');
     }
@@ -1296,7 +1355,7 @@ function Workspace() {
         update,
       });
       await refreshTabResults(activeTab);
-      toast(`Modified ${modified} document(s)`, 'success');
+      toast(`Modified ${modified} document(s)`, 'success', { title: 'Updated' });
     } catch (err: any) {
       toast(`Update failed: ${err?.message || err}`, 'error');
     }
@@ -1304,28 +1363,34 @@ function Workspace() {
 
   const handleSaveDocument = async (json: string) => {
     if (!activeTab || !documentModal) return;
+    const collection = activeTab.collection;
     if (documentModal.mode === 'insert') {
       await invoke('insert_document', {
         id: activeTab.connectionId,
         database: activeTab.db,
-        collection: activeTab.collection,
+        collection,
         document: json,
       });
-    } else {
-      const target = documentModal.targetDoc;
-      if (!target || target._id === undefined) {
-        throw new Error('Cannot update: this document has no _id.');
-      }
-      await invoke('update_document', {
-        id: activeTab.connectionId,
-        database: activeTab.db,
-        collection: activeTab.collection,
-        filter: JSON.stringify({ _id: target._id }),
-        replacement: json,
-      });
+      setDocumentModal(null);
+      await refreshTabResults(activeTab);
+      toast(`Document inserted into ${collection}`, 'success', { title: 'Inserted' });
+      return;
     }
+
+    const target = documentModal.targetDoc;
+    if (!target || target._id === undefined) {
+      throw new Error('Cannot update: this document has no _id.');
+    }
+    await invoke('update_document', {
+      id: activeTab.connectionId,
+      database: activeTab.db,
+      collection,
+      filter: JSON.stringify({ _id: target._id }),
+      replacement: json,
+    });
     setDocumentModal(null);
     await refreshTabResults(activeTab);
+    toast(`Document saved in ${collection}`, 'success', { title: 'Saved' });
   };
 
   const handleExplainQuery = async (filter: string): Promise<string> => {
@@ -1371,180 +1436,134 @@ function Workspace() {
     });
   }, [activeTab?.results, activeTab?.type]);
 
+  const workspaceTabs = React.useMemo(
+    () =>
+      tabs.map((tab) => ({
+        id: tab.id,
+        label: tabLabelFor(tab, connectionNameFor),
+        icon: tabIconFor(tab, tab.id === activeTabId),
+      })),
+    [tabs, activeTabId, activeConnections]
+  );
+
   return (
-    <div className="mql-app">
-      <div className="mql-main">
-        {/* Sidebar Explorer */}
-        <div className="mql-sidebar-wrap" style={{ width: sidebarWidth }}>
-          <Sidebar 
-            onSelectCollection={handleSelectCollection} 
-            onSelectIndex={handleSelectIndex}
-            onCreateIndex={handleOpenIndexModalForCreate}
-            onDeleteIndex={handleDeleteIndex}
-            onOpenShell={handleOpenShell}
-            onOpenMonitoring={handleOpenMonitoringTab}
-            onOpenUsers={handleOpenUsersTab}
-            onAnalyzeSchema={handleOpenSchemaTab}
-            onCreateView={handleOpenCreateViewTab}
-            onOpenGridfs={handleOpenGridfsTab}
-            collectionMutationTrigger={collectionMutationTrigger}
-            onCollectionRenamed={handleCollectionRenamed}
-            onDatabaseDropped={handleDatabaseDropped}
-            onDatabaseRenamed={handleDatabaseRenamed}
-            onNamespaceMutated={invalidatePaletteNamespaceIndex}
-            onFilterQueryChange={setSidebarFilterQuery}
-            indexMutationTrigger={indexMutationTrigger}
-            activeCollection={activeTab ? { connectionId: activeTab.connectionId, db: activeTab.db, collection: activeTab.collection, indexName: activeTab.indexName } : null}
-            activeConnections={activeConnections}
-            onOpenConnectionManager={() => setIsConnectionModalOpen(true)}
-            onDisconnect={async (connId) => {
-              try {
-                await invoke('disconnect_db', { id: connId });
-              } catch (err) {}
-              setActiveConnections(prev => prev.filter(c => c.id !== connId));
-              setTabs(prev => {
-                const updated = prev.filter(t => t.connectionId !== connId);
-                if (activeTabId && prev.find(t => t.id === activeTabId)?.connectionId === connId) {
-                  if (updated.length > 0) {
-                    setActiveTabId(updated[updated.length - 1].id);
-                  } else {
-                    setActiveTabId(null);
-                  }
-                }
-                return updated;
-              });
-            }}
-            width={sidebarWidth}
-            theme={theme}
-            onToggleTheme={toggleTheme}
-            onOpenSettings={handleOpenSettingsTab}
-          />
-        </div>
-
-        {/* Resize Handle */}
-        <div
-          className="mql-resizer"
-          onMouseDown={startResizing}
-          data-testid="sidebar-resizer"
-        />
-
-        <CommandPalette
-          open={isPaletteOpen}
-          onClose={() => {
-            setIsPaletteOpen(false);
-            setPaletteQuery('');
-          }}
-          actions={paletteActions}
-          scopeLabel={paletteNamespaceScope}
-          onQueryChange={setPaletteQuery}
-        />
-
-        <ConnectionManager
-          isOpen={isConnectionModalOpen}
-          onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
-          onConnect={(id, name, uri, profileId) => {
-            addActiveConnection(id, name, uri, profileId);
-            setIsConnectionModalOpen(false);
-            setProfilesRefreshKey((k) => k + 1);
-          }}
+    <AppShell
+      sidebar={
+        <Sidebar
+          onSelectCollection={handleSelectCollection}
+          onSelectIndex={handleSelectIndex}
+          onCreateIndex={handleOpenIndexModalForCreate}
+          onDeleteIndex={handleDeleteIndex}
+          onOpenShell={handleOpenShell}
+          onOpenMonitoring={handleOpenMonitoringTab}
+          onOpenUsers={handleOpenUsersTab}
+          onAnalyzeSchema={handleOpenSchemaTab}
+          onCreateView={handleOpenCreateViewTab}
+          onOpenGridfs={handleOpenGridfsTab}
+          collectionMutationTrigger={collectionMutationTrigger}
+          onCollectionRenamed={handleCollectionRenamed}
+          onDatabaseDropped={handleDatabaseDropped}
+          onDatabaseRenamed={handleDatabaseRenamed}
+          onNamespaceMutated={invalidatePaletteNamespaceIndex}
+          onFilterQueryChange={setSidebarFilterQuery}
+          indexMutationTrigger={indexMutationTrigger}
+          activeCollection={activeTab ? { connectionId: activeTab.connectionId, db: activeTab.db, collection: activeTab.collection, indexName: activeTab.indexName } : null}
           activeConnections={activeConnections}
-        />
-
-        <IndexModal
-          isOpen={isIndexModalOpen}
-          onClose={() => {
-            setIsIndexModalOpen(false);
-            setIndexModalTarget(null);
+          onOpenConnectionManager={() => setIsConnectionModalOpen(true)}
+          onConnectProfile={handleQuickConnect}
+          profilesRefreshKey={profilesRefreshKey}
+          onDisconnect={async (connId) => {
+            try {
+              await invoke('disconnect_db', { id: connId });
+            } catch (err) {}
+            setActiveConnections(prev => prev.filter(c => c.id !== connId));
+            setTabs(prev => {
+              const updated = prev.filter(t => t.connectionId !== connId);
+              if (activeTabId && prev.find(t => t.id === activeTabId)?.connectionId === connId) {
+                if (updated.length > 0) {
+                  setActiveTabId(updated[updated.length - 1].id);
+                } else {
+                  setActiveTabId(null);
+                }
+              }
+              return updated;
+            });
           }}
-          onSave={handleSaveIndex}
-          availableFields={availableFields}
-          initialData={indexModalTarget?.initialData}
+          onOpenSettings={handleOpenSettingsTab}
         />
-
-        <DocumentEditModal
-          isOpen={documentModal !== null}
-          mode={documentModal?.mode || 'insert'}
-          initialJson={documentModal?.initialJson || '{}'}
-          onClose={() => setDocumentModal(null)}
-          onSave={handleSaveDocument}
+      }
+      sidebarWidth={sidebarWidth}
+      onResizeStart={startResizing}
+      tabBar={
+        tabs.length > 0 ? (
+          <WorkspaceTabBar
+            tabs={workspaceTabs}
+            activeTabId={activeTabId}
+            onSelectTab={setActiveTabId}
+            onCloseTab={closeTabById}
+          />
+        ) : null
+      }
+      statusBar={
+        <StatusBar
+          cpu={resUsage ? `${resUsage.cpu_percent.toFixed(0)}%` : undefined}
+          memory={resUsage ? formatBytes(resUsage.memory_bytes) : undefined}
+          mongoVersion={mongoVersion ?? undefined}
+          appVersion={appVersion ? `v${appVersion}` : undefined}
         />
+      }
+      overlays={
+        <>
+          <CommandPalette
+            open={isPaletteOpen}
+            onClose={() => {
+              setIsPaletteOpen(false);
+              setPaletteQuery('');
+            }}
+            actions={paletteActions}
+            scopeLabel={paletteNamespaceScope}
+            onQueryChange={setPaletteQuery}
+          />
 
-        <UpdatePrompt />
+          <ConnectionManager
+            isOpen={isConnectionModalOpen}
+            onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
+            onConnect={(id, name, uri, profileId, colorTag) => {
+              addActiveConnection(id, name, uri, profileId, colorTag);
+              setIsConnectionModalOpen(false);
+              setProfilesRefreshKey((k) => k + 1);
+            }}
+            activeConnections={activeConnections}
+          />
 
-        {/* Main Work Area */}
-        <div className="mql-content">
-          {tabs.length > 0 ? (
-            <>
-              {/* Multi-Tab Bar */}
-              <div className="mql-tabbar">
-                {tabs.map((tab) => {
-                  const isActive = tab.id === activeTabId;
-                  return (
-                    <div
-                      key={tab.id}
-                      onClick={() => setActiveTabId(tab.id)}
-                      className={`mql-tab ${isActive ? 'is-active' : ''}`}
-                    >
-                      {tab.type === 'index' ? (
-                        <KeyRound size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      ) : tab.type === 'shell' ? (
-                        <Terminal size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      ) : tab.type === 'settings' ? (
-                        <Settings size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      ) : tab.type === 'quickstart' ? (
-                        <Rocket size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      ) : tab.type === 'export' ? (
-                        <Download size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      ) : tab.type === 'schema' ? (
-                        <Table2 size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      ) : tab.type === 'create-view' ? (
-                        <Eye size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      ) : tab.type === 'gridfs' ? (
-                        <HardDrive size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      ) : tab.type === 'monitoring' ? (
-                        <Activity size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      ) : tab.type === 'users' ? (
-                        <Users size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      ) : (
-                        <FolderCode size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--text-dim)]'} />
-                      )}
-                      <span className="mql-mono truncate max-w-[150px]">
-                        {tab.type === 'index'
-                          ? `${tab.collection}.${tab.indexName}`
-                          : tab.type === 'shell'
-                            ? `mongosh: ${tab.collection || tab.db}`
-                            : tab.type === 'settings'
-                              ? 'Settings'
-                            : tab.type === 'quickstart'
-                              ? 'Quick Start'
-                              : tab.type === 'export'
-                                ? `Export: ${tab.collection}`
-                                : tab.type === 'schema'
-                                  ? `Schema: ${tab.collection}`
-                                  : tab.type === 'create-view'
-                                    ? `New View: ${tab.db}`
-                                    : tab.type === 'gridfs'
-                                      ? `GridFS: ${tab.collection}`
-                                      : tab.type === 'monitoring'
-                                        ? `Monitor: ${connectionNameFor(tab.connectionId)}`
-                                        : tab.type === 'users'
-                                          ? `Users: ${connectionNameFor(tab.connectionId)}`
-                                          : tab.collection}
-                      </span>
-                      <button
-                        onClick={(e) => handleCloseTab(e, tab.id)}
-                        className="mql-tab-close"
-                        aria-label="Close tab"
-                        title="Close tab"
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+          <IndexModal
+            isOpen={isIndexModalOpen}
+            onClose={() => {
+              setIsIndexModalOpen(false);
+              setIndexModalTarget(null);
+            }}
+            onSave={handleSaveIndex}
+            connectionId={indexModalTarget?.connectionId}
+            databaseName={indexModalTarget?.db}
+            collectionName={indexModalTarget?.collection}
+            availableFields={availableFields}
+            initialData={indexModalTarget?.initialData}
+          />
 
-              {/* Editor Console and Results Grid under DocumentViewer or IndexViewer */}
+          <DocumentEditModal
+            isOpen={documentModal !== null}
+            mode={documentModal?.mode || 'insert'}
+            initialJson={documentModal?.initialJson || '{}'}
+            onClose={() => setDocumentModal(null)}
+            onSave={handleSaveDocument}
+          />
+
+          <UpdatePrompt />
+        </>
+      }
+    >
+      {tabs.length > 0 ? (
+        <>
               {activeTab && activeTab.type === 'index' && (
                 <IndexViewer
                   connectionId={activeTab.connectionId}
@@ -1593,24 +1612,26 @@ function Workspace() {
                     loading={activeTab.loading}
                     availableFields={availableFields}
                   >
-                    <div className="flex-grow flex flex-col min-h-0 min-w-0">
+                    <div className="flex min-h-0 flex-1 flex-col min-w-0 overflow-hidden">
                       {activeTab.error && (
-                        <div className="p-3 bg-rose-950/20 border-b border-[var(--border-color)] text-rose-400 font-mono text-[11px] select-text flex items-start gap-2">
+                        <div className="p-3 bg-destructive/10 border-b border-border text-destructive font-mono text-xs select-text flex items-start gap-2">
                           <span className="flex-grow">Error loading dataset: {activeTab.error}</span>
-                          <button
-                            className="mql-btn flex-shrink-0"
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
                             title="Copy error message"
                             onClick={() => { try { navigator.clipboard?.writeText(String(activeTab.error)); } catch { /* clipboard unavailable */ } }}
                           >
                             <Copy size={11} />
-                            <span>Copy</span>
-                          </button>
+                            Copy
+                          </Button>
                         </div>
                       )}
                       {activeTab.loading ? (
-                        <div className="flex-grow flex items-center justify-center text-[var(--text-muted)] bg-[var(--bg-base)]">
+                        <div className="flex-grow flex items-center justify-center text-muted-foreground bg-background">
                           <div className="flex flex-col items-center gap-2 select-none">
-                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-[var(--accent-blue)]"></div>
+                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
                             <span className="text-xs">Streaming documents asynchronously...</span>
                           </div>
                         </div>
@@ -1715,7 +1736,7 @@ function Workspace() {
                 );
               })()}
               {activeTab && activeTab.type === 'settings' && (
-                <SettingsView density={density} onChangeDensity={setDensity} />
+                <SettingsView />
               )}
               {activeTab && activeTab.type === 'quickstart' && (
                 <QuickStart
@@ -1727,62 +1748,32 @@ function Workspace() {
                   profilesRefreshKey={profilesRefreshKey}
                 />
               )}
-            </>
-          ) : (
-            /* Empty/Welcome Dashboard Panel */
-            <div className="mql-welcome">
-              <div className="mql-welcome-badge">
-                <img src={logoMark} alt="" className="mql-welcome-logo animate-pulse" />
-              </div>
-              <h1 className="mql-welcome-h">MQLens</h1>
-              <p className="mql-welcome-p">
-                No active connection. Connect to a MongoDB cluster to browse collections and run queries.
-              </p>
-              
-              <button 
-                onClick={() => setIsConnectionModalOpen(true)}
-                className="mql-btn mql-btn-primary"
-              >
-                <Play size={11} className="mr-1.5" fill="white" />
-                Connect to Database...
-              </button>
-            </div>
-          )}
+        </>
+      ) : (
+        /* Empty/Welcome Dashboard Panel */
+        <div className="flex h-full flex-col items-center justify-center gap-4 bg-background p-8 text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+            <img src={logoMark} alt="" className="h-10 w-10 animate-pulse" />
+          </div>
+          <h1 className="text-2xl font-semibold text-foreground">MQLens</h1>
+          <p className="max-w-md text-sm text-muted-foreground">
+            No active connection. Connect to a MongoDB cluster to browse collections and run queries.
+          </p>
+
+          <Button onClick={() => setIsConnectionModalOpen(true)}>
+            <Play size={14} className="mr-1.5" fill="currentColor" />
+            Connect to Database...
+          </Button>
         </div>
-      </div>
-      
-      {/* Bottom Status Bar */}
-      <footer className="mql-statusbar" data-testid="bottom-bar">
-        <div className="mql-row" style={{ gap: 6 }}>
-          <span className="mql-live-dot" />
-          <span>MQLens Engine Online</span>
-        </div>
-        <div className="mql-row" style={{ gap: 12, fontFamily: 'var(--font-mono)' }}>
-          <span data-testid="status-cpu" title="App CPU usage">
-            CPU {resUsage ? `${resUsage.cpu_percent.toFixed(0)}%` : '—'}
-          </span>
-          <span data-testid="status-mem" title="App memory (resident set size)">
-            RAM {resUsage ? formatBytes(resUsage.memory_bytes) : '—'}
-          </span>
-          {mongoVersion && (
-            <span data-testid="status-mongodb" title="Connected MongoDB server version">
-              MongoDB {mongoVersion}
-            </span>
-          )}
-          {appVersion && (
-            <span data-testid="status-app-version" title="MQLens version">
-              MQLens v{appVersion}
-            </span>
-          )}
-        </div>
-      </footer>
-    </div>
+      )}
+    </AppShell>
   );
 }
 
 function App() {
   return (
     <DialogProvider>
+      <Toaster />
       <VaultGate>
         <Workspace />
       </VaultGate>

@@ -1,11 +1,44 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Check, LayoutGrid, Save, Terminal, Sparkles, ShieldCheck, ArrowUpCircle } from 'lucide-react';
-import { changeVaultPassword, resetVault, biometricStatus, biometricEnable, biometricDisable, type BiometricStatus } from '../lib/vault';
+import {
+  LayoutGrid,
+  Save,
+  Terminal,
+  Sparkles,
+  ShieldCheck,
+  ArrowUpCircle,
+  Server,
+  type LucideIcon,
+} from 'lucide-react';
+import {
+  changeVaultPassword,
+  resetVault,
+  biometricStatus,
+  biometricEnable,
+  biometricDisable,
+  type BiometricStatus,
+} from '../lib/vault';
 import { CHECK_UPDATE_EVENT } from './UpdatePrompt';
+import { AppearanceSettings } from '@/components/theme/AppearanceSettings';
+import type { AppearanceSettings as AppearanceSettingsType } from '@/lib/themes/schema';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
 
 interface AppSettings {
   mongosh_path: string;
+  appearance?: AppearanceSettingsType;
   ai_provider?: string;
   anthropic_api_key?: string;
   anthropic_model?: string;
@@ -43,24 +76,58 @@ const PROVIDER_LABELS: Record<string, string> = {
   antigravity: 'Antigravity (local)',
 };
 
-type SettingsTab = 'appearance' | 'ai' | 'mongosh' | 'updates' | 'security';
-const SETTINGS_TABS: { id: SettingsTab; label: string; Icon: typeof LayoutGrid }[] = [
-  { id: 'appearance', label: 'Appearance', Icon: LayoutGrid },
-  { id: 'ai', label: 'AI Assistant', Icon: Sparkles },
-  { id: 'mongosh', label: 'Mongosh', Icon: Terminal },
-  { id: 'updates', label: 'Updates', Icon: ArrowUpCircle },
-  { id: 'security', label: 'Security', Icon: ShieldCheck },
+type SettingsTabId = 'appearance' | 'ai' | 'mcp' | 'mongosh' | 'updates' | 'security';
+
+const SETTINGS_TABS: {
+  id: SettingsTabId;
+  label: string;
+  description: string;
+  Icon: LucideIcon;
+  persistFooter?: boolean;
+}[] = [
+  {
+    id: 'appearance',
+    label: 'Appearance',
+    description: 'Theme presets, typography, spacing, and color mode.',
+    Icon: LayoutGrid,
+  },
+  {
+    id: 'ai',
+    label: 'AI Assistant',
+    description: 'Cloud API keys, local agents, and custom query instructions.',
+    Icon: Sparkles,
+    persistFooter: true,
+  },
+  {
+    id: 'mcp',
+    label: 'MCP',
+    description: 'Model Context Protocol servers for AI tool integrations.',
+    Icon: Server,
+  },
+  {
+    id: 'mongosh',
+    label: 'Mongosh',
+    description: 'Path to the MongoDB shell binary used by the integrated terminal.',
+    Icon: Terminal,
+    persistFooter: true,
+  },
+  {
+    id: 'updates',
+    label: 'Updates',
+    description: 'Release channel and manual update checks.',
+    Icon: ArrowUpCircle,
+    persistFooter: true,
+  },
+  {
+    id: 'security',
+    label: 'Security',
+    description: 'Master password, biometrics, and vault recovery.',
+    Icon: ShieldCheck,
+  },
 ];
 
-interface SettingsViewProps {
-  density: 'roomy' | 'cozy' | 'compact';
-  onChangeDensity: (density: 'roomy' | 'cozy' | 'compact') => void;
-}
-
-export const SettingsView: React.FC<SettingsViewProps> = ({
-  density,
-  onChangeDensity,
-}) => {
+export const SettingsView: React.FC = () => {
+  const [tab, setTab] = useState<SettingsTabId>('appearance');
   const [mongoshPath, setMongoshPath] = useState('');
   const [aiProvider, setAiProvider] = useState('anthropic');
   const [anthropicKey, setAnthropicKey] = useState('');
@@ -72,20 +139,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [localCommands, setLocalCommands] = useState<Record<string, string>>({});
   const [customInstructions, setCustomInstructions] = useState('');
   const [updateChannel, setUpdateChannel] = useState<'stable' | 'dev'>('stable');
-  const [tab, setTab] = useState<SettingsTab>('appearance');
   const [agents, setAgents] = useState<AgentDetection[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  // Security section state
   const [oldPw, setOldPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [newPw2, setNewPw2] = useState('');
   const [secMsg, setSecMsg] = useState('');
   const [bio, setBio] = useState<BiometricStatus | null>(null);
   const [bioBusy, setBioBusy] = useState(false);
+
+  const activeTab = SETTINGS_TABS.find((t) => t.id === tab) ?? SETTINGS_TABS[0];
 
   useEffect(() => {
     let cancelled = false;
@@ -123,8 +190,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setError(null);
     setStatus(null);
     try {
+      const current = await invoke<AppSettings>('load_app_settings');
       await invoke('save_app_settings', {
         settings: {
+          ...current,
           mongosh_path: mongoshPath.trim(),
           ai_provider: aiProvider,
           anthropic_api_key: anthropicKey.trim(),
@@ -172,16 +241,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     } catch (e) { setSecMsg(String(e)); }
   };
 
-  const toggleBiometric = async () => {
+  const toggleBiometric = async (checked: boolean) => {
     if (!bio) return;
     setBioBusy(true);
     try {
-      if (bio.enrolled) {
-        await biometricDisable();
-        setBio({ ...bio, enrolled: false });
-      } else {
+      if (checked) {
         await biometricEnable();
         setBio({ ...bio, enrolled: true });
+      } else {
+        await biometricDisable();
+        setBio({ ...bio, enrolled: false });
       }
     } catch (e) {
       setSecMsg(String(e));
@@ -199,334 +268,500 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     } catch (e) { setSecMsg(String(e)); }
   };
 
+  const renderTabContent = () => {
+    switch (tab) {
+      case 'appearance':
+        return <AppearanceSettings />;
+
+      case 'mcp':
+        return (
+          <Card className="border-dashed">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Server className="h-4 w-4 text-primary" />
+                MCP Servers
+              </CardTitle>
+              <CardDescription>
+                Configure Model Context Protocol servers for AI integrations. Coming soon (#98).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                MCP server configuration will be available in a future update. You&apos;ll be able to
+                add stdio and HTTP servers, manage credentials, and attach them to the AI assistant.
+              </p>
+            </CardContent>
+          </Card>
+        );
+
+      case 'updates':
+        return (
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ArrowUpCircle className="h-4 w-4 text-primary" />
+                  Release channel
+                </CardTitle>
+                <CardDescription>
+                  MQLens checks for updates on launch and installs only after you approve.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Channel</Label>
+                  <div role="group" aria-label="Update channel" className="flex flex-wrap gap-2">
+                    {(['stable', 'dev'] as const).map((ch) => (
+                      <Button
+                        key={ch}
+                        type="button"
+                        variant={updateChannel === ch ? 'default' : 'outline'}
+                        size="sm"
+                        data-testid={`update-channel-${ch}`}
+                        onClick={() => setUpdateChannel(ch)}
+                      >
+                        {ch === 'stable' ? 'Stable' : 'Dev (pre-release)'}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    Dev receives pre-release builds. Switching to Dev pulls newer dev builds; switching
+                    back to Stable won&apos;t downgrade automatically. Click Save to apply.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Manual check</CardTitle>
+                <CardDescription>Trigger an update check without restarting the app.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  type="button"
+                  variant="outline"
+                  data-testid="check-updates-btn"
+                  onClick={() => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT))}
+                >
+                  <ArrowUpCircle className="h-3.5 w-3.5" />
+                  Check for updates
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        );
+
+      case 'mongosh':
+        return (
+          <Card className="max-w-3xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Terminal className="h-4 w-4 text-success" />
+                Mongosh binary
+              </CardTitle>
+              <CardDescription>
+                Absolute path or command name resolved via your system PATH.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="mongosh-path">Executable path</Label>
+                <Input
+                  id="mongosh-path"
+                  className="font-mono"
+                  value={mongoshPath}
+                  onChange={(event) => setMongoshPath(event.target.value)}
+                  placeholder="mongosh or /usr/local/bin/mongosh"
+                  data-testid="mongosh-path-input"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={testMongosh} disabled={testing} type="button">
+                  <Terminal className="h-3 w-3" />
+                  {testing ? 'Testing...' : 'Test path'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        );
+
+      case 'ai':
+        return (
+          <div className="grid gap-6 xl:grid-cols-2">
+            <Card className="xl:col-span-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  Provider
+                </CardTitle>
+                <CardDescription>
+                  Choose a cloud API or a local agent CLI for the query assistant.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="max-w-md space-y-2">
+                  <Label>Active provider</Label>
+                  <Select value={aiProvider} onValueChange={setAiProvider}>
+                    <SelectTrigger data-testid="ai-provider-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[...CLOUD_PROVIDERS, ...LOCAL_AGENTS].map((p) => (
+                        <SelectItem key={p} value={p}>{PROVIDER_LABELS[p]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
+
+            {aiProvider === 'anthropic' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Anthropic</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="anthropic-key">API key</Label>
+                    <Input
+                      id="anthropic-key"
+                      type="password"
+                      className="font-mono"
+                      value={anthropicKey}
+                      onChange={(e) => setAnthropicKey(e.target.value)}
+                      placeholder="sk-ant-..."
+                      data-testid="anthropic-key-input"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="anthropic-model">Model</Label>
+                    <Input
+                      id="anthropic-model"
+                      className="font-mono"
+                      value={anthropicModel}
+                      onChange={(e) => setAnthropicModel(e.target.value)}
+                      placeholder="claude-opus-4-8"
+                      data-testid="anthropic-model-input"
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {aiProvider === 'openai' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">OpenAI</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="openai-key">API key</Label>
+                    <Input
+                      id="openai-key"
+                      type="password"
+                      className="font-mono"
+                      value={openaiKey}
+                      onChange={(e) => setOpenaiKey(e.target.value)}
+                      placeholder="sk-..."
+                      data-testid="openai-key-input"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="openai-model">Model</Label>
+                    <Input
+                      id="openai-model"
+                      className="font-mono"
+                      value={openaiModel}
+                      onChange={(e) => setOpenaiModel(e.target.value)}
+                      placeholder="gpt-4o"
+                      data-testid="openai-model-input"
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {aiProvider === 'gemini' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Google Gemini</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="gemini-key">API key</Label>
+                    <Input
+                      id="gemini-key"
+                      type="password"
+                      className="font-mono"
+                      value={geminiKey}
+                      onChange={(e) => setGeminiKey(e.target.value)}
+                      placeholder="AIza..."
+                      data-testid="gemini-key-input"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="gemini-model">Model</Label>
+                    <Input
+                      id="gemini-model"
+                      className="font-mono"
+                      value={geminiModel}
+                      onChange={(e) => setGeminiModel(e.target.value)}
+                      placeholder="gemini-1.5-flash"
+                      data-testid="gemini-model-input"
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {(LOCAL_AGENTS as readonly string[]).includes(aiProvider) && (
+              <Card className="xl:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base">Local agent</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {(() => {
+                    const det = agents.find((a) => a.id === aiProvider);
+                    return (
+                      <p className="text-xs text-muted-foreground" data-testid="agent-availability">
+                        {det?.available
+                          ? `✓ Installed${det.version ? ` — ${det.version}` : ''}`
+                          : '✗ Not detected on PATH — install it or set an absolute path below.'}
+                      </p>
+                    );
+                  })()}
+                  <div className="space-y-2">
+                    <Label htmlFor="local-command">Command (use {'{prompt}'} for the prompt)</Label>
+                    <Input
+                      id="local-command"
+                      className="font-mono"
+                      value={localCommandFor(aiProvider)}
+                      onChange={(e) => setLocalCommands((prev) => ({ ...prev, [aiProvider]: e.target.value }))}
+                      placeholder={DEFAULT_LOCAL_COMMANDS[aiProvider]}
+                      data-testid="local-command-input"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Runs the agent locally using its own auth — no API key stored.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <Card className="xl:col-span-2">
+              <CardHeader>
+                <CardTitle className="text-base">Custom instructions</CardTitle>
+                <CardDescription>Optional system prompt appended to every AI query request.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <textarea
+                  id="ai-instructions"
+                  rows={5}
+                  className={cn(
+                    'flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50'
+                  )}
+                  value={customInstructions}
+                  onChange={(e) => setCustomInstructions(e.target.value)}
+                  placeholder="e.g. Always project only the fields the user mentions; prefer $regex for text search."
+                  data-testid="ai-instructions-input"
+                />
+              </CardContent>
+            </Card>
+          </div>
+        );
+
+      case 'security':
+        return (
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ShieldCheck className="h-4 w-4 text-warning" />
+                  Master password
+                </CardTitle>
+                <CardDescription>Encrypts stored connections and API keys in the vault.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="sec-old-pw">Current password</Label>
+                  <Input
+                    id="sec-old-pw"
+                    type="password"
+                    className="font-mono"
+                    value={oldPw}
+                    onChange={(e) => setOldPw(e.target.value)}
+                    placeholder="Current password"
+                    data-testid="sec-old-pw"
+                  />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="sec-new-pw">New password</Label>
+                    <Input
+                      id="sec-new-pw"
+                      type="password"
+                      className="font-mono"
+                      value={newPw}
+                      onChange={(e) => setNewPw(e.target.value)}
+                      placeholder="New password"
+                      data-testid="sec-new-pw"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="sec-new-pw2">Confirm</Label>
+                    <Input
+                      id="sec-new-pw2"
+                      type="password"
+                      className="font-mono"
+                      value={newPw2}
+                      onChange={(e) => setNewPw2(e.target.value)}
+                      placeholder="Confirm new password"
+                      data-testid="sec-new-pw2"
+                    />
+                  </div>
+                </div>
+
+                {secMsg && (
+                  <div
+                    className={cn(
+                      'rounded-md px-3 py-2 text-sm',
+                      secMsg === 'Master password changed'
+                        ? 'bg-success/10 text-success'
+                        : 'bg-destructive/10 text-destructive'
+                    )}
+                    data-testid="sec-msg"
+                  >
+                    {secMsg}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={onChangePw} type="button" data-testid="sec-change-pw-btn">
+                    <ShieldCheck className="h-3 w-3" />
+                    Change password
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="flex flex-col gap-6">
+              {bio?.available && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Biometric unlock</CardTitle>
+                    <CardDescription>Unlock the vault with Touch ID or Face ID on this device.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-3">
+                      <Switch
+                        data-testid="sec-biometric-toggle"
+                        checked={!!bio.enrolled}
+                        disabled={bioBusy}
+                        onCheckedChange={toggleBiometric}
+                      />
+                      <Label className="font-normal">
+                        Unlock with {bio.biometryType === 2 ? 'Touch ID' : bio.biometryType === 3 ? 'Face ID' : 'biometrics'}
+                      </Label>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              <Card className="border-destructive/30">
+                <CardHeader>
+                  <CardTitle className="text-base text-destructive">Danger zone</CardTitle>
+                  <CardDescription>Permanently deletes all saved connections and secrets.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button
+                    variant="outline"
+                    onClick={onResetVault}
+                    type="button"
+                    data-testid="sec-reset-btn"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    Reset vault
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
   return (
-    <div className="mql-settings" data-testid="settings-view">
-      <header className="mql-settings-h">
-        <div className="mql-row" style={{ gap: 8 }}>
-          <LayoutGrid size={16} className="text-[var(--accent-blue)]" />
-          <div>
-            <h2>Settings</h2>
-            <span className="mql-mono">Application configuration</span>
+    <div className="flex h-full min-h-0 w-full flex-1 overflow-hidden bg-background" data-testid="settings-view">
+      <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-sidebar/40 xl:w-60">
+        <div className="shrink-0 border-b border-border px-4 py-5">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+              <LayoutGrid className="h-4 w-4 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold leading-tight">Settings</h2>
+              <p className="truncate text-[10px] text-muted-foreground">MQLens preferences</p>
+            </div>
           </div>
         </div>
-      </header>
 
-      <div className="mql-settings-layout">
-        <nav className="mql-settings-tabs" role="tablist" aria-label="Settings sections">
-          {SETTINGS_TABS.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={tab === id}
-              data-testid={`settings-tab-${id}`}
-              className={`mql-settings-tab ${tab === id ? 'is-active' : ''}`}
-              onClick={() => setTab(id)}
-            >
-              <Icon size={14} /> <span>{label}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="mql-settings-panel">
-        {tab === 'appearance' && (
-        <section className="mql-settings-section">
-          <div className="mql-settings-section-h">
-            <LayoutGrid size={13} color="var(--accent-blue)" />
-            <span className="mql-label">Layout Density</span>
-          </div>
-          <div className="mql-density-picker">
-            {(['roomy', 'cozy', 'compact'] as const).map((opt) => {
-              const isActive = density === opt;
-              return (
-                <button
-                  key={opt}
-                  onClick={() => onChangeDensity(opt)}
-                  className="mql-density-row"
-                  data-testid={`density-option-${opt}`}
-                  type="button"
-                >
-                  <div>
-                    <div className="mql-settings-option-title" style={{ color: isActive ? 'var(--accent-blue)' : 'var(--text-main)' }}>
-                      {opt}
-                    </div>
-                    <div className="mql-settings-option-copy">
-                      {opt === 'roomy' && 'Larger spacing and font sizing for comfortable reading.'}
-                      {opt === 'cozy' && 'Balanced padding and standard grid heights (recommended).'}
-                      {opt === 'compact' && 'Dense spacing and smaller font sizes for maximum data display.'}
-                    </div>
-                  </div>
-                  {isActive && <Check size={14} className="text-[var(--accent-green)] flex-shrink-0" data-testid={`density-check-${opt}`} />}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-        )}
-
-        {tab === 'updates' && (
-        <section className="mql-settings-section">
-          <div className="mql-settings-section-h">
-            <ArrowUpCircle size={13} color="var(--accent-blue)" />
-            <span className="mql-label">Updates</span>
-          </div>
-          <div className="mql-settings-option-copy" style={{ marginBottom: 8 }}>
-            MQLens checks for updates on launch and installs only after you approve. You can also check now.
-          </div>
-
-          <div className="mql-label" style={{ marginBottom: 6 }}>Channel</div>
-          <div role="group" aria-label="Update channel" style={{ display: 'inline-flex', gap: 4, marginBottom: 6 }}>
-            {(['stable', 'dev'] as const).map((ch) => (
+        <ScrollArea className="min-h-0 flex-1">
+          <nav className="flex flex-col gap-0.5 p-2" aria-label="Settings sections">
+            {SETTINGS_TABS.map(({ id, label, Icon }) => (
               <button
-                key={ch}
+                key={id}
                 type="button"
-                data-testid={`update-channel-${ch}`}
-                className={`mql-btn ${updateChannel === ch ? 'mql-btn-primary' : 'mql-btn-secondary'}`}
-                onClick={() => setUpdateChannel(ch)}
+                data-testid={`settings-tab-${id}`}
+                onClick={() => setTab(id)}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm transition-colors cursor-pointer',
+                  tab === id
+                    ? 'bg-background font-medium text-foreground shadow-sm ring-1 ring-border'
+                    : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
+                )}
               >
-                {ch === 'stable' ? 'Stable' : 'Dev (pre-release)'}
+                <Icon className={cn('h-4 w-4 shrink-0', tab === id ? 'text-primary' : '')} />
+                <span className="truncate">{label}</span>
               </button>
             ))}
-          </div>
-          <div className="mql-settings-option-copy" style={{ marginBottom: 10, fontSize: 11 }}>
-            Dev receives pre-release builds. Switching to Dev pulls newer dev builds; switching back to Stable won’t downgrade automatically. Click Save to apply.
-          </div>
+          </nav>
+        </ScrollArea>
+      </aside>
 
-          <button
-            type="button"
-            className="mql-btn mql-btn-secondary"
-            data-testid="check-updates-btn"
-            onClick={() => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT))}
-          >
-            <ArrowUpCircle size={13} /> Check for updates
-          </button>
-        </section>
-        )}
-
-        {tab === 'mongosh' && (
-        <section className="mql-settings-section">
-          <div className="mql-settings-section-h">
-            <Terminal size={13} color="var(--accent-green)" />
-            <span className="mql-label">Mongosh Binary</span>
-          </div>
-          <label className="mql-field-group">
-            <span className="mql-settings-field-label">Executable path</span>
-            <input
-              className="mql-settings-input mql-mono"
-              value={mongoshPath}
-              onChange={(event) => setMongoshPath(event.target.value)}
-              placeholder="mongosh or /usr/local/bin/mongosh"
-              data-testid="mongosh-path-input"
-            />
-          </label>
-          <div className="mql-settings-actions">
-            <button className="mql-btn" onClick={testMongosh} disabled={testing} type="button">
-              <Terminal size={11} />
-              {testing ? 'Testing...' : 'Test Path'}
-            </button>
-          </div>
-        </section>
-        )}
-
-        {tab === 'ai' && (
-        <section className="mql-settings-section">
-          <div className="mql-settings-section-h">
-            <Sparkles size={13} color="var(--accent-blue)" />
-            <span className="mql-label">AI Query Assistant</span>
-          </div>
-
-          <label className="mql-field-group">
-            <span className="mql-settings-field-label">Provider</span>
-            <select
-              className="mql-settings-input"
-              value={aiProvider}
-              onChange={(e) => setAiProvider(e.target.value)}
-              data-testid="ai-provider-select"
-            >
-              {[...CLOUD_PROVIDERS, ...LOCAL_AGENTS].map((p) => (
-                <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>
-              ))}
-            </select>
-          </label>
-
-          {aiProvider === 'anthropic' && (
-            <>
-              <label className="mql-field-group">
-                <span className="mql-settings-field-label">Anthropic API key</span>
-                <input type="password" className="mql-settings-input mql-mono" value={anthropicKey}
-                  onChange={(e) => setAnthropicKey(e.target.value)} placeholder="sk-ant-..."
-                  data-testid="anthropic-key-input" />
-              </label>
-              <label className="mql-field-group">
-                <span className="mql-settings-field-label">Model</span>
-                <input className="mql-settings-input mql-mono" value={anthropicModel}
-                  onChange={(e) => setAnthropicModel(e.target.value)} placeholder="claude-opus-4-8"
-                  data-testid="anthropic-model-input" />
-              </label>
-            </>
-          )}
-
-          {aiProvider === 'openai' && (
-            <>
-              <label className="mql-field-group">
-                <span className="mql-settings-field-label">OpenAI API key</span>
-                <input type="password" className="mql-settings-input mql-mono" value={openaiKey}
-                  onChange={(e) => setOpenaiKey(e.target.value)} placeholder="sk-..."
-                  data-testid="openai-key-input" />
-              </label>
-              <label className="mql-field-group">
-                <span className="mql-settings-field-label">Model</span>
-                <input className="mql-settings-input mql-mono" value={openaiModel}
-                  onChange={(e) => setOpenaiModel(e.target.value)} placeholder="gpt-4o"
-                  data-testid="openai-model-input" />
-              </label>
-            </>
-          )}
-
-          {aiProvider === 'gemini' && (
-            <>
-              <label className="mql-field-group">
-                <span className="mql-settings-field-label">Gemini API key</span>
-                <input type="password" className="mql-settings-input mql-mono" value={geminiKey}
-                  onChange={(e) => setGeminiKey(e.target.value)} placeholder="AIza..."
-                  data-testid="gemini-key-input" />
-              </label>
-              <label className="mql-field-group">
-                <span className="mql-settings-field-label">Model</span>
-                <input className="mql-settings-input mql-mono" value={geminiModel}
-                  onChange={(e) => setGeminiModel(e.target.value)} placeholder="gemini-1.5-flash"
-                  data-testid="gemini-model-input" />
-              </label>
-            </>
-          )}
-
-          {(LOCAL_AGENTS as readonly string[]).includes(aiProvider) && (
-            <>
-              {(() => {
-                const det = agents.find((a) => a.id === aiProvider);
-                return (
-                  <div className="mql-settings-option-copy" data-testid="agent-availability">
-                    {det?.available
-                      ? `✓ Installed${det.version ? ` — ${det.version}` : ''}`
-                      : '✗ Not detected on PATH — install it or set an absolute path below.'}
-                  </div>
-                );
-              })()}
-              <label className="mql-field-group">
-                <span className="mql-settings-field-label">Command (use {'{prompt}'} for the prompt)</span>
-                <input className="mql-settings-input mql-mono" value={localCommandFor(aiProvider)}
-                  onChange={(e) => setLocalCommands((prev) => ({ ...prev, [aiProvider]: e.target.value }))}
-                  placeholder={DEFAULT_LOCAL_COMMANDS[aiProvider]}
-                  data-testid="local-command-input" />
-                <span className="mql-settings-option-copy">
-                  Runs the agent locally using its own auth — no API key stored. The prompt is passed as a single argument.
-                </span>
-              </label>
-            </>
-          )}
-
-          <label className="mql-field-group">
-            <span className="mql-settings-field-label">Custom instructions (optional)</span>
-            <textarea className="mql-settings-input mql-mono" rows={3} value={customInstructions}
-              onChange={(e) => setCustomInstructions(e.target.value)}
-              placeholder="e.g. Always project only the fields the user mentions; prefer $regex for text search."
-              data-testid="ai-instructions-input" />
-          </label>
-
-        </section>
-        )}
-
-        {tab === 'security' && (
-        <section className="mql-settings-section">
-          <div className="mql-settings-section-h">
-            <ShieldCheck size={13} color="var(--accent-amber)" />
-            <span className="mql-label">Security</span>
-          </div>
-
-          <label className="mql-field-group">
-            <span className="mql-settings-field-label">Current master password</span>
-            <input
-              type="password"
-              className="mql-settings-input mql-mono"
-              value={oldPw}
-              onChange={(e) => setOldPw(e.target.value)}
-              placeholder="Current password"
-              data-testid="sec-old-pw"
-            />
-          </label>
-          <label className="mql-field-group">
-            <span className="mql-settings-field-label">New master password</span>
-            <input
-              type="password"
-              className="mql-settings-input mql-mono"
-              value={newPw}
-              onChange={(e) => setNewPw(e.target.value)}
-              placeholder="New password"
-              data-testid="sec-new-pw"
-            />
-          </label>
-          <label className="mql-field-group">
-            <span className="mql-settings-field-label">Confirm new password</span>
-            <input
-              type="password"
-              className="mql-settings-input mql-mono"
-              value={newPw2}
-              onChange={(e) => setNewPw2(e.target.value)}
-              placeholder="Confirm new password"
-              data-testid="sec-new-pw2"
-            />
-          </label>
-
-          {secMsg && (
-            <div
-              className={secMsg === 'Master password changed' ? 'mql-settings-status' : 'mql-settings-error'}
-              data-testid="sec-msg"
-            >
-              {secMsg}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="shrink-0 border-b border-border bg-muted/20 px-6 py-5 lg:px-8">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+              <activeTab.Icon className="h-5 w-5 text-primary" />
             </div>
-          )}
-
-          <div className="mql-settings-actions">
-            <button className="mql-btn mql-btn-primary" onClick={onChangePw} type="button" data-testid="sec-change-pw-btn">
-              <ShieldCheck size={11} />
-              Change master password
-            </button>
-            <button className="mql-btn" onClick={onResetVault} type="button" data-testid="sec-reset-btn"
-              style={{ color: 'var(--soft-red-text)', borderColor: 'var(--soft-red-bd)' }}>
-              Reset vault
-            </button>
-          </div>
-
-          {bio?.available && (
-            <label className="mql-field-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <input
-                type="checkbox"
-                data-testid="sec-biometric-toggle"
-                checked={!!bio.enrolled}
-                disabled={bioBusy}
-                onChange={toggleBiometric}
-              />
-              <span className="mql-settings-field-label">
-                Unlock with {bio.biometryType === 2 ? 'Touch ID' : bio.biometryType === 3 ? 'Face ID' : 'biometrics'}
-              </span>
-            </label>
-          )}
-        </section>
-        )}
-
-          {(tab === 'updates' || tab === 'mongosh' || tab === 'ai') && (
-            <div className="mql-settings-footer">
-              <div className="mql-settings-footer-msg">
-                {status && <span className="mql-settings-status">{status}</span>}
-                {error && <span className="mql-settings-error">{error}</span>}
-              </div>
-              <button className="mql-btn mql-btn-primary" onClick={saveSettings} disabled={saving} type="button" data-testid="settings-save-btn">
-                <Save size={11} />
-                {saving ? 'Saving...' : 'Save'}
-              </button>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold tracking-tight">{activeTab.label}</h1>
+              <p className="mt-0.5 text-sm text-muted-foreground">{activeTab.description}</p>
             </div>
-          )}
-        </div>
+          </div>
+        </header>
+
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="px-6 py-6 lg:px-8 lg:py-8">
+            {renderTabContent()}
+          </div>
+        </ScrollArea>
+
+        {activeTab.persistFooter && (
+          <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-border bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:px-8">
+            <div className="flex min-w-0 items-center gap-3 text-sm">
+              {status && <span className="text-success">{status}</span>}
+              {error && <span className="text-destructive">{error}</span>}
+            </div>
+            <Button onClick={saveSettings} disabled={saving} type="button" data-testid="settings-save-btn">
+              <Save className="h-3.5 w-3.5" />
+              {saving ? 'Saving...' : 'Save changes'}
+            </Button>
+          </footer>
+        )}
       </div>
     </div>
   );

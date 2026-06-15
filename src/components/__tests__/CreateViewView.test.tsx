@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
+import { renderWithProviders } from '../../test/render-with-providers';
 import { CreateViewView } from '../CreateViewView';
 
 const mockInvoke = vi.fn();
@@ -23,16 +24,19 @@ describe('CreateViewView (M7 — view creation)', () => {
       return Promise.reject(new Error(`unhandled ${cmd}`));
     });
     const onCreated = vi.fn();
-    render(
+    renderWithProviders(
       <CreateViewView connectionId="c1" databaseName="shop" onCreated={onCreated} />
     );
 
     // Source options come from list_collections (system.* excluded).
-    await screen.findByRole('option', { name: 'customers' });
+    await screen.findByTestId('view-source-select');
+    expect(screen.getByTestId('view-source-select')).toHaveTextContent('customers');
+    fireEvent.click(screen.getByTestId('view-source-select'));
+    expect(screen.getByRole('option', { name: 'customers' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'system.views' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'customers' }));
 
     fireEvent.change(screen.getByTestId('view-name-input'), { target: { value: 'vip' } });
-    fireEvent.change(screen.getByTestId('view-source-select'), { target: { value: 'customers' } });
     fireEvent.change(screen.getByTestId('view-pipeline-input'), {
       target: { value: '[{ "$match": { "tier": "Premium" } }]' },
     });
@@ -54,11 +58,12 @@ describe('CreateViewView (M7 — view creation)', () => {
     mockInvoke.mockImplementation((cmd: string) =>
       cmd === 'list_collections' ? Promise.resolve(collections) : Promise.resolve()
     );
-    render(<CreateViewView connectionId="c1" databaseName="shop" onCreated={() => {}} />);
+    renderWithProviders(<CreateViewView connectionId="c1" databaseName="shop" onCreated={() => {}} />);
 
-    await screen.findByRole('option', { name: 'customers' });
+    await screen.findByTestId('view-source-select');
+    fireEvent.click(screen.getByTestId('view-source-select'));
+    fireEvent.click(screen.getByRole('option', { name: 'customers' }));
     fireEvent.change(screen.getByTestId('view-name-input'), { target: { value: 'vip' } });
-    fireEvent.change(screen.getByTestId('view-source-select'), { target: { value: 'customers' } });
     fireEvent.change(screen.getByTestId('view-pipeline-input'), { target: { value: '[{ not json' } });
     fireEvent.click(screen.getByTestId('view-create-btn'));
 

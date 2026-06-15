@@ -1,21 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from "react";
+import { useThemeOptional } from "@/hooks/use-theme";
+import {
+  getMqlensMonacoThemeId,
+  type MqlensMonacoThemeId,
+} from "./monacoAppTheme";
 
-const current = (): 'light' | 'vs-dark' =>
-  typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light'
-    ? 'light'
-    : 'vs-dark';
+function resolveThemeId(resolvedMode?: "dark" | "light"): MqlensMonacoThemeId {
+  if (resolvedMode === "light") return "mqlens-light";
+  if (resolvedMode === "dark") return "mqlens-dark";
+  return getMqlensMonacoThemeId();
+}
 
-// Monaco theme that tracks the app theme reactively. Reading the data-theme
-// attribute during render goes stale: the attribute is set in an effect AFTER
-// the toggle's render, so an editor that only reads at render lags one render
-// behind (or, with a hardcoded theme, never updates at all).
-export function useMonacoTheme(): 'light' | 'vs-dark' {
-  const [theme, setTheme] = useState(current);
-  useEffect(() => {
-    const observer = new MutationObserver(() => setTheme(current()));
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    setTheme(current()); // catch a flip between first render and observation
-    return () => observer.disconnect();
-  }, []);
-  return theme;
+/** Monaco theme id — driven by ThemeProvider, no DOM observers. */
+export function useMonacoTheme(): MqlensMonacoThemeId {
+  const themeCtx = useThemeOptional();
+  return useMemo(
+    () => resolveThemeId(themeCtx?.resolvedMode),
+    [themeCtx?.resolvedMode]
+  );
 }
