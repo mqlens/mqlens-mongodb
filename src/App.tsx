@@ -199,7 +199,7 @@ const tabLabelFor = (
 
 function Workspace() {
   const { toast, confirm, choose, prompt } = useDialogs();
-  const { config, resolvedMode, setMode, setSpacingDensity } = useTheme();
+  const { config, resolvedMode, setMode, setSpacingDensity, resetZoom } = useTheme();
   const density = config.spacingDensity;
   // Open the Quick Start tab by default so the app never starts on a blank canvas.
   const [tabs, setTabs] = useState<QueryTab[]>([createQuickStartTab()]);
@@ -1515,6 +1515,8 @@ function Workspace() {
           memory={resUsage ? formatBytes(resUsage.memory_bytes) : undefined}
           mongoVersion={mongoVersion ?? undefined}
           appVersion={appVersion ? `v${appVersion}` : undefined}
+          zoomPercent={Math.round(config.uiZoom * 100)}
+          onZoomReset={resetZoom}
         />
       }
       overlays={
