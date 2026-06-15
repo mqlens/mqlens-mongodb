@@ -64,6 +64,9 @@ vi.mock('../Sidebar', () => ({
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
       </button>
+      <button data-testid="select-orders-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'orders')}>
+        Select Orders
+      </button>
       <button data-testid="select-index-btn" onClick={() => onSelectIndex('conn-1', 'sales_db', 'customers', 'email_1')}>
         Select Index
       </button>
@@ -782,5 +785,39 @@ describe('App Component', () => {
     // The malformed file surfaces an in-app error toast and no write happens.
     expect(await screen.findByText(/Import aborted/)).toBeInTheDocument();
     expect(calls.find((c) => c.cmd === 'import_documents')).toBeFalsy();
+  });
+
+  it('resets query editor state when switching collections (#120)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'Sample' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'count_documents') {
+        return Promise.resolve(1);
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    // Open customers, type a custom filter.
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    await screen.findByText(/"Sample"/);
+    fireEvent.click(screen.getByTestId('toggle-query-builder'));
+    const filterInput = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    fireEvent.change(filterInput, { target: { value: '{"status":"active"}' } });
+    expect(filterInput.value).toContain('"status"');
+
+    // Switch to orders — editor must reset to default {}, not carry over the filter.
+    fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+    await screen.findByText(/"Sample"/);
+    fireEvent.click(screen.getByTestId('toggle-query-builder'));
+    const ordersFilter = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    expect(ordersFilter.value).toBe('{}');
   });
 });

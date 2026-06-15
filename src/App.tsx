@@ -1597,6 +1597,7 @@ function Workspace() {
                 const connectionUser = activeConnection ? usernameFromUri(activeConnection.uri) : '';
                 return (
                   <DocumentViewer
+                    key={activeTab.id}
                     connectionId={activeTab.connectionId}
                     connectionName={connectionName}
                     connectionUser={connectionUser}
