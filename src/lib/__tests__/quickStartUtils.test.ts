@@ -1,5 +1,24 @@
 import { describe, it, expect } from 'vitest';
-import { hostFromUri, avatarColor, initial, topology, AVATAR_PALETTE } from '../quickStartUtils';
+import {
+  hostFromUri,
+  avatarColor,
+  initial,
+  topology,
+  AVATAR_PALETTE,
+  primaryShortcutModifier,
+} from '../quickStartUtils';
+
+describe('primaryShortcutModifier', () => {
+  it('uses the Command symbol on Apple platforms', () => {
+    expect(primaryShortcutModifier('MacIntel')).toBe('⌘');
+    expect(primaryShortcutModifier('iPhone')).toBe('⌘');
+  });
+
+  it('uses Ctrl on other platforms', () => {
+    expect(primaryShortcutModifier('Win32')).toBe('Ctrl');
+    expect(primaryShortcutModifier('Linux x86_64')).toBe('Ctrl');
+  });
+});
 
 describe('topology', () => {
   it('labels srv uris as SRV cluster', () => {

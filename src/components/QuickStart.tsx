@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import brandMark from '../assets/mqlens-mark.png';
 import type { ConnectionProfile } from '../lib/connection';
+import { primaryShortcutModifier } from '../lib/quickStartUtils';
 import { ConnectionCard } from './ConnectionCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,13 +48,6 @@ const QUICK_ACTIONS: {
   { id: 'sample', label: 'Load sample data', icon: Download, onClickKey: 'onLoadSampleData' as const, emptyOnly: true },
   { id: 'settings', label: 'Settings', icon: Settings, onClickKey: 'onOpenSettings' },
 ];
-
-const SHORTCUTS = [
-  { keys: '⌘ ↵', label: 'Run the current query' },
-  { keys: '⌘ F', label: 'Search the sidebar tree' },
-  { keys: '⌘ K', label: 'Open command palette' },
-  { keys: '⌘ + / −', label: 'Zoom interface in or out' },
-] as const;
 
 export const QuickStart: React.FC<QuickStartProps> = ({
   onConnect,
@@ -89,6 +83,13 @@ export const QuickStart: React.FC<QuickStartProps> = ({
   const isEmpty = sorted.length === 0;
   const activeIds = new Set(activeConnections.map((c) => c.profileId));
   const activeCount = sorted.filter((p) => activeIds.has(p.id)).length;
+  const modifier = primaryShortcutModifier();
+  const shortcuts = [
+    { keys: `${modifier} ↵`, label: 'Run the current query' },
+    { keys: `${modifier} F`, label: 'Search the sidebar tree' },
+    { keys: `${modifier} K`, label: 'Open command palette' },
+    { keys: `${modifier} + / −`, label: 'Zoom interface in or out' },
+  ] as const;
 
   const handleQuickConnect = async (p: ConnectionProfile) => {
     setConnectingId(p.id);
@@ -302,7 +303,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
                   <CardTitle className="text-sm">Keyboard shortcuts</CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3 pt-0">
-                  {SHORTCUTS.map(({ keys, label }) => (
+                  {shortcuts.map(({ keys, label }) => (
                     <div key={keys} className="flex items-start gap-2.5 text-xs text-muted-foreground">
                       <kbd className="mt-0.5 shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-[10px] text-foreground">
                         {keys}
