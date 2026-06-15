@@ -16,6 +16,7 @@ describe('collectionRef', () => {
   it('uses getCollection() for non-identifier names', () => {
     expect(collectionRef('weird name')).toBe('getCollection("weird name")');
     expect(collectionRef('has"quote')).toBe('getCollection("has\\"quote")');
+    expect(collectionRef('has\\backslash')).toBe('getCollection("has\\\\backslash")');
   });
 });
 
