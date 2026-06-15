@@ -445,6 +445,7 @@ describe('ConnectionManager Component', () => {
         name: 'Staging DB',
         uri: 'mongodb://staging:27017',
         ssh: null,
+        color_tag: null,
       });
       // The nested modal should be closed
       expect(screen.queryByText('New Connection')).not.toBeInTheDocument();
@@ -705,5 +706,147 @@ describe('ConnectionManager Component', () => {
     const connectBtn = screen.getByRole('button', { name: /already connected/i });
     expect(connectBtn).toBeInTheDocument();
     expect(connectBtn).toBeDisabled();
+  });
+
+  it('saves a color tag from the preset palette', async () => {
+    let savedProfile: any = null;
+    let profilesList: any[] = [];
+
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profilesList);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        profilesList = [args.profile];
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <ConnectionManager
+        isOpen={true}
+        onClose={() => {}}
+        onConnect={() => {}}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Prod' } });
+    await pickSelectOption('topology-select', /full uri string only/i);
+    fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: 'mongodb://prod' } });
+    fireEvent.click(screen.getByTestId('color-swatch-blue'));
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(savedProfile).toMatchObject({
+        name: 'Prod',
+        uri: 'mongodb://prod',
+        color_tag: '#3b82f6',
+      });
+    });
+  });
+
+  it('saves a custom color from the color picker', async () => {
+    let savedProfile: any = null;
+    let profilesList: any[] = [];
+
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profilesList);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        profilesList = [args.profile];
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <ConnectionManager
+        isOpen={true}
+        onClose={() => {}}
+        onConnect={() => {}}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Custom' } });
+    await pickSelectOption('topology-select', /full uri string only/i);
+    fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: 'mongodb://custom' } });
+    expect(screen.getByLabelText('Pick a custom color')).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('color-picker-custom'), { target: { value: '#a1b2c3' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(savedProfile).toMatchObject({
+        name: 'Custom',
+        uri: 'mongodb://custom',
+        color_tag: '#a1b2c3',
+      });
+    });
+  });
+
+  it('shows color dots in the profile list for tagged connections', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') {
+        return Promise.resolve([
+          { id: 'p1', name: 'Staging', uri: 'mongodb://staging', color_tag: '#22c55e' },
+          { id: 'p2', name: 'Prod', uri: 'mongodb://prod' },
+        ]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <ConnectionManager
+        isOpen={true}
+        onClose={() => {}}
+        onConnect={() => {}}
+      />
+    );
+
+    await waitFor(() => expect(screen.getAllByText('Staging')[0]).toBeInTheDocument());
+    const dots = screen.getAllByTestId('connection-color-dot');
+    expect(dots.length).toBeGreaterThanOrEqual(1);
+    dots.forEach((dot) => {
+      expect(dot).toHaveStyle({ backgroundColor: 'rgb(34, 197, 94)' });
+    });
+  });
+
+  it('clears a saved color tag when none is selected', async () => {
+    let savedProfile: any = null;
+    const profilesList = [
+      { id: 'p1', name: 'Staging', uri: 'mongodb://staging', color_tag: '#22c55e' },
+    ];
+
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profilesList);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        profilesList[0] = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <ConnectionManager
+        isOpen={true}
+        onClose={() => {}}
+        onConnect={() => {}}
+      />
+    );
+
+    await waitFor(() => expect(screen.getAllByText('Staging')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Staging')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByTestId('color-swatch-none'));
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(savedProfile).toMatchObject({
+        id: 'p1',
+        color_tag: null,
+      });
+    });
   });
 });

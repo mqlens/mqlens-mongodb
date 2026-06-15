@@ -804,4 +804,31 @@ describe('Sidebar Component', () => {
       expect(onSelectCollection).toHaveBeenCalledWith('conn-new', 'sales_db', 'orders');
     });
   });
+
+  it('shows a color dot for tagged active connections', async () => {
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'list_all_saved_queries') return Promise.resolve([]);
+      if (cmd === 'list_databases') {
+        if (args.id === 'conn-1') return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Staging', uri: 'mongodb://staging', color_tag: '#3b82f6' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    expect(await screen.findByTitle('Connection color')).toBeInTheDocument();
+    expect(screen.getByText('Staging')).toBeInTheDocument();
+  });
 });
