@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { WorkspaceTabBar } from '@/components/layout/WorkspaceTabBar';
 import { StatusBar } from '@/components/layout/StatusBar';
@@ -6,7 +6,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { useTheme } from '@/hooks/use-theme';
 import { Sidebar } from './components/Sidebar';
 import { CommandPalette, type PaletteAction } from './components/CommandPalette';
-import { DocumentViewer } from './components/DocumentViewer';
+import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
 import { DataGrid } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
 import { SettingsView } from './components/SettingsModal';
@@ -204,6 +204,10 @@ function Workspace() {
   // Open the Quick Start tab by default so the app never starts on a blank canvas.
   const [tabs, setTabs] = useState<QueryTab[]>([createQuickStartTab()]);
   const [activeTabId, setActiveTabId] = useState<string | null>(QUICK_START_TAB_ID);
+  const tabBuilderStateCache = useRef(new Map<string, BuilderState>());
+  const handleBuilderStateChange = useCallback((tabId: string, state: BuilderState) => {
+    tabBuilderStateCache.current.set(tabId, state);
+  }, []);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
@@ -871,6 +875,7 @@ function Workspace() {
   };
 
   const closeTabById = (tabId: string) => {
+    tabBuilderStateCache.current.delete(tabId);
     const updatedTabs = tabs.filter(t => t.id !== tabId);
     setTabs(updatedTabs);
 
@@ -1603,6 +1608,11 @@ function Workspace() {
                     connectionUser={connectionUser}
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
+                    initialBuilderState={
+                      tabBuilderStateCache.current.get(activeTab.id)
+                      ?? builderStateFromQueryTab(activeTab.lastQuery, activeTab.lastAggregate)
+                    }
+                    onBuilderStateChange={(state) => handleBuilderStateChange(activeTab.id, state)}
                     onExecute={handleExecuteQuery}
                     onExecuteAggregate={handleExecuteAggregate}
                     onExplain={handleExplainQuery}

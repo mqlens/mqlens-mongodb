@@ -787,7 +787,7 @@ describe('App Component', () => {
     expect(calls.find((c) => c.cmd === 'import_documents')).toBeFalsy();
   });
 
-  it('resets query editor state when switching collections (#120)', async () => {
+  it('isolates query editor state per collection tab (#120)', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'execute_mql_query') {
         return Promise.resolve([JSON.stringify({ _id: '1', name: 'Sample' })]);
@@ -819,5 +819,23 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('toggle-query-builder'));
     const ordersFilter = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
     expect(ordersFilter.value).toBe('{}');
+
+    // Type a different filter on orders.
+    fireEvent.change(ordersFilter, { target: { value: '{"shipped":true}' } });
+    expect(ordersFilter.value).toContain('"shipped"');
+
+    // Switch back to customers — customers filter must be restored.
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    await screen.findByText(/"Sample"/);
+    fireEvent.click(screen.getByTestId('toggle-query-builder'));
+    const customersFilterAgain = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    expect(customersFilterAgain.value).toContain('"status"');
+
+    // Switch back to orders — orders filter must be restored.
+    fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+    await screen.findByText(/"Sample"/);
+    fireEvent.click(screen.getByTestId('toggle-query-builder'));
+    const ordersFilterAgain = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    expect(ordersFilterAgain.value).toContain('"shipped"');
   });
 });

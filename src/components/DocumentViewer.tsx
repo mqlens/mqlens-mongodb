@@ -90,14 +90,69 @@ interface SortRule {
   direction: 1 | -1;
 }
 
-interface BuilderState {
+export interface PipelineStage {
+  id: string;
+  operator: string;
+  content: string;
+  disabled?: boolean;
+  collapsed?: boolean;
+}
+
+export interface BuilderState {
   queryMode: 'find' | 'aggregate';
   filterQuery: string;
   sortQuery: string;
   projectionQuery: string;
   limit: string;
   skip: string;
-  stages: { id: string; operator: string; content: string; disabled?: boolean }[];
+  stages: PipelineStage[];
+}
+
+export const DEFAULT_BUILDER_STATE: BuilderState = {
+  queryMode: 'find',
+  filterQuery: '{}',
+  sortQuery: '{}',
+  projectionQuery: '{}',
+  limit: '50',
+  skip: '0',
+  stages: [{ id: 'stage-1', operator: '$match', content: '{\n  \n}' }],
+};
+
+const stagesFromPipeline = (pipeline: unknown[]): PipelineStage[] =>
+  pipeline.map((stage, i) => {
+    const obj = (stage && typeof stage === 'object' ? stage : {}) as Record<string, unknown>;
+    const operator = Object.keys(obj)[0] ?? '$match';
+    return {
+      id: `stage-${i + 1}`,
+      operator,
+      content: JSON.stringify(obj[operator] ?? {}, null, 2),
+    };
+  });
+
+/** Derive editor state from a tab's last executed find or aggregate query. */
+export function builderStateFromQueryTab(
+  lastQuery?: { filter: string; sort: string; projection: string; limit: number; skip: number },
+  lastAggregate?: Record<string, unknown>[]
+): BuilderState {
+  if (lastAggregate && lastAggregate.length > 0) {
+    return {
+      ...DEFAULT_BUILDER_STATE,
+      queryMode: 'aggregate',
+      stages: stagesFromPipeline(lastAggregate),
+    };
+  }
+  if (lastQuery) {
+    return {
+      ...DEFAULT_BUILDER_STATE,
+      queryMode: 'find',
+      filterQuery: lastQuery.filter,
+      sortQuery: lastQuery.sort,
+      projectionQuery: lastQuery.projection,
+      limit: String(lastQuery.limit),
+      skip: String(lastQuery.skip),
+    };
+  }
+  return DEFAULT_BUILDER_STATE;
 }
 
 // Serialize the current builder state into a GeneratedQuery — the same value
@@ -144,6 +199,9 @@ interface DocumentViewerProps {
   onImport?: () => void;
   loading: boolean;
   availableFields?: string[];
+  /** Restored when remounting this tab's viewer (see App tab cache). */
+  initialBuilderState?: BuilderState;
+  onBuilderStateChange?: (state: BuilderState) => void;
   children?: React.ReactNode;
 }
 
@@ -452,15 +510,17 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onImport,
   loading,
   availableFields = [],
+  initialBuilderState = DEFAULT_BUILDER_STATE,
+  onBuilderStateChange,
   children
 }) => {
   const { prompt, toast } = useDialogs();
   const { schema } = useCollectionSchema(connectionId, databaseName, collectionName);
-  const [filterQuery, setFilterQuery] = useState('{}');
-  const [projectionQuery, setProjectionQuery] = useState('{}');
-  const [sortQuery, setSortQuery] = useState('{}');
-  const [limit, setLimit] = useState('50');
-  const [skip, setSkip] = useState('0');
+  const [filterQuery, setFilterQuery] = useState(initialBuilderState.filterQuery);
+  const [projectionQuery, setProjectionQuery] = useState(initialBuilderState.projectionQuery);
+  const [sortQuery, setSortQuery] = useState(initialBuilderState.sortQuery);
+  const [limit, setLimit] = useState(initialBuilderState.limit);
+  const [skip, setSkip] = useState(initialBuilderState.skip);
   const [explainLoading, setExplainLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]);
@@ -500,22 +560,20 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   }, [refreshStoredQueries]);
 
   // Query mode: traditional find vs aggregate pipeline
-  const [queryMode, setQueryMode] = useState<'find' | 'aggregate'>('find');
-  
-  // Aggregation stages state
-  interface PipelineStage {
-    id: string;
-    operator: string;
-    content: string;
-    // Disabled stages stay in the builder but are excluded from every
-    // pipeline build (run, run-to-here, explain, shell command, saved query).
-    disabled?: boolean;
-    // Collapsed stages hide their body editor; purely visual.
-    collapsed?: boolean;
-  }
-  const [stages, setStages] = useState<PipelineStage[]>([
-    { id: 'stage-1', operator: '$match', content: '{\n  \n}' }
-  ]);
+  const [queryMode, setQueryMode] = useState<'find' | 'aggregate'>(initialBuilderState.queryMode);
+  const [stages, setStages] = useState<PipelineStage[]>(initialBuilderState.stages);
+
+  useEffect(() => {
+    onBuilderStateChange?.({
+      queryMode,
+      filterQuery,
+      sortQuery,
+      projectionQuery,
+      limit,
+      skip,
+      stages,
+    });
+  }, [queryMode, filterQuery, sortQuery, projectionQuery, limit, skip, stages, onBuilderStateChange]);
 
   // AI chat assistant — open/close only; the panel owns its own chat state.
   const [isAIHelperOpen, setIsAIHelperOpen] = useState(false);
@@ -653,18 +711,6 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     [next[index], next[index + 1]] = [next[index + 1], next[index]];
     commitStages(next);
   };
-
-  // Build pipeline stages ({id, operator, content}) from a MongoDB pipeline array.
-  const stagesFromPipeline = (pipeline: unknown[]): PipelineStage[] =>
-    pipeline.map((stage, i) => {
-      const obj = (stage && typeof stage === 'object' ? stage : {}) as Record<string, unknown>;
-      const operator = Object.keys(obj)[0] ?? '$match';
-      return {
-        id: `stage-${i + 1}`,
-        operator,
-        content: JSON.stringify(obj[operator] ?? {}, null, 2),
-      };
-    });
 
   // Apply a generated query to the editor; auto-switch to aggregation mode for pipelines.
   const handleInsertQuery = (query: GeneratedQuery) => {
