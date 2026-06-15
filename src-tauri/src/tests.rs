@@ -1426,6 +1426,7 @@ mod tests {
             id: "profile-1".to_string(),
             name: "Mock Database".to_string(),
             uri: "mongodb://mock".to_string(),
+            color_tag: None,
             ssh: None,
         };
 
@@ -1445,6 +1446,7 @@ mod tests {
             id: "profile-2".to_string(),
             name: "Prod DB".to_string(),
             uri: "mongodb://localhost:27017".to_string(),
+            color_tag: None,
             ssh: Some(crate::ssh_tunnel::SshConfig {
                 enabled: true,
                 host: "bastion.example.com".to_string(),
@@ -1900,6 +1902,7 @@ mod tests {
             id: "1".into(),
             name: "prod".into(),
             uri: "mongodb://user:secret@host:27017".into(),
+            color_tag: None,
             ssh: None,
         }];
         save_profiles_encrypted(&prof_path, &key, &profiles).unwrap();
@@ -1946,6 +1949,7 @@ mod tests {
             id: "1".into(),
             name: "p".into(),
             uri: "mongodb://localhost".into(),
+            color_tag: None,
             ssh: None,
         }];
         save_profiles_to_file(&pt_profiles, &profiles).unwrap();
@@ -2174,6 +2178,7 @@ mod tests {
             id: "1".into(),
             name: "p".into(),
             uri: "mongodb://localhost".into(),
+            color_tag: None,
             ssh: None,
         }];
         save_profiles_encrypted(&enc_profiles, &old_key, &profiles).unwrap();

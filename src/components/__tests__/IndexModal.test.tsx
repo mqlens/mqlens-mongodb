@@ -1,8 +1,17 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { IndexModal } from '../IndexModal';
 
+const mockInvoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...args: unknown[]) => mockInvoke(...args),
+}));
+
 describe('IndexModal Component', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInvoke.mockResolvedValue(JSON.stringify({ sampled: 2, fields: [] }));
+  });
   it('does not render when isOpen is false', () => {
     render(
       <IndexModal
@@ -31,8 +40,8 @@ describe('IndexModal Component', () => {
     expect(screen.getByPlaceholderText('e.g. email_1_status_-1')).toBeInTheDocument();
 
     // Default key builder row
-    expect(screen.getByDisplayValue('_id')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Ascending (1)')).toBeInTheDocument();
+    expect(screen.getByTestId('index-key-field-0')).toHaveValue('_id');
+    expect(screen.getByTestId('index-key-direction-0')).toHaveValue('1');
 
     // Default constraints
     const uniqueCheckbox = screen.getByTestId('unique-checkbox') as HTMLInputElement;
@@ -48,7 +57,7 @@ describe('IndexModal Component', () => {
 
   it('auto-generates the index name from keys until manually overridden', () => {
     render(
-      <IndexModal isOpen={true} onClose={() => {}} onSave={() => {}} availableFields={['_id', 'email']} />
+      <IndexModal isOpen={true} onClose={() => {}} onSave={() => {}} availableFields={['_id', 'email', 'status']} />
     );
     const nameInput = screen.getByTestId('index-name-input') as HTMLInputElement;
 
@@ -56,14 +65,14 @@ describe('IndexModal Component', () => {
     expect(nameInput.value).toBe('_id_1');
 
     // Changing the key field/direction regenerates the name.
-    fireEvent.change(screen.getByPlaceholderText('Field name'), { target: { value: 'email' } });
+    fireEvent.change(screen.getByTestId('index-key-field-0'), { target: { value: 'email' } });
     expect(nameInput.value).toBe('email_1');
-    fireEvent.change(screen.getByDisplayValue('Ascending (1)'), { target: { value: '-1' } });
+    fireEvent.change(screen.getByTestId('index-key-direction-0'), { target: { value: '-1' } });
     expect(nameInput.value).toBe('email_-1');
 
     // A manually typed name sticks…
     fireEvent.change(nameInput, { target: { value: 'my_custom_name' } });
-    fireEvent.change(screen.getByDisplayValue('email'), { target: { value: 'status' } });
+    fireEvent.change(screen.getByTestId('index-key-field-0'), { target: { value: 'status' } });
     expect(nameInput.value).toBe('my_custom_name');
 
     // …and clearing it resumes auto-generation.
@@ -93,10 +102,10 @@ describe('IndexModal Component', () => {
     expect(screen.getByDisplayValue('age_index')).toBeInTheDocument();
 
     // Verify key builder rows
-    expect(screen.getByDisplayValue('age')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Descending (-1)')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('status')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Ascending (1)')).toBeInTheDocument();
+    expect(screen.getByTestId('index-key-field-0')).toHaveValue('age');
+    expect(screen.getByTestId('index-key-direction-0')).toHaveValue('-1');
+    expect(screen.getByTestId('index-key-field-1')).toHaveValue('status');
+    expect(screen.getByTestId('index-key-direction-1')).toHaveValue('1');
 
     // Constraints
     const uniqueCheckbox = screen.getByTestId('unique-checkbox') as HTMLInputElement;
@@ -116,23 +125,23 @@ describe('IndexModal Component', () => {
     );
 
     // Starts with 1 row (_id)
-    expect(screen.getAllByPlaceholderText('Field name')).toHaveLength(1);
+    expect(screen.getAllByTestId(/^index-key-field-/)).toHaveLength(1);
 
     // Add row
     const addBtn = screen.getByRole('button', { name: /add index key/i });
     fireEvent.click(addBtn);
 
     // Now has 2 rows
-    expect(screen.getAllByPlaceholderText('Field name')).toHaveLength(2);
+    expect(screen.getAllByTestId(/^index-key-field-/)).toHaveLength(2);
     // Auto-picks next field (e.g. name)
-    expect(screen.getByDisplayValue('name')).toBeInTheDocument();
+    expect(screen.getByTestId('index-key-field-1')).toHaveValue('age');
 
     // Remove row
     const deleteBtns = screen.getAllByTitle('Remove Key');
     fireEvent.click(deleteBtns[1]);
 
     // Back to 1 row
-    expect(screen.getAllByPlaceholderText('Field name')).toHaveLength(1);
+    expect(screen.getAllByTestId(/^index-key-field-/)).toHaveLength(1);
   });
 
   it('handles raw JSON mode toggle and validation', () => {
@@ -184,6 +193,43 @@ describe('IndexModal Component', () => {
     );
   });
 
+  it('loads collection schema fields into the key field list', async () => {
+    mockInvoke.mockResolvedValue(
+      JSON.stringify({
+        sampled: 10,
+        fields: [
+          { path: 'email', types: [{ type: 'string', count: 10 }] },
+          { path: 'profile.city', types: [{ type: 'string', count: 8 }] },
+        ],
+      })
+    );
+
+    render(
+      <IndexModal
+        isOpen={true}
+        onClose={() => {}}
+        onSave={() => {}}
+        connectionId="conn-1"
+        databaseName="testdb"
+        collectionName="users"
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('analyze_schema', expect.objectContaining({
+        id: 'conn-1',
+        database: 'testdb',
+        collection: 'users',
+      }));
+    });
+
+    const fieldSelect = screen.getByTestId('index-key-field-0') as HTMLSelectElement;
+    const optionValues = Array.from(fieldSelect.options).map((o) => o.value);
+    expect(optionValues).toContain('email');
+    expect(optionValues).toContain('profile.city');
+    expect(optionValues[0]).toBe('_id');
+  });
+
   it('submits form with builder data on Save', () => {
     const handleSave = vi.fn();
     render(
@@ -198,7 +244,7 @@ describe('IndexModal Component', () => {
     const nameInput = screen.getByTestId('index-name-input');
     fireEvent.change(nameInput, { target: { value: 'name_asc' } });
 
-    const fieldInput = screen.getByPlaceholderText('Field name');
+    const fieldInput = screen.getByTestId('index-key-field-0');
     fireEvent.change(fieldInput, { target: { value: 'name' } });
 
     const uniqueCheckbox = screen.getByTestId('unique-checkbox');

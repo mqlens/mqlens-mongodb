@@ -4,6 +4,10 @@ import { render as rtlRender, screen, fireEvent, waitFor } from '@testing-librar
 import { Sidebar } from '../Sidebar';
 import { DialogProvider } from '../dialogs/DialogProvider';
 
+vi.mock('../theme/ThemePicker', () => ({
+  ThemePicker: () => <div data-testid="theme-picker">Theme presets</div>,
+}));
+
 // Sidebar now uses the in-app dialog system, so it must render inside a provider.
 const render = (ui: ReactElement) => rtlRender(<DialogProvider>{ui}</DialogProvider>);
 
@@ -16,6 +20,12 @@ vi.mock('@tauri-apps/api/core', () => ({
 describe('Sidebar Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'list_all_saved_queries') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
   });
 
   it('renders connect button initially when no connections are active', () => {
@@ -28,8 +38,6 @@ describe('Sidebar Component', () => {
         activeConnections={[]}
         onOpenConnectionManager={handleOpenModal}
         onDisconnect={() => {}}
-        theme="dark"
-        onToggleTheme={() => {}}
         onOpenSettings={() => {}}
       />
     );
@@ -58,8 +66,6 @@ describe('Sidebar Component', () => {
         activeConnections={[{ id: 'conn-1', name: 'Mock DB 1', uri: 'mongodb://mock1' }]}
         onOpenConnectionManager={() => {}}
         onDisconnect={() => {}}
-        theme="dark"
-        onToggleTheme={() => {}}
         onOpenSettings={() => {}}
       />
     );
@@ -122,8 +128,6 @@ describe('Sidebar Component', () => {
         activeConnections={activeConnections}
         onOpenConnectionManager={() => {}}
         onDisconnect={handleDisconnect}
-        theme="dark"
-        onToggleTheme={() => {}}
         onOpenSettings={() => {}}
       />
     );
@@ -205,8 +209,6 @@ describe('Sidebar Component', () => {
         activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
         onOpenConnectionManager={() => {}}
         onDisconnect={() => {}}
-        theme="dark"
-        onToggleTheme={() => {}}
         onOpenSettings={() => {}}
       />
     );
@@ -234,8 +236,6 @@ describe('Sidebar Component', () => {
         onOpenConnectionManager={() => {}}
         onDisconnect={() => {}}
         width={350}
-        theme="dark"
-        onToggleTheme={() => {}}
         onOpenSettings={() => {}}
       />
     );
@@ -243,8 +243,7 @@ describe('Sidebar Component', () => {
     expect(sidebarEl).toHaveStyle({ width: '350px' });
   });
 
-  it('calls onToggleTheme when the theme button is clicked', () => {
-    const handleToggleTheme = vi.fn();
+  it('renders theme picker in footer', () => {
     render(
       <Sidebar
         onSelectCollection={() => {}}
@@ -253,14 +252,10 @@ describe('Sidebar Component', () => {
         activeConnections={[]}
         onOpenConnectionManager={() => {}}
         onDisconnect={() => {}}
-        theme="dark"
-        onToggleTheme={handleToggleTheme}
         onOpenSettings={() => {}}
       />
     );
-    const themeBtn = screen.getByRole('button', { name: /toggle theme/i });
-    fireEvent.click(themeBtn);
-    expect(handleToggleTheme).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('theme-picker')).toBeInTheDocument();
   });
 
   it('calls onOpenSettings when the Settings button is clicked', () => {
@@ -273,8 +268,6 @@ describe('Sidebar Component', () => {
         activeConnections={[]}
         onOpenConnectionManager={() => {}}
         onDisconnect={() => {}}
-        theme="dark"
-        onToggleTheme={() => {}}
         onOpenSettings={handleOpenSettings}
       />
     );
@@ -307,8 +300,6 @@ describe('Sidebar Component', () => {
         activeConnections={activeConnections}
         onOpenConnectionManager={() => {}}
         onDisconnect={() => {}}
-        theme="dark"
-        onToggleTheme={() => {}}
         onOpenSettings={() => {}}
       />
     );
@@ -353,8 +344,6 @@ describe('Sidebar Component', () => {
         activeConnections={activeConnections}
         onOpenConnectionManager={() => {}}
         onDisconnect={() => {}}
-        theme="dark"
-        onToggleTheme={() => {}}
         onOpenSettings={() => {}}
       />
     );
@@ -382,7 +371,6 @@ describe('Sidebar Component', () => {
   it('triggers context menu on empty space and handles selections', () => {
     const handleOpenModal = vi.fn();
     const handleOpenSettings = vi.fn();
-    const handleToggleTheme = vi.fn();
 
     const { container } = render(
       <Sidebar
@@ -392,8 +380,6 @@ describe('Sidebar Component', () => {
         activeConnections={[]}
         onOpenConnectionManager={handleOpenModal}
         onDisconnect={() => {}}
-        theme="dark"
-        onToggleTheme={handleToggleTheme}
         onOpenSettings={handleOpenSettings}
       />
     );
@@ -406,11 +392,9 @@ describe('Sidebar Component', () => {
     // Check menu options
     const newConnOption = screen.getByText('New Connection');
     const settingsOption = screen.getByText('Settings');
-    const toggleThemeOption = screen.getByText('Toggle Theme');
 
     expect(newConnOption).toBeInTheDocument();
     expect(settingsOption).toBeInTheDocument();
-    expect(toggleThemeOption).toBeInTheDocument();
 
     // Click "New Connection"
     fireEvent.click(newConnOption);
@@ -420,11 +404,6 @@ describe('Sidebar Component', () => {
     fireEvent.contextMenu(sidebarEl!);
     fireEvent.click(screen.getByText('Settings'));
     expect(handleOpenSettings).toHaveBeenCalledTimes(1);
-
-    // Re-open context menu and click "Toggle Theme"
-    fireEvent.contextMenu(sidebarEl!);
-    fireEvent.click(screen.getByText('Toggle Theme'));
-    expect(handleToggleTheme).toHaveBeenCalledTimes(1);
   });
 
   it('triggers context menu on connection node and handles actions', async () => {
@@ -459,8 +438,6 @@ describe('Sidebar Component', () => {
         activeConnections={activeConnections}
         onOpenConnectionManager={handleOpenModal}
         onDisconnect={handleDisconnect}
-        theme="dark"
-        onToggleTheme={() => {}}
         onOpenSettings={() => {}}
       />
     );
@@ -569,8 +546,6 @@ describe('Sidebar Component', () => {
         activeConnections={[{ id: 'conn-real', name: 'Prod', uri: 'mongodb://localhost:27017' }]}
         onOpenConnectionManager={() => {}}
         onDisconnect={() => {}}
-        theme="dark"
-        onToggleTheme={() => {}}
         onOpenSettings={() => {}}
       />
     );
@@ -639,6 +614,129 @@ describe('Sidebar Component', () => {
       const d = calls.find((x) => x.cmd === 'drop_database');
       expect(d).toBeTruthy();
       expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop' });
+    });
+  });
+
+  it('shows pinned collections from storage in the Pinned section', async () => {
+    localStorage.setItem(
+      'mqlens_pinned_collections',
+      JSON.stringify([
+        { kind: 'collection', connectionName: 'Local', db: 'sales_db', collection: 'orders' },
+      ]),
+    );
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /pinned/i }));
+    expect(await screen.findByText('orders')).toBeInTheDocument();
+    expect(screen.getByText('sales_db')).toBeInTheDocument();
+  });
+
+  it('pins a connection from the context menu and shows a toast', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    const serverNode = await screen.findByText('Local');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    fireEvent.click(screen.getByText('Pin to sidebar'));
+
+    expect(await screen.findByTestId('pinned-item-conn::Local')).toBeInTheDocument();
+    expect(screen.getByText('Pinned to sidebar')).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('mqlens_pinned_collections')!)).toEqual([
+      { kind: 'connection', connectionName: 'Local' },
+    ]);
+  });
+
+  it('shows empty-state hint when pinned section has no items', async () => {
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /pinned/i }));
+    expect(
+      screen.getByText('Right-click a connection, database, or collection → Pin to sidebar'),
+    ).toBeInTheDocument();
+  });
+
+  it('auto-connects when opening a pinned collection while offline', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') {
+        return Promise.resolve([
+          { id: 'prof-1', name: 'Local', uri: 'mongodb://localhost:27017' },
+        ]);
+      }
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      return Promise.resolve([]);
+    });
+
+    localStorage.setItem(
+      'mqlens_pinned_collections',
+      JSON.stringify([
+        {
+          kind: 'collection',
+          connectionName: 'Local',
+          db: 'sales_db',
+          collection: 'orders',
+        },
+      ]),
+    );
+
+    const onSelectCollection = vi.fn();
+    const onConnectProfile = vi.fn().mockResolvedValue('conn-new');
+
+    render(
+      <Sidebar
+        onSelectCollection={onSelectCollection}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onConnectProfile={onConnectProfile}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /pinned/i }));
+    fireEvent.click(await screen.findByTestId('pinned-item-coll::Local::sales_db::orders'));
+
+    await waitFor(() => {
+      expect(onConnectProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'prof-1', name: 'Local' }),
+      );
+      expect(onSelectCollection).toHaveBeenCalledWith('conn-new', 'sales_db', 'orders');
     });
   });
 });

@@ -47,7 +47,7 @@ describe('CommandPalette', () => {
     const { actions } = makeActions();
     render(<CommandPalette open onClose={() => {}} actions={actions} scopeLabel="widas" />);
     expect(screen.getByTestId('command-palette-input')).toHaveValue('');
-    expect(screen.getByText('Sidebar')).toBeTruthy();
+    expect(screen.getByText('Sidebar scope')).toBeTruthy();
     expect(screen.getByText('widas')).toBeTruthy();
     expect(screen.getByText('Toggle Theme')).toBeTruthy();
   });

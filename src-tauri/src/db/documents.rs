@@ -1,5 +1,6 @@
 //! Document mutation and import operations.
 
+use crate::limits::{IMPORT_BATCH_SIZE, MAX_IMPORT_DOCS};
 use crate::{connection_is_mock, require_real_client, AppState};
 
 // Parse a JSON string into a BSON Document, interpreting MongoDB Extended JSON
@@ -162,6 +163,14 @@ pub async fn import_documents_impl(
     docs: Vec<serde_json::Value>,
     mode: &str,
 ) -> Result<ImportResult, String> {
+    if docs.len() > MAX_IMPORT_DOCS {
+        return Err(format!(
+            "Import too large ({} documents). Maximum per batch is {} — split the file or use collection export/import on disk.",
+            docs.len(),
+            MAX_IMPORT_DOCS
+        ));
+    }
+
     // Convert all docs up front; a bad doc fails the whole import before writing.
     let mut bson_docs: Vec<mongodb::bson::Document> = Vec::with_capacity(docs.len());
     for value in &docs {
@@ -204,18 +213,35 @@ pub async fn import_documents_impl(
         if ids.is_empty() {
             return Ok(found);
         }
-        let mut cursor = coll
-            .find(mongodb::bson::doc! { "_id": { "$in": ids } })
-            .await
-            .map_err(|e| format!("Failed to check existing documents: {}", e))?;
         use futures::stream::StreamExt;
-        while let Some(result) = cursor.next().await {
-            let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            if let Some(id_val) = doc.get("_id") {
-                found.insert(id_val.to_string());
+        for chunk in ids.chunks(IMPORT_BATCH_SIZE) {
+            let mut cursor = coll
+                .find(mongodb::bson::doc! { "_id": { "$in": chunk } })
+                .await
+                .map_err(|e| format!("Failed to check existing documents: {}", e))?;
+            while let Some(result) = cursor.next().await {
+                let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
+                if let Some(id_val) = doc.get("_id") {
+                    found.insert(id_val.to_string());
+                }
             }
         }
         Ok(found)
+    }
+
+    async fn insert_many_batched(
+        coll: &mongodb::Collection<mongodb::bson::Document>,
+        docs: Vec<mongodb::bson::Document>,
+    ) -> Result<(), String> {
+        for chunk in docs.chunks(IMPORT_BATCH_SIZE) {
+            if chunk.is_empty() {
+                continue;
+            }
+            coll.insert_many(chunk.to_vec())
+                .await
+                .map_err(|e| format!("Failed to import: {}", e))?;
+        }
+        Ok(())
     }
 
     match mode {
@@ -260,9 +286,7 @@ pub async fn import_documents_impl(
                 ));
             }
             let total = bson_docs.len() as u64;
-            coll.insert_many(bson_docs)
-                .await
-                .map_err(|e| format!("Failed to import: {}", e))?;
+            insert_many_batched(&coll, bson_docs).await?;
             Ok(ImportResult {
                 inserted: total,
                 updated: 0,
@@ -283,9 +307,7 @@ pub async fn import_documents_impl(
                 .collect();
             let inserted = to_insert.len() as u64;
             if !to_insert.is_empty() {
-                coll.insert_many(to_insert)
-                    .await
-                    .map_err(|e| format!("Failed to import: {}", e))?;
+                insert_many_batched(&coll, to_insert).await?;
             }
             Ok(ImportResult {
                 inserted,

@@ -72,7 +72,7 @@ describe('MongoShell Component', () => {
       sessionId: 'shell-session-1',
       command: 'db.events.find({}).limit(50)',
     }));
-    fireEvent.click(screen.getByRole('button', { name: /console/i }));
+    fireEvent.click(screen.getByRole('tab', { name: /console/i }));
     expect(await screen.findByText(/Current Mongosh Log ID:/)).toBeInTheDocument();
     expect(screen.getByText(/Connecting to: mock/)).toBeInTheDocument();
     expect(screen.queryByText(/mongodb:\/\/prod-replica-set/)).not.toBeInTheDocument();

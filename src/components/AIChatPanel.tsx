@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Sparkles, User, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { buildRunnableCommand, type GeneratedQuery } from '../lib/mongoCommand';
 
 export type { GeneratedQuery };
@@ -18,14 +20,19 @@ interface AIChatPanelProps {
   databaseName?: string;
   collectionName: string;
   fields?: string[];
-  // 'shell' shows the runnable mongosh command (with Copy); 'editor' shows the
-  // raw query JSON, matching the original in-editor assistant behavior.
   variant: 'editor' | 'shell';
   isOpen: boolean;
   onClose: () => void;
   onInsertQuery: (query: GeneratedQuery) => void;
   onInsertAndRunQuery: (query: GeneratedQuery) => void;
+  /** When true, render inside a parent ResizablePanel (no own width/resizer). */
+  embedded?: boolean;
 }
+
+const composerClassName = cn(
+  'min-h-[52px] w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 text-xs shadow-sm transition-colors',
+  'placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+);
 
 export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   collectionName,
@@ -35,6 +42,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   onClose,
   onInsertQuery,
   onInsertAndRunQuery,
+  embedded = false,
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -71,8 +79,6 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     const text = chatInput.trim();
     if (!text || isChatLoading) return;
 
-    // History sent to the model: prior turns as plain text (assistant turns
-    // include the query JSON so multi-turn refinements have context).
     const history = chatMessages.map((m) => ({
       role: m.role,
       content:
@@ -136,7 +142,6 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     }
   };
 
-  // Keep the chat scrolled to the latest message.
   useEffect(() => {
     const el = chatScrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -144,178 +149,135 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
   if (!isOpen) return null;
 
-  return (
+  const panelContent = (
     <>
-      {/* Resize Handle */}
-      <div
-        className="query-builder-resizer"
-        onMouseDown={startResizingAIHelper}
-        data-testid="ai-helper-resizer"
-      />
-      <div
-        className="query-builder-panel border-l border-b border-[var(--border-color)] bg-[var(--bg-panel)] flex flex-col flex-shrink-0"
-        style={{ width: aiHelperWidth }}
-        data-testid="ai-helper-panel"
-      >
-        {/* Header */}
-        <div className="query-builder-header">
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-main)]">
-            <Sparkles size={11} className="text-[var(--accent-blue)]" />
+        <div className="flex items-center justify-between border-b border-border px-3 py-2">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
+            <Sparkles size={11} className="text-primary" />
             <span>AI Query Assistant</span>
           </div>
-          <button
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
             onClick={onClose}
-            className="p-0.5 rounded hover:bg-[var(--bg-item-active)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
             title="Close AI Assistant"
           >
             <X size={12} />
-          </button>
+          </Button>
         </div>
 
-        {/* Chat message list */}
-        <div
-          ref={chatScrollRef}
-          className="flex-1 overflow-y-auto p-3 flex flex-col gap-3"
-          data-testid="ai-chat-messages"
-        >
-          {chatMessages.length === 0 && !isChatLoading && (
-            <div className="text-[var(--text-dim)]" style={{ fontSize: 11, lineHeight: 1.5 }}>
-              Ask for a query in plain language — e.g. <em>“active users older than 30, sorted by age”</em> or
-              <em> “average order total per customer”</em>. I’ll explain what I’m doing and you can insert the result.
-            </div>
-          )}
-
-          {chatMessages.map((m) => (
-            <div
-              key={m.id}
-              className="flex flex-col gap-1"
-              style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}
-              data-testid={`chat-msg-${m.role}`}
-            >
-              <div
-                className="flex items-center gap-1 text-[var(--text-dim)]"
-                style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.04em' }}
-              >
-                {m.role === 'user' ? <User size={9} /> : <Sparkles size={9} />}
-                <span>{m.role === 'user' ? 'You' : 'Assistant'}</span>
+        <div ref={chatScrollRef} className="flex-1 overflow-y-auto">
+          <div className="flex flex-col gap-3 p-3" data-testid="ai-chat-messages">
+            {chatMessages.length === 0 && !isChatLoading && (
+              <div className="text-[11px] leading-relaxed text-muted-foreground">
+                Ask for a query in plain language — e.g. <em>“active users older than 30, sorted by age”</em> or
+                <em> “average order total per customer”</em>. I’ll explain what I’m doing and you can insert the result.
               </div>
-              <div
-                style={{
-                  maxWidth: '92%',
-                  padding: '7px 9px',
-                  borderRadius: 8,
-                  fontSize: 11.5,
-                  lineHeight: 1.5,
-                  whiteSpace: 'pre-wrap',
-                  background: m.role === 'user' ? 'var(--bg-item-active)' : 'var(--bg-base)',
-                  border: '1px solid var(--border-color)',
-                  color: m.error ? 'var(--accent-red)' : 'var(--text-main)',
-                }}
-              >
-                {m.text}
-              </div>
+            )}
 
-              {m.query && (
+            {chatMessages.map((m) => (
+              <div
+                key={m.id}
+                className={cn('flex flex-col gap-1', m.role === 'user' ? 'items-end' : 'items-start')}
+                data-testid={`chat-msg-${m.role}`}
+              >
+                <div className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-muted-foreground">
+                  {m.role === 'user' ? <User size={9} /> : <Sparkles size={9} />}
+                  <span>{m.role === 'user' ? 'You' : 'Assistant'}</span>
+                </div>
                 <div
-                  className="flex flex-col gap-1"
-                  style={{ width: '92%', marginTop: 2 }}
-                  data-testid="chat-query-card"
+                  className={cn(
+                    'max-w-[92%] whitespace-pre-wrap rounded-lg border px-2.5 py-1.5 text-[11.5px] leading-relaxed',
+                    m.role === 'user' ? 'border-border bg-accent' : 'border-border bg-background',
+                    m.error && 'text-destructive'
+                  )}
                 >
-                  <div className="flex items-center justify-between">
-                    <span
-                      className="mql-mono"
-                      style={{ fontSize: 9, color: 'var(--accent-blue)', textTransform: 'uppercase' }}
-                    >
+                  {m.text}
+                </div>
+
+                {m.query && (
+                  <div className="mt-0.5 flex w-[92%] flex-col gap-1" data-testid="chat-query-card">
+                    <span className="font-mono text-[9px] uppercase text-primary">
                       {m.query.queryType === 'aggregate'
                         ? 'Aggregation pipeline'
                         : m.query.queryType === 'script'
                           ? 'Shell script'
                           : 'Find query'}
                     </span>
-                  </div>
-                  <pre
-                    data-testid={variant === 'shell' ? 'chat-runnable-cmd' : 'chat-query-json'}
-                    style={{
-                      margin: 0,
-                      padding: 6,
-                      background: 'var(--bg-base)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: 4,
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 10.5,
-                      maxHeight: 220,
-                      overflow: 'auto',
-                      color: 'var(--text-main)',
-                    }}
-                  >
-                    {variant === 'shell'
-                      ? buildRunnableCommand(m.query, collectionName)
-                      : m.query.queryType === 'aggregate'
-                        ? JSON.stringify(m.query.pipeline ?? [], null, 2)
-                        : JSON.stringify(
-                            {
-                              filter: m.query.filter ?? {},
-                              sort: m.query.sort ?? {},
-                              ...(m.query.projection !== undefined
-                                ? { projection: m.query.projection }
-                                : {}),
-                            },
-                            null,
-                            2
-                          )}
-                  </pre>
-                  <div className="flex gap-1">
-                    {variant === 'shell' && (
-                      <button
-                        onClick={() =>
-                          navigator.clipboard?.writeText(buildRunnableCommand(m.query!, collectionName))
-                        }
-                        className="mql-btn mql-btn-ghost mql-btn-outlined"
-                        style={{ justifyContent: 'center', flex: 1 }}
-                        data-testid="chat-copy-btn"
+                    <pre
+                      data-testid={variant === 'shell' ? 'chat-runnable-cmd' : 'chat-query-json'}
+                      className="m-0 max-h-[220px] overflow-auto rounded border border-border bg-background p-1.5 font-mono text-[10.5px] text-foreground"
+                    >
+                      {variant === 'shell'
+                        ? buildRunnableCommand(m.query, collectionName)
+                        : m.query.queryType === 'aggregate'
+                          ? JSON.stringify(m.query.pipeline ?? [], null, 2)
+                          : JSON.stringify(
+                              {
+                                filter: m.query.filter ?? {},
+                                sort: m.query.sort ?? {},
+                                ...(m.query.projection !== undefined
+                                  ? { projection: m.query.projection }
+                                  : {}),
+                              },
+                              null,
+                              2
+                            )}
+                    </pre>
+                    <div className="flex gap-1">
+                      {variant === 'shell' && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 flex-1 text-xs"
+                          onClick={() =>
+                            navigator.clipboard?.writeText(buildRunnableCommand(m.query!, collectionName))
+                          }
+                          data-testid="chat-copy-btn"
+                        >
+                          Copy
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 flex-1 text-xs"
+                        onClick={() => onInsertQuery(m.query!)}
+                        data-testid="chat-insert-btn"
                       >
-                        Copy
-                      </button>
-                    )}
-                    <button
-                      onClick={() => onInsertQuery(m.query!)}
-                      className="mql-btn mql-btn-ghost mql-btn-outlined"
-                      style={{ justifyContent: 'center', flex: 1 }}
-                      data-testid="chat-insert-btn"
-                    >
-                      Insert
-                    </button>
-                    <button
-                      onClick={() => onInsertAndRunQuery(m.query!)}
-                      className="mql-btn mql-btn-primary"
-                      style={{ justifyContent: 'center', flex: 1 }}
-                      data-testid="chat-insert-run-btn"
-                    >
-                      Insert &amp; run
-                    </button>
+                        Insert
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-7 flex-1 text-xs"
+                        onClick={() => onInsertAndRunQuery(m.query!)}
+                        data-testid="chat-insert-run-btn"
+                      >
+                        Insert &amp; run
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            ))}
 
-          {isChatLoading && (
-            <div
-              className="flex items-center gap-2 text-[var(--text-muted)]"
-              data-testid="chat-thinking"
-              style={{ fontSize: 11 }}
-            >
-              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-[var(--accent-blue)]" />
-              <span>Thinking…</span>
-            </div>
-          )}
+            {isChatLoading && (
+              <div className="flex items-center gap-2 text-[11px] text-muted-foreground" data-testid="chat-thinking">
+                <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-primary" />
+                <span>Thinking…</span>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Composer */}
-        <div className="border-t border-[var(--border-color)] p-2 flex flex-col gap-2 flex-shrink-0">
+        <div className="flex flex-shrink-0 flex-col gap-2 border-t border-border p-2">
           <textarea
-            className="query-builder-input"
-            style={{ minHeight: '52px', padding: '6px 8px', resize: 'vertical' }}
+            className={composerClassName}
             placeholder="Describe a query… (Enter to send, Shift+Enter for newline)"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
@@ -327,17 +289,42 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
             }}
             data-testid="chat-input"
           />
-          <button
+          <Button
+            type="button"
+            className="w-full"
+            size="sm"
             onClick={handleSendChat}
-            className="mql-btn mql-btn-primary"
-            style={{ justifyContent: 'center' }}
             disabled={isChatLoading || !chatInput.trim()}
             data-testid="chat-send-btn"
           >
-            <Sparkles size={11} className="mr-1.5" />
+            <Sparkles size={11} />
             {isChatLoading ? 'Thinking…' : 'Send'}
-          </button>
+          </Button>
         </div>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="flex h-full min-h-0 w-full flex-col border-l border-border bg-card" data-testid="ai-helper-panel">
+        {panelContent}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div
+        className="w-1 flex-shrink-0 cursor-col-resize bg-border/50 hover:bg-primary/40"
+        onMouseDown={startResizingAIHelper}
+        data-testid="ai-helper-resizer"
+      />
+      <div
+        className="flex flex-shrink-0 flex-col border-b border-l border-border bg-card"
+        style={{ width: aiHelperWidth }}
+        data-testid="ai-helper-panel"
+      >
+        {panelContent}
       </div>
     </>
   );

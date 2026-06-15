@@ -1,5 +1,6 @@
 //! GridFS browsing (M7): list files in a bucket and download them to disk.
 
+use crate::limits::{GRIDFS_STREAM_BUF, MAX_GRIDFS_LIST};
 use crate::{connection_is_mock, require_real_client, AppState};
 use serde::Serialize;
 
@@ -30,6 +31,7 @@ pub async fn list_gridfs_files_impl(
     let mut cursor = coll
         .find(mongodb::bson::doc! {})
         .sort(mongodb::bson::doc! { "filename": 1 })
+        .limit(MAX_GRIDFS_LIST)
         .await
         .map_err(|e| format!("Failed to list GridFS files: {}", e))?;
 
@@ -97,11 +99,28 @@ pub async fn download_gridfs_file_impl(
         .map_err(|e| format!("Failed to open GridFS download: {}", e))?;
 
     use futures::AsyncReadExt;
-    let mut buf = Vec::new();
-    stream
-        .read_to_end(&mut buf)
+    use tokio::io::AsyncWriteExt;
+
+    let mut file = tokio::fs::File::create(dest_path)
         .await
-        .map_err(|e| format!("GridFS read error: {}", e))?;
-    std::fs::write(dest_path, &buf).map_err(|e| format!("Failed to write file: {}", e))?;
-    Ok(buf.len() as u64)
+        .map_err(|e| format!("Failed to create file: {}", e))?;
+    let mut buf = vec![0u8; GRIDFS_STREAM_BUF];
+    let mut total = 0u64;
+    loop {
+        let n = stream
+            .read(&mut buf)
+            .await
+            .map_err(|e| format!("GridFS read error: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])
+            .await
+            .map_err(|e| format!("Failed to write file: {}", e))?;
+        total += n as u64;
+    }
+    file.flush()
+        .await
+        .map_err(|e| format!("Failed to flush file: {}", e))?;
+    Ok(total)
 }

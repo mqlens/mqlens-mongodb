@@ -1,9 +1,61 @@
 import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useDialogs } from './dialogs/DialogProvider';
 import { fuzzyMatch } from '../lib/fuzzyMatch';
+import {
+  type FolderNode,
+  FOLDERS_CHANGED_EVENT,
+  loadConnectionFolders,
+} from '../lib/connectionFolders';
+import {
+  type PinnedItem,
+  PINNED_CHANGED_EVENT,
+  loadPinnedCollections,
+  isItemPinned,
+  togglePinItem,
+  unpinItem,
+  pinnedItemLabel,
+  pinnedItemSubtitle,
+  pinnedItemKey,
+} from '../lib/pinnedCollections';
+import {
+  type FavoriteItem,
+  FAVORITES_CHANGED_EVENT,
+  loadFavoriteItems,
+  isItemFavorited,
+  toggleFavoriteItem,
+  removeFavoriteItem,
+  favoriteItemLabel,
+  favoriteItemSubtitle,
+  favoriteItemKey,
+} from '../lib/favoriteItems';
+import {
+  listAllSavedQueries,
+  QUERIES_CHANGED_EVENT,
+  type SavedQueryBody,
+  type SavedQueryRef,
+} from '../lib/queryStore';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Badge } from '@/components/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import { ThemePicker } from '@/components/theme/ThemePicker';
 import {
   Database,
   Folder,
@@ -16,8 +68,6 @@ import {
   Layers,
   KeyRound,
   ChevronRight,
-  Sun,
-  Moon,
   Settings,
   Terminal,
   Eye,
@@ -33,7 +83,9 @@ import {
   Lightbulb,
   Star,
   BookOpen,
-  X
+  X,
+  Pin,
+  Heart,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
@@ -62,16 +114,26 @@ export interface IndexInfo {
 const compareCollectionNames = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 
+interface ConnectionProfile {
+  id: string;
+  name: string;
+  uri: string;
+  color_tag?: string;
+}
+
 interface SidebarProps {
-  onSelectCollection: (connectionId: string, dbName: string, collName: string) => void;
+  onSelectCollection: (
+    connectionId: string,
+    dbName: string,
+    collName: string,
+    savedQuery?: SavedQueryBody,
+  ) => void;
   onSelectIndex: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
   activeCollection: { connectionId: string; db: string; collection: string; indexName?: string } | null;
-  activeConnections: { id: string; name: string; uri: string }[];
+  activeConnections: { id: string; name: string; uri: string; profileId?: string; color_tag?: string }[];
   onOpenConnectionManager: () => void;
   onDisconnect: (connectionId: string) => void;
   width?: number;
-  theme: 'dark' | 'light';
-  onToggleTheme: () => void;
   onOpenSettings: () => void;
   onCreateIndex?: (connectionId: string, dbName: string, collName: string) => void;
   onDeleteIndex?: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
@@ -88,59 +150,80 @@ interface SidebarProps {
   onFilterQueryChange?: (query: string) => void;
   indexMutationTrigger?: number;
   collectionMutationTrigger?: number;
+  onConnectProfile?: (profile: ConnectionProfile) => Promise<string | null> | string | null;
+  profilesRefreshKey?: number;
 }
 
-interface SidebarContextMenuProps {
-  x: number;
-  y: number;
-  onClose: () => void;
-  children: React.ReactNode;
-}
-
-const SidebarContextMenu: React.FC<SidebarContextMenuProps> = ({ x, y, onClose, children }) => {
-  const [pos, setPos] = useState({ x, y, ready: false });
-  const ref = React.useRef<HTMLDivElement>(null);
-
-  React.useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    let newX = x;
-    let newY = y;
-    if (x + r.width > window.innerWidth) newX = window.innerWidth - r.width - 8;
-    if (y + r.height > window.innerHeight) newY = window.innerHeight - r.height - 8;
-    newX = Math.max(8, newX);
-    newY = Math.max(8, newY);
-    setPos({ x: newX, y: newY, ready: true });
-  }, [x, y]);
-
-  useEffect(() => {
-    const handleClose = () => onClose();
-    window.addEventListener('click', handleClose);
-    window.addEventListener('scroll', handleClose, true);
-    return () => {
-      window.removeEventListener('click', handleClose);
-      window.removeEventListener('scroll', handleClose, true);
-    };
-  }, [onClose]);
-
-  return createPortal(
-    <div
-      ref={ref}
-      className="mql-ctx-menu"
-      style={{
-        left: pos.x,
-        top: pos.y,
-        visibility: pos.ready ? 'visible' : 'hidden',
-      }}
-      onClick={(e) => e.stopPropagation()}
-      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
-    >
-      {children}
-    </div>,
-    document.body
+const treeRowClass = (active?: boolean) =>
+  cn(
+    'flex h-7 min-w-0 cursor-pointer items-center gap-1.5 rounded-sm px-2 text-xs transition-colors hover:bg-accent/80',
+    active && 'bg-accent font-medium text-primary',
   );
-};
+
+const sectionEmptyClass = 'px-3 py-2 text-[10px] italic text-muted-foreground';
+
+const ctxItemClass = 'gap-2 text-xs [&_svg]:size-3';
+
+function SidebarSection({
+  title,
+  icon: Icon,
+  open,
+  onOpenChange,
+  children,
+  emptyText,
+  isEmpty = false,
+}: {
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children?: React.ReactNode;
+  emptyText?: string;
+  isEmpty?: boolean;
+}) {
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange}>
+      <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-accent/50">
+        <ChevronRight className={cn('h-3 w-3 shrink-0 transition-transform', open && 'rotate-90')} />
+        <Icon className="h-3 w-3 shrink-0" />
+        <span>{title}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="data-[state=closed]:hidden">
+        {isEmpty
+          ? emptyText
+            ? <p className={sectionEmptyClass}>{emptyText}</p>
+            : null
+          : children}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function EmptySpaceContextMenu({
+  children,
+  onNewConnection,
+  onSettings,
+}: {
+  children: React.ReactNode;
+  onNewConnection: () => void;
+  onSettings: () => void;
+}) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem className={ctxItemClass} onClick={onNewConnection}>
+          <Plus />
+          <span>New Connection</span>
+        </ContextMenuItem>
+        <ContextMenuItem className={ctxItemClass} onClick={onSettings}>
+          <Settings />
+          <span>Settings</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
 
 export const Sidebar: React.FC<SidebarProps> = ({
   onSelectCollection,
@@ -150,8 +233,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenConnectionManager,
   onDisconnect,
   width,
-  theme,
-  onToggleTheme,
   onOpenSettings,
   onCreateIndex,
   onDeleteIndex,
@@ -168,56 +249,239 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onFilterQueryChange,
   indexMutationTrigger,
   collectionMutationTrigger,
+  onConnectProfile,
+  profilesRefreshKey = 0,
 }) => {
   const { toast, confirm, prompt } = useDialogs();
-  // Tree filter: matches connection / database / (loaded) collection names.
   const [filterQuery, setFilterQuery] = useState('');
   useEffect(() => {
     onFilterQueryChange?.(filterQuery);
   }, [filterQuery, onFilterQueryChange]);
-  const [helpOpen, setHelpOpen] = useState(false);
-  // key: connectionId, value: database names list
-  const [databases, setDatabases] = useState<{ [connectionId: string]: string[] }>({});
-  
-  // key: `${connectionId}/${dbName}`, value: collection info list (name + type)
-  const [collections, setCollections] = useState<{ [connectionDbKey: string]: CollectionInfo[] }>({});
 
-  // key: `${connectionId}/${dbName}/${collName}`, value: index names list
+  const [sectionsOpen, setSectionsOpen] = useState({
+    connections: true,
+    pinned: false,
+    favorites: false,
+    folders: false,
+  });
+
+  const [databases, setDatabases] = useState<{ [connectionId: string]: string[] }>({});
+  const [collections, setCollections] = useState<{ [connectionDbKey: string]: CollectionInfo[] }>({});
   const [indexes, setIndexes] = useState<{ [connectionDbCollKey: string]: IndexInfo[] }>({});
 
-  // Expanded States
   const [expandedConnections, setExpandedConnections] = useState<{ [connectionId: string]: boolean }>({});
   const [expandedDbs, setExpandedDbs] = useState<{ [connectionDbKey: string]: boolean }>({});
   const [expandedCollectionsFolders, setExpandedCollectionsFolders] = useState<{ [connectionDbFolderKey: string]: boolean }>({});
   const [expandedCollections, setExpandedCollections] = useState<{ [connectionDbCollKey: string]: boolean }>({});
   const [expandedIndexesFolders, setExpandedIndexesFolders] = useState<{ [connectionDbCollKey: string]: boolean }>({});
 
+  const [pinnedItems, setPinnedItems] = useState<PinnedItem[]>(() => loadPinnedCollections());
+  const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>(() => loadFavoriteItems());
+  const [savedQueryCatalog, setSavedQueryCatalog] = useState<SavedQueryRef[]>([]);
+  const [connectionProfiles, setConnectionProfiles] = useState<ConnectionProfile[]>([]);
+  const [connectionFolders, setConnectionFolders] = useState<FolderNode[]>([]);
+  const [profileFolderMap, setProfileFolderMap] = useState<Record<string, string>>({});
+  const [expandedProfileFolders, setExpandedProfileFolders] = useState<Record<string, boolean>>({
+    'local-resources': true,
+  });
+
+  const connectionIdForName = (name: string): string | null =>
+    activeConnections.find((c) => c.name === name)?.id ?? null;
+
+  const ensureConnection = async (connectionName: string): Promise<string | null> => {
+    const existing = connectionIdForName(connectionName);
+    if (existing) return existing;
+
+    const profile = connectionProfiles.find((p) => p.name === connectionName);
+    if (!profile || !onConnectProfile) {
+      toast(
+        `No saved connection "${connectionName}". Add it in Connection Manager, then try again.`,
+        'error',
+      );
+      return null;
+    }
+
+    toast(`Connecting to ${connectionName}…`, 'info');
+    const connId = await onConnectProfile(profile);
+    if (connId) return connId;
+
+    toast(`Could not connect to ${connectionName}`, 'error');
+    return null;
+  };
+
+  const openCollectionTarget = async (
+    connectionName: string,
+    db: string,
+    collection: string,
+    savedQuery?: SavedQueryBody,
+  ) => {
+    const connId = await ensureConnection(connectionName);
+    if (!connId) return;
+    onSelectCollection(connId, db, collection, savedQuery);
+  };
+
+  const reloadPinned = () => setPinnedItems(loadPinnedCollections());
+  const reloadFavoritesStorage = () => setFavoriteItems(loadFavoriteItems());
+
+  const reloadFolders = () => {
+    const { folders, profileFolderMap: map } = loadConnectionFolders();
+    setConnectionFolders(folders);
+    setProfileFolderMap(map);
+  };
+
+  const reloadSavedQueryCatalog = async () => {
+    try {
+      setSavedQueryCatalog(await listAllSavedQueries());
+    } catch {
+      setSavedQueryCatalog([]);
+    }
+  };
+
+  useEffect(() => {
+    reloadPinned();
+    const onPinned = () => reloadPinned();
+    window.addEventListener(PINNED_CHANGED_EVENT, onPinned);
+    return () => window.removeEventListener(PINNED_CHANGED_EVENT, onPinned);
+  }, []);
+
+  useEffect(() => {
+    reloadFavoritesStorage();
+    const onFavorites = () => reloadFavoritesStorage();
+    window.addEventListener(FAVORITES_CHANGED_EVENT, onFavorites);
+    return () => window.removeEventListener(FAVORITES_CHANGED_EVENT, onFavorites);
+  }, []);
+
+  useEffect(() => {
+    void reloadSavedQueryCatalog();
+    const onQueries = () => void reloadSavedQueryCatalog();
+    window.addEventListener(QUERIES_CHANGED_EVENT, onQueries);
+    return () => window.removeEventListener(QUERIES_CHANGED_EVENT, onQueries);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    invoke<ConnectionProfile[]>('load_connection_profiles')
+      .then((list) => { if (alive) setConnectionProfiles(list ?? []); })
+      .catch(() => { if (alive) setConnectionProfiles([]); });
+    reloadFolders();
+    return () => { alive = false; };
+  }, [profilesRefreshKey]);
+
+  useEffect(() => {
+    const onFolders = () => reloadFolders();
+    window.addEventListener(FOLDERS_CHANGED_EVENT, onFolders);
+    return () => window.removeEventListener(FOLDERS_CHANGED_EVENT, onFolders);
+  }, []);
+
+  const ensureConnectionExpanded = (connId: string) => {
+    setSectionsOpen((s) => ({ ...s, connections: true }));
+    setExpandedConnections((prev) => ({ ...prev, [connId]: true }));
+  };
+
+  const ensureDbExpanded = async (connId: string, dbName: string) => {
+    const key = `${connId}/${dbName}`;
+    setExpandedDbs((prev) => ({ ...prev, [key]: true }));
+    if (!collections[key]) {
+      try {
+        const colls = await invoke<CollectionInfo[]>('list_collections', { id: connId, db: dbName });
+        setCollections((prev) => ({ ...prev, [key]: colls }));
+      } catch (err) {
+        console.error(`Failed to load collections for database ${dbName}`, err);
+      }
+    }
+  };
+
+  const navigateToPinned = async (item: PinnedItem) => {
+    const connId = await ensureConnection(item.connectionName);
+    if (!connId) return;
+    ensureConnectionExpanded(connId);
+    if (item.kind === 'connection') return;
+    await ensureDbExpanded(connId, item.db!);
+    if (item.kind === 'database') return;
+    onSelectCollection(connId, item.db!, item.collection!);
+  };
+
+  const navigateToFavorite = async (item: FavoriteItem) => {
+    if (item.kind === 'query') {
+      const resolved = savedQueryCatalog.find(
+        (q) =>
+          q.connectionName === item.connectionName &&
+          q.db === item.db &&
+          q.collection === item.collection &&
+          q.id === item.queryId,
+      );
+      if (!resolved) {
+        toast('Saved query no longer exists', 'info');
+        return;
+      }
+      await openCollectionTarget(
+        resolved.connectionName,
+        resolved.db,
+        resolved.collection,
+        resolved.query,
+      );
+      return;
+    }
+    const connId = await ensureConnection(item.connectionName);
+    if (!connId) return;
+    ensureConnectionExpanded(connId);
+    if (item.kind === 'connection') return;
+    await ensureDbExpanded(connId, item.db!);
+    if (item.kind === 'database') return;
+    onSelectCollection(connId, item.db!, item.collection!);
+  };
+
+  const pinEntryForConnection = (connId: string): PinnedItem | null => {
+    const conn = activeConnections.find((c) => c.id === connId);
+    if (!conn) return null;
+    return { kind: 'connection', connectionName: conn.name };
+  };
+
+  const favoriteEntryForConnection = (connId: string): FavoriteItem | null => {
+    const conn = activeConnections.find((c) => c.id === connId);
+    if (!conn) return null;
+    return { kind: 'connection', connectionName: conn.name };
+  };
+
+  const handleTogglePin = (entry: PinnedItem) => {
+    try {
+      const wasPinned = isItemPinned(pinnedItems, entry);
+      const next = togglePinItem(pinnedItems, entry);
+      setPinnedItems(next);
+      if (!wasPinned) {
+        setSectionsOpen((s) => ({ ...s, pinned: true }));
+      }
+      toast(wasPinned ? 'Unpinned from sidebar' : 'Pinned to sidebar', wasPinned ? 'info' : 'success');
+    } catch {
+      toast('Could not update pinned items', 'error');
+    }
+  };
+
+  const handleToggleFavorite = (entry: FavoriteItem) => {
+    try {
+      const wasFav = isItemFavorited(favoriteItems, entry);
+      const next = toggleFavoriteItem(favoriteItems, entry);
+      setFavoriteItems(next);
+      if (!wasFav) {
+        setSectionsOpen((s) => ({ ...s, favorites: true }));
+      }
+      toast(wasFav ? 'Removed from favorites' : 'Added to favorites', wasFav ? 'info' : 'success');
+    } catch {
+      toast('Could not update favorites', 'error');
+    }
+  };
+
+  const pinMenuLabel = (entry: PinnedItem): string =>
+    isItemPinned(pinnedItems, entry) ? 'Unpin from sidebar' : 'Pin to sidebar';
+
+  const favoriteMenuLabel = (entry: FavoriteItem): string =>
+    isItemFavorited(favoriteItems, entry) ? 'Remove from favorites' : 'Add to favorites';
+
   const toggleIndexesFolder = (connectionId: string, dbName: string, collName: string) => {
     const key = `${connectionId}/${dbName}/${collName}`;
     setExpandedIndexesFolders((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Context Menu State
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    connectionId?: string;
-    dbName?: string;
-    collName?: string;
-    indexName?: string;
-    isIndexesFolder?: boolean;
-    isConnectionNode?: boolean;
-    isEmptySpace?: boolean;
-  } | null>(null);
-
-  // Close context menu on outside click
-  useEffect(() => {
-    const handleOutsideClick = () => setContextMenu(null);
-    window.addEventListener('click', handleOutsideClick);
-    return () => window.removeEventListener('click', handleOutsideClick);
-  }, []);
-
-  // Fetch databases and automatically expand for new connections
   useEffect(() => {
     activeConnections.forEach((conn) => {
       if (!databases[conn.id]) {
@@ -231,7 +495,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       });
     });
 
-    // Cleanup disconnected connections from databases list
     setDatabases((prev) => {
       const next = { ...prev };
       let changed = false;
@@ -245,7 +508,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   }, [activeConnections]);
 
-  // Re-fetch indexes for all currently expanded collections when indexMutationTrigger changes
   useEffect(() => {
     if (indexMutationTrigger) {
       Object.keys(expandedCollections).forEach(async (collKey) => {
@@ -269,7 +531,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [indexMutationTrigger]);
 
-  // Re-fetch collections for every expanded database when a collection/view is added.
   useEffect(() => {
     if (collectionMutationTrigger) {
       Object.keys(expandedDbs).forEach((dbKey) => {
@@ -325,8 +586,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // Toggle a virtual category folder (Views / GridFS Buckets / System) — these are
-  // derived from the already-loaded collection list, so no fetch is needed.
   const toggleVirtualFolder = (key: string) => {
     setExpandedCollectionsFolders((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -360,29 +619,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleContextMenu = (
-    e: React.MouseEvent,
-    connectionId?: string,
-    dbName?: string,
-    collName?: string,
-    indexName?: string,
-    isIndexesFolder?: boolean,
-    isConnectionNode?: boolean
-  ) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      connectionId,
-      dbName,
-      collName,
-      indexName,
-      isIndexesFolder,
-      isConnectionNode
-    });
-  };
-
   const handleAddDatabase = async (connectionId: string) => {
     const name = await prompt({
       title: 'New database',
@@ -404,7 +640,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       return;
     }
 
-    // A MongoDB database only exists once it has a collection — create the first one.
     const firstColl = await prompt({
       title: 'Initial collection',
       message: 'Database needs an initial collection. Enter its name:',
@@ -421,22 +656,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleEmptySpaceContextMenu = (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (
-      target.classList.contains('sidebar') ||
-      target.classList.contains('database-tree-container') ||
-      target.classList.contains('sidebar-empty-prompt')
-    ) {
-      e.preventDefault();
-      setContextMenu({
-        x: e.clientX,
-        y: e.clientY,
-        isEmptySpace: true
-      });
-    }
-  };
-
   const handleAddCollection = async (connectionId: string, dbName: string) => {
     const name = await prompt({
       title: 'New collection',
@@ -445,10 +664,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       validate: (v) => (v ? null : 'Name is required'),
     });
     if (!name) return;
-    
+
     const conn = activeConnections.find((c) => c.id === connectionId);
     const isMock = connectionId.startsWith('mock') || conn?.uri.startsWith('mongodb://mock');
-    
+
     if (isMock) {
       const key = `${connectionId}/${dbName}`;
       setCollections((prev) => ({
@@ -480,7 +699,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       return;
     const conn = activeConnections.find((c) => c.id === connectionId);
     const isMock = connectionId.startsWith('mock') || conn?.uri.startsWith('mongodb://mock');
-    
+
     const clearActiveIfDropped = () => {
       if (
         activeCollection?.connectionId === connectionId &&
@@ -512,11 +731,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleRenameCollection = async (
-    connectionId: string,
-    dbName: string,
-    collName: string
-  ) => {
+  const handleRenameCollection = async (connectionId: string, dbName: string, collName: string) => {
     const newName = await prompt({
       title: 'Rename collection',
       message: 'Enter new collection name:',
@@ -535,9 +750,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       setCollections((prev) => ({
         ...prev,
-        [dbKey]: (prev[dbKey] || []).map((c) =>
-          c.name === collName ? { ...c, name: newName } : c
-        ),
+        [dbKey]: (prev[dbKey] || []).map((c) => (c.name === collName ? { ...c, name: newName } : c)),
       }));
       setIndexes((prev) => {
         const next = { ...prev };
@@ -759,80 +972,226 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // Renders a single collection node (the row plus its nested indexes folder).
-  // Shared by the Collections and System virtual folders so both behave identically.
   const renderCollectionNode = (connId: string, dbName: string, collName: string) => {
     const collKey = `${connId}/${dbName}/${collName}`;
     const isCollExpanded = expandedCollections[collKey];
     const collIndexes = indexes[collKey] || [];
-    const isActive = activeCollection?.connectionId === connId && activeCollection?.db === dbName && activeCollection?.collection === collName && !activeCollection?.indexName;
+    const isActive =
+      activeCollection?.connectionId === connId &&
+      activeCollection?.db === dbName &&
+      activeCollection?.collection === collName &&
+      !activeCollection?.indexName;
 
     return (
-      <div key={collName} className="mql-tree-node">
-        <div
-          onClick={() => {
-            onSelectCollection(connId, dbName, collName);
-            toggleCollectionNode(connId, dbName, collName);
-          }}
-          onContextMenu={(e) => handleContextMenu(e, connId, dbName, collName)}
-          className={`mql-row-h mql-tree-row mql-coll-row ${isActive ? 'is-active' : ''}`}
-        >
-          <ChevronRight
-            size={10}
-            className={`transition-transform duration-150 ${isCollExpanded ? 'rotate-90' : ''}`}
-            style={{ color: 'var(--text-dim)', flexShrink: 0 }}
-          />
-          <Layers size={11} className={isActive ? 'text-[var(--accent-blue)]' : 'text-[var(--accent-green)]'} style={{ flexShrink: 0 }} />
-          <span className="mql-coll-name" title={collName}>{collName}</span>
-        </div>
-
-        {/* Indexes Folder under collection node */}
-        {isCollExpanded && (
-          <div className="mql-tree-children">
+      <div key={collName}>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
             <div
-              className="mql-row-h mql-tree-row"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleIndexesFolder(connId, dbName, collName);
+              onClick={() => {
+                onSelectCollection(connId, dbName, collName);
+                toggleCollectionNode(connId, dbName, collName);
               }}
-              onContextMenu={(e) => handleContextMenu(e, connId, dbName, collName, undefined, true)}
+              className={treeRowClass(isActive)}
             >
               <ChevronRight
                 size={10}
-                className={`transition-transform duration-150 ${expandedIndexesFolders[`${connId}/${dbName}/${collName}`] ? 'rotate-90' : ''}`}
-                style={{ color: 'var(--text-dim)', flexShrink: 0 }}
+                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isCollExpanded && 'rotate-90')}
               />
-              <Folder size={11} className="text-[var(--accent-amber)] flex-shrink-0" />
-              <span className="mql-folder-label">indexes</span>
-              {collIndexes && collIndexes.length > 0 && (
-                <span className="mql-count" data-testid="indexes-count">
-                  ({collIndexes.length})
-                </span>
-              )}
+              <Layers size={11} className={cn('shrink-0', isActive ? 'text-primary' : 'text-emerald-500')} />
+              <span className="min-w-0 truncate" title={collName}>
+                {collName}
+              </span>
             </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem
+              className={ctxItemClass}
+              onClick={() => onSelectCollection(connId, dbName, collName)}
+            >
+              <FolderOpen />
+              <span>Open Collection</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={ctxItemClass}
+              data-testid={`ctx-pin-${connId}-${dbName}-${collName}`}
+              onSelect={() => {
+                const conn = activeConnections.find((c) => c.id === connId);
+                if (conn) {
+                  handleTogglePin({
+                    kind: 'collection',
+                    connectionName: conn.name,
+                    db: dbName,
+                    collection: collName,
+                  });
+                }
+              }}
+            >
+              <Pin />
+              <span>
+                {(() => {
+                  const conn = activeConnections.find((c) => c.id === connId);
+                  return conn
+                    ? pinMenuLabel({
+                        kind: 'collection',
+                        connectionName: conn.name,
+                        db: dbName,
+                        collection: collName,
+                      })
+                    : 'Pin to sidebar';
+                })()}
+              </span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={ctxItemClass}
+              onSelect={() => {
+                const conn = activeConnections.find((c) => c.id === connId);
+                if (conn) {
+                  handleToggleFavorite({
+                    kind: 'collection',
+                    connectionName: conn.name,
+                    db: dbName,
+                    collection: collName,
+                  });
+                }
+              }}
+            >
+              <Heart />
+              <span>
+                {(() => {
+                  const conn = activeConnections.find((c) => c.id === connId);
+                  return conn
+                    ? favoriteMenuLabel({
+                        kind: 'collection',
+                        connectionName: conn.name,
+                        db: dbName,
+                        collection: collName,
+                      })
+                    : 'Add to favorites';
+                })()}
+              </span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={ctxItemClass}
+              onClick={() =>
+                onOpenShell?.(connId, dbName, collName, `db.${collName}.find({}).limit(50)`)
+              }
+            >
+              <Terminal />
+              <span>Open mongosh Shell</span>
+            </ContextMenuItem>
+            <ContextMenuItem className={ctxItemClass} onClick={() => onAnalyzeSchema?.(connId, dbName, collName)}>
+              <Table2 />
+              <span>Analyze Schema</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={ctxItemClass}
+              onClick={() => navigator.clipboard?.writeText(collName)}
+            >
+              <FolderOpen />
+              <span>Copy Collection Name</span>
+            </ContextMenuItem>
+            <ContextMenuItem className={ctxItemClass} onClick={() => handleRenameCollection(connId, dbName, collName)}>
+              <Pencil />
+              <span>Rename Collection</span>
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
+              onClick={() => handleDropCollection(connId, dbName, collName)}
+            >
+              <Trash2 />
+              <span>
+                {(collections[`${connId}/${dbName}`] || []).find((c) => c.name === collName)?.type === 'view'
+                  ? 'Drop View'
+                  : 'Drop Collection'}
+              </span>
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+
+        {isCollExpanded && (
+          <div className="ml-3 border-l border-border/50 pl-1">
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <div
+                  className={treeRowClass()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleIndexesFolder(connId, dbName, collName);
+                  }}
+                >
+                  <ChevronRight
+                    size={10}
+                    className={cn(
+                      'shrink-0 text-muted-foreground transition-transform duration-150',
+                      expandedIndexesFolders[`${connId}/${dbName}/${collName}`] && 'rotate-90',
+                    )}
+                  />
+                  <Folder size={11} className="shrink-0 text-amber-500" />
+                  <span className="text-muted-foreground">indexes</span>
+                  {collIndexes.length > 0 && (
+                    <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="indexes-count">
+                      ({collIndexes.length})
+                    </Badge>
+                  )}
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem className={ctxItemClass} onClick={() => onCreateIndex?.(connId, dbName, collName)}>
+                  <Plus />
+                  <span>Create Index</span>
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
 
             {expandedIndexesFolders[`${connId}/${dbName}/${collName}`] && (
-              <div className="mql-tree-children">
+              <div className="ml-3 border-l border-border/50 pl-1">
                 {collIndexes.map((idx) => {
                   const indexName = idx.name;
-                  const isIndexActive = activeCollection?.connectionId === connId && activeCollection?.db === dbName && activeCollection?.collection === collName && activeCollection?.indexName === indexName;
+                  const isIndexActive =
+                    activeCollection?.connectionId === connId &&
+                    activeCollection?.db === dbName &&
+                    activeCollection?.collection === collName &&
+                    activeCollection?.indexName === indexName;
                   return (
-                    <div
-                      key={indexName}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectIndex(connId, dbName, collName, indexName);
-                      }}
-                      onContextMenu={(e) => handleContextMenu(e, connId, dbName, collName, indexName)}
-                      className={`mql-row-h mql-tree-row mql-idx-row ${isIndexActive ? 'is-active' : ''}`}
-                    >
-                      <KeyRound size={10} className={isIndexActive ? 'text-[var(--accent-blue)]' : 'text-[var(--accent-amber)] flex-shrink-0'} />
-                      <span className="mql-idx-name">{indexName}</span>
-                    </div>
+                    <ContextMenu key={indexName}>
+                      <ContextMenuTrigger asChild>
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectIndex(connId, dbName, collName, indexName);
+                          }}
+                          className={treeRowClass(isIndexActive)}
+                        >
+                          <KeyRound
+                            size={10}
+                            className={cn('shrink-0', isIndexActive ? 'text-primary' : 'text-amber-500')}
+                          />
+                          <span className="min-w-0 truncate">{indexName}</span>
+                        </div>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem
+                          className={ctxItemClass}
+                          onClick={() => navigator.clipboard?.writeText(indexName)}
+                        >
+                          <Plus />
+                          <span>Copy Index Name</span>
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
+                          onClick={() => onDeleteIndex?.(connId, dbName, collName, indexName)}
+                        >
+                          <Trash2 />
+                          <span>Delete Index</span>
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
                   );
                 })}
                 {collIndexes.length === 0 && (
-                  <div className="text-[9px] text-[var(--text-dim)] pl-6 py-0.5 italic">Empty</div>
+                  <div className="py-0.5 pl-6 text-[9px] italic text-muted-foreground">Empty</div>
                 )}
               </div>
             )}
@@ -842,678 +1201,758 @@ export const Sidebar: React.FC<SidebarProps> = ({
     );
   };
 
-  return (
-    <aside
-      style={width ? { width: `${width}px` } : undefined}
-      className="sidebar mql-sidebar"
-      onContextMenu={handleEmptySpaceContextMenu}
-    >
-      {/* Sidebar Header */}
-      <header className="mql-sidebar-h">
-        <div className="mql-row" style={{ gap: 6 }}>
-          <Server size={14} className="text-[var(--accent-blue)]" />
-          <span style={{ fontWeight: 600, fontSize: 12, letterSpacing: '0.02em' }}>MQLens Workspace</span>
+  const renderConnectionsTree = () => {
+    if (activeConnections.length === 0) {
+      return (
+        <div className="sidebar-empty-prompt flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground">
+          <span className="text-[11px]">Connect to MongoDB server to browse database tree structures.</span>
+          <Button size="sm" onClick={onOpenConnectionManager} aria-label="Connect to Database">
+            <Plus className="mr-1.5 size-3" />
+            Connect to Database...
+          </Button>
         </div>
-        <div className="mql-row" style={{ gap: 2 }}>
-          <button
-            onClick={onToggleTheme}
-            className="mql-icon-btn"
-            title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            aria-label="Toggle Theme"
-          >
-            {theme === 'dark' ? <Sun size={13} /> : <Moon size={13} />}
-          </button>
-          <button
-            onClick={onOpenSettings}
-            className="mql-icon-btn"
-            title="Settings"
-            aria-label="Open Settings"
-          >
-            <Settings size={13} />
-          </button>
-          <span style={{ position: 'relative', display: 'inline-flex' }}>
-            <button
-              onClick={() => setHelpOpen((o) => !o)}
-              className="mql-icon-btn"
-              title="Help & feedback"
-              aria-label="Help and feedback"
-              aria-haspopup="menu"
-              aria-expanded={helpOpen}
-              data-testid="help-menu-btn"
-            >
-              <HelpCircle size={13} />
-            </button>
-            {helpOpen && (
-              <>
-                <div
-                  onClick={() => setHelpOpen(false)}
-                  style={{ position: 'fixed', inset: 0, zIndex: 60 }}
-                  aria-hidden="true"
-                />
-                <div className="mql-help-menu" role="menu">
-                  {HELP_LINKS.map(({ Icon, label, url }) => (
-                    <button
-                      key={label}
-                      type="button"
-                      role="menuitem"
-                      onClick={() => { setHelpOpen(false); void openUrl(url); }}
-                    >
-                      <Icon size={13} /> <span>{label}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </span>
-          <button
-            onClick={onOpenConnectionManager}
-            className="mql-icon-btn"
-            title="Manage Connections"
-            aria-label="Manage Connections"
-          >
-            <Plus size={14} />
-          </button>
-        </div>
-      </header>
+      );
+    }
 
-      {/* Filter / search the tree */}
-      {activeConnections.length > 0 && (
-        <div className="mql-tree-search">
-          <Search size={12} className="mql-tree-search-icon" />
-          <input
-            type="text"
-            value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
-            placeholder="Search connections, databases, collections…"
-            aria-label="Search sidebar"
-            data-testid="sidebar-search"
-          />
-          {filterQuery && (
-            <button
-              type="button"
-              className="mql-tree-search-clear"
-              onClick={() => setFilterQuery('')}
-              aria-label="Clear search"
-            >
-              <X size={12} />
-            </button>
-          )}
-        </div>
-      )}
+    return (
+      <div className="flex flex-col">
+        {activeConnections.map((conn) => {
+          const q = filterQuery.trim();
+          const filterActive = q.length > 0;
+          const connDbs = databases[conn.id] || [];
+          const connNameMatch = filterActive && fuzzyMatch(q, conn.name);
+          const visibleDbs = connDbs.filter(
+            (dbName) =>
+              !filterActive ||
+              connNameMatch ||
+              fuzzyMatch(q, dbName) ||
+              (collections[`${conn.id}/${dbName}`] || []).some((c) => fuzzyMatch(q, c.name)),
+          );
+          if (filterActive && !connNameMatch && visibleDbs.length === 0) return null;
+          const isConnExpanded = expandedConnections[conn.id] || filterActive;
 
-      {/* Database Navigation Tree */}
-      <div
-        className="mql-tree-scroll database-tree-container"
-        onContextMenu={(e) => {
-          if (e.target === e.currentTarget) handleEmptySpaceContextMenu(e);
-        }}
-      >
-        {activeConnections.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {activeConnections.map((conn) => {
-              const q = filterQuery.trim();
-              const filterActive = q.length > 0;
-              const connDbs = databases[conn.id] || [];
-              const connNameMatch = filterActive && fuzzyMatch(q, conn.name);
-              const visibleDbs = connDbs.filter((dbName) =>
-                !filterActive ||
-                connNameMatch ||
-                fuzzyMatch(q, dbName) ||
-                (collections[`${conn.id}/${dbName}`] || []).some((c) => fuzzyMatch(q, c.name))
-              );
-              // Hide a connection entirely when nothing under it matches.
-              if (filterActive && !connNameMatch && visibleDbs.length === 0) return null;
-              // While filtering, auto-reveal connections so matches are visible.
-              const isConnExpanded = expandedConnections[conn.id] || filterActive;
-
-              return (
-                <div key={conn.id} className="mql-tree-node">
-                  {/* Connection Node */}
+          return (
+            <div key={conn.id}>
+              <ContextMenu>
+                <ContextMenuTrigger asChild>
                   <div
-                    className="mql-conn-row"
+                    className={cn(
+                      'group flex h-7 cursor-pointer items-center gap-1 rounded-sm px-2 text-xs hover:bg-accent/80',
+                      conn.color_tag && 'border-l-[3px]',
+                    )}
+                    style={conn.color_tag ? { borderLeftColor: conn.color_tag } : undefined}
                     role="button"
                     aria-expanded={isConnExpanded}
                     aria-label={`Connection ${conn.name}`}
                     onClick={() => setExpandedConnections((prev) => ({ ...prev, [conn.id]: !prev[conn.id] }))}
-                    onContextMenu={(e) => handleContextMenu(e, conn.id, undefined, undefined, undefined, false, true)}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
-                      <ChevronRight 
-                        size={11} 
-                        className={`transition-transform duration-150 ${isConnExpanded ? 'rotate-90' : ''}`} 
-                        style={{ color: 'var(--text-dim)', flexShrink: 0 }} 
+                    <div className="flex min-w-0 flex-1 items-center gap-1">
+                      <ChevronRight
+                        size={11}
+                        className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isConnExpanded && 'rotate-90')}
                       />
-                      <Server size={12} className="text-[var(--accent-blue)] flex-shrink-0" />
-                      <span className="mql-conn-name">{conn.name}</span>
-                      <span className="mql-live-dot" title="Connected" />
+                      {conn.color_tag && (
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: conn.color_tag }}
+                          title="Connection color"
+                        />
+                      )}
+                      <Server size={12} className="shrink-0 text-primary" />
+                      <span className="min-w-0 truncate font-medium">{conn.name}</span>
+                      <span
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
+                        title="Connected"
+                      />
                     </div>
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
                       onClick={(e) => {
                         e.stopPropagation();
                         onDisconnect(conn.id);
                       }}
                       title="Disconnect Connection"
                       aria-label="Disconnect"
-                      className="mql-icon-btn mql-disconnect-btn"
-                      style={{ padding: '2px', opacity: 0.8, color: 'var(--text-muted)' }}
                     >
-                      <LogOut size={12} />
-                    </button>
+                      <LogOut className="size-3" />
+                    </Button>
                   </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem className={ctxItemClass} onClick={() => handleAddDatabase(conn.id)}>
+                    <Plus />
+                    <span>Add Database</span>
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    className={ctxItemClass}
+                    data-testid={`ctx-pin-conn-${conn.id}`}
+                    onSelect={() => {
+                      const entry = pinEntryForConnection(conn.id);
+                      if (entry) handleTogglePin(entry);
+                    }}
+                  >
+                    <Pin />
+                    <span>
+                      {(() => {
+                        const entry = pinEntryForConnection(conn.id);
+                        return entry ? pinMenuLabel(entry) : 'Pin to sidebar';
+                      })()}
+                    </span>
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    className={ctxItemClass}
+                    onSelect={() => {
+                      const entry = favoriteEntryForConnection(conn.id);
+                      if (entry) handleToggleFavorite(entry);
+                    }}
+                  >
+                    <Heart />
+                    <span>
+                      {(() => {
+                        const entry = favoriteEntryForConnection(conn.id);
+                        return entry ? favoriteMenuLabel(entry) : 'Add to favorites';
+                      })()}
+                    </span>
+                  </ContextMenuItem>
+                  <ContextMenuItem className={ctxItemClass} onClick={onOpenConnectionManager}>
+                    <Server />
+                    <span>Manage Connections</span>
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    className={ctxItemClass}
+                    data-testid="ctx-monitor"
+                    onClick={() => onOpenMonitoring?.(conn.id)}
+                  >
+                    <Activity />
+                    <span>Monitor cluster</span>
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    className={ctxItemClass}
+                    data-testid="ctx-users"
+                    onClick={() => onOpenUsers?.(conn.id)}
+                  >
+                    <Users />
+                    <span>Manage users</span>
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
+                    onClick={() => onDisconnect(conn.id)}
+                  >
+                    <LogOut />
+                    <span>Disconnect</span>
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
 
-                  {/* Databases List */}
-                  {isConnExpanded && (
-                    <div className="mql-tree-children">
-                      {visibleDbs.map((dbName) => {
-                        const dbKey = `${conn.id}/${dbName}`;
-                        const rawColls = collections[dbKey] || [];
-                        // When filtering and neither the connection nor the db name
-                        // matches, narrow the db's collections to the matches and
-                        // auto-expand so they're visible.
-                        const dbNameMatch = filterActive && (connNameMatch || fuzzyMatch(q, dbName));
-                        const dbColls = filterActive && !dbNameMatch
-                          ? rawColls.filter((c) => fuzzyMatch(q, c.name))
-                          : rawColls;
-                        const autoExpandDb = filterActive && !dbNameMatch && dbColls.length > 0;
-                        const isDbExpanded = expandedDbs[dbKey] || autoExpandDb;
-                        const isFolderExpanded = expandedCollectionsFolders[`${dbKey}/collections`] || autoExpandDb;
+              {isConnExpanded && (
+                <div className="ml-3 border-l border-border/50 pl-1">
+                  {visibleDbs.map((dbName) => {
+                    const dbKey = `${conn.id}/${dbName}`;
+                    const rawColls = collections[dbKey] || [];
+                    const dbNameMatch = filterActive && (connNameMatch || fuzzyMatch(q, dbName));
+                    const dbColls =
+                      filterActive && !dbNameMatch ? rawColls.filter((c) => fuzzyMatch(q, c.name)) : rawColls;
+                    const autoExpandDb = filterActive && !dbNameMatch && dbColls.length > 0;
+                    const isDbExpanded = expandedDbs[dbKey] || autoExpandDb;
+                    const isFolderExpanded = expandedCollectionsFolders[`${dbKey}/collections`] || autoExpandDb;
 
-                        // Separate the flat collection list into the standard MongoDB
-                        // categories. Views come from the backend's collection type;
-                        // GridFS buckets are derived from the `<bucket>.files` convention;
-                        // System covers the `system.*` namespace.
-                        const systemColls = dbColls
-                          .filter((c) => c.name.startsWith('system.'))
-                          .map((c) => c.name)
-                          .sort(compareCollectionNames);
-                        const gridfsBuckets = Array.from(
-                          new Set(
-                            dbColls
-                              .filter((c) => /\.files$/.test(c.name))
-                              .map((c) => c.name.replace(/\.files$/, ''))
-                          )
-                        ).sort(compareCollectionNames);
-                        const gridfsColls = new Set(
-                          gridfsBuckets.flatMap((b) => [`${b}.files`, `${b}.chunks`])
-                        );
-                        const views = dbColls
-                          .filter((c) => c.type === 'view' && !c.name.startsWith('system.'))
-                          .map((c) => c.name)
-                          .sort(compareCollectionNames);
-                        const regularColls = dbColls
-                          .filter(
-                            (c) =>
-                              c.type !== 'view' &&
-                              !c.name.startsWith('system.') &&
-                              !gridfsColls.has(c.name)
-                          )
-                          .map((c) => c.name)
-                          .sort(compareCollectionNames);
+                    const systemColls = dbColls
+                      .filter((c) => c.name.startsWith('system.'))
+                      .map((c) => c.name)
+                      .sort(compareCollectionNames);
+                    const gridfsBuckets = Array.from(
+                      new Set(
+                        dbColls.filter((c) => /\.files$/.test(c.name)).map((c) => c.name.replace(/\.files$/, '')),
+                      ),
+                    ).sort(compareCollectionNames);
+                    const gridfsColls = new Set(gridfsBuckets.flatMap((b) => [`${b}.files`, `${b}.chunks`]));
+                    const views = dbColls
+                      .filter((c) => c.type === 'view' && !c.name.startsWith('system.'))
+                      .map((c) => c.name)
+                      .sort(compareCollectionNames);
+                    const regularColls = dbColls
+                      .filter(
+                        (c) => c.type !== 'view' && !c.name.startsWith('system.') && !gridfsColls.has(c.name),
+                      )
+                      .map((c) => c.name)
+                      .sort(compareCollectionNames);
 
-                        const isViewsExpanded = expandedCollectionsFolders[`${dbKey}/views`];
-                        const isGridfsExpanded = expandedCollectionsFolders[`${dbKey}/gridfs`];
-                        const isSystemExpanded = expandedCollectionsFolders[`${dbKey}/system`];
+                    const isViewsExpanded = expandedCollectionsFolders[`${dbKey}/views`];
+                    const isGridfsExpanded = expandedCollectionsFolders[`${dbKey}/gridfs`];
+                    const isSystemExpanded = expandedCollectionsFolders[`${dbKey}/system`];
 
-                        return (
-                          <div key={dbName} className="mql-tree-node">
-                            {/* Database Node */}
+                    return (
+                      <div key={dbName}>
+                        <ContextMenu>
+                          <ContextMenuTrigger asChild>
                             <div
-                              className="mql-row-h mql-tree-row"
+                              className={treeRowClass()}
                               role="button"
                               aria-expanded={isDbExpanded}
                               aria-label={`Database ${dbName}`}
                               onClick={() => toggleDb(conn.id, dbName)}
-                              onContextMenu={(e) => handleContextMenu(e, conn.id, dbName)}
                             >
-                              <ChevronRight 
-                                size={11} 
-                                className={`transition-transform duration-150 ${isDbExpanded ? 'rotate-90' : ''}`} 
-                                style={{ color: 'var(--text-dim)', flexShrink: 0 }} 
+                              <ChevronRight
+                                size={11}
+                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isDbExpanded && 'rotate-90')}
                               />
-                              <Database size={12} className="text-[var(--accent-amber)] flex-shrink-0" />
-                              <span className="mql-db-name">{dbName}</span>
+                              <Database size={12} className="shrink-0 text-amber-500" />
+                              <span className="min-w-0 truncate">{dbName}</span>
                             </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => handleAddCollection(conn.id, dbName)}>
+                              <Plus />
+                              <span>Add Collection</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              className={ctxItemClass}
+                              data-testid={`ctx-pin-db-${conn.id}-${dbName}`}
+                              onSelect={() =>
+                                handleTogglePin({
+                                  kind: 'database',
+                                  connectionName: conn.name,
+                                  db: dbName,
+                                })
+                              }
+                            >
+                              <Pin />
+                              <span>
+                                {pinMenuLabel({
+                                  kind: 'database',
+                                  connectionName: conn.name,
+                                  db: dbName,
+                                })}
+                              </span>
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              className={ctxItemClass}
+                              onSelect={() =>
+                                handleToggleFavorite({
+                                  kind: 'database',
+                                  connectionName: conn.name,
+                                  db: dbName,
+                                })
+                              }
+                            >
+                              <Heart />
+                              <span>
+                                {favoriteMenuLabel({
+                                  kind: 'database',
+                                  connectionName: conn.name,
+                                  db: dbName,
+                                })}
+                              </span>
+                            </ContextMenuItem>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => onCreateView?.(conn.id, dbName)}>
+                              <Eye />
+                              <span>Create View</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              className={ctxItemClass}
+                              onClick={() => onOpenShell?.(conn.id, dbName, undefined, 'show collections')}
+                            >
+                              <Terminal />
+                              <span>Open mongosh Shell</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => handleRefreshDb(conn.id, dbName)}>
+                              <RefreshCw />
+                              <span>Refresh Database</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => handleRenameDatabase(conn.id, dbName)}>
+                              <Pencil />
+                              <span>Rename Database</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              className={ctxItemClass}
+                              data-testid="ctx-db-users"
+                              onClick={() => onOpenUsers?.(conn.id, dbName)}
+                            >
+                              <Users />
+                              <span>Manage Users</span>
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
+                              onClick={() => handleDropDatabase(conn.id, dbName)}
+                            >
+                              <Trash2 />
+                              <span>Drop Database</span>
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
 
-                            {/* Database Subtree: category virtual folders */}
-                            {isDbExpanded && (
-                              <div className="mql-tree-children">
-                                {/* Collections */}
-                                <div
-                                  className="mql-row-h mql-tree-row"
-                                  onClick={() => toggleCollectionsFolder(conn.id, dbName)}
-                                  onContextMenu={(e) => handleContextMenu(e, conn.id, dbName)}
-                                >
-                                  <ChevronRight
-                                    size={10}
-                                    className={`transition-transform duration-150 ${isFolderExpanded ? 'rotate-90' : ''}`}
-                                    style={{ color: 'var(--text-dim)', flexShrink: 0 }}
-                                  />
-                                  <Folder size={11} className="text-[var(--accent-amber)] flex-shrink-0" />
-                                  <span className="mql-folder-label">Collections</span>
-                                  <span className="mql-count" data-testid="collections-count">
-                                    ({regularColls.length})
-                                  </span>
-                                </div>
-                                {isFolderExpanded && (
-                                  <div className="mql-tree-children">
-                                    {regularColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
-                                    {regularColls.length === 0 && (
-                                      <div className="text-[10px] text-[var(--text-dim)] pl-6 py-0.5 italic">Empty</div>
-                                    )}
-                                  </div>
+                        {isDbExpanded && (
+                          <div className="ml-3 border-l border-border/50 pl-1">
+                            <div className={treeRowClass()} onClick={() => toggleCollectionsFolder(conn.id, dbName)}>
+                              <ChevronRight
+                                size={10}
+                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isFolderExpanded && 'rotate-90')}
+                              />
+                              <Folder size={11} className="shrink-0 text-amber-500" />
+                              <span className="text-muted-foreground">Collections</span>
+                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="collections-count">
+                                ({regularColls.length})
+                              </Badge>
+                            </div>
+                            {isFolderExpanded && (
+                              <div className="ml-3 border-l border-border/50 pl-1">
+                                {regularColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
+                                {regularColls.length === 0 && (
+                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
                                 )}
+                              </div>
+                            )}
 
-                                {/* Views */}
-                                <div
-                                  className="mql-row-h mql-tree-row"
-                                  onClick={() => toggleVirtualFolder(`${dbKey}/views`)}
-                                >
-                                  <ChevronRight
-                                    size={10}
-                                    className={`transition-transform duration-150 ${isViewsExpanded ? 'rotate-90' : ''}`}
-                                    style={{ color: 'var(--text-dim)', flexShrink: 0 }}
-                                  />
-                                  <Eye size={11} className="text-[var(--accent-amber)] flex-shrink-0" />
-                                  <span className="mql-folder-label">Views</span>
-                                  <span className="mql-count" data-testid="views-count">
-                                    ({views.length})
-                                  </span>
-                                </div>
-                                {isViewsExpanded && (
-                                  <div className="mql-tree-children">
-                                    {views.map((viewName) => renderCollectionNode(conn.id, dbName, viewName))}
-                                    {views.length === 0 && (
-                                      <div className="text-[10px] text-[var(--text-dim)] pl-6 py-0.5 italic">Empty</div>
-                                    )}
-                                  </div>
+                            <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/views`)}>
+                              <ChevronRight
+                                size={10}
+                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isViewsExpanded && 'rotate-90')}
+                              />
+                              <Eye size={11} className="shrink-0 text-amber-500" />
+                              <span className="text-muted-foreground">Views</span>
+                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="views-count">
+                                ({views.length})
+                              </Badge>
+                            </div>
+                            {isViewsExpanded && (
+                              <div className="ml-3 border-l border-border/50 pl-1">
+                                {views.map((viewName) => renderCollectionNode(conn.id, dbName, viewName))}
+                                {views.length === 0 && (
+                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
                                 )}
+                              </div>
+                            )}
 
-                                {/* GridFS Buckets */}
-                                <div
-                                  className="mql-row-h mql-tree-row"
-                                  onClick={() => toggleVirtualFolder(`${dbKey}/gridfs`)}
-                                >
-                                  <ChevronRight
-                                    size={10}
-                                    className={`transition-transform duration-150 ${isGridfsExpanded ? 'rotate-90' : ''}`}
-                                    style={{ color: 'var(--text-dim)', flexShrink: 0 }}
-                                  />
-                                  <Archive size={11} className="text-[var(--accent-amber)] flex-shrink-0" />
-                                  <span className="mql-folder-label">GridFS Buckets</span>
-                                  <span className="mql-count" data-testid="gridfs-count">
-                                    ({gridfsBuckets.length})
-                                  </span>
-                                </div>
-                                {isGridfsExpanded && (
-                                  <div className="mql-tree-children">
-                                    {gridfsBuckets.map((bucket) => (
-                                      <div
-                                        key={bucket}
-                                        className="mql-row-h mql-tree-row mql-coll-row"
-                                        onClick={() => onOpenGridfs?.(conn.id, dbName, bucket)}
-                                      >
-                                        <Archive size={11} className="text-[var(--accent-green)] flex-shrink-0" style={{ marginLeft: 14 }} />
-                                        <span className="mql-coll-name" title={bucket}>{bucket}</span>
-                                      </div>
-                                    ))}
-                                    {gridfsBuckets.length === 0 && (
-                                      <div className="text-[10px] text-[var(--text-dim)] pl-6 py-0.5 italic">Empty</div>
-                                    )}
+                            <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/gridfs`)}>
+                              <ChevronRight
+                                size={10}
+                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isGridfsExpanded && 'rotate-90')}
+                              />
+                              <Archive size={11} className="shrink-0 text-amber-500" />
+                              <span className="text-muted-foreground">GridFS Buckets</span>
+                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="gridfs-count">
+                                ({gridfsBuckets.length})
+                              </Badge>
+                            </div>
+                            {isGridfsExpanded && (
+                              <div className="ml-3 border-l border-border/50 pl-1">
+                                {gridfsBuckets.map((bucket) => (
+                                  <div
+                                    key={bucket}
+                                    className={treeRowClass()}
+                                    onClick={() => onOpenGridfs?.(conn.id, dbName, bucket)}
+                                  >
+                                    <Archive size={11} className="ml-3.5 shrink-0 text-emerald-500" />
+                                    <span className="min-w-0 truncate" title={bucket}>
+                                      {bucket}
+                                    </span>
                                   </div>
+                                ))}
+                                {gridfsBuckets.length === 0 && (
+                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
                                 )}
+                              </div>
+                            )}
 
-                                {/* System */}
-                                <div
-                                  className="mql-row-h mql-tree-row"
-                                  onClick={() => toggleVirtualFolder(`${dbKey}/system`)}
-                                >
-                                  <ChevronRight
-                                    size={10}
-                                    className={`transition-transform duration-150 ${isSystemExpanded ? 'rotate-90' : ''}`}
-                                    style={{ color: 'var(--text-dim)', flexShrink: 0 }}
-                                  />
-                                  <Cog size={11} className="text-[var(--accent-amber)] flex-shrink-0" />
-                                  <span className="mql-folder-label">System</span>
-                                  <span className="mql-count" data-testid="system-count">
-                                    ({systemColls.length})
-                                  </span>
-                                </div>
-                                {isSystemExpanded && (
-                                  <div className="mql-tree-children">
-                                    {systemColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
-                                    {systemColls.length === 0 && (
-                                      <div className="text-[10px] text-[var(--text-dim)] pl-6 py-0.5 italic">Empty</div>
-                                    )}
-                                  </div>
+                            <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/system`)}>
+                              <ChevronRight
+                                size={10}
+                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isSystemExpanded && 'rotate-90')}
+                              />
+                              <Cog size={11} className="shrink-0 text-amber-500" />
+                              <span className="text-muted-foreground">System</span>
+                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="system-count">
+                                ({systemColls.length})
+                              </Badge>
+                            </div>
+                            {isSystemExpanded && (
+                              <div className="ml-3 border-l border-border/50 pl-1">
+                                {systemColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
+                                {systemColls.length === 0 && (
+                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
                                 )}
                               </div>
                             )}
                           </div>
-                        );
-                      })}
-                      {connDbs.length === 0 && (
-                        <div className="text-[10px] text-[var(--text-dim)] pl-6 py-0.5 italic">Empty</div>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {connDbs.length === 0 && (
+                    <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
                   )}
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="h-full flex flex-col items-center justify-center text-[var(--text-dim)] text-center p-4 gap-3">
-            <span style={{ fontSize: 11 }}>Connect to MongoDB server to browse database tree structures.</span>
-            <button
-              onClick={onOpenConnectionManager}
-              className="mql-btn mql-btn-primary"
-              aria-label="Connect to Database"
-            >
-              <Plus size={11} className="mr-1.5" />
-              Connect to Database...
-            </button>
-          </div>
-        )}
+              )}
+            </div>
+          );
+        })}
       </div>
+    );
+  };
 
-      {/* Floating Resilient Context Menu */}
-      {contextMenu && (
-        <SidebarContextMenu 
-          x={contextMenu.x} 
-          y={contextMenu.y} 
-          onClose={() => setContextMenu(null)}
-        >
-          {contextMenu.indexName ? (
-            /* Index Context Options */
-            <>
-              <div 
-                className="mql-ctx-item"
-                onClick={() => {
-                  navigator.clipboard?.writeText(contextMenu.indexName!);
-                  setContextMenu(null);
-                }}
+  return (
+    <EmptySpaceContextMenu onNewConnection={onOpenConnectionManager} onSettings={onOpenSettings}>
+    <aside
+      style={width ? { width: `${width}px` } : undefined}
+      className="sidebar flex h-full flex-col mql-chrome"
+    >
+      <header className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
+        <div className="flex items-center gap-1.5">
+          <Server size={14} className="text-primary" />
+          <span className="text-ui-xs font-semibold tracking-wide">MQLens Workspace</span>
+        </div>
+        <div className="flex items-center gap-0.5">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onOpenSettings} title="Settings" aria-label="Open Settings">
+            <Settings className="size-3.5" />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                title="Help & feedback"
+                aria-label="Help and feedback"
+                data-testid="help-menu-btn"
               >
-                <Plus size={12} />
-                <span>Copy Index Name</span>
-              </div>
-              <div className="mql-ctx-sep" />
-              <div 
-                className="mql-ctx-item mql-ctx-item-danger"
-                style={{ color: 'var(--accent-red)' }}
-                onClick={() => {
-                  if (onDeleteIndex) {
-                    onDeleteIndex(contextMenu.connectionId!, contextMenu.dbName!, contextMenu.collName!, contextMenu.indexName!);
-                  }
-                  setContextMenu(null);
-                }}
+                <HelpCircle className="size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              {HELP_LINKS.map(({ Icon, label, url }) => (
+                <DropdownMenuItem key={label} className="gap-2 text-xs" onClick={() => void openUrl(url)}>
+                  <Icon className="size-3.5" />
+                  <span>{label}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={onOpenConnectionManager}
+            title="Manage Connections"
+            aria-label="Manage Connections"
+          >
+            <Plus className="size-3.5" />
+          </Button>
+        </div>
+      </header>
+
+      {activeConnections.length > 0 && (
+        <div className="shrink-0 border-b border-border px-2 py-1.5">
+          <div className="relative">
+            <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="text"
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              placeholder="Search connections, databases, collections…"
+              aria-label="Search sidebar"
+              data-testid="sidebar-search"
+              className="h-7 pl-7 pr-7 text-ui-xs"
+            />
+            {filterQuery && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-0 top-0 h-7 w-7"
+                onClick={() => setFilterQuery('')}
+                aria-label="Clear search"
               >
-                <Trash2 size={12} />
-                <span>Delete Index</span>
-              </div>
-            </>
-          ) : contextMenu.isIndexesFolder ? (
-            /* Indexes Folder Context Options */
-            <>
-              <div 
-                className="mql-ctx-item"
-                onClick={() => {
-                  if (onCreateIndex) {
-                    onCreateIndex(contextMenu.connectionId!, contextMenu.dbName!, contextMenu.collName!);
-                  }
-                  setContextMenu(null);
-                }}
-              >
-                <Plus size={12} />
-                <span>Create Index</span>
-              </div>
-            </>
-          ) : contextMenu.collName ? (
-            /* Collection Context Options */
-            <>
-              <div 
-                className="mql-ctx-item"
-                onClick={() => {
-                  onSelectCollection(contextMenu.connectionId!, contextMenu.dbName!, contextMenu.collName!);
-                  setContextMenu(null);
-                }}
-              >
-                <FolderOpen size={12} />
-                <span>Open Collection</span>
-              </div>
-              <div
-                className="mql-ctx-item"
-                onClick={() => {
-                  onOpenShell?.(
-                    contextMenu.connectionId!,
-                    contextMenu.dbName!,
-                    contextMenu.collName!,
-                    `db.${contextMenu.collName!}.find({}).limit(50)`
-                  );
-                  setContextMenu(null);
-                }}
-              >
-                <Terminal size={12} />
-                <span>Open mongosh Shell</span>
-              </div>
-              <div
-                className="mql-ctx-item"
-                onClick={() => {
-                  onAnalyzeSchema?.(contextMenu.connectionId!, contextMenu.dbName!, contextMenu.collName!);
-                  setContextMenu(null);
-                }}
-              >
-                <Table2 size={12} />
-                <span>Analyze Schema</span>
-              </div>
-              <div
-                className="mql-ctx-item"
-                onClick={() => {
-                  navigator.clipboard?.writeText(contextMenu.collName!);
-                  setContextMenu(null);
-                }}
-              >
-                <FolderOpen size={12} />
-                <span>Copy Collection Name</span>
-              </div>
-              <div
-                className="mql-ctx-item"
-                onClick={() => {
-                  handleRenameCollection(contextMenu.connectionId!, contextMenu.dbName!, contextMenu.collName!);
-                  setContextMenu(null);
-                }}
-              >
-                <Pencil size={12} />
-                <span>Rename Collection</span>
-              </div>
-              <div className="mql-ctx-sep" />
-              <div 
-                className="mql-ctx-item mql-ctx-item-danger"
-                style={{ color: 'var(--accent-red)' }}
-                onClick={() => {
-                  handleDropCollection(contextMenu.connectionId!, contextMenu.dbName!, contextMenu.collName!);
-                  setContextMenu(null);
-                }}
-              >
-                <Trash2 size={12} />
-                <span>
-                  {(collections[`${contextMenu.connectionId}/${contextMenu.dbName}`] || [])
-                    .find((c) => c.name === contextMenu.collName)?.type === 'view'
-                    ? 'Drop View'
-                    : 'Drop Collection'}
-                </span>
-              </div>
-            </>
-          ) : contextMenu.isConnectionNode ? (
-            /* Connection Node Context Options */
-            <>
-              <div 
-                className="mql-ctx-item"
-                onClick={() => {
-                  handleAddDatabase(contextMenu.connectionId!);
-                  setContextMenu(null);
-                }}
-              >
-                <Plus size={12} />
-                <span>Add Database</span>
-              </div>
-              <div 
-                className="mql-ctx-item"
-                onClick={() => {
-                  onOpenConnectionManager();
-                  setContextMenu(null);
-                }}
-              >
-                <Server size={12} />
-                <span>Manage Connections</span>
-              </div>
-              <div
-                className="mql-ctx-item"
-                data-testid="ctx-monitor"
-                onClick={() => {
-                  onOpenMonitoring?.(contextMenu.connectionId!);
-                  setContextMenu(null);
-                }}
-              >
-                <Activity size={12} />
-                <span>Monitor cluster</span>
-              </div>
-              <div
-                className="mql-ctx-item"
-                data-testid="ctx-users"
-                onClick={() => {
-                  onOpenUsers?.(contextMenu.connectionId!);
-                  setContextMenu(null);
-                }}
-              >
-                <Users size={12} />
-                <span>Manage users</span>
-              </div>
-              <div className="mql-ctx-sep" />
-              <div 
-                className="mql-ctx-item mql-ctx-item-danger"
-                style={{ color: 'var(--accent-red)' }}
-                onClick={() => {
-                  onDisconnect(contextMenu.connectionId!);
-                  setContextMenu(null);
-                }}
-              >
-                <LogOut size={12} />
-                <span>Disconnect</span>
-              </div>
-            </>
-          ) : contextMenu.isEmptySpace ? (
-            /* Empty Space Context Options */
-            <>
-              <div 
-                className="mql-ctx-item"
-                onClick={() => {
-                  onOpenConnectionManager();
-                  setContextMenu(null);
-                }}
-              >
-                <Plus size={12} />
-                <span>New Connection</span>
-              </div>
-              <div 
-                className="mql-ctx-item"
-                onClick={() => {
-                  onOpenSettings();
-                  setContextMenu(null);
-                }}
-              >
-                <Settings size={12} />
-                <span>Settings</span>
-              </div>
-              <div 
-                className="mql-ctx-item"
-                onClick={() => {
-                  onToggleTheme();
-                  setContextMenu(null);
-                }}
-              >
-                {theme === 'dark' ? <Sun size={12} /> : <Moon size={12} />}
-                <span>Toggle Theme</span>
-              </div>
-            </>
-          ) : (
-            /* Database Context Options */
-            <>
-              <div 
-                className="mql-ctx-item"
-                onClick={() => {
-                  handleAddCollection(contextMenu.connectionId!, contextMenu.dbName!);
-                  setContextMenu(null);
-                }}
-              >
-                <Plus size={12} />
-                <span>Add Collection</span>
-              </div>
-              <div
-                className="mql-ctx-item"
-                onClick={() => {
-                  onCreateView?.(contextMenu.connectionId!, contextMenu.dbName!);
-                  setContextMenu(null);
-                }}
-              >
-                <Eye size={12} />
-                <span>Create View</span>
-              </div>
-              <div
-                className="mql-ctx-item"
-                onClick={() => {
-                  onOpenShell?.(contextMenu.connectionId!, contextMenu.dbName!, undefined, 'show collections');
-                  setContextMenu(null);
-                }}
-              >
-                <Terminal size={12} />
-                <span>Open mongosh Shell</span>
-              </div>
-              <div 
-                className="mql-ctx-item"
-                onClick={() => {
-                  handleRefreshDb(contextMenu.connectionId!, contextMenu.dbName!);
-                  setContextMenu(null);
-                }}
-              >
-                <RefreshCw size={12} />
-                <span>Refresh Database</span>
-              </div>
-              <div
-                className="mql-ctx-item"
-                onClick={() => {
-                  handleRenameDatabase(contextMenu.connectionId!, contextMenu.dbName!);
-                  setContextMenu(null);
-                }}
-              >
-                <Pencil size={12} />
-                <span>Rename Database</span>
-              </div>
-              <div
-                className="mql-ctx-item"
-                data-testid="ctx-db-users"
-                onClick={() => {
-                  onOpenUsers?.(contextMenu.connectionId!, contextMenu.dbName!);
-                  setContextMenu(null);
-                }}
-              >
-                <Users size={12} />
-                <span>Manage Users</span>
-              </div>
-              <div className="mql-ctx-sep" />
-              <div
-                className="mql-ctx-item mql-ctx-item-danger"
-                style={{ color: 'var(--accent-red)' }}
-                onClick={() => {
-                  handleDropDatabase(contextMenu.connectionId!, contextMenu.dbName!);
-                  setContextMenu(null);
-                }}
-              >
-                <Trash2 size={12} />
-                <span>Drop Database</span>
-              </div>
-            </>
-          )}
-        </SidebarContextMenu>
+                <X className="size-3" />
+              </Button>
+            )}
+          </div>
+        </div>
       )}
+
+      <ScrollArea className="min-h-0 flex-1">
+          <div className="database-tree-container p-2">
+            <SidebarSection
+              title="Connections"
+              icon={Server}
+              open={sectionsOpen.connections}
+              onOpenChange={(open) => setSectionsOpen((s) => ({ ...s, connections: open }))}
+            >
+              {renderConnectionsTree()}
+            </SidebarSection>
+
+            <SidebarSection
+              title="Pinned"
+              icon={Pin}
+              open={sectionsOpen.pinned}
+              onOpenChange={(open) => setSectionsOpen((s) => ({ ...s, pinned: open }))}
+              isEmpty={pinnedItems.length === 0}
+              emptyText="Right-click a connection, database, or collection → Pin to sidebar"
+            >
+              <div className="flex flex-col gap-0.5 pb-1">
+                {pinnedItems.map((p) => {
+                    const connected = Boolean(connectionIdForName(p.connectionName));
+                    const label = pinnedItemLabel(p);
+                    const subtitle = pinnedItemSubtitle(p);
+                    const isActive =
+                      p.kind === 'collection' &&
+                      activeCollection &&
+                      activeConnections.find((c) => c.id === activeCollection.connectionId)?.name ===
+                        p.connectionName &&
+                      activeCollection.db === p.db &&
+                      activeCollection.collection === p.collection &&
+                      !activeCollection.indexName;
+                    const PinIcon =
+                      p.kind === 'connection' ? Server : p.kind === 'database' ? Database : Layers;
+                    return (
+                      <ContextMenu key={pinnedItemKey(p)}>
+                        <ContextMenuTrigger asChild>
+                          <div
+                            className={treeRowClass(!!isActive)}
+                            data-testid={`pinned-item-${pinnedItemKey(p)}`}
+                            onClick={() => void navigateToPinned(p)}
+                          >
+                            <PinIcon
+                              size={10}
+                              className={cn(
+                                'shrink-0',
+                                p.kind === 'connection'
+                                  ? 'text-primary'
+                                  : p.kind === 'database'
+                                    ? 'text-amber-500'
+                                    : 'text-emerald-500',
+                              )}
+                            />
+                            <span className="min-w-0 truncate" title={label}>
+                              {label}
+                            </span>
+                            <span className="ml-auto truncate text-[10px] text-muted-foreground">
+                              {subtitle}
+                              {!connected && ' · offline'}
+                            </span>
+                          </div>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          <ContextMenuItem
+                            className={ctxItemClass}
+                            onClick={() => void navigateToPinned(p)}
+                          >
+                            <FolderOpen />
+                            <span>Open</span>
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            className={ctxItemClass}
+                            onSelect={() => {
+                              const next = unpinItem(pinnedItems, p);
+                              setPinnedItems(next);
+                            }}
+                          >
+                            <Pin />
+                            <span>Unpin</span>
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      </ContextMenu>
+                    );
+                  })}
+              </div>
+            </SidebarSection>
+
+            <SidebarSection
+              title="Favorites"
+              icon={Heart}
+              open={sectionsOpen.favorites}
+              onOpenChange={(open) => {
+                setSectionsOpen((s) => ({ ...s, favorites: open }));
+                if (open) void reloadSavedQueryCatalog();
+              }}
+              isEmpty={favoriteItems.length === 0}
+              emptyText="Right-click items in the tree, or favorite a saved query from a collection tab"
+            >
+              <div className="flex flex-col gap-0.5 pb-1">
+                {favoriteItems.map((fav) => {
+                    const connected = Boolean(connectionIdForName(fav.connectionName));
+                    const label = favoriteItemLabel(fav);
+                    const subtitle = favoriteItemSubtitle(fav);
+                    const FavIcon =
+                      fav.kind === 'query'
+                        ? Heart
+                        : fav.kind === 'connection'
+                          ? Server
+                          : fav.kind === 'database'
+                            ? Database
+                            : Layers;
+                    return (
+                      <ContextMenu key={favoriteItemKey(fav)}>
+                        <ContextMenuTrigger asChild>
+                          <div
+                            className={treeRowClass()}
+                            onClick={() => void navigateToFavorite(fav)}
+                            title={`${fav.connectionName}${fav.db ? ` · ${fav.db}` : ''}${fav.collection ? `.${fav.collection}` : ''}`}
+                          >
+                            <FavIcon
+                              size={10}
+                              className={cn(
+                                'shrink-0',
+                                fav.kind === 'query' ? 'text-rose-500' : 'text-primary',
+                              )}
+                            />
+                            <span className="min-w-0 truncate">{label}</span>
+                            <span className="ml-auto truncate text-[10px] text-muted-foreground">
+                              {subtitle}
+                              {!connected && fav.kind !== 'query' ? ' · offline' : ''}
+                            </span>
+                          </div>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          <ContextMenuItem
+                            className={ctxItemClass}
+                            onClick={() => void navigateToFavorite(fav)}
+                          >
+                            <FolderOpen />
+                            <span>Open</span>
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            className={ctxItemClass}
+                            onSelect={() => {
+                              const next = removeFavoriteItem(favoriteItems, fav);
+                              setFavoriteItems(next);
+                            }}
+                          >
+                            <Heart />
+                            <span>Remove from favorites</span>
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      </ContextMenu>
+                    );
+                  })}
+              </div>
+            </SidebarSection>
+
+            <SidebarSection
+              title="Folders"
+              icon={FolderOpen}
+              open={sectionsOpen.folders}
+              onOpenChange={(open) => setSectionsOpen((s) => ({ ...s, folders: open }))}
+              emptyText={
+                connectionProfiles.length === 0
+                  ? 'Save connections in Connection Manager'
+                  : undefined
+              }
+            >
+              {connectionProfiles.length > 0 && (
+                <div className="flex flex-col gap-0.5 pb-1">
+                  {connectionFolders.map((folder) => {
+                    const folderProfiles = connectionProfiles.filter(
+                      (p) => profileFolderMap[p.id] === folder.id,
+                    );
+                    if (folderProfiles.length === 0) return null;
+                    const isExpanded = expandedProfileFolders[folder.id] ?? false;
+                    return (
+                      <div key={folder.id}>
+                        <div
+                          className={treeRowClass()}
+                          onClick={() =>
+                            setExpandedProfileFolders((prev) => ({
+                              ...prev,
+                              [folder.id]: !prev[folder.id],
+                            }))
+                          }
+                        >
+                          <ChevronRight
+                            size={10}
+                            className={cn(
+                              'shrink-0 text-muted-foreground transition-transform duration-150',
+                              isExpanded && 'rotate-90',
+                            )}
+                          />
+                          <Folder size={11} className="shrink-0 text-amber-500" />
+                          <span className="min-w-0 truncate">{folder.name}</span>
+                          <Badge variant="secondary" className="ml-auto h-4 px-1 text-[9px] font-normal">
+                            {folderProfiles.length}
+                          </Badge>
+                        </div>
+                        {isExpanded && (
+                          <div className="ml-3 border-l border-border/50 pl-1">
+                            {folderProfiles.map((profile) => {
+                              const isConnected = activeConnections.some(
+                                (c) => c.profileId === profile.id,
+                              );
+                              return (
+                                <div
+                                  key={profile.id}
+                                  className={treeRowClass()}
+                                  onClick={() => onConnectProfile?.(profile)}
+                                  title={profile.name}
+                                >
+                                  <Server
+                                    size={11}
+                                    className={cn(
+                                      'shrink-0',
+                                      isConnected ? 'text-emerald-500' : 'text-muted-foreground',
+                                    )}
+                                  />
+                                  <span className="min-w-0 truncate">{profile.name}</span>
+                                  {isConnected && (
+                                    <span
+                                      className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
+                                      title="Connected"
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {connectionProfiles
+                    .filter((p) => !profileFolderMap[p.id])
+                    .map((profile) => {
+                      const isConnected = activeConnections.some((c) => c.profileId === profile.id);
+                      return (
+                        <div
+                          key={profile.id}
+                          className={treeRowClass()}
+                          onClick={() => onConnectProfile?.(profile)}
+                          title={profile.name}
+                        >
+                          <Server
+                            size={11}
+                            className={cn(
+                              'shrink-0',
+                              isConnected ? 'text-emerald-500' : 'text-muted-foreground',
+                            )}
+                          />
+                          <span className="min-w-0 truncate">{profile.name}</span>
+                          <span className="ml-auto text-[10px] text-muted-foreground">root</span>
+                        </div>
+                      );
+                    })}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="mt-1 h-7 w-full justify-start gap-1.5 px-2 text-[10px] text-muted-foreground"
+                    onClick={onOpenConnectionManager}
+                  >
+                    <Settings size={11} />
+                    Manage connections
+                  </Button>
+                </div>
+              )}
+            </SidebarSection>
+          </div>
+      </ScrollArea>
+
+      <footer className="flex shrink-0 items-center justify-between border-t border-border px-3 py-2">
+        <ThemePicker />
+        <span className="text-[10px] text-muted-foreground">Theme</span>
+      </footer>
     </aside>
+    </EmptySpaceContextMenu>
   );
 };

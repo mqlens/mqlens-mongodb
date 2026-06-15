@@ -177,6 +177,47 @@ pub async fn set_default_query(
     save_store_to_file(&path, &store)
 }
 
+/// Flat list of every saved query across all collections (for sidebar favorites).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedQueryRef {
+    pub connection_name: String,
+    pub db: String,
+    pub collection: String,
+    pub id: String,
+    pub name: String,
+    pub query: Value,
+    pub created_at: String,
+}
+
+#[tauri::command]
+pub async fn list_all_saved_queries(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<SavedQueryRef>, String> {
+    let path = get_queries_path(&app_handle);
+    let store = load_store_from_file(&path);
+    let mut out = Vec::new();
+    for (key, cq) in &store.collections {
+        let parts: Vec<&str> = key.split("::").collect();
+        if parts.len() != 3 {
+            continue;
+        }
+        for s in &cq.saved {
+            out.push(SavedQueryRef {
+                connection_name: parts[0].to_string(),
+                db: parts[1].to_string(),
+                collection: parts[2].to_string(),
+                id: s.id.clone(),
+                name: s.name.clone(),
+                query: s.query.clone(),
+                created_at: s.created_at.clone(),
+            });
+        }
+    }
+    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +265,50 @@ mod tests {
         let text = serde_json::to_string(&store).unwrap();
         let back: QueryStore = serde_json::from_str(&text).unwrap();
         assert_eq!(back, store);
+    }
+
+    #[test]
+    fn list_all_saved_queries_flattens_collections() {
+        let mut store = QueryStore::default();
+        let key = collection_key("Local", "db", "orders");
+        let cq = store.collections.entry(key).or_default();
+        cq.saved.push(SavedQuery {
+            id: "q1".into(),
+            name: "Active".into(),
+            query: json!({ "queryType": "find" }),
+            created_at: "2024-01-02".into(),
+        });
+        let key2 = collection_key("Local", "db", "users");
+        store.collections.entry(key2).or_default().saved.push(SavedQuery {
+            id: "q2".into(),
+            name: "All users".into(),
+            query: json!({}),
+            created_at: "2024-01-01".into(),
+        });
+        let path = std::env::temp_dir().join(format!("mqlens_queries_test_{}.json", std::process::id()));
+        save_store_to_file(&path, &store).unwrap();
+        let loaded = load_store_from_file(&path);
+        let mut out = Vec::new();
+        for (k, cq) in &loaded.collections {
+            let parts: Vec<&str> = k.split("::").collect();
+            if parts.len() != 3 {
+                continue;
+            }
+            for s in &cq.saved {
+                out.push(SavedQueryRef {
+                    connection_name: parts[0].to_string(),
+                    db: parts[1].to_string(),
+                    collection: parts[2].to_string(),
+                    id: s.id.clone(),
+                    name: s.name.clone(),
+                    query: s.query.clone(),
+                    created_at: s.created_at.clone(),
+                });
+            }
+        }
+        out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].name, "Active");
+        let _ = std::fs::remove_file(path);
     }
 }

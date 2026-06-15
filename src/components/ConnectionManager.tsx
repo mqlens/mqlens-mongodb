@@ -6,9 +6,37 @@ import { PasswordInput } from './PasswordInput';
 import { useEscapeClose } from '../lib/useEscapeClose';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
-  Folder, FolderPlus, FolderOpen, Search, ChevronDown, ChevronRight,
+  Folder, FolderPlus, FolderOpen, Search, ChevronRight,
   Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste
 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogPortal,
+  DialogOverlay,
+} from '@/components/ui/dialog';
+import { DraggableDialogContent } from '@/components/ui/draggable-dialog-content';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { cn } from '@/lib/utils';
+import {
+  type FolderNode,
+  loadConnectionFolders,
+  saveConnectionFolders,
+} from '@/lib/connectionFolders';
 
 // Mirrors the backend ssh_tunnel::SshConfig (auth is internally tagged).
 export type SshConfig = {
@@ -25,26 +53,20 @@ interface ConnectionProfile {
   id: string;
   name: string;
   uri: string;
+  color_tag?: string;
   ssh?: SshConfig | null;
 }
 
 interface ConnectionManagerProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnect: (id: string, name: string, uri: string, profileId: string) => void;
+  onConnect: (id: string, name: string, uri: string, profileId: string, colorTag?: string) => void;
   activeConnections?: { id: string; profileId: string; name: string; uri: string }[];
 }
 
 interface TestStep {
   name: string;
   status: 'pending' | 'running' | 'success' | 'failed';
-}
-
-interface FolderNode {
-  id: string;
-  name: string;
-  parentId: string | null;
-  shared?: boolean;
 }
 
 const generateUUID = () => {
@@ -95,6 +117,29 @@ const BLANK_CONN = {
   name: 'New Connection',
   folder: '',
 };
+
+const sidebarPanelClass =
+  'flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar/40 text-sidebar-foreground';
+
+/** Stacking above the connection-manager shell (z-50) and its nested editor (z-100). */
+const NESTED_DIALOG_Z = 'z-[100]';
+const NESTED_SELECT_Z = 'z-[110]';
+
+const sidebarNavButtonClass = (active: boolean) =>
+  cn(
+    'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-ui-xs transition-colors cursor-pointer',
+    active
+      ? 'bg-background font-medium text-foreground shadow-sm ring-1 ring-border'
+      : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
+  );
+
+const treeRowClass = (active?: boolean) =>
+  cn(
+    'flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-ui-xs transition-colors',
+    active
+      ? 'bg-background font-medium text-foreground shadow-sm ring-1 ring-border'
+      : 'text-muted-foreground hover:bg-sidebar-accent/70 hover:text-foreground',
+  );
 
 const TABS = [
   { id: 'server', label: 'Server', icon: Server },
@@ -363,44 +408,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   useEscapeClose(isOpen && !showEditDialog, onClose);
 
   const loadFoldersFromStorage = () => {
-    try {
-      const storedFolders = localStorage.getItem('mqlens_folders');
-      const storedMap = localStorage.getItem('mqlens_profile_folders');
-      
-      let currentFolders: FolderNode[] = [];
-      if (storedFolders) {
-        currentFolders = JSON.parse(storedFolders);
-      } else {
-        // Initial Seed Folder
-        currentFolders = [
-          { id: 'local-resources', name: 'Local resources', parentId: null, shared: false }
-        ];
-        localStorage.setItem('mqlens_folders', JSON.stringify(currentFolders));
-      }
-      setFolders(currentFolders);
-
-      // Default expand local resources
-      setExpandedFolders(prev => ({ 'local-resources': true, ...prev }));
-
-      if (storedMap) {
-        setProfileFolderMap(JSON.parse(storedMap));
-      } else {
-        setProfileFolderMap({});
-      }
-    } catch (err) {
-      console.error('Failed to load connection folders', err);
-    }
+    const { folders: currentFolders, profileFolderMap: map } = loadConnectionFolders();
+    setFolders(currentFolders);
+    setExpandedFolders((prev) => ({ 'local-resources': true, ...prev }));
+    setProfileFolderMap(map);
   };
 
   const saveFoldersToStorage = (updatedFolders: FolderNode[], updatedMap: Record<string, string>) => {
-    try {
-      localStorage.setItem('mqlens_folders', JSON.stringify(updatedFolders));
-      localStorage.setItem('mqlens_profile_folders', JSON.stringify(updatedMap));
-      setFolders(updatedFolders);
-      setProfileFolderMap(updatedMap);
-    } catch (err) {
-      console.error('Failed to save connection folders', err);
-    }
+    saveConnectionFolders(updatedFolders, updatedMap);
+    setFolders(updatedFolders);
+    setProfileFolderMap(updatedMap);
   };
 
   const loadProfiles = async () => {
@@ -609,7 +626,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     try {
       const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-      onConnect(connId, profile.name, profile.uri, profile.id);
+      onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag);
     } catch (err: any) {
       setError(String(err));
     } finally {
@@ -726,138 +743,151 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   const selectedProfile = profiles.find(p => p.id === selectedId);
 
-  if (!isOpen) return null;
-
   return (
-    // No click-outside close: dismiss only via the X button or Escape.
-    <div className="modal-overlay mql-modal-overlay">
-      <div className="modal-container mql-ncd" style={{ width: '820px', height: '620px', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <header className="mql-ncd-titlebar">
-          <div className="mql-row" style={{ gap: 8 }}>
-            <Server size={14} className="text-[var(--accent-blue)]" />
-            <span style={{ fontSize: 12, fontWeight: 600 }}>Connection Manager</span>
+    <>
+    {/* No click-outside close: dismiss only via the X button or Escape. */}
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DraggableDialogContent
+        resetKey={isOpen}
+        defaultWidth={900}
+        defaultHeight={680}
+        minWidth={640}
+        minHeight={420}
+        hideClose
+        className="flex min-h-0 flex-col gap-0 overflow-hidden p-0"
+        onInteractOutside={(e) => e.preventDefault()}
+      >
+        <header
+          data-dialog-drag-handle
+          className="flex shrink-0 cursor-grab items-center justify-between border-b border-border bg-muted/20 px-4 py-4 active:cursor-grabbing"
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+              <Server className="h-5 w-5 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold leading-tight text-foreground">Connection Manager</h2>
+              <p className="truncate text-ui-xs text-muted-foreground">Manage saved MongoDB profiles and folders</p>
+            </div>
           </div>
-          <button onClick={onClose} className="mql-icon-btn" aria-label="Close">
-            <X size={13} />
-          </button>
+          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose} aria-label="Close">
+            <X size={14} />
+          </Button>
         </header>
 
         {/* Toolbar */}
-        <section style={{ padding: '6px 12px', borderBottom: '1px solid var(--border-color)', display: 'flex', flexDirection: 'row', gap: 6, alignItems: 'center', background: 'var(--bg-panel)', flexShrink: 0 }}>
-          <button className="mql-btn mql-btn-ghost mql-btn-outlined" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={handleNewClick} aria-label="New...">
-            <Plus size={11} className="mr-1 text-[var(--accent-blue)]" />
+        <section className="flex shrink-0 flex-row flex-wrap items-center gap-1.5 border-b border-border bg-muted/30 px-4 py-2">
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={handleNewClick} aria-label="New...">
+            <Plus size={12} className="text-primary" />
             <span>New...</span>
-          </button>
-          <button className="mql-btn mql-btn-ghost mql-btn-outlined" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={handleNewFolderClick}>
-            <FolderPlus size={11} className="mr-1 text-[var(--accent-amber)]" />
+          </Button>
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={handleNewFolderClick}>
+            <FolderPlus size={12} className="text-warning" />
             <span>New Folder</span>
-          </button>
+          </Button>
           {selectedId && (
             <>
-              <div className="mql-ctx-sep" style={{ height: '16px', margin: '0 4px', width: '1px', background: 'var(--border-color)' }} />
-              <button className="mql-btn mql-btn-ghost mql-btn-outlined" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => handleEditClick(selectedId)}>
-                <Edit3 size={11} className="mr-1 text-[var(--accent-blue)]" />
+              <div className="mx-1 h-4 w-px bg-border" />
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={() => handleEditClick(selectedId)}>
+                <Edit3 size={12} className="text-primary" />
                 <span>Edit</span>
-              </button>
-              <button className="mql-btn mql-btn-ghost mql-btn-outlined" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => handleDuplicateClick(selectedId)}>
-                <Copy size={11} className="mr-1 text-[var(--accent-teal)]" />
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={() => handleDuplicateClick(selectedId)}>
+                <Copy size={12} className="text-muted-foreground" />
                 <span>Duplicate</span>
-              </button>
-              <button className="mql-btn mql-btn-ghost mql-btn-outlined mql-btn-danger" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => handleDelete(selectedId)}>
-                <Trash2 size={11} className="mr-1 text-[var(--accent-red)]" />
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs text-destructive hover:text-destructive" onClick={() => handleDelete(selectedId)}>
+                <Trash2 size={12} />
                 <span>Delete</span>
-              </button>
-              <button className="mql-btn mql-btn-ghost mql-btn-outlined" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => {
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={() => {
                 if (selectedProfile) navigator.clipboard?.writeText(selectedProfile.uri);
               }}>
-                <ExternalLink size={11} className="mr-1" />
+                <ExternalLink size={12} />
                 <span>Copy URI</span>
-              </button>
+              </Button>
             </>
           )}
         </section>
 
-        {/* Filter Input */}
-        <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-input-blend)' }}>
-          <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
-            <Search size={12} style={{ position: 'absolute', left: 8, color: 'var(--text-dim)' }} />
-            <input 
-              type="text" 
-              placeholder="Search connections..." 
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              style={{ width: '100%', padding: '4px 8px 4px 26px', fontSize: 11, background: 'var(--bg-base)', border: '1px solid var(--border-color)', borderRadius: '4px', color: 'var(--text-main)' }}
-            />
-          </div>
-          <div className="mql-ncd-select-wrap" style={{ width: 140 }}>
-            <select 
-              className="mql-ncd-select" 
-              value={folderFilter} 
-              onChange={e => setFolderFilter(e.target.value)}
-              style={{ fontSize: 11, padding: '4px 8px' }}
-            >
-              <option value="all">All Folders</option>
-              <option value="root">(root)</option>
-              {folders.map(f => (
-                <option key={f.id} value={f.id}>{f.name}</option>
-              ))}
-            </select>
-            <ChevronDown size={10} color="var(--text-dim)" style={{ right: 8 }} />
-          </div>
-        </div>
-
         {/* Content splits */}
-        <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        <div className="flex min-h-0 flex-1">
           {/* Left profile explorer tree */}
-          <div style={{ width: '280px', borderRight: '1px solid var(--border-color)', overflowY: 'auto', padding: '6px', background: 'var(--bg-sidebar)' }}>
-            <div className="mql-tree-scroll">
+          <aside className={cn(sidebarPanelClass, 'w-[min(280px,34%)]')}>
+            <div className="shrink-0 space-y-2 border-b border-sidebar-border px-3 py-3">
+              <div className="relative flex items-center">
+                <Search size={13} className="absolute left-2.5 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder="Search connections..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="h-8 border-sidebar-border bg-background/80 pl-8 text-ui-xs"
+                />
+              </div>
+              <Select value={folderFilter} onValueChange={setFolderFilter}>
+                <SelectTrigger data-testid="folder-filter-select" className="h-8 w-full border-sidebar-border bg-background/80 text-ui-xs">
+                  <SelectValue placeholder="All folders" />
+                </SelectTrigger>
+                <SelectContent className={NESTED_SELECT_Z}>
+                  <SelectItem value="all">All Folders</SelectItem>
+                  <SelectItem value="root">(root)</SelectItem>
+                  {folders.map(f => (
+                    <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <ScrollArea className="min-h-0 flex-1">
+            <div className="p-2">
               {folders.map(folder => {
                 const isExpanded = expandedFolders[folder.id];
                 const folderProfiles = filteredProfiles.filter(p => profileFolderMap[p.id] === folder.id);
 
                 return (
-                  <div key={folder.id} className="mql-tree-node">
-                    <div 
-                      className="mql-row-h mql-tree-row"
-                      style={{ padding: '4px 6px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                  <div key={folder.id}>
+                    <div
+                      className={treeRowClass()}
                       onClick={() => toggleFolderExpand(folder.id)}
                     >
-                      <ChevronRight 
-                        size={11} 
-                        className={`transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} 
-                        style={{ color: 'var(--text-dim)', flexShrink: 0 }} 
+                      <ChevronRight
+                        size={12}
+                        className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isExpanded && 'rotate-90')}
                       />
                       {isExpanded ? (
-                        <FolderOpen size={12} className="text-[var(--accent-amber)]" />
+                        <FolderOpen size={12} className="shrink-0 text-warning" />
                       ) : (
-                        <Folder size={12} className="text-[var(--accent-amber)]" />
+                        <Folder size={12} className="shrink-0 text-warning" />
                       )}
-                      <span className="mql-folder-label" style={{ fontWeight: 500 }}>{folder.name}</span>
-                      <span className="mql-count">({folderProfiles.length})</span>
+                      <span className="min-w-0 truncate">{folder.name}</span>
+                      <span className="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">({folderProfiles.length})</span>
                     </div>
 
                     {isExpanded && (
-                      <div className="mql-tree-children" style={{ marginLeft: 16, borderLeft: '1px solid var(--tree-guide-color)', paddingLeft: 4 }}>
+                      <div className="ml-3 border-l border-sidebar-border pl-1.5">
                         {folderProfiles.map(p => {
                           const isSel = p.id === selectedId;
                           const isActive = activeConnections.some(c => c.profileId === p.id);
                           return (
-                            <div 
+                            <div
                               key={p.id}
-                              className={`mql-row-h mql-tree-row mql-coll-row ${isSel ? 'is-active' : ''}`}
-                              style={{ padding: '4px 6px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                              className={treeRowClass(isSel)}
                               onClick={() => handleSelect(p.id)}
                               onDoubleClick={handleConnectClick}
                             >
-                              <Server size={11} className={isSel ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'} />
-                              <span className="mql-coll-name" style={{ fontSize: '11px' }}>{p.name || 'Unnamed connection'}</span>
-                              {isActive && <span className="mql-live-dot" title="Connected" />}
+                              <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
+                              <span className="min-w-0 truncate">{p.name || 'Unnamed connection'}</span>
+                              {isActive && (
+                                <Badge variant="success" className="ml-auto h-4 px-1 text-ui-2xs" title="Connected">
+                                  ●
+                                </Badge>
+                              )}
                             </div>
                           );
                         })}
                         {folderProfiles.length === 0 && (
-                          <div style={{ fontSize: '10px', color: 'var(--text-dim)', paddingLeft: '20px', fontStyle: 'italic' }}>Empty folder</div>
+                          <div className="pl-4 text-ui-2xs italic text-muted-foreground">Empty folder</div>
                         )}
                       </div>
                     )}
@@ -870,136 +900,141 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 const isSel = p.id === selectedId;
                 const isActive = activeConnections.some(c => c.profileId === p.id);
                 return (
-                  <div 
+                  <div
                     key={p.id}
-                    className={`mql-row-h mql-tree-row mql-coll-row ${isSel ? 'is-active' : ''}`}
-                    style={{ padding: '4px 6px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, margin: '2px 0' }}
+                    className={cn(treeRowClass(isSel), 'my-0.5')}
                     onClick={() => handleSelect(p.id)}
                     onDoubleClick={handleConnectClick}
                   >
-                    <Server size={11} className={isSel ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'} />
-                    <span className="mql-coll-name" style={{ fontSize: '11px' }}>{p.name || 'Unnamed connection'}</span>
-                    {isActive && <span className="mql-live-dot" title="Connected" />}
+                    <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
+                    <span className="min-w-0 truncate">{p.name || 'Unnamed connection'}</span>
+                    {isActive && (
+                      <Badge variant="success" className="ml-auto h-4 px-1 text-ui-2xs" title="Connected">
+                        ●
+                      </Badge>
+                    )}
                   </div>
                 );
               })}
             </div>
-          </div>
+            </ScrollArea>
+          </aside>
 
           {/* Right connection preview panel */}
-          <div style={{ flex: 1, padding: '16px', display: 'flex', flexDirection: 'column', background: 'var(--bg-base)', overflowY: 'auto' }}>
+          <ScrollArea className="min-h-0 flex-1 bg-background">
+            <div className="flex min-h-full flex-col p-6 lg:p-8">
             {selectedProfile ? (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--border-color)', paddingBottom: 8, marginBottom: 12 }}>
-                    <Server size={16} className="text-[var(--accent-blue)]" />
-                    <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-main)' }}>{selectedProfile.name}</h3>
+              <div className="flex flex-1 flex-col">
+                <div className="flex-1">
+                  <div className="mb-4 flex items-center gap-3 border-b border-border pb-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                      <Server size={18} className="text-primary" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="truncate text-base font-semibold text-foreground">{selectedProfile.name}</h3>
+                      <p className="text-ui-xs text-muted-foreground">Connection profile</p>
+                    </div>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span className="mql-label" style={{ fontSize: 9 }}>Connection URI</span>
+                  <div className="mb-4 flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">Connection URI</Label>
                       {maskUriPassword(selectedProfile.uri) !== selectedProfile.uri && (
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
                           onClick={() => setRevealDetailUri(v => !v)}
                           title={revealDetailUri ? 'Hide password' : 'Show password'}
                           aria-label={revealDetailUri ? 'Hide password' : 'Show password'}
-                          style={{ display: 'inline-flex', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}
                         >
                           {revealDetailUri ? <EyeOff size={13} /> : <Eye size={13} />}
-                        </button>
+                        </Button>
                       )}
                     </div>
-                    <div style={{ padding: 10, background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: 11, wordBreak: 'break-all', userSelect: 'text' }}>
+                    <div className="rounded-lg border border-border bg-muted/30 p-3 font-mono text-ui-xs break-all select-text">
                       {revealDetailUri ? selectedProfile.uri : maskUriPassword(selectedProfile.uri)}
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span className="mql-label" style={{ fontSize: 9 }}>Connection Metadata</span>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 8, background: 'var(--bg-input-blend)', border: '1px solid var(--border-color)', borderRadius: 4, fontSize: 11 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>Status:</span>
-                        <span style={{ fontWeight: 500 }}>
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">Connection Metadata</Label>
+                    <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3 text-ui-xs">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Status:</span>
+                        <span className="font-medium">
                           {activeConnections.some(c => c.profileId === selectedProfile.id) ? 'Connected (Active)' : 'Disconnected'}
                         </span>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>Profile ID:</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>{selectedProfile.id}</span>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Profile ID:</span>
+                        <span className="font-mono text-ui-2xs">{selectedProfile.id}</span>
                       </div>
                     </div>
                   </div>
                 </div>
 
                 {error && (
-                  <div className="text-rose-400 text-[10px] bg-rose-950/20 border border-rose-900/30 p-1.5 rounded truncate mb-3" style={{ fontSize: 11, padding: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div className="mb-3 flex items-center gap-1.5 truncate rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
                     <AlertCircle size={12} />
                     <span>{error}</span>
                   </div>
                 )}
 
-                <footer style={{ borderTop: '1px solid var(--border-color)', paddingTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                  <button 
+                <footer className="mt-auto flex justify-end gap-2 border-t border-border pt-3">
+                  <Button
                     onClick={handleConnectClick}
                     disabled={loading || activeConnections.some(c => c.profileId === selectedProfile.id)}
-                    className="mql-btn mql-btn-primary"
+                    size="sm"
                     aria-label={activeConnections.some(c => c.profileId === selectedProfile.id) ? "Already Connected" : loading ? "Connecting..." : "Connect"}
                   >
-                    <Play size={11} className="mr-1" fill="white" />
+                    <Play size={11} fill="currentColor" />
                     <span>{activeConnections.some(c => c.profileId === selectedProfile.id) ? "Already Connected" : loading ? "Connecting..." : "Connect"}</span>
-                  </button>
-                  <button 
-                    onClick={onClose}
-                    className="mql-btn mql-btn-ghost mql-btn-outlined"
-                  >
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={onClose}>
                     Close
-                  </button>
+                  </Button>
                 </footer>
               </div>
             ) : (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', textAlign: 'center', padding: 16 }}>
-                <Server size={32} style={{ marginBottom: 12, color: 'var(--border-color)' }} />
-                <span style={{ fontSize: 11 }}>Select a connection profile from the tree sheet, or choose "New Connection" in the toolbar above to set one up.</span>
+              <div className="flex flex-1 flex-col items-center justify-center p-8 text-center text-muted-foreground">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+                  <Server size={28} className="text-muted-foreground" />
+                </div>
+                <span className="max-w-sm text-ui-xs leading-relaxed">Select a connection from the sidebar, or choose &quot;New…&quot; in the toolbar to create one.</span>
               </div>
             )}
-          </div>
+            </div>
+          </ScrollArea>
         </div>
-      </div>
+      </DraggableDialogContent>
+    </Dialog>
 
-      {showFolderDialog && (
-        <div
-          className="mql-mini-overlay"
-          onClick={(event) => {
-            event.stopPropagation();
-            setShowFolderDialog(false);
-          }}
-        >
+      <Dialog open={showFolderDialog} onOpenChange={setShowFolderDialog}>
+        <DialogPortal>
+          <DialogOverlay className={NESTED_DIALOG_Z} />
+          <DialogContent className={cn(NESTED_DIALOG_Z, 'w-[360px] max-w-[95vw] [&>button]:hidden')} onInteractOutside={(e) => e.preventDefault()}>
           <form
-            className="mql-mini"
-            style={{ width: 360 }}
-            onClick={(event) => event.stopPropagation()}
             onSubmit={(event) => {
               event.preventDefault();
               handleCreateFolder();
             }}
           >
-            <header className="mql-mini-h">
-              <div className="mql-row" style={{ gap: 8 }}>
-                <FolderPlus size={14} className="text-[var(--accent-amber)]" />
-                <span className="mql-mini-title">New Folder</span>
+            <DialogHeader className="flex-row items-center justify-between space-y-0">
+              <div className="flex items-center gap-2">
+                <FolderPlus size={14} className="text-warning" />
+                <DialogTitle className="text-sm">New Folder</DialogTitle>
               </div>
-              <button type="button" className="mql-icon-btn" aria-label="Close folder dialog" onClick={() => setShowFolderDialog(false)}>
+              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label="Close folder dialog" onClick={() => setShowFolderDialog(false)}>
                 <X size={13} />
-              </button>
-            </header>
-            <div className="mql-mini-body">
-              <label htmlFor="new-folder-name" className="mql-label">Folder Name</label>
-              <input
+              </Button>
+            </DialogHeader>
+            <div className="space-y-3 py-4">
+              <Label htmlFor="new-folder-name">Folder Name</Label>
+              <Input
                 id="new-folder-name"
                 data-testid="new-folder-name-input"
-                className="mql-ncd-input"
                 value={newFolderName}
                 onChange={(event) => {
                   setNewFolderName(event.target.value);
@@ -1008,114 +1043,132 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 autoFocus
               />
               {folderError && (
-                <div className="text-rose-400 text-[11px] bg-rose-950/20 border border-rose-900/30 p-1.5 rounded" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div className="flex items-center gap-1.5 rounded border border-destructive/30 bg-destructive/10 p-1.5 text-[11px] text-destructive">
                   <AlertCircle size={12} />
                   <span>{folderError}</span>
                 </div>
               )}
             </div>
-            <footer className="mql-mini-foot">
-              <button type="button" className="mql-btn mql-btn-ghost mql-btn-outlined" onClick={() => setShowFolderDialog(false)}>Cancel</button>
-              <button type="submit" className="mql-btn mql-btn-primary">
-                <Check size={11} className="mr-1" />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowFolderDialog(false)}>Cancel</Button>
+              <Button type="submit">
+                <Check size={11} />
                 <span>Create</span>
-              </button>
-            </footer>
+              </Button>
+            </DialogFooter>
           </form>
-        </div>
-      )}
+        </DialogContent>
+        </DialogPortal>
+      </Dialog>
 
       {/* Editor Dialog nested modal */}
-      {showEditDialog && (
-        <div className="nested-modal-overlay mql-modal-overlay" style={{ zIndex: 110 }}>
-          <div className="nested-modal-container mql-ncd" style={{ width: '680px', height: '520px', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
-            {/* Dialog Header */}
-            <header className="mql-ncd-titlebar">
-              <div className="mql-row" style={{ gap: 8 }}>
-                <Server size={14} className="text-[var(--accent-blue)]" />
-                <span style={{ fontSize: 12, fontWeight: 600 }}>
-                  {editMode === 'new' ? 'New Connection' : editMode === 'duplicate' ? 'Duplicate Connection' : 'Edit Connection'}
-                </span>
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DraggableDialogContent
+          resetKey={showEditDialog}
+          defaultWidth={780}
+          defaultHeight={600}
+          minWidth={560}
+          minHeight={400}
+          overlayClassName={NESTED_DIALOG_Z}
+          hideClose
+          className={cn(
+            NESTED_DIALOG_Z,
+            'flex min-h-0 flex-col gap-0 overflow-hidden p-0',
+          )}
+          onInteractOutside={(e) => e.preventDefault()}
+        >
+            <header
+              data-dialog-drag-handle
+              className="flex shrink-0 cursor-grab items-center justify-between border-b border-border bg-muted/20 px-4 py-4 active:cursor-grabbing"
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                  <Server className="h-5 w-5 text-primary" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold leading-tight text-foreground">
+                    {editMode === 'new' ? 'New Connection' : editMode === 'duplicate' ? 'Duplicate Connection' : 'Edit Connection'}
+                  </h2>
+                  <p className="truncate text-ui-xs text-muted-foreground">Configure server, auth, TLS, and advanced options</p>
+                </div>
               </div>
-              <button className="mql-icon-btn" onClick={() => setShowEditDialog(false)}>
-                <X size={13} />
-              </button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setShowEditDialog(false)} aria-label="Close">
+                <X size={14} />
+              </Button>
             </header>
 
             {/* Dialog Meta details */}
-            <section className="mql-ncd-meta">
-              <div className="mql-ncd-meta-row">
-                <label htmlFor="connection-name" className="mql-label" style={{ fontSize: 10, marginRight: 8 }}>Display Name</label>
-                <input 
+            <section className="shrink-0 space-y-2 border-b border-border bg-muted/20 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Label htmlFor="connection-name" className="shrink-0 text-ui-xs">Display Name</Label>
+                <Input
                   id="connection-name"
-                  type="text" 
+                  type="text"
                   value={editorState.name}
                   onChange={e => setEditorState(prev => ({ ...prev, name: e.target.value }))}
-                  className="mql-ncd-input" 
-                  style={{ flex: 1 }}
+                  className="h-8 min-w-[160px] flex-1 text-ui-xs"
                 />
-                
-                <label htmlFor="folder-select" className="mql-label" style={{ fontSize: 10, margin: '0 8px 0 12px' }}>Folder</label>
-                <div className="mql-ncd-select-wrap" style={{ width: 140 }}>
-                  <select 
-                    id="folder-select"
-                    className="mql-ncd-select" 
-                    value={editorState.folder} 
-                    onChange={e => setEditorState(prev => ({ ...prev, folder: e.target.value }))}
-                  >
-                    <option value="">(root)</option>
+
+                <Label htmlFor="folder-select" className="shrink-0 text-ui-xs">Folder</Label>
+                <Select value={editorState.folder || '__root__'} onValueChange={(v) => setEditorState(prev => ({ ...prev, folder: v === '__root__' ? '' : v }))}>
+                  <SelectTrigger id="folder-select" className="h-8 w-[140px] text-ui-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className={NESTED_SELECT_Z}>
+                    <SelectItem value="__root__">(root)</SelectItem>
                     {folders.map(f => (
-                      <option key={f.id} value={f.id}>{f.name}</option>
+                      <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
                     ))}
-                  </select>
-                  <ChevronDown size={10} color="var(--text-dim)" />
-                </div>
+                  </SelectContent>
+                </Select>
               </div>
 
-              <div className="mql-ncd-uri-row">
-                <span className="mql-ncd-uri-badge">URI</span>
-                <code className="mql-ncd-uri">{maskUriPassword(buildUri(editorState))}</code>
-                <button className="mql-ncd-copy" onClick={() => navigator.clipboard?.writeText(buildUri(editorState))}>
-                  <Copy size={11} />
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
+                <Badge variant="secondary" className="shrink-0 text-ui-2xs">URI</Badge>
+                <code className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{maskUriPassword(buildUri(editorState))}</code>
+                <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 gap-1 text-ui-2xs" onClick={() => navigator.clipboard?.writeText(buildUri(editorState))}>
+                  <Copy size={12} />
                   <span>Copy</span>
-                </button>
+                </Button>
               </div>
             </section>
 
-            {/* Editor dialog tabs */}
-            <nav className="mql-ncd-tabs">
-              {TABS.map(t => {
-                const TabIcon = t.icon;
-                return (
-                  <button
-                    key={t.id}
-                    className={`mql-ncd-tab ${activeEditorTab === t.id ? 'is-active' : ''}`}
-                    onClick={() => setActiveEditorTab(t.id)}
-                  >
-                    <TabIcon size={12} style={{ marginRight: 4 }} />
-                    <span>{t.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
+            <div className="flex min-h-0 flex-1">
+            <aside className={cn(sidebarPanelClass, 'w-48 xl:w-52')}>
+              <nav className="flex flex-col gap-0.5 p-2" aria-label="Connection settings sections">
+                {TABS.map(t => {
+                  const TabIcon = t.icon;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setActiveEditorTab(t.id)}
+                      className={sidebarNavButtonClass(activeEditorTab === t.id)}
+                    >
+                      <TabIcon className={cn('h-4 w-4 shrink-0', activeEditorTab === t.id ? 'text-primary' : '')} />
+                      <span className="truncate">{t.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </aside>
 
             {/* Editor dialog body views */}
-            <div className="mql-ncd-body" style={{ flex: 1, minHeight: 0, padding: 12, overflowY: 'auto' }}>
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+            <ScrollArea className="min-h-0 flex-1">
+            <div className="p-6">
               {activeEditorTab === 'server' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="flex flex-col gap-2.5">
                   {editorState.topology === 'uri' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <label htmlFor="connection-uri" className="mql-label">Connection URI</label>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="connection-uri">Connection URI</Label>
                     {(() => {
-                      // Show the readable URI (protocol/host/db) with only the
-                      // password masked. Focusing the field — or the eye — reveals
-                      // the full string so it stays editable.
                       const masked = maskUriPassword(editorState.uri);
                       const hasSecret = masked !== editorState.uri;
                       const showMasked = hasSecret && !revealUri;
                       return (
-                        <div className="mql-password-field">
-                          <input
+                        <div className="relative">
+                          <Input
                             id="connection-uri"
                             type="text"
                             value={showMasked ? masked : editorState.uri}
@@ -1123,97 +1176,100 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             onFocus={() => { if (hasSecret) setRevealUri(true); }}
                             onChange={e => setEditorState(prev => ({ ...prev, uri: e.target.value, topology: 'uri' }))}
                             placeholder="mongodb://localhost:27017"
-                            className="mql-ncd-input font-mono"
+                            className="font-mono pr-9"
                           />
                           {hasSecret && (
-                            <button
+                            <Button
                               type="button"
-                              className="mql-password-toggle"
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-0 top-0 h-full w-8"
                               aria-label={revealUri ? 'Hide password' : 'Show password'}
                               title={revealUri ? 'Hide password' : 'Show password to edit'}
                               onClick={() => setRevealUri(v => !v)}
                               tabIndex={-1}
                             >
                               {revealUri ? <EyeOff size={13} /> : <Eye size={13} />}
-                            </button>
+                            </Button>
                           )}
                         </div>
                       );
                     })()}
-                    <button
+                    <Button
                       type="button"
-                      className="mql-ncd-parse-btn"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 w-fit text-xs"
                       data-testid="parse-uri-btn"
                       disabled={!editorState.uri.trim()}
                       onClick={() => setEditorState(prev => ({ ...prev, ...parseUriIntoFields(prev.uri) }))}
                       title="Fill the Server and Auth form fields from this URI so you can edit them"
                     >
                       <LayoutGrid size={12} /> Parse into form fields
-                    </button>
+                    </Button>
                   </div>
                   )}
 
                   {editorState.topology !== 'uri' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <span className="mql-label">
+                    <div className="flex flex-col gap-1">
+                      <Label>
                         Host List {editorState.protocol === 'mongodb+srv' ? '(hostname only)' : '(host:port, comma-separated)'}
-                      </span>
-                      <input
+                      </Label>
+                      <Input
                         type="text"
                         data-testid="host-list"
                         value={hostsToText(editorState.hosts, editorState.protocol === 'mongodb+srv')}
                         onChange={e => setEditorState(prev => ({ ...prev, hosts: textToHosts(e.target.value) }))}
                         placeholder={editorState.protocol === 'mongodb+srv' ? 'cluster0.abcd.mongodb.net' : '172.18.19.60:27017, 172.18.19.61:27017'}
-                        className="mql-ncd-input font-mono"
+                        className="font-mono"
                       />
                     </div>
                   )}
 
-                  <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 10, display: 'flex', gap: 12 }}>
+                  <div className="flex gap-3 border-t border-border pt-2.5">
                     {editorState.topology !== 'uri' && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                        <span className="mql-label">Protocol</span>
-                        <div className="mql-ncd-select-wrap">
-                          <select
-                            className="mql-ncd-select"
-                            data-testid="protocol-select"
-                            value={editorState.protocol}
-                            onChange={e => setEditorState(prev => ({ ...prev, protocol: e.target.value }))}
-                          >
-                            <option value="mongodb">mongodb://</option>
-                            <option value="mongodb+srv">mongodb+srv://</option>
-                          </select>
-                          <ChevronDown size={10} color="var(--text-dim)" />
-                        </div>
+                      <div className="flex flex-1 flex-col gap-1">
+                        <Label>Protocol</Label>
+                        <Select
+                          value={editorState.protocol}
+                          onValueChange={(v) => setEditorState(prev => ({ ...prev, protocol: v }))}
+                        >
+                          <SelectTrigger className="h-8 text-ui-xs" data-testid="protocol-select">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className={NESTED_SELECT_Z}>
+                            <SelectItem value="mongodb">mongodb://</SelectItem>
+                            <SelectItem value="mongodb+srv">mongodb+srv://</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     )}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                      <span className="mql-label">Topology</span>
-                      <div className="mql-ncd-select-wrap">
-                        <select
-                          className="mql-ncd-select"
-                          data-testid="topology-select"
-                          value={editorState.topology}
-                          onChange={e => setEditorState(prev => ({ ...prev, topology: e.target.value }))}
-                        >
-                          <option value="standalone">Standalone / Direct</option>
-                          <option value="replicaSet">Replica Set</option>
-                          <option value="sharded">Sharded Cluster (mongos)</option>
-                          <option value="uri">Full URI String Only</option>
-                        </select>
-                        <ChevronDown size={10} color="var(--text-dim)" />
-                      </div>
+                    <div className="flex flex-1 flex-col gap-1">
+                      <Label>Topology</Label>
+                      <Select
+                        value={editorState.topology}
+                        onValueChange={(v) => setEditorState(prev => ({ ...prev, topology: v }))}
+                      >
+                        <SelectTrigger className="h-8 text-ui-xs" data-testid="topology-select">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className={NESTED_SELECT_Z}>
+                          <SelectItem value="standalone">Standalone / Direct</SelectItem>
+                          <SelectItem value="replicaSet">Replica Set</SelectItem>
+                          <SelectItem value="sharded">Sharded Cluster (mongos)</SelectItem>
+                          <SelectItem value="uri">Full URI String Only</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     {editorState.topology === 'replicaSet' && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                        <span className="mql-label">Replica Set Name</span>
-                        <input 
-                          type="text" 
+                      <div className="flex flex-1 flex-col gap-1">
+                        <Label>Replica Set Name</Label>
+                        <Input
+                          type="text"
                           value={editorState.replicaSetName}
                           onChange={e => setEditorState(prev => ({ ...prev, replicaSetName: e.target.value }))}
                           placeholder="rs0"
-                          className="mql-ncd-input"
                         />
                       </div>
                     )}
@@ -1222,25 +1278,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
 
               {activeEditorTab === 'auth' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span className="mql-label">Authentication Method</span>
-                    <div className="mql-ncd-select-wrap">
-                      <select 
-                        className="mql-ncd-select" 
-                        value={editorState.authMethod} 
-                        onChange={e => setEditorState(prev => ({ ...prev, authMethod: e.target.value }))}
-                      >
-                        <option value="none">None (Guest Access)</option>
-                        <option value="scram-256">SCRAM-SHA-256 (Default)</option>
-                        <option value="scram-1">SCRAM-SHA-1</option>
-                        <option value="x509">x.509 Client Certificate</option>
-                        <option value="aws">MONGODB-AWS (IAM)</option>
-                        <option value="kerberos">GSSAPI (Kerberos)</option>
-                        <option value="ldap">LDAP (PLAIN)</option>
-                      </select>
-                      <ChevronDown size={10} color="var(--text-dim)" />
-                    </div>
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex flex-col gap-1">
+                    <Label>Authentication Method</Label>
+                    <Select value={editorState.authMethod} onValueChange={(v) => setEditorState(prev => ({ ...prev, authMethod: v }))}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className={NESTED_SELECT_Z}>
+                        <SelectItem value="none">None (Guest Access)</SelectItem>
+                        <SelectItem value="scram-256">SCRAM-SHA-256 (Default)</SelectItem>
+                        <SelectItem value="scram-1">SCRAM-SHA-1</SelectItem>
+                        <SelectItem value="x509">x.509 Client Certificate</SelectItem>
+                        <SelectItem value="aws">MONGODB-AWS (IAM)</SelectItem>
+                        <SelectItem value="kerberos">GSSAPI (Kerberos)</SelectItem>
+                        <SelectItem value="ldap">LDAP (PLAIN)</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   {editorState.authMethod !== 'none' && (() => {
@@ -1255,88 +1309,85 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     const passLabel = m === 'aws' ? 'Secret Access Key' : 'Password';
                     const showPasswordField = m !== 'x509' && m !== 'kerberos';
                     return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border-color)', paddingTop: 10 }}>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                          <span className="mql-label">{userLabel}</span>
-                          <input
+                    <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                      <div className="flex gap-2">
+                        <div className="flex flex-1 flex-col gap-1">
+                          <Label>{userLabel}</Label>
+                          <Input
                             type="text"
                             value={editorState.authUser}
                             onChange={e => setEditorState(prev => ({ ...prev, authUser: e.target.value }))}
                             placeholder={m === 'aws' ? 'AKIA…' : m === 'kerberos' ? 'user@REALM' : 'admin'}
-                            className="mql-ncd-input"
                           />
                         </div>
                         {isScram && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                            <span className="mql-label">Authentication Database</span>
-                            <input
+                          <div className="flex flex-1 flex-col gap-1">
+                            <Label>Authentication Database</Label>
+                            <Input
                               type="text"
                               value={editorState.authDb}
                               onChange={e => setEditorState(prev => ({ ...prev, authDb: e.target.value }))}
                               placeholder="admin"
-                              className="mql-ncd-input"
                             />
                           </div>
                         )}
                       </div>
 
                       {showPasswordField && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span className="mql-label">{passLabel}</span>
-                          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                            <input
+                        <div className="flex flex-col gap-1">
+                          <Label>{passLabel}</Label>
+                          <div className="relative">
+                            <Input
                               type={showPassword ? 'text' : 'password'}
                               value={editorState.authPass}
                               onChange={e => setEditorState(prev => ({ ...prev, authPass: e.target.value }))}
                               placeholder="••••••••"
-                              className="mql-ncd-input"
-                              style={{ width: '100%', paddingRight: '32px' }}
+                              className="pr-9"
                             />
-                            <button
+                            <Button
                               type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-0 top-0 h-full w-8"
                               onClick={() => setShowPassword(prev => !prev)}
-                              style={{ position: 'absolute', right: 8, cursor: 'pointer', color: 'var(--text-muted)' }}
                             >
                               {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
-                            </button>
+                            </Button>
                           </div>
                         </div>
                       )}
 
                       {m === 'aws' && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span className="mql-label">Session Token (optional)</span>
-                          <input
+                        <div className="flex flex-col gap-1">
+                          <Label>Session Token (optional)</Label>
+                          <Input
                             type="text"
                             value={editorState.awsSessionToken}
                             onChange={e => setEditorState(prev => ({ ...prev, awsSessionToken: e.target.value }))}
                             placeholder="for temporary STS credentials"
-                            className="mql-ncd-input"
                           />
                         </div>
                       )}
 
                       {m === 'kerberos' && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span className="mql-label">Service Name (optional, default: mongodb)</span>
-                          <input
+                        <div className="flex flex-col gap-1">
+                          <Label>Service Name (optional, default: mongodb)</Label>
+                          <Input
                             type="text"
                             value={editorState.kerberosServiceName}
                             onChange={e => setEditorState(prev => ({ ...prev, kerberosServiceName: e.target.value }))}
                             placeholder="mongodb"
-                            className="mql-ncd-input"
                           />
                         </div>
                       )}
 
                       {m === 'x509' && (
-                        <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: 0 }}>
+                        <p className="m-0 text-[10px] text-muted-foreground">
                           Requires TLS with a client certificate (TLS tab).
                         </p>
                       )}
                       {isExternal && (
-                        <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: 0 }}>
+                        <p className="m-0 text-[10px] text-muted-foreground">
                           Authenticates against the <code>$external</code> database.
                         </p>
                       )}
@@ -1347,59 +1398,57 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
 
               {activeEditorTab === 'tls' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span className="mql-label">SSL / TLS Certificate Mode</span>
-                    <div className="mql-ncd-select-wrap">
-                      <select 
-                        className="mql-ncd-select" 
-                        value={editorState.tlsMode} 
-                        onChange={e => setEditorState(prev => ({ ...prev, tlsMode: e.target.value }))}
-                      >
-                        <option value="off">Off (Insecure Plaintext)</option>
-                        <option value="system">System Root CA Certificates</option>
-                        <option value="file">Custom CA File Upload</option>
-                      </select>
-                      <ChevronDown size={10} color="var(--text-dim)" />
-                    </div>
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex flex-col gap-1">
+                    <Label>SSL / TLS Certificate Mode</Label>
+                    <Select value={editorState.tlsMode} onValueChange={(v) => setEditorState(prev => ({ ...prev, tlsMode: v }))}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className={NESTED_SELECT_Z}>
+                        <SelectItem value="off">Off (Insecure Plaintext)</SelectItem>
+                        <SelectItem value="system">System Root CA Certificates</SelectItem>
+                        <SelectItem value="file">Custom CA File Upload</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   {editorState.tlsMode === 'file' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, borderTop: '1px solid var(--border-color)', paddingTop: 10 }}>
-                      <span className="mql-label">CA File Path</span>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <input
+                    <div className="flex flex-col gap-1 border-t border-border pt-2.5">
+                      <Label>CA File Path</Label>
+                      <div className="flex gap-1.5">
+                        <Input
                           type="text"
                           value={editorState.tlsCa}
                           onChange={e => setEditorState(prev => ({ ...prev, tlsCa: e.target.value }))}
                           placeholder="/path/to/ca.pem"
-                          className="mql-ncd-input font-mono"
-                          style={{ flex: 1 }}
+                          className="flex-1 font-mono"
                         />
-                        <button
+                        <Button
                           type="button"
-                          className="mql-btn mql-btn-ghost mql-btn-outlined"
+                          variant="outline"
+                          size="sm"
                           data-testid="ca-file-browse"
                           onClick={() => pickTlsFile('tlsCa')}
                         >
                           Browse…
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   )}
 
                   {editorState.tlsMode !== 'off' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border-color)', paddingTop: 10 }}>
-                      <span className="mql-label">Certificate Validation</span>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                    <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                      <Label>Certificate Validation</Label>
+                      <label className="flex items-center gap-2 text-[11px]">
                         <input
                           type="checkbox"
                           checked={editorState.tlsAllowInvalidCerts}
                           onChange={e => setEditorState(prev => ({ ...prev, tlsAllowInvalidCerts: e.target.checked }))}
                         />
-                        <span>Allow invalid certificates <span style={{ color: 'var(--accent-red)' }}>(insecure)</span></span>
+                        <span>Allow invalid certificates <span className="text-destructive">(insecure)</span></span>
                       </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                      <label className="flex items-center gap-2 text-[11px]">
                         <input
                           type="checkbox"
                           checked={editorState.tlsAllowInvalidHosts}
@@ -1407,7 +1456,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         />
                         <span>Allow invalid hostnames</span>
                       </label>
-                      <span style={{ fontSize: 10.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+                      <span className="text-[10.5px] leading-relaxed text-muted-foreground">
                         Disabling certificate validation exposes the connection to man-in-the-middle
                         attacks. Enable only for trusted/self-signed test servers.
                       </span>
@@ -1417,104 +1466,100 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
 
               {activeEditorTab === 'ssh' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input 
-                      type="checkbox" 
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
                       id="ssh-enable"
-                      checked={editorState.sshEnabled} 
+                      checked={editorState.sshEnabled}
                       onChange={e => setEditorState(prev => ({ ...prev, sshEnabled: e.target.checked }))}
                     />
-                    <label htmlFor="ssh-enable" style={{ fontSize: 11, fontWeight: 500 }}>Enable SSH Tunnel Proxy Gateway</label>
+                    <Label htmlFor="ssh-enable" className="text-[11px] font-medium">Enable SSH Tunnel Proxy Gateway</Label>
                   </div>
 
                   {editorState.sshEnabled && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border-color)', paddingTop: 10 }}>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 2 }}>
-                          <span className="mql-label">SSH Server Host</span>
-                          <input 
-                            type="text" 
-                            value={editorState.sshHost} 
+                    <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                      <div className="flex gap-2">
+                        <div className="flex flex-[2] flex-col gap-1">
+                          <Label>SSH Server Host</Label>
+                          <Input
+                            type="text"
+                            value={editorState.sshHost}
                             onChange={e => setEditorState(prev => ({ ...prev, sshHost: e.target.value }))}
                             placeholder="ssh.server.com"
-                            className="mql-ncd-input"
                           />
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                          <span className="mql-label">SSH Port</span>
-                          <input
+                        <div className="flex flex-1 flex-col gap-1">
+                          <Label>SSH Port</Label>
+                          <Input
                             type="text"
                             value={editorState.sshPort}
                             onChange={e => setEditorState(prev => ({ ...prev, sshPort: e.target.value }))}
                             placeholder="22"
-                            className="mql-ncd-input font-mono"
+                            className="font-mono"
                           />
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 2 }}>
-                          <span className="mql-label">SSH Username</span>
-                          <input
+                      <div className="flex gap-2">
+                        <div className="flex flex-[2] flex-col gap-1">
+                          <Label>SSH Username</Label>
+                          <Input
                             type="text"
                             value={editorState.sshUser}
                             onChange={e => setEditorState(prev => ({ ...prev, sshUser: e.target.value }))}
                             placeholder="deploy"
-                            className="mql-ncd-input"
                           />
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                          <span className="mql-label">Auth Method</span>
-                          <div className="mql-ncd-select-wrap">
-                            <select
-                              className="mql-ncd-select"
-                              value={editorState.sshAuth}
-                              onChange={e => setEditorState(prev => ({ ...prev, sshAuth: e.target.value }))}
-                            >
-                              <option value="key">Private Key</option>
-                              <option value="password">Password</option>
-                            </select>
-                            <ChevronDown size={10} color="var(--text-dim)" />
-                          </div>
+                        <div className="flex flex-1 flex-col gap-1">
+                          <Label>Auth Method</Label>
+                          <Select value={editorState.sshAuth} onValueChange={(v) => setEditorState(prev => ({ ...prev, sshAuth: v }))}>
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className={NESTED_SELECT_Z}>
+                              <SelectItem value="key">Private Key</SelectItem>
+                              <SelectItem value="password">Password</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
 
                       {editorState.sshAuth === 'key' ? (
                         <>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span className="mql-label">Private Key Path</span>
-                            <input
+                          <div className="flex flex-col gap-1">
+                            <Label>Private Key Path</Label>
+                            <Input
                               type="text"
                               value={editorState.sshKey}
                               onChange={e => setEditorState(prev => ({ ...prev, sshKey: e.target.value }))}
                               placeholder="~/.ssh/id_ed25519"
-                              className="mql-ncd-input font-mono"
+                              className="font-mono"
                             />
                           </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span className="mql-label">Key Passphrase (optional)</span>
+                          <div className="flex flex-col gap-1">
+                            <Label>Key Passphrase (optional)</Label>
                             <PasswordInput
                               value={editorState.sshPass}
                               onChange={e => setEditorState(prev => ({ ...prev, sshPass: e.target.value }))}
                               placeholder="Leave blank if the key is unencrypted"
-                              className="mql-ncd-input font-mono"
+                              className="font-mono"
                             />
                           </div>
                         </>
                       ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span className="mql-label">SSH Password</span>
+                        <div className="flex flex-col gap-1">
+                          <Label>SSH Password</Label>
                           <PasswordInput
                             value={editorState.sshPass}
                             onChange={e => setEditorState(prev => ({ ...prev, sshPass: e.target.value }))}
                             placeholder="••••••••"
-                            className="mql-ncd-input font-mono"
+                            className="font-mono"
                           />
                         </div>
                       )}
 
-                      <div style={{ fontSize: 10.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+                      <div className="text-[10.5px] leading-relaxed text-muted-foreground">
                         The SSH server's host key must be in <code>~/.ssh/known_hosts</code>. Credentials are
                         stored with the profile (plaintext); prefer key-based auth.
                       </div>
@@ -1524,64 +1569,61 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
 
               {activeEditorTab === 'proxy' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
                       id="proxy-enable"
                       checked={editorState.proxyEnabled}
                       onChange={e => setEditorState(prev => ({ ...prev, proxyEnabled: e.target.checked }))}
                     />
-                    <label htmlFor="proxy-enable" style={{ fontSize: 11, fontWeight: 500 }}>Enable SOCKS5 Client Proxy</label>
+                    <Label htmlFor="proxy-enable" className="text-[11px] font-medium">Enable SOCKS5 Client Proxy</Label>
                   </div>
-                  <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: 0 }}>
+                  <p className="m-0 text-[10px] text-muted-foreground">
                     The MongoDB driver tunnels its connection through a SOCKS5 proxy. (HTTP proxies are not supported by the driver.)
                   </p>
 
                   {editorState.proxyEnabled && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border-color)', paddingTop: 10 }}>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 2 }}>
-                          <span className="mql-label">Proxy Host</span>
-                          <input
+                    <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                      <div className="flex gap-2">
+                        <div className="flex flex-[2] flex-col gap-1">
+                          <Label>Proxy Host</Label>
+                          <Input
                             type="text"
                             value={editorState.proxyHost}
                             onChange={e => setEditorState(prev => ({ ...prev, proxyHost: e.target.value }))}
                             placeholder="proxy.internal"
-                            className="mql-ncd-input"
                           />
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                          <span className="mql-label">Proxy Port</span>
-                          <input
+                        <div className="flex flex-1 flex-col gap-1">
+                          <Label>Proxy Port</Label>
+                          <Input
                             type="text"
                             value={editorState.proxyPort}
                             onChange={e => setEditorState(prev => ({ ...prev, proxyPort: e.target.value }))}
                             placeholder="1080"
-                            className="mql-ncd-input font-mono"
+                            className="font-mono"
                           />
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                          <span className="mql-label">Proxy Username (optional)</span>
-                          <input
+                      <div className="flex gap-2">
+                        <div className="flex flex-1 flex-col gap-1">
+                          <Label>Proxy Username (optional)</Label>
+                          <Input
                             type="text"
                             value={editorState.proxyUser}
                             onChange={e => setEditorState(prev => ({ ...prev, proxyUser: e.target.value }))}
                             placeholder="username"
-                            className="mql-ncd-input"
                           />
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                          <span className="mql-label">Proxy Password (optional)</span>
-                          <input
+                        <div className="flex flex-1 flex-col gap-1">
+                          <Label>Proxy Password (optional)</Label>
+                          <Input
                             type="password"
                             value={editorState.proxyPass}
                             onChange={e => setEditorState(prev => ({ ...prev, proxyPass: e.target.value }))}
                             placeholder="••••••••"
-                            className="mql-ncd-input"
                           />
                         </div>
                       </div>
@@ -1591,111 +1633,112 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
 
               {activeEditorTab === 'adv' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                      <span className="mql-label">Default Database</span>
-                      <input 
-                        type="text" 
-                        value={editorState.defaultDb} 
+                <div className="flex flex-col gap-2">
+                  <div className="flex gap-2">
+                    <div className="flex flex-1 flex-col gap-1">
+                      <Label>Default Database</Label>
+                      <Input
+                        type="text"
+                        value={editorState.defaultDb}
                         onChange={e => setEditorState(prev => ({ ...prev, defaultDb: e.target.value }))}
                         placeholder="test"
-                        className="mql-ncd-input"
                       />
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                      <span className="mql-label">BSON Compression</span>
-                      <div className="mql-ncd-select-wrap">
-                        <select 
-                          className="mql-ncd-select" 
-                          value={editorState.compression} 
-                          onChange={e => setEditorState(prev => ({ ...prev, compression: e.target.value }))}
-                        >
-                          <option value="none">None</option>
-                          <option value="snappy">Snappy</option>
-                          <option value="zlib">Zlib</option>
-                        </select>
-                        <ChevronDown size={10} color="var(--text-dim)" />
-                      </div>
+                    <div className="flex flex-1 flex-col gap-1">
+                      <Label>BSON Compression</Label>
+                      <Select value={editorState.compression} onValueChange={(v) => setEditorState(prev => ({ ...prev, compression: v }))}>
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className={NESTED_SELECT_Z}>
+                          <SelectItem value="none">None</SelectItem>
+                          <SelectItem value="snappy">Snappy</SelectItem>
+                          <SelectItem value="zlib">Zlib</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                 </div>
               )}
             </div>
+            </ScrollArea>
 
-            {/* Test progress strip — pinned above the footer, capped so a long
-                error scrolls inside it instead of growing the dialog. */}
             {(testing || testResult) && (
-              <div style={{ flexShrink: 0, margin: '0 12px', padding: '10px', maxHeight: 200, overflowY: 'auto', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                  <span className="mql-label" style={{ fontSize: 9 }}>Connection Test Progress</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent-blue)', fontWeight: 600 }}>{testProgress}%</span>
+              <div className="mx-4 mb-2 flex max-h-[200px] shrink-0 flex-col gap-2 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">Connection Test Progress</Label>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] font-semibold text-primary">{testProgress}%</span>
                     {testResult && !testing && (
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
                         data-testid="test-dismiss"
                         aria-label="Dismiss test result"
                         title="Dismiss"
                         onClick={() => { setTestResult(null); setShowErrDetail(false); setTestProgress(0); }}
-                        style={{ display: 'inline-flex', background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--text-muted)' }}
                       >
                         <X size={13} />
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
-                
-                {/* Progress bar fill */}
-                <div style={{ width: '100%', height: '4px', background: 'var(--bg-item-active)', borderRadius: '2px', overflow: 'hidden' }}>
-                  <div style={{ width: `${testProgress}%`, height: '100%', background: 'var(--accent-blue)', transition: 'width 250ms ease-out' }} />
+
+                <div className="h-1 w-full overflow-hidden rounded bg-muted">
+                  <div className="h-full bg-primary transition-[width] duration-200 ease-out" style={{ width: `${testProgress}%` }} />
                 </div>
 
-                {/* Checklist steps */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div className="flex flex-col gap-1">
                   {testSteps.map((step, idx) => (
-                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11 }}>
-                      <span style={{ color: step.status === 'pending' ? 'var(--text-dim)' : step.status === 'running' ? 'var(--accent-blue)' : 'var(--text-main)' }}>{step.name}</span>
+                    <div key={idx} className="flex items-center justify-between text-[11px]">
+                      <span className={cn(
+                        step.status === 'pending' && 'text-muted-foreground',
+                        step.status === 'running' && 'text-primary',
+                        (step.status === 'success' || step.status === 'failed') && 'text-foreground'
+                      )}>{step.name}</span>
                       <span>
-                        {step.status === 'pending' && <span style={{ display: 'inline-block', width: 8, height: 8, border: '1px solid var(--border-color)', borderRadius: '50%' }} />}
-                        {step.status === 'running' && <RefreshCw size={10} className="animate-spin text-[var(--accent-blue)]" />}
-                        {step.status === 'success' && <Check size={11} className="text-[var(--accent-green)]" />}
-                        {step.status === 'failed' && <X size={11} className="text-[var(--accent-red)]" />}
+                        {step.status === 'pending' && <span className="inline-block h-2 w-2 rounded-full border border-border" />}
+                        {step.status === 'running' && <RefreshCw size={10} className="animate-spin text-primary" />}
+                        {step.status === 'success' && <Check size={11} className="text-success" />}
+                        {step.status === 'failed' && <X size={11} className="text-destructive" />}
                       </span>
                     </div>
                   ))}
                 </div>
 
-                {/* Final status feedback */}
                 {testResult && (() => {
                   const info = testResult.success
                     ? { summary: testResult.message, hint: undefined as string | undefined }
                     : summarizeConnectionError(testResult.message);
                   return (
-                    <div style={{ padding: '8px 10px', borderRadius: '4px', fontSize: '11px', border: '1px solid transparent',
-                      background: testResult.success ? 'var(--soft-green-bg)' : 'var(--soft-red-bg)',
-                      borderColor: testResult.success ? 'var(--soft-green-bd)' : 'var(--soft-red-bd)',
-                      color: testResult.success ? 'var(--accent-green)' : 'var(--accent-red)'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                        {testResult.success ? <Check size={12} style={{ flex: 'none', marginTop: 1 }} /> : <AlertCircle size={12} style={{ flex: 'none', marginTop: 1 }} />}
-                        <span style={{ fontWeight: 600 }} data-testid="test-result-summary">{info.summary}</span>
+                    <div className={cn(
+                      'rounded border p-2 text-[11px]',
+                      testResult.success
+                        ? 'border-success/30 bg-success/10 text-success'
+                        : 'border-destructive/30 bg-destructive/10 text-destructive'
+                    )}>
+                      <div className="flex items-start gap-1.5">
+                        {testResult.success ? <Check size={12} className="mt-px shrink-0" /> : <AlertCircle size={12} className="mt-px shrink-0" />}
+                        <span className="font-semibold" data-testid="test-result-summary">{info.summary}</span>
                       </div>
                       {info.hint && (
-                        <div style={{ marginTop: 4, marginLeft: 18, color: 'var(--text-muted)', fontWeight: 400 }}>{info.hint}</div>
+                        <div className="ml-[18px] mt-1 font-normal text-muted-foreground">{info.hint}</div>
                       )}
                       {!testResult.success && (
                         <>
-                          <button
+                          <Button
                             type="button"
+                            variant="link"
+                            className="ml-[18px] mt-1.5 h-auto p-0 text-[10px] text-muted-foreground"
                             data-testid="test-error-details-toggle"
                             onClick={() => setShowErrDetail(v => !v)}
-                            style={{ marginTop: 6, marginLeft: 18, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10, textDecoration: 'underline' }}
                           >
                             {showErrDetail ? 'Hide details' : 'Show details'}
-                          </button>
+                          </Button>
                           {showErrDetail && (
-                            <pre data-testid="test-error-detail" style={{ marginTop: 6, marginBottom: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 10, lineHeight: 1.5, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                            <pre data-testid="test-error-detail" className="mb-0 mt-1.5 whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-muted-foreground">
                               {testResult.message}
                             </pre>
                           )}
@@ -1707,29 +1750,29 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               </div>
             )}
 
-            {/* Dialog Footer */}
-            <footer className="mql-ncd-foot">
-              <div className="mql-row" style={{ gap: 8 }}>
-                <button className="mql-btn mql-btn-ghost mql-btn-outlined" onClick={runTestStepSequence} disabled={testing}>
-                  <RefreshCw size={11} className={`mr-1 ${testing ? 'animate-spin' : ''}`} />
+            <footer className="flex shrink-0 items-center justify-between border-t border-border bg-muted/20 px-4 py-3">
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={runTestStepSequence} disabled={testing}>
+                  <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
                   <span>Test Connection</span>
-                </button>
-                <button className="mql-btn mql-btn-ghost mql-btn-outlined" onClick={handleImportUri} data-testid="import-uri-btn">
-                  <ClipboardPaste size={11} className="mr-1" />
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleImportUri} data-testid="import-uri-btn">
+                  <ClipboardPaste size={11} />
                   <span>Import URI</span>
-                </button>
+                </Button>
               </div>
-              <div className="mql-row" style={{ gap: 8 }}>
-                <button className="mql-btn mql-btn-ghost mql-btn-outlined" onClick={() => setShowEditDialog(false)}>Cancel</button>
-                <button className="mql-btn mql-btn-primary" onClick={handleSave} disabled={loading || testing}>
-                  <Check size={11} className="mr-1" />
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setShowEditDialog(false)}>Cancel</Button>
+                <Button size="sm" onClick={handleSave} disabled={loading || testing}>
+                  <Check size={11} />
                   <span>Save</span>
-                </button>
+                </Button>
               </div>
             </footer>
-          </div>
-        </div>
-      )}
-    </div>
+            </div>
+            </div>
+        </DraggableDialogContent>
+      </Dialog>
+    </>
   );
 };

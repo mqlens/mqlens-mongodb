@@ -4,7 +4,11 @@ import { SettingsView } from '../SettingsModal';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: any[]) => mockInvoke(...args),
+  invoke: (...args: unknown[]) => mockInvoke(...args),
+}));
+
+vi.mock('../theme/AppearanceSettings', () => ({
+  AppearanceSettings: () => <div data-testid="appearance-settings">Theme preset</div>,
 }));
 
 const mockChangeVaultPassword = vi.fn();
@@ -13,17 +17,24 @@ const mockBiometricStatus = vi.fn();
 const mockBiometricEnable = vi.fn();
 const mockBiometricDisable = vi.fn();
 vi.mock('../../lib/vault', () => ({
-  changeVaultPassword: (...args: any[]) => mockChangeVaultPassword(...args),
+  changeVaultPassword: (...args: unknown[]) => mockChangeVaultPassword(...args),
   resetVault: () => mockResetVault(),
   biometricStatus: () => mockBiometricStatus(),
   biometricEnable: () => mockBiometricEnable(),
   biometricDisable: () => mockBiometricDisable(),
 }));
 
+function renderSettings() {
+  return render(<SettingsView />);
+}
+
+async function openTab(tabId: string) {
+  fireEvent.click(screen.getByTestId(tabId));
+}
+
 describe('SettingsView Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Safe default: biometrics unavailable so existing tests are unaffected
     mockBiometricStatus.mockResolvedValue({ available: false, biometryType: 0, enrolled: false });
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === 'load_app_settings') {
@@ -42,51 +53,21 @@ describe('SettingsView Component', () => {
     });
   });
 
-  it('renders density and mongosh settings', async () => {
-    render(
-      <SettingsView
-        density="cozy"
-        onChangeDensity={() => {}}
-      />
-    );
+  it('renders appearance and mongosh settings', async () => {
+    renderSettings();
 
-    expect(screen.getByText('Settings')).toBeInTheDocument();
-    expect(screen.getByText('roomy')).toBeInTheDocument();
-    expect(screen.getByText('cozy')).toBeInTheDocument();
-    expect(screen.getByText('compact')).toBeInTheDocument();
-    expect(screen.getByText('Balanced padding and standard grid heights (recommended).')).toBeInTheDocument();
-    expect(screen.getByTestId('density-check-cozy')).toBeInTheDocument();
+    expect(await screen.findByText('Settings')).toBeInTheDocument();
+    expect(await screen.findByText('Theme preset')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId('settings-tab-mongosh'));
+    await openTab('settings-tab-mongosh');
     const pathInput = await screen.findByTestId('mongosh-path-input') as HTMLInputElement;
     expect(pathInput.value).toBe('/usr/local/bin/mongosh');
   });
 
-  it('calls onChangeDensity when options are clicked', () => {
-    const handleChangeDensity = vi.fn();
-    render(
-      <SettingsView
-        density="cozy"
-        onChangeDensity={handleChangeDensity}
-      />
-    );
-
-    fireEvent.click(screen.getByTestId('density-option-roomy'));
-    expect(handleChangeDensity).toHaveBeenCalledWith('roomy');
-
-    fireEvent.click(screen.getByTestId('density-option-compact'));
-    expect(handleChangeDensity).toHaveBeenCalledWith('compact');
-  });
-
   it('saves and tests mongosh path through backend settings commands', async () => {
-    render(
-      <SettingsView
-        density="cozy"
-        onChangeDensity={() => {}}
-      />
-    );
+    renderSettings();
 
-    fireEvent.click(screen.getByTestId('settings-tab-mongosh'));
+    await openTab('settings-tab-mongosh');
     const pathInput = await screen.findByTestId('mongosh-path-input') as HTMLInputElement;
     fireEvent.change(pathInput, { target: { value: '/opt/homebrew/bin/mongosh' } });
 
@@ -95,7 +76,6 @@ describe('SettingsView Component', () => {
       expect(mockInvoke).toHaveBeenCalledWith('test_mongosh_path', { path: '/opt/homebrew/bin/mongosh' });
     });
 
-    // One shared Save button in the panel footer persists all settings.
     fireEvent.click(screen.getByTestId('settings-save-btn'));
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('save_app_settings', {
@@ -116,9 +96,9 @@ describe('SettingsView Component', () => {
 
   it('changes master password via the Security section (H7)', async () => {
     mockChangeVaultPassword.mockResolvedValue(undefined);
-    render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
+    renderSettings();
 
-    fireEvent.click(screen.getByTestId('settings-tab-security'));
+    await openTab('settings-tab-security');
     fireEvent.change(await screen.findByTestId('sec-old-pw'), { target: { value: 'oldpass' } });
     fireEvent.change(screen.getByTestId('sec-new-pw'), { target: { value: 'newpass' } });
     fireEvent.change(screen.getByTestId('sec-new-pw2'), { target: { value: 'newpass' } });
@@ -131,9 +111,9 @@ describe('SettingsView Component', () => {
   });
 
   it('shows error when new passwords do not match (H7)', async () => {
-    render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
+    renderSettings();
 
-    fireEvent.click(screen.getByTestId('settings-tab-security'));
+    await openTab('settings-tab-security');
     fireEvent.change(await screen.findByTestId('sec-old-pw'), { target: { value: 'oldpass' } });
     fireEvent.change(screen.getByTestId('sec-new-pw'), { target: { value: 'newpass' } });
     fireEvent.change(screen.getByTestId('sec-new-pw2'), { target: { value: 'different' } });
@@ -146,8 +126,8 @@ describe('SettingsView Component', () => {
   it('shows the biometric toggle when available and enables it', async () => {
     mockBiometricStatus.mockResolvedValue({ available: true, biometryType: 2, enrolled: false });
     mockBiometricEnable.mockResolvedValue(undefined);
-    render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
-    fireEvent.click(screen.getByTestId('settings-tab-security'));
+    renderSettings();
+    await openTab('settings-tab-security');
     const toggle = await screen.findByTestId('sec-biometric-toggle');
     fireEvent.click(toggle);
     await waitFor(() => expect(mockBiometricEnable).toHaveBeenCalledTimes(1));
@@ -155,8 +135,8 @@ describe('SettingsView Component', () => {
 
   it('hides the biometric toggle when unavailable', async () => {
     mockBiometricStatus.mockResolvedValue({ available: false, biometryType: 0, enrolled: false });
-    render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
-    fireEvent.click(screen.getByTestId('settings-tab-security'));
+    renderSettings();
+    await openTab('settings-tab-security');
     await screen.findByTestId('sec-change-pw-btn');
     expect(screen.queryByTestId('sec-biometric-toggle')).not.toBeInTheDocument();
   });
@@ -175,18 +155,17 @@ describe('SettingsView Component', () => {
       return Promise.resolve(undefined);
     });
 
-    render(<SettingsView density="cozy" onChangeDensity={() => {}} />);
+    renderSettings();
 
-    fireEvent.click(screen.getByTestId('settings-tab-ai'));
-    const select = await screen.findByTestId('ai-provider-select');
+    await openTab('settings-tab-ai');
 
-    // Cloud provider shows key + model.
-    fireEvent.change(select, { target: { value: 'openai' } });
+    fireEvent.click(await screen.findByTestId('ai-provider-select'));
+    fireEvent.click(screen.getByRole('option', { name: /OpenAI/i }));
     expect(screen.getByTestId('openai-key-input')).toBeInTheDocument();
     expect(screen.getByTestId('openai-model-input')).toBeInTheDocument();
 
-    // Local provider shows a command template + detection badge.
-    fireEvent.change(select, { target: { value: 'claude-code' } });
+    fireEvent.click(screen.getByTestId('ai-provider-select'));
+    fireEvent.click(screen.getByRole('option', { name: /Claude Code/i }));
     expect(screen.getByTestId('local-command-input')).toBeInTheDocument();
     expect(await screen.findByTestId('agent-availability')).toHaveTextContent(/installed/i);
   });

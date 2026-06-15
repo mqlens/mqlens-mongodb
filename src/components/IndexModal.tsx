@@ -1,17 +1,47 @@
-import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Code, Layers, ChevronDown } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Plus, Trash2, Code, Layers, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { useCollectionSchema } from '../lib/useCollectionSchema';
+import {
+  Dialog,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { DraggableDialogContent } from '@/components/ui/draggable-dialog-content';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { cn } from '@/lib/utils';
 import { useEscapeClose } from '../lib/useEscapeClose';
 
 interface IndexKeyRule {
+  id: string;
   field: string;
   direction: 1 | -1;
 }
+
+const newKeyRule = (field = '_id', direction: 1 | -1 = 1): IndexKeyRule => ({
+  id: Math.random().toString(36).slice(2, 11),
+  field,
+  direction,
+});
+
+const sortFieldNames = (fields: Iterable<string>): string[] =>
+  Array.from(new Set(fields)).sort((a, b) => {
+    if (a === '_id') return -1;
+    if (b === '_id') return 1;
+    return a.localeCompare(b);
+  });
 
 interface IndexModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (indexName: string, keys: string, unique: boolean, sparse: boolean) => void;
-  availableFields: string[];
+  availableFields?: string[];
+  connectionId?: string;
+  databaseName?: string;
+  collectionName?: string;
   initialData?: {
     name: string;
     keys: Record<string, number>;
@@ -20,8 +50,6 @@ interface IndexModalProps {
   } | null;
 }
 
-// MongoDB's default index name: the key fields joined as `field_direction`
-// (e.g. { email: 1, status: -1 } → "email_1_status_-1").
 const defaultIndexName = (json: string): string => {
   try {
     const parsed = JSON.parse(json);
@@ -35,50 +63,68 @@ const defaultIndexName = (json: string): string => {
   }
 };
 
+const textareaClassName = cn(
+  'flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm shadow-sm transition-colors',
+  'placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+);
+
 export const IndexModal: React.FC<IndexModalProps> = ({
   isOpen,
   onClose,
   onSave,
-  availableFields,
+  availableFields = [],
+  connectionId,
+  databaseName,
+  collectionName,
   initialData,
 }) => {
   const [indexName, setIndexName] = useState('');
-  // Whether the user typed a custom name; until then the name is generated
-  // from the keys per the Mongo convention.
   const [nameTouched, setNameTouched] = useState(false);
   const [isRawMode, setIsRawMode] = useState(false);
   const [unique, setUnique] = useState(false);
   const [sparse, setSparse] = useState(false);
-  
-  // Structured Key Builder State
-  const [keysList, setKeysList] = useState<IndexKeyRule[]>([{ field: '_id', direction: 1 }]);
-  
-  // Raw JSON Mode State
+  const [keysList, setKeysList] = useState<IndexKeyRule[]>([newKeyRule()]);
   const [rawKeysJson, setRawKeysJson] = useState('{\n  "_id": 1\n}');
   const [jsonError, setJsonError] = useState<string | null>(null);
 
+  const { schema } = useCollectionSchema(
+    isOpen ? connectionId : undefined,
+    isOpen ? databaseName : undefined,
+    isOpen ? collectionName : undefined
+  );
+
+  const fieldOptions = useMemo(() => {
+    const names = new Set<string>(['_id']);
+    availableFields.forEach((f) => names.add(f));
+    schema.forEach((_, path) => names.add(path));
+    if (initialData) {
+      Object.keys(initialData.keys).forEach((f) => names.add(f));
+    }
+    keysList.forEach((k) => {
+      const trimmed = k.field.trim();
+      if (trimmed && trimmed !== '__custom__') names.add(trimmed);
+    });
+    return sortFieldNames(names);
+  }, [availableFields, schema, initialData, keysList]);
+
   useEscapeClose(isOpen, onClose);
 
-  // Sync state with initial data (when editing) or reset (when creating)
   useEffect(() => {
     if (isOpen) {
       if (initialData) {
         setIndexName(initialData.name);
         setUnique(initialData.unique);
         setSparse(initialData.sparse);
-        
-        // Populate keys list
-        const list: IndexKeyRule[] = Object.entries(initialData.keys).map(([field, dir]) => ({
-          field,
-          direction: dir === -1 ? -1 : 1,
-        }));
-        setKeysList(list.length > 0 ? list : [{ field: '_id', direction: 1 }]);
+        const list: IndexKeyRule[] = Object.entries(initialData.keys).map(([field, dir]) =>
+          newKeyRule(field, dir === -1 ? -1 : 1)
+        );
+        setKeysList(list.length > 0 ? list : [newKeyRule()]);
         setRawKeysJson(JSON.stringify(initialData.keys, null, 2));
       } else {
         setIndexName('');
         setUnique(false);
         setSparse(false);
-        setKeysList([{ field: '_id', direction: 1 }]);
+        setKeysList([newKeyRule()]);
         setRawKeysJson('{\n  "_id": 1\n}');
       }
       setJsonError(null);
@@ -87,19 +133,15 @@ export const IndexModal: React.FC<IndexModalProps> = ({
     }
   }, [isOpen, initialData]);
 
-  // Auto-name the index from its keys until the user types a custom name;
-  // clearing the field hands naming back to the generator. Existing indexes
-  // keep their stored name.
   useEffect(() => {
     if (!isOpen || initialData || nameTouched) return;
     setIndexName(defaultIndexName(rawKeysJson));
   }, [isOpen, initialData, nameTouched, rawKeysJson]);
 
-  // Synchronize keysList to raw JSON whenever it changes
   useEffect(() => {
     if (!isRawMode) {
       const keysObj: Record<string, number> = {};
-      keysList.forEach(k => {
+      keysList.forEach((k) => {
         if (k.field.trim()) {
           keysObj[k.field.trim()] = k.direction;
         }
@@ -108,22 +150,19 @@ export const IndexModal: React.FC<IndexModalProps> = ({
     }
   }, [keysList, isRawMode]);
 
-  if (!isOpen) return null;
-
   const handleAddKeyRow = () => {
-    // Pick first available field that isn't already added, or default to empty
-    const addedFields = new Set(keysList.map(k => k.field));
-    const nextField = availableFields.find(f => !addedFields.has(f)) || '';
-    setKeysList(prev => [...prev, { field: nextField, direction: 1 }]);
+    const addedFields = new Set(keysList.map((k) => k.field.trim()).filter(Boolean));
+    const nextField = fieldOptions.find((f) => !addedFields.has(f)) ?? '';
+    setKeysList((prev) => [...prev, newKeyRule(nextField)]);
   };
 
   const handleRemoveKeyRow = (index: number) => {
     if (keysList.length <= 1) return;
-    setKeysList(prev => prev.filter((_, i) => i !== index));
+    setKeysList((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleKeyRowChange = (index: number, updates: Partial<IndexKeyRule>) => {
-    setKeysList(prev => prev.map((k, i) => i === index ? { ...k, ...updates } : k));
+    setKeysList((prev) => prev.map((k, i) => (i === index ? { ...k, ...updates } : k)));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -138,7 +177,6 @@ export const IndexModal: React.FC<IndexModalProps> = ({
         if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
           throw new Error('Index keys must be a JSON object (e.g. { "field": 1 })');
         }
-        // Verify values are either 1 or -1
         Object.entries(parsed).forEach(([key, val]) => {
           if (val !== 1 && val !== -1) {
             throw new Error(`Index direction for "${key}" must be 1 (Ascending) or -1 (Descending)`);
@@ -153,7 +191,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
       const keysObj: Record<string, number> = {};
       let hasEmptyField = false;
 
-      keysList.forEach(k => {
+      keysList.forEach((k) => {
         const fieldName = k.field.trim();
         if (!fieldName) {
           hasEmptyField = true;
@@ -184,218 +222,234 @@ export const IndexModal: React.FC<IndexModalProps> = ({
     onSave(trimmedName, keysJsonStr, unique, sparse);
   };
 
+  const switchToBuilder = () => {
+    if (isRawMode) {
+      try {
+        const parsed = JSON.parse(rawKeysJson);
+        const list: IndexKeyRule[] = Object.entries(parsed).map(([field, dir]) =>
+          newKeyRule(field, dir === -1 ? -1 : 1)
+        );
+        if (list.length > 0) setKeysList(list);
+      } catch {
+        /* keep current list */
+      }
+      setIsRawMode(false);
+    }
+  };
+
+  const switchToRaw = () => {
+    if (!isRawMode) {
+      const keysObj: Record<string, number> = {};
+      keysList.forEach((k) => {
+        if (k.field.trim()) {
+          keysObj[k.field.trim()] = k.direction;
+        }
+      });
+      setRawKeysJson(JSON.stringify(keysObj, null, 2));
+      setIsRawMode(true);
+    }
+  };
+
   return (
-    // No click-outside close: dismiss only via the X button, Cancel, or Escape.
-    <div className="nested-modal-overlay mql-modal-overlay select-none" data-testid="index-modal">
-      <div className="nested-modal-container mql-ncd" style={{ width: 560, display: 'flex', flexDirection: 'column' }}>
-        {/* Header */}
-        <header className="mql-ncd-titlebar">
-          <div className="mql-row" style={{ gap: 8 }}>
-            <Layers size={14} className="text-[var(--accent-blue)]" />
-            <span style={{ fontSize: 12, fontWeight: 600 }}>
-              {initialData ? 'Edit Index definition' : 'Create New Index'}
-            </span>
-          </div>
-          <button type="button" className="mql-icon-btn" onClick={onClose} aria-label="Close modal">
+    <Dialog open={isOpen} onOpenChange={() => {}}>
+      <DraggableDialogContent
+        resetKey={isOpen}
+        defaultWidth={560}
+        defaultHeight={520}
+        minWidth={440}
+        minHeight={360}
+        hideClose
+        className="flex min-h-0 flex-col gap-0 p-0"
+        data-testid="index-modal"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+      >
+        <DialogHeader
+          data-dialog-drag-handle
+          className="flex cursor-grab flex-row items-center justify-between border-b border-border px-4 py-3 active:cursor-grabbing"
+        >
+          <DialogTitle className="flex items-center gap-2 text-sm">
+            <Layers size={14} className="text-primary" />
+            {initialData ? 'Edit Index definition' : 'Create New Index'}
+          </DialogTitle>
+          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="Close modal">
             <X size={13} />
-          </button>
-        </header>
+          </Button>
+        </DialogHeader>
 
-        {/* Modal Body Form */}
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-          <div
-            className="mql-ncd-body"
-            style={{ flex: 1, minHeight: 0, padding: 12, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}
-          >
-          {/* Index Name Input */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label className="mql-label">Index Name</label>
-            <input
-              type="text"
-              value={indexName}
-              onChange={(e) => {
-                setIndexName(e.target.value);
-                setNameTouched(e.target.value !== '');
-              }}
-              placeholder="e.g. email_1_status_-1"
-              required
-              className="mql-ncd-input"
-              data-testid="index-name-input"
-            />
-            <span className="mql-ncd-fhint">
-              Auto-generated from the keys (Mongo convention) — type to override.
-            </span>
-          </div>
-
-          {/* Keys Specification */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label className="mql-label">Index Key Definition</label>
-
-            {/* Builder / raw JSON mode tabs (same control as the connection dialog) */}
-            <nav className="mql-ncd-tabs">
-              <button
-                type="button"
-                className={`mql-ncd-tab ${!isRawMode ? 'is-active' : ''}`}
-                onClick={() => {
-                  if (isRawMode) {
-                    try {
-                      const parsed = JSON.parse(rawKeysJson);
-                      const list: IndexKeyRule[] = Object.entries(parsed).map(([field, dir]) => ({
-                        field,
-                        direction: dir === -1 ? -1 : 1,
-                      }));
-                      if (list.length > 0) setKeysList(list);
-                    } catch (e) {}
-                    setIsRawMode(false);
-                  }
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="index-name-input">Index Name</Label>
+              <Input
+                id="index-name-input"
+                type="text"
+                value={indexName}
+                onChange={(e) => {
+                  setIndexName(e.target.value);
+                  setNameTouched(e.target.value !== '');
                 }}
-              >
-                <Layers size={12} style={{ marginRight: 4 }} />
-                <span>Key Builder</span>
-              </button>
-              <button
-                type="button"
-                className={`mql-ncd-tab ${isRawMode ? 'is-active' : ''}`}
-                onClick={() => {
-                  if (!isRawMode) {
-                    const keysObj: Record<string, number> = {};
-                    keysList.forEach(k => {
-                      if (k.field.trim()) {
-                        keysObj[k.field.trim()] = k.direction;
-                      }
-                    });
-                    setRawKeysJson(JSON.stringify(keysObj, null, 2));
-                    setIsRawMode(true);
-                  }
-                }}
-              >
-                <Code size={12} style={{ marginRight: 4 }} />
-                <span>Raw JSON</span>
-              </button>
-            </nav>
-
-            {/* Builder Mode */}
-            {!isRawMode ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {/* Cap at ~5 rows; longer key lists scroll instead of growing the dialog. */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 170, overflowY: 'auto', paddingRight: 2 }}>
-                {keysList.map((rule, idx) => (
-                  <div key={idx} className="mql-row" style={{ gap: 6 }}>
-                    {/* Unified row input */}
-                    <input
-                      type="text"
-                      list={`available-fields-${idx}`}
-                      value={rule.field}
-                      onChange={(e) => handleKeyRowChange(idx, { field: e.target.value })}
-                      placeholder="Field name"
-                      required
-                      className="mql-ncd-input"
-                      style={{ flex: 1 }}
-                    />
-                    <datalist id={`available-fields-${idx}`}>
-                      {availableFields.map(f => (
-                        <option key={f} value={f} />
-                      ))}
-                    </datalist>
-
-                    {/* Direction Dropdown */}
-                    <div className="mql-ncd-select-wrap" style={{ width: 150 }}>
-                      <select
-                        value={rule.direction}
-                        onChange={(e) => handleKeyRowChange(idx, { direction: parseInt(e.target.value, 10) as 1 | -1 })}
-                        className="mql-ncd-select"
-                      >
-                        <option value={1}>Ascending (1)</option>
-                        <option value={-1}>Descending (-1)</option>
-                      </select>
-                      <ChevronDown size={10} color="var(--text-dim)" />
-                    </div>
-
-                    {/* Delete row */}
-                    <button
-                      type="button"
-                      disabled={keysList.length <= 1}
-                      onClick={() => handleRemoveKeyRow(idx)}
-                      className="mql-icon-btn mql-icon-btn-danger"
-                      title="Remove Key"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={handleAddKeyRow}
-                  className="mql-btn mql-btn-ghost mql-btn-outlined"
-                  style={{ alignSelf: 'flex-start', padding: '4px 8px', fontSize: 11 }}
-                >
-                  <Plus size={12} style={{ marginRight: 4 }} />
-                  <span>Add Index Key</span>
-                </button>
-              </div>
-            ) : (
-              /* Raw JSON Editor Mode */
-              <textarea
-                value={rawKeysJson}
-                onChange={(e) => setRawKeysJson(e.target.value)}
-                rows={4}
-                className="mql-ncd-textarea font-mono"
-                placeholder='{ "email": 1 }'
+                placeholder="e.g. email_1_status_-1"
+                required
+                data-testid="index-name-input"
               />
-            )}
-          </div>
+              <span className="text-[11px] text-muted-foreground">
+                Auto-generated from the keys (Mongo convention) — type to override.
+              </span>
+            </div>
 
-          {/* Constraints */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label className="mql-label">Constraints</label>
-            <div className="mql-row" style={{ gap: 20 }}>
-              <label className="mql-row" style={{ gap: 6, cursor: 'pointer', fontSize: 11.5, color: 'var(--text-main)' }}>
-                <input
-                  type="checkbox"
-                  checked={unique}
-                  onChange={() => setUnique(v => !v)}
-                  data-testid="unique-checkbox"
+            <div className="flex flex-col gap-2">
+              <Label>Index Key Definition</Label>
+              <Tabs value={isRawMode ? 'raw' : 'builder'}>
+                <TabsList className="h-8">
+                  <TabsTrigger value="builder" className="text-xs" onClick={switchToBuilder}>
+                    <Layers size={12} className="mr-1" />
+                    Key Builder
+                  </TabsTrigger>
+                  <TabsTrigger value="raw" className="text-xs" onClick={switchToRaw}>
+                    <Code size={12} className="mr-1" />
+                    Raw JSON
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+
+              {!isRawMode ? (
+                <div className="flex flex-col gap-2">
+                  <div className="flex max-h-[170px] flex-col gap-2 overflow-y-auto pr-1">
+                    {keysList.map((rule, idx) => {
+                      const isCustomField =
+                        rule.field === '__custom__' || !fieldOptions.includes(rule.field);
+                      return (
+                      <div key={rule.id} className="flex items-center gap-2">
+                        {isCustomField ? (
+                          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                            <Input
+                              type="text"
+                              value={rule.field === '__custom__' ? '' : rule.field}
+                              onChange={(e) => handleKeyRowChange(idx, { field: e.target.value })}
+                              placeholder="field.path"
+                              required
+                              className="min-w-0 flex-1 font-mono text-sm"
+                              data-testid={`index-key-field-${idx}`}
+                            />
+                            {fieldOptions.length > 0 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 shrink-0 px-2 text-xs"
+                                onClick={() => handleKeyRowChange(idx, { field: fieldOptions[0] })}
+                              >
+                                List
+                              </Button>
+                            )}
+                          </div>
+                        ) : (
+                          <select
+                            value={rule.field}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              handleKeyRowChange(idx, {
+                                field: value === '__custom__' ? '__custom__' : value,
+                              });
+                            }}
+                            className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm"
+                            data-testid={`index-key-field-${idx}`}
+                          >
+                            {fieldOptions.map((f) => (
+                              <option key={f} value={f}>{f}</option>
+                            ))}
+                            <option value="__custom__">Custom field…</option>
+                          </select>
+                        )}
+                        <select
+                          value={String(rule.direction)}
+                          onChange={(e) =>
+                            handleKeyRowChange(idx, { direction: parseInt(e.target.value, 10) as 1 | -1 })
+                          }
+                          className="h-9 w-[150px] shrink-0 rounded-md border border-input bg-background px-2 text-sm"
+                          data-testid={`index-key-direction-${idx}`}
+                        >
+                          <option value="1">Ascending (1)</option>
+                          <option value="-1">Descending (-1)</option>
+                        </select>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                          disabled={keysList.length <= 1}
+                          onClick={() => handleRemoveKeyRow(idx)}
+                          title="Remove Key"
+                        >
+                          <Trash2 size={13} />
+                        </Button>
+                      </div>
+                    );
+                    })}
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="w-fit text-xs" onClick={handleAddKeyRow}>
+                    <Plus size={12} />
+                    Add Index Key
+                  </Button>
+                </div>
+              ) : (
+                <textarea
+                  value={rawKeysJson}
+                  onChange={(e) => setRawKeysJson(e.target.value)}
+                  rows={4}
+                  className={textareaClassName}
+                  placeholder='{ "email": 1 }'
                 />
-                <span>Unique</span>
-                <span className="mql-ncd-fhint">prevent duplicates</span>
-              </label>
-              <label className="mql-row" style={{ gap: 6, cursor: 'pointer', fontSize: 11.5, color: 'var(--text-main)' }}>
-                <input
-                  type="checkbox"
-                  checked={sparse}
-                  onChange={() => setSparse(v => !v)}
-                  data-testid="sparse-checkbox"
-                />
-                <span>Sparse</span>
-                <span className="mql-ncd-fhint">ignore missing keys</span>
-              </label>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label>Constraints</Label>
+              <div className="flex flex-wrap gap-4">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={unique}
+                    onChange={() => setUnique((v) => !v)}
+                    data-testid="unique-checkbox"
+                    className="rounded border-input"
+                  />
+                  <span>Unique</span>
+                  <span className="text-muted-foreground">prevent duplicates</span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={sparse}
+                    onChange={() => setSparse((v) => !v)}
+                    data-testid="sparse-checkbox"
+                    className="rounded border-input"
+                  />
+                  <span>Sparse</span>
+                  <span className="text-muted-foreground">ignore missing keys</span>
+                </label>
+              </div>
             </div>
           </div>
-          </div>
 
-          {/* Modal Footer Actions */}
-          <footer className="mql-ncd-foot">
-            <span style={{ color: 'var(--accent-red)', fontSize: 11, minWidth: 0 }}>{jsonError}</span>
-            <div className="mql-row" style={{ gap: 8 }}>
-              <button
-                type="button"
-                onClick={onClose}
-                className="mql-btn mql-btn-ghost mql-btn-outlined"
-              >
+          <DialogFooter className="border-t border-border px-4 py-3 sm:justify-between">
+            <span className="min-w-0 text-[11px] text-destructive">{jsonError}</span>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={onClose}>
                 Cancel
-              </button>
-              <button
-                type="submit"
-                className="mql-btn mql-btn-primary"
-                data-testid="save-index-btn"
-              >
+              </Button>
+              <Button type="submit" data-testid="save-index-btn">
                 {initialData ? 'Save Changes' : 'Create Index'}
-              </button>
+              </Button>
             </div>
-          </footer>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DraggableDialogContent>
+    </Dialog>
   );
 };

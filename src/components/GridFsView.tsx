@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { HardDrive, Loader2, AlertCircle, Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatBytes } from '../lib/format';
 import { useDialogs } from './dialogs/DialogProvider';
 
@@ -53,7 +55,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({ connectionId, databaseNa
   const handleDownload = async (file: GridFsFile) => {
     try {
       const destPath = await save({ defaultPath: file.filename });
-      if (!destPath) return; // cancelled
+      if (!destPath) return;
       await invoke('download_gridfs_file', {
         id: connectionId,
         database: databaseName,
@@ -69,7 +71,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({ connectionId, databaseNa
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full text-[var(--text-muted)] gap-2 text-sm">
+      <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
         <Loader2 size={16} className="animate-spin" />
         Loading GridFS files…
       </div>
@@ -78,8 +80,8 @@ export const GridFsView: React.FC<GridFsViewProps> = ({ connectionId, databaseNa
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full p-6">
-        <div className="flex items-center gap-2 text-rose-400 text-sm font-mono">
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="flex items-center gap-2 font-mono text-sm text-destructive">
           <AlertCircle size={16} className="flex-shrink-0" />
           <span>{error}</span>
         </div>
@@ -88,64 +90,66 @@ export const GridFsView: React.FC<GridFsViewProps> = ({ connectionId, databaseNa
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" data-testid="gridfs-view">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-color)]">
-        <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-main)]">
-          <HardDrive size={14} className="text-emerald-500" />
+    <div className="flex h-full flex-col overflow-hidden" data-testid="gridfs-view">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <HardDrive size={14} className="text-success" />
           <span>
             GridFS: {databaseName}.{bucket}
           </span>
         </div>
-        <span className="text-[11px] text-[var(--text-dim)] font-mono">{files.length} file(s)</span>
+        <span className="font-mono text-[11px] text-muted-foreground">{files.length} file(s)</span>
       </div>
 
       {files.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-full text-[var(--text-muted)] gap-2 text-sm">
+        <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
           <HardDrive size={20} />
           No files in this bucket.
         </div>
       ) : (
-        <div className="flex-1 overflow-auto">
-          <table className="w-full text-[12px] border-collapse">
-            <thead className="sticky top-0 bg-[var(--bg-sidebar)]">
-              <tr className="text-left text-[var(--text-muted)]">
+        <ScrollArea className="flex-1">
+          <table className="w-full border-collapse text-xs">
+            <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
+              <tr className="text-left text-muted-foreground">
                 <th className="px-4 py-2 font-medium">filename</th>
                 <th className="px-4 py-2 font-medium">size</th>
                 <th className="px-4 py-2 font-medium">uploaded</th>
                 <th className="px-4 py-2 font-medium">chunk size</th>
-                <th className="px-4 py-2 font-medium"></th>
+                <th className="px-4 py-2 font-medium" />
               </tr>
             </thead>
             <tbody>
               {files.map((file) => (
                 <tr
                   key={file.id}
-                  className="border-t border-[var(--border-color)] hover:bg-[var(--bg-item-hover)]"
+                  className="border-t border-border hover:bg-accent/50"
                 >
-                  <td className="px-4 py-1.5 font-mono text-[var(--text-main)]">{file.filename}</td>
+                  <td className="px-4 py-1.5 font-mono text-foreground">{file.filename}</td>
                   <td className="px-4 py-1.5 tabular-nums">{formatBytes(file.length)}</td>
-                  <td className="px-4 py-1.5 text-[var(--text-muted)]">
+                  <td className="px-4 py-1.5 text-muted-foreground">
                     {file.upload_date ? file.upload_date.replace('T', ' ').replace(/\..*$/, '') : '—'}
                   </td>
-                  <td className="px-4 py-1.5 tabular-nums text-[var(--text-muted)]">
+                  <td className="px-4 py-1.5 tabular-nums text-muted-foreground">
                     {formatBytes(file.chunk_size_bytes)}
                   </td>
                   <td className="px-4 py-1.5">
-                    <button
+                    <Button
                       type="button"
-                      className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-item-hover)] cursor-pointer transition-all"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-[11px]"
                       data-testid="gridfs-download-btn"
                       onClick={() => handleDownload(file)}
                     >
                       <Download size={12} />
-                      <span>Download</span>
-                    </button>
+                      Download
+                    </Button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollArea>
       )}
     </div>
   );

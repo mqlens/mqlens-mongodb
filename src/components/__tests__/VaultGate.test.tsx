@@ -9,6 +9,7 @@ vi.mock('../../lib/vault', () => ({
   resetVault: vi.fn(),
   biometricStatus: vi.fn(),
   biometricUnlock: vi.fn(),
+  notifyVaultUnlocked: vi.fn(),
 }));
 import * as vault from '../../lib/vault';
 

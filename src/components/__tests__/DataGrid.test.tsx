@@ -9,6 +9,31 @@ vi.mock('@monaco-editor/react', () => ({
   ),
 }));
 
+vi.mock('@/hooks/use-theme', () => ({
+  useTheme: () => ({
+    config: {
+      presetId: 'mqlens-dark',
+      mode: 'dark',
+      fonts: { sans: 'Inter', mono: 'JetBrains Mono' },
+      fontSize: 13,
+      spacingDensity: 'cozy',
+      overrides: {},
+    },
+    resolvedMode: 'dark' as const,
+  }),
+  useThemeOptional: () => ({
+    config: {
+      presetId: 'mqlens-dark',
+      mode: 'dark',
+      fonts: { sans: 'Inter', mono: 'JetBrains Mono' },
+      fontSize: 13,
+      spacingDensity: 'cozy',
+      overrides: {},
+    },
+    resolvedMode: 'dark' as const,
+  }),
+}));
+
 import { DataGrid, getExplainTree } from '../DataGrid';
 
 // Collect every node name in the tree (depth-first) for assertions.
@@ -107,7 +132,7 @@ describe('DataGrid Component', () => {
     // Line-number gutter starts at 1. The number is exposed via data-num and
     // rendered through a ::before pseudo-element (not a text node) so that
     // selecting and copying JSON never picks up the gutter numbers.
-    const firstGutter = jsonView.querySelector('.mql-jsonview-num');
+    const firstGutter = jsonView.querySelector('.json-view-gutter');
     expect(firstGutter).toHaveAttribute('data-num', '1');
     expect(firstGutter).toBeEmptyDOMElement();
 

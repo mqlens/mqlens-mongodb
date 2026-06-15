@@ -1,0 +1,269 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+
+  --text-2xs: var(--font-size-2xs);
+  --text-xs: var(--font-size-xs);
+  --text-sm: var(--font-size-sm);
+  --text-base: var(--font-size-md);
+  --text-lg: var(--font-size-lg);
+  --text-xl: var(--font-size-xl);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+  --color-sidebar: hsl(var(--sidebar-background));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+  --color-syntax-key: hsl(var(--syntax-key));
+  --color-syntax-string: hsl(var(--syntax-string));
+  --color-syntax-number: hsl(var(--syntax-number));
+  --color-syntax-boolean: hsl(var(--syntax-boolean));
+  --color-syntax-null: hsl(var(--syntax-null));
+}
+
+:root {
+  --font-family-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-family-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-size-base: 13px;
+  --ui-scale: 1;
+  --font-size-effective: 13px;
+  --font-size-2xs: 10px;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 14px;
+  --font-size-xl: 16px;
+  --spacing-density-scale: 1;
+
+  --radius: 0.5rem;
+
+  /* MQLens Dark (default) — HSL components only */
+  --background: 222 24% 6%;
+  --foreground: 210 20% 94%;
+  --card: 222 20% 10%;
+  --card-foreground: 210 20% 94%;
+  --popover: 222 20% 12%;
+  --popover-foreground: 210 20% 94%;
+  --primary: 200 90% 50%;
+  --primary-foreground: 210 20% 98%;
+  --secondary: 220 20% 16%;
+  --secondary-foreground: 210 20% 94%;
+  --muted: 220 20% 14%;
+  --muted-foreground: 215 12% 68%;
+  --accent: 220 20% 18%;
+  --accent-foreground: 210 20% 94%;
+  --destructive: 350 80% 55%;
+  --destructive-foreground: 210 20% 98%;
+  --border: 220 15% 18%;
+  --input: 222 20% 8%;
+  --ring: 200 90% 50%;
+  --success: 142 70% 45%;
+  --warning: 38 92% 60%;
+  --chart-1: 200 90% 50%;
+  --chart-2: 175 85% 43%;
+  --chart-3: 142 70% 45%;
+  --chart-4: 268 85% 65%;
+  --chart-5: 38 92% 60%;
+  --sidebar-background: 222 24% 4%;
+  --sidebar-foreground: 210 20% 94%;
+  --sidebar-primary: 200 90% 50%;
+  --sidebar-primary-foreground: 210 20% 98%;
+  --sidebar-accent: 220 20% 16%;
+  --sidebar-accent-foreground: 210 20% 94%;
+  --sidebar-border: 220 15% 18%;
+  --sidebar-ring: 200 90% 50%;
+  --syntax-key: 200 95% 70%;
+  --syntax-string: 142 70% 75%;
+  --syntax-number: 38 92% 60%;
+  --syntax-boolean: 268 80% 75%;
+  --syntax-null: 215 8% 55%;
+}
+
+.light {
+  --background: 220 20% 98%;
+  --foreground: 220 24% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 24% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 24% 12%;
+  --primary: 210 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 15% 92%;
+  --secondary-foreground: 220 24% 12%;
+  --muted: 220 15% 94%;
+  --muted-foreground: 220 12% 38%;
+  --accent: 220 15% 90%;
+  --accent-foreground: 220 24% 12%;
+  --destructive: 350 80% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 15% 80%;
+  --input: 220 20% 93%;
+  --ring: 210 100% 45%;
+  --success: 142 65% 35%;
+  --warning: 38 90% 45%;
+  --chart-1: 210 100% 45%;
+  --chart-2: 175 80% 35%;
+  --chart-3: 142 65% 35%;
+  --chart-4: 268 75% 50%;
+  --chart-5: 38 90% 45%;
+  --sidebar-background: 220 20% 94%;
+  --sidebar-foreground: 220 24% 12%;
+  --sidebar-primary: 210 100% 45%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 220 15% 88%;
+  --sidebar-accent-foreground: 220 24% 12%;
+  --sidebar-border: 220 15% 80%;
+  --sidebar-ring: 210 100% 45%;
+  --syntax-key: 210 100% 35%;
+  --syntax-string: 142 65% 30%;
+  --syntax-number: 38 90% 40%;
+  --syntax-boolean: 268 75% 45%;
+  --syntax-null: 220 8% 50%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-size: var(--font-size-effective, var(--font-size-base));
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-md);
+    overflow: hidden;
+    user-select: none;
+  }
+
+  #root {
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    flex-direction: column;
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-family-mono);
+  }
+}
+
+[data-spacing="compact"] {
+  --spacing-density-scale: 0.85;
+}
+
+[data-spacing="cozy"] {
+  --spacing-density-scale: 1;
+}
+
+[data-spacing="roomy"] {
+  --spacing-density-scale: 1.15;
+}
+
+.mql-chrome {
+  background: hsl(var(--sidebar-background) / 0.95);
+}
+
+.mql-panel {
+  background: hsl(var(--card) / 0.92);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+.selectable {
+  user-select: text;
+}
+
+/* Scale fixed pixel utilities to user font / DPI settings */
+.text-ui-2xs {
+  font-size: var(--font-size-2xs);
+}
+
+.text-ui-xs {
+  font-size: var(--font-size-xs);
+}
+
+.text-ui-sm {
+  font-size: var(--font-size-sm);
+}
+
+/* Density-aware spacing helpers */
+.gap-ui {
+  gap: calc(0.5rem * var(--spacing-density-scale, 1));
+}
+
+.px-ui {
+  padding-left: calc(0.75rem * var(--spacing-density-scale, 1));
+  padding-right: calc(0.75rem * var(--spacing-density-scale, 1));
+}
+
+@keyframes toast-progress {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.animate-toast-progress {
+  animation-name: toast-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}

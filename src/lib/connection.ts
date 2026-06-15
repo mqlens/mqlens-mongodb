@@ -5,5 +5,6 @@ export interface ConnectionProfile {
   id: string;
   name: string;
   uri: string;
+  color_tag?: string;
   ssh?: SshConfig | null;
 }

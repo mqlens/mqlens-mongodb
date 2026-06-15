@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { cn } from '@/lib/utils';
 
 export interface ContextMenuItem {
   label: string;
@@ -36,7 +37,9 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
 
   useEffect(() => {
     const close = () => onClose();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
@@ -57,7 +60,9 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
   return createPortal(
     <div
       ref={ref}
-      className="mql-context-menu"
+      className={cn(
+        'fixed z-50 min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md',
+      )}
       style={{ left: pos.left, top: pos.top }}
       role="menu"
       data-testid="context-menu"
@@ -65,15 +70,25 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
     >
       {items.map((it, i) => (
         <React.Fragment key={`${it.label}-${i}`}>
-          {it.separatorBefore && <div className="mql-context-sep" />}
+          {it.separatorBefore && <div className="-mx-1 my-1 h-px bg-border" />}
           <button
             type="button"
             role="menuitem"
-            className={`mql-context-item${it.danger ? ' is-danger' : ''}`}
+            className={cn(
+              'relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50',
+              it.danger && 'is-danger text-destructive hover:text-destructive',
+            )}
             disabled={it.disabled}
-            onClick={() => { it.onClick(); onClose(); }}
+            onClick={() => {
+              it.onClick();
+              onClose();
+            }}
           >
-            {it.icon && <span className="mql-context-icon">{it.icon}</span>}
+            {it.icon && (
+              <span className="mr-2 inline-flex shrink-0 text-muted-foreground [&_svg]:size-4">
+                {it.icon}
+              </span>
+            )}
             <span>{it.label}</span>
           </button>
         </React.Fragment>

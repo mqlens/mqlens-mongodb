@@ -1,5 +1,9 @@
 import React from 'react';
 import { ChevronRight, Loader2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
 import type { ConnectionProfile } from '../lib/connection';
 import { hostFromUri, avatarColor, initial, topology } from '../lib/quickStartUtils';
 
@@ -18,42 +22,60 @@ export const ConnectionCard: React.FC<ConnectionCardProps> = ({ profile, connect
   const interactive = !connected && !connecting;
 
   return (
-    <button
-      type="button"
-      data-testid={`conn-card-${profile.id}`}
-      className={`mql-qs-card ${connected ? 'is-connected' : ''}`}
-      disabled={!interactive}
-      onClick={() => onConnect(profile)}
-      title={connected ? 'Already connected' : `Connect to ${profile.name}`}
-      aria-label={connected ? `${profile.name} – already connected` : `Connect to ${profile.name}`}
+    <Card
+      className={cn(
+        'overflow-hidden transition-colors',
+        connected && 'border-success/40 bg-success/5',
+        interactive && 'hover:border-primary/50 hover:shadow-sm'
+      )}
     >
-      <span className="mql-qs-card-head">
-        <span className="mql-qs-card-av" style={{ background: avatarColor(profile.name) }}>
-          {initial(profile.name)}
-        </span>
-        <span className="mql-qs-card-id">
-          <span className="mql-qs-card-name">
-            {profile.name}
-            {isSrv && <span className="mql-qs-badge is-srv" title="MongoDB SRV record">SRV</span>}
-            {hasSsh && <span className="mql-qs-badge is-ssh">SSH</span>}
+      <Button
+        type="button"
+        variant="ghost"
+        data-testid={`conn-card-${profile.id}`}
+        disabled={!interactive}
+        onClick={() => onConnect(profile)}
+        title={connected ? 'Already connected' : `Connect to ${profile.name}`}
+        aria-label={connected ? `${profile.name} – already connected` : `Connect to ${profile.name}`}
+        className="h-auto w-full flex-col items-stretch gap-0 rounded-none p-0 text-left font-normal hover:bg-transparent"
+      >
+        <div className="flex w-full items-start gap-3 p-4 pb-2">
+          <span
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-sm font-semibold text-primary-foreground"
+            style={{ background: avatarColor(profile.name) }}
+          >
+            {initial(profile.name)}
           </span>
-          <span className="mql-qs-card-status">
-            {connected
-              ? <span className="mql-qs-badge is-live">Connected</span>
-              : <span className="mql-qs-card-topo">{topo}</span>}
-          </span>
-        </span>
-      </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="truncate font-medium text-foreground">{profile.name}</span>
+              {isSrv && <Badge variant="outline" title="MongoDB SRV record">SRV</Badge>}
+              {hasSsh && <Badge variant="secondary">SSH</Badge>}
+            </div>
+            <div className="mt-0.5">
+              {connected ? (
+                <Badge variant="success">Connected</Badge>
+              ) : (
+                <span className="text-xs text-muted-foreground">{topo}</span>
+              )}
+            </div>
+          </div>
+        </div>
 
-      <span className="mql-qs-card-host">{host}</span>
+        <p className="w-full truncate px-4 font-mono text-xs text-muted-foreground">{host}</p>
 
-      <span className="mql-qs-card-foot">
-        {connecting ? (
-          <><Loader2 size={13} className="mql-qs-spin" /> Connecting…</>
-        ) : interactive ? (
-          <>Connect <ChevronRight size={14} /></>
-        ) : null}
-      </span>
-    </button>
+        <div className="flex w-full items-center px-4 pb-4 pt-2 text-xs">
+          {connecting ? (
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <Loader2 size={13} className="animate-spin" /> Connecting…
+            </span>
+          ) : interactive ? (
+            <span className="flex items-center gap-0.5 text-primary">
+              Connect <ChevronRight size={14} />
+            </span>
+          ) : null}
+        </div>
+      </Button>
+    </Card>
   );
 };

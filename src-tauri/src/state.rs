@@ -4,6 +4,7 @@ use crate::{ssh_tunnel, IndexInfo, MongoshSession, TaskInfo};
 use mongodb::Client;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 /// Lock a std mutex, mapping a poisoned lock to an error instead of panicking.
 pub trait LockExt<T> {
@@ -25,6 +26,9 @@ pub struct AppState {
     pub ssh_tunnels: Mutex<HashMap<String, ssh_tunnel::SshTunnel>>,
     // Persisted across polls so CPU usage can be sampled as a delta.
     pub sys: Mutex<sysinfo::System>,
+    /// PIDs in this app process tree — refreshed periodically, not every poll.
+    pub resource_pids: Mutex<Vec<sysinfo::Pid>>,
+    pub resource_tree_at: Mutex<Instant>,
     // In-memory vault key; None when locked or uninitialized.
     pub vault_key: Mutex<Option<[u8; 32]>>,
 }
@@ -39,6 +43,8 @@ impl AppState {
             tasks: Arc::new(Mutex::new(HashMap::new())),
             ssh_tunnels: Mutex::new(HashMap::new()),
             sys: Mutex::new(sysinfo::System::new()),
+            resource_pids: Mutex::new(Vec::new()),
+            resource_tree_at: Mutex::new(Instant::now()),
             vault_key: Mutex::new(None),
         }
     }

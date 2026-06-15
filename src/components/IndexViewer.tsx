@@ -11,8 +11,14 @@ import {
   Copy,
   Check,
   Edit,
-  Trash2
+  Trash2,
+  Loader2,
 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
 import type { IndexInfo } from './Sidebar';
 import { useDialogs } from './dialogs/DialogProvider';
 
@@ -39,7 +45,6 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch the REAL index definition from the backend (no more guessing from the name).
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -72,9 +77,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
     };
   }, [connectionId, databaseName, collectionName, indexName]);
 
-  // Derive view data from the real spec.
   const indexSpecs = useMemo(() => {
-    // keyPattern values can be numbers (1 / -1) or strings ("text", "2dsphere", "hashed").
     let keyPattern: Record<string, number | string> = {};
     if (info) {
       try {
@@ -112,7 +115,6 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
     return { keyPattern, type, unique, sparse, fieldCount, description, rawJson };
   }, [info, indexName, databaseName, collectionName]);
 
-  // Coerce the real key pattern into the {field: 1 | -1} shape the edit modal accepts.
   const editableKeyPattern = useMemo(() => {
     const out: Record<string, number> = {};
     Object.entries(indexSpecs.keyPattern).forEach(([field, dir]) => {
@@ -121,14 +123,12 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
     return out;
   }, [indexSpecs.keyPattern]);
 
-  // Copy BSON to clipboard helper
   const handleCopy = () => {
     navigator.clipboard.writeText(indexSpecs.rawJson);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Custom JSON Syntax Highlighter for BSON Metadata codeblock
   const renderHighlightedJson = (json: string) => {
     const regex = /("(?:\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*")(\s*:)?|(\b(?:true|false|null)\b)|(\b-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?\b)/g;
     const parts: React.ReactNode[] = [];
@@ -167,9 +167,9 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
 
   if (loading) {
     return (
-      <div className="index-viewer-container" data-testid="index-viewer" data-connection-id={connectionId}>
-        <div className="p-6 flex items-center gap-2 text-sm text-[var(--text-muted)]">
-          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[var(--accent-blue)]" />
+      <div className="flex h-full flex-col" data-testid="index-viewer" data-connection-id={connectionId}>
+        <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
           <span>Loading index definition…</span>
         </div>
       </div>
@@ -178,8 +178,8 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
 
   if (error) {
     return (
-      <div className="index-viewer-container" data-testid="index-viewer" data-connection-id={connectionId}>
-        <div className="p-6 text-sm text-rose-400 font-mono select-text" data-testid="index-viewer-error">
+      <div className="flex h-full flex-col" data-testid="index-viewer" data-connection-id={connectionId}>
+        <div className="select-text p-6 font-mono text-sm text-destructive" data-testid="index-viewer-error">
           {error}
         </div>
       </div>
@@ -187,215 +187,200 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
   }
 
   return (
-    <div className="index-viewer-container" data-testid="index-viewer" data-connection-id={connectionId}>
-      {/* Title Header */}
-      <div className="index-header-bar justify-between">
-        <div className="flex items-center gap-3">
-          <div className="index-header-icon-box">
-            <KeyRound size={22} className="text-amber-400" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base font-semibold tracking-tight text-[var(--text-main)]">{indexName}</h1>
-              <span className="badge-pill info">
-                Index
-              </span>
+    <ScrollArea className="h-full" data-testid="index-viewer" data-connection-id={connectionId}>
+      <div className="flex flex-col gap-4 p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10">
+              <KeyRound size={22} className="text-warning" />
             </div>
-            <p className="text-xs text-[var(--text-muted)] flex items-center gap-1.5 mt-0.5">
-              <Database size={11} className="text-amber-400" />
-              <span>{databaseName}.{collectionName}</span>
-            </p>
-          </div>
-        </div>
-
-        {/* Edit and Delete Actions */}
-        {indexName !== '_id_' && (onEditIndex || onDeleteIndex) && (
-          <div className="flex items-center gap-2 pr-1">
-            {onEditIndex && (
-              <button
-                onClick={() => onEditIndex(indexName, editableKeyPattern, indexSpecs.unique, indexSpecs.sparse)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-item-hover)] cursor-pointer transition-all"
-                title="Edit Index"
-                data-testid="edit-index-btn"
-              >
-                <Edit size={13} />
-                <span>Edit Index</span>
-              </button>
-            )}
-            {onDeleteIndex && (
-              <button
-                onClick={async () => {
-                  if (
-                    await confirm({
-                      title: 'Delete index',
-                      message: `Are you sure you want to delete index "${indexName}"?`,
-                      confirmLabel: 'Delete',
-                      destructive: true,
-                    })
-                  ) {
-                    onDeleteIndex(indexName);
-                  }
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold border border-rose-900/30 bg-rose-950/10 text-rose-400 hover:bg-rose-950/20 cursor-pointer transition-all"
-                title="Delete Index"
-                data-testid="delete-index-btn"
-              >
-                <Trash2 size={13} />
-                <span>Delete Index</span>
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Grid Dashboard */}
-      <div className="index-metric-grid">
-        {/* Card 1: Index Type & Keys */}
-        <div className="index-metric-card">
-          <div className="index-metric-header">
-            <Cpu size={12} className="text-sky-400" />
-            <span>Definition</span>
-          </div>
-          <div className="index-metric-value">{indexSpecs.type}</div>
-          <div className="index-keys-container">
-            {Object.entries(indexSpecs.keyPattern).map(([key, dir]) => {
-              const isDesc = dir === -1 || dir === '-1';
-              const isAsc = dir === 1 || dir === '1';
-              const label = isDesc ? 'DESC (-1)' : isAsc ? 'ASC (1)' : String(dir);
-              return (
-                <div key={key} className="index-key-tag">
-                  <span>{key}</span>
-                  <span className={`index-key-direction ${isDesc ? 'desc' : 'asc'}`}>
-                    {label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-          <div className="index-metric-card-bg-accent text-sky-500" />
-        </div>
-
-        {/* Card 2: Constraints (real) */}
-        <div className="index-metric-card">
-          <div className="index-metric-header">
-            <Layers size={12} className="text-emerald-400" />
-            <span>Constraints</span>
-          </div>
-          <div className="index-metric-value">{indexSpecs.unique ? 'Unique' : 'Non-Unique'}</div>
-          <div className="text-[11px] text-[var(--text-muted)] mt-1 flex items-center gap-1.5">
-            <span className={`status-pulse ${indexSpecs.sparse ? 'text-[var(--accent-green)]' : 'text-[var(--text-dim)]'}`} />
-            <span>{indexSpecs.sparse ? 'Sparse index' : 'Non-sparse (indexes all documents)'}</span>
-          </div>
-          <div className="index-metric-card-bg-accent text-emerald-500" />
-        </div>
-
-        {/* Card 3: Key field count (real) */}
-        <div className="index-metric-card">
-          <div className="index-metric-header">
-            <Hash size={12} className="text-amber-400" />
-            <span>Key Fields</span>
-          </div>
-          <div className="index-metric-value">{indexSpecs.fieldCount}</div>
-          <div className="text-[11px] text-[var(--text-muted)] mt-1">
-            {indexSpecs.fieldCount === 1 ? 'Single-field index' : `${indexSpecs.fieldCount} fields (compound)`}
-          </div>
-          <div className="index-metric-card-bg-accent text-amber-500" />
-        </div>
-      </div>
-
-      {/* Details Sections */}
-      <div className="index-details-grid">
-        
-        {/* Left Section: Info and Specs */}
-        <div className="index-details-card">
-          <div className="index-details-header">
-            <Info size={13} className="text-sky-400" />
-            <span>Properties & Details</span>
-          </div>
-
-          <div className="index-property-list">
-            <div className="index-property-row">
-              <span className="index-property-label">Index Name</span>
-              <span className="index-property-value select-text">{indexName}</span>
-            </div>
-            <div className="index-property-row">
-              <span className="index-property-label">Unique Constraint</span>
-              {indexSpecs.unique ? (
-                <span className="badge-pill success-active">
-                  <span className="status-pulse text-[var(--accent-green)]" />
-                  <span>Unique</span>
-                </span>
-              ) : (
-                <span className="badge-pill muted">
-                  <span>Non-Unique</span>
-                </span>
-              )}
-            </div>
-            <div className="index-property-row">
-              <span className="index-property-label">Sparse Constraint</span>
-              {indexSpecs.sparse ? (
-                <span className="badge-pill success">
-                  <span>Sparse</span>
-                </span>
-              ) : (
-                <span className="badge-pill muted">
-                  <span>Non-Sparse</span>
-                </span>
-              )}
-            </div>
-            <div className="index-property-row">
-              <span className="index-property-label">Operational Status</span>
-              <span className="badge-pill success-active">
-                <span className="status-pulse text-[var(--accent-green)]" />
-                <span>Active</span>
-              </span>
-            </div>
-
-            <div className="index-description-block">
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--accent-blue)] mb-1">
-                <Info size={12} />
-                <span>Description & Guidelines</span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-base font-semibold tracking-tight text-foreground">{indexName}</h1>
+                <Badge variant="secondary">Index</Badge>
               </div>
-              <p className="index-description-text">
-                {indexSpecs.description}
+              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Database size={11} className="text-warning" />
+                <span>{databaseName}.{collectionName}</span>
               </p>
             </div>
           </div>
-        </div>
 
-        {/* Right Section: JSON Specification */}
-        <div className="bson-metadata-card">
-          <div className="bson-metadata-header">
-            <div className="flex items-center gap-2 text-xs font-bold text-[var(--text-main)]">
-              <FileJson size={13} className="text-amber-500" />
-              <span>Raw Specification (BSON Metadata)</span>
-            </div>
-            <button 
-              onClick={handleCopy}
-              className="bson-metadata-copy-btn"
-              title="Copy to Clipboard"
-            >
-              {copied ? (
-                <>
-                  <Check size={11} className="text-[var(--accent-green)]" />
-                  <span>Copied!</span>
-                </>
-              ) : (
-                <>
-                  <Copy size={11} />
-                  <span>Copy JSON</span>
-                </>
+          {indexName !== '_id_' && (onEditIndex || onDeleteIndex) && (
+            <div className="flex items-center gap-2">
+              {onEditIndex && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onEditIndex(indexName, editableKeyPattern, indexSpecs.unique, indexSpecs.sparse)}
+                  title="Edit Index"
+                  data-testid="edit-index-btn"
+                >
+                  <Edit size={13} />
+                  Edit Index
+                </Button>
               )}
-            </button>
-          </div>
-          <div className="bson-metadata-body select-text">
-            <pre className="m-0 select-text leading-relaxed whitespace-pre-wrap">
-              {renderHighlightedJson(indexSpecs.rawJson)}
-            </pre>
-          </div>
+              {onDeleteIndex && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: 'Delete index',
+                        message: `Are you sure you want to delete index "${indexName}"?`,
+                        confirmLabel: 'Delete',
+                        destructive: true,
+                      })
+                    ) {
+                      onDeleteIndex(indexName);
+                    }
+                  }}
+                  title="Delete Index"
+                  data-testid="delete-index-btn"
+                >
+                  <Trash2 size={13} />
+                  Delete Index
+                </Button>
+              )}
+            </div>
+          )}
         </div>
 
+        <div className="grid gap-3 md:grid-cols-3">
+          <Card className="relative overflow-hidden">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Cpu size={12} className="text-primary" />
+                Definition
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg font-semibold text-foreground">{indexSpecs.type}</div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {Object.entries(indexSpecs.keyPattern).map(([key, dir]) => {
+                  const isDesc = dir === -1 || dir === '-1';
+                  const isAsc = dir === 1 || dir === '1';
+                  const label = isDesc ? 'DESC (-1)' : isAsc ? 'ASC (1)' : String(dir);
+                  return (
+                    <Badge key={key} variant="outline" className="gap-1 font-mono text-[10px]">
+                      <span>{key}</span>
+                      <span className={cn(isDesc ? 'text-destructive' : 'text-success')}>{label}</span>
+                    </Badge>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="relative overflow-hidden">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Layers size={12} className="text-success" />
+                Constraints
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg font-semibold text-foreground">
+                {indexSpecs.unique ? 'Unique' : 'Non-Unique'}
+              </div>
+              <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className={cn('inline-block h-1.5 w-1.5 rounded-full', indexSpecs.sparse ? 'bg-success' : 'bg-muted-foreground/40')} />
+                {indexSpecs.sparse ? 'Sparse index' : 'Non-sparse (indexes all documents)'}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="relative overflow-hidden">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Hash size={12} className="text-warning" />
+                Key Fields
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg font-semibold text-foreground">{indexSpecs.fieldCount}</div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {indexSpecs.fieldCount === 1 ? 'Single-field index' : `${indexSpecs.fieldCount} fields (compound)`}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-1.5 text-sm">
+                <Info size={13} className="text-primary" />
+                Properties &amp; Details
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between gap-4 text-xs">
+                <span className="text-muted-foreground">Index Name</span>
+                <span className="select-text font-mono text-foreground">{indexName}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 text-xs">
+                <span className="text-muted-foreground">Unique Constraint</span>
+                {indexSpecs.unique ? (
+                  <Badge variant="success">Unique</Badge>
+                ) : (
+                  <Badge variant="outline">Non-Unique</Badge>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-4 text-xs">
+                <span className="text-muted-foreground">Sparse Constraint</span>
+                {indexSpecs.sparse ? (
+                  <Badge variant="secondary">Sparse</Badge>
+                ) : (
+                  <Badge variant="outline">Non-Sparse</Badge>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-4 text-xs">
+                <span className="text-muted-foreground">Operational Status</span>
+                <Badge variant="success">Active</Badge>
+              </div>
+              <div className="rounded-md border border-border bg-muted/30 p-3">
+                <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-primary">
+                  <Info size={12} />
+                  Description &amp; Guidelines
+                </div>
+                <p className="text-xs leading-relaxed text-muted-foreground">{indexSpecs.description}</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <FileJson size={13} className="text-warning" />
+                Raw Specification (BSON Metadata)
+              </CardTitle>
+              <Button type="button" variant="outline" size="sm" className="h-7 text-[11px]" onClick={handleCopy} title="Copy to Clipboard">
+                {copied ? (
+                  <>
+                    <Check size={11} className="text-success" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy size={11} />
+                    Copy JSON
+                  </>
+                )}
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <pre className="select-text whitespace-pre-wrap rounded-md bg-muted/50 p-3 font-mono text-xs leading-relaxed text-foreground">
+                {renderHighlightedJson(indexSpecs.rawJson)}
+              </pre>
+            </CardContent>
+          </Card>
+        </div>
       </div>
-    </div>
+    </ScrollArea>
   );
 };
