@@ -1,7 +1,7 @@
 const dbName = 'mqlens_demo';
-const db = db.getSiblingDB(dbName);
+const demoDb = db.getSiblingDB(dbName);
 
-db.dropDatabase();
+demoDb.dropDatabase();
 
 const regions = ['North America', 'Europe', 'APAC', 'Latin America'];
 const statuses = ['new', 'processing', 'shipped', 'delivered', 'returned'];
@@ -13,7 +13,7 @@ const products = [
   { sku: 'MQL-AI', name: 'AI Query Assistant', category: 'AI', price: 129 },
 ];
 
-db.products.insertMany(products.map((product, index) => ({
+demoDb.products.insertMany(products.map((product, index) => ({
   ...product,
   stock: 80 + index * 23,
   rating: Number((4.2 + index * 0.13).toFixed(2)),
@@ -40,9 +40,9 @@ const customers = Array.from({ length: 36 }, (_, index) => {
     createdAt: new Date(Date.UTC(2025, index % 12, 4 + (index % 20))),
   };
 });
-db.customers.insertMany(customers);
+demoDb.customers.insertMany(customers);
 
-const productDocs = db.products.find().toArray();
+const productDocs = demoDb.products.find().toArray();
 const orders = Array.from({ length: 180 }, (_, index) => {
   const customer = customers[index % customers.length];
   const itemCount = 1 + (index % 4);
@@ -85,7 +85,7 @@ const orders = Array.from({ length: 180 }, (_, index) => {
     updatedAt: new Date(createdAt.getTime() + 1000 * 60 * 60 * (6 + (index % 48))),
   };
 });
-db.orders.insertMany(orders);
+demoDb.orders.insertMany(orders);
 
 const events = Array.from({ length: 260 }, (_, index) => ({
   eventId: `EVT-${String(index + 1).padStart(5, '0')}`,
