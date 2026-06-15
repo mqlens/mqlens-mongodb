@@ -7,6 +7,11 @@ import { DialogProvider } from '../dialogs/DialogProvider';
 // ConnectionManager now uses the in-app dialog system, so it must render inside a provider.
 const render = (ui: ReactElement) => rtlRender(<DialogProvider>{ui}</DialogProvider>);
 
+async function pickSelectOption(testId: string, optionName: RegExp | string) {
+  fireEvent.click(screen.getByTestId(testId));
+  fireEvent.click(await screen.findByRole('option', { name: optionName }));
+}
+
 // Mock Tauri invoke function
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -423,7 +428,7 @@ describe('ConnectionManager Component', () => {
     expect(screen.getByText('New Connection')).toBeInTheDocument();
 
     const nameInput = screen.getByLabelText(/display name/i);
-    fireEvent.change(screen.getByTestId('topology-select'), { target: { value: 'uri' } });
+    await pickSelectOption('topology-select', /full uri string only/i);
     const uriInput = screen.getByLabelText(/connection uri/i);
 
     fireEvent.change(nameInput, { target: { value: 'Staging DB' } });
@@ -474,6 +479,7 @@ describe('ConnectionManager Component', () => {
       expect(screen.getAllByText('Production').length).toBeGreaterThan(0);
     });
 
+    fireEvent.click(screen.getByTestId('folder-filter-select'));
     expect(screen.getByRole('option', { name: 'Production' })).toBeInTheDocument();
     expect(screen.queryByTestId('new-folder-name-input')).not.toBeInTheDocument();
 
@@ -513,7 +519,7 @@ describe('ConnectionManager Component', () => {
     const newBtn = await screen.findByRole('button', { name: /new\.\.\./i });
     fireEvent.click(newBtn);
 
-    fireEvent.change(screen.getByTestId('topology-select'), { target: { value: 'uri' } });
+    await pickSelectOption('topology-select', /full uri string only/i);
     const uriInput = screen.getByLabelText(/connection uri/i);
     fireEvent.change(uriInput, { target: { value: 'mongodb://mock' } });
 
@@ -567,7 +573,7 @@ describe('ConnectionManager Component', () => {
     const newBtn = await screen.findByRole('button', { name: /new\.\.\./i });
     fireEvent.click(newBtn);
 
-    fireEvent.change(screen.getByTestId('topology-select'), { target: { value: 'uri' } });
+    await pickSelectOption('topology-select', /full uri string only/i);
     const uriInput = screen.getByLabelText(/connection uri/i);
     fireEvent.change(uriInput, { target: { value: 'mongodb://invalid' } });
 
@@ -627,7 +633,7 @@ describe('ConnectionManager Component', () => {
 
     // Verify it called connect_db and passed connection ID to callback
     await waitFor(() => {
-      expect(handleConnect).toHaveBeenCalledWith('conn-abc-123', 'Mock DB 1', 'mongodb://mock', 'profile-1');
+      expect(handleConnect).toHaveBeenCalledWith('conn-abc-123', 'Mock DB 1', 'mongodb://mock', 'profile-1', undefined);
     });
   });
 

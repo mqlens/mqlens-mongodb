@@ -23,6 +23,26 @@ export interface CollectionQueries {
   default: SavedQueryBody | null;
 }
 
+export const QUERIES_CHANGED_EVENT = 'mqlens-queries-changed';
+
+export interface SavedQueryRef {
+  connectionName: string;
+  db: string;
+  collection: string;
+  id: string;
+  name: string;
+  query: SavedQueryBody;
+  createdAt: string;
+}
+
+export async function listAllSavedQueries(): Promise<SavedQueryRef[]> {
+  return invoke<SavedQueryRef[]>('list_all_saved_queries');
+}
+
+function notifyQueriesChanged(): void {
+  window.dispatchEvent(new Event(QUERIES_CHANGED_EVENT));
+}
+
 const newId = (): string =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
@@ -55,6 +75,7 @@ export async function saveQuery(
     collection,
     saved: { id: newId(), name, query, createdAt: nowIso() },
   });
+  notifyQueriesChanged();
 }
 
 export async function deleteSavedQuery(
@@ -64,6 +85,7 @@ export async function deleteSavedQuery(
   id: string
 ): Promise<void> {
   await invoke('delete_saved_query', { connectionName, db, collection, id });
+  notifyQueriesChanged();
 }
 
 export async function recordHistory(

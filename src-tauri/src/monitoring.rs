@@ -154,25 +154,30 @@ pub struct CurrentOp {
 /// Keep the current-op payload bounded so a busy/large cluster can't flood the
 /// IPC boundary and hang the UI: retain at most `MAX_OPS` ops (the caller sorts
 /// longest-running first) and truncate each command string to `MAX_CMD_CHARS`.
-const MAX_OPS: usize = 200;
-const MAX_CMD_CHARS: usize = 2000;
+pub const MAX_OPS: usize = 200;
+pub const MAX_CMD_CHARS: usize = 2000;
+/// Stop parsing inprog entries after this many candidates (before sort/truncate).
+const MAX_PARSE_OPS: usize = 800;
+
+fn truncate_chars(s: String, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s;
+    }
+    format!("{}…", s.chars().take(max).collect::<String>())
+}
 
 pub fn cap_current_ops(mut ops: Vec<CurrentOp>) -> Vec<CurrentOp> {
+    ops.sort_by(|a, b| b.secs_running.cmp(&a.secs_running));
     ops.truncate(MAX_OPS);
-    for o in &mut ops {
-        if o.command.chars().count() > MAX_CMD_CHARS {
-            // char-boundary safe (commands can contain multibyte UTF-8).
-            let truncated: String = o.command.chars().take(MAX_CMD_CHARS).collect();
-            o.command = format!("{truncated}…");
-        }
-    }
     ops
 }
 
-/// Curate one `inprog` entry into a CurrentOp row. The full command is kept here;
-/// `cap_current_ops` bounds it for transport. The UI ellipsizes it in the table.
+/// Curate one `inprog` entry into a CurrentOp row.
 pub fn curate_current_op(d: &Document) -> CurrentOp {
-    let command = d.get("command").map(|c| c.to_string()).unwrap_or_default();
+    let command = truncate_chars(
+        d.get("command").map(|c| c.to_string()).unwrap_or_default(),
+        MAX_CMD_CHARS,
+    );
     CurrentOp {
         opid: num(d, "opid"),
         op: d.get_str("op").unwrap_or_default().to_string(),
@@ -208,7 +213,10 @@ pub fn curate_profile_entry(d: &Document) -> ProfileEntry {
         Some(Bson::DateTime(dt)) => dt.timestamp_millis(),
         _ => 0,
     };
-    let command = d.get("command").map(|c| c.to_string()).unwrap_or_default();
+    let command = truncate_chars(
+        d.get("command").map(|c| c.to_string()).unwrap_or_default(),
+        MAX_CMD_CHARS,
+    );
     ProfileEntry {
         op: d.get_str("op").unwrap_or_default().to_string(),
         ns: d.get_str("ns").unwrap_or_default().to_string(),
@@ -269,14 +277,17 @@ pub async fn current_ops_impl(state: &AppState, id: &str) -> Result<Vec<CurrentO
         .await
         .map_err(|e| format!("currentOp failed: {}", e))?;
     let inprog = raw.get_array("inprog").map_err(|_| "currentOp returned no inprog".to_string())?;
-    let mut ops: Vec<CurrentOp> = inprog
-        .iter()
-        .filter_map(|b| b.as_document())
-        // Skip idle/no-op connections.
-        .filter(|d| d.get_str("op").map(|o| o != "none").unwrap_or(true))
-        .map(curate_current_op)
-        .collect();
-    ops.sort_by(|a, b| b.secs_running.cmp(&a.secs_running));
+    let mut ops: Vec<CurrentOp> = Vec::with_capacity(inprog.len().min(MAX_PARSE_OPS));
+    for b in inprog.iter() {
+        if ops.len() >= MAX_PARSE_OPS {
+            break;
+        }
+        if let Some(d) = b.as_document() {
+            if d.get_str("op").map(|o| o != "none").unwrap_or(true) {
+                ops.push(curate_current_op(d));
+            }
+        }
+    }
     Ok(cap_current_ops(ops))
 }
 
@@ -399,34 +410,31 @@ mod tests {
     }
 
     #[test]
-    fn curates_current_op_keeps_full_command() {
-        let long = "x".repeat(400);
-        let d = doc! { "opid": 99i32, "op": "query", "ns": "db.c", "secs_running": 4i64, "client": "1.2.3.4", "desc": "conn1", "command": { "find": long.clone() } };
+    fn curates_current_op_truncates_oversized_command() {
+        let long = "x".repeat(5000);
+        let d = doc! { "opid": 99i32, "op": "query", "ns": "db.c", "secs_running": 4i64, "client": "1.2.3.4", "desc": "conn1", "command": { "find": long } };
         let op = curate_current_op(&d);
         assert_eq!(op.opid, 99);
-        assert_eq!(op.ns, "db.c");
-        assert_eq!(op.secs_running, 4);
-        assert!(op.command.contains(&long), "full command is preserved");
+        assert_eq!(op.command.chars().count(), 2001, "command truncated to MAX + ellipsis");
+        assert!(op.command.ends_with('…'));
     }
 
     #[test]
-    fn cap_current_ops_limits_count_and_command_length() {
-        let big = "x".repeat(5000);
+    fn cap_current_ops_limits_count() {
         let ops: Vec<CurrentOp> = (0..300)
             .map(|i| CurrentOp {
                 opid: i,
                 op: "query".into(),
                 ns: "db.c".into(),
-                secs_running: 0,
+                secs_running: i as i64,
                 client: String::new(),
                 desc: String::new(),
-                command: big.clone(),
+                command: "{ find: \"c\" }".into(),
             })
             .collect();
         let capped = cap_current_ops(ops);
         assert_eq!(capped.len(), 200, "op count is capped");
-        assert_eq!(capped[0].command.chars().count(), 2001, "command truncated to MAX + ellipsis");
-        assert!(capped[0].command.ends_with('…'));
+        assert_eq!(capped[0].secs_running, 299, "longest-running ops are kept");
     }
 
     #[test]

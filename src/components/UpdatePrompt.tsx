@@ -3,12 +3,20 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ArrowUpCircle } from 'lucide-react';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 import { useEscapeClose } from '../lib/useEscapeClose';
 
-// Event other components (e.g. Settings) dispatch to trigger a manual check.
 export const CHECK_UPDATE_EVENT = 'mqlens:check-update';
 
-// Mirrors the Rust updater::UpdateMeta returned by the `update_check` command.
 interface UpdateMeta {
   version: string;
   current_version: string;
@@ -18,7 +26,68 @@ interface UpdateMeta {
 
 type Phase = 'idle' | 'checking' | 'available' | 'downloading' | 'uptodate' | 'error';
 
-/** The user's selected update channel, read from app settings. */
+const renderInline = (text: string): React.ReactNode[] => {
+  const out: React.ReactNode[] = [];
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g;
+  let last = 0;
+  let k = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith('**')) {
+      out.push(<strong key={k++}>{tok.slice(2, -2)}</strong>);
+    } else if (tok.startsWith('`')) {
+      out.push(<code key={k++} className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{tok.slice(1, -1)}</code>);
+    } else {
+      const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(tok)!;
+      const url = link[2];
+      out.push(
+        <a key={k++} href={url} className="text-primary underline-offset-2 hover:underline" onClick={(e) => { e.preventDefault(); void openUrl(url); }}>
+          {link[1]}
+        </a>
+      );
+    }
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+};
+
+const ReleaseNotes: React.FC<{ markdown: string }> = ({ markdown }) => {
+  const blocks: React.ReactNode[] = [];
+  let listItems: React.ReactNode[] = [];
+  let k = 0;
+  const flushList = () => {
+    if (listItems.length) {
+      blocks.push(<ul key={k++} className="ml-4 list-disc space-y-1">{listItems}</ul>);
+      listItems = [];
+    }
+  };
+  for (const raw of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    const line = raw.trim();
+    const heading = /^#{1,6}\s+(.*)$/.exec(line);
+    const bullet = /^[-*]\s+(.*)$/.exec(line);
+    if (heading) {
+      flushList();
+      blocks.push(<h4 key={k++} className="text-sm font-semibold text-foreground">{renderInline(heading[1])}</h4>);
+    } else if (bullet) {
+      listItems.push(<li key={k++}>{renderInline(bullet[1])}</li>);
+    } else if (line === '') {
+      flushList();
+    } else {
+      flushList();
+      blocks.push(<p key={k++} className="text-sm text-muted-foreground">{renderInline(line)}</p>);
+    }
+  }
+  flushList();
+  return (
+    <div className="max-h-48 space-y-2 overflow-y-auto text-sm" data-testid="update-notes">
+      {blocks}
+    </div>
+  );
+};
+
 async function currentChannel(): Promise<string> {
   try {
     const s = await invoke<{ update_channel?: string }>('load_app_settings');
@@ -28,11 +97,6 @@ async function currentChannel(): Promise<string> {
   }
 }
 
-// Auto-checks for an update a few seconds after launch (silent), and on demand
-// via the CHECK_UPDATE_EVENT. The check + install run against the channel the
-// user picked in Settings (stable | dev) via the Rust updater commands — Tauri's
-// static endpoints can't be switched at runtime. An available update is only ever
-// downloaded and installed after the user clicks "Update now".
 export const UpdatePrompt: React.FC = () => {
   const [update, setUpdate] = useState<UpdateMeta | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -60,7 +124,6 @@ export const UpdatePrompt: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // Silent check shortly after startup so it doesn't compete with launch work.
     const t = setTimeout(() => void runCheck(false), 4000);
     const onManual = () => void runCheck(true);
     window.addEventListener(CHECK_UPDATE_EVENT, onManual);
@@ -99,78 +162,91 @@ export const UpdatePrompt: React.FC = () => {
     setError(null);
   };
 
-  // The approval modal no longer closes on backdrop click; Escape still
-  // dismisses it (except mid-download, like the disabled close button).
   useEscapeClose(phase === 'available', dismiss);
 
-  // Transient toasts (manual feedback) ────────────────────────────────────────
+  const toastClassName = cn(
+    'fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2.5 text-sm shadow-lg'
+  );
+
   if (phase === 'checking' && manual) {
     return (
-      <div className="mql-update-toast" data-testid="update-toast">
-        <RefreshCw size={14} className="animate-spin" /> Checking for updates…
+      <div className={toastClassName} data-testid="update-toast">
+        <RefreshCw size={14} className="animate-spin text-primary" /> Checking for updates…
       </div>
     );
   }
   if (phase === 'uptodate') {
     return (
-      <div className="mql-update-toast" data-testid="update-toast">
-        <CheckCircle2 size={14} style={{ color: '#34d399' }} /> You’re on the latest version.
-        <button type="button" className="mql-update-toast-x" onClick={dismiss} aria-label="Dismiss"><X size={12} /></button>
+      <div className={toastClassName} data-testid="update-toast">
+        <CheckCircle2 size={14} className="text-success" /> You’re on the latest version.
+        <Button type="button" variant="ghost" size="icon" className="ml-1 h-6 w-6" onClick={dismiss} aria-label="Dismiss">
+          <X size={12} />
+        </Button>
       </div>
     );
   }
   if (phase === 'error') {
     return (
-      <div className="mql-update-toast is-error" data-testid="update-toast" title={error ?? undefined}>
+      <div className={cn(toastClassName, 'border-destructive/30 text-destructive')} data-testid="update-toast" title={error ?? undefined}>
         <AlertTriangle size={14} /> Update check failed.
-        <button type="button" className="mql-update-toast-x" onClick={dismiss} aria-label="Dismiss"><X size={12} /></button>
+        <Button type="button" variant="ghost" size="icon" className="ml-1 h-6 w-6" onClick={dismiss} aria-label="Dismiss">
+          <X size={12} />
+        </Button>
       </div>
     );
   }
 
-  // Available / downloading → approval modal ───────────────────────────────────
   if (phase !== 'available' && phase !== 'downloading') return null;
 
   const downloading = phase === 'downloading';
   return (
-    <div className="nested-modal-overlay" data-testid="update-dialog">
-      <div className="index-modal-container" onClick={(e) => e.stopPropagation()} style={{ width: 'min(520px, 92vw)' }}>
-        <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3 mb-4">
-          <div className="flex items-center gap-2">
-            <ArrowUpCircle size={16} className="text-[var(--accent-blue)]" />
-            <h2 className="text-sm font-semibold text-[var(--text-main)]">Update available</h2>
-          </div>
-          {!downloading && (
-            <button type="button" onClick={dismiss} aria-label="Close" className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-item-hover)]">
-              <X size={14} />
-            </button>
-          )}
-        </div>
+    <Dialog open onOpenChange={() => {}}>
+      <DialogContent
+        className="sm:max-w-[520px] [&>button.absolute]:hidden"
+        data-testid="update-dialog"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => {
+          if (!downloading) {
+            e.preventDefault();
+            dismiss();
+          }
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-sm">
+            <ArrowUpCircle size={16} className="text-primary" />
+            Update available
+          </DialogTitle>
+        </DialogHeader>
 
-        <p className="text-[13px] text-[var(--text-main)]" data-testid="update-version">
+        <p className="text-sm text-foreground" data-testid="update-version">
           MQLens <strong>{update?.version}</strong> is available
           {update?.current_version ? <> (you have {update.current_version})</> : null}.
         </p>
-        {update?.notes && (
-          <pre className="mql-update-notes">{update.notes}</pre>
-        )}
+        {update?.notes && <ReleaseNotes markdown={update.notes} />}
 
         {downloading ? (
-          <div className="mql-update-progress" data-testid="update-progress">
-            <div className="mql-update-progress-bar"><span style={{ width: `${pct}%` }} /></div>
-            <span className="mql-update-progress-pct">{pct}% — downloading, the app will restart when done…</span>
+          <div className="space-y-2" data-testid="update-progress">
+            <div className="h-2 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {pct}% — downloading, the app will restart when done…
+            </span>
           </div>
         ) : (
-          <div className="flex items-center justify-end gap-2 border-t border-[var(--border-color)] pt-3 mt-4">
-            <button type="button" onClick={dismiss} className="index-modal-btn-secondary" data-testid="update-later">
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={dismiss} data-testid="update-later">
               Later
-            </button>
-            <button type="button" onClick={install} className="index-modal-btn-primary" data-testid="update-now">
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Download size={13} /> Update now</span>
-            </button>
-          </div>
+            </Button>
+            <Button type="button" onClick={install} data-testid="update-now">
+              <Download size={13} />
+              Update now
+            </Button>
+          </DialogFooter>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };

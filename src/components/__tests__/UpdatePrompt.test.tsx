@@ -6,6 +6,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => invokeMock(...
 vi.mock('@tauri-apps/api/event', () => ({ listen: () => Promise.resolve(() => {}) }));
 const mockRelaunch = vi.fn(() => Promise.resolve());
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: () => mockRelaunch() }));
+const mockOpenUrl = vi.fn((_url: string) => Promise.resolve());
+vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (url: string) => mockOpenUrl(url) }));
 
 import { UpdatePrompt, CHECK_UPDATE_EVENT } from '../UpdatePrompt';
 
@@ -55,6 +57,32 @@ describe('UpdatePrompt', () => {
     fireEvent.click(screen.getByTestId('update-now'));
     await waitFor(() => expect(installFn).toHaveBeenCalled());
     await waitFor(() => expect(mockRelaunch).toHaveBeenCalled());
+  });
+
+  it('renders release-note markdown as headings, bullets, and links', async () => {
+    routeInvoke({
+      update_check: {
+        version: '0.3.0',
+        current_version: '0.2.0',
+        notes: '### Features\n- add **user management** (`createUser`)\n- tree view\n\n### Fixes\n- dialog polish ([#109](https://github.com/mqlens/mqlens-mongodb/pull/109))',
+        date: null,
+      },
+    });
+    render(<UpdatePrompt />);
+    triggerManualCheck();
+
+    const notes = await screen.findByTestId('update-notes');
+    // No raw markdown markers survive…
+    expect(notes.textContent).not.toMatch(/###|\*\*|\[#109\]\(/);
+    // …structure does: headings, list items, bold, code, and a link.
+    expect(notes.querySelectorAll('h4')).toHaveLength(2);
+    expect(notes.querySelectorAll('li')).toHaveLength(3);
+    expect(notes.querySelector('strong')).toHaveTextContent('user management');
+    expect(notes.querySelector('code')).toHaveTextContent('createUser');
+    const link = notes.querySelector('a')!;
+    expect(link).toHaveTextContent('#109');
+    fireEvent.click(link);
+    expect(mockOpenUrl).toHaveBeenCalledWith('https://github.com/mqlens/mqlens-mongodb/pull/109');
   });
 
   it('dismisses with Later without installing', async () => {

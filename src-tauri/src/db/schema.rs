@@ -1,5 +1,6 @@
 //! Collection schema analysis (M6): sample documents and infer per-field types.
 
+use crate::limits::normalize_schema_sample;
 use crate::state::LockExt;
 use crate::{mock_db, require_real_client, AppState};
 use serde::Serialize;
@@ -164,6 +165,7 @@ pub async fn analyze_schema_impl(
     collection: &str,
     sample_size: i64,
 ) -> Result<String, String> {
+    let sample_size = normalize_schema_sample(sample_size);
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;
         *mocks

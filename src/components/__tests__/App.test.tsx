@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
+import { renderWithProviders } from '../../test/render-with-providers';
 import App from '../../App';
 
 vi.mock('../../lib/vault', () => ({
@@ -12,6 +13,7 @@ vi.mock('../../lib/vault', () => ({
   biometricStatus: vi.fn().mockResolvedValue({ available: false, biometryType: 0, enrolled: false }),
   biometricEnable: vi.fn(),
   biometricDisable: vi.fn(),
+  notifyVaultUnlocked: vi.fn(),
 }));
 
 // Mock Tauri invoke function
@@ -81,20 +83,22 @@ vi.mock('../Sidebar', () => ({
 describe('App Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Provide a safe default so invoke() calls that are not explicitly mocked
-    // (e.g. load_connection_profiles, get_resource_usage) return a resolved
-    // promise rather than undefined, preventing ".then() of undefined" crashes.
-    mockInvoke.mockResolvedValue([]);
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_app_settings') {
+        return Promise.resolve({});
+      }
+      return Promise.resolve([]);
+    });
   });
 
   it('opens the Quick Start tab by default and shows bottom status bar with version info', async () => {
-    render(<App />);
+    renderWithProviders(<App />);
 
     // VaultGate resolves asynchronously — wait for workspace to mount.
     expect(await screen.findByTestId('quickstart-tab')).toBeInTheDocument();
     // Quick Start welcome hero + primary CTA text.
     expect(screen.getByText('Welcome to MQLens')).toBeInTheDocument();
-    expect(screen.getByText('New Connection')).toBeInTheDocument();
+    expect(screen.getAllByText('New connection').length).toBeGreaterThan(0);
 
     // Check Bottom status bar
     const bottomBar = screen.getByTestId('bottom-bar');
@@ -126,7 +130,7 @@ describe('App Component', () => {
 
     const { fireEvent } = await import('@testing-library/react');
 
-    render(<App />);
+    renderWithProviders(<App />);
     // Wait for VaultGate to resolve and Workspace to mount.
     await screen.findByTestId('mock-sidebar');
 
@@ -135,7 +139,7 @@ describe('App Component', () => {
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('select-index-btn'));
-    expect(screen.getByText('customers.email_1')).toBeInTheDocument();
+    expect(await screen.findByText('city')).toBeInTheDocument();
     expect(await screen.findByTestId('index-viewer')).toBeInTheDocument();
 
     // Real key field from the fetched spec, NOT derived from the name.
@@ -166,7 +170,7 @@ describe('App Component', () => {
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
 
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     fireEvent.click(screen.getByTestId('select-collection-btn'));
@@ -199,7 +203,7 @@ describe('App Component', () => {
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
 
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     // Click Create Index button in mock sidebar
@@ -258,7 +262,7 @@ describe('App Component', () => {
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
 
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
@@ -277,6 +281,7 @@ describe('App Component', () => {
         collection: 'customers',
         filter: '{"_id":{"$oid":"507f1f77bcf86cd799439011"}}',
       });
+      expect(screen.getByText(/Document deleted from customers/)).toBeInTheDocument();
     });
   });
 
@@ -291,7 +296,7 @@ describe('App Component', () => {
       return Promise.resolve([]);
     });
     const { fireEvent, waitFor } = await import('@testing-library/react');
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
@@ -317,7 +322,7 @@ describe('App Component', () => {
       return Promise.resolve([]);
     });
     const { fireEvent, waitFor } = await import('@testing-library/react');
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
@@ -351,7 +356,7 @@ describe('App Component', () => {
       return Promise.resolve([]);
     });
     const { fireEvent } = await import('@testing-library/react');
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
@@ -379,7 +384,7 @@ describe('App Component', () => {
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
 
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
@@ -393,6 +398,7 @@ describe('App Component', () => {
       const ins = calls.find((c) => c.cmd === 'insert_document');
       expect(ins).toBeTruthy();
       expect(ins.args.document).toBe('{"name":"Ada"}');
+      expect(screen.getByText(/Document inserted into customers/)).toBeInTheDocument();
     });
   });
 
@@ -409,7 +415,7 @@ describe('App Component', () => {
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
 
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
@@ -424,6 +430,7 @@ describe('App Component', () => {
       expect(upd).toBeTruthy();
       expect(upd.args.filter).toBe('{"_id":"1"}');
       expect(upd.args.replacement).toBe('{"_id":"1","name":"Ada"}');
+      expect(screen.getByText(/Document saved in customers/)).toBeInTheDocument();
     });
   });
 
@@ -437,7 +444,7 @@ describe('App Component', () => {
 
     const { fireEvent } = await import('@testing-library/react');
 
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     fireEvent.click(screen.getByTestId('open-settings-btn'));
@@ -463,7 +470,7 @@ describe('App Component', () => {
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
 
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     fireEvent.click(screen.getByTestId('select-collection-btn'));
@@ -509,7 +516,7 @@ describe('App Component', () => {
     });
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     fireEvent.click(screen.getByTestId('select-collection-btn'));
@@ -544,7 +551,7 @@ describe('App Component', () => {
     });
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     fireEvent.click(screen.getByTestId('select-collection-btn'));
@@ -577,7 +584,7 @@ describe('App Component', () => {
     readTextFileMock.mockResolvedValue('[{"name":"Ada"},{"name":"Bob"}]');
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     fireEvent.click(screen.getByTestId('select-collection-btn'));
@@ -636,7 +643,7 @@ describe('App Component', () => {
     saveMock.mockResolvedValue('/tmp/customers.full.json');
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     fireEvent.click(screen.getByTestId('select-collection-btn'));
@@ -662,7 +669,7 @@ describe('App Component', () => {
   it('does not load profiles until the vault is unlocked', async () => {
     const vault = await import('../../lib/vault');
     (vault.getVaultStatus as any).mockResolvedValueOnce('locked');
-    render(<App />);
+    renderWithProviders(<App />);
     expect(await screen.findByTestId('vault-unlock')).toBeInTheDocument();
     // load_connection_profiles must not have been invoked while locked.
     expect(mockInvoke).not.toHaveBeenCalledWith('load_connection_profiles');
@@ -679,7 +686,7 @@ describe('App Component', () => {
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
 
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     // Open the collection — triggers execute_mql_query then count_documents.
@@ -725,7 +732,7 @@ describe('App Component', () => {
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
 
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     fireEvent.click(screen.getByTestId('select-collection-btn'));
@@ -764,7 +771,7 @@ describe('App Component', () => {
     readTextFileMock.mockResolvedValue('{not valid json');
 
     const { fireEvent } = await import('@testing-library/react');
-    render(<App />);
+    renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     fireEvent.click(screen.getByTestId('select-collection-btn'));

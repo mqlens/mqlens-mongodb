@@ -124,7 +124,7 @@ pub fn execute_mock_query(
     // Paginate mock documents
     let total_len = docs.len();
     let skip_index = (skip as usize).min(total_len);
-    let max_limit = if limit <= 0 { 50 } else { limit as usize };
+    let max_limit = crate::limits::normalize_query_limit(limit) as usize;
     let limit_index = (skip_index + max_limit).min(total_len);
 
     let sliced = docs[skip_index..limit_index].to_vec();

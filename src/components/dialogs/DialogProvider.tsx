@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
-import { ToastStack, Toast, ToastKind } from './ToastStack';
+import { Toaster } from '@/components/ui/sonner';
+import { ToastStack, Toast, ToastKind, type ToastOptions } from './ToastStack';
 import { DialogModal, ModalRequest } from './DialogModal';
 
 export interface ConfirmOptions {
@@ -31,7 +32,7 @@ export interface ChooseOptions {
 }
 
 export interface DialogApi {
-  toast: (message: string, kind?: ToastKind) => void;
+  toast: (message: string, kind?: ToastKind, options?: ToastOptions) => void;
   confirm: (opts: ConfirmOptions) => Promise<boolean>;
   prompt: (opts: PromptOptions) => Promise<string | null>;
   choose: (opts: ChooseOptions) => Promise<string | null>;
@@ -62,9 +63,9 @@ export const DialogProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const toast = useCallback((message: string, kind: ToastKind = 'info') => {
+  const toast = useCallback((message: string, kind: ToastKind = 'info', options?: ToastOptions) => {
     const id = nextId.current++;
-    setToasts((prev) => [...prev, { id, message, kind }]);
+    setToasts((prev) => [...prev, { id, message, kind, title: options?.title }]);
   }, []);
 
   const openModal = useCallback(
@@ -72,7 +73,7 @@ export const DialogProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       new Promise<boolean | string | null>((resolve) => {
         setModal({ request, resolve });
       }),
-    []
+    [],
   );
 
   const resolveModal = useCallback(
@@ -80,20 +81,20 @@ export const DialogProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       resolve(value);
       setModal(null);
     },
-    []
+    [],
   );
 
   const confirm = useCallback(
     (opts: ConfirmOptions) => openModal({ type: 'confirm', ...opts }) as Promise<boolean>,
-    [openModal]
+    [openModal],
   );
   const prompt = useCallback(
     (opts: PromptOptions) => openModal({ type: 'prompt', ...opts }) as Promise<string | null>,
-    [openModal]
+    [openModal],
   );
   const choose = useCallback(
     (opts: ChooseOptions) => openModal({ type: 'choose', ...opts }) as Promise<string | null>,
-    [openModal]
+    [openModal],
   );
 
   const api: DialogApi = { toast, confirm, prompt, choose };
@@ -101,6 +102,7 @@ export const DialogProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   return (
     <DialogContext.Provider value={api}>
       {children}
+      <Toaster closeButton={false} />
       <ToastStack toasts={toasts} onDismiss={removeToast} />
       {modal && (
         <DialogModal

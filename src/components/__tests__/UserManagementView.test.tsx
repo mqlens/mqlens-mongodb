@@ -1,5 +1,7 @@
+import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { renderWithProviders } from '../../test/render-with-providers';
 import { UserManagementView } from '../UserManagementView';
 
 const mockInvoke = vi.fn();
@@ -52,8 +54,21 @@ describe('UserManagementView (user & role management)', () => {
     mockInvoke.mockImplementation(defaultInvoke);
   });
 
+  const renderView = (props: React.ComponentProps<typeof UserManagementView>) =>
+    renderWithProviders(<UserManagementView {...props} />);
+
+  const selectScope = async (database: string) => {
+    fireEvent.click(screen.getByTestId('user-db-scope'));
+    fireEvent.click(await screen.findByRole('option', { name: database }));
+  };
+
+  const selectAuthDb = async (database: string) => {
+    fireEvent.click(screen.getByTestId('user-authdb-input'));
+    fireEvent.click(await screen.findByRole('option', { name: database }));
+  };
+
   it('lists users as a tree and expands a user to show its roles', async () => {
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
 
     const adminRow = await screen.findByTestId('user-row-admin.admin');
     expect(screen.getByText('app_user')).toBeInTheDocument();
@@ -68,7 +83,7 @@ describe('UserManagementView (user & role management)', () => {
   });
 
   it('filters to one database via the scope selector', async () => {
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     await screen.findByTestId('user-row-admin.admin');
 
     mockInvoke.mockImplementation((cmd: string, args: any) =>
@@ -76,7 +91,7 @@ describe('UserManagementView (user & role management)', () => {
         ? Promise.resolve([users[1]])
         : defaultInvoke(cmd)
     );
-    fireEvent.change(screen.getByTestId('user-db-scope'), { target: { value: 'sales_db' } });
+    await selectScope('sales_db');
 
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith('list_users', { id: 'c1', database: 'sales_db' })
@@ -95,19 +110,19 @@ describe('UserManagementView (user & role management)', () => {
       }
       return defaultInvoke(cmd);
     });
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
 
     expect(await screen.findByText('app_user')).toBeInTheDocument();
     expect(screen.getByText(/Not authorized to list users across all databases/)).toBeInTheDocument();
   });
 
   it('creates a user through the editor modal', async () => {
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     await screen.findByTestId('user-row-admin.admin');
 
     fireEvent.click(screen.getByTestId('create-user-btn'));
     fireEvent.change(screen.getByTestId('user-name-input'), { target: { value: 'bob' } });
-    fireEvent.change(screen.getByTestId('user-authdb-input'), { target: { value: 'sales_db' } });
+    await selectAuthDb('sales_db');
     fireEvent.change(screen.getByTestId('user-password-input'), { target: { value: 'secret' } });
     fireEvent.click(screen.getByTestId('save-user-btn'));
 
@@ -128,7 +143,7 @@ describe('UserManagementView (user & role management)', () => {
         ? Promise.resolve([users[1]])
         : defaultInvoke(cmd)
     );
-    render(<UserManagementView connectionId="c1" database="sales_db" />);
+    renderView({ connectionId: 'c1', database: 'sales_db' });
 
     expect(await screen.findByText('app_user')).toBeInTheDocument();
     expect(mockInvoke).toHaveBeenCalledWith('list_users', { id: 'c1', database: 'sales_db' });
@@ -136,7 +151,7 @@ describe('UserManagementView (user & role management)', () => {
   });
 
   it('keeps the editor modal open on overlay click, closes via the X button', async () => {
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     await screen.findByTestId('user-row-admin.admin');
 
     fireEvent.click(screen.getByTestId('create-user-btn'));
@@ -150,19 +165,21 @@ describe('UserManagementView (user & role management)', () => {
   });
 
   it('offers role and database dropdowns populated from the backend', async () => {
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     await screen.findByTestId('user-row-admin.admin');
 
     fireEvent.click(screen.getByTestId('create-user-btn'));
     fireEvent.click(screen.getByTestId('add-role-btn'));
 
-    const roleSelect = (await screen.findByTestId('role-select-0')) as HTMLSelectElement;
-    const dbSelect = screen.getByTestId('role-db-select-0') as HTMLSelectElement;
-    expect([...roleSelect.options].map((o) => o.value)).toEqual(expect.arrayContaining(['read', 'readWrite']));
-    expect([...dbSelect.options].map((o) => o.value)).toEqual(expect.arrayContaining(['admin', 'sales_db']));
+    fireEvent.click(await screen.findByTestId('role-select-0'));
+    expect(await screen.findByRole('option', { name: 'read' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'readWrite' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'readWrite' }));
 
-    fireEvent.change(roleSelect, { target: { value: 'readWrite' } });
-    fireEvent.change(dbSelect, { target: { value: 'sales_db' } });
+    fireEvent.click(screen.getByTestId('role-db-select-0'));
+    expect(await screen.findByRole('option', { name: 'admin' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'sales_db' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'sales_db' }));
     fireEvent.change(screen.getByTestId('user-name-input'), { target: { value: 'bob' } });
     fireEvent.change(screen.getByTestId('user-password-input'), { target: { value: 'secret' } });
     fireEvent.click(screen.getByTestId('save-user-btn'));
@@ -179,7 +196,7 @@ describe('UserManagementView (user & role management)', () => {
   });
 
   it('rejects saving when a granted role row has no role selected', async () => {
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     await screen.findByTestId('user-row-admin.admin');
 
     fireEvent.click(screen.getByTestId('create-user-btn'));
@@ -195,7 +212,7 @@ describe('UserManagementView (user & role management)', () => {
   });
 
   it('grants and revokes roles in the editor', async () => {
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     await screen.findByTestId('user-row-admin.admin');
 
     fireEvent.click(screen.getByTestId('create-user-btn'));
@@ -208,7 +225,7 @@ describe('UserManagementView (user & role management)', () => {
 
   it('drops a user via right click after confirmation', async () => {
     mockConfirm.mockResolvedValue(true);
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     const row = await screen.findByTestId('user-row-sales_db.app_user');
 
     fireEvent.contextMenu(row);
@@ -225,7 +242,7 @@ describe('UserManagementView (user & role management)', () => {
 
   it('does not drop when confirmation is declined', async () => {
     mockConfirm.mockResolvedValue(false);
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     const row = await screen.findByTestId('user-row-sales_db.app_user');
 
     fireEvent.contextMenu(row);
@@ -236,7 +253,7 @@ describe('UserManagementView (user & role management)', () => {
   });
 
   it('opens the editor via right click → Edit User', async () => {
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     const row = await screen.findByTestId('user-row-sales_db.app_user');
 
     fireEvent.contextMenu(row);
@@ -247,10 +264,10 @@ describe('UserManagementView (user & role management)', () => {
   });
 
   it('offers Create User on empty-space right click', async () => {
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     await screen.findByTestId('user-row-admin.admin');
 
-    fireEvent.contextMenu(screen.getByTestId('users-tree'));
+    fireEvent.contextMenu(screen.getByText('User'));
     const ctxMenu = await screen.findByTestId('context-menu');
     expect(within(ctxMenu).queryByText('Edit User')).not.toBeInTheDocument();
     fireEvent.click(within(ctxMenu).getByText('Create User'));
@@ -265,7 +282,7 @@ describe('UserManagementView (user & role management)', () => {
         ? Promise.reject('connection lost')
         : defaultInvoke(cmd)
     );
-    render(<UserManagementView connectionId="c1" />);
+    renderView({ connectionId: 'c1' });
     expect(await screen.findByText(/connection lost/)).toBeInTheDocument();
   });
 });

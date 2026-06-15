@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { AIChatPanel } from './AIChatPanel';
 import { QueryEditor } from './QueryEditor';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
@@ -12,6 +12,31 @@ import {
   type SavedQuery,
   type HistoryEntry,
 } from '../lib/queryStore';
+import {
+  loadFavoriteItems,
+  toggleFavoriteItem,
+  isItemFavorited,
+  FAVORITES_CHANGED_EVENT,
+  type FavoriteItem,
+} from '../lib/favoriteItems';
+import { useDialogs } from './dialogs/DialogProvider';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from '@/components/ui/resizable';
+import type { Layout } from 'react-resizable-panels';
+import { cn } from '@/lib/utils';
 import {
   Play, 
   AlertCircle,
@@ -42,7 +67,8 @@ import {
   EyeOff,
   GripVertical,
   Undo2,
-  Redo2
+  Redo2,
+  Heart,
 } from 'lucide-react';
 
 interface VisualRule {
@@ -428,6 +454,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   availableFields = [],
   children
 }) => {
+  const { prompt, toast } = useDialogs();
   const { schema } = useCollectionSchema(connectionId, databaseName, collectionName);
   const [filterQuery, setFilterQuery] = useState('{}');
   const [projectionQuery, setProjectionQuery] = useState('{}');
@@ -436,9 +463,27 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [skip, setSkip] = useState('0');
   const [explainLoading, setExplainLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notification, setNotification] = useState<string | null>(null);
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]);
   const [queryHistory, setQueryHistory] = useState<HistoryEntry[]>([]);
+  const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>(() => loadFavoriteItems());
+
+  useEffect(() => {
+    const onFavorites = () => setFavoriteItems(loadFavoriteItems());
+    window.addEventListener(FAVORITES_CHANGED_EVENT, onFavorites);
+    return () => window.removeEventListener(FAVORITES_CHANGED_EVENT, onFavorites);
+  }, []);
+
+  const queryFavoriteEntry = (sq: SavedQuery): FavoriteItem => ({
+    kind: 'query',
+    connectionName,
+    db: databaseName,
+    collection: collectionName,
+    queryId: sq.id,
+    label: sq.name,
+  });
+
+  const isQueryFavorited = (sq: SavedQuery): boolean =>
+    isItemFavorited(favoriteItems, queryFavoriteEntry(sq));
 
   const refreshStoredQueries = React.useCallback(async () => {
     try {
@@ -627,7 +672,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       const pipeline = query.pipeline && query.pipeline.length > 0 ? query.pipeline : [{ $match: {} }];
       commitStages(stagesFromPipeline(pipeline));
       setQueryMode('aggregate');
-      triggerNotification('Aggregation pipeline applied');
+      toast('Aggregation pipeline applied', 'success');
     } else {
       setFilterQuery(JSON.stringify(query.filter ?? {}, null, 2));
       setSortQuery(JSON.stringify(query.sort ?? {}, null, 2));
@@ -635,7 +680,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         setProjectionQuery(JSON.stringify(query.projection ?? {}, null, 2));
       }
       setQueryMode('find');
-      triggerNotification('Query applied to editor');
+      toast('Query applied to editor', 'success');
     }
   };
 
@@ -682,38 +727,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [isSortEnabled, setIsSortEnabled] = useState(true);
   
   const wasOpenRef = React.useRef(false);
-
-  const [queryBuilderWidth, setQueryBuilderWidth] = useState(340);
-  const [isResizingQueryBuilder, setIsResizingQueryBuilder] = useState(false);
-
-  const startResizingQueryBuilder = (mouseDownEvent: React.MouseEvent) => {
-    mouseDownEvent.preventDefault();
-    setIsResizingQueryBuilder(true);
-  };
-
-  useEffect(() => {
-    const handleMouseMove = (mouseMoveEvent: MouseEvent) => {
-      if (!isResizingQueryBuilder) return;
-      const newWidth = window.innerWidth - mouseMoveEvent.clientX;
-      if (newWidth >= 240 && newWidth <= 600) {
-        setQueryBuilderWidth(newWidth);
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsResizingQueryBuilder(false);
-    };
-
-    if (isResizingQueryBuilder) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-    }
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizingQueryBuilder]);
+  const rulesRef = React.useRef(rules);
+  const queryMatchTypeRef = React.useRef(queryMatchType);
+  const projectionRulesRef = React.useRef(projectionRules);
+  const sortRulesRef = React.useRef(sortRules);
+  rulesRef.current = rules;
+  queryMatchTypeRef.current = queryMatchType;
+  projectionRulesRef.current = projectionRules;
+  sortRulesRef.current = sortRules;
 
   const fields = availableFields.length > 0 ? availableFields : ['_id'];
 
@@ -721,9 +742,6 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [isFilterValid, setIsFilterValid] = useState(true);
   const [isProjectionValid, setIsProjectionValid] = useState(true);
   const [isSortValid, setIsSortValid] = useState(true);
-
-  // Dropdown states
-  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -770,85 +788,64 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     wasOpenRef.current = false;
   }, [collectionName]);
 
-  // Synchronize Filter/Query
-  useEffect(() => {
-    if (isQueryBuilderOpen && wasOpenRef.current) {
-      if (!isQueryEnabled && filterQuery.trim() === '{}') {
-        return;
+  const syncFilterRulesFromInput = (json: string) => {
+    try {
+      const synced = syncRulesFromQuery(json);
+      if (synced.rules.length > 0) {
+        rulesRef.current = synced.rules;
+        queryMatchTypeRef.current = synced.matchType;
+        setRules(synced.rules);
+        setQueryMatchType(synced.matchType);
+        setIsQueryEnabled(true);
+      } else if (json.trim() === '{}') {
+        rulesRef.current = [];
+        setRules([]);
+        setIsQueryEnabled(false);
       }
-      try {
-        const parsedCurrent = parseShellJson(filterQuery);
-        const compiledCurrent = JSON.parse(compileRulesToQuery(rules, queryMatchType));
-        if (JSON.stringify(parsedCurrent) !== JSON.stringify(compiledCurrent)) {
-          const synced = syncRulesFromQuery(filterQuery);
-          if (synced.rules.length > 0) {
-            setRules(synced.rules);
-            setQueryMatchType(synced.matchType);
-            setIsQueryEnabled(true);
-          } else if (filterQuery.trim() === '{}') {
-            setRules([]);
-            setIsQueryEnabled(false);
-          }
-        }
-      } catch {
-        // Ignore invalid JSON while user is typing
-      }
+    } catch {
+      // Ignore invalid JSON while user is typing
     }
-  }, [filterQuery, isQueryBuilderOpen, rules, queryMatchType, isQueryEnabled]);
+  };
 
-  // Synchronize Projection
-  useEffect(() => {
-    if (isQueryBuilderOpen && wasOpenRef.current) {
-      if (!isProjectionEnabled && projectionQuery.trim() === '{}') {
-        return;
+  const syncProjectionRulesFromInput = (json: string) => {
+    try {
+      const synced = syncProjectionFromQuery(json);
+      if (synced.length > 0) {
+        projectionRulesRef.current = synced;
+        setProjectionRules(synced);
+        setIsProjectionEnabled(true);
+      } else if (json.trim() === '{}') {
+        projectionRulesRef.current = [];
+        setProjectionRules([]);
+        setIsProjectionEnabled(false);
       }
-      try {
-        const parsedCurrent = parseShellJson(projectionQuery);
-        const compiledCurrent = JSON.parse(compileProjectionRules(projectionRules));
-        if (JSON.stringify(parsedCurrent) !== JSON.stringify(compiledCurrent)) {
-          const synced = syncProjectionFromQuery(projectionQuery);
-          if (synced.length > 0) {
-            setProjectionRules(synced);
-            setIsProjectionEnabled(true);
-          } else if (projectionQuery.trim() === '{}') {
-            setProjectionRules([]);
-            setIsProjectionEnabled(false);
-          }
-        }
-      } catch {
-        // Ignore invalid JSON
-      }
+    } catch {
+      // Ignore invalid JSON while user is typing
     }
-  }, [projectionQuery, isQueryBuilderOpen, projectionRules, isProjectionEnabled]);
+  };
 
-  // Synchronize Sort
-  useEffect(() => {
-    if (isQueryBuilderOpen && wasOpenRef.current) {
-      if (!isSortEnabled && sortQuery.trim() === '{}') {
-        return;
+  const syncSortRulesFromInput = (json: string) => {
+    try {
+      const synced = syncSortFromQuery(json);
+      if (synced.length > 0) {
+        sortRulesRef.current = synced;
+        setSortRules(synced);
+        setIsSortEnabled(true);
+      } else if (json.trim() === '{}') {
+        sortRulesRef.current = [];
+        setSortRules([]);
+        setIsSortEnabled(false);
       }
-      try {
-        const parsedCurrent = parseShellJson(sortQuery);
-        const compiledCurrent = JSON.parse(compileSortRules(sortRules));
-        if (JSON.stringify(parsedCurrent) !== JSON.stringify(compiledCurrent)) {
-          const synced = syncSortFromQuery(sortQuery);
-          if (synced.length > 0) {
-            setSortRules(synced);
-            setIsSortEnabled(true);
-          } else if (sortQuery.trim() === '{}') {
-            setSortRules([]);
-            setIsSortEnabled(false);
-          }
-        }
-      } catch {
-        // Ignore invalid JSON
-      }
+    } catch {
+      // Ignore invalid JSON while user is typing
     }
-  }, [sortQuery, isQueryBuilderOpen, sortRules, isSortEnabled]);
+  };
 
-  // Update wasOpenRef at the end of the render/effects cycle
+  // Enable bidirectional sync after the open-render manual sync completes.
   useEffect(() => {
-    wasOpenRef.current = isQueryBuilderOpen;
+    if (isQueryBuilderOpen) {
+      wasOpenRef.current = true;
+    }
   }, [isQueryBuilderOpen]);
 
   // Query/Filter CRUD Handlers
@@ -859,14 +856,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       operator: '$eq',
       value: ''
     };
-    const newRules = [...rules, newRule];
+    const newRules = [...rulesRef.current, newRule];
+    rulesRef.current = newRules;
     setRules(newRules);
     setIsQueryEnabled(true);
-    setFilterQuery(compileRulesToQuery(newRules, queryMatchType));
+    setFilterQuery(compileRulesToQuery(newRules, queryMatchTypeRef.current));
   };
 
   const updateRule = (id: string, updates: Partial<VisualRule>) => {
-    const newRules = rules.map(r => {
+    const newRules = rulesRef.current.map(r => {
       if (r.id === id) {
         const updated = { ...r, ...updates };
         if (updates.field === '__custom__') {
@@ -879,25 +877,29 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       }
       return r;
     });
+    rulesRef.current = newRules;
     setRules(newRules);
     setIsQueryEnabled(true);
-    setFilterQuery(compileRulesToQuery(newRules, queryMatchType));
+    setFilterQuery(compileRulesToQuery(newRules, queryMatchTypeRef.current));
   };
 
   const updateQueryMatchType = (newType: 'and' | 'or') => {
+    queryMatchTypeRef.current = newType;
     setQueryMatchType(newType);
     setIsQueryEnabled(true);
-    setFilterQuery(compileRulesToQuery(rules, newType));
+    setFilterQuery(compileRulesToQuery(rulesRef.current, newType));
   };
 
   const deleteRule = (id: string) => {
-    const newRules = rules.filter(r => r.id !== id);
+    const newRules = rulesRef.current.filter(r => r.id !== id);
+    rulesRef.current = newRules;
     setRules(newRules);
     setIsQueryEnabled(true);
-    setFilterQuery(compileRulesToQuery(newRules, queryMatchType));
+    setFilterQuery(compileRulesToQuery(newRules, queryMatchTypeRef.current));
   };
 
   const clearAllRules = () => {
+    rulesRef.current = [];
     setRules([]);
     setFilterQuery('{}');
   };
@@ -909,14 +911,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       field: fields[0] || '_id',
       include: true
     };
-    const newRules = [...projectionRules, newRule];
+    const newRules = [...projectionRulesRef.current, newRule];
+    projectionRulesRef.current = newRules;
     setProjectionRules(newRules);
     setIsProjectionEnabled(true);
     setProjectionQuery(compileProjectionRules(newRules));
   };
 
   const updateProjectionRule = (id: string, updates: Partial<ProjectionRule>) => {
-    const newRules = projectionRules.map(r => {
+    const newRules = projectionRulesRef.current.map(r => {
       if (r.id === id) {
         const updated = { ...r, ...updates };
         if (updates.field === '__custom__') {
@@ -926,19 +929,22 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       }
       return r;
     });
+    projectionRulesRef.current = newRules;
     setProjectionRules(newRules);
     setIsProjectionEnabled(true);
     setProjectionQuery(compileProjectionRules(newRules));
   };
 
   const deleteProjectionRule = (id: string) => {
-    const newRules = projectionRules.filter(r => r.id !== id);
+    const newRules = projectionRulesRef.current.filter(r => r.id !== id);
+    projectionRulesRef.current = newRules;
     setProjectionRules(newRules);
     setIsProjectionEnabled(true);
     setProjectionQuery(compileProjectionRules(newRules));
   };
 
   const clearAllProjectionRules = () => {
+    projectionRulesRef.current = [];
     setProjectionRules([]);
     setProjectionQuery('{}');
   };
@@ -950,14 +956,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       field: fields[0] || '_id',
       direction: 1
     };
-    const newRules = [...sortRules, newRule];
+    const newRules = [...sortRulesRef.current, newRule];
+    sortRulesRef.current = newRules;
     setSortRules(newRules);
     setIsSortEnabled(true);
     setSortQuery(compileSortRules(newRules));
   };
 
   const updateSortRule = (id: string, updates: Partial<SortRule>) => {
-    const newRules = sortRules.map(r => {
+    const newRules = sortRulesRef.current.map(r => {
       if (r.id === id) {
         const updated = { ...r, ...updates };
         if (updates.field === '__custom__') {
@@ -967,111 +974,128 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       }
       return r;
     });
+    sortRulesRef.current = newRules;
     setSortRules(newRules);
     setIsSortEnabled(true);
     setSortQuery(compileSortRules(newRules));
   };
 
   const deleteSortRule = (id: string) => {
-    const newRules = sortRules.filter(r => r.id !== id);
+    const newRules = sortRulesRef.current.filter(r => r.id !== id);
+    sortRulesRef.current = newRules;
     setSortRules(newRules);
     setIsSortEnabled(true);
     setSortQuery(compileSortRules(newRules));
   };
 
   const clearAllSortRules = () => {
+    sortRulesRef.current = [];
     setSortRules([]);
     setSortQuery('{}');
   };
 
   // Section Toggle Handlers
   const handleToggleQueryEnabled = (checked: boolean) => {
-    setIsQueryEnabled(checked);
     if (checked) {
-      setFilterQuery(compileRulesToQuery(rules, queryMatchType));
+      setIsQueryEnabled(true);
+      setFilterQuery(compileRulesToQuery(rulesRef.current, queryMatchTypeRef.current));
     } else {
       setFilterQuery('{}');
+      setIsQueryEnabled(false);
     }
   };
 
   const handleToggleProjectionEnabled = (checked: boolean) => {
-    setIsProjectionEnabled(checked);
     if (checked) {
-      setProjectionQuery(compileProjectionRules(projectionRules));
+      setIsProjectionEnabled(true);
+      setProjectionQuery(compileProjectionRules(projectionRulesRef.current));
     } else {
       setProjectionQuery('{}');
+      setIsProjectionEnabled(false);
     }
   };
 
   const handleToggleSortEnabled = (checked: boolean) => {
-    setIsSortEnabled(checked);
     if (checked) {
-      setSortQuery(compileSortRules(sortRules));
+      setIsSortEnabled(true);
+      setSortQuery(compileSortRules(sortRulesRef.current));
     } else {
       setSortQuery('{}');
+      setIsSortEnabled(false);
     }
   };
 
-  // Flash a notification toast
-  const triggerNotification = (message: string) => {
-    setNotification(message);
-    setTimeout(() => {
-      setNotification((prev) => (prev === message ? null : prev));
-    }, 3000);
+  // Flash a notification via the global toast stack
+  const notify = (message: string, kind: 'success' | 'error' | 'info' = 'success') => {
+    toast(message, kind);
   };
 
   const currentBuilderQuery = (): GeneratedQuery =>
     builderStateToQuery({ queryMode, filterQuery, sortQuery, projectionQuery, limit, skip, stages });
 
-  const handleSaveQuery = async () => {
-    const name = window.prompt('Save query as:')?.trim();
-    if (!name) return;
+  const handleSaveQuery = async (alsoFavorite = false) => {
+    const name = await prompt({
+      title: 'Save query',
+      message: 'Enter a name for this query:',
+      placeholder: 'Query name',
+      validate: (v) => (v.trim() ? null : 'Name is required'),
+    });
+    if (!name?.trim()) return;
     try {
-      await saveQuery(connectionName, databaseName, collectionName, name, currentBuilderQuery());
+      await saveQuery(connectionName, databaseName, collectionName, name.trim(), currentBuilderQuery());
       await refreshStoredQueries();
-      triggerNotification(`Saved "${name}"`);
+      if (alsoFavorite) {
+        const cq = await loadCollectionQueries(connectionName, databaseName, collectionName);
+        const saved = (cq.saved ?? []).find((s) => s.name === name.trim());
+        if (saved) {
+          toggleFavoriteItem(favoriteItems, queryFavoriteEntry(saved));
+          setFavoriteItems(loadFavoriteItems());
+        }
+      }
+      notify(alsoFavorite ? `Saved and favorited "${name.trim()}"` : `Saved "${name.trim()}"`);
     } catch (e: any) {
-      triggerNotification(`Couldn't save query: ${e?.message || e}`);
+      notify(`Couldn't save query: ${e?.message || e}`, 'error');
     }
+  };
+
+  const handleToggleQueryFavorite = (sq: SavedQuery) => {
+    setFavoriteItems((prev) => toggleFavoriteItem(prev, queryFavoriteEntry(sq)));
   };
 
   const handleLoadSaved = (saved: SavedQuery) => {
     handleInsertQuery(saved.query);
-    setActiveDropdown(null);
   };
 
   const handleDeleteSaved = async (id: string) => {
     try {
       await deleteSavedQuery(connectionName, databaseName, collectionName, id);
       await refreshStoredQueries();
+      notify('Saved query deleted', 'success');
     } catch (e: any) {
-      triggerNotification(`Couldn't delete query: ${e?.message || e}`);
+      notify(`Couldn't delete query: ${e?.message || e}`, 'error');
     }
   };
 
   const handleSetDefault = async () => {
     try {
       await setDefaultQuery(connectionName, databaseName, collectionName, currentBuilderQuery());
-      triggerNotification('Default query set');
+      notify('Default query set');
     } catch (e: any) {
-      triggerNotification(`Couldn't set default: ${e?.message || e}`);
+      notify(`Couldn't set default: ${e?.message || e}`, 'error');
     }
-    setActiveDropdown(null);
   };
 
   const handleClearDefault = async () => {
     try {
       await setDefaultQuery(connectionName, databaseName, collectionName, null);
-      triggerNotification('Default query cleared');
+      notify('Default query cleared');
     } catch (e: any) {
-      triggerNotification(`Couldn't clear default: ${e?.message || e}`);
+      notify(`Couldn't clear default: ${e?.message || e}`, 'error');
     }
-    setActiveDropdown(null);
   };
 
   const handleApplyHistory = (entry: HistoryEntry) => {
     handleInsertQuery(entry.query);
-    setActiveDropdown(null);
   };
 
   // Build the aggregation pipeline array from the builder's non-empty stages.
@@ -1210,135 +1234,159 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     if (field === 'filter') setFilterQuery('{}');
     if (field === 'projection') setProjectionQuery('{}');
     if (field === 'sort') setSortQuery('{}');
-    triggerNotification(`Cleared ${field} parameters`);
+    notify(`Cleared ${field} parameters`);
   };
 
-  const toggleDropdown = (dropdownName: string) => {
-    setActiveDropdown((prev) => (prev === dropdownName ? null : dropdownName));
-  };
+  const queryColClass = (invalid: boolean) =>
+    cn(
+      'flex min-w-0 flex-1 items-center border-r border-border bg-input/80 transition-colors last:border-r-0',
+      'focus-within:z-[1] focus-within:bg-input focus-within:ring-1 focus-within:ring-inset',
+      invalid ? 'focus-within:ring-destructive' : 'focus-within:ring-primary'
+    );
 
-  // Close active dropdowns on window click
-  useEffect(() => {
-    const handleOutsideClick = () => setActiveDropdown(null);
-    window.addEventListener('click', handleOutsideClick);
-    return () => window.removeEventListener('click', handleOutsideClick);
-  }, []);
+  const fieldBadgeClass = (invalid: boolean) =>
+    cn(
+      'flex h-7 min-w-[90px] shrink-0 select-none items-center justify-end border-r border-border px-2.5 text-[9.5px] font-bold uppercase tracking-wider',
+      invalid ? 'bg-destructive/5 text-destructive' : 'bg-muted/40 text-muted-foreground'
+    );
+
+  const workspaceRightPanel = isQueryBuilderOpen
+    ? 'query-builder'
+    : isAIHelperOpen
+      ? 'ai-helper'
+      : 'none';
+
+  const workspaceDefaultLayout = useMemo((): Layout => {
+    if (workspaceRightPanel === 'query-builder') {
+      return { 'document-main': 70, 'query-builder': 30 };
+    }
+    if (workspaceRightPanel === 'ai-helper') {
+      return { 'document-main': 70, 'ai-helper': 30 };
+    }
+    return { 'document-main': 100 };
+  }, [workspaceRightPanel]);
 
   return (
-    <div className="flex-grow flex flex-col min-h-0 min-w-0 relative">
+    <div className="relative flex h-full min-h-0 flex-col min-w-0">
       
       {/* 1. Breadcrumbs Bar */}
-      <div className="mql-breadcrumbs">
-        <div className="mql-bc-group">
-          <div
-            className="mql-bc-item"
-            style={{ color: connectionUser ? 'var(--accent-blue)' : 'var(--text-dim)' }}
-          >
-            <User size={12} className="flex-shrink-0" />
+      <div className="flex select-none items-center justify-between border-b border-border bg-muted/30 px-3.5 py-1.5 text-xs text-muted-foreground">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <div className={cn('inline-flex items-center gap-1', connectionUser ? 'text-primary' : 'text-muted-foreground')}>
+            <User size={12} className="shrink-0" />
             <span
-              className="truncate font-medium"
-              style={{ fontWeight: 600, fontStyle: connectionUser ? 'normal' : 'italic' }}
+              className={cn('truncate font-semibold', !connectionUser && 'italic')}
               title={connectionUser ? `Authenticated as ${connectionUser}` : 'Connection has no authentication'}
             >
               {connectionUser || 'no auth'}
             </span>
           </div>
-          <ChevronRight size={10} className="text-[var(--text-dim)] flex-shrink-0" />
+          <ChevronRight size={10} className="shrink-0 text-muted-foreground" />
 
-          <div className="mql-bc-item">
-            <Server size={12} className="text-[var(--accent-blue)] flex-shrink-0" />
+          <div className="inline-flex items-center gap-1 text-foreground">
+            <Server size={12} className="shrink-0 text-primary" />
             <span className="truncate font-mono font-medium" title={connectionName}>{connectionName}</span>
           </div>
-          <ChevronRight size={10} className="text-[var(--text-dim)] flex-shrink-0" />
+          <ChevronRight size={10} className="shrink-0 text-muted-foreground" />
 
-          <div className="mql-bc-item">
-            <Database size={12} className="text-amber-500 flex-shrink-0" />
+          <div className="inline-flex items-center gap-1 text-foreground">
+            <Database size={12} className="shrink-0 text-warning" />
             <span className="truncate font-semibold" title={databaseName}>{databaseName}</span>
           </div>
-          <ChevronRight size={10} className="text-[var(--text-dim)] flex-shrink-0" />
+          <ChevronRight size={10} className="shrink-0 text-muted-foreground" />
 
-          <div className="mql-bc-item">
-            <Layers size={12} className="text-[var(--accent-green)] flex-shrink-0" />
+          <div className="inline-flex items-center gap-1 text-foreground">
+            <Layers size={12} className="shrink-0 text-success" />
             <span className="truncate font-mono font-medium" title={collectionName}>{collectionName}</span>
           </div>
         </div>
-
-        {notification && (
-          <div className="mql-notif">
-            {notification}
-          </div>
-        )}
       </div>
 
       {/* 2. Toolbar */}
-      <div className="mql-toolbar">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          
-          {/* Run Button */}
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <div className="query-plane-btn-group">
-              <button
-                onClick={handleRun}
-                disabled={loading || explainLoading}
-                className="query-plane-btn query-plane-btn-primary"
-                title="Execute query (Ctrl/⌘ + Enter)"
-              >
-                <Play size={11} fill="white" />
-                <span>Run</span>
-              </button>
-              <button
-                onClick={() => toggleDropdown('run')}
-                disabled={loading || explainLoading}
-                className="query-plane-btn-caret"
-              >
-                <ChevronDown size={10} />
-              </button>
-            </div>
-            {activeDropdown === 'run' && (
-              <div className="query-plane-dropdown min-w-[120px]">
-                <div 
-                  className="query-plane-dropdown-item"
-                  onClick={() => {
-                    handleRun();
-                    setActiveDropdown(null);
-                  }}
+      <div className="flex select-none flex-wrap items-center justify-between gap-2 border-b border-border bg-card/50 px-3.5 py-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex overflow-hidden rounded-md shadow-sm">
+            <Button
+              onClick={handleRun}
+              disabled={loading || explainLoading}
+              size="sm"
+              className="h-7 rounded-r-none px-2.5 text-[11px]"
+              title="Execute query (Ctrl/⌘ + Enter)"
+            >
+              <Play size={11} fill="currentColor" />
+              Run
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  disabled={loading || explainLoading}
+                  size="sm"
+                  variant="default"
+                  className="h-7 rounded-l-none border-l border-primary-foreground/20 px-1.5"
                 >
+                  <ChevronDown size={10} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[120px]">
+                <DropdownMenuItem onClick={handleRun}>
                   <Play size={11} />
-                  <span>Run Query</span>
-                </div>
-                <div 
-                  className="query-plane-dropdown-item"
-                  onClick={() => {
-                    handleExplain();
-                    setActiveDropdown(null);
-                  }}
-                >
+                  Run Query
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExplain}>
                   <Cpu size={11} />
-                  <span>Run Explain</span>
-                </div>
-              </div>
-            )}
+                  Run Explain
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
-          {/* Load Query */}
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => toggleDropdown('load')} className="query-plane-btn">
-              <FolderOpen size={11} className="text-sky-500" />
-              <span>Load query</span>
-              <ChevronDown size={10} className="text-[var(--text-dim)]" />
-            </button>
-            {activeDropdown === 'load' && (
-              <div className="query-plane-dropdown min-w-[200px]" data-testid="load-query-dropdown">
-                {savedQueries.length === 0 ? (
-                  <div className="query-plane-dropdown-item-disabled">No saved queries</div>
-                ) : (
-                  savedQueries.map((sq) => (
-                    <div key={sq.id} className="query-plane-dropdown-item" data-testid={`saved-query-${sq.id}`}>
-                      <span style={{ flexGrow: 1 }} onClick={() => handleLoadSaved(sq)}>
-                        <FolderOpen size={11} /> {sq.name}
-                      </span>
-                      <button
-                        className="query-plane-icon-btn text-rose-400"
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]">
+                <FolderOpen size={11} className="text-primary" />
+                Load query
+                <ChevronDown size={10} className="text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[200px]" data-testid="load-query-dropdown">
+              {savedQueries.length === 0 ? (
+                <DropdownMenuItem disabled>No saved queries</DropdownMenuItem>
+              ) : (
+                savedQueries.map((sq) => (
+                  <DropdownMenuItem
+                    key={sq.id}
+                    className="justify-between"
+                    data-testid={`saved-query-${sq.id}`}
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      handleLoadSaved(sq);
+                    }}
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <FolderOpen size={11} className="shrink-0" />{' '}
+                      <span className="truncate">{sq.name}</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-0.5">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          'h-6 w-6',
+                          isQueryFavorited(sq) ? 'text-rose-500 hover:text-rose-500' : 'text-muted-foreground',
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleQueryFavorite(sq);
+                        }}
+                        data-testid={`favorite-saved-${sq.id}`}
+                        title={isQueryFavorited(sq) ? 'Remove from favorites' : 'Add to favorites'}
+                      >
+                        <Heart size={11} className={isQueryFavorited(sq) ? 'fill-current' : ''} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-destructive hover:text-destructive"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleDeleteSaved(sq.id);
@@ -1347,416 +1395,395 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         title="Delete saved query"
                       >
                         <Trash2 size={11} />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
+                      </Button>
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-          {/* Save Query */}
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => toggleDropdown('save')} className="query-plane-btn">
-              <Save size={11} className="text-[var(--accent-blue)]" />
-              <span>Save query</span>
-              <ChevronDown size={10} className="text-[var(--text-dim)]" />
-            </button>
-            {activeDropdown === 'save' && (
-              <div className="query-plane-dropdown min-w-[150px]">
-                <div
-                  className="query-plane-dropdown-item"
-                  onClick={() => {
-                    handleSaveQuery();
-                    setActiveDropdown(null);
-                  }}
-                  data-testid="save-query-item"
-                >
-                  <Save size={11} />
-                  <span>Save as new query...</span>
-                </div>
-              </div>
-            )}
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]">
+                <Save size={11} className="text-primary" />
+                Save query
+                <ChevronDown size={10} className="text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[150px]">
+              <DropdownMenuItem onClick={() => void handleSaveQuery(false)} data-testid="save-query-item">
+                <Save size={11} />
+                Save as new query...
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => void handleSaveQuery(true)}
+                data-testid="save-favorite-query-item"
+              >
+                <Heart size={11} />
+                Save and add to favorites
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-          {/* Query History */}
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => toggleDropdown('history')} className="query-plane-btn" data-testid="history-btn">
-              <History size={11} className="text-amber-500" />
-              <span>Query history</span>
-              <ChevronDown size={10} className="text-[var(--text-dim)]" />
-            </button>
-            {activeDropdown === 'history' && (
-              <div className="query-plane-dropdown min-w-[260px]" data-testid="history-dropdown">
-                {queryHistory.length === 0 ? (
-                  <div className="query-plane-dropdown-item-disabled">No history yet</div>
-                ) : (
-                  queryHistory.map((h, i) => (
-                    <div
-                      key={i}
-                      className="query-plane-dropdown-item"
-                      data-testid={`history-item-${i}`}
-                      onClick={() => handleApplyHistory(h)}
-                    >
-                      <History size={11} />
-                      <span className="truncate">
-                        {h.query.queryType === 'aggregate'
-                          ? `aggregate · ${(h.query.pipeline ?? []).length} stage(s)`
-                          : `find · ${JSON.stringify(h.query.filter ?? {})}`}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]" data-testid="history-btn">
+                <History size={11} className="text-warning" />
+                Query history
+                <ChevronDown size={10} className="text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[260px]" data-testid="history-dropdown">
+              {queryHistory.length === 0 ? (
+                <DropdownMenuItem disabled>No history yet</DropdownMenuItem>
+              ) : (
+                queryHistory.map((h, i) => (
+                  <DropdownMenuItem
+                    key={i}
+                    data-testid={`history-item-${i}`}
+                    onClick={() => handleApplyHistory(h)}
+                  >
+                    <History size={11} />
+                    <span className="truncate">
+                      {h.query.queryType === 'aggregate'
+                        ? `aggregate · ${(h.query.pipeline ?? []).length} stage(s)`
+                        : `find · ${JSON.stringify(h.query.filter ?? {})}`}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-          {/* Set Default Query */}
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => toggleDropdown('default')} className="query-plane-btn">
-              <Anchor size={11} className="text-purple-400" />
-              <span>Set default query</span>
-              <ChevronDown size={10} className="text-[var(--text-dim)]" />
-            </button>
-            {activeDropdown === 'default' && (
-              <div className="query-plane-dropdown min-w-[200px]">
-                <div
-                  className="query-plane-dropdown-item"
-                  onClick={handleSetDefault}
-                  data-testid="set-default-item"
-                >
-                  <Check size={11} />
-                  <span>Pin current query as default</span>
-                </div>
-                <div
-                  className="query-plane-dropdown-item"
-                  onClick={handleClearDefault}
-                  data-testid="clear-default-item"
-                >
-                  <Trash2 size={11} />
-                  <span>Clear default</span>
-                </div>
-              </div>
-            )}
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]">
+                <Anchor size={11} className="text-chart-4" />
+                Set default query
+                <ChevronDown size={10} className="text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[200px]">
+              <DropdownMenuItem onClick={handleSetDefault} data-testid="set-default-item">
+                <Check size={11} />
+                Pin current query as default
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleClearDefault} data-testid="clear-default-item">
+                <Trash2 size={11} />
+                Clear default
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-          {/* Open Query in... */}
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => toggleDropdown('openin')} className="query-plane-btn">
-              <ExternalLink size={11} className="text-[var(--text-muted)]" />
-              <span>Open query in...</span>
-              <ChevronDown size={10} className="text-[var(--text-dim)]" />
-            </button>
-            {activeDropdown === 'openin' && (
-              <div className="query-plane-dropdown query-plane-dropdown-right min-w-[180px]">
-                <div 
-                  className="query-plane-dropdown-item"
-                  onClick={() => {
-                    const shellCommand = buildShellCommand();
-                    if (onOpenShell) {
-                      onOpenShell(shellCommand);
-                      triggerNotification("Opened query in mongosh");
-                    } else {
-                      navigator.clipboard?.writeText(shellCommand);
-                      triggerNotification("Copied mongosh command");
-                    }
-                    setActiveDropdown(null);
-                  }}
-                >
-                  <ExternalLink size={11} />
-                  <span>Open in mongosh</span>
-                </div>
-              </div>
-            )}
-          </div>
-
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]">
+                <ExternalLink size={11} className="text-muted-foreground" />
+                Open query in...
+                <ChevronDown size={10} className="text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[180px]">
+              <DropdownMenuItem
+                onClick={() => {
+                  const shellCommand = buildShellCommand();
+                  if (onOpenShell) {
+                    onOpenShell(shellCommand);
+                    notify('Opened query in mongosh', 'info');
+                  } else {
+                    navigator.clipboard?.writeText(shellCommand);
+                    notify('Copied mongosh command', 'success');
+                  }
+                }}
+              >
+                <ExternalLink size={11} />
+                Open in mongosh
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
-        {/* AI Helper & Visual query builder */}
         <div className="flex items-center gap-1.5">
           {onOpenExport && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={onOpenExport}
-              className="query-plane-btn"
+              className="h-7 gap-1.5 text-[11px]"
               data-testid="export-btn"
               title="Open export workspace"
             >
               <Download size={11} />
-              <span>Export</span>
-            </button>
+              Export
+            </Button>
           )}
           {onImport && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={onImport}
-              className="query-plane-btn"
+              className="h-7 gap-1.5 text-[11px]"
               data-testid="import-btn"
               title="Import documents from a file"
             >
               <Upload size={11} />
-              <span>Import</span>
-            </button>
+              Import
+            </Button>
           )}
-          <button
+          <Button
+            variant={isAIHelperOpen ? 'secondary' : 'outline'}
+            size="sm"
             onClick={() => {
               const newOpen = !isAIHelperOpen;
               setIsAIHelperOpen(newOpen);
-              if (newOpen) {
-                setIsQueryBuilderOpen(false);
-              }
+              if (newOpen) setIsQueryBuilderOpen(false);
             }}
-            className={`query-plane-btn ${isAIHelperOpen ? 'bg-[var(--bg-item-active)] border-[var(--accent-blue)] text-[var(--accent-blue)]' : ''}`}
+            className={cn('h-7 gap-1.5 text-[11px]', isAIHelperOpen && 'border-primary text-primary')}
             data-testid="toggle-ai-helper"
           >
-            <Sparkles size={11} className="text-[var(--accent-blue)]" />
-            <span className="font-semibold text-[var(--accent-blue)]">AI Helper</span>
-          </button>
-          
-          <button 
+            <Sparkles size={11} className="text-primary" />
+            <span className="font-semibold text-primary">AI Helper</span>
+          </Button>
+
+          <Button
+            variant={isQueryBuilderOpen ? 'secondary' : 'outline'}
+            size="sm"
             onClick={() => {
               const newOpen = !isQueryBuilderOpen;
               setIsQueryBuilderOpen(newOpen);
               if (newOpen) {
                 setIsAIHelperOpen(false);
                 const syncedQuery = syncRulesFromQuery(filterQuery);
-                setRules(syncedQuery.rules.length > 0 ? syncedQuery.rules : [{
+                const initialRules = syncedQuery.rules.length > 0 ? syncedQuery.rules : [{
                   id: Math.random().toString(36).substr(2, 9),
                   field: fields[0] || '_id',
                   operator: '$eq',
                   value: ''
-                }]);
+                }];
+                rulesRef.current = initialRules;
+                queryMatchTypeRef.current = syncedQuery.matchType;
+                setRules(initialRules);
                 setQueryMatchType(syncedQuery.matchType);
                 setIsQueryEnabled(true);
-
                 const syncedProj = syncProjectionFromQuery(projectionQuery);
+                projectionRulesRef.current = syncedProj;
                 setProjectionRules(syncedProj);
                 setIsProjectionEnabled(true);
-
                 const syncedSort = syncSortFromQuery(sortQuery);
+                sortRulesRef.current = syncedSort;
                 setSortRules(syncedSort);
                 setIsSortEnabled(true);
-
+                wasOpenRef.current = false;
+              } else {
                 wasOpenRef.current = false;
               }
             }}
-            className={`query-plane-btn ${isQueryBuilderOpen ? 'bg-[var(--bg-item-active)] border-[var(--accent-blue)] text-[var(--accent-blue)]' : ''}`}
+            className={cn('h-7 gap-1.5 text-[11px]', isQueryBuilderOpen && 'border-primary text-primary')}
             data-testid="toggle-query-builder"
           >
-            <DatabaseZap size={11} className="text-emerald-500" />
-            <span>Visual Query Builder</span>
-          </button>
+            <DatabaseZap size={11} className="text-success" />
+            Visual Query Builder
+          </Button>
         </div>
       </div>
 
       {/* 3. Main Workspace Split Area */}
-      <div className="flex-grow flex items-stretch min-h-0 min-w-0">
-        
-        {/* Left Side: Inputs Card and DataGrid children */}
-        <div className="flex-1 flex flex-col min-h-0 min-w-0">
-          {/* Query Mode Switcher */}
-          <div className="mql-qmode">
-            <button 
-              className={`mql-qmode-tab ${queryMode === 'find' ? 'is-active' : ''}`}
-              onClick={() => setQueryMode('find')}
-            >
-              Find
-            </button>
-            <button 
-              className={`mql-qmode-tab ${queryMode === 'aggregate' ? 'is-active' : ''}`}
-              onClick={() => setQueryMode('aggregate')}
-              data-testid="mode-aggregate-tab"
-            >
-              Aggregation
-            </button>
-          </div>
+      <ResizablePanelGroup
+        id="document-viewer-workspace"
+        orientation="horizontal"
+        defaultLayout={workspaceDefaultLayout}
+        className="min-h-0 min-w-0 flex-1"
+      >
+        <ResizablePanel id="document-main" minSize="30%" className="flex min-h-0 flex-col">
+        <div className="flex h-full min-h-0 min-w-0 flex-col">
+            <div className="shrink-0">
+            <div className="flex gap-0.5 border-b border-border bg-muted/20 px-3.5 pt-1.5">
+              <button
+                type="button"
+                onClick={() => setQueryMode('find')}
+                className={cn(
+                  'border-b-2 px-3 py-1.5 text-[11.5px] font-semibold transition-colors',
+                  queryMode === 'find' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+                )}
+              >
+                Find
+              </button>
+              <button
+                type="button"
+                data-testid="mode-aggregate-tab"
+                onClick={() => setQueryMode('aggregate')}
+                className={cn(
+                  'border-b-2 px-3 py-1.5 text-[11.5px] font-semibold transition-colors',
+                  queryMode === 'aggregate' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+                )}
+              >
+                Aggregation
+              </button>
+            </div>
 
           {queryMode === 'find' ? (
-            <div className="query-plane-grid flex-shrink-0">
-              <div className="mql-qcard">
-                {/* Row 1: Query (Filter) */}
-                <div className="mql-qrow">
-                  <div className={`mql-qcol ${!isFilterValid ? 'is-invalid' : ''}`}>
-                    <div className="mql-qbadge">Query</div>
+            <div className="shrink-0">
+            <div className="flex flex-col border-b border-border bg-muted/20">
+                <div className="flex w-full border-b border-border">
+                  <div className={queryColClass(!isFilterValid)}>
+                    <span className={fieldBadgeClass(!isFilterValid)}>Query</span>
                     <QueryEditor
                       singleLine
                       surface="filter"
                       onRun={handleRun}
                       value={filterQuery}
-                      onChange={setFilterQuery}
+                      onChange={(v) => {
+                        setFilterQuery(v);
+                        if (isQueryBuilderOpen) {
+                          syncFilterRulesFromInput(v);
+                        }
+                      }}
                       fields={fields}
                       schema={schema}
-                      className="mql-qinput"
                       data-testid="query-filter-input"
                     />
                     {!isFilterValid && (
-                      <span className="mql-invalid-pill">
+                      <span className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap">
                         <AlertCircle size={10} /> Invalid JSON
                       </span>
                     )}
-                    <button 
-                      onClick={() => handleClearField('filter')}
-                      className="query-plane-icon-btn mr-1"
-                      title="Clear Filter"
-                    >
+                    <Button variant="ghost" size="icon" className="mr-1 h-6 w-6 shrink-0" onClick={() => handleClearField('filter')} title="Clear Filter">
                       <Eraser size={11} />
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
-                {/* Row 2: Projection & Sort */}
-                <div className="mql-qrow">
-                  {/* Projection */}
-                  <div className={`mql-qcol ${!isProjectionValid ? 'is-invalid' : ''}`}>
-                    <div className="mql-qbadge">Projection</div>
+                <div className="flex w-full border-b border-border">
+                  <div className={queryColClass(!isProjectionValid)}>
+                    <span className={fieldBadgeClass(!isProjectionValid)}>Projection</span>
                     <QueryEditor
                       singleLine
                       surface="projection"
                       onRun={handleRun}
                       value={projectionQuery}
-                      onChange={setProjectionQuery}
+                      onChange={(v) => {
+                        setProjectionQuery(v);
+                        if (isQueryBuilderOpen) {
+                          syncProjectionRulesFromInput(v);
+                        }
+                      }}
                       fields={fields}
                       schema={schema}
-                      className="mql-qinput"
                       data-testid="projection-query-input"
                     />
                     {!isProjectionValid && (
-                      <span className="mql-invalid-pill">
+                      <span className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap">
                         <AlertCircle size={10} /> Invalid JSON
                       </span>
                     )}
-                    <button 
-                      onClick={() => handleClearField('projection')}
-                      className="query-plane-icon-btn mr-1"
-                      title="Clear Projection"
-                    >
+                    <Button variant="ghost" size="icon" className="mr-1 h-6 w-6 shrink-0" onClick={() => handleClearField('projection')} title="Clear Projection">
                       <Eraser size={11} />
-                    </button>
+                    </Button>
                   </div>
 
-                  {/* Sort */}
-                  <div className={`mql-qcol ${!isSortValid ? 'is-invalid' : ''}`}>
-                    <div className="mql-qbadge">Sort</div>
+                  <div className={queryColClass(!isSortValid)}>
+                    <span className={fieldBadgeClass(!isSortValid)}>Sort</span>
                     <QueryEditor
                       singleLine
                       surface="sort"
                       onRun={handleRun}
                       value={sortQuery}
-                      onChange={setSortQuery}
+                      onChange={(v) => {
+                        setSortQuery(v);
+                        if (isQueryBuilderOpen) {
+                          syncSortRulesFromInput(v);
+                        }
+                      }}
                       fields={fields}
                       schema={schema}
-                      className="mql-qinput"
                       data-testid="sort-query-input"
                     />
                     {!isSortValid && (
-                      <span className="mql-invalid-pill">
+                      <span className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap">
                         <AlertCircle size={10} /> Invalid JSON
                       </span>
                     )}
-                    <button 
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="mr-0.5 h-6 w-6 shrink-0 text-warning"
                       onClick={() => {
                         if (sortQuery === '{}') setSortQuery('{"_id": -1}');
                         else if (sortQuery === '{"_id": -1}') setSortQuery('{"_id": 1}');
                         else setSortQuery('{}');
                       }}
-                      className="query-plane-icon-btn mr-0.5 text-amber-500"
                       title="Quick Sort Direction"
                     >
                       <ArrowUpDown size={11} />
-                    </button>
-                    <button 
-                      onClick={() => handleClearField('sort')}
-                      className="query-plane-icon-btn mr-1"
-                      title="Clear Sort"
-                    >
+                    </Button>
+                    <Button variant="ghost" size="icon" className="mr-1 h-6 w-6 shrink-0" onClick={() => handleClearField('sort')} title="Clear Sort">
                       <Eraser size={11} />
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
-                {/* Row 3: Skip & Limit */}
-                <div className="mql-qrow">
-                  {/* Skip */}
-                  <div className="mql-qcol">
-                    <div className="mql-qbadge">Skip</div>
-                    <input
+                <div className="flex w-full">
+                  <div className={queryColClass(false)}>
+                    <span className={fieldBadgeClass(false)}>Skip</span>
+                    <Input
                       type="number"
                       value={skip}
                       onChange={(e) => setSkip(e.target.value)}
                       placeholder="0"
                       min="0"
-                      className="mql-qinput"
+                      className="h-7 flex-1 min-w-0 border-0 bg-transparent px-2.5 font-mono text-[11.5px] shadow-none focus-visible:ring-0"
                     />
                     {skip !== '0' && skip !== '' && (
-                      <button 
-                        onClick={() => setSkip('0')}
-                        className="query-plane-icon-btn mr-1"
-                        title="Reset Skip"
-                      >
+                      <Button variant="ghost" size="icon" className="mr-1 h-6 w-6 shrink-0" onClick={() => setSkip('0')} title="Reset Skip">
                         <Eraser size={11} />
-                      </button>
+                      </Button>
                     )}
                   </div>
 
-                  {/* Limit */}
-                  <div className="mql-qcol">
-                    <div className="mql-qbadge">Limit</div>
-                    <input
+                  <div className={queryColClass(false)}>
+                    <span className={fieldBadgeClass(false)}>Limit</span>
+                    <Input
                       type="number"
                       value={limit}
                       onChange={(e) => setLimit(e.target.value)}
                       placeholder="50"
                       min="1"
-                      className="mql-qinput"
+                      className="h-7 flex-1 min-w-0 border-0 bg-transparent px-2.5 font-mono text-[11.5px] shadow-none focus-visible:ring-0"
                     />
                     {limit !== '50' && limit !== '' && (
-                      <button 
-                        onClick={() => setLimit('50')}
-                        className="query-plane-icon-btn mr-1"
-                        title="Reset Limit"
-                      >
+                      <Button variant="ghost" size="icon" className="mr-1 h-6 w-6 shrink-0" onClick={() => setLimit('50')} title="Reset Limit">
                         <Eraser size={11} />
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
               </div>
             </div>
           ) : (
-            /* Aggregation Pipeline Mode */
-            <div className="mql-pipeline flex-shrink-0" data-testid="aggregation-pipeline-editor">
-              <header className="mql-pipeline-h">
-                <span className="mql-pipeline-count">{stages.length} stage{stages.length !== 1 ? 's' : ''}</span>
-                <button 
-                  onClick={addStage}
-                  className="query-plane-btn"
-                  style={{ border: '1px solid var(--border-color)', padding: '2px 8px' }}
-                >
+          <div className="shrink-0" data-testid="aggregation-pipeline-editor">
+            <div className="flex max-h-[min(380px,42vh)] flex-col overflow-hidden border-b border-border bg-muted/20">
+              <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+                <Badge variant="outline" className="font-mono text-[10px]">
+                  {stages.length} stage{stages.length !== 1 ? 's' : ''}
+                </Badge>
+                <Button variant="outline" size="sm" onClick={addStage} className="h-7 gap-1 text-[11px]">
                   <Plus size={11} />
-                  <span>Add Stage</span>
-                </button>
-                <button
-                  onClick={undoStages}
-                  disabled={stagesPast.current.length === 0}
-                  className="query-plane-icon-btn"
-                  aria-label="Undo pipeline change"
-                  title="Undo pipeline change"
-                >
+                  Add Stage
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={undoStages} disabled={stagesPast.current.length === 0} aria-label="Undo pipeline change" title="Undo pipeline change">
                   <Undo2 size={11} />
-                </button>
-                <button
-                  onClick={redoStages}
-                  disabled={stagesFuture.current.length === 0}
-                  className="query-plane-icon-btn"
-                  aria-label="Redo pipeline change"
-                  title="Redo pipeline change"
-                >
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={redoStages} disabled={stagesFuture.current.length === 0} aria-label="Redo pipeline change" title="Redo pipeline change">
                   <Redo2 size={11} />
-                </button>
-                <div style={{ flexGrow: 1 }} />
+                </Button>
+                <div className="flex-grow" />
               </header>
 
-              <div className="mql-pipeline-stages">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+              <div className="flex flex-col gap-0 p-3 [&>*]:shrink-0">
                 {stages.map((stage, index) => {
                   const isValid = checkIsValidJson(stage.content);
                   return (
@@ -1766,7 +1793,12 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                     // With index keys a reorder is just a value-prop update.
                     <React.Fragment key={index}>
                       <div
-                        className={`mql-stage ${!isValid ? 'is-invalid' : ''}${stage.disabled ? ' is-disabled' : ''}`}
+                        className={cn(
+                          'overflow-hidden rounded-md border border-border bg-background transition-colors',
+                          !isValid && 'border-destructive ring-1 ring-destructive',
+                          stage.disabled && 'is-disabled opacity-55',
+                          'focus-within:border-primary focus-within:ring-1 focus-within:ring-primary'
+                        )}
                         data-testid={`pipeline-stage-${index}`}
                         onDragOver={(e) => {
                           if (dragStageIndex === null) return;
@@ -1776,31 +1808,25 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         onDrop={(e) => { e.preventDefault(); dropStageAt(index); }}
                       >
                         <div
-                          className="mql-stage-h"
+                          className="flex cursor-grab items-center gap-1.5 border-b border-border bg-muted/30 px-2 py-1.5 active:cursor-grabbing"
                           draggable
                           onDragStart={(e) => {
-                            // WebKit refuses to start a drag without payload data.
                             e.dataTransfer.setData('text/plain', String(index));
                             e.dataTransfer.effectAllowed = 'move';
                             setDragStageIndex(index);
                           }}
                           onDragEnd={() => setDragStageIndex(null)}
                         >
-                          <GripVertical size={11} className="mql-stage-grip" aria-hidden="true" />
-                          <button
-                            onClick={() => toggleStageCollapsed(stage.id)}
-                            className="query-plane-icon-btn"
-                            aria-label={stage.collapsed ? `Expand stage ${index + 1}` : `Collapse stage ${index + 1}`}
-                            title={stage.collapsed ? `Expand stage ${index + 1}` : `Collapse stage ${index + 1}`}
-                          >
+                          <GripVertical size={11} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleStageCollapsed(stage.id)} aria-label={stage.collapsed ? `Expand stage ${index + 1}` : `Collapse stage ${index + 1}`} title={stage.collapsed ? `Expand stage ${index + 1}` : `Collapse stage ${index + 1}`}>
                             {stage.collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
-                          </button>
-                          <span className="mql-stage-num">{index + 1}</span>
-                          <div className="mql-stage-op-wrap">
+                          </Button>
+                          <span className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded bg-accent text-[10px] text-muted-foreground">{index + 1}</span>
+                          <div className="relative inline-flex items-center">
                             <select
                               value={stage.operator}
                               onChange={(e) => updateStageOperator(stage.id, e.target.value)}
-                              className="mql-stage-op"
+                              className="cursor-pointer appearance-none border-0 bg-transparent py-0.5 pl-1 pr-4 font-mono text-xs font-semibold text-chart-4 outline-none"
                             >
                               {STAGE_OPERATORS.map(({ group, stages: groupStages }) => (
                                 <optgroup key={group} label={group}>
@@ -1810,45 +1836,35 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                 </optgroup>
                               ))}
                             </select>
-                            <ChevronDown size={10} className="mql-stage-op-caret text-[var(--text-dim)]" />
+                            <ChevronDown size={10} className="pointer-events-none absolute right-0.5 text-muted-foreground" />
                           </div>
-                          <div style={{ flexGrow: 1 }} />
-                          <button
-                            onClick={() => runToStage(index)}
-                            disabled={loading || stage.disabled}
-                            className="query-plane-icon-btn"
-                            title={`Run pipeline to stage ${index + 1}`}
-                            aria-label={`Run pipeline to stage ${index + 1}`}
-                          >
+                          <div className="flex-grow" />
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => runToStage(index)} disabled={loading || stage.disabled} title={`Run pipeline to stage ${index + 1}`} aria-label={`Run pipeline to stage ${index + 1}`}>
                             <Play size={11} />
-                          </button>
-                          <button
-                            onClick={() => toggleStageDisabled(stage.id)}
-                            className="query-plane-icon-btn"
-                            title={stage.disabled ? `Enable stage ${index + 1}` : `Disable stage ${index + 1}`}
-                            aria-label={stage.disabled ? `Enable stage ${index + 1}` : `Disable stage ${index + 1}`}
-                          >
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleStageDisabled(stage.id)} title={stage.disabled ? `Enable stage ${index + 1}` : `Disable stage ${index + 1}`} aria-label={stage.disabled ? `Enable stage ${index + 1}` : `Disable stage ${index + 1}`}>
                             {stage.disabled ? <EyeOff size={11} /> : <Eye size={11} />}
-                          </button>
-                          <button onClick={() => moveStageUp(index)} disabled={index === 0} className="query-plane-icon-btn" aria-label={`Move stage ${index + 1} up`}>
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveStageUp(index)} disabled={index === 0} aria-label={`Move stage ${index + 1} up`}>
                             <ChevronUp size={11} />
-                          </button>
-                          <button onClick={() => moveStageDown(index)} disabled={index === stages.length - 1} className="query-plane-icon-btn" aria-label={`Move stage ${index + 1} down`}>
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveStageDown(index)} disabled={index === stages.length - 1} aria-label={`Move stage ${index + 1} down`}>
                             <ChevronDown size={11} />
-                          </button>
-                          <button onClick={() => removeStage(stage.id)} className="query-plane-icon-btn text-rose-400" aria-label={`Remove stage ${index + 1}`}>
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => removeStage(stage.id)} aria-label={`Remove stage ${index + 1}`}>
                             <Trash2 size={11} />
-                          </button>
+                          </Button>
                         </div>
                         {stage.operator === '$lookup' && !stage.collapsed && (
-                          <div className="mql-lookup-form" data-testid={`lookup-form-${index}`}>
+                          <div className="grid grid-cols-4 gap-1.5 border-b border-border bg-muted/20 p-2" data-testid={`lookup-form-${index}`}>
                             {(['from', 'localField', 'foreignField', 'as'] as const).map((key) => (
-                              <label key={key} className="mql-lookup-field">
-                                <span>{key}</span>
-                                <input
+                              <label key={key} className="flex min-w-0 flex-col gap-0.5">
+                                <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">{key}</span>
+                                <Input
                                   value={lookupFieldValue(stage, key)}
                                   onChange={(e) => updateLookupField(stage.id, key, e.target.value)}
                                   aria-label={`$lookup ${key}`}
+                                  className="h-[22px] font-mono text-[11px]"
                                 />
                               </label>
                             ))}
@@ -1868,7 +1884,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         )}
                       </div>
                       {index < stages.length - 1 && (
-                        <div className="mql-pipeline-flow">
+                        <div className="flex justify-center py-0.5 text-muted-foreground">
                           <ChevronDown size={12} />
                         </div>
                       )}
@@ -1877,77 +1893,68 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 })}
               </div>
             </div>
+            </div>
+          </div>
           )}
 
-          {/* Children results pane */}
+            </div>
+
           <DocumentViewerContext.Provider value={{ handleExplain, explainLoading }}>
-            {children}
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {children}
+            </div>
           </DocumentViewerContext.Provider>
 
-          {/* Error Info or Explain Plan Panel */}
           {error && (
-            <div className="bg-rose-950/20 border-t border-[var(--border-color)] p-2 px-3 text-rose-400 text-[11px] flex items-center gap-2 font-mono select-text flex-shrink-0">
-              <AlertCircle size={13} className="flex-shrink-0 text-rose-400" />
+            <div className="flex shrink-0 select-text items-center gap-2 border-t border-border bg-destructive/10 px-3 py-2 font-mono text-ui-xs text-destructive">
+              <AlertCircle size={13} className="shrink-0 text-destructive" />
               <span>{error}</span>
             </div>
           )}
         </div>
+        </ResizablePanel>
 
-        {/* Right Side: Visual Query Builder Panel */}
         {isQueryBuilderOpen && (
           <>
-            {/* Resize Handle */}
-            <div
-              className="query-builder-resizer"
-              onMouseDown={startResizingQueryBuilder}
-              data-testid="query-builder-resizer"
-            />
-            <div 
-              className="query-builder-panel border-l border-b border-[var(--border-color)] bg-[var(--bg-panel)] flex flex-col flex-shrink-0"
-              style={{ width: queryBuilderWidth }}
-              data-testid="query-builder-panel"
-            >
-            {/* Header */}
-            <div className="query-builder-header">
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-main)]">
-                <DatabaseZap size={11} className="text-emerald-500" />
+            <ResizableHandle withHandle data-testid="query-builder-resizer" />
+            <ResizablePanel id="query-builder" minSize="18%" maxSize="50%" className="flex min-h-0 flex-col">
+            <div className="flex h-full min-h-0 w-full flex-col border-l border-border bg-card" data-testid="query-builder-panel">
+            <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
+                <DatabaseZap size={11} className="text-success" />
                 <span>Visual Query Builder</span>
               </div>
               <div className="flex items-center gap-2">
                 {(rules.length > 0 || projectionRules.length > 0 || sortRules.length > 0) && (
-                  <button 
+                  <button
                     onClick={() => {
                       clearAllRules();
                       clearAllProjectionRules();
                       clearAllSortRules();
                     }}
-                    className="text-[10px] text-[var(--text-muted)] hover:text-rose-400 transition-colors"
+                    className="text-[10px] text-muted-foreground transition-colors hover:text-destructive"
                   >
                     Clear All
                   </button>
                 )}
-                <button 
-                  onClick={() => setIsQueryBuilderOpen(false)}
-                  className="p-0.5 rounded hover:bg-[var(--bg-item-active)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
-                  title="Close Panel"
-                >
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setIsQueryBuilderOpen(false)} title="Close Panel">
                   <X size={12} />
-                </button>
+                </Button>
               </div>
             </div>
 
-            {/* Cards List container */}
-            <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
+            <ScrollArea className="min-h-0 flex-1">
+            <div className="flex flex-col gap-2 p-3">
               
               {/* Card 1: Query (Filter) */}
-              <div className="query-builder-card" data-testid="query-card">
-                <div className="query-builder-card-header">
-                  <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-[11px]">
-                    <input 
+              <div className="rounded-md border border-border bg-background" data-testid="query-card">
+                <div className="flex items-center justify-between border-b border-border px-2 py-2">
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold">
+                    <input
                       type="checkbox"
                       checked={isQueryEnabled}
-                      onChange={(e) => handleToggleQueryEnabled(e.target.checked)}
-                      className="query-builder-checkbox"
+                      onChange={() => handleToggleQueryEnabled(!isQueryEnabled)}
+                      className="h-3.5 w-3.5 rounded border-border accent-primary"
                       data-testid="query-enable-checkbox"
                     />
                     <span>Query</span>
@@ -1956,7 +1963,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                     <select
                       value={queryMatchType}
                       onChange={(e) => updateQueryMatchType(e.target.value as 'and' | 'or')}
-                      className="query-builder-select py-0 px-1 text-[10px] w-auto max-w-[130px]"
+                      className="h-7 max-w-[130px] rounded-md border border-border bg-background px-1 text-[10px]"
                       data-testid="query-match-type"
                     >
                       <option value="and">Match All ($and)</option>
@@ -1965,11 +1972,11 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   )}
                 </div>
                 {isQueryEnabled && (
-                  <div className="query-builder-card-body">
+                  <div className="p-2">
                     {rules.length === 0 ? (
-                      <div 
-                        onClick={addRule} 
-                        className="query-builder-dropzone"
+                      <div
+                        onClick={addRule}
+                        className="cursor-pointer rounded-md border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
                         data-testid="query-dropzone"
                       >
                         <span>+ Click to add query rules</span>
@@ -1979,7 +1986,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         {rules.map((rule) => {
                           const isCustomField = rule.field === '__custom__' || !fields.includes(rule.field);
                           return (
-                            <div key={rule.id} className="query-builder-rule-row" data-testid={`query-rule-${rule.id}`}>
+                            <div key={rule.id} className="flex items-center gap-1.5 rounded-md border border-border bg-muted/20 p-1.5" data-testid={`query-rule-${rule.id}`}>
                               {/* Field selector */}
                               {isCustomField ? (
                                 <div className="flex items-center gap-1 flex-1 min-w-0">
@@ -1988,13 +1995,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                     value={rule.field === '__custom__' ? '' : rule.field}
                                     onChange={(e) => updateRule(rule.id, { field: e.target.value })}
                                     placeholder="field.path"
-                                    className="query-builder-input"
+                                    className="h-7 min-w-0 flex-1 font-mono text-[11px]"
                                     data-testid={`rule-field-custom-${rule.id}`}
                                   />
                                   {fields.length > 0 && (
                                     <button 
                                       onClick={() => updateRule(rule.id, { field: fields[0] })}
-                                      className="text-[10px] text-[var(--accent-blue)] hover:underline flex-shrink-0"
+                                      className="shrink-0 text-[10px] text-primary hover:underline"
                                     >
                                       List
                                     </button>
@@ -2004,7 +2011,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                 <select
                                   value={rule.field}
                                   onChange={(e) => updateRule(rule.id, { field: e.target.value })}
-                                  className="query-builder-select flex-1 min-w-0"
+                                  className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-[11px]"
                                   data-testid={`rule-field-${rule.id}`}
                                 >
                                   {fields.map(f => (
@@ -2018,7 +2025,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                               <select
                                 value={rule.operator}
                                 onChange={(e) => updateRule(rule.id, { operator: e.target.value })}
-                                className="query-builder-select w-[65px] flex-shrink-0"
+                                className="h-7 w-[65px] shrink-0 rounded-md border border-border bg-background px-2 text-[11px]"
                                 data-testid={`rule-operator-${rule.id}`}
                               >
                                 {OPERATORS.map(op => (
@@ -2031,7 +2038,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                 <select
                                   value={rule.value}
                                   onChange={(e) => updateRule(rule.id, { value: e.target.value })}
-                                  className="query-builder-select w-[65px] flex-shrink-0"
+                                  className="h-7 w-[65px] shrink-0 rounded-md border border-border bg-background px-2 text-[11px]"
                                   data-testid={`rule-value-exists-${rule.id}`}
                                 >
                                   <option value="true">true</option>
@@ -2043,7 +2050,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                   value={rule.value}
                                   onChange={(e) => updateRule(rule.id, { value: e.target.value })}
                                   placeholder="value"
-                                  className="query-builder-input"
+                                  className="h-7 min-w-0 flex-1 font-mono text-[11px]"
                                   data-testid={`rule-value-${rule.id}`}
                                 />
                               )}
@@ -2051,7 +2058,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                               {/* Delete button */}
                               <button 
                                 onClick={() => deleteRule(rule.id)}
-                                className="p-1 rounded hover:bg-[var(--bg-item-active)] text-[var(--text-muted)] hover:text-rose-400 transition-colors"
+                                className="p-1 rounded text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
                                 title="Remove Rule"
                               >
                                 <Trash2 size={11} />
@@ -2059,14 +2066,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                             </div>
                           );
                         })}
-                        <button 
-                          onClick={addRule} 
-                          className="query-builder-add-btn"
-                          data-testid="query-add-rule-btn"
-                        >
+                        <Button variant="outline" size="sm" onClick={addRule} className="h-7 w-full gap-1 text-[11px]" data-testid="query-add-rule-btn">
                           <Plus size={11} />
                           <span>Add Rule</span>
-                        </button>
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -2074,25 +2077,25 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               </div>
 
               {/* Card 2: Projection */}
-              <div className="query-builder-card" data-testid="projection-card">
-                <div className="query-builder-card-header">
-                  <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-[11px]">
-                    <input 
+              <div className="rounded-md border border-border bg-background" data-testid="projection-card">
+                <div className="flex items-center justify-between border-b border-border px-2 py-2">
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold">
+                    <input
                       type="checkbox"
                       checked={isProjectionEnabled}
-                      onChange={(e) => handleToggleProjectionEnabled(e.target.checked)}
-                      className="query-builder-checkbox"
+                      onChange={() => handleToggleProjectionEnabled(!isProjectionEnabled)}
+                      className="h-3.5 w-3.5 rounded border-border accent-primary"
                       data-testid="projection-enable-checkbox"
                     />
                     <span>Projection</span>
                   </label>
                 </div>
                 {isProjectionEnabled && (
-                  <div className="query-builder-card-body">
+                  <div className="p-2">
                     {projectionRules.length === 0 ? (
-                      <div 
-                        onClick={addProjectionRule} 
-                        className="query-builder-dropzone"
+                      <div
+                        onClick={addProjectionRule}
+                        className="cursor-pointer rounded-md border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
                         data-testid="projection-dropzone"
                       >
                         <span>+ Click to add projection criteria</span>
@@ -2102,7 +2105,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         {projectionRules.map((rule) => {
                           const isCustomField = rule.field === '__custom__' || !fields.includes(rule.field);
                           return (
-                            <div key={rule.id} className="query-builder-rule-row" data-testid={`projection-rule-${rule.id}`}>
+                            <div key={rule.id} className="flex items-center gap-1.5 rounded-md border border-border bg-muted/20 p-1.5" data-testid={`projection-rule-${rule.id}`}>
                               {/* Field selector */}
                               {isCustomField ? (
                                 <div className="flex items-center gap-1 flex-1 min-w-0">
@@ -2111,13 +2114,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                     value={rule.field === '__custom__' ? '' : rule.field}
                                     onChange={(e) => updateProjectionRule(rule.id, { field: e.target.value })}
                                     placeholder="field.path"
-                                    className="query-builder-input"
+                                    className="h-7 min-w-0 flex-1 font-mono text-[11px]"
                                     data-testid={`projection-field-custom-${rule.id}`}
                                   />
                                   {fields.length > 0 && (
                                     <button 
                                       onClick={() => updateProjectionRule(rule.id, { field: fields[0] })}
-                                      className="text-[10px] text-[var(--accent-blue)] hover:underline flex-shrink-0"
+                                      className="shrink-0 text-[10px] text-primary hover:underline"
                                     >
                                       List
                                     </button>
@@ -2127,7 +2130,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                 <select
                                   value={rule.field}
                                   onChange={(e) => updateProjectionRule(rule.id, { field: e.target.value })}
-                                  className="query-builder-select flex-1 min-w-0"
+                                  className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-[11px]"
                                   data-testid={`projection-field-${rule.id}`}
                                 >
                                   {fields.map(f => (
@@ -2141,7 +2144,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                               <select
                                 value={rule.include ? '1' : '0'}
                                 onChange={(e) => updateProjectionRule(rule.id, { include: e.target.value === '1' })}
-                                className="query-builder-select w-[100px] flex-shrink-0"
+                                className="h-7 w-[100px] shrink-0 rounded-md border border-border bg-background px-2 text-[11px]"
                                 data-testid={`projection-include-${rule.id}`}
                               >
                                 <option value="1">Include (1)</option>
@@ -2153,7 +2156,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                               {/* Delete button */}
                               <button 
                                 onClick={() => deleteProjectionRule(rule.id)}
-                                className="p-1 rounded hover:bg-[var(--bg-item-active)] text-[var(--text-muted)] hover:text-rose-400 transition-colors"
+                                className="p-1 rounded text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
                                 title="Remove Rule"
                               >
                                 <Trash2 size={11} />
@@ -2161,14 +2164,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                             </div>
                           );
                         })}
-                        <button 
-                          onClick={addProjectionRule} 
-                          className="query-builder-add-btn"
-                          data-testid="projection-add-rule-btn"
-                        >
+                        <Button variant="outline" size="sm" onClick={addProjectionRule} className="h-7 w-full gap-1 text-[11px]" data-testid="projection-add-rule-btn">
                           <Plus size={11} />
                           <span>Add Projection</span>
-                        </button>
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -2176,25 +2175,25 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               </div>
 
               {/* Card 3: Sort */}
-              <div className="query-builder-card" data-testid="sort-card">
-                <div className="query-builder-card-header">
-                  <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-[11px]">
-                    <input 
+              <div className="rounded-md border border-border bg-background" data-testid="sort-card">
+                <div className="flex items-center justify-between border-b border-border px-2 py-2">
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold">
+                    <input
                       type="checkbox"
                       checked={isSortEnabled}
-                      onChange={(e) => handleToggleSortEnabled(e.target.checked)}
-                      className="query-builder-checkbox"
+                      onChange={() => handleToggleSortEnabled(!isSortEnabled)}
+                      className="h-3.5 w-3.5 rounded border-border accent-primary"
                       data-testid="sort-enable-checkbox"
                     />
                     <span>Sort</span>
                   </label>
                 </div>
                 {isSortEnabled && (
-                  <div className="query-builder-card-body">
+                  <div className="p-2">
                     {sortRules.length === 0 ? (
-                      <div 
-                        onClick={addSortRule} 
-                        className="query-builder-dropzone"
+                      <div
+                        onClick={addSortRule}
+                        className="cursor-pointer rounded-md border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
                         data-testid="sort-dropzone"
                       >
                         <span>+ Click to add sort criteria</span>
@@ -2204,7 +2203,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         {sortRules.map((rule) => {
                           const isCustomField = rule.field === '__custom__' || !fields.includes(rule.field);
                           return (
-                            <div key={rule.id} className="query-builder-rule-row" data-testid={`sort-rule-${rule.id}`}>
+                            <div key={rule.id} className="flex items-center gap-1.5 rounded-md border border-border bg-muted/20 p-1.5" data-testid={`sort-rule-${rule.id}`}>
                               {/* Field selector */}
                               {isCustomField ? (
                                 <div className="flex items-center gap-1 flex-1 min-w-0">
@@ -2213,13 +2212,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                     value={rule.field === '__custom__' ? '' : rule.field}
                                     onChange={(e) => updateSortRule(rule.id, { field: e.target.value })}
                                     placeholder="field.path"
-                                    className="query-builder-input"
+                                    className="h-7 min-w-0 flex-1 font-mono text-[11px]"
                                     data-testid={`sort-field-custom-${rule.id}`}
                                   />
                                   {fields.length > 0 && (
                                     <button 
                                       onClick={() => updateSortRule(rule.id, { field: fields[0] })}
-                                      className="text-[10px] text-[var(--accent-blue)] hover:underline flex-shrink-0"
+                                      className="shrink-0 text-[10px] text-primary hover:underline"
                                     >
                                       List
                                     </button>
@@ -2229,7 +2228,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                 <select
                                   value={rule.field}
                                   onChange={(e) => updateSortRule(rule.id, { field: e.target.value })}
-                                  className="query-builder-select flex-1 min-w-0"
+                                  className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-[11px]"
                                   data-testid={`sort-field-${rule.id}`}
                                 >
                                   {fields.map(f => (
@@ -2243,7 +2242,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                               <select
                                 value={rule.direction}
                                 onChange={(e) => updateSortRule(rule.id, { direction: Number(e.target.value) as 1 | -1 })}
-                                className="query-builder-select w-[75px] flex-shrink-0"
+                                className="h-7 w-[75px] shrink-0 rounded-md border border-border bg-background px-2 text-[11px]"
                                 data-testid={`sort-direction-${rule.id}`}
                               >
                                 <option value="1">Asc (1)</option>
@@ -2255,7 +2254,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                               {/* Delete button */}
                               <button 
                                 onClick={() => deleteSortRule(rule.id)}
-                                className="p-1 rounded hover:bg-[var(--bg-item-active)] text-[var(--text-muted)] hover:text-rose-400 transition-colors"
+                                className="p-1 rounded text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
                                 title="Remove Rule"
                               >
                                 <Trash2 size={11} />
@@ -2263,14 +2262,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                             </div>
                           );
                         })}
-                        <button 
-                          onClick={addSortRule} 
-                          className="query-builder-add-btn"
-                          data-testid="sort-add-rule-btn"
-                        >
+                        <Button variant="outline" size="sm" onClick={addSortRule} className="h-7 w-full gap-1 text-[11px]" data-testid="sort-add-rule-btn">
                           <Plus size={11} />
                           <span>Add Sort Field</span>
-                        </button>
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -2278,33 +2273,37 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               </div>
 
             </div>
+            </ScrollArea>
 
-            {/* Footer */}
-            <div className="p-2 border-t border-[var(--border-color)] bg-[var(--bg-panel)] flex justify-end">
-              <button 
-                onClick={handleRun}
-                disabled={loading}
-                className="px-3 py-1 text-[11px] font-semibold text-white bg-[var(--accent-blue)] hover:bg-[var(--accent-blue-hover)] transition-colors rounded shadow-sm"
-              >
+            <div className="flex shrink-0 justify-end border-t border-border bg-card p-2">
+              <Button onClick={handleRun} disabled={loading} size="sm" className="h-7 text-[11px]">
                 Apply
-              </button>
+              </Button>
             </div>
-          </div>
-        </>
-      )}
+            </div>
+            </ResizablePanel>
+          </>
+        )}
 
-      {/* Right Side: AI Helper Panel */}
-      <AIChatPanel
-        variant="editor"
-        databaseName={databaseName}
-        collectionName={collectionName}
-        fields={availableFields}
-        isOpen={isAIHelperOpen}
-        onClose={() => setIsAIHelperOpen(false)}
-        onInsertQuery={handleInsertQuery}
-        onInsertAndRunQuery={handleInsertAndRunQuery}
-      />
-      </div>
+        {isAIHelperOpen && (
+          <>
+            <ResizableHandle withHandle data-testid="ai-helper-resizer" />
+            <ResizablePanel id="ai-helper" minSize="18%" maxSize="50%" className="flex min-h-0 flex-col">
+              <AIChatPanel
+                variant="editor"
+                embedded
+                databaseName={databaseName}
+                collectionName={collectionName}
+                fields={availableFields}
+                isOpen={isAIHelperOpen}
+                onClose={() => setIsAIHelperOpen(false)}
+                onInsertQuery={handleInsertQuery}
+                onInsertAndRunQuery={handleInsertAndRunQuery}
+              />
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
     </div>
   );
 };

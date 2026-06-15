@@ -10,6 +10,9 @@ pub struct ConnectionProfile {
     pub id: String,
     pub name: String,
     pub uri: String,
+    // Optional color tag for quick visual identification in the sidebar (#34).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_tag: Option<String>,
     // Optional SSH tunnel config. `#[serde(default)]` keeps older 3-field
     // connections.json files readable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -30,6 +33,54 @@ fn default_gemini_model() -> String {
 }
 fn default_update_channel() -> String {
     "stable".to_string()
+}
+
+fn default_preset_id() -> String {
+    "mqlens-dark".to_string()
+}
+
+fn default_theme_mode() -> String {
+    "dark".to_string()
+}
+
+fn default_font_sans() -> String {
+    "Inter".to_string()
+}
+
+fn default_font_mono() -> String {
+    "JetBrains Mono".to_string()
+}
+
+fn default_font_size() -> u8 {
+    13
+}
+
+fn default_spacing_density() -> String {
+    "cozy".to_string()
+}
+
+fn default_ui_zoom() -> f32 {
+    1.0
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct AppearanceSettings {
+    #[serde(default = "default_preset_id")]
+    pub preset_id: String,
+    #[serde(default = "default_theme_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub overrides: std::collections::HashMap<String, String>,
+    #[serde(default = "default_font_sans")]
+    pub font_sans: String,
+    #[serde(default = "default_font_mono")]
+    pub font_mono: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: u8,
+    #[serde(default = "default_spacing_density")]
+    pub spacing_density: String,
+    #[serde(default = "default_ui_zoom")]
+    pub ui_zoom: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -61,6 +112,9 @@ pub struct AppSettings {
     // Auto-update channel: "stable" (default) or "dev".
     #[serde(default = "default_update_channel")]
     pub update_channel: String,
+    // UI appearance: theme preset, fonts, font size, spacing density.
+    #[serde(default)]
+    pub appearance: AppearanceSettings,
 }
 
 impl Default for AppSettings {
@@ -77,6 +131,7 @@ impl Default for AppSettings {
             local_commands: std::collections::HashMap::new(),
             ai_custom_instructions: String::new(),
             update_channel: default_update_channel(),
+            appearance: AppearanceSettings::default(),
         }
     }
 }

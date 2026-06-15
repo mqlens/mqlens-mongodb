@@ -8,3 +8,6 @@ class MockResizeObserver {
 }
 
 globalThis.ResizeObserver = MockResizeObserver;
+
+// cmdk and Radix scroll areas call scrollIntoView; jsdom does not implement it.
+Element.prototype.scrollIntoView = function scrollIntoView() {};

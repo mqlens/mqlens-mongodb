@@ -1,6 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Eye, Loader2, AlertCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 import type { CollectionInfo } from './Sidebar';
 
 interface CreateViewViewProps {
@@ -9,6 +20,11 @@ interface CreateViewViewProps {
   /** Called with the new view's name after a successful create. */
   onCreated: (viewName: string) => void;
 }
+
+const textareaClassName = cn(
+  'flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm shadow-sm transition-colors',
+  'placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50'
+);
 
 export const CreateViewView: React.FC<CreateViewViewProps> = ({
   connectionId,
@@ -59,7 +75,6 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
       setError('Select a source collection.');
       return;
     }
-    // Validate the pipeline JSON client-side before any backend call.
     try {
       const parsed = JSON.parse(pipeline || '[]');
       if (!Array.isArray(parsed)) {
@@ -89,18 +104,18 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full overflow-auto" data-testid="create-view">
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border-color)] text-sm font-semibold text-[var(--text-main)]">
-        <Eye size={14} className="text-emerald-500" />
+    <div className="flex h-full flex-col overflow-auto" data-testid="create-view">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-sm font-semibold text-foreground">
+        <Eye size={14} className="text-success" />
         <span>Create View — {databaseName}</span>
       </div>
 
-      <div className="flex flex-col gap-4 p-4 max-w-[640px]">
+      <div className="flex max-w-[640px] flex-col gap-4 p-4">
         <div className="flex flex-col gap-1.5">
-          <span className="mql-label">View Name</span>
-          <input
+          <Label htmlFor="view-name-input">View Name</Label>
+          <Input
+            id="view-name-input"
             type="text"
-            className="mql-ncd-input"
             data-testid="view-name-input"
             value={viewName}
             onChange={(e) => setViewName(e.target.value)}
@@ -109,34 +124,37 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <span className="mql-label">Source Collection</span>
+          <Label>Source Collection</Label>
           {loadingColls ? (
-            <div className="flex items-center gap-2 text-[var(--text-muted)] text-xs">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 size={13} className="animate-spin" /> Loading collections…
             </div>
           ) : (
-            <div className="mql-ncd-select-wrap">
-              <select
-                className="mql-ncd-select"
-                data-testid="view-source-select"
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-              >
-                {collections.length === 0 && <option value="">(no collections)</option>}
+            <Select value={source || '__none__'} onValueChange={(v) => setSource(v === '__none__' ? '' : v)}>
+              <SelectTrigger data-testid="view-source-select">
+                <SelectValue placeholder="(no collections)" />
+              </SelectTrigger>
+              <SelectContent>
+                {collections.length === 0 && (
+                  <SelectItem value="__none__" disabled>
+                    (no collections)
+                  </SelectItem>
+                )}
                 {collections.map((c) => (
-                  <option key={c} value={c}>
+                  <SelectItem key={c} value={c}>
                     {c}
-                  </option>
+                  </SelectItem>
                 ))}
-              </select>
-            </div>
+              </SelectContent>
+            </Select>
           )}
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <span className="mql-label">Aggregation Pipeline (JSON array)</span>
+          <Label htmlFor="view-pipeline-input">Aggregation Pipeline (JSON array)</Label>
           <textarea
-            className="mql-ncd-input font-mono"
+            id="view-pipeline-input"
+            className={textareaClassName}
             data-testid="view-pipeline-input"
             rows={8}
             value={pipeline}
@@ -148,7 +166,7 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
 
         {error && (
           <div
-            className="flex items-center gap-2 text-rose-400 text-xs font-mono"
+            className="flex items-center gap-2 font-mono text-xs text-destructive"
             data-testid="view-error"
           >
             <AlertCircle size={13} className="flex-shrink-0" />
@@ -157,15 +175,14 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
         )}
 
         <div>
-          <button
+          <Button
             type="button"
-            className="mql-btn mql-btn-primary"
             data-testid="view-create-btn"
             onClick={handleCreate}
             disabled={creating}
           >
             {creating ? 'Creating…' : 'Create View'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

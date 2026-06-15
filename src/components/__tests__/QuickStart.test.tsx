@@ -42,8 +42,8 @@ describe('QuickStart', () => {
     expect(await screen.findByText('alpha')).toBeInTheDocument();
     expect(screen.getByText('beta')).toBeInTheDocument();
     expect(screen.queryByTestId('qs-load-sample')).not.toBeInTheDocument();
-    const names = screen.getAllByTestId(/conn-card-/).map((n) => n.querySelector('.mql-qs-card-name')?.textContent);
-    expect(names[0]).toContain('alpha'); // alphabetical
+    const names = screen.getAllByTestId(/conn-card-/).map((n) => n.textContent);
+    expect(names[0]).toMatch(/alpha/);
   });
 
   it('calls onQuickConnect with the clicked profile', async () => {

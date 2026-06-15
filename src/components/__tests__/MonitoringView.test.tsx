@@ -4,14 +4,6 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => mockInvoke(...a) }));
 
-// recharts needs layout; stub it to plain divs for jsdom.
-vi.mock('recharts', () => ({
-  ResponsiveContainer: ({ children }: any) => <div>{children}</div>,
-  LineChart: ({ children }: any) => <div>{children}</div>,
-  Line: () => null,
-  YAxis: () => null,
-}));
-
 import { MonitoringView } from '../MonitoringView';
 
 const STATUS = {
@@ -117,7 +109,7 @@ describe('MonitoringView', () => {
     expect(modal).toBeInTheDocument();
     expect(screen.getByText('Operation details')).toBeInTheDocument();
     // The detail modal shows the full command in its own code block.
-    expect(modal.querySelector('.mql-mon-detail-cmd')).toBeTruthy();
+    expect(modal.querySelector('[data-testid="monitoring-detail-cmd"]')).toBeTruthy();
   });
 
   it('switches between the Current operations and Profiler tabs', async () => {
