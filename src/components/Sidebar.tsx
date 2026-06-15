@@ -130,7 +130,7 @@ interface SidebarProps {
   ) => void;
   onSelectIndex: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
   activeCollection: { connectionId: string; db: string; collection: string; indexName?: string } | null;
-  activeConnections: { id: string; name: string; uri: string; color_tag?: string }[];
+  activeConnections: { id: string; name: string; uri: string; profileId?: string; color_tag?: string }[];
   onOpenConnectionManager: () => void;
   onDisconnect: (connectionId: string) => void;
   width?: number;

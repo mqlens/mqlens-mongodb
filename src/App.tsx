@@ -1742,7 +1742,9 @@ function Workspace() {
                 <QuickStart
                   onConnect={() => setIsConnectionModalOpen(true)}
                   onOpenSettings={handleOpenSettingsTab}
-                  onQuickConnect={handleQuickConnect}
+                  onQuickConnect={async (profile) => {
+                    await handleQuickConnect(profile);
+                  }}
                   onLoadSampleData={handleLoadSampleData}
                   activeConnections={activeConnections}
                   profilesRefreshKey={profilesRefreshKey}
