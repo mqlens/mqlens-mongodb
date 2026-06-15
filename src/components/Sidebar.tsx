@@ -254,9 +254,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { toast, confirm, prompt } = useDialogs();
   const [filterQuery, setFilterQuery] = useState('');
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     onFilterQueryChange?.(filterQuery);
   }, [filterQuery, onFilterQueryChange]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.altKey ||
+        event.shiftKey ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.key.toLowerCase() !== 'f'
+      ) {
+        return;
+      }
+
+      const searchInput = searchInputRef.current;
+      if (!searchInput) return;
+
+      const target = event.target;
+      if (target instanceof Element && target !== searchInput) {
+        const isEditable =
+          target.closest('.monaco-editor') ||
+          target.closest('input, textarea, select, [contenteditable="true"]');
+        if (isEditable) return;
+      }
+
+      event.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const [sectionsOpen, setSectionsOpen] = useState({
     connections: true,
@@ -1649,6 +1683,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="relative">
             <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
+              ref={searchInputRef}
               type="text"
               value={filterQuery}
               onChange={(e) => setFilterQuery(e.target.value)}

@@ -67,4 +67,14 @@ describe('QuickStart', () => {
     fireEvent.click(await screen.findByTestId('qs-load-sample'));
     expect(onLoadSampleData).toHaveBeenCalled();
   });
+
+  it('shows platform-aware shortcut labels', async () => {
+    const platform = vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32');
+    invokeMock.mockResolvedValueOnce([]);
+
+    setup();
+
+    expect(await screen.findByText('Ctrl F')).toBeInTheDocument();
+    platform.mockRestore();
+  });
 });

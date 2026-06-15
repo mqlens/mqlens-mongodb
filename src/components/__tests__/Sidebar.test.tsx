@@ -84,6 +84,71 @@ describe('Sidebar Component', () => {
     expect(screen.getByText('user_analytics')).toBeInTheDocument();
   });
 
+  it.each([
+    ['Ctrl', { ctrlKey: true }],
+    ['Command', { metaKey: true }],
+  ])('focuses sidebar search with %s+F', async (_label, modifier) => {
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    const search = screen.getByTestId('sidebar-search');
+    const event = new KeyboardEvent('keydown', {
+      key: 'f',
+      ...modifier,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    window.dispatchEvent(event);
+
+    expect(search).toHaveFocus();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('does not steal Ctrl+F from Monaco editors', () => {
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    const monaco = document.createElement('div');
+    monaco.className = 'monaco-editor';
+    const textarea = document.createElement('textarea');
+    monaco.appendChild(textarea);
+    document.body.appendChild(monaco);
+    textarea.focus();
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    textarea.dispatchEvent(event);
+
+    expect(textarea).toHaveFocus();
+    expect(screen.getByTestId('sidebar-search')).not.toHaveFocus();
+    expect(event.defaultPrevented).toBe(false);
+
+    monaco.remove();
+  });
+
   it('handles rendering multiple connections, databases, collections, and indexes', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases') {

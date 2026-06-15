@@ -8,6 +8,10 @@ export const AVATAR_PALETTE = [
   '#1f6f7a', // teal
 ] as const;
 
+export function primaryShortcutModifier(platform = navigator.platform): '⌘' | 'Ctrl' {
+  return /Mac|iPhone|iPad|iPod/i.test(platform) ? '⌘' : 'Ctrl';
+}
+
 /** Host[:port] parsed from a mongodb URI, credentials stripped. '' if unparseable. */
 export function hostFromUri(uri: string): string {
   try {
