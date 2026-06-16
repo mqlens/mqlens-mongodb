@@ -4,6 +4,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { formatShortcut, shortcutById } from "@/lib/shortcuts";
 
 interface StatusBarProps {
   cpu?: string;
@@ -52,7 +53,7 @@ export function StatusBar({
             </button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            Reset zoom (⌘0 / Ctrl+0)
+            Reset zoom ({formatShortcut(shortcutById('zoom-reset')!)})
           </TooltipContent>
         </Tooltip>
       )}

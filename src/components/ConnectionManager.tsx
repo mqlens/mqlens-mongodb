@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
 import { useEscapeClose } from '../lib/useEscapeClose';
+import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
   Folder, FolderPlus, FolderOpen, Search, ChevronRight,
@@ -673,7 +674,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const handleImportUri = async () => {
     const uri = await prompt({
       title: 'Import Connection URI',
-      message: 'Paste a mongodb:// or mongodb+srv:// connection string. Protocol, hosts, auth, TLS, and topology are detected automatically. (⌘/Ctrl+Enter to import)',
+      message: `Paste a mongodb:// or mongodb+srv:// connection string. Protocol, hosts, auth, TLS, and topology are detected automatically. (${formatShortcut(shortcutById('submit-dialog')!)} to import)`,
       placeholder: 'mongodb://user:pass@host1:27017,host2:27017/?replicaSet=rs0&tls=true',
       confirmLabel: 'Import',
       multiline: true,

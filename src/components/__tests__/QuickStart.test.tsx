@@ -77,4 +77,12 @@ describe('QuickStart', () => {
     expect(await screen.findByText('Ctrl F')).toBeInTheDocument();
     platform.mockRestore();
   });
+
+  it('links to the full shortcuts reference', async () => {
+    invokeMock.mockResolvedValueOnce([]);
+    const onOpenShortcuts = vi.fn();
+    setup({ onOpenShortcuts });
+    fireEvent.click(await screen.findByTestId('qs-view-all-shortcuts'));
+    expect(onOpenShortcuts).toHaveBeenCalled();
+  });
 });

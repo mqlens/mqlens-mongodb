@@ -9,7 +9,7 @@ import { CommandPalette, type PaletteAction } from './components/CommandPalette'
 import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
 import { DataGrid } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
-import { SettingsView } from './components/SettingsModal';
+import { SettingsView, type SettingsTabId } from './components/SettingsModal';
 import { IndexViewer } from './components/IndexViewer';
 import { IndexModal } from './components/IndexModal';
 import { MongoShell } from './components/MongoShell';
@@ -211,6 +211,7 @@ function Workspace() {
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
 
   const addActiveConnection = (
     id: string,
@@ -546,7 +547,7 @@ function Workspace() {
     setActiveTabId(tabId);
   };
 
-  const handleOpenSettingsTab = () => {
+  const openSettingsTab = (section: SettingsTabId = 'appearance') => {
     const tabId = 'settings';
     const tabExists = tabs.some(t => t.id === tabId);
     if (!tabExists) {
@@ -562,8 +563,12 @@ function Workspace() {
         explainResult: null,
       }]);
     }
+    setSettingsInitialTab(section);
     setActiveTabId(tabId);
   };
+
+  const handleOpenSettingsTab = () => openSettingsTab('appearance');
+  const handleOpenShortcutsReference = () => openSettingsTab('shortcuts');
 
   const handleOpenExportTab = (sourceTab: QueryTab) => {
     if (sourceTab.type !== 'collection') return;
@@ -1749,12 +1754,13 @@ function Workspace() {
                 );
               })()}
               {activeTab && activeTab.type === 'settings' && (
-                <SettingsView />
+                <SettingsView initialTab={settingsInitialTab} />
               )}
               {activeTab && activeTab.type === 'quickstart' && (
                 <QuickStart
                   onConnect={() => setIsConnectionModalOpen(true)}
                   onOpenSettings={handleOpenSettingsTab}
+                  onOpenShortcuts={handleOpenShortcutsReference}
                   onQuickConnect={async (profile) => {
                     await handleQuickConnect(profile);
                   }}
