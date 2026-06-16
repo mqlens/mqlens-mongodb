@@ -118,8 +118,8 @@ describe('UpdatePrompt', () => {
     routeInvoke({ update_check: () => Promise.reject(new Error('invalid signature')) });
     render(<UpdatePrompt />);
     triggerManualCheck();
-    expect(await screen.findByTestId('update-toast')).toHaveTextContent(/update server/i);
-    expect(readUpdateCheckSnapshot()?.result).toBe('check-failed');
+    expect(await screen.findByText(/update server/i)).toBeInTheDocument();
+    await waitFor(() => expect(readUpdateCheckSnapshot()?.result).toBe('check-failed'));
   });
 
   it('records offline on startup without showing a toast', async () => {
