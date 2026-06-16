@@ -5,7 +5,7 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use argon2::{Algorithm, Argon2, Params, Version};
-use rand::RngCore;
+use rand::Rng;
 
 /// Constant plaintext encrypted under the derived key to form the unlock verifier.
 pub const VERIFIER_PLAINTEXT: &[u8] = b"mqlens-vault-v1";
@@ -42,16 +42,12 @@ pub fn derive_key(password: &str, salt: &[u8], params: KdfParams) -> Result<[u8;
 
 /// 16 random salt bytes.
 pub fn new_salt() -> [u8; 16] {
-    let mut s = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut s);
-    s
+    rand::thread_rng().gen()
 }
 
 /// 12 random nonce bytes (AES-GCM standard nonce size).
 pub fn new_nonce() -> [u8; 12] {
-    let mut n = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut n);
-    n
+    rand::thread_rng().gen()
 }
 
 /// Encrypt plaintext, returning `nonce(12) || ciphertext+tag`.

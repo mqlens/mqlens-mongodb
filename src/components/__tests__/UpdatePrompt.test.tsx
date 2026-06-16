@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { readUpdateCheckSnapshot } from '../../lib/updateCheckState';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => invokeMock(...a) }));
@@ -28,6 +29,12 @@ function routeInvoke(map: Record<string, unknown>) {
 beforeEach(() => {
   invokeMock.mockReset();
   mockRelaunch.mockClear();
+  localStorage.clear();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
 });
 
 describe('UpdatePrompt', () => {
@@ -96,5 +103,33 @@ describe('UpdatePrompt', () => {
     fireEvent.click(await screen.findByTestId('update-later'));
     expect(screen.queryByTestId('update-dialog')).toBeNull();
     expect(installFn).not.toHaveBeenCalled();
+  });
+
+  it('shows an offline message on manual check when navigator is offline', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    routeInvoke({ update_check: null });
+    render(<UpdatePrompt />);
+    triggerManualCheck();
+    expect(await screen.findByTestId('update-toast')).toHaveTextContent(/offline/i);
+    expect(readUpdateCheckSnapshot()?.result).toBe('offline');
+  });
+
+  it('shows a server error message on manual check failure', async () => {
+    routeInvoke({ update_check: () => Promise.reject(new Error('invalid signature')) });
+    render(<UpdatePrompt />);
+    triggerManualCheck();
+    expect(await screen.findByText(/update server/i)).toBeInTheDocument();
+    await waitFor(() => expect(readUpdateCheckSnapshot()?.result).toBe('check-failed'));
+  });
+
+  it('records offline on startup without showing a toast', async () => {
+    vi.useFakeTimers();
+    routeInvoke({ update_check: () => Promise.reject(new Error('network timeout')) });
+    render(<UpdatePrompt />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    expect(readUpdateCheckSnapshot()?.result).toBe('offline');
+    expect(screen.queryByTestId('update-toast')).toBeNull();
   });
 });

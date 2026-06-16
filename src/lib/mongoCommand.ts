@@ -11,11 +11,16 @@ export interface GeneratedQuery {
   script?: string;
 }
 
+// Escape a collection name for a double-quoted mongosh string literal.
+function escapeCollectionName(name: string): string {
+  return name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 // A collection reference safe for a mongosh `db.<ref>` expression.
 // Identifier-safe names use dot access; anything else uses getCollection("…").
 export function collectionRef(name: string): string {
   if (/^[A-Za-z_$][\w$]*$/.test(name)) return name;
-  return `getCollection("${name.replace(/"/g, '\\"')}")`;
+  return `getCollection("${escapeCollectionName(name)}")`;
 }
 
 const isEmptyObject = (val: unknown): boolean =>

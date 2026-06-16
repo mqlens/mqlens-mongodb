@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   ArrowUpCircle,
   Server,
+  Keyboard,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -19,7 +20,15 @@ import {
   type BiometricStatus,
 } from '../lib/vault';
 import { CHECK_UPDATE_EVENT } from './UpdatePrompt';
+import {
+  formatLastChecked,
+  readUpdateCheckSnapshot,
+  UPDATE_CHECK_STATE_EVENT,
+  updateCheckResultLabel,
+  type UpdateCheckSnapshot,
+} from '@/lib/updateCheckState';
 import { AppearanceSettings } from '@/components/theme/AppearanceSettings';
+import { KeyboardShortcutsSettings } from '@/components/KeyboardShortcutsSettings';
 import type { AppearanceSettings as AppearanceSettingsType } from '@/lib/themes/schema';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -76,7 +85,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   antigravity: 'Antigravity (local)',
 };
 
-type SettingsTabId = 'appearance' | 'ai' | 'mcp' | 'mongosh' | 'updates' | 'security';
+type SettingsTabId = 'appearance' | 'ai' | 'mcp' | 'mongosh' | 'updates' | 'shortcuts' | 'security';
 
 const SETTINGS_TABS: {
   id: SettingsTabId;
@@ -119,6 +128,12 @@ const SETTINGS_TABS: {
     persistFooter: true,
   },
   {
+    id: 'shortcuts',
+    label: 'Shortcuts',
+    description: 'Keyboard shortcuts reference for the workspace.',
+    Icon: Keyboard,
+  },
+  {
     id: 'security',
     label: 'Security',
     description: 'Master password, biometrics, and vault recovery.',
@@ -126,8 +141,14 @@ const SETTINGS_TABS: {
   },
 ];
 
-export const SettingsView: React.FC = () => {
-  const [tab, setTab] = useState<SettingsTabId>('appearance');
+export type { SettingsTabId };
+
+export interface SettingsViewProps {
+  initialTab?: SettingsTabId;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab }) => {
+  const [tab, setTab] = useState<SettingsTabId>(initialTab ?? 'appearance');
   const [mongoshPath, setMongoshPath] = useState('');
   const [aiProvider, setAiProvider] = useState('anthropic');
   const [anthropicKey, setAnthropicKey] = useState('');
@@ -151,8 +172,21 @@ export const SettingsView: React.FC = () => {
   const [secMsg, setSecMsg] = useState('');
   const [bio, setBio] = useState<BiometricStatus | null>(null);
   const [bioBusy, setBioBusy] = useState(false);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheckSnapshot | null>(() =>
+    readUpdateCheckSnapshot(),
+  );
 
   const activeTab = SETTINGS_TABS.find((t) => t.id === tab) ?? SETTINGS_TABS[0];
+
+  useEffect(() => {
+    const sync = () => setUpdateCheck(readUpdateCheckSnapshot());
+    window.addEventListener(UPDATE_CHECK_STATE_EVENT, sync);
+    return () => window.removeEventListener(UPDATE_CHECK_STATE_EVENT, sync);
+  }, []);
+
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+  }, [initialTab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -336,7 +370,21 @@ export const SettingsView: React.FC = () => {
                 <CardTitle className="text-base">Manual check</CardTitle>
                 <CardDescription>Trigger an update check without restarting the app.</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
+                {updateCheck ? (
+                  <div className="space-y-1 text-sm" data-testid="update-last-checked">
+                    <p className="text-muted-foreground">
+                      Last checked: {formatLastChecked(updateCheck.checkedAt)}
+                    </p>
+                    <p className="text-foreground">
+                      Result: {updateCheckResultLabel(updateCheck.result)}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground" data-testid="update-last-checked">
+                    No update check recorded yet.
+                  </p>
+                )}
                 <Button
                   type="button"
                   variant="outline"
@@ -569,6 +617,9 @@ export const SettingsView: React.FC = () => {
             </Card>
           </div>
         );
+
+      case 'shortcuts':
+        return <KeyboardShortcutsSettings />;
 
       case 'security':
         return (

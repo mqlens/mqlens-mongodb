@@ -4,10 +4,11 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
 import { useEscapeClose } from '../lib/useEscapeClose';
+import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
   Folder, FolderPlus, FolderOpen, Search, ChevronRight,
-  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste
+  Copy, ExternalLink, ShieldAlert, Eye, EyeOff, LayoutGrid, ClipboardPaste, Pipette
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,7 @@ import {
   loadConnectionFolders,
   saveConnectionFolders,
 } from '@/lib/connectionFolders';
+import { CONNECTION_COLOR_PALETTE, colorInputValue, isPresetConnectionColor, normalizeHexColor } from '@/lib/connectionColors';
 
 // Mirrors the backend ssh_tunnel::SshConfig (auth is internally tagged).
 export type SshConfig = {
@@ -53,14 +55,14 @@ interface ConnectionProfile {
   id: string;
   name: string;
   uri: string;
-  color_tag?: string;
+  color_tag?: string | null;
   ssh?: SshConfig | null;
 }
 
 interface ConnectionManagerProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnect: (id: string, name: string, uri: string, profileId: string, colorTag?: string) => void;
+  onConnect: (id: string, name: string, uri: string, profileId: string, colorTag?: string | null) => void;
   activeConnections?: { id: string; profileId: string; name: string; uri: string }[];
 }
 
@@ -116,6 +118,7 @@ const BLANK_CONN = {
   compression: 'none',
   name: 'New Connection',
   folder: '',
+  colorTag: '',
 };
 
 const sidebarPanelClass =
@@ -140,6 +143,16 @@ const treeRowClass = (active?: boolean) =>
       ? 'bg-background font-medium text-foreground shadow-sm ring-1 ring-border'
       : 'text-muted-foreground hover:bg-sidebar-accent/70 hover:text-foreground',
   );
+
+const ConnectionColorDot = ({ color, className }: { color?: string | null; className?: string }) =>
+  color ? (
+    <span
+      className={cn('h-2 w-2 shrink-0 rounded-full', className)}
+      style={{ backgroundColor: color }}
+      title="Connection color"
+      data-testid="connection-color-dot"
+    />
+  ) : null;
 
 const TABS = [
   { id: 'server', label: 'Server', icon: Server },
@@ -487,6 +500,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       uri: profile.uri,
       ...parsed,
       folder: profileFolderMap[profile.id] || '',
+      colorTag: profile.color_tag || '',
       ...sshFields,
     });
 
@@ -509,6 +523,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       topology: profile.uri.includes('replicaSet=') ? 'replicaSet' : 'standalone',
       hosts: [{ host: 'localhost', port: '27017' }],
       folder: profileFolderMap[profile.id] || '',
+      colorTag: profile.color_tag || '',
     });
     setError(null);
     setTestResult(null);
@@ -564,6 +579,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       name: editorState.name,
       uri: uriToSave,
       ssh: buildSshConfig(editorState),
+      color_tag: editorState.colorTag
+        ? normalizeHexColor(editorState.colorTag) ?? editorState.colorTag
+        : null,
     };
 
     setLoading(true);
@@ -626,7 +644,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     try {
       const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-      onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag);
+      onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
     } catch (err: any) {
       setError(String(err));
     } finally {
@@ -656,7 +674,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const handleImportUri = async () => {
     const uri = await prompt({
       title: 'Import Connection URI',
-      message: 'Paste a mongodb:// or mongodb+srv:// connection string. Protocol, hosts, auth, TLS, and topology are detected automatically. (⌘/Ctrl+Enter to import)',
+      message: `Paste a mongodb:// or mongodb+srv:// connection string. Protocol, hosts, auth, TLS, and topology are detected automatically. (${formatShortcut(shortcutById('submit-dialog')!)} to import)`,
       placeholder: 'mongodb://user:pass@host1:27017,host2:27017/?replicaSet=rs0&tls=true',
       confirmLabel: 'Import',
       multiline: true,
@@ -876,6 +894,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                               onClick={() => handleSelect(p.id)}
                               onDoubleClick={handleConnectClick}
                             >
+                              <ConnectionColorDot color={p.color_tag} />
                               <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
                               <span className="min-w-0 truncate">{p.name || 'Unnamed connection'}</span>
                               {isActive && (
@@ -906,6 +925,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     onClick={() => handleSelect(p.id)}
                     onDoubleClick={handleConnectClick}
                   >
+                    <ConnectionColorDot color={p.color_tag} />
                     <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
                     <span className="min-w-0 truncate">{p.name || 'Unnamed connection'}</span>
                     {isActive && (
@@ -931,7 +951,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       <Server size={18} className="text-primary" />
                     </div>
                     <div className="min-w-0">
-                      <h3 className="truncate text-base font-semibold text-foreground">{selectedProfile.name}</h3>
+                      <div className="flex items-center gap-2">
+                        <ConnectionColorDot color={selectedProfile.color_tag} className="h-2.5 w-2.5" />
+                        <h3 className="truncate text-base font-semibold text-foreground">{selectedProfile.name}</h3>
+                      </div>
                       <p className="text-ui-xs text-muted-foreground">Connection profile</p>
                     </div>
                   </div>
@@ -1121,6 +1144,69 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Label className="shrink-0 text-ui-xs">Color tag</Label>
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Connection color tag">
+                  <button
+                    type="button"
+                    data-testid="color-swatch-none"
+                    title="No color"
+                    aria-label="No color"
+                    aria-pressed={!editorState.colorTag}
+                    className={cn(
+                      'flex h-5 w-5 items-center justify-center rounded-full border border-border text-ui-2xs text-muted-foreground transition-colors',
+                      !editorState.colorTag && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
+                    )}
+                    onClick={() => setEditorState((prev) => ({ ...prev, colorTag: '' }))}
+                  >
+                    ∅
+                  </button>
+                  {CONNECTION_COLOR_PALETTE.map((swatch) => (
+                    <button
+                      key={swatch.id}
+                      type="button"
+                      data-testid={`color-swatch-${swatch.id}`}
+                      title={swatch.label}
+                      aria-label={swatch.label}
+                      aria-pressed={editorState.colorTag === swatch.value}
+                      className={cn(
+                        'h-5 w-5 rounded-full transition-[box-shadow]',
+                        editorState.colorTag === swatch.value && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
+                      )}
+                      style={{ backgroundColor: swatch.value }}
+                      onClick={() => setEditorState((prev) => ({ ...prev, colorTag: swatch.value }))}
+                    />
+                  ))}
+                  <label
+                    className={cn(
+                      'relative inline-flex h-6 cursor-pointer items-center gap-1 rounded-md border border-dashed border-border px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-accent hover:text-foreground',
+                      editorState.colorTag
+                        && !isPresetConnectionColor(editorState.colorTag)
+                        && 'border-solid ring-2 ring-primary ring-offset-1 ring-offset-background',
+                    )}
+                    title="Pick a custom color"
+                  >
+                    <Pipette size={11} className="pointer-events-none shrink-0" aria-hidden="true" />
+                    <span className="pointer-events-none">Custom</span>
+                    {editorState.colorTag && !isPresetConnectionColor(editorState.colorTag) && (
+                      <span
+                        className="pointer-events-none h-2.5 w-2.5 shrink-0 rounded-full border border-border"
+                        style={{ backgroundColor: editorState.colorTag }}
+                        data-testid="color-picker-custom-preview"
+                      />
+                    )}
+                    <input
+                      type="color"
+                      data-testid="color-picker-custom"
+                      aria-label="Pick a custom color"
+                      value={colorInputValue(editorState.colorTag)}
+                      onChange={(e) => setEditorState((prev) => ({ ...prev, colorTag: e.target.value }))}
+                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                    />
+                  </label>
+                </div>
               </div>
 
               <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">

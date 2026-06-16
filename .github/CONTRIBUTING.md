@@ -10,7 +10,8 @@ By participating, you agree to our [Code of Conduct](CODE_OF_CONDUCT.md).
 - **Report a bug or workflow issue** — use the in-app **Help → Report a bug**, or
   open a [bug report](https://github.com/mqlens/mqlens-mongodb/issues/new?template=bug_report.yml).
 - **Request a feature** — open a [feature request](https://github.com/mqlens/mqlens-mongodb/issues/new?template=feature_request.yml).
-  Larger ideas are tracked under the [`roadmap`](https://github.com/mqlens/mqlens-mongodb/labels/roadmap) label.
+  Larger ideas are tracked on the [roadmap board](https://github.com/orgs/mqlens/projects/2) and under the
+  [`roadmap`](https://github.com/mqlens/mqlens-mongodb/labels/roadmap) label — see [docs/ROADMAP.md](../docs/ROADMAP.md).
 - **Pick up an issue** — [`good first issue`](https://github.com/mqlens/mqlens-mongodb/labels/good%20first%20issue)
   is a good place to start. Comment to claim it.
 - **Improve docs** — README, in-app text, or the website under `website/`.

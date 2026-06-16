@@ -47,3 +47,15 @@ services you connect to.
 - **Signed builds** — macOS notarized, Windows signed, and GPG-signed Linux
   artifacts; updater artifacts are signed and verified before install.
 - **Apache-2.0** — the source is open for review.
+
+## Known dependency advisories
+
+Some GitHub Dependabot alerts reflect **transitive Linux-only dependencies** we
+cannot patch in this repository alone:
+
+- **`glib` (< 0.20)** — pulled in by Tauri’s GTK3 / WebKitGTK stack on Linux.
+  The unsoundness in `VariantStrIter` is fixed in `glib` 0.20+, but gtk-rs 0.18
+  (GTK3) is unmaintained and Tauri has not yet completed its GTK4 migration.
+  We track upstream: [tauri#12048](https://github.com/tauri-apps/tauri/issues/12048),
+  [wry#1474](https://github.com/tauri-apps/wry/issues/1474). Risk is limited to
+  Linux builds; macOS and Windows are unaffected.

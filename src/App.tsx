@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { WorkspaceTabBar } from '@/components/layout/WorkspaceTabBar';
 import { StatusBar } from '@/components/layout/StatusBar';
@@ -6,10 +6,10 @@ import { Toaster } from '@/components/ui/sonner';
 import { useTheme } from '@/hooks/use-theme';
 import { Sidebar } from './components/Sidebar';
 import { CommandPalette, type PaletteAction } from './components/CommandPalette';
-import { DocumentViewer } from './components/DocumentViewer';
+import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
 import { DataGrid } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
-import { SettingsView } from './components/SettingsModal';
+import { SettingsView, type SettingsTabId } from './components/SettingsModal';
 import { IndexViewer } from './components/IndexViewer';
 import { IndexModal } from './components/IndexModal';
 import { MongoShell } from './components/MongoShell';
@@ -199,14 +199,19 @@ const tabLabelFor = (
 
 function Workspace() {
   const { toast, confirm, choose, prompt } = useDialogs();
-  const { config, resolvedMode, setMode, setSpacingDensity } = useTheme();
+  const { config, resolvedMode, setMode, setSpacingDensity, resetZoom } = useTheme();
   const density = config.spacingDensity;
   // Open the Quick Start tab by default so the app never starts on a blank canvas.
   const [tabs, setTabs] = useState<QueryTab[]>([createQuickStartTab()]);
   const [activeTabId, setActiveTabId] = useState<string | null>(QUICK_START_TAB_ID);
+  const tabBuilderStateCache = useRef(new Map<string, BuilderState>());
+  const handleBuilderStateChange = useCallback((tabId: string, state: BuilderState) => {
+    tabBuilderStateCache.current.set(tabId, state);
+  }, []);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
 
   const addActiveConnection = (
     id: string,
@@ -229,7 +234,7 @@ function Workspace() {
     if (existing) return existing.id;
     try {
       const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-      addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag);
+      addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
       return id;
     } catch (e) {
       toast(`Could not connect to ${profile.name}: ${(e as any)?.message || String(e)}`, 'error');
@@ -542,7 +547,7 @@ function Workspace() {
     setActiveTabId(tabId);
   };
 
-  const handleOpenSettingsTab = () => {
+  const openSettingsTab = (section: SettingsTabId = 'appearance') => {
     const tabId = 'settings';
     const tabExists = tabs.some(t => t.id === tabId);
     if (!tabExists) {
@@ -558,8 +563,12 @@ function Workspace() {
         explainResult: null,
       }]);
     }
+    setSettingsInitialTab(section);
     setActiveTabId(tabId);
   };
+
+  const handleOpenSettingsTab = () => openSettingsTab('appearance');
+  const handleOpenShortcutsReference = () => openSettingsTab('shortcuts');
 
   const handleOpenExportTab = (sourceTab: QueryTab) => {
     if (sourceTab.type !== 'collection') return;
@@ -871,6 +880,7 @@ function Workspace() {
   };
 
   const closeTabById = (tabId: string) => {
+    tabBuilderStateCache.current.delete(tabId);
     const updatedTabs = tabs.filter(t => t.id !== tabId);
     setTabs(updatedTabs);
 
@@ -1510,6 +1520,8 @@ function Workspace() {
           memory={resUsage ? formatBytes(resUsage.memory_bytes) : undefined}
           mongoVersion={mongoVersion ?? undefined}
           appVersion={appVersion ? `v${appVersion}` : undefined}
+          zoomPercent={Math.round(config.uiZoom * 100)}
+          onZoomReset={resetZoom}
         />
       }
       overlays={
@@ -1529,7 +1541,7 @@ function Workspace() {
             isOpen={isConnectionModalOpen}
             onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
             onConnect={(id, name, uri, profileId, colorTag) => {
-              addActiveConnection(id, name, uri, profileId, colorTag);
+              addActiveConnection(id, name, uri, profileId, colorTag ?? undefined);
               setIsConnectionModalOpen(false);
               setProfilesRefreshKey((k) => k + 1);
             }}
@@ -1597,11 +1609,17 @@ function Workspace() {
                 const connectionUser = activeConnection ? usernameFromUri(activeConnection.uri) : '';
                 return (
                   <DocumentViewer
+                    key={activeTab.id}
                     connectionId={activeTab.connectionId}
                     connectionName={connectionName}
                     connectionUser={connectionUser}
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
+                    initialBuilderState={
+                      tabBuilderStateCache.current.get(activeTab.id)
+                      ?? builderStateFromQueryTab(activeTab.lastQuery, activeTab.lastAggregate)
+                    }
+                    onBuilderStateChange={(state) => handleBuilderStateChange(activeTab.id, state)}
                     onExecute={handleExecuteQuery}
                     onExecuteAggregate={handleExecuteAggregate}
                     onExplain={handleExplainQuery}
@@ -1736,12 +1754,13 @@ function Workspace() {
                 );
               })()}
               {activeTab && activeTab.type === 'settings' && (
-                <SettingsView />
+                <SettingsView initialTab={settingsInitialTab} />
               )}
               {activeTab && activeTab.type === 'quickstart' && (
                 <QuickStart
                   onConnect={() => setIsConnectionModalOpen(true)}
                   onOpenSettings={handleOpenSettingsTab}
+                  onOpenShortcuts={handleOpenShortcutsReference}
                   onQuickConnect={async (profile) => {
                     await handleQuickConnect(profile);
                   }}

@@ -8,6 +8,8 @@ export const AVATAR_PALETTE = [
   '#1f6f7a', // teal
 ] as const;
 
+export { primaryShortcutModifier } from './shortcuts';
+
 /** Host[:port] parsed from a mongodb URI, credentials stripped. '' if unparseable. */
 export function hostFromUri(uri: string): string {
   try {

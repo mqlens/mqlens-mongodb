@@ -18,6 +18,7 @@ import { DataGrid } from './DataGrid';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
 import { useMonacoTheme } from '../lib/useMonacoTheme';
 import { registerMqlensMonacoThemes } from '../lib/monacoAppTheme';
+import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 
 type ShellTab = 'console' | 'viewer';
 
@@ -645,7 +646,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           <span className="text-xs font-semibold text-foreground">mongosh</span>
           <span className="font-mono text-[11px] text-muted-foreground">{connectionName} · {currentDb}</span>
           <span className="flex-1" />
-          <span className="font-mono text-[10px] text-muted-foreground">Ctrl/⌘↵</span>
+          <span className="font-mono text-[10px] text-muted-foreground">
+            {formatShortcut(shortcutById('run-query')!)}
+          </span>
           <Button size="sm" onClick={() => runRef.current()} disabled={running}>
             <Play size={11} />
             Run

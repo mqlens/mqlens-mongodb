@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ArrowUpCircle } from 'lucide-react';
+import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ArrowUpCircle, WifiOff } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,6 +14,11 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useEscapeClose } from '../lib/useEscapeClose';
+import {
+  classifyUpdateCheckError,
+  updateCheckBackoffMs,
+  writeUpdateCheckSnapshot,
+} from '@/lib/updateCheckState';
 
 export const CHECK_UPDATE_EVENT = 'mqlens:check-update';
 
@@ -24,7 +29,14 @@ interface UpdateMeta {
   date: string | null;
 }
 
-type Phase = 'idle' | 'checking' | 'available' | 'downloading' | 'uptodate' | 'error';
+type Phase =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'uptodate'
+  | 'offline'
+  | 'check-failed';
 
 const renderInline = (text: string): React.ReactNode[] => {
   const out: React.ReactNode[] = [];
@@ -103,35 +115,89 @@ export const UpdatePrompt: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [pct, setPct] = useState(0);
   const [manual, setManual] = useState(false);
+  const retryAttemptRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const runCheck = useCallback(async (isManual: boolean) => {
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleAutoRetry = useCallback((attempt: number, runCheck: (isManual: boolean, retryAttempt?: number) => Promise<void>) => {
+    clearRetryTimer();
+    const delay = updateCheckBackoffMs(attempt);
+    retryTimerRef.current = setTimeout(() => {
+      void runCheck(false, attempt + 1);
+    }, delay);
+  }, [clearRetryTimer]);
+
+  const runCheck = useCallback(async (isManual: boolean, retryAttempt = 0) => {
+    clearRetryTimer();
     setManual(isManual);
     setError(null);
-    setPhase('checking');
+
+    if (isManual && typeof navigator !== 'undefined' && !navigator.onLine) {
+      writeUpdateCheckSnapshot({
+        checkedAt: new Date().toISOString(),
+        result: 'offline',
+      });
+      setPhase('offline');
+      return;
+    }
+
+    if (isManual) setPhase('checking');
+
     try {
       const channel = await currentChannel();
       const meta = await invoke<UpdateMeta | null>('update_check', { channel });
+      const checkedAt = new Date().toISOString();
+      retryAttemptRef.current = 0;
       if (meta) {
         setUpdate(meta);
         setPhase('available');
+        writeUpdateCheckSnapshot({ checkedAt, result: 'available' });
       } else {
+        writeUpdateCheckSnapshot({ checkedAt, result: 'uptodate' });
         setPhase(isManual ? 'uptodate' : 'idle');
       }
-    } catch (e: any) {
-      setError(String(e?.message || e));
-      setPhase(isManual ? 'error' : 'idle');
+    } catch (e: unknown) {
+      const detail = String((e as { message?: string })?.message || e);
+      const result = classifyUpdateCheckError(e);
+      writeUpdateCheckSnapshot({
+        checkedAt: new Date().toISOString(),
+        result,
+        detail,
+      });
+      if (isManual) {
+        setError(detail);
+        setPhase(result);
+      } else {
+        setPhase('idle');
+        if (result === 'offline') {
+          scheduleAutoRetry(retryAttempt, runCheck);
+        }
+      }
     }
-  }, []);
+  }, [clearRetryTimer, scheduleAutoRetry]);
 
   useEffect(() => {
     const t = setTimeout(() => void runCheck(false), 4000);
     const onManual = () => void runCheck(true);
+    const onOnline = () => {
+      retryAttemptRef.current = 0;
+      void runCheck(false);
+    };
     window.addEventListener(CHECK_UPDATE_EVENT, onManual);
+    window.addEventListener('online', onOnline);
     return () => {
       clearTimeout(t);
+      clearRetryTimer();
       window.removeEventListener(CHECK_UPDATE_EVENT, onManual);
+      window.removeEventListener('online', onOnline);
     };
-  }, [runCheck]);
+  }, [runCheck, clearRetryTimer]);
 
   const install = async () => {
     if (!update) return;
@@ -149,9 +215,9 @@ export const UpdatePrompt: React.FC = () => {
       const channel = await currentChannel();
       await invoke('update_install', { channel });
       await relaunch();
-    } catch (e: any) {
-      setError(String(e?.message || e));
-      setPhase('error');
+    } catch (e: unknown) {
+      setError(String((e as { message?: string })?.message || e));
+      setPhase('check-failed');
     } finally {
       unlisten?.();
     }
@@ -185,10 +251,22 @@ export const UpdatePrompt: React.FC = () => {
       </div>
     );
   }
-  if (phase === 'error') {
+  if (phase === 'offline') {
+    return (
+      <div className={cn(toastClassName, 'border-warning/30')} data-testid="update-toast">
+        <WifiOff size={14} className="text-warning" />
+        You’re offline. Connect to the internet and try again.
+        <Button type="button" variant="ghost" size="icon" className="ml-1 h-6 w-6" onClick={dismiss} aria-label="Dismiss">
+          <X size={12} />
+        </Button>
+      </div>
+    );
+  }
+  if (phase === 'check-failed') {
     return (
       <div className={cn(toastClassName, 'border-destructive/30 text-destructive')} data-testid="update-toast" title={error ?? undefined}>
-        <AlertTriangle size={14} /> Update check failed.
+        <AlertTriangle size={14} />
+        Couldn’t reach the update server. Try again later.
         <Button type="button" variant="ghost" size="icon" className="ml-1 h-6 w-6" onClick={dismiss} aria-label="Dismiss">
           <X size={12} />
         </Button>
