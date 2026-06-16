@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/resizable';
 import type { Layout } from 'react-resizable-panels';
 import { cn } from '@/lib/utils';
+import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
   Play, 
   AlertCircle,
@@ -1357,7 +1358,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               disabled={loading || explainLoading}
               size="sm"
               className="h-7 rounded-r-none px-2.5 text-[11px]"
-              title="Execute query (Ctrl/⌘ + Enter)"
+              title={`Execute query (${formatShortcut(shortcutById('run-query')!)})`}
             >
               <Play size={11} fill="currentColor" />
               Run

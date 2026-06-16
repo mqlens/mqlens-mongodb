@@ -21,6 +21,7 @@ import {
   UI_ZOOM_MIN,
   UI_ZOOM_STEP,
 } from "@/lib/themes/ui-scale";
+import { formatZoomShortcutHint } from "@/lib/shortcuts";
 
 export function AppearanceSettings() {
   const {
@@ -159,7 +160,7 @@ export function AppearanceSettings() {
               onValueChange={([v]) => setUiZoom(clampUiZoom(v))}
             />
             <p className="text-[11px] text-muted-foreground">
-              Shortcut: ⌘ + / ⌘ − / ⌘ 0 to reset
+              Shortcut: {formatZoomShortcutHint()}
             </p>
           </div>
 

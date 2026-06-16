@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import brandMark from '../assets/mqlens-mark.png';
 import type { ConnectionProfile } from '../lib/connection';
-import { primaryShortcutModifier } from '../lib/quickStartUtils';
+import { quickStartShortcutRows } from '../lib/shortcuts';
 import { ConnectionCard } from './ConnectionCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,6 +27,7 @@ import { Separator } from '@/components/ui/separator';
 interface QuickStartProps {
   onConnect: () => void;
   onOpenSettings: () => void;
+  onOpenShortcuts?: () => void;
   onQuickConnect: (profile: ConnectionProfile) => Promise<void>;
   onLoadSampleData: () => void;
   activeConnections: { profileId: string }[];
@@ -52,6 +53,7 @@ const QUICK_ACTIONS: {
 export const QuickStart: React.FC<QuickStartProps> = ({
   onConnect,
   onOpenSettings,
+  onOpenShortcuts,
   onQuickConnect,
   onLoadSampleData,
   activeConnections,
@@ -83,13 +85,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
   const isEmpty = sorted.length === 0;
   const activeIds = new Set(activeConnections.map((c) => c.profileId));
   const activeCount = sorted.filter((p) => activeIds.has(p.id)).length;
-  const modifier = primaryShortcutModifier();
-  const shortcuts = [
-    { keys: `${modifier} ↵`, label: 'Run the current query' },
-    { keys: `${modifier} F`, label: 'Search the sidebar tree' },
-    { keys: `${modifier} K`, label: 'Open command palette' },
-    { keys: `${modifier} + / −`, label: 'Zoom interface in or out' },
-  ] as const;
+  const shortcuts = quickStartShortcutRows();
 
   const handleQuickConnect = async (p: ConnectionProfile) => {
     setConnectingId(p.id);
@@ -303,14 +299,22 @@ export const QuickStart: React.FC<QuickStartProps> = ({
                   <CardTitle className="text-sm">Keyboard shortcuts</CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3 pt-0">
-                  {shortcuts.map(({ keys, label }) => (
-                    <div key={keys} className="flex items-start gap-2.5 text-xs text-muted-foreground">
+                  {shortcuts.map(({ id, keys, label }) => (
+                    <div key={id} className="flex items-start gap-2.5 text-xs text-muted-foreground">
                       <kbd className="mt-0.5 shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-[10px] text-foreground">
                         {keys}
                       </kbd>
                       <span className="min-w-0 flex-1 leading-snug">{label}</span>
                     </div>
                   ))}
+                  <button
+                    type="button"
+                    className="text-left text-xs font-medium text-primary hover:underline"
+                    data-testid="qs-view-all-shortcuts"
+                    onClick={onOpenShortcuts ?? onOpenSettings}
+                  >
+                    View all shortcuts in Settings
+                  </button>
                   <div className="flex items-start gap-2.5 text-xs text-muted-foreground">
                     <FolderOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
                     <span className="min-w-0 flex-1 leading-snug">

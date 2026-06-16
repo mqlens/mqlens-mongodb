@@ -182,4 +182,19 @@ describe('SettingsView Component', () => {
     expect(await screen.findByTestId('update-last-checked')).toHaveTextContent(/Offline/i);
     expect(screen.getByTestId('update-last-checked')).toHaveTextContent(/Last checked:/i);
   });
+
+  it('lists keyboard shortcuts with search on the shortcuts tab', async () => {
+    renderSettings();
+    await openTab('settings-tab-shortcuts');
+    expect(await screen.findByTestId('shortcuts-group-command-palette')).toBeInTheDocument();
+    expect(screen.getByTestId('shortcut-row-palette-open')).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('shortcuts-filter'), { target: { value: 'sidebar' } });
+    expect(screen.getByTestId('shortcut-row-sidebar-search')).toBeInTheDocument();
+    expect(screen.queryByTestId('shortcut-row-palette-open')).not.toBeInTheDocument();
+  });
+
+  it('opens the shortcuts tab when initialTab is shortcuts', async () => {
+    render(<SettingsView initialTab="shortcuts" />);
+    expect(await screen.findByTestId('shortcuts-group-zoom')).toBeInTheDocument();
+  });
 });
