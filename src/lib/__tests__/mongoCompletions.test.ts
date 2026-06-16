@@ -23,6 +23,25 @@ describe('getCompletions — filter', () => {
     const enums = items.filter((i) => i.kind === 'enum');
     expect(enums.map((e) => e.insertText)).toEqual(expect.arrayContaining(['"Free"', '"Team"']));
   });
+  it('does not double-quote enum values when already inside a quote', () => {
+    const schema = new Map([['workspaceId', { type: 'string', enumValues: ['default', 'personal'] }]]);
+    const items = getCompletions(base({ surface: 'filter', textBeforeCursor: '{ "workspaceId": "', token: '', schema }));
+    const enums = items.filter((i) => i.kind === 'enum');
+    expect(enums.map((e) => e.insertText)).toEqual(expect.arrayContaining(['default"', 'personal"']));
+    expect(enums.map((e) => e.insertText)).not.toEqual(expect.arrayContaining(['"default"', '"personal"']));
+  });
+  it('does not add a closing quote when one is already ahead of the cursor', () => {
+    const schema = new Map([['workspaceId', { type: 'string', enumValues: ['default', 'personal'] }]]);
+    const items = getCompletions(base({
+      surface: 'filter',
+      textBeforeCursor: '{ "workspaceId": "',
+      textAfterCursor: '"',
+      token: '',
+      schema,
+    }));
+    const enums = items.filter((i) => i.kind === 'enum');
+    expect(enums.map((e) => e.insertText)).toEqual(expect.arrayContaining(['default', 'personal']));
+  });
   it('prefix-filters by token', () => {
     const items = getCompletions(base({ surface: 'filter', textBeforeCursor: '{ reg', token: 'reg' }));
     expect(labels(items)).toContain('region');
@@ -444,6 +463,14 @@ describe('getCompletions — per-stage body editor (stageOperator)', () => {
   it('$lookup localField value offers field names as strings', () => {
     const items = getCompletions(stage('$lookup', '{ "localField": ', 'reg'));
     expect(items.find((i) => i.label === 'region')!.insertText).toBe('"region"');
+  });
+  it('$lookup localField value does not double-quote when already inside a quote', () => {
+    const items = getCompletions(stage('$lookup', '{ "localField": "', 'reg'));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('region"');
+  });
+  it('$lookup localField value does not add a closing quote when one is ahead', () => {
+    const items = getCompletions(stage('$lookup', '{ "localField": "', 'reg', { textAfterCursor: '"' }));
+    expect(items.find((i) => i.label === 'region')!.insertText).toBe('region');
   });
   it('$unwind body suggests field path refs', () => {
     const items = getCompletions(stage('$unwind', '', '$reg'));

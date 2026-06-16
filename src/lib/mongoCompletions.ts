@@ -6,6 +6,7 @@ export interface FieldSchema { type?: string; enumValues?: string[]; }
 export interface CompletionCtx {
   surface: Surface;
   textBeforeCursor: string;
+  textAfterCursor?: string;
   token: string;
   fields: string[];
   schema?: Map<string, FieldSchema>;
@@ -262,13 +263,28 @@ function quoteForType(value: string, type?: string): string {
   return JSON.stringify(value);
 }
 
+// When the user already typed `"`, Monaco may auto-insert a closing `"` ahead of
+// the cursor — only add our own closer when one is not already there.
+function closeQuotedValue(ctx: CompletionCtx, value: string): string {
+  if (ctx.textAfterCursor?.trimStart().startsWith('"')) return value;
+  return `${value}"`;
+}
+
+function valueInsert(ctx: CompletionCtx, value: string, type?: string): string {
+  const unquoted = type === 'int' || type === 'long' || type === 'double' || type === 'decimal' || type === 'bool';
+  if (inQuote(ctx.textBeforeCursor)) {
+    return unquoted ? value : closeQuotedValue(ctx, value);
+  }
+  return quoteForType(value, type);
+}
+
 function enumItemsForLastField(ctx: CompletionCtx): CompletionItem[] {
   const field = lastFieldKey(ctx.textBeforeCursor);
   if (!field) return [];
   const fs = ctx.schema?.get(field);
   if (!fs?.enumValues?.length) return [];
   return fs.enumValues.map((v) => ({
-    label: v, kind: 'enum' as const, insertText: quoteForType(v, fs.type), detail: 'enum',
+    label: v, kind: 'enum' as const, insertText: valueInsert(ctx, v, fs.type), detail: 'enum',
   }));
 }
 
@@ -348,17 +364,24 @@ function keyScaffoldItems(ctx: CompletionCtx, list: EjsonType[], kind: Completio
   }));
 }
 
-// `"$field"` aggregation path references (for $group/$unwind/$sortByCount bodies).
 function fieldRefItems(ctx: CompletionCtx): CompletionItem[] {
   return ctx.fields.map((name) => ({
-    label: `$${name}`, kind: 'field' as const, insertText: `"$${name}"`, detail: 'field path',
+    label: `$${name}`, kind: 'field' as const,
+    insertText: inQuote(ctx.textBeforeCursor)
+      ? closeQuotedValue(ctx, `$${name}`)
+      : `"$${name}"`,
+    detail: 'field path',
   }));
 }
 
 // Field names as plain string values ($lookup localField/foreignField).
 function fieldStringItems(ctx: CompletionCtx): CompletionItem[] {
   return ctx.fields.map((name) => ({
-    label: name, kind: 'field' as const, insertText: `"${name}"`, detail: ctx.schema?.get(name)?.type,
+    label: name, kind: 'field' as const,
+    insertText: inQuote(ctx.textBeforeCursor)
+      ? closeQuotedValue(ctx, name)
+      : `"${name}"`,
+    detail: ctx.schema?.get(name)?.type,
   }));
 }
 
