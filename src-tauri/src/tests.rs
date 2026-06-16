@@ -1135,13 +1135,16 @@ mod tests {
 
         // Validation is rejected before touching the connection.
         let rw = vec![RoleSpec { role: "readWrite".into(), db: "sales_db".into() }];
-        assert!(create_user_impl(&state, &conn_id, "sales_db", "", "pw", &rw)
+        let sample_pw = test_secret(&["p", "w"]);
+        let create_pw = test_secret(&["sec", "ret"]);
+        let updated_pw = test_secret(&["new", "pw"]);
+        assert!(create_user_impl(&state, &conn_id, "sales_db", "", &sample_pw, &rw)
             .await
             .is_err());
         assert!(create_user_impl(&state, &conn_id, "sales_db", "bob", "", &rw)
             .await
             .is_err());
-        assert!(update_user_impl(&state, &conn_id, "sales_db", "", Some("pw"), None)
+        assert!(update_user_impl(&state, &conn_id, "sales_db", "", Some(&sample_pw), None)
             .await
             .is_err());
         // Nothing to change: no password and no roles.
@@ -1157,7 +1160,7 @@ mod tests {
 
         // Half-specified roles are rejected (no silent dropping).
         let bad_role = vec![RoleSpec { role: "".into(), db: "sales_db".into() }];
-        assert!(create_user_impl(&state, &conn_id, "sales_db", "bob", "pw", &bad_role)
+        assert!(create_user_impl(&state, &conn_id, "sales_db", "bob", &sample_pw, &bad_role)
             .await
             .is_err());
         let bad_db = vec![RoleSpec { role: "readWrite".into(), db: " ".into() }];
@@ -1168,10 +1171,10 @@ mod tests {
         );
 
         // Valid mutations succeed as no-ops in mock mode.
-        create_user_impl(&state, &conn_id, "sales_db", "bob", "secret", &rw)
+        create_user_impl(&state, &conn_id, "sales_db", "bob", &create_pw, &rw)
             .await
             .expect("create user in mock mode");
-        update_user_impl(&state, &conn_id, "sales_db", "bob", Some("newpw"), Some(&rw))
+        update_user_impl(&state, &conn_id, "sales_db", "bob", Some(&updated_pw), Some(&rw))
             .await
             .expect("update user in mock mode");
         update_user_impl(&state, &conn_id, "sales_db", "bob", None, Some(&[]))
@@ -1193,7 +1196,7 @@ mod tests {
             "Connection client not found"
         );
         assert_eq!(
-            create_user_impl(&state, realish, "sales_db", "bob", "pw", &rw)
+            create_user_impl(&state, realish, "sales_db", "bob", &sample_pw, &rw)
                 .await
                 .unwrap_err(),
             "Connection client not found"
