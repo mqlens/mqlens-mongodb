@@ -109,6 +109,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
     overflowWidgetsDomNode,
     tabSize: 2,
     quickSuggestions,
+    acceptSuggestionOnEnter: 'on' as const,
   };
 
   const editor = (
@@ -124,14 +125,23 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
         registerMqlensMonacoThemes(monaco);
         monaco.editor.setTheme(theme);
         registerMongoCompletionProvider(monaco);
+
+        // ⌘/Ctrl+Enter always runs; plain Enter is bound below for single-line fields.
         ed.onKeyDown((e) => {
-          if ((e.ctrlKey || e.metaKey) && e.keyCode === monaco.KeyCode.Enter) {
+          if (e.keyCode === monaco.KeyCode.Enter && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             e.stopPropagation();
             onRunRef.current?.();
           }
         });
+
         if (singleLine) {
+          // Let Monaco accept suggestions on Enter when the widget is open; run only when closed.
+          ed.addCommand(
+            monaco.KeyCode.Enter,
+            () => onRunRef.current?.(),
+            '!suggestWidgetVisible && !renameInputVisible && !inSnippetMode',
+          );
           ed.onDidChangeModelContent(() => {
             const v = ed.getValue();
             if (v.includes('\n')) {
