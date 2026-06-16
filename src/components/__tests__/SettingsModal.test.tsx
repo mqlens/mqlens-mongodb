@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SettingsView } from '../SettingsModal';
+import { writeUpdateCheckSnapshot } from '../../lib/updateCheckState';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -35,6 +36,7 @@ async function openTab(tabId: string) {
 describe('SettingsView Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     mockBiometricStatus.mockResolvedValue({ available: false, biometryType: 0, enrolled: false });
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === 'load_app_settings') {
@@ -168,5 +170,16 @@ describe('SettingsView Component', () => {
     fireEvent.click(screen.getByRole('option', { name: /Claude Code/i }));
     expect(screen.getByTestId('local-command-input')).toBeInTheDocument();
     expect(await screen.findByTestId('agent-availability')).toHaveTextContent(/installed/i);
+  });
+
+  it('shows last update check status on the updates tab', async () => {
+    writeUpdateCheckSnapshot({
+      checkedAt: '2026-06-15T12:00:00.000Z',
+      result: 'offline',
+    });
+    renderSettings();
+    await openTab('settings-tab-updates');
+    expect(await screen.findByTestId('update-last-checked')).toHaveTextContent(/Offline/i);
+    expect(screen.getByTestId('update-last-checked')).toHaveTextContent(/Last checked:/i);
   });
 });
