@@ -3,27 +3,14 @@
 > **Live board:** [MQLens Roadmap (GitHub Project)](https://github.com/orgs/mqlens/projects/2)  
 > **Milestones:** [github.com/mqlens/mqlens-mongodb/milestones](https://github.com/mqlens/mqlens-mongodb/milestones)
 
-Current stable release: **[v0.8.0](https://github.com/mqlens/mqlens-mongodb/releases/latest)**
+Current stable release: **[v0.8.0](https://github.com/mqlens/mqlens-mongodb/releases/latest)**  
+**v0.9.0 milestone complete** (shipped Jun 16, 2026) — release tag to follow.
 
-## v0.9.0 — Stability & polish
-
-Target: **Jul 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/1)
-
-Bug fixes, UX polish, and test coverage before the next feature wave.
-
-| Issue | Title |
-|-------|-------|
-| [#120](https://github.com/mqlens/mqlens-mongodb/issues/120) | Query editor state leaks across collections |
-| [#131](https://github.com/mqlens/mqlens-mongodb/issues/131) | ⌘/Ctrl+F sidebar search shortcut not implemented |
-| [#119](https://github.com/mqlens/mqlens-mongodb/issues/119) | Show UI zoom % in status bar |
-| [#34](https://github.com/mqlens/mqlens-mongodb/issues/34) | Per-connection color tag picker UI |
-| [#133](https://github.com/mqlens/mqlens-mongodb/issues/133) | Updater: graceful offline behavior |
-| [#132](https://github.com/mqlens/mqlens-mongodb/issues/132) | Keyboard shortcuts reference page |
-| [#134](https://github.com/mqlens/mqlens-mongodb/issues/134) | Tests: ExportView + TaskManager |
+Each upcoming milestone is planned as a **10-day** window. Dates below are targets, not hard deadlines.
 
 ## v0.10.0 — Import, export & migration
 
-Target: **Aug 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/2)
+Window: **Jun 17 – Jun 26, 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/2)
 
 Complete data movement workflows for production use.
 
@@ -38,7 +25,7 @@ Complete data movement workflows for production use.
 
 ## Docs & community
 
-Target: **Aug 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/6)
+Window: **Jun 27 – Jul 6, 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/6)
 
 | Issue | Title |
 |-------|-------|
@@ -49,7 +36,7 @@ Target: **Aug 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/mil
 
 ## v0.11.0 — Shell & connections
 
-Target: **Sep 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/3)
+Window: **Jul 7 – Jul 16, 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/3)
 
 Zero-friction mongosh and enterprise SSH workflows.
 
@@ -61,7 +48,7 @@ Zero-friction mongosh and enterprise SSH workflows.
 
 ## v0.12.0 — DBA & operations
 
-Target: **Oct 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/4)
+Window: **Jul 17 – Jul 26, 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/4)
 
 | Issue | Title |
 |-------|-------|
@@ -72,7 +59,7 @@ Target: **Oct 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/mil
 
 ## v1.0.0 — Platform & ecosystem
 
-Target: **Dec 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/5)
+Window: **Jul 27 – Aug 5, 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/milestone/5)
 
 | Issue | Title |
 |-------|-------|
@@ -81,7 +68,21 @@ Target: **Dec 2026** · [Milestone](https://github.com/mqlens/mqlens-mongodb/mil
 | [#98](https://github.com/mqlens/mqlens-mongodb/issues/98) | MCP server (expose MQLens as AI tools) |
 | [#91](https://github.com/mqlens/mqlens-mongodb/issues/91) | Data generation (Faker) |
 
-## Shipped recently
+## Shipped — v0.9.0 (Jun 16, 2026)
+
+Stability & polish: bug fixes, UX polish, and test coverage.
+
+| Issue | Title |
+|-------|-------|
+| [#120](https://github.com/mqlens/mqlens-mongodb/issues/120) | Per-tab query editor state |
+| [#131](https://github.com/mqlens/mqlens-mongodb/issues/131) | ⌘/Ctrl+F sidebar search shortcut |
+| [#119](https://github.com/mqlens/mqlens-mongodb/issues/119) | UI zoom % in status bar |
+| [#34](https://github.com/mqlens/mqlens-mongodb/issues/34) | Per-connection color tag picker |
+| [#133](https://github.com/mqlens/mqlens-mongodb/issues/133) | Updater: graceful offline behavior |
+| [#132](https://github.com/mqlens/mqlens-mongodb/issues/132) | Keyboard shortcuts reference page |
+| [#134](https://github.com/mqlens/mqlens-mongodb/issues/134) | Tests: ExportView + TaskManager |
+
+## Shipped earlier
 
 - Command palette (#94)
 - Sidebar folders, pins, favorites (#95)
