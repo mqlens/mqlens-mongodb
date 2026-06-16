@@ -19,6 +19,13 @@ import {
   type BiometricStatus,
 } from '../lib/vault';
 import { CHECK_UPDATE_EVENT } from './UpdatePrompt';
+import {
+  formatLastChecked,
+  readUpdateCheckSnapshot,
+  UPDATE_CHECK_STATE_EVENT,
+  updateCheckResultLabel,
+  type UpdateCheckSnapshot,
+} from '@/lib/updateCheckState';
 import { AppearanceSettings } from '@/components/theme/AppearanceSettings';
 import type { AppearanceSettings as AppearanceSettingsType } from '@/lib/themes/schema';
 import { Button } from '@/components/ui/button';
@@ -151,8 +158,17 @@ export const SettingsView: React.FC = () => {
   const [secMsg, setSecMsg] = useState('');
   const [bio, setBio] = useState<BiometricStatus | null>(null);
   const [bioBusy, setBioBusy] = useState(false);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheckSnapshot | null>(() =>
+    readUpdateCheckSnapshot(),
+  );
 
   const activeTab = SETTINGS_TABS.find((t) => t.id === tab) ?? SETTINGS_TABS[0];
+
+  useEffect(() => {
+    const sync = () => setUpdateCheck(readUpdateCheckSnapshot());
+    window.addEventListener(UPDATE_CHECK_STATE_EVENT, sync);
+    return () => window.removeEventListener(UPDATE_CHECK_STATE_EVENT, sync);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -336,7 +352,21 @@ export const SettingsView: React.FC = () => {
                 <CardTitle className="text-base">Manual check</CardTitle>
                 <CardDescription>Trigger an update check without restarting the app.</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
+                {updateCheck ? (
+                  <div className="space-y-1 text-sm" data-testid="update-last-checked">
+                    <p className="text-muted-foreground">
+                      Last checked: {formatLastChecked(updateCheck.checkedAt)}
+                    </p>
+                    <p className="text-foreground">
+                      Result: {updateCheckResultLabel(updateCheck.result)}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground" data-testid="update-last-checked">
+                    No update check recorded yet.
+                  </p>
+                )}
                 <Button
                   type="button"
                   variant="outline"
