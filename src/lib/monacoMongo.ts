@@ -57,9 +57,13 @@ export function registerMongoCompletionProvider(monaco: Monaco) {
         startLineNumber: position.lineNumber, startColumn: 1,
         endLineNumber: position.lineNumber, endColumn: position.column,
       });
+      const textAfterCursor: string = model.getValueInRange({
+        startLineNumber: position.lineNumber, startColumn: position.column,
+        endLineNumber: position.lineNumber, endColumn: model.getLineMaxColumn(position.lineNumber),
+      });
       const token = textBeforeCursor.match(/[\w$]*$/)?.[0] ?? '';
       const items = getCompletions({
-        surface: meta.surface, textBeforeCursor, token,
+        surface: meta.surface, textBeforeCursor, textAfterCursor, token,
         fields: meta.getFields(), schema: meta.getSchema(), collections: meta.getCollections?.(),
         stageOperator: meta.getStageOperator?.(),
       });

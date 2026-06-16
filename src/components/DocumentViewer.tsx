@@ -1284,6 +1284,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     notify(`Cleared ${field} parameters`);
   };
 
+  const runQueryOnEnter = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleRun();
+    }
+  };
+
   const queryColClass = (invalid: boolean) =>
     cn(
       'flex min-w-0 flex-1 items-center border-r border-border bg-input/80 transition-colors last:border-r-0',
@@ -1779,6 +1786,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                       type="number"
                       value={skip}
                       onChange={(e) => setSkip(e.target.value)}
+                      onKeyDown={runQueryOnEnter}
                       placeholder="0"
                       min="0"
                       className="h-7 flex-1 min-w-0 border-0 bg-transparent px-2.5 font-mono text-[11.5px] shadow-none focus-visible:ring-0"
@@ -1796,6 +1804,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                       type="number"
                       value={limit}
                       onChange={(e) => setLimit(e.target.value)}
+                      onKeyDown={runQueryOnEnter}
                       placeholder="50"
                       min="1"
                       className="h-7 flex-1 min-w-0 border-0 bg-transparent px-2.5 font-mono text-[11.5px] shadow-none focus-visible:ring-0"
