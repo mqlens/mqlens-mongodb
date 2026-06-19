@@ -1,18 +1,16 @@
 import React from 'react';
-import { Download, FileJson, FileSpreadsheet, RefreshCw } from 'lucide-react';
+import { Download, FileJson, FileSpreadsheet, ListChecks } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { TaskManager, type ExportTaskInfo } from './TaskManager';
 
 interface ExportViewProps {
   connectionName: string;
   databaseName: string;
   collectionName: string;
   currentResultCount: number;
-  tasks: ExportTaskInfo[];
   onExport: (format: 'json' | 'csv', scope: 'current' | 'full') => void;
-  onRefreshTasks: () => void;
-  onClearFinishedTasks: () => void;
+  /** Open the dedicated Tasks tab where background jobs (incl. full exports) appear. */
+  onOpenTasks?: () => void;
 }
 
 export const ExportView: React.FC<ExportViewProps> = ({
@@ -20,10 +18,8 @@ export const ExportView: React.FC<ExportViewProps> = ({
   databaseName,
   collectionName,
   currentResultCount,
-  tasks,
   onExport,
-  onRefreshTasks,
-  onClearFinishedTasks,
+  onOpenTasks,
 }) => {
   const hasCurrentResults = currentResultCount > 0;
 
@@ -36,9 +32,9 @@ export const ExportView: React.FC<ExportViewProps> = ({
             {connectionName} / {databaseName}.{collectionName}
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={onRefreshTasks}>
-          <RefreshCw size={12} />
-          Refresh Tasks
+        <Button type="button" variant="outline" size="sm" onClick={onOpenTasks}>
+          <ListChecks size={12} />
+          View Tasks
         </Button>
       </header>
 
@@ -110,12 +106,13 @@ export const ExportView: React.FC<ExportViewProps> = ({
         </Card>
       </div>
 
-      <TaskManager
-        tasks={tasks}
-        onRefresh={onRefreshTasks}
-        onClearFinished={onClearFinishedTasks}
-        variant="embedded"
-      />
+      <p className="mt-4 text-xs text-muted-foreground">
+        Full-collection exports run in the background. Track their progress in the{' '}
+        <button type="button" className="underline hover:text-foreground" onClick={onOpenTasks}>
+          Tasks
+        </button>{' '}
+        tab.
+      </p>
     </div>
   );
 };

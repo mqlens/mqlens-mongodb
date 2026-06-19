@@ -382,6 +382,10 @@ pub async fn start_collection_export_impl(
         error: None,
         created_at_ms: now_ms(),
         finished_at_ms: None,
+        sub_label: None,
+        items_processed: None,
+        items_total: None,
+        summary: None,
     };
     state
         .tasks

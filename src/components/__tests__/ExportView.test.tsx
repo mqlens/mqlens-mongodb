@@ -1,10 +1,8 @@
-import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '../../test/render-with-providers';
 import { DialogProvider, useDialogs } from '../dialogs/DialogProvider';
 import { ExportView } from '../ExportView';
-import type { ExportTaskInfo } from '../TaskManager';
 
 const mockInvoke = vi.fn();
 const saveMock = vi.fn();
@@ -27,10 +25,8 @@ const baseProps = {
   databaseName: 'sales_db',
   collectionName: 'customers',
   currentResultCount: 3,
-  tasks: [] as ExportTaskInfo[],
   onExport: vi.fn(),
-  onRefreshTasks: vi.fn(),
-  onClearFinishedTasks: vi.fn(),
+  onOpenTasks: vi.fn(),
 };
 
 function renderExportView(overrides: Partial<typeof baseProps> = {}) {
@@ -51,7 +47,6 @@ function ExportViewHarness({
   invokeFails?: boolean;
 }) {
   const { toast } = useDialogs();
-  const [tasks, setTasks] = useState<ExportTaskInfo[]>([]);
 
   const onExport = async (format: 'json' | 'csv', scope: 'current' | 'full') => {
     if (scope === 'current' && currentResultCount === 0) return;
@@ -62,14 +57,13 @@ function ExportViewHarness({
       if (!path) return;
       if (scope === 'full') {
         if (invokeFails) throw new Error('disk full');
-        const task = await mockInvoke('start_collection_export', {
+        await mockInvoke('start_collection_export', {
           id: 'conn-1',
           database: 'sales_db',
           collection: 'customers',
           format,
           path,
         });
-        setTasks([task]);
         return;
       }
       await writeTextFileMock(path, '[]');
@@ -86,10 +80,8 @@ function ExportViewHarness({
       databaseName="sales_db"
       collectionName="customers"
       currentResultCount={currentResultCount}
-      tasks={tasks}
       onExport={onExport}
-      onRefreshTasks={vi.fn()}
-      onClearFinishedTasks={vi.fn()}
+      onOpenTasks={vi.fn()}
     />
   );
 }
@@ -145,11 +137,11 @@ describe('ExportView', () => {
     expect(onExport).toHaveBeenCalledWith('csv', 'full');
   });
 
-  it('refreshes export tasks from the header action', () => {
-    const onRefreshTasks = vi.fn();
-    renderExportView({ onRefreshTasks });
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh Tasks' }));
-    expect(onRefreshTasks).toHaveBeenCalledTimes(1);
+  it('opens the Tasks tab from the header action', () => {
+    const onOpenTasks = vi.fn();
+    renderExportView({ onOpenTasks });
+    fireEvent.click(screen.getByRole('button', { name: 'View Tasks' }));
+    expect(onOpenTasks).toHaveBeenCalledTimes(1);
   });
 
   it('starts a background export via invoke when full collection JSON is chosen', async () => {
@@ -171,8 +163,6 @@ describe('ExportView', () => {
         path: '/tmp/customers.json',
       });
     });
-    expect(await screen.findByTestId('task-manager')).toBeInTheDocument();
-    expect(screen.getByText(/Export sales_db\.customers as JSON/)).toBeInTheDocument();
   });
 
   it('surfaces export failures from invoke as an error toast', async () => {

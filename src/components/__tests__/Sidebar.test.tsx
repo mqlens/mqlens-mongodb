@@ -291,6 +291,42 @@ describe('Sidebar Component', () => {
     expect(orders10.compareDocumentPosition(zeta)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
+  it('refreshes and expands a copy destination when the refresh nonce bumps', async () => {
+    let collections: { name: string; type: string }[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'list_all_saved_queries') return Promise.resolve([]);
+      if (cmd === 'list_databases') return Promise.resolve(['shop']);
+      if (cmd === 'list_collections' && args.db === 'shop') return Promise.resolve(collections);
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    const sidebar = (nonce: number) => (
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        refreshTarget={{ connectionId: 'conn-1', db: 'shop', expand: true }}
+        refreshTargetNonce={nonce}
+      />
+    );
+
+    const { rerender } = render(sidebar(0));
+    await screen.findByText('shop');
+
+    // The copy lands a new collection; bumping the nonce surfaces it without any
+    // manual expansion, because the destination db + Collections folder auto-open.
+    collections = [{ name: 'copied_orders', type: 'collection' }];
+    rerender(<DialogProvider>{sidebar(1)}</DialogProvider>);
+
+    expect(await screen.findByText('copied_orders')).toBeInTheDocument();
+  });
+
   it('applies custom width inline style if width prop is provided', () => {
     const { container } = render(
       <Sidebar

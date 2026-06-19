@@ -16,12 +16,13 @@ import { MongoShell } from './components/MongoShell';
 import { QuickStart } from './components/QuickStart';
 import { DocumentEditModal } from './components/DocumentEditModal';
 import { ExportView } from './components/ExportView';
+import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
 import { GridFsView } from './components/GridFsView';
 import { MonitoringView } from './components/MonitoringView';
 import { UserManagementView } from './components/UserManagementView';
-import { type ExportTaskInfo } from './components/TaskManager';
+import { TaskManager, type ExportTaskInfo } from './components/TaskManager';
 import { VaultGate } from './components/VaultGate';
 import { UpdatePrompt } from './components/UpdatePrompt';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
@@ -38,12 +39,12 @@ import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity, Copy, Users } from 'lucide-react';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users';
   connectionId: string;
   db: string;
   collection: string;
@@ -138,6 +139,20 @@ const createQuickStartTab = (): QueryTab => ({
   explainResult: null,
 });
 
+const TASKS_TAB_ID = 'tasks';
+
+const createTasksTab = (): QueryTab => ({
+  id: TASKS_TAB_ID,
+  type: 'tasks',
+  connectionId: '',
+  db: '',
+  collection: '',
+  results: [],
+  loading: false,
+  error: null,
+  explainResult: null,
+});
+
 const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
   const className = isActive ? 'text-primary' : 'text-muted-foreground';
   const size = 11;
@@ -152,6 +167,8 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
       return <Rocket size={size} className={className} />;
     case 'export':
       return <Download size={size} className={className} />;
+    case 'tasks':
+      return <ListChecks size={size} className={className} />;
     case 'schema':
       return <Table2 size={size} className={className} />;
     case 'create-view':
@@ -182,6 +199,8 @@ const tabLabelFor = (
       return 'Quick Start';
     case 'export':
       return `Export: ${tab.collection}`;
+    case 'tasks':
+      return 'Tasks';
     case 'schema':
       return `Schema: ${tab.collection}`;
     case 'create-view':
@@ -336,6 +355,69 @@ function Workspace() {
       setExportTasks(tasks);
     } catch {
       /* ignore */
+    }
+  };
+
+  type CopySource = { connectionId: string; db: string; collections: string[] };
+  const [copyDialog, setCopyDialog] = useState<
+    { source: CopySource; target?: { connectionId: string; db?: string } } | null
+  >(null);
+  // In-app clipboard for the Copy → Paste-here flow.
+  const [copyClipboard, setCopyClipboard] = useState<CopySource | null>(null);
+
+  // Destination to refresh in the sidebar after a copy starts (and periodically
+  // while it runs), so newly-copied databases/collections show up live.
+  const [copyRefresh, setCopyRefresh] = useState<
+    { connectionId: string; db?: string; expand: boolean } | null
+  >(null);
+  const [copyRefreshNonce, setCopyRefreshNonce] = useState(0);
+  const triggerCopyRefresh = React.useCallback(
+    (target: { connectionId: string; db?: string }, expand: boolean) => {
+      setCopyRefresh({ ...target, expand });
+      setCopyRefreshNonce((n) => n + 1);
+    },
+    []
+  );
+
+  // While a copy task is running, periodically re-refresh its destination so
+  // collections that trickle in during a long copy stay visible. `expand: false`
+  // keeps reloading collections without re-opening a db the user has collapsed.
+  const copyRunning = exportTasks.some(
+    (t) => (t.kind === 'collection_copy' || t.kind === 'database_copy') && t.status === 'running'
+  );
+  const refreshConnId = copyRefresh?.connectionId;
+  const refreshDb = copyRefresh?.db;
+  useEffect(() => {
+    if (!copyRunning || !refreshConnId) return;
+    const id = setInterval(() => {
+      setCopyRefresh((prev) => (prev ? { ...prev, expand: false } : prev));
+      setCopyRefreshNonce((n) => n + 1);
+    }, 4000);
+    return () => clearInterval(id);
+  }, [copyRunning, refreshConnId, refreshDb]);
+
+  const handleCopyCollections = (connectionId: string, db: string, collections: string[]) =>
+    setCopyDialog({ source: { connectionId, db, collections } });
+  const handleCopyDatabase = (connectionId: string, db: string) =>
+    setCopyDialog({ source: { connectionId, db, collections: [] } });
+
+  // Copy → clipboard (no dialog); Paste-here opens the dialog pre-filled with that target.
+  const handleCopyToClipboard = (connectionId: string, db: string, collections: string[]) => {
+    setCopyClipboard({ connectionId, db, collections });
+    const what = collections.length === 0 ? `database ${db}` : `${collections.length} collection(s)`;
+    toast(`Copied ${what} — right-click a target and choose “Paste here”.`, 'success');
+  };
+  const handlePasteInto = (connectionId: string, db?: string) => {
+    if (!copyClipboard) return;
+    setCopyDialog({ source: copyClipboard, target: { connectionId, db } });
+  };
+
+  const handleCancelTask = async (taskId: string) => {
+    try {
+      await invoke('cancel_task', { id: taskId });
+      await loadExportTasks();
+    } catch (err: any) {
+      toast(`Could not cancel: ${err?.message || err}`, 'error');
     }
   };
 
@@ -569,6 +651,13 @@ function Workspace() {
 
   const handleOpenSettingsTab = () => openSettingsTab('appearance');
   const handleOpenShortcutsReference = () => openSettingsTab('shortcuts');
+
+  const handleOpenTasksTab = () => {
+    if (!tabs.some(t => t.id === TASKS_TAB_ID)) {
+      setTabs(prev => [...prev, createTasksTab()]);
+    }
+    setActiveTabId(TASKS_TAB_ID);
+  };
 
   const handleOpenExportTab = (sourceTab: QueryTab) => {
     if (sourceTab.type !== 'collection') return;
@@ -1173,6 +1262,7 @@ function Workspace() {
           path,
         });
         setExportTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
+        handleOpenTasksTab();
         await loadExportTasks();
         return;
       }
@@ -1500,6 +1590,13 @@ function Workspace() {
             });
           }}
           onOpenSettings={handleOpenSettingsTab}
+          onCopyCollections={handleCopyCollections}
+          onCopyDatabase={handleCopyDatabase}
+          onCopyToClipboard={handleCopyToClipboard}
+          onPasteInto={handlePasteInto}
+          canPaste={!!copyClipboard}
+          refreshTarget={copyRefresh}
+          refreshTargetNonce={copyRefreshNonce}
         />
       }
       sidebarWidth={sidebarWidth}
@@ -1522,6 +1619,8 @@ function Workspace() {
           appVersion={appVersion ? `v${appVersion}` : undefined}
           zoomPercent={Math.round(config.uiZoom * 100)}
           onZoomReset={resetZoom}
+          onOpenTasks={handleOpenTasksTab}
+          runningTasks={exportTasks.filter((t) => t.status === 'running').length}
         />
       }
       overlays={
@@ -1571,6 +1670,63 @@ function Workspace() {
           />
 
           <UpdatePrompt />
+
+          {copyDialog && (
+            <CopyToDialog
+              open={!!copyDialog}
+              onOpenChange={(o) => !o && setCopyDialog(null)}
+              source={copyDialog.source}
+              presetTargetId={copyDialog.target?.connectionId}
+              presetTargetDb={copyDialog.target?.db}
+              activeConnections={activeConnections.map((c) => ({ id: c.id, name: c.name, uri: c.uri }))}
+              listDatabases={(id) => invoke<string[]>('list_databases', { id })}
+              listCollections={(id, db) =>
+                invoke<{ name: string }[]>('list_collections', { id, db }).then((cs) => cs.map((c) => c.name))
+              }
+              preflight={(req) =>
+                invoke('preflight_copy', {
+                  sourceId: req.sourceId,
+                  sourceDb: req.sourceDb,
+                  sourceCollections: req.sourceCollections,
+                  targets: req.targets,
+                })
+              }
+              onConfirm={async (req) => {
+                handleOpenTasksTab();
+                // Surface the destination right away and expand it; the periodic
+                // effect keeps it fresh while the copy runs.
+                triggerCopyRefresh({ connectionId: req.targetId, db: req.targetDb }, true);
+                let task: ExportTaskInfo;
+                if (req.type === 'database') {
+                  task = await invoke<ExportTaskInfo>('start_database_copy', {
+                    sourceId: req.sourceId, sourceDb: req.sourceDb,
+                    targetId: req.targetId, targetDb: req.targetDb,
+                    collections: req.collections, includeIndexes: req.includeIndexes,
+                    includeViews: req.includeViews, conflictMode: req.conflictMode,
+                  });
+                } else if (req.type === 'collections') {
+                  // Copy each selected collection as its own task (same target db, same name).
+                  const tasks = await Promise.all(req.collections.map((name) =>
+                    invoke<ExportTaskInfo>('start_collection_copy', {
+                      sourceId: req.sourceId, sourceDb: req.sourceDb, sourceCollection: name,
+                      targetId: req.targetId, targetDb: req.targetDb, targetCollection: name,
+                      filter: null, includeIndexes: req.includeIndexes, conflictMode: req.conflictMode,
+                    })));
+                  setExportTasks((prev) => [...tasks, ...prev.filter((t) => !tasks.some((n) => n.id === t.id))]);
+                  await loadExportTasks();
+                  return;
+                } else {
+                  task = await invoke<ExportTaskInfo>('start_collection_copy', {
+                    sourceId: req.sourceId, sourceDb: req.sourceDb, sourceCollection: req.sourceCollection,
+                    targetId: req.targetId, targetDb: req.targetDb, targetCollection: req.targetCollection,
+                    filter: req.filter ?? null, includeIndexes: req.includeIndexes, conflictMode: req.conflictMode,
+                  });
+                }
+                setExportTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
+                await loadExportTasks();
+              }}
+            />
+          )}
         </>
       }
     >
@@ -1729,13 +1885,28 @@ function Workspace() {
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
                     currentResultCount={sourceTab?.results.length || 0}
-                    tasks={exportTasks}
                     onExport={(format, scope) => handleExportForTab(sourceTab || activeTab, format, scope)}
-                    onRefreshTasks={loadExportTasks}
-                    onClearFinishedTasks={handleClearFinishedTasks}
+                    onOpenTasks={handleOpenTasksTab}
                   />
                 );
               })()}
+              {activeTab && activeTab.type === 'tasks' && (
+                <div className="flex h-full flex-col overflow-auto p-4" data-testid="tasks-view">
+                  <header className="mb-3">
+                    <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Background copy and export jobs.
+                    </p>
+                  </header>
+                  <TaskManager
+                    tasks={exportTasks}
+                    onRefresh={loadExportTasks}
+                    onClearFinished={handleClearFinishedTasks}
+                    onCancel={handleCancelTask}
+                    variant="embedded"
+                  />
+                </div>
+              )}
               {activeTab && activeTab.type === 'shell' && (() => {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
                 const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;

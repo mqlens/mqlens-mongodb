@@ -1,3 +1,4 @@
+import { ListChecks } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -14,6 +15,10 @@ interface StatusBarProps {
   /** User UI zoom (75–150); hidden at 100%. */
   zoomPercent?: number;
   onZoomReset?: () => void;
+  /** Open the dedicated Tasks tab. */
+  onOpenTasks?: () => void;
+  /** Number of currently-running background tasks, shown as a badge. */
+  runningTasks?: number;
   className?: string;
 }
 
@@ -24,6 +29,8 @@ export function StatusBar({
   appVersion,
   zoomPercent,
   onZoomReset,
+  onOpenTasks,
+  runningTasks = 0,
   className,
 }: StatusBarProps) {
   const showZoom = zoomPercent != null && zoomPercent !== 100;
@@ -57,7 +64,30 @@ export function StatusBar({
           </TooltipContent>
         </Tooltip>
       )}
-      <span className="ml-auto">MQLens {appVersion ?? ""}</span>
+      {onOpenTasks && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              data-testid="status-bar-tasks"
+              className="ml-auto flex items-center gap-1 transition-colors hover:text-foreground"
+              onClick={onOpenTasks}
+            >
+              <ListChecks size={12} />
+              <span>Tasks</span>
+              {runningTasks > 0 && (
+                <span className="rounded-full bg-primary px-1.5 text-[10px] font-medium tabular-nums text-primary-foreground">
+                  {runningTasks}
+                </span>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {runningTasks > 0 ? `${runningTasks} running task(s)` : "Background tasks"}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      <span className={onOpenTasks ? "" : "ml-auto"}>MQLens {appVersion ?? ""}</span>
     </footer>
   );
 }
