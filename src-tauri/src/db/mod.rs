@@ -1,6 +1,7 @@
 //! Database-operation modules (split out of lib.rs).
 
 pub mod aggregate;
+pub mod copy;
 pub mod ddl;
 pub mod documents;
 pub mod export;
