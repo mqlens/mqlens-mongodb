@@ -1514,7 +1514,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
                             >
                               <Archive />
-                              <span>Open GridFS Bucket</span>
+                              <span>New Bucket</span>
                             </ContextMenuItem>
                             <ContextMenuItem
                               className={ctxItemClass}
@@ -1552,115 +1552,193 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                         {isDbExpanded && (
                           <div className="ml-3 border-l border-border/50 pl-1">
-                            <div className={treeRowClass()} onClick={() => toggleCollectionsFolder(conn.id, dbName)}>
-                              <ChevronRight
-                                size={10}
-                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isFolderExpanded && 'rotate-90')}
-                              />
-                              <Folder size={11} className="shrink-0 text-amber-500" />
-                              <span className="text-muted-foreground">Collections</span>
-                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="collections-count">
-                                ({regularColls.length})
-                              </Badge>
-                            </div>
-                            {isFolderExpanded && (
-                              <div className="ml-3 border-l border-border/50 pl-1">
-                                {regularColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
-                                {regularColls.length === 0 && (
-                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
-                                )}
-                              </div>
-                            )}
-
-                            <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/views`)}>
-                              <ChevronRight
-                                size={10}
-                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isViewsExpanded && 'rotate-90')}
-                              />
-                              <Eye size={11} className="shrink-0 text-amber-500" />
-                              <span className="text-muted-foreground">Views</span>
-                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="views-count">
-                                ({views.length})
-                              </Badge>
-                            </div>
-                            {isViewsExpanded && (
-                              <div className="ml-3 border-l border-border/50 pl-1">
-                                {views.map((viewName) => renderCollectionNode(conn.id, dbName, viewName))}
-                                {views.length === 0 && (
-                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
-                                )}
-                              </div>
-                            )}
-
-                            <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/gridfs`)}>
-                              <ChevronRight
-                                size={10}
-                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isGridfsExpanded && 'rotate-90')}
-                              />
-                              <Archive size={11} className="shrink-0 text-amber-500" />
-                              <span className="text-muted-foreground">GridFS Buckets</span>
-                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="gridfs-count">
-                                ({gridfsBuckets.length})
-                              </Badge>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
-                                data-testid={`gridfs-new-bucket-${conn.id}-${dbName}`}
-                                title="Open GridFS bucket"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void handleOpenGridfsBucket(conn.id, dbName);
-                                }}
-                              >
-                                <Plus size={11} />
-                              </Button>
-                            </div>
-                            {isGridfsExpanded && (
-                              <div className="ml-3 border-l border-border/50 pl-1">
-                                {gridfsBuckets.map((bucket) => (
-                                  <div
-                                    key={bucket}
-                                    className={treeRowClass()}
-                                    onClick={() => onOpenGridfs?.(conn.id, dbName, bucket)}
-                                  >
-                                    <Archive size={11} className="ml-3.5 shrink-0 text-emerald-500" />
-                                    <span className="min-w-0 truncate" title={bucket}>
-                                      {bucket}
-                                    </span>
+                            <ContextMenu>
+                              <ContextMenuTrigger asChild>
+                                <div>
+                                  <div className={treeRowClass()} onClick={() => toggleCollectionsFolder(conn.id, dbName)}>
+                                    <ChevronRight
+                                      size={10}
+                                      className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isFolderExpanded && 'rotate-90')}
+                                    />
+                                    <Folder size={11} className="shrink-0 text-amber-500" />
+                                    <span className="text-muted-foreground">Collections</span>
+                                    <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="collections-count">
+                                      ({regularColls.length})
+                                    </Badge>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                                      data-testid={`collections-new-${conn.id}-${dbName}`}
+                                      title="New collection"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleAddCollection(conn.id, dbName);
+                                      }}
+                                    >
+                                      <Plus size={11} />
+                                    </Button>
                                   </div>
-                                ))}
-                                <div
-                                  className={cn(treeRowClass(), 'text-[10px] text-primary')}
-                                  data-testid={`gridfs-open-bucket-${conn.id}-${dbName}`}
+                                  {isFolderExpanded && (
+                                    <div className="ml-3 border-l border-border/50 pl-1">
+                                      {regularColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
+                                      {regularColls.length === 0 && (
+                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem
+                                  className={ctxItemClass}
+                                  data-testid={`ctx-collections-new-${conn.id}-${dbName}`}
+                                  onClick={() => void handleAddCollection(conn.id, dbName)}
+                                >
+                                  <Plus />
+                                  <span>New Collection</span>
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
+
+                            <ContextMenu>
+                              <ContextMenuTrigger asChild>
+                                <div>
+                                  <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/views`)}>
+                                    <ChevronRight
+                                      size={10}
+                                      className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isViewsExpanded && 'rotate-90')}
+                                    />
+                                    <Eye size={11} className="shrink-0 text-amber-500" />
+                                    <span className="text-muted-foreground">Views</span>
+                                    <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="views-count">
+                                      ({views.length})
+                                    </Badge>
+                                  </div>
+                                  {isViewsExpanded && (
+                                    <div className="ml-3 border-l border-border/50 pl-1">
+                                      {views.map((viewName) => renderCollectionNode(conn.id, dbName, viewName))}
+                                      {views.length === 0 && (
+                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem
+                                  className={ctxItemClass}
+                                  data-testid={`ctx-views-create-${conn.id}-${dbName}`}
+                                  onClick={() => onCreateView?.(conn.id, dbName)}
+                                >
+                                  <Eye />
+                                  <span>Create View</span>
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
+
+                            <ContextMenu>
+                              <ContextMenuTrigger asChild>
+                                <div>
+                                  <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/gridfs`)}>
+                                    <ChevronRight
+                                      size={10}
+                                      className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isGridfsExpanded && 'rotate-90')}
+                                    />
+                                    <Archive size={11} className="shrink-0 text-amber-500" />
+                                    <span className="text-muted-foreground">GridFS Buckets</span>
+                                    <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="gridfs-count">
+                                      ({gridfsBuckets.length})
+                                    </Badge>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                                      data-testid={`gridfs-new-bucket-${conn.id}-${dbName}`}
+                                      title="New bucket"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleOpenGridfsBucket(conn.id, dbName);
+                                      }}
+                                    >
+                                      <Plus size={11} />
+                                    </Button>
+                                  </div>
+                                  {isGridfsExpanded && (
+                                    <div className="ml-3 border-l border-border/50 pl-1">
+                                      {gridfsBuckets.map((bucket) => (
+                                        <div
+                                          key={bucket}
+                                          className={treeRowClass()}
+                                          onClick={() => onOpenGridfs?.(conn.id, dbName, bucket)}
+                                        >
+                                          <Archive size={11} className="ml-3.5 shrink-0 text-emerald-500" />
+                                          <span className="min-w-0 truncate" title={bucket}>
+                                            {bucket}
+                                          </span>
+                                        </div>
+                                      ))}
+                                      <div
+                                        className={cn(treeRowClass(), 'text-[10px] text-primary')}
+                                        data-testid={`gridfs-open-bucket-${conn.id}-${dbName}`}
+                                        onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
+                                      >
+                                        <Plus size={11} className="ml-3.5 shrink-0" />
+                                        <span>New bucket…</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem
+                                  className={ctxItemClass}
+                                  data-testid={`ctx-gridfs-new-bucket-${conn.id}-${dbName}`}
                                   onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
                                 >
-                                  <Plus size={11} className="ml-3.5 shrink-0" />
-                                  <span>New bucket…</span>
-                                </div>
-                              </div>
-                            )}
+                                  <Plus />
+                                  <span>New Bucket</span>
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
 
-                            <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/system`)}>
-                              <ChevronRight
-                                size={10}
-                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isSystemExpanded && 'rotate-90')}
-                              />
-                              <Cog size={11} className="shrink-0 text-amber-500" />
-                              <span className="text-muted-foreground">System</span>
-                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="system-count">
-                                ({systemColls.length})
-                              </Badge>
-                            </div>
-                            {isSystemExpanded && (
-                              <div className="ml-3 border-l border-border/50 pl-1">
-                                {systemColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
-                                {systemColls.length === 0 && (
-                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
-                                )}
-                              </div>
-                            )}
+                            <ContextMenu>
+                              <ContextMenuTrigger asChild>
+                                <div>
+                                  <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/system`)}>
+                                    <ChevronRight
+                                      size={10}
+                                      className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isSystemExpanded && 'rotate-90')}
+                                    />
+                                    <Cog size={11} className="shrink-0 text-amber-500" />
+                                    <span className="text-muted-foreground">System</span>
+                                    <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="system-count">
+                                      ({systemColls.length})
+                                    </Badge>
+                                  </div>
+                                  {isSystemExpanded && (
+                                    <div className="ml-3 border-l border-border/50 pl-1">
+                                      {systemColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
+                                      {systemColls.length === 0 && (
+                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem
+                                  className={ctxItemClass}
+                                  data-testid={`ctx-system-refresh-${conn.id}-${dbName}`}
+                                  onClick={() => void handleRefreshDb(conn.id, dbName)}
+                                >
+                                  <RefreshCw />
+                                  <span>Refresh Database</span>
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
                           </div>
                         )}
                       </div>
