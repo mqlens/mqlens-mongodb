@@ -33,7 +33,10 @@ pub use db::documents::{
     json_to_bson_document, update_document_impl, update_many_impl, ImportResult,
 };
 pub use db::export::start_collection_export_impl;
-pub use db::gridfs::{download_gridfs_file_impl, list_gridfs_files_impl, GridFsFileInfo};
+pub use db::gridfs::{
+    delete_gridfs_file_impl, download_gridfs_file_impl, list_gridfs_files_impl,
+    upload_gridfs_file_impl, GridFsFileInfo, GridFsTransferProgress,
+};
 pub use db::metadata::{
     create_index_impl, delete_index_impl, list_collections_impl, list_databases_impl,
     list_indexes_impl,
@@ -1129,8 +1132,63 @@ async fn download_gridfs_file(
     bucket: String,
     file_id: String,
     dest_path: String,
+    total_bytes: Option<u64>,
+    on_progress: tauri::ipc::Channel<GridFsTransferProgress>,
 ) -> Result<u64, String> {
-    download_gridfs_file_impl(&state, &id, &database, &bucket, &file_id, &dest_path).await
+    let emit = |update: GridFsTransferProgress| {
+        let _ = on_progress.send(update);
+    };
+    download_gridfs_file_impl(
+        &state,
+        &id,
+        &database,
+        &bucket,
+        &file_id,
+        &dest_path,
+        total_bytes,
+        Some(&emit),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn upload_gridfs_file(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    bucket: String,
+    source_path: String,
+    filename: Option<String>,
+    metadata_json: Option<String>,
+    content_type: Option<String>,
+    on_progress: tauri::ipc::Channel<GridFsTransferProgress>,
+) -> Result<String, String> {
+    let emit = |update: GridFsTransferProgress| {
+        let _ = on_progress.send(update);
+    };
+    upload_gridfs_file_impl(
+        &state,
+        &id,
+        &database,
+        &bucket,
+        &source_path,
+        filename.as_deref(),
+        metadata_json.as_deref(),
+        content_type.as_deref(),
+        Some(&emit),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn delete_gridfs_file(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    bucket: String,
+    file_id: String,
+) -> Result<(), String> {
+    delete_gridfs_file_impl(&state, &id, &database, &bucket, &file_id).await
 }
 
 #[tauri::command]
@@ -1410,6 +1468,8 @@ pub fn run() {
             update_many,
             list_gridfs_files,
             download_gridfs_file,
+            upload_gridfs_file,
+            delete_gridfs_file,
             insert_document,
             import_documents,
             update_document,

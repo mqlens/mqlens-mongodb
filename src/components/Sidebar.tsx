@@ -114,6 +114,17 @@ export interface IndexInfo {
 const compareCollectionNames = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 
+const validateGridfsBucketName = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Bucket name is required';
+  if (trimmed.includes('.')) return 'Bucket name cannot contain "."';
+  if (trimmed.startsWith('system')) return 'Bucket name cannot start with "system"';
+  if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+    return 'Use letters, numbers, underscore, or hyphen only';
+  }
+  return null;
+};
+
 interface ConnectionProfile {
   id: string;
   name: string;
@@ -719,6 +730,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     } catch (err) {
       toast(`Failed to create collection: ${err}`, 'error');
     }
+  };
+
+  const handleOpenGridfsBucket = async (connectionId: string, dbName: string) => {
+    const name = await prompt({
+      title: 'Open GridFS bucket',
+      message: 'Bucket name (collections are created on first upload):',
+      defaultValue: 'fs',
+      placeholder: 'fs',
+      validate: validateGridfsBucketName,
+    });
+    if (!name) return;
+    onOpenGridfs?.(connectionId, dbName, name.trim());
   };
 
   const handleDropCollection = async (connectionId: string, dbName: string, collName: string) => {
@@ -1487,6 +1510,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             </ContextMenuItem>
                             <ContextMenuItem
                               className={ctxItemClass}
+                              data-testid={`ctx-add-gridfs-bucket-${conn.id}-${dbName}`}
+                              onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
+                            >
+                              <Archive />
+                              <span>Open GridFS Bucket</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              className={ctxItemClass}
                               onClick={() => onOpenShell?.(conn.id, dbName, undefined, 'show collections')}
                             >
                               <Terminal />
@@ -1571,6 +1602,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="gridfs-count">
                                 ({gridfsBuckets.length})
                               </Badge>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                                data-testid={`gridfs-new-bucket-${conn.id}-${dbName}`}
+                                title="Open GridFS bucket"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleOpenGridfsBucket(conn.id, dbName);
+                                }}
+                              >
+                                <Plus size={11} />
+                              </Button>
                             </div>
                             {isGridfsExpanded && (
                               <div className="ml-3 border-l border-border/50 pl-1">
@@ -1586,9 +1631,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     </span>
                                   </div>
                                 ))}
-                                {gridfsBuckets.length === 0 && (
-                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
-                                )}
+                                <div
+                                  className={cn(treeRowClass(), 'text-[10px] text-primary')}
+                                  data-testid={`gridfs-open-bucket-${conn.id}-${dbName}`}
+                                  onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
+                                >
+                                  <Plus size={11} className="ml-3.5 shrink-0" />
+                                  <span>New bucket…</span>
+                                </div>
                               </div>
                             )}
 

@@ -14,6 +14,8 @@ pub const MAX_IMPORT_DOCS: usize = 10_000;
 pub const GRIDFS_STREAM_BUF: usize = 64 * 1024;
 /// Maximum GridFS file metadata entries listed at once.
 pub const MAX_GRIDFS_LIST: i64 = 500;
+/// Maximum single-file GridFS upload size (streamed; not loaded whole-file into RAM).
+pub const MAX_GRIDFS_UPLOAD_BYTES: u64 = 512 * 1024 * 1024;
 /// Maximum documents sampled for schema inference.
 pub const MAX_SCHEMA_SAMPLE: i64 = 1_000;
 /// Mongosh output caps per command.

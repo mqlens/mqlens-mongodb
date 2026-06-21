@@ -12,12 +12,13 @@ mod integration {
     use crate::{
         analyze_schema_impl, connect_db_impl, count_documents_impl, create_collection_impl,
         create_index_impl, create_view_impl, delete_document_impl, delete_index_impl,
-        delete_many_impl, disconnect_db_impl, download_gridfs_file_impl, drop_collection_impl,
-        drop_database_impl, execute_aggregate_impl, execute_mql_query_impl,
+        delete_many_impl, delete_gridfs_file_impl, disconnect_db_impl, download_gridfs_file_impl,
+        drop_collection_impl, drop_database_impl, execute_aggregate_impl, execute_mql_query_impl,
         explain_aggregate_query_impl, explain_mql_query_impl, get_mongodb_version_impl,
         import_documents_impl, insert_document_impl, list_collections_impl, list_databases_impl,
         list_gridfs_files_impl, list_indexes_impl, rename_collection_impl, rename_database_impl,
-        start_collection_export_impl, update_document_impl, update_many_impl, AppState,
+        start_collection_export_impl, update_document_impl, update_many_impl,
+        upload_gridfs_file_impl, AppState,
     };
     use mongodb::bson::{doc, Document};
 
@@ -569,22 +570,31 @@ mod integration {
     }
 
     #[tokio::test]
-    async fn it_gridfs_list_and_download_real() {
+    async fn it_gridfs_list_upload_download_and_delete_real() {
         use futures::AsyncWriteExt;
         let Some((state, id, db)) = connect().await else {
             return;
         };
 
-        // Upload a file into the "uploads" GridFS bucket via the driver.
-        let bucket = client_of(&state, &id).database(&db).gridfs_bucket(
-            mongodb::options::GridFsBucketOptions::builder()
-                .bucket_name("uploads".to_string())
-                .build(),
-        );
+        let src = std::env::temp_dir().join(format!("mqlens-it-gridfs-src-{}.txt", uuid::Uuid::new_v4().simple()));
         let payload = b"hello gridfs integration".to_vec();
-        let mut upload = bucket.open_upload_stream("greeting.txt").await.unwrap();
-        upload.write_all(&payload).await.unwrap();
-        upload.close().await.unwrap();
+        std::fs::write(&src, &payload).expect("write temp upload source");
+        let src_str = src.to_string_lossy().to_string();
+
+        let uploaded_id = upload_gridfs_file_impl(
+            &state,
+            &id,
+            &db,
+            "uploads",
+            &src_str,
+            Some("greeting.txt"),
+            Some(r#"{"source":"integration-test"}"#),
+            None,
+            None,
+        )
+        .await
+        .expect("upload gridfs");
+        assert!(!uploaded_id.is_empty());
 
         // list_gridfs_files_impl returns JSON of files; find ours.
         let listed = list_gridfs_files_impl(&state, &id, &db, "uploads")
@@ -597,8 +607,7 @@ mod integration {
             .find(|f| f["filename"] == "greeting.txt")
             .expect("uploaded file listed");
         assert_eq!(entry["length"].as_u64().unwrap(), payload.len() as u64);
-        // `id` is already the file _id rendered as extended JSON (e.g. {"$oid":"..."}),
-        // which is exactly what download_gridfs_file_impl expects — pass it through as-is.
+        assert_eq!(entry["content_type"].as_str(), Some("text/plain"));
         let file_id_json = entry["id"].as_str().expect("gridfs id is a json string").to_string();
 
         // Download it back to disk and verify the bytes.
@@ -611,6 +620,8 @@ mod integration {
             "uploads",
             &file_id_json,
             &dest_str,
+            Some(payload.len() as u64),
+            None,
         )
         .await
         .unwrap_or_else(|e| panic!("download gridfs (id={file_id_json}): {e}"));
@@ -619,6 +630,23 @@ mod integration {
         assert_eq!(got, payload);
         let _ = std::fs::remove_file(&dest);
 
+        delete_gridfs_file_impl(&state, &id, &db, "uploads", &file_id_json)
+            .await
+            .expect("delete gridfs");
+        let listed_after = list_gridfs_files_impl(&state, &id, &db, "uploads")
+            .await
+            .expect("list after delete");
+        let after: serde_json::Value = serde_json::from_str(&listed_after).unwrap();
+        assert!(
+            !after
+                .as_array()
+                .expect("files array")
+                .iter()
+                .any(|f| f["filename"] == "greeting.txt"),
+            "deleted file should no longer be listed"
+        );
+
+        let _ = std::fs::remove_file(&src);
         cleanup(&state, &id, &db).await;
     }
 
