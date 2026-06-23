@@ -249,8 +249,13 @@ pub async fn upload_gridfs_file_impl(
         .await
         .map_err(|e| format!("Failed to finalize GridFS upload: {}", e))?;
 
+    // Best-effort: the file is already durably stored, so a failure to stamp the
+    // contentType must not surface as an upload failure. Worst case the file simply
+    // lacks a contentType.
     if let Some(ct) = resolved_content_type.as_deref() {
-        set_gridfs_content_type(&client, database, bucket, &file_bson_id, ct).await?;
+        if let Err(e) = set_gridfs_content_type(&client, database, bucket, &file_bson_id, ct).await {
+            eprintln!("warning: GridFS upload succeeded but content type was not set: {}", e);
+        }
     }
 
     let file_id = file_bson_id.into_relaxed_extjson().to_string();

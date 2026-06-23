@@ -52,7 +52,6 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [transfer, setTransfer] = useState<TransferState>(null);
-  const [dragActive, setDragActive] = useState(false);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -145,6 +144,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
     );
 
     let uploadedAny = false;
+    const failed: string[] = [];
     for (const { sourcePath, filename } of planned) {
       const channel = makeProgressChannel('upload', filename);
       try {
@@ -161,11 +161,16 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
         uploadedAny = true;
         toast(`Uploaded ${filename}`, 'success');
       } catch (err: any) {
-        toast(`Upload failed: ${err?.message || err}`, 'error');
-        break;
+        // Don't abort the batch — keep uploading the remaining files and
+        // report which ones failed at the end.
+        failed.push(filename);
+        toast(`Upload failed for ${filename}: ${err?.message || err}`, 'error');
       } finally {
         setTransfer(null);
       }
+    }
+    if (failed.length > 1) {
+      toast(`${failed.length} files failed to upload.`, 'error');
     }
     await loadFiles();
     if (uploadedAny) {
@@ -182,19 +187,6 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
     } catch (err: any) {
       toast(`Upload failed: ${err?.message || err}`, 'error');
     }
-  };
-
-  const handleDrop = async (event: React.DragEvent) => {
-    event.preventDefault();
-    setDragActive(false);
-    const paths = Array.from(event.dataTransfer.files)
-      .map((f) => (f as File & { path?: string }).path)
-      .filter((p): p is string => typeof p === 'string' && p.length > 0);
-    if (paths.length === 0) {
-      toast('Drag-and-drop is available in the desktop app.', 'error');
-      return;
-    }
-    await uploadPaths(paths);
   };
 
   const handleDownload = async (file: GridFsFile) => {
@@ -276,23 +268,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
       : null;
 
   return (
-    <div
-      className="relative flex h-full flex-col overflow-hidden"
-      data-testid="gridfs-view"
-      onDragEnter={(e) => {
-        e.preventDefault();
-        setDragActive(true);
-      }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragActive(true);
-      }}
-      onDragLeave={(e) => {
-        e.preventDefault();
-        if (e.currentTarget === e.target) setDragActive(false);
-      }}
-      onDrop={handleDrop}
-    >
+    <div className="relative flex h-full flex-col overflow-hidden" data-testid="gridfs-view">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <HardDrive size={14} className="text-success" />
@@ -338,17 +314,6 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
         </div>
       )}
 
-      {dragActive && (
-        <div
-          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/70 backdrop-blur-[1px]"
-          data-testid="gridfs-drop-overlay"
-        >
-          <div className="rounded-md border border-dashed border-primary px-6 py-4 text-sm text-primary">
-            Drop files to upload
-          </div>
-        </div>
-      )}
-
       {files.length === 0 ? (
         <div
           className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground"
@@ -385,10 +350,6 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
                 <tr
                   key={file.id}
                   className="border-t border-border hover:bg-accent/50"
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    void handleDelete(file);
-                  }}
                 >
                   <td className="px-4 py-1.5 font-mono text-foreground">{file.filename}</td>
                   <td className="px-4 py-1.5 tabular-nums">{formatBytes(file.length)}</td>
