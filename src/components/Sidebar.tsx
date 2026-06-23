@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useDialogs } from './dialogs/DialogProvider';
 import { fuzzyMatch } from '../lib/fuzzyMatch';
+import { type CollectionSelection, emptySelection, toggleCollection, selectionScope } from '@/lib/collectionSelection';
 import {
   type FolderNode,
   FOLDERS_CHANGED_EVENT,
@@ -86,6 +87,8 @@ import {
   X,
   Pin,
   Heart,
+  Copy,
+  ClipboardPaste,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
@@ -163,6 +166,22 @@ interface SidebarProps {
   collectionMutationTrigger?: number;
   onConnectProfile?: (profile: ConnectionProfile) => Promise<string | null> | string | null;
   profilesRefreshKey?: number;
+  onCopyCollections?: (connectionId: string, db: string, collections: string[]) => void;
+  onCopyDatabase?: (connectionId: string, db: string) => void;
+  /** Copy source to the in-app clipboard (collections=[] means whole database). */
+  onCopyToClipboard?: (connectionId: string, db: string, collections: string[]) => void;
+  /** Paste the clipboard into a target (db omitted = paste onto a connection). */
+  onPasteInto?: (connectionId: string, db?: string) => void;
+  /** Whether the clipboard currently holds something to paste. */
+  canPaste?: boolean;
+  /**
+   * Destination to refresh after a copy starts (and periodically while it runs),
+   * so newly-copied databases/collections appear. `expand` auto-opens the target
+   * db (only on copy start, so a manual collapse mid-copy is respected).
+   */
+  refreshTarget?: { connectionId: string; db?: string; expand: boolean } | null;
+  /** Bumped by the parent to fire a refresh of `refreshTarget`. */
+  refreshTargetNonce?: number;
 }
 
 const treeRowClass = (active?: boolean) =>
@@ -262,6 +281,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   collectionMutationTrigger,
   onConnectProfile,
   profilesRefreshKey = 0,
+  onCopyCollections,
+  onCopyDatabase,
+  onCopyToClipboard,
+  onPasteInto,
+  canPaste,
+  refreshTarget,
+  refreshTargetNonce,
 }) => {
   const { toast, confirm, prompt } = useDialogs();
   const [filterQuery, setFilterQuery] = useState('');
@@ -319,6 +345,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [expandedCollectionsFolders, setExpandedCollectionsFolders] = useState<{ [connectionDbFolderKey: string]: boolean }>({});
   const [expandedCollections, setExpandedCollections] = useState<{ [connectionDbCollKey: string]: boolean }>({});
   const [expandedIndexesFolders, setExpandedIndexesFolders] = useState<{ [connectionDbCollKey: string]: boolean }>({});
+
+  const [selection, setSelection] = useState<CollectionSelection>(emptySelection());
 
   const [pinnedItems, setPinnedItems] = useState<PinnedItem[]>(() => loadPinnedCollections());
   const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>(() => loadFavoriteItems());
@@ -590,6 +618,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
       });
     }
   }, [collectionMutationTrigger]);
+
+  // Refresh a copy destination when the parent bumps the nonce — on copy start
+  // and periodically while it runs — so new databases/collections appear live.
+  useEffect(() => {
+    if (!refreshTargetNonce || !refreshTarget) return;
+    const { connectionId, db, expand } = refreshTarget;
+    loadDatabases(connectionId);
+    if (db) {
+      const key = `${connectionId}/${db}`;
+      if (expand) {
+        setExpandedDbs((prev) => ({ ...prev, [key]: true }));
+        setExpandedCollectionsFolders((prev) => ({ ...prev, [`${key}/collections`]: true }));
+      }
+      handleRefreshDb(connectionId, db);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTargetNonce]);
 
   const loadDatabases = async (connectionId: string) => {
     try {
@@ -1029,6 +1074,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const selectedNamesFor = (connId: string, dbName: string, collName: string): string[] => {
+    const scope = selectionScope(connId, dbName);
+    if (selection.scope === scope && selection.names.has(collName)) {
+      return [...selection.names];
+    }
+    return [collName];
+  };
+
   const renderCollectionNode = (connId: string, dbName: string, collName: string) => {
     const collKey = `${connId}/${dbName}/${collName}`;
     const isCollExpanded = expandedCollections[collKey];
@@ -1038,17 +1091,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
       activeCollection?.db === dbName &&
       activeCollection?.collection === collName &&
       !activeCollection?.indexName;
+    const isSelected = selection.scope === selectionScope(connId, dbName) && selection.names.has(collName);
 
     return (
       <div key={collName}>
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
-              onClick={() => {
-                onSelectCollection(connId, dbName, collName);
-                toggleCollectionNode(connId, dbName, collName);
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSelection((s) => toggleCollection(s, connId, dbName, collName));
+                } else {
+                  onSelectCollection(connId, dbName, collName);
+                  toggleCollectionNode(connId, dbName, collName);
+                }
               }}
-              className={treeRowClass(isActive)}
+              className={cn(treeRowClass(isActive), isSelected && 'bg-accent')}
             >
               <ChevronRight
                 size={10}
@@ -1139,6 +1199,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <ContextMenuItem className={ctxItemClass} onClick={() => onAnalyzeSchema?.(connId, dbName, collName)}>
               <Table2 />
               <span>Analyze Schema</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={ctxItemClass}
+              onClick={() => onCopyToClipboard?.(connId, dbName, selectedNamesFor(connId, dbName, collName))}
+            >
+              <Copy />
+              <span>Copy</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={ctxItemClass}
+              onClick={() => onCopyCollections?.(connId, dbName, selectedNamesFor(connId, dbName, collName))}
+            >
+              Copy to…
             </ContextMenuItem>
             <ContextMenuItem
               className={ctxItemClass}
@@ -1328,6 +1401,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
                       onClick={(e) => {
                         e.stopPropagation();
+                        loadDatabases(conn.id);
+                      }}
+                      title="Refresh Databases"
+                      aria-label="Refresh databases"
+                    >
+                      <RefreshCw className="size-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
                         onDisconnect(conn.id);
                       }}
                       title="Disconnect Connection"
@@ -1342,6 +1428,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <Plus />
                     <span>Add Database</span>
                   </ContextMenuItem>
+                  <ContextMenuItem className={ctxItemClass} onClick={() => loadDatabases(conn.id)}>
+                    <RefreshCw />
+                    <span>Refresh Databases</span>
+                  </ContextMenuItem>
+                  {canPaste && (
+                    <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id)}>
+                      <ClipboardPaste />
+                      <span>Paste here</span>
+                    </ContextMenuItem>
+                  )}
                   <ContextMenuItem
                     className={ctxItemClass}
                     data-testid={`ctx-pin-conn-${conn.id}`}
@@ -1508,6 +1604,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <Eye />
                               <span>Create View</span>
                             </ContextMenuItem>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => onCopyToClipboard?.(conn.id, dbName, [])}>
+                              <Copy />
+                              <span>Copy database</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => onCopyDatabase?.(conn.id, dbName)}>
+                              Copy database to…
+                            </ContextMenuItem>
+                            {canPaste && (
+                              <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id, dbName)}>
+                                <ClipboardPaste />
+                                <span>Paste here</span>
+                              </ContextMenuItem>
+                            )}
                             <ContextMenuItem
                               className={ctxItemClass}
                               data-testid={`ctx-add-gridfs-bucket-${conn.id}-${dbName}`}

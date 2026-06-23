@@ -48,6 +48,7 @@ pub use db::users::{
     MongoUser, RoleInfo, RoleSpec,
 };
 pub use db::version::get_mongodb_version_impl;
+pub use db::copy::{preflight_copy_impl, start_collection_copy_impl, start_database_copy_impl, CopyTargetRef};
 pub use biometric::{decode_and_verify_key, encode_key, BiometricStatus};
 pub use state::{AppState, LockExt};
 pub use window::target_window_size;
@@ -178,6 +179,24 @@ pub struct AgentDetection {
     pub version: String,
 }
 
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyFailure {
+    pub collection: String,
+    pub error: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CopySummary {
+    pub collections_copied: u64,
+    pub documents_copied: u64,
+    pub documents_skipped: u64,
+    pub indexes_created: u64,
+    pub skipped: Vec<String>,
+    pub failed: Vec<CopyFailure>,
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskInfo {
@@ -192,6 +211,14 @@ pub struct TaskInfo {
     pub error: Option<String>,
     pub created_at_ms: u64,
     pub finished_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items_processed: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items_total: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<CopySummary>,
 }
 
 /// Probe each local agent's binary with `--version` (short, blocking). NotFound -> not available.
@@ -931,6 +958,66 @@ async fn clear_finished_export_tasks(
 }
 
 #[tauri::command]
+async fn cancel_task(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    if state.request_cancel(&id) {
+        Ok(())
+    } else {
+        Err("Task is not running or cannot be cancelled".to_string())
+    }
+}
+
+#[tauri::command]
+async fn preflight_copy(
+    state: tauri::State<'_, AppState>,
+    source_id: String,
+    source_db: String,
+    source_collections: Vec<String>,
+    targets: Vec<CopyTargetRef>,
+) -> Result<db::copy::PreflightResult, String> {
+    preflight_copy_impl(&state, &source_id, &source_db, source_collections, targets).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_collection_copy(
+    state: tauri::State<'_, AppState>,
+    source_id: String,
+    source_db: String,
+    source_collection: String,
+    target_id: String,
+    target_db: String,
+    target_collection: String,
+    filter: Option<String>,
+    include_indexes: bool,
+    conflict_mode: String,
+) -> Result<TaskInfo, String> {
+    start_collection_copy_impl(
+        &state, &source_id, &source_db, &source_collection,
+        &target_id, &target_db, &target_collection,
+        filter, include_indexes, conflict_mode,
+    ).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_database_copy(
+    state: tauri::State<'_, AppState>,
+    source_id: String,
+    source_db: String,
+    target_id: String,
+    target_db: String,
+    collections: Option<Vec<String>>,
+    include_indexes: bool,
+    include_views: bool,
+    conflict_mode: String,
+) -> Result<TaskInfo, String> {
+    start_database_copy_impl(
+        &state, &source_id, &source_db, &target_id, &target_db,
+        collections, include_indexes, include_views, conflict_mode,
+    ).await
+}
+
+#[tauri::command]
 async fn execute_aggregate(
     state: tauri::State<'_, AppState>,
     id: String,
@@ -1479,6 +1566,10 @@ pub fn run() {
             start_collection_export,
             list_export_tasks,
             clear_finished_export_tasks,
+            cancel_task,
+            preflight_copy,
+            start_collection_copy,
+            start_database_copy,
             create_collection,
             create_view,
             drop_collection,
