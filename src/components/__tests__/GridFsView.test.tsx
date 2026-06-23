@@ -4,20 +4,40 @@ import { GridFsView } from '../GridFsView';
 
 const mockInvoke = vi.fn();
 const mockSave = vi.fn();
+const mockOpen = vi.fn();
+const mockConfirm = vi.fn();
+const mockPrompt = vi.fn();
+const mockChoose = vi.fn();
+const mockToast = vi.fn();
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
-}));
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-  save: (...args: any[]) => mockSave(...args),
+  Channel: class {
+    onmessage: ((update: any) => void) | null = null;
+  },
 }));
 
-// GridFsView consumes the in-app dialog system for toasts.
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  save: (...args: any[]) => mockSave(...args),
+  open: (...args: any[]) => mockOpen(...args),
+}));
+
 vi.mock('../dialogs/DialogProvider', () => ({
-  useDialogs: () => ({ toast: vi.fn(), confirm: vi.fn(), prompt: vi.fn(), choose: vi.fn() }),
+  useDialogs: () => ({
+    toast: mockToast,
+    confirm: mockConfirm,
+    prompt: mockPrompt,
+    choose: mockChoose,
+  }),
 }));
 
 describe('GridFsView (M7 — GridFS browsing)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockConfirm.mockResolvedValue(true);
+    mockChoose.mockResolvedValue('skip');
+    mockPrompt.mockImplementation(async ({ defaultValue }: { defaultValue?: string }) => defaultValue ?? 'file.bin');
+  });
 
   const files = [
     { id: '{"$oid":"aaa"}', filename: 'report.pdf', length: 2048, chunk_size_bytes: 261120, upload_date: '2026-01-02T10:00:00Z', content_type: 'application/pdf' },
@@ -30,7 +50,6 @@ describe('GridFsView (M7 — GridFS browsing)', () => {
 
     expect(await screen.findByText('report.pdf')).toBeInTheDocument();
     expect(screen.getByText('photo.jpg')).toBeInTheDocument();
-    // 1048576 bytes -> "1 MB" (formatBytes); 2048 -> "2 KB"
     expect(screen.getByText(/1 MB/)).toBeInTheDocument();
     expect(mockInvoke).toHaveBeenCalledWith('list_gridfs_files', {
       id: 'c1',
@@ -50,13 +69,15 @@ describe('GridFsView (M7 — GridFS browsing)', () => {
     fireEvent.click(screen.getAllByTestId('gridfs-download-btn')[0]);
 
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith('download_gridfs_file', {
+      expect(mockInvoke).toHaveBeenCalledWith('download_gridfs_file', expect.objectContaining({
         id: 'c1',
         database: 'shop',
         bucket: 'uploads',
         fileId: '{"$oid":"aaa"}',
         destPath: '/home/me/report.pdf',
-      })
+        totalBytes: 2048,
+        onProgress: expect.any(Object),
+      }))
     );
   });
 
@@ -70,6 +91,91 @@ describe('GridFsView (M7 — GridFS browsing)', () => {
 
     await waitFor(() => expect(mockSave).toHaveBeenCalled());
     expect(mockInvoke).not.toHaveBeenCalledWith('download_gridfs_file', expect.anything());
+  });
+
+  it('uploads a file selected from the open dialog', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_gridfs_files') return Promise.resolve(JSON.stringify(files));
+      if (cmd === 'upload_gridfs_file') return Promise.resolve('{"$oid":"new"}');
+      return Promise.resolve(undefined);
+    });
+    mockOpen.mockResolvedValue('/tmp/report.pdf');
+
+    render(<GridFsView connectionId="c1" databaseName="shop" bucket="uploads" />);
+    await screen.findByText('report.pdf');
+    fireEvent.click(screen.getByTestId('gridfs-upload-btn'));
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('upload_gridfs_file', expect.objectContaining({
+        id: 'c1',
+        database: 'shop',
+        bucket: 'uploads',
+        sourcePath: '/tmp/report.pdf',
+        filename: 'report.pdf',
+        metadataJson: null,
+        contentType: null,
+        onProgress: expect.any(Object),
+      }))
+    );
+    expect(mockToast).toHaveBeenCalledWith('Uploaded report.pdf', 'success');
+  });
+
+  it('uploads with optional metadata JSON', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_gridfs_files') return Promise.resolve(JSON.stringify(files));
+      if (cmd === 'upload_gridfs_file') return Promise.resolve('{"$oid":"new"}');
+      return Promise.resolve(undefined);
+    });
+    mockOpen.mockResolvedValue('/tmp/report.pdf');
+    mockChoose.mockResolvedValue('add');
+    mockPrompt
+      .mockResolvedValueOnce('report.pdf')
+      .mockResolvedValueOnce('{"source":"manual"}');
+
+    render(<GridFsView connectionId="c1" databaseName="shop" bucket="uploads" />);
+    await screen.findByText('report.pdf');
+    fireEvent.click(screen.getByTestId('gridfs-upload-btn'));
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('upload_gridfs_file', expect.objectContaining({
+        metadataJson: '{"source":"manual"}',
+      }))
+    );
+  });
+
+  it('deletes a file after confirmation', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_gridfs_files') return Promise.resolve(JSON.stringify(files));
+      if (cmd === 'delete_gridfs_file') return Promise.resolve(undefined);
+      return Promise.resolve(undefined);
+    });
+
+    render(<GridFsView connectionId="c1" databaseName="shop" bucket="uploads" />);
+    await screen.findByText('report.pdf');
+    fireEvent.click(screen.getAllByTestId('gridfs-delete-btn')[0]);
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('delete_gridfs_file', {
+        id: 'c1',
+        database: 'shop',
+        bucket: 'uploads',
+        fileId: '{"$oid":"aaa"}',
+      })
+    );
+    expect(mockConfirm).toHaveBeenCalled();
+    expect(mockToast).toHaveBeenCalledWith('Deleted report.pdf', 'success');
+  });
+
+  it('does not delete when confirmation is cancelled', async () => {
+    mockConfirm.mockResolvedValue(false);
+    mockInvoke.mockResolvedValue(JSON.stringify(files));
+    render(<GridFsView connectionId="c1" databaseName="shop" bucket="uploads" />);
+
+    await screen.findByText('report.pdf');
+    fireEvent.click(screen.getAllByTestId('gridfs-delete-btn')[0]);
+
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalled());
+    expect(mockInvoke).not.toHaveBeenCalledWith('delete_gridfs_file', expect.anything());
   });
 
   it('shows an error state when listing fails', async () => {

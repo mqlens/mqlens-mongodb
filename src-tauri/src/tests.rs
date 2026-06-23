@@ -3,11 +3,13 @@ mod tests {
     use crate::AppState;
     use crate::{
         connect_db_impl, count_documents_impl, create_collection_impl, create_index_impl,
-        delete_document_impl, disconnect_db_impl, download_gridfs_file_impl, drop_collection_impl,
+        delete_document_impl, delete_gridfs_file_impl, disconnect_db_impl,
+        download_gridfs_file_impl, drop_collection_impl,
         drop_database_impl, execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
         import_documents_impl, insert_document_impl, json_to_bson_document, list_collections_impl,
         list_databases_impl, list_gridfs_files_impl, list_indexes_impl, rename_collection_impl,
         rename_database_impl, start_collection_export_impl, update_document_impl,
+        upload_gridfs_file_impl,
     };
     use crate::{
         create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
@@ -928,11 +930,43 @@ mod tests {
             "uploads",
             r#"{"$oid":"507f1f77bcf86cd799439011"}"#,
             "/tmp/out.bin",
+            None,
+            None,
         )
         .await;
         assert!(
             dl.unwrap_err().contains("not supported on mock"),
             "GridFS download on a mock connection should be rejected"
+        );
+
+        let up = upload_gridfs_file_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "uploads",
+            "/tmp/in.bin",
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            up.unwrap_err().contains("not supported on mock"),
+            "GridFS upload on a mock connection should be rejected"
+        );
+
+        let del = delete_gridfs_file_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "uploads",
+            r#"{"$oid":"507f1f77bcf86cd799439011"}"#,
+        )
+        .await;
+        assert!(
+            del.unwrap_err().contains("not supported on mock"),
+            "GridFS delete on a mock connection should be rejected"
         );
     }
 
@@ -942,10 +976,30 @@ mod tests {
         let id = "realish-gridfs";
         state.mocks.lock().unwrap().insert(id.to_string(), false);
 
-        let bad_id = download_gridfs_file_impl(&state, id, "db", "fs", "{", "/tmp/file.bin")
+        let bad_id = download_gridfs_file_impl(&state, id, "db", "fs", "{", "/tmp/file.bin", None, None)
             .await
             .unwrap_err();
         assert!(bad_id.contains("Invalid file id JSON"));
+
+        let bad_upload_meta = upload_gridfs_file_impl(
+            &state,
+            id,
+            "db",
+            "fs",
+            "/tmp/missing.bin",
+            None,
+            Some("{"),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(bad_upload_meta.contains("Invalid metadata JSON"));
+
+        let bad_delete = delete_gridfs_file_impl(&state, id, "db", "fs", "{")
+            .await
+            .unwrap_err();
+        assert!(bad_delete.contains("Invalid file id JSON"));
 
         let missing_client = list_gridfs_files_impl(&state, id, "db", "fs")
             .await

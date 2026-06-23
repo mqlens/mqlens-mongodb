@@ -1859,6 +1859,7 @@ function Workspace() {
                   connectionId={activeTab.connectionId}
                   databaseName={activeTab.db}
                   bucket={activeTab.collection}
+                  onNamespaceMutated={() => setCollectionMutationTrigger((prev) => prev + 1)}
                 />
               )}
               {activeTab && activeTab.type === 'monitoring' && (

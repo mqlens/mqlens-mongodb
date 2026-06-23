@@ -867,4 +867,161 @@ describe('Sidebar Component', () => {
     expect(await screen.findByTitle('Connection color')).toBeInTheDocument();
     expect(screen.getByText('Staging')).toBeInTheDocument();
   });
+
+  it('opens a new GridFS bucket from the sidebar when none exist', async () => {
+    const onOpenGridfs = vi.fn();
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'list_databases') {
+        if (args.id === 'conn-1') return Promise.resolve(['demo']);
+      }
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenGridfs={onOpenGridfs}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('demo'));
+    fireEvent.click(await screen.findByText('GridFS Buckets'));
+
+    fireEvent.click(screen.getByTestId('gridfs-open-bucket-conn-1-demo'));
+    const input = await screen.findByTestId('dialog-input');
+    fireEvent.change(input, { target: { value: 'uploads' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await waitFor(() => {
+      expect(onOpenGridfs).toHaveBeenCalledWith('conn-1', 'demo', 'uploads');
+    });
+  });
+
+  it('shows New Bucket on GridFS Buckets context menu, not empty-space items', async () => {
+    const onOpenGridfs = vi.fn();
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'list_databases') {
+        if (args.id === 'conn-1') return Promise.resolve(['demo']);
+      }
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenGridfs={onOpenGridfs}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('demo'));
+    const gridfsRow = await screen.findByText('GridFS Buckets');
+    fireEvent.contextMenu(gridfsRow);
+
+    expect(screen.getByText('New Bucket')).toBeInTheDocument();
+    expect(screen.queryByText('New Connection')).toBeNull();
+    expect(screen.queryByText('Settings')).toBeNull();
+  });
+
+  it('shows New Collection on Collections context menu, not empty-space items', async () => {
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'list_databases') {
+        if (args.id === 'conn-1') return Promise.resolve(['demo']);
+      }
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('demo'));
+    fireEvent.contextMenu(await screen.findByText('Collections'));
+
+    expect(screen.getByText('New Collection')).toBeInTheDocument();
+    expect(screen.queryByText('New Connection')).toBeNull();
+    expect(screen.queryByText('Settings')).toBeNull();
+  });
+
+  it('shows Create View on Views context menu, not empty-space items', async () => {
+    const onCreateView = vi.fn();
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'list_databases') {
+        if (args.id === 'conn-1') return Promise.resolve(['demo']);
+      }
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onCreateView={onCreateView}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('demo'));
+    fireEvent.contextMenu(await screen.findByText('Views'));
+
+    expect(screen.getByText('Create View')).toBeInTheDocument();
+    expect(screen.queryByText('New Connection')).toBeNull();
+    expect(screen.queryByText('Settings')).toBeNull();
+  });
+
+  it('shows Refresh Database on System context menu, not empty-space items', async () => {
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'list_databases') {
+        if (args.id === 'conn-1') return Promise.resolve(['demo']);
+      }
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('demo'));
+    fireEvent.contextMenu(await screen.findByText('System'));
+
+    expect(screen.getByText('Refresh Database')).toBeInTheDocument();
+    expect(screen.queryByText('New Connection')).toBeNull();
+    expect(screen.queryByText('Settings')).toBeNull();
+  });
 });
