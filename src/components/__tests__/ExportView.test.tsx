@@ -1,3 +1,4 @@
+import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '../../test/render-with-providers';
@@ -29,7 +30,9 @@ const baseProps = {
   onOpenTasks: vi.fn(),
 };
 
-function renderExportView(overrides: Partial<typeof baseProps> = {}) {
+function renderExportView(
+  overrides: Partial<ComponentProps<typeof ExportView>> = {}
+) {
   const props = { ...baseProps, ...overrides };
   return renderWithProviders(
     <DialogProvider>
@@ -48,7 +51,10 @@ function ExportViewHarness({
 }) {
   const { toast } = useDialogs();
 
-  const onExport = async (format: 'json' | 'csv', scope: 'current' | 'full') => {
+  const onExport = async (
+    format: 'json' | 'csv',
+    scope: 'current' | 'full' | 'filtered'
+  ) => {
     if (scope === 'current' && currentResultCount === 0) return;
     try {
       const path = await saveMock({
@@ -135,6 +141,41 @@ describe('ExportView', () => {
     expect(onExport).toHaveBeenCalledWith('json', 'full');
     fireEvent.click(screen.getByTestId('export-full-csv-btn'));
     expect(onExport).toHaveBeenCalledWith('csv', 'full');
+  });
+
+  it('disables filtered-export buttons until a query has run', () => {
+    renderExportView();
+    expect(screen.getByTestId('export-filtered-json-btn')).toBeDisabled();
+    expect(screen.getByTestId('export-filtered-csv-btn')).toBeDisabled();
+  });
+
+  it('shows the active find filter and match count, and exports filtered results', () => {
+    const onExport = vi.fn();
+    renderExportView({
+      onExport,
+      filtered: {
+        kind: 'find',
+        summary: 'Filter: {"tier":"gold"}',
+        matchCount: 1234,
+        estimated: false,
+      },
+    });
+    expect(screen.getByText('Filter: {"tier":"gold"}')).toBeInTheDocument();
+    expect(screen.getByText('1,234 matching documents')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('export-filtered-json-btn'));
+    expect(onExport).toHaveBeenCalledWith('json', 'filtered');
+    fireEvent.click(screen.getByTestId('export-filtered-csv-btn'));
+    expect(onExport).toHaveBeenCalledWith('csv', 'filtered');
+  });
+
+  it('describes an aggregation pipeline without a precomputed count', () => {
+    renderExportView({
+      filtered: { kind: 'aggregate', summary: '3-stage aggregation pipeline' },
+    });
+    expect(screen.getByText('3-stage aggregation pipeline')).toBeInTheDocument();
+    expect(screen.getByText('Count determined when the export runs')).toBeInTheDocument();
+    expect(screen.getByTestId('export-filtered-json-btn')).not.toBeDisabled();
+    expect(screen.getByTestId('export-filtered-csv-btn')).not.toBeDisabled();
   });
 
   it('opens the Tasks tab from the header action', () => {

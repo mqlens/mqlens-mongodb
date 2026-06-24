@@ -15,7 +15,7 @@ import { IndexModal } from './components/IndexModal';
 import { MongoShell } from './components/MongoShell';
 import { QuickStart } from './components/QuickStart';
 import { DocumentEditModal } from './components/DocumentEditModal';
-import { ExportView } from './components/ExportView';
+import { ExportView, type FilteredExportInfo } from './components/ExportView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
@@ -1242,14 +1242,20 @@ function Workspace() {
   const handleExportForTab = async (
     targetTab: QueryTab | null,
     format: 'json' | 'csv',
-    scope: 'current' | 'full' = 'current'
+    scope: 'current' | 'full' | 'filtered' = 'current'
   ) => {
     if (!targetTab || (targetTab.type !== 'collection' && targetTab.type !== 'export')) return;
     const docs = targetTab.type === 'collection' ? targetTab.results || [] : [];
     if (scope === 'current' && docs.length === 0) return;
+    // Filtered export needs a query to have run on the source tab.
+    if (scope === 'filtered' && !targetTab.lastAggregate && !targetTab.lastQuery) {
+      toast('Run a find query or aggregation first to export its results.', 'error');
+      return;
+    }
     try {
+      const suffix = scope === 'full' ? '.full' : scope === 'filtered' ? '.filtered' : '';
       const path = await save({
-        defaultPath: `${targetTab.collection}${scope === 'full' ? '.full' : ''}.${format}`,
+        defaultPath: `${targetTab.collection}${suffix}.${format}`,
         filters: [{ name: format.toUpperCase(), extensions: [format] }],
       });
       if (!path) return; // cancelled
@@ -1266,6 +1272,25 @@ function Workspace() {
         await loadExportTasks();
         return;
       }
+      if (scope === 'filtered') {
+        const agg = targetTab.lastAggregate;
+        const lq = targetTab.lastQuery;
+        const task = await invoke<ExportTaskInfo>('start_filtered_export', {
+          id: targetTab.connectionId,
+          database: targetTab.db,
+          collection: targetTab.collection,
+          format,
+          path,
+          filter: agg ? '{}' : lq?.filter || '{}',
+          sort: agg ? '{}' : lq?.sort || '{}',
+          projection: agg ? '{}' : lq?.projection || '{}',
+          pipeline: agg ? JSON.stringify(agg) : '',
+        });
+        setExportTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
+        handleOpenTasksTab();
+        await loadExportTasks();
+        return;
+      }
 
       const content = format === 'json' ? toJson(docs) : toCsv(docs);
       await writeTextFile(path, content);
@@ -1273,6 +1298,26 @@ function Workspace() {
     } catch (err: any) {
       toast(`Export failed: ${err?.message || err}`, 'error');
     }
+  };
+
+  // Describe the source tab's active query for the Export view's Filtered card.
+  const buildFilteredExportInfo = (tab: QueryTab | null): FilteredExportInfo | undefined => {
+    if (!tab) return undefined;
+    if (tab.lastAggregate) {
+      const n = tab.lastAggregate.length;
+      return { kind: 'aggregate', summary: `${n}-stage aggregation pipeline` };
+    }
+    if (tab.lastQuery) {
+      const f = (tab.lastQuery.filter || '').trim();
+      const isAll = f === '' || f === '{}';
+      return {
+        kind: 'find',
+        summary: isAll ? 'All documents (no filter)' : `Filter: ${f}`,
+        matchCount: typeof tab.totalCount === 'number' ? tab.totalCount : null,
+        estimated: tab.estimated,
+      };
+    }
+    return undefined;
   };
 
   const handleImport = async () => {
@@ -1886,6 +1931,7 @@ function Workspace() {
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
                     currentResultCount={sourceTab?.results.length || 0}
+                    filtered={buildFilteredExportInfo(sourceTab)}
                     onExport={(format, scope) => handleExportForTab(sourceTab || activeTab, format, scope)}
                     onOpenTasks={handleOpenTasksTab}
                   />

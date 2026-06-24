@@ -8,8 +8,8 @@ mod tests {
         drop_database_impl, execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
         import_documents_impl, insert_document_impl, json_to_bson_document, list_collections_impl,
         list_databases_impl, list_gridfs_files_impl, list_indexes_impl, rename_collection_impl,
-        rename_database_impl, start_collection_export_impl, update_document_impl,
-        upload_gridfs_file_impl,
+        rename_database_impl, start_collection_export_impl, start_filtered_export_impl,
+        update_document_impl, upload_gridfs_file_impl,
     };
     use crate::{
         create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
@@ -231,6 +231,132 @@ mod tests {
         assert!(header.contains("name"));
         assert!(exported.contains("Alice Smith"));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_mock_filtered_export_writes_only_matching_subset() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("Should connect to mock db successfully");
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-filtered-export-test-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        // sales_db.customers has Alice/Bob/Charlie; filter to just Alice.
+        let task = start_filtered_export_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            "json",
+            &path_str,
+            "{\"name\":\"Alice Smith\"}",
+            "{}",
+            "{}",
+            "",
+        )
+        .await
+        .expect("Should start filtered export task");
+
+        for _ in 0..50 {
+            let status = state
+                .tasks
+                .lock()
+                .unwrap()
+                .get(&task.id)
+                .map(|t| t.status.clone())
+                .unwrap();
+            if status != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 1, "only Alice matches the filter");
+        assert_eq!(finished.kind, "filtered_export");
+        let exported = std::fs::read_to_string(&path).expect("Export file should exist");
+        assert!(exported.contains("Alice Smith"));
+        assert!(!exported.contains("Bob Johnson"));
+        assert!(!exported.contains("Charlie Brown"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_filtered_export_rejects_aggregate_on_mock() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("Should connect to mock db successfully");
+
+        let err = start_filtered_export_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            "json",
+            "/tmp/agg.json",
+            "{}",
+            "{}",
+            "{}",
+            "[{\"$match\":{}}]",
+        )
+        .await
+        .err()
+        .expect("aggregate export on mock should error");
+        assert_eq!(
+            err,
+            "Aggregation pipelines are not supported on mock connections"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_filtered_export_validates_format_path_and_connection() {
+        let state = AppState::new();
+
+        let invalid_format = start_filtered_export_impl(
+            &state, "missing", "db", "coll", "xml", "/tmp/out.xml", "{}", "{}", "{}", "",
+        )
+        .await
+        .err()
+        .expect("invalid export format should error");
+        assert_eq!(invalid_format, "Export format must be json or csv");
+
+        let missing_path = start_filtered_export_impl(
+            &state, "missing", "db", "coll", "json", "   ", "{}", "{}", "{}", "",
+        )
+        .await
+        .err()
+        .expect("blank export path should error");
+        assert_eq!(missing_path, "Export path is required");
+
+        let missing_connection = start_filtered_export_impl(
+            &state, "missing", "db", "coll", "json", "/tmp/out.json", "{}", "{}", "{}", "",
+        )
+        .await
+        .err()
+        .expect("missing export connection should error");
+        assert_eq!(missing_connection, "Connection not found");
+
+        let bad_filter = start_filtered_export_impl(
+            &state, "missing", "db", "coll", "json", "/tmp/out.json", "{not json}", "{}", "{}",
+            "",
+        )
+        .await
+        .err()
+        .expect("malformed filter should error");
+        assert!(
+            bad_filter.contains("Invalid MQL filter JSON"),
+            "got: {bad_filter}"
+        );
     }
 
     #[tokio::test]
