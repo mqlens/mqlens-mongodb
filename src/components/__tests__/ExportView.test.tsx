@@ -5,6 +5,27 @@ import { renderWithProviders } from '../../test/render-with-providers';
 import { DialogProvider, useDialogs } from '../dialogs/DialogProvider';
 import { ExportView } from '../ExportView';
 
+// QueryEditor wraps @monaco-editor/react, which has no usable DOM under jsdom.
+// Mock it with a textarea that round-trips value/onChange and forwards the
+// data-testid so the filter/sort/projection/pipeline inputs stay drivable.
+vi.mock('@monaco-editor/react', () => ({
+  default: ({
+    value,
+    onChange,
+    wrapperProps,
+  }: {
+    value: string;
+    onChange?: (v: string) => void;
+    wrapperProps?: Record<string, unknown>;
+  }) => (
+    <textarea
+      data-testid={wrapperProps?.['data-testid'] as string | undefined}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+    />
+  ),
+}));
+
 const mockInvoke = vi.fn();
 const saveMock = vi.fn();
 const writeTextFileMock = vi.fn();
@@ -187,16 +208,32 @@ describe('ExportView', () => {
     expect(screen.getAllByText('Invalid JSON').length).toBeGreaterThan(0);
   });
 
-  it('recounts matches as the filter is edited', async () => {
+  it('counts matches only when the Count button is clicked', async () => {
     const onCountFilter = vi.fn().mockResolvedValue(42);
-    renderExportView({ filtered: { kind: 'find', filter: '{}', matchCount: 0 }, onCountFilter });
+    renderExportView({ filtered: { kind: 'find', filter: '{}', matchCount: null }, onCountFilter });
+
+    // Editing the filter must NOT trigger a count on its own.
     fireEvent.change(screen.getByTestId('export-filtered-filter-input'), {
       target: { value: '{"active":true}' },
     });
+    expect(onCountFilter).not.toHaveBeenCalled();
+    expect(screen.getByTestId('export-filtered-count')).toHaveTextContent('Count not run yet');
+
+    fireEvent.click(screen.getByTestId('export-filtered-count-btn'));
     await waitFor(() => {
       expect(onCountFilter).toHaveBeenCalledWith('{"active":true}');
       expect(screen.getByText('42 matching documents')).toBeInTheDocument();
     });
+    expect(onCountFilter).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the Count button while the filter JSON is invalid', () => {
+    const onCountFilter = vi.fn().mockResolvedValue(0);
+    renderExportView({ filtered: { kind: 'find', filter: '{}' }, onCountFilter });
+    fireEvent.change(screen.getByTestId('export-filtered-filter-input'), {
+      target: { value: '{bad' },
+    });
+    expect(screen.getByTestId('export-filtered-count-btn')).toBeDisabled();
   });
 
   it('edits and exports an aggregation pipeline', () => {
@@ -205,9 +242,8 @@ describe('ExportView', () => {
       onExport,
       filtered: { kind: 'aggregate', pipeline: '[\n  { "$match": {} }\n]' },
     });
-    expect(screen.getByTestId('export-filtered-count')).toHaveTextContent(
-      'Count determined when the export runs'
-    );
+    // Aggregate mode has no pre-count UI (count is determined when the export runs).
+    expect(screen.queryByTestId('export-filtered-count-btn')).not.toBeInTheDocument();
     const pipelineInput = screen.getByTestId(
       'export-filtered-pipeline-input'
     ) as HTMLTextAreaElement;

@@ -1,9 +1,11 @@
 import React from 'react';
-import { Download, FileJson, FileSpreadsheet, Filter, ListChecks } from 'lucide-react';
+import { Download, FileJson, FileSpreadsheet, Filter, ListChecks, Hash } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { QueryEditor } from './QueryEditor';
+import { useCollectionSchema } from '../lib/useCollectionSchema';
 
 /** The edited query the user chose to export from the Filtered card. */
 export type FilteredExportQuery =
@@ -18,15 +20,18 @@ export interface FilteredExportSeed {
   sort?: string;
   projection?: string;
   pipeline?: string;
-  /** Match count from the last run, shown until the first live recount resolves. */
+  /** Match count from the last run, shown until the user recounts. */
   matchCount?: number | null;
 }
 
 interface ExportViewProps {
+  connectionId?: string;
   connectionName: string;
   databaseName: string;
   collectionName: string;
   currentResultCount: number;
+  /** Field names for the query editors' autocomplete (same as the document viewer). */
+  availableFields?: string[];
   /** Seeds the editable Filtered card from the source tab's active query. */
   filtered?: FilteredExportSeed;
   onExport: (
@@ -34,13 +39,11 @@ interface ExportViewProps {
     scope: 'current' | 'full' | 'filtered',
     query?: FilteredExportQuery
   ) => void;
-  /** Live recount for the Filtered (find) card; resolves the match count for a filter. */
+  /** Resolve the match count for a filter (run on demand via the Count button). */
   onCountFilter?: (filter: string) => Promise<number>;
   /** Open the dedicated Tasks tab where background jobs (incl. full exports) appear. */
   onOpenTasks?: () => void;
 }
-
-const COUNT_DEBOUNCE_MS = 400;
 
 /** Validate a JSON object string ('' and '{}' count as the empty object). */
 function checkJsonObject(raw: string): { ok: boolean; error?: string } {
@@ -70,16 +73,19 @@ function checkJsonArray(raw: string): { ok: boolean; error?: string } {
   }
 }
 
-const fieldBase = cn(
-  'w-full rounded-md border bg-background px-2 py-1.5 font-mono text-xs shadow-sm transition-colors',
-  'placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
-);
+const editorShell = (valid: boolean) =>
+  cn(
+    'rounded-md border bg-background px-1.5 py-1 shadow-sm focus-within:ring-2 focus-within:ring-ring',
+    valid ? 'border-input' : 'border-destructive focus-within:ring-destructive'
+  );
 
 export const ExportView: React.FC<ExportViewProps> = ({
+  connectionId,
   connectionName,
   databaseName,
   collectionName,
   currentResultCount,
+  availableFields,
   filtered,
   onExport,
   onCountFilter,
@@ -87,6 +93,9 @@ export const ExportView: React.FC<ExportViewProps> = ({
 }) => {
   const hasCurrentResults = currentResultCount > 0;
   const mode: 'find' | 'aggregate' = filtered?.kind ?? 'find';
+
+  const { schema } = useCollectionSchema(connectionId, databaseName, collectionName);
+  const fields = availableFields && availableFields.length > 0 ? availableFields : ['_id'];
 
   const [filter, setFilter] = React.useState(filtered?.filter ?? '{}');
   const [sort, setSort] = React.useState(filtered?.sort ?? '{}');
@@ -105,53 +114,30 @@ export const ExportView: React.FC<ExportViewProps> = ({
       ? pipelineCheck.ok
       : filterCheck.ok && sortCheck.ok && projectionCheck.ok;
 
-  // Live, debounced recount as the find filter is edited.
-  React.useEffect(() => {
-    if (mode !== 'find' || !onCountFilter) return;
-    const check = checkJsonObject(filter);
-    if (!check.ok) {
-      setCountError(check.error ?? 'Invalid filter JSON');
-      return;
-    }
+  // Count only on demand — never automatically — so it stays stable while editing.
+  const runCount = () => {
+    if (!onCountFilter || !filterCheck.ok) return;
+    setCounting(true);
     setCountError(null);
-    let cancelled = false;
-    const handle = setTimeout(() => {
-      setCounting(true);
-      onCountFilter(filter)
-        .then((n) => {
-          if (!cancelled) setCount(n);
-        })
-        .catch(() => {
-          if (!cancelled) setCountError('Count failed');
-        })
-        .finally(() => {
-          if (!cancelled) setCounting(false);
-        });
-    }, COUNT_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(handle);
-    };
-  }, [filter, mode, onCountFilter]);
+    onCountFilter(filter)
+      .then((n) => setCount(n))
+      .catch(() => setCountError('Count failed'))
+      .finally(() => setCounting(false));
+  };
 
   const countLabel = (() => {
-    if (mode === 'aggregate') return 'Count determined when the export runs';
-    if (!filterCheck.ok) return filterCheck.error ?? 'Invalid filter JSON';
     if (counting) return 'Counting…';
     if (countError) return countError;
     if (typeof count === 'number') {
       return `${count.toLocaleString()} matching document${count === 1 ? '' : 's'}`;
     }
-    return 'Edit the filter to export matching documents';
+    return 'Count not run yet';
   })();
 
   const buildQuery = (): FilteredExportQuery =>
     mode === 'aggregate'
       ? { kind: 'aggregate', pipeline }
       : { kind: 'find', filter, sort, projection };
-
-  const fieldClass = (valid: boolean) =>
-    cn(fieldBase, valid ? 'border-input' : 'border-destructive focus-visible:ring-destructive');
 
   return (
     <div className="flex h-full flex-col overflow-auto p-4" data-testid="export-view">
@@ -245,28 +231,24 @@ export const ExportView: React.FC<ExportViewProps> = ({
           <CardDescription>
             {mode === 'aggregate'
               ? 'Edit the aggregation pipeline, then export every resulting document.'
-              : 'Edit the query, then export every matching document.'}{' '}
-            <span data-testid="export-filtered-count" className="text-muted-foreground">
-              {countLabel}
-            </span>
+              : 'Edit the query (reused from the document view), then export every match.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {mode === 'aggregate' ? (
             <div className="flex flex-col gap-1">
-              <Label htmlFor="filtered-pipeline" className="text-xs">
-                Pipeline
-              </Label>
-              <textarea
-                id="filtered-pipeline"
-                value={pipeline}
-                onChange={(e) => setPipeline(e.target.value)}
-                rows={6}
-                spellCheck={false}
-                className={fieldClass(pipelineCheck.ok)}
-                placeholder='[ { "$match": { } } ]'
-                data-testid="export-filtered-pipeline-input"
-              />
+              <Label className="text-xs">Pipeline</Label>
+              <div className={editorShell(pipelineCheck.ok)}>
+                <QueryEditor
+                  surface="aggStage"
+                  value={pipeline}
+                  onChange={setPipeline}
+                  fields={fields}
+                  schema={schema}
+                  height={140}
+                  data-testid="export-filtered-pipeline-input"
+                />
+              </div>
               {!pipelineCheck.ok && (
                 <span className="text-xs text-destructive">{pipelineCheck.error}</span>
               )}
@@ -274,56 +256,53 @@ export const ExportView: React.FC<ExportViewProps> = ({
           ) : (
             <>
               <div className="flex flex-col gap-1">
-                <Label htmlFor="filtered-filter" className="text-xs">
-                  Filter
-                </Label>
-                <textarea
-                  id="filtered-filter"
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  rows={3}
-                  spellCheck={false}
-                  className={fieldClass(filterCheck.ok)}
-                  placeholder='{ "status": "active" }'
-                  data-testid="export-filtered-filter-input"
-                />
+                <Label className="text-xs">Filter</Label>
+                <div className={editorShell(filterCheck.ok)}>
+                  <QueryEditor
+                    singleLine
+                    surface="filter"
+                    value={filter}
+                    onChange={setFilter}
+                    fields={fields}
+                    schema={schema}
+                    data-testid="export-filtered-filter-input"
+                  />
+                </div>
                 {!filterCheck.ok && (
                   <span className="text-xs text-destructive">{filterCheck.error}</span>
                 )}
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor="filtered-sort" className="text-xs">
-                    Sort
-                  </Label>
-                  <textarea
-                    id="filtered-sort"
-                    value={sort}
-                    onChange={(e) => setSort(e.target.value)}
-                    rows={2}
-                    spellCheck={false}
-                    className={fieldClass(sortCheck.ok)}
-                    placeholder='{ "createdAt": -1 }'
-                    data-testid="export-filtered-sort-input"
-                  />
+                  <Label className="text-xs">Sort</Label>
+                  <div className={editorShell(sortCheck.ok)}>
+                    <QueryEditor
+                      singleLine
+                      surface="sort"
+                      value={sort}
+                      onChange={setSort}
+                      fields={fields}
+                      schema={schema}
+                      data-testid="export-filtered-sort-input"
+                    />
+                  </div>
                   {!sortCheck.ok && (
                     <span className="text-xs text-destructive">{sortCheck.error}</span>
                   )}
                 </div>
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor="filtered-projection" className="text-xs">
-                    Projection
-                  </Label>
-                  <textarea
-                    id="filtered-projection"
-                    value={projection}
-                    onChange={(e) => setProjection(e.target.value)}
-                    rows={2}
-                    spellCheck={false}
-                    className={fieldClass(projectionCheck.ok)}
-                    placeholder='{ "_id": 0, "name": 1 }'
-                    data-testid="export-filtered-projection-input"
-                  />
+                  <Label className="text-xs">Projection</Label>
+                  <div className={editorShell(projectionCheck.ok)}>
+                    <QueryEditor
+                      singleLine
+                      surface="projection"
+                      value={projection}
+                      onChange={setProjection}
+                      fields={fields}
+                      schema={schema}
+                      data-testid="export-filtered-projection-input"
+                    />
+                  </div>
                   {!projectionCheck.ok && (
                     <span className="text-xs text-destructive">{projectionCheck.error}</span>
                   )}
@@ -331,6 +310,26 @@ export const ExportView: React.FC<ExportViewProps> = ({
               </div>
             </>
           )}
+
+          {mode === 'find' && (
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!onCountFilter || !filterCheck.ok || counting}
+                onClick={runCount}
+                data-testid="export-filtered-count-btn"
+              >
+                <Hash size={12} />
+                Count
+              </Button>
+              <span data-testid="export-filtered-count" className="text-xs text-muted-foreground">
+                {countLabel}
+              </span>
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"

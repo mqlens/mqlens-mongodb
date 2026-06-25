@@ -1299,6 +1299,22 @@ function Workspace() {
     }
   };
 
+  // Top-level field names from a tab's loaded documents, for the export query editors'
+  // autocomplete (the export tab itself has no results, so derive from the source tab).
+  const fieldsFromResults = (results?: any[]): string[] => {
+    if (!results || results.length === 0) return ['_id'];
+    const keys = new Set<string>();
+    results.forEach((doc) => {
+      if (doc && typeof doc === 'object') Object.keys(doc).forEach((k) => keys.add(k));
+    });
+    keys.add('_id');
+    return Array.from(keys).sort((a, b) => {
+      if (a === '_id') return -1;
+      if (b === '_id') return 1;
+      return a.localeCompare(b);
+    });
+  };
+
   // Seed the Export view's editable Filtered card from the source tab's last run.
   const buildFilteredExportSeed = (tab: QueryTab | null): FilteredExportSeed => {
     if (tab?.lastAggregate) {
@@ -1921,10 +1937,12 @@ function Workspace() {
                 return (
                   <ExportView
                     key={`export:${activeTab.connectionId}:${activeTab.db}:${activeTab.collection}`}
+                    connectionId={activeTab.connectionId}
                     connectionName={connectionName}
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
                     currentResultCount={sourceTab?.results.length || 0}
+                    availableFields={fieldsFromResults(sourceTab?.results)}
                     filtered={buildFilteredExportSeed(sourceTab)}
                     onExport={(format, scope, query) =>
                       handleExportForTab(sourceTab || activeTab, format, scope, query)
