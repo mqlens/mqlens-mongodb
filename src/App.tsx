@@ -15,7 +15,7 @@ import { IndexModal } from './components/IndexModal';
 import { MongoShell } from './components/MongoShell';
 import { QuickStart } from './components/QuickStart';
 import { DocumentEditModal } from './components/DocumentEditModal';
-import { ExportView, type FilteredExportInfo } from './components/ExportView';
+import { ExportView, type FilteredExportSeed, type FilteredExportQuery } from './components/ExportView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
@@ -1242,14 +1242,14 @@ function Workspace() {
   const handleExportForTab = async (
     targetTab: QueryTab | null,
     format: 'json' | 'csv',
-    scope: 'current' | 'full' | 'filtered' = 'current'
+    scope: 'current' | 'full' | 'filtered' = 'current',
+    query?: FilteredExportQuery
   ) => {
     if (!targetTab || (targetTab.type !== 'collection' && targetTab.type !== 'export')) return;
     const docs = targetTab.type === 'collection' ? targetTab.results || [] : [];
     if (scope === 'current' && docs.length === 0) return;
-    // Filtered export needs a query to have run on the source tab.
-    if (scope === 'filtered' && !targetTab.lastAggregate && !targetTab.lastQuery) {
-      toast('Run a find query or aggregation first to export its results.', 'error');
+    if (scope === 'filtered' && !query) {
+      toast('No query to export — edit the filter first.', 'error');
       return;
     }
     try {
@@ -1272,19 +1272,18 @@ function Workspace() {
         await loadExportTasks();
         return;
       }
-      if (scope === 'filtered') {
-        const agg = targetTab.lastAggregate;
-        const lq = targetTab.lastQuery;
+      if (scope === 'filtered' && query) {
+        const isAgg = query.kind === 'aggregate';
         const task = await invoke<ExportTaskInfo>('start_filtered_export', {
           id: targetTab.connectionId,
           database: targetTab.db,
           collection: targetTab.collection,
           format,
           path,
-          filter: agg ? '{}' : lq?.filter || '{}',
-          sort: agg ? '{}' : lq?.sort || '{}',
-          projection: agg ? '{}' : lq?.projection || '{}',
-          pipeline: agg ? JSON.stringify(agg) : '',
+          filter: isAgg ? '{}' : query.filter || '{}',
+          sort: isAgg ? '{}' : query.sort || '{}',
+          projection: isAgg ? '{}' : query.projection || '{}',
+          pipeline: isAgg ? query.pipeline : '',
         });
         setExportTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
         handleOpenTasksTab();
@@ -1300,24 +1299,18 @@ function Workspace() {
     }
   };
 
-  // Describe the source tab's active query for the Export view's Filtered card.
-  const buildFilteredExportInfo = (tab: QueryTab | null): FilteredExportInfo | undefined => {
-    if (!tab) return undefined;
-    if (tab.lastAggregate) {
-      const n = tab.lastAggregate.length;
-      return { kind: 'aggregate', summary: `${n}-stage aggregation pipeline` };
+  // Seed the Export view's editable Filtered card from the source tab's last run.
+  const buildFilteredExportSeed = (tab: QueryTab | null): FilteredExportSeed => {
+    if (tab?.lastAggregate) {
+      return { kind: 'aggregate', pipeline: JSON.stringify(tab.lastAggregate, null, 2) };
     }
-    if (tab.lastQuery) {
-      const f = (tab.lastQuery.filter || '').trim();
-      const isAll = f === '' || f === '{}';
-      return {
-        kind: 'find',
-        summary: isAll ? 'All documents (no filter)' : `Filter: ${f}`,
-        matchCount: typeof tab.totalCount === 'number' ? tab.totalCount : null,
-        estimated: tab.estimated,
-      };
-    }
-    return undefined;
+    return {
+      kind: 'find',
+      filter: tab?.lastQuery?.filter || '{}',
+      sort: tab?.lastQuery?.sort || '{}',
+      projection: tab?.lastQuery?.projection || '{}',
+      matchCount: typeof tab?.totalCount === 'number' ? tab.totalCount : null,
+    };
   };
 
   const handleImport = async () => {
@@ -1927,12 +1920,23 @@ function Workspace() {
                   null;
                 return (
                   <ExportView
+                    key={`export:${activeTab.connectionId}:${activeTab.db}:${activeTab.collection}`}
                     connectionName={connectionName}
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
                     currentResultCount={sourceTab?.results.length || 0}
-                    filtered={buildFilteredExportInfo(sourceTab)}
-                    onExport={(format, scope) => handleExportForTab(sourceTab || activeTab, format, scope)}
+                    filtered={buildFilteredExportSeed(sourceTab)}
+                    onExport={(format, scope, query) =>
+                      handleExportForTab(sourceTab || activeTab, format, scope, query)
+                    }
+                    onCountFilter={(filter) =>
+                      invoke<number>('count_documents', {
+                        id: activeTab.connectionId,
+                        database: activeTab.db,
+                        collection: activeTab.collection,
+                        filter,
+                      })
+                    }
                     onOpenTasks={handleOpenTasksTab}
                   />
                 );

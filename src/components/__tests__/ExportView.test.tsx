@@ -143,39 +143,82 @@ describe('ExportView', () => {
     expect(onExport).toHaveBeenCalledWith('csv', 'full');
   });
 
-  it('disables filtered-export buttons until a query has run', () => {
-    renderExportView();
-    expect(screen.getByTestId('export-filtered-json-btn')).toBeDisabled();
-    expect(screen.getByTestId('export-filtered-csv-btn')).toBeDisabled();
+  it('seeds the filter editor and keeps filtered export enabled by default', () => {
+    renderExportView({ filtered: { kind: 'find', filter: '{}', matchCount: null } });
+    const input = screen.getByTestId('export-filtered-filter-input') as HTMLTextAreaElement;
+    expect(input.value).toBe('{}');
+    expect(screen.getByTestId('export-filtered-json-btn')).not.toBeDisabled();
+    expect(screen.getByTestId('export-filtered-csv-btn')).not.toBeDisabled();
   });
 
-  it('shows the active find filter and match count, and exports filtered results', () => {
+  it('seeds from the active find query and exports the edited query', () => {
     const onExport = vi.fn();
     renderExportView({
       onExport,
       filtered: {
         kind: 'find',
-        summary: 'Filter: {"tier":"gold"}',
+        filter: '{"tier":"gold"}',
+        sort: '{"name":1}',
+        projection: '{}',
         matchCount: 1234,
-        estimated: false,
       },
     });
-    expect(screen.getByText('Filter: {"tier":"gold"}')).toBeInTheDocument();
+    const filterInput = screen.getByTestId('export-filtered-filter-input') as HTMLTextAreaElement;
+    expect(filterInput.value).toBe('{"tier":"gold"}');
     expect(screen.getByText('1,234 matching documents')).toBeInTheDocument();
+
+    fireEvent.change(filterInput, { target: { value: '{"tier":"silver"}' } });
     fireEvent.click(screen.getByTestId('export-filtered-json-btn'));
-    expect(onExport).toHaveBeenCalledWith('json', 'filtered');
-    fireEvent.click(screen.getByTestId('export-filtered-csv-btn'));
-    expect(onExport).toHaveBeenCalledWith('csv', 'filtered');
+    expect(onExport).toHaveBeenCalledWith('json', 'filtered', {
+      kind: 'find',
+      filter: '{"tier":"silver"}',
+      sort: '{"name":1}',
+      projection: '{}',
+    });
   });
 
-  it('describes an aggregation pipeline without a precomputed count', () => {
-    renderExportView({
-      filtered: { kind: 'aggregate', summary: '3-stage aggregation pipeline' },
+  it('disables filtered export and shows an error when the filter JSON is invalid', () => {
+    renderExportView({ filtered: { kind: 'find', filter: '{}' } });
+    fireEvent.change(screen.getByTestId('export-filtered-filter-input'), {
+      target: { value: '{bad' },
     });
-    expect(screen.getByText('3-stage aggregation pipeline')).toBeInTheDocument();
-    expect(screen.getByText('Count determined when the export runs')).toBeInTheDocument();
-    expect(screen.getByTestId('export-filtered-json-btn')).not.toBeDisabled();
-    expect(screen.getByTestId('export-filtered-csv-btn')).not.toBeDisabled();
+    expect(screen.getByTestId('export-filtered-json-btn')).toBeDisabled();
+    expect(screen.getByTestId('export-filtered-csv-btn')).toBeDisabled();
+    expect(screen.getAllByText('Invalid JSON').length).toBeGreaterThan(0);
+  });
+
+  it('recounts matches as the filter is edited', async () => {
+    const onCountFilter = vi.fn().mockResolvedValue(42);
+    renderExportView({ filtered: { kind: 'find', filter: '{}', matchCount: 0 }, onCountFilter });
+    fireEvent.change(screen.getByTestId('export-filtered-filter-input'), {
+      target: { value: '{"active":true}' },
+    });
+    await waitFor(() => {
+      expect(onCountFilter).toHaveBeenCalledWith('{"active":true}');
+      expect(screen.getByText('42 matching documents')).toBeInTheDocument();
+    });
+  });
+
+  it('edits and exports an aggregation pipeline', () => {
+    const onExport = vi.fn();
+    renderExportView({
+      onExport,
+      filtered: { kind: 'aggregate', pipeline: '[\n  { "$match": {} }\n]' },
+    });
+    expect(screen.getByTestId('export-filtered-count')).toHaveTextContent(
+      'Count determined when the export runs'
+    );
+    const pipelineInput = screen.getByTestId(
+      'export-filtered-pipeline-input'
+    ) as HTMLTextAreaElement;
+    expect(pipelineInput.value).toContain('$match');
+
+    fireEvent.change(pipelineInput, { target: { value: '[{"$limit":5}]' } });
+    fireEvent.click(screen.getByTestId('export-filtered-csv-btn'));
+    expect(onExport).toHaveBeenCalledWith('csv', 'filtered', {
+      kind: 'aggregate',
+      pipeline: '[{"$limit":5}]',
+    });
   });
 
   it('opens the Tasks tab from the header action', () => {
