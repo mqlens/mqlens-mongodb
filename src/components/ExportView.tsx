@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { QueryEditor } from './QueryEditor';
+import { FindQueryBar } from './FindQueryBar';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
 
 /** The edited query the user chose to export from the Filtered card. */
@@ -254,61 +255,21 @@ export const ExportView: React.FC<ExportViewProps> = ({
               )}
             </div>
           ) : (
-            <>
-              <div className="flex flex-col gap-1">
-                <Label className="text-xs">Filter</Label>
-                <div className={editorShell(filterCheck.ok)}>
-                  <QueryEditor
-                    singleLine
-                    surface="filter"
-                    value={filter}
-                    onChange={setFilter}
-                    fields={fields}
-                    schema={schema}
-                    data-testid="export-filtered-filter-input"
-                  />
-                </div>
-                {!filterCheck.ok && (
-                  <span className="text-xs text-destructive">{filterCheck.error}</span>
-                )}
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="flex flex-col gap-1">
-                  <Label className="text-xs">Sort</Label>
-                  <div className={editorShell(sortCheck.ok)}>
-                    <QueryEditor
-                      singleLine
-                      surface="sort"
-                      value={sort}
-                      onChange={setSort}
-                      fields={fields}
-                      schema={schema}
-                      data-testid="export-filtered-sort-input"
-                    />
-                  </div>
-                  {!sortCheck.ok && (
-                    <span className="text-xs text-destructive">{sortCheck.error}</span>
-                  )}
-                </div>
-                <div className="flex flex-col gap-1">
-                  <Label className="text-xs">Projection</Label>
-                  <div className={editorShell(projectionCheck.ok)}>
-                    <QueryEditor
-                      singleLine
-                      surface="projection"
-                      value={projection}
-                      onChange={setProjection}
-                      fields={fields}
-                      schema={schema}
-                      data-testid="export-filtered-projection-input"
-                    />
-                  </div>
-                  {!projectionCheck.ok && (
-                    <span className="text-xs text-destructive">{projectionCheck.error}</span>
-                  )}
-                </div>
-              </div>
-            </>
+            <div className="overflow-hidden rounded-md border border-border">
+              <FindQueryBar
+                filter={filter}
+                projection={projection}
+                sort={sort}
+                onFilterChange={setFilter}
+                onProjectionChange={setProjection}
+                onSortChange={setSort}
+                filterInvalid={!filterCheck.ok}
+                projectionInvalid={!projectionCheck.ok}
+                sortInvalid={!sortCheck.ok}
+                fields={fields}
+                schema={schema}
+              />
+            </div>
           )}
 
           {mode === 'find' && (

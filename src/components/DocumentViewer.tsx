@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { AIChatPanel } from './AIChatPanel';
 import { QueryEditor } from './QueryEditor';
+import { FindQueryBar } from './FindQueryBar';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
 import { parseShellJson } from '../lib/shellDoc';
@@ -54,10 +55,8 @@ import {
   Anchor, 
   ExternalLink, 
   Sparkles, 
-  DatabaseZap, 
+  DatabaseZap,
   Trash2,
-  Eraser,
-  ArrowUpDown,
   Check,
   ChevronDown,
   Plus,
@@ -1284,26 +1283,6 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     notify(`Cleared ${field} parameters`);
   };
 
-  const runQueryOnEnter = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleRun();
-    }
-  };
-
-  const queryColClass = (invalid: boolean) =>
-    cn(
-      'flex min-w-0 flex-1 items-center border-r border-border bg-input/80 transition-colors last:border-r-0',
-      'focus-within:z-[1] focus-within:bg-input focus-within:ring-1 focus-within:ring-inset',
-      invalid ? 'focus-within:ring-destructive' : 'focus-within:ring-primary'
-    );
-
-  const fieldBadgeClass = (invalid: boolean) =>
-    cn(
-      'flex h-7 min-w-[90px] shrink-0 select-none items-center justify-end border-r border-border px-2.5 text-[9.5px] font-bold uppercase tracking-wider',
-      invalid ? 'bg-destructive/5 text-destructive' : 'bg-muted/40 text-muted-foreground'
-    );
-
   const workspaceRightPanel = isQueryBuilderOpen
     ? 'query-builder'
     : isAIHelperOpen
@@ -1680,143 +1659,36 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
           {queryMode === 'find' ? (
             <div className="shrink-0">
-            <div className="flex flex-col border-b border-border bg-muted/20">
-                <div className="flex w-full border-b border-border">
-                  <div className={queryColClass(!isFilterValid)}>
-                    <span className={fieldBadgeClass(!isFilterValid)}>Query</span>
-                    <QueryEditor
-                      singleLine
-                      surface="filter"
-                      onRun={handleRun}
-                      value={filterQuery}
-                      onChange={(v) => {
-                        setFilterQuery(v);
-                        if (isQueryBuilderOpen) {
-                          syncFilterRulesFromInput(v);
-                        }
-                      }}
-                      fields={fields}
-                      schema={schema}
-                      data-testid="query-filter-input"
-                    />
-                    {!isFilterValid && (
-                      <span className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap">
-                        <AlertCircle size={10} /> Invalid JSON
-                      </span>
-                    )}
-                    <Button variant="ghost" size="icon" className="mr-1 h-6 w-6 shrink-0" onClick={() => handleClearField('filter')} title="Clear Filter">
-                      <Eraser size={11} />
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex w-full border-b border-border">
-                  <div className={queryColClass(!isProjectionValid)}>
-                    <span className={fieldBadgeClass(!isProjectionValid)}>Projection</span>
-                    <QueryEditor
-                      singleLine
-                      surface="projection"
-                      onRun={handleRun}
-                      value={projectionQuery}
-                      onChange={(v) => {
-                        setProjectionQuery(v);
-                        if (isQueryBuilderOpen) {
-                          syncProjectionRulesFromInput(v);
-                        }
-                      }}
-                      fields={fields}
-                      schema={schema}
-                      data-testid="projection-query-input"
-                    />
-                    {!isProjectionValid && (
-                      <span className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap">
-                        <AlertCircle size={10} /> Invalid JSON
-                      </span>
-                    )}
-                    <Button variant="ghost" size="icon" className="mr-1 h-6 w-6 shrink-0" onClick={() => handleClearField('projection')} title="Clear Projection">
-                      <Eraser size={11} />
-                    </Button>
-                  </div>
-
-                  <div className={queryColClass(!isSortValid)}>
-                    <span className={fieldBadgeClass(!isSortValid)}>Sort</span>
-                    <QueryEditor
-                      singleLine
-                      surface="sort"
-                      onRun={handleRun}
-                      value={sortQuery}
-                      onChange={(v) => {
-                        setSortQuery(v);
-                        if (isQueryBuilderOpen) {
-                          syncSortRulesFromInput(v);
-                        }
-                      }}
-                      fields={fields}
-                      schema={schema}
-                      data-testid="sort-query-input"
-                    />
-                    {!isSortValid && (
-                      <span className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap">
-                        <AlertCircle size={10} /> Invalid JSON
-                      </span>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="mr-0.5 h-6 w-6 shrink-0 text-warning"
-                      onClick={() => {
-                        if (sortQuery === '{}') setSortQuery('{"_id": -1}');
-                        else if (sortQuery === '{"_id": -1}') setSortQuery('{"_id": 1}');
-                        else setSortQuery('{}');
-                      }}
-                      title="Quick Sort Direction"
-                    >
-                      <ArrowUpDown size={11} />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="mr-1 h-6 w-6 shrink-0" onClick={() => handleClearField('sort')} title="Clear Sort">
-                      <Eraser size={11} />
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex w-full">
-                  <div className={queryColClass(false)}>
-                    <span className={fieldBadgeClass(false)}>Skip</span>
-                    <Input
-                      type="number"
-                      value={skip}
-                      onChange={(e) => setSkip(e.target.value)}
-                      onKeyDown={runQueryOnEnter}
-                      placeholder="0"
-                      min="0"
-                      className="h-7 flex-1 min-w-0 border-0 bg-transparent px-2.5 font-mono text-[11.5px] shadow-none focus-visible:ring-0"
-                    />
-                    {skip !== '0' && skip !== '' && (
-                      <Button variant="ghost" size="icon" className="mr-1 h-6 w-6 shrink-0" onClick={() => setSkip('0')} title="Reset Skip">
-                        <Eraser size={11} />
-                      </Button>
-                    )}
-                  </div>
-
-                  <div className={queryColClass(false)}>
-                    <span className={fieldBadgeClass(false)}>Limit</span>
-                    <Input
-                      type="number"
-                      value={limit}
-                      onChange={(e) => setLimit(e.target.value)}
-                      onKeyDown={runQueryOnEnter}
-                      placeholder="50"
-                      min="1"
-                      className="h-7 flex-1 min-w-0 border-0 bg-transparent px-2.5 font-mono text-[11.5px] shadow-none focus-visible:ring-0"
-                    />
-                    {limit !== '50' && limit !== '' && (
-                      <Button variant="ghost" size="icon" className="mr-1 h-6 w-6 shrink-0" onClick={() => setLimit('50')} title="Reset Limit">
-                        <Eraser size={11} />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <FindQueryBar
+                filter={filterQuery}
+                projection={projectionQuery}
+                sort={sortQuery}
+                onFilterChange={(v) => {
+                  setFilterQuery(v);
+                  if (isQueryBuilderOpen) syncFilterRulesFromInput(v);
+                }}
+                onProjectionChange={(v) => {
+                  setProjectionQuery(v);
+                  if (isQueryBuilderOpen) syncProjectionRulesFromInput(v);
+                }}
+                onSortChange={(v) => {
+                  setSortQuery(v);
+                  if (isQueryBuilderOpen) syncSortRulesFromInput(v);
+                }}
+                filterInvalid={!isFilterValid}
+                projectionInvalid={!isProjectionValid}
+                sortInvalid={!isSortValid}
+                fields={fields}
+                schema={schema}
+                onRun={handleRun}
+                onClearFilter={() => handleClearField('filter')}
+                onClearProjection={() => handleClearField('projection')}
+                onClearSort={() => handleClearField('sort')}
+                skip={skip}
+                limit={limit}
+                onSkipChange={setSkip}
+                onLimitChange={setLimit}
+              />
             </div>
           ) : (
           <div className="shrink-0" data-testid="aggregation-pipeline-editor">

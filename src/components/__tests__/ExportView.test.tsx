@@ -166,7 +166,7 @@ describe('ExportView', () => {
 
   it('seeds the filter editor and keeps filtered export enabled by default', () => {
     renderExportView({ filtered: { kind: 'find', filter: '{}', matchCount: null } });
-    const input = screen.getByTestId('export-filtered-filter-input') as HTMLTextAreaElement;
+    const input = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
     expect(input.value).toBe('{}');
     expect(screen.getByTestId('export-filtered-json-btn')).not.toBeDisabled();
     expect(screen.getByTestId('export-filtered-csv-btn')).not.toBeDisabled();
@@ -184,7 +184,7 @@ describe('ExportView', () => {
         matchCount: 1234,
       },
     });
-    const filterInput = screen.getByTestId('export-filtered-filter-input') as HTMLTextAreaElement;
+    const filterInput = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
     expect(filterInput.value).toBe('{"tier":"gold"}');
     expect(screen.getByText('1,234 matching documents')).toBeInTheDocument();
 
@@ -200,7 +200,7 @@ describe('ExportView', () => {
 
   it('disables filtered export and shows an error when the filter JSON is invalid', () => {
     renderExportView({ filtered: { kind: 'find', filter: '{}' } });
-    fireEvent.change(screen.getByTestId('export-filtered-filter-input'), {
+    fireEvent.change(screen.getByTestId('query-filter-input'), {
       target: { value: '{bad' },
     });
     expect(screen.getByTestId('export-filtered-json-btn')).toBeDisabled();
@@ -213,7 +213,7 @@ describe('ExportView', () => {
     renderExportView({ filtered: { kind: 'find', filter: '{}', matchCount: null }, onCountFilter });
 
     // Editing the filter must NOT trigger a count on its own.
-    fireEvent.change(screen.getByTestId('export-filtered-filter-input'), {
+    fireEvent.change(screen.getByTestId('query-filter-input'), {
       target: { value: '{"active":true}' },
     });
     expect(onCountFilter).not.toHaveBeenCalled();
@@ -230,7 +230,7 @@ describe('ExportView', () => {
   it('disables the Count button while the filter JSON is invalid', () => {
     const onCountFilter = vi.fn().mockResolvedValue(0);
     renderExportView({ filtered: { kind: 'find', filter: '{}' }, onCountFilter });
-    fireEvent.change(screen.getByTestId('export-filtered-filter-input'), {
+    fireEvent.change(screen.getByTestId('query-filter-input'), {
       target: { value: '{bad' },
     });
     expect(screen.getByTestId('export-filtered-count-btn')).toBeDisabled();
