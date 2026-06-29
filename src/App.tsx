@@ -15,7 +15,7 @@ import { IndexModal } from './components/IndexModal';
 import { MongoShell } from './components/MongoShell';
 import { QuickStart } from './components/QuickStart';
 import { DocumentEditModal } from './components/DocumentEditModal';
-import { ExportView } from './components/ExportView';
+import { ExportView, type FilteredExportSeed, type FilteredExportQuery } from './components/ExportView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
@@ -1242,14 +1242,20 @@ function Workspace() {
   const handleExportForTab = async (
     targetTab: QueryTab | null,
     format: 'json' | 'csv',
-    scope: 'current' | 'full' = 'current'
+    scope: 'current' | 'full' | 'filtered' = 'current',
+    query?: FilteredExportQuery
   ) => {
     if (!targetTab || (targetTab.type !== 'collection' && targetTab.type !== 'export')) return;
     const docs = targetTab.type === 'collection' ? targetTab.results || [] : [];
     if (scope === 'current' && docs.length === 0) return;
+    if (scope === 'filtered' && !query) {
+      toast('No query to export — edit the filter first.', 'error');
+      return;
+    }
     try {
+      const suffix = scope === 'full' ? '.full' : scope === 'filtered' ? '.filtered' : '';
       const path = await save({
-        defaultPath: `${targetTab.collection}${scope === 'full' ? '.full' : ''}.${format}`,
+        defaultPath: `${targetTab.collection}${suffix}.${format}`,
         filters: [{ name: format.toUpperCase(), extensions: [format] }],
       });
       if (!path) return; // cancelled
@@ -1266,6 +1272,24 @@ function Workspace() {
         await loadExportTasks();
         return;
       }
+      if (scope === 'filtered' && query) {
+        const isAgg = query.kind === 'aggregate';
+        const task = await invoke<ExportTaskInfo>('start_filtered_export', {
+          id: targetTab.connectionId,
+          database: targetTab.db,
+          collection: targetTab.collection,
+          format,
+          path,
+          filter: isAgg ? '{}' : query.filter || '{}',
+          sort: isAgg ? '{}' : query.sort || '{}',
+          projection: isAgg ? '{}' : query.projection || '{}',
+          pipeline: isAgg ? query.pipeline : '',
+        });
+        setExportTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
+        handleOpenTasksTab();
+        await loadExportTasks();
+        return;
+      }
 
       const content = format === 'json' ? toJson(docs) : toCsv(docs);
       await writeTextFile(path, content);
@@ -1273,6 +1297,36 @@ function Workspace() {
     } catch (err: any) {
       toast(`Export failed: ${err?.message || err}`, 'error');
     }
+  };
+
+  // Top-level field names from a tab's loaded documents, for the export query editors'
+  // autocomplete (the export tab itself has no results, so derive from the source tab).
+  const fieldsFromResults = (results?: any[]): string[] => {
+    if (!results || results.length === 0) return ['_id'];
+    const keys = new Set<string>();
+    results.forEach((doc) => {
+      if (doc && typeof doc === 'object') Object.keys(doc).forEach((k) => keys.add(k));
+    });
+    keys.add('_id');
+    return Array.from(keys).sort((a, b) => {
+      if (a === '_id') return -1;
+      if (b === '_id') return 1;
+      return a.localeCompare(b);
+    });
+  };
+
+  // Seed the Export view's editable Filtered card from the source tab's last run.
+  const buildFilteredExportSeed = (tab: QueryTab | null): FilteredExportSeed => {
+    if (tab?.lastAggregate) {
+      return { kind: 'aggregate', pipeline: JSON.stringify(tab.lastAggregate, null, 2) };
+    }
+    return {
+      kind: 'find',
+      filter: tab?.lastQuery?.filter || '{}',
+      sort: tab?.lastQuery?.sort || '{}',
+      projection: tab?.lastQuery?.projection || '{}',
+      matchCount: typeof tab?.totalCount === 'number' ? tab.totalCount : null,
+    };
   };
 
   const handleImport = async () => {
@@ -1882,11 +1936,25 @@ function Workspace() {
                   null;
                 return (
                   <ExportView
+                    key={`export:${activeTab.connectionId}:${activeTab.db}:${activeTab.collection}`}
+                    connectionId={activeTab.connectionId}
                     connectionName={connectionName}
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
                     currentResultCount={sourceTab?.results.length || 0}
-                    onExport={(format, scope) => handleExportForTab(sourceTab || activeTab, format, scope)}
+                    availableFields={fieldsFromResults(sourceTab?.results)}
+                    filtered={buildFilteredExportSeed(sourceTab)}
+                    onExport={(format, scope, query) =>
+                      handleExportForTab(sourceTab || activeTab, format, scope, query)
+                    }
+                    onCountFilter={(filter) =>
+                      invoke<number>('count_documents', {
+                        id: activeTab.connectionId,
+                        database: activeTab.db,
+                        collection: activeTab.collection,
+                        filter,
+                      })
+                    }
                     onOpenTasks={handleOpenTasksTab}
                   />
                 );
