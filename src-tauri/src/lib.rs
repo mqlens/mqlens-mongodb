@@ -29,15 +29,19 @@ pub use db::ddl::{
     rename_collection_impl, rename_database_impl, DatabaseRenameResult,
 };
 pub use db::documents::{
-    delete_document_impl, delete_many_impl, import_collection_file_impl, import_documents_impl,
-    insert_document_impl, json_to_bson_document, parse_bson_docs, parse_csv_docs,
-    parse_json_array_docs, parse_ndjson_docs, update_document_impl, update_many_impl, ImportResult,
+    delete_document_impl, delete_many_impl, import_documents_impl, insert_document_impl,
+    json_to_bson_document, parse_json_array_docs, update_document_impl, update_many_impl,
+    ImportResult,
 };
-pub use db::export::{start_collection_export_impl, start_filtered_export_impl};
+pub use db::export::{
+    format_current_docs_impl, preview_export_impl, sample_export_fields_impl,
+    start_collection_export_impl, start_filtered_export_impl,
+};
 pub use db::gridfs::{
     delete_gridfs_file_impl, download_gridfs_file_impl, list_gridfs_files_impl,
     upload_gridfs_file_impl, GridFsFileInfo, GridFsTransferProgress,
 };
+pub use db::import::{preview_import_impl, start_import_task_impl};
 pub use db::metadata::{
     create_index_impl, delete_index_impl, list_collections_impl, list_databases_impl,
     list_indexes_impl,
@@ -180,14 +184,14 @@ pub struct AgentDetection {
     pub version: String,
 }
 
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, Clone, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CopyFailure {
     pub collection: String,
     pub error: String,
 }
 
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, Clone, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CopySummary {
     pub collections_copied: u64,
@@ -198,7 +202,7 @@ pub struct CopySummary {
     pub failed: Vec<CopyFailure>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskInfo {
     pub id: String,
@@ -933,8 +937,10 @@ async fn start_collection_export(
     collection: String,
     format: String,
     path: String,
+    options: Option<crate::db::export::options::ExportOptions>,
 ) -> Result<TaskInfo, String> {
-    start_collection_export_impl(&state, &id, &database, &collection, &format, &path).await
+    start_collection_export_impl(&state, &id, &database, &collection, &format, &path, options)
+        .await
 }
 
 #[tauri::command]
@@ -950,6 +956,9 @@ async fn start_filtered_export(
     sort: String,
     projection: String,
     pipeline: String,
+    skip: Option<u64>,
+    limit: Option<i64>,
+    options: Option<crate::db::export::options::ExportOptions>,
 ) -> Result<TaskInfo, String> {
     start_filtered_export_impl(
         &state,
@@ -962,8 +971,62 @@ async fn start_filtered_export(
         &sort,
         &projection,
         &pipeline,
+        skip,
+        limit,
+        options,
     )
     .await
+}
+
+#[tauri::command]
+async fn sample_export_fields(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    filter: String,
+    pipeline: String,
+) -> Result<Vec<String>, String> {
+    sample_export_fields_impl(&state, &id, &database, &collection, &filter, &pipeline).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn preview_export(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    format: String,
+    filter: String,
+    sort: String,
+    projection: String,
+    pipeline: String,
+    options: Option<crate::db::export::options::ExportOptions>,
+) -> Result<String, String> {
+    preview_export_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        &format,
+        &filter,
+        &sort,
+        &projection,
+        &pipeline,
+        options,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn format_current_docs(
+    docs: Vec<serde_json::Value>,
+    format: String,
+    options: Option<crate::db::export::options::ExportOptions>,
+    path: Option<String>,
+) -> Result<Option<String>, String> {
+    format_current_docs_impl(docs, &format, options, path).await
 }
 
 #[tauri::command]
@@ -1320,16 +1383,38 @@ async fn insert_document(
 }
 
 #[tauri::command]
-async fn import_collection_file(
+async fn preview_import(
+    source: crate::db::import::ImportSourceArg,
+    format: String,
+    csv_options: Option<crate::db::documents::CsvImportOptions>,
+    limit: Option<usize>,
+) -> Result<crate::db::import::ImportPreview, String> {
+    preview_import_impl(source, &format, csv_options, limit.unwrap_or(20)).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_import_task(
     state: tauri::State<'_, AppState>,
     id: String,
     database: String,
     collection: String,
-    path: String,
+    source: crate::db::import::ImportSourceArg,
     format: String,
+    csv_options: Option<crate::db::documents::CsvImportOptions>,
     mode: String,
-) -> Result<ImportResult, String> {
-    import_collection_file_impl(&state, &id, &database, &collection, &path, &format, &mode).await
+) -> Result<TaskInfo, String> {
+    start_import_task_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        source,
+        &format,
+        csv_options,
+        &mode,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1589,13 +1674,17 @@ pub fn run() {
             upload_gridfs_file,
             delete_gridfs_file,
             insert_document,
-            import_collection_file,
+            preview_import,
+            start_import_task,
             update_document,
             execute_mql_query,
             execute_aggregate,
             count_documents,
             start_collection_export,
             start_filtered_export,
+            sample_export_fields,
+            preview_export,
+            format_current_docs,
             list_export_tasks,
             clear_finished_export_tasks,
             cancel_task,

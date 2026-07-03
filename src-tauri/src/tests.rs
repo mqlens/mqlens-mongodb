@@ -1,16 +1,19 @@
 #[cfg(test)]
 mod tests {
+    use crate::db::documents::CsvImportOptions;
     use crate::AppState;
     use crate::{
         connect_db_impl, count_documents_impl, create_collection_impl, create_index_impl,
         delete_document_impl, delete_gridfs_file_impl, disconnect_db_impl,
         download_gridfs_file_impl, drop_collection_impl,
         drop_database_impl, execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
-        import_collection_file_impl, import_documents_impl, insert_document_impl,
+        format_current_docs_impl, import_documents_impl,
+        insert_document_impl,
         json_to_bson_document, list_collections_impl, list_databases_impl, list_gridfs_files_impl,
-        list_indexes_impl, parse_bson_docs, parse_csv_docs, parse_json_array_docs, parse_ndjson_docs,
-        rename_collection_impl, rename_database_impl, start_collection_export_impl,
-        start_filtered_export_impl, update_document_impl, upload_gridfs_file_impl,
+        list_indexes_impl, parse_json_array_docs,
+        preview_export_impl, rename_collection_impl, rename_database_impl, sample_export_fields_impl,
+        start_collection_export_impl, start_filtered_export_impl, update_document_impl,
+        upload_gridfs_file_impl,
     };
     use crate::{
         create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
@@ -25,6 +28,16 @@ mod tests {
     /// Build test-only passwords without hard-coded string literals for static analysis.
     fn test_secret(parts: &[&str]) -> String {
         parts.concat()
+    }
+
+    async fn wait_for_task(state: &AppState, task_id: &str) {
+        for _ in 0..50 {
+            let status = state.tasks.lock().unwrap().get(task_id).map(|t| t.status.clone());
+            if status.as_deref() != Some("running") {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
     }
 
     #[test]
@@ -151,6 +164,7 @@ mod tests {
             "customers",
             "json",
             &path_str,
+            None,
         )
         .await
         .expect("Should start export task");
@@ -202,6 +216,7 @@ mod tests {
             "customers",
             "csv",
             &path_str,
+            None,
         )
         .await
         .expect("Should start CSV export task");
@@ -252,6 +267,61 @@ mod tests {
         state.tasks.lock().unwrap().get(task_id).cloned().unwrap()
     }
 
+    /// Re-parse an on-disk export file through the shipping import reader
+    /// (used to round-trip-verify export output; `parse_ndjson_docs` /
+    /// `parse_bson_docs` were dead code and have been removed).
+    fn reparse_import_file(path: &std::path::Path, format: &str) -> Vec<mongodb::bson::Document> {
+        use crate::db::import::{ImportReader, ImportSourceArg};
+        let source = ImportSourceArg {
+            path: Some(path.to_string_lossy().to_string()),
+            text: None,
+        };
+        let mut reader =
+            ImportReader::open(&source, format, &CsvImportOptions::default()).expect("open reader");
+        let mut docs = Vec::new();
+        while let Some(doc) = reader.next_doc().expect("read doc") {
+            docs.push(doc);
+        }
+        docs
+    }
+
+    /// Parse a text source through the shipping import reader for a given
+    /// format (ports unit coverage that used to call the removed
+    /// `parse_ndjson_docs` / `parse_csv_docs` directly).
+    fn drain_text_source(
+        text: &str,
+        format: &str,
+        csv: &CsvImportOptions,
+    ) -> Result<Vec<mongodb::bson::Document>, String> {
+        use crate::db::import::{ImportReader, ImportSourceArg};
+        let source = ImportSourceArg { path: None, text: Some(text.to_string()) };
+        let mut reader = ImportReader::open(&source, format, csv)?;
+        let mut docs = Vec::new();
+        while let Some(doc) = reader.next_doc()? {
+            docs.push(doc);
+        }
+        Ok(docs)
+    }
+
+    /// Parse concatenated BSON bytes through the shipping import reader.
+    /// BSON import requires a file source, so this writes to a temp file
+    /// first (ports unit coverage that used to call the removed
+    /// `parse_bson_docs` directly).
+    fn drain_bson_bytes(bytes: &[u8]) -> Vec<mongodb::bson::Document> {
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-tests-bson-{}-{}.bson",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, bytes).expect("write temp bson");
+        let docs = reparse_import_file(&path, "bson");
+        let _ = std::fs::remove_file(&path);
+        docs
+    }
+
     #[tokio::test]
     async fn test_mock_full_collection_export_task_writes_ndjson() {
         let state = AppState::new();
@@ -261,7 +331,7 @@ mod tests {
         let path = temp_import_path("ndjson");
         let path_str = path.to_string_lossy().to_string();
         let task = start_collection_export_impl(
-            &state, &conn_id, "sales_db", "customers", "ndjson", &path_str,
+            &state, &conn_id, "sales_db", "customers", "ndjson", &path_str, None,
         )
         .await
         .expect("start ndjson export");
@@ -274,7 +344,7 @@ mod tests {
         let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
         assert_eq!(lines.len(), 3);
         assert!(!text.contains('['));
-        let docs = parse_ndjson_docs(&text).expect("re-parse ndjson");
+        let docs = reparse_import_file(&path, "ndjson");
         assert_eq!(docs.len(), 3);
         assert!(text.contains("Alice Smith"));
         let _ = std::fs::remove_file(&path);
@@ -289,7 +359,7 @@ mod tests {
         let path = temp_import_path("bson");
         let path_str = path.to_string_lossy().to_string();
         let task = start_collection_export_impl(
-            &state, &conn_id, "sales_db", "customers", "bson", &path_str,
+            &state, &conn_id, "sales_db", "customers", "bson", &path_str, None,
         )
         .await
         .expect("start bson export");
@@ -298,8 +368,7 @@ mod tests {
         assert_eq!(finished.processed, 3);
 
         // The on-disk bytes are concatenated BSON and parse back to 3 documents.
-        let bytes = std::fs::read(&path).expect("bson file");
-        let docs = parse_bson_docs(&bytes).expect("re-parse bson");
+        let docs = reparse_import_file(&path, "bson");
         assert_eq!(docs.len(), 3);
         let names: Vec<String> = docs
             .iter()
@@ -337,6 +406,9 @@ mod tests {
             "{}",
             "{}",
             "",
+            None,
+            None,
+            None,
         )
         .await
         .expect("Should start filtered export task");
@@ -384,6 +456,9 @@ mod tests {
             "{}",
             "{}",
             "[{\"$match\":{}}]",
+            None,
+            None,
+            None,
         )
         .await
         .err()
@@ -399,15 +474,20 @@ mod tests {
         let state = AppState::new();
 
         let invalid_format = start_filtered_export_impl(
-            &state, "missing", "db", "coll", "xml", "/tmp/out.xml", "{}", "{}", "{}", "",
+            &state, "missing", "db", "coll", "xml", "/tmp/out.xml", "{}", "{}", "{}", "", None,
+            None, None,
         )
         .await
         .err()
         .expect("invalid export format should error");
-        assert_eq!(invalid_format, "Export format must be json, ndjson, bson, or csv");
+        assert_eq!(
+            invalid_format,
+            "Export format must be json, ndjson, bson, csv, or xlsx"
+        );
 
         let missing_path = start_filtered_export_impl(
-            &state, "missing", "db", "coll", "json", "   ", "{}", "{}", "{}", "",
+            &state, "missing", "db", "coll", "json", "   ", "{}", "{}", "{}", "", None, None,
+            None,
         )
         .await
         .err()
@@ -415,7 +495,8 @@ mod tests {
         assert_eq!(missing_path, "Export path is required");
 
         let missing_connection = start_filtered_export_impl(
-            &state, "missing", "db", "coll", "json", "/tmp/out.json", "{}", "{}", "{}", "",
+            &state, "missing", "db", "coll", "json", "/tmp/out.json", "{}", "{}", "{}", "", None,
+            None, None,
         )
         .await
         .err()
@@ -424,7 +505,7 @@ mod tests {
 
         let bad_filter = start_filtered_export_impl(
             &state, "missing", "db", "coll", "json", "/tmp/out.json", "{not json}", "{}", "{}",
-            "",
+            "", None, None, None,
         )
         .await
         .err()
@@ -439,26 +520,152 @@ mod tests {
     async fn test_collection_export_validates_format_path_and_connection() {
         let state = AppState::new();
 
-        let invalid_format =
-            start_collection_export_impl(&state, "missing", "db", "coll", "xml", "/tmp/out.xml")
-                .await
-                .err()
-                .expect("invalid export format should error");
-        assert_eq!(invalid_format, "Export format must be json, ndjson, bson, or csv");
+        let invalid_format = start_collection_export_impl(
+            &state, "missing", "db", "coll", "xml", "/tmp/out.xml", None,
+        )
+        .await
+        .err()
+        .expect("invalid export format should error");
+        assert_eq!(
+            invalid_format,
+            "Export format must be json, ndjson, bson, csv, or xlsx"
+        );
 
-        let missing_path =
-            start_collection_export_impl(&state, "missing", "db", "coll", "json", "   ")
-                .await
-                .err()
-                .expect("blank export path should error");
+        let missing_path = start_collection_export_impl(
+            &state, "missing", "db", "coll", "json", "   ", None,
+        )
+        .await
+        .err()
+        .expect("blank export path should error");
         assert_eq!(missing_path, "Export path is required");
 
-        let missing_connection =
-            start_collection_export_impl(&state, "missing", "db", "coll", "json", "/tmp/out.json")
-                .await
-                .err()
-                .expect("missing export connection should error");
+        let missing_connection = start_collection_export_impl(
+            &state, "missing", "db", "coll", "json", "/tmp/out.json", None,
+        )
+        .await
+        .err()
+        .expect("missing export connection should error");
         assert_eq!(missing_connection, "Connection not found");
+    }
+
+    #[tokio::test]
+    async fn test_export_options_field_selection_and_delimiter() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-export-opts-{}-{}.csv",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        let options: crate::db::export::options::ExportOptions = serde_json::from_str(
+            r#"{"fields":["name"],"csv":{"delimiter":";"}}"#,
+        ).unwrap();
+        let task = start_collection_export_impl(
+            &state, &conn_id, "sales_db", "customers", "csv", &path_str, Some(options),
+        ).await.unwrap();
+        wait_for_task(&state, &task.id).await;
+
+        let exported = std::fs::read_to_string(&path).unwrap();
+        let mut lines = exported.lines();
+        assert_eq!(lines.next(), Some("name"), "only the selected column");
+        assert!(exported.contains("Alice Smith"));
+        assert!(!exported.contains("@"), "email column excluded");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_filtered_export_applies_skip_and_limit() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-export-skiplimit-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        let task = start_filtered_export_impl(
+            &state, &conn_id, "sales_db", "customers", "ndjson", &path_str,
+            "{}", "{}", "{}", "", Some(1), Some(1), None,
+        ).await.unwrap();
+        wait_for_task(&state, &task.id).await;
+
+        let exported = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(exported.lines().count(), 1, "skip 1, limit 1 of 3 docs");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_sample_export_fields_returns_dot_paths() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let fields =
+            sample_export_fields_impl(&state, &conn_id, "sales_db", "customers", "{}", "")
+                .await
+                .unwrap();
+        assert!(fields.contains(&"_id".to_string()));
+        assert!(fields.contains(&"name".to_string()));
+        // mock customers embed an address sub-document → nested dot path present
+        assert!(fields.iter().any(|f| f.contains('.')),
+            "expected at least one nested dot path, got {:?}", fields);
+    }
+
+    #[tokio::test]
+    async fn test_preview_export_returns_first_docs_in_format() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let preview = preview_export_impl(
+            &state, &conn_id, "sales_db", "customers", "ndjson", "{}", "{}", "{}", "", None,
+        ).await.unwrap();
+        assert!(preview.lines().count() <= 5);
+        assert!(preview.contains("Alice Smith"));
+
+        let err = preview_export_impl(
+            &state, &conn_id, "sales_db", "customers", "bson", "{}", "{}", "{}", "", None,
+        ).await.unwrap_err();
+        assert!(err.to_lowercase().contains("preview"));
+    }
+
+    #[tokio::test]
+    async fn test_format_current_docs_string_and_file_targets() {
+        let docs: Vec<serde_json::Value> = vec![
+            serde_json::json!({"name": "A", "n": 1}),
+            serde_json::json!({"name": "B", "n": 2}),
+        ];
+        // Clipboard target: CSV string with only the selected column.
+        let options: crate::db::export::options::ExportOptions =
+            serde_json::from_str(r#"{"fields":["name"]}"#).unwrap();
+        let text = format_current_docs_impl(docs.clone(), "csv", Some(options), None)
+            .await.unwrap().unwrap();
+        assert_eq!(text.trim(), "name\nA\nB");
+
+        // File target: xlsx written to disk.
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-current-{}-{}.xlsx",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+        let none = format_current_docs_impl(docs, "xlsx", None, Some(path_str.clone()))
+            .await.unwrap();
+        assert!(none.is_none());
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..2], b"PK");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_export_rejects_invalid_options() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let options: crate::db::export::options::ExportOptions =
+            serde_json::from_str(r#"{"csv":{"delimiter":"ab"}}"#).unwrap();
+        let err = start_collection_export_impl(
+            &state, &conn_id, "sales_db", "customers", "csv", "/tmp/x.csv", Some(options),
+        ).await.unwrap_err();
+        assert!(err.contains("delimiter"));
     }
 
     // Regression guard for the index-edit corruption bug (GO-LIVE C2/H4):
@@ -2611,7 +2818,8 @@ mod tests {
     fn test_parse_ndjson_docs_skips_blank_lines() {
         // One doc per line, blank lines (incl. trailing newline) tolerated.
         let text = "{\"_id\": 1, \"name\": \"Ada\"}\n\n{\"_id\": 2, \"name\": \"Bob\"}\n";
-        let docs = parse_ndjson_docs(text).expect("parse ndjson");
+        let docs =
+            drain_text_source(text, "ndjson", &CsvImportOptions::default()).expect("parse ndjson");
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0].get_str("name").unwrap(), "Ada");
         assert_eq!(docs[1].get_str("name").unwrap(), "Bob");
@@ -2622,7 +2830,8 @@ mod tests {
         // An $oid wrapper must revive to a real ObjectId, not a sub-document.
         let oid = mongodb::bson::oid::ObjectId::new();
         let line = format!("{{\"_id\": {{\"$oid\": \"{}\"}}}}", oid.to_hex());
-        let docs = parse_ndjson_docs(&line).expect("parse ndjson ejson");
+        let docs = drain_text_source(&line, "ndjson", &CsvImportOptions::default())
+            .expect("parse ndjson ejson");
         assert_eq!(docs[0].get_object_id("_id").unwrap(), oid);
     }
 
@@ -2638,7 +2847,7 @@ mod tests {
         let mut bytes = mongodb::bson::to_vec(&original).expect("serialize bson");
         bytes.extend(mongodb::bson::to_vec(&doc! { "_id": 2, "name": "Bob" }).unwrap());
 
-        let docs = parse_bson_docs(&bytes).expect("parse bson");
+        let docs = drain_bson_bytes(&bytes);
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0].get_object_id("_id").unwrap(), oid);
         assert_eq!(docs[0].get_datetime("when").unwrap(), &when);
@@ -2651,14 +2860,15 @@ mod tests {
 
     #[test]
     fn test_parse_bson_docs_empty_input() {
-        assert_eq!(parse_bson_docs(&[]).expect("empty bson").len(), 0);
+        assert_eq!(drain_bson_bytes(&[]).len(), 0);
     }
 
     #[test]
     fn test_parse_csv_docs_revives_cell_values() {
         // Numbers/bools/objects parse as JSON; bare text stays a string.
         let text = "_id,name,active,tags\n1,Ada,true,\"[1,2]\"\n2,Bob,false,plain";
-        let docs = parse_csv_docs(text).expect("parse csv");
+        let docs =
+            drain_text_source(text, "csv", &CsvImportOptions::default()).expect("parse csv");
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0].get_i32("_id").unwrap(), 1);
         assert_eq!(docs[0].get_str("name").unwrap(), "Ada");
@@ -2671,79 +2881,112 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mock_import_collection_file_ndjson() {
-        let state = AppState::new();
-        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
-            .await
-            .expect("connect mock");
-        let path = temp_import_path("ndjson");
-        std::fs::write(
-            &path,
-            "{\"_id\": 1, \"name\": \"Ada\"}\n{\"_id\": 2, \"name\": \"Bob\"}\n",
-        )
-        .unwrap();
-
-        let res = import_collection_file_impl(
-            &state,
-            &conn_id,
-            "sales_db",
-            "customers",
-            &path.to_string_lossy(),
+    async fn test_preview_import_truncates_and_reports_inline_errors() {
+        use crate::db::import::{preview_import_impl, ImportSourceArg};
+        // 30 NDJSON lines → only 20 previewed.
+        let text: String = (0..30).map(|i| format!("{{\"n\":{}}}\n", i)).collect();
+        let p = preview_import_impl(
+            ImportSourceArg { path: None, text: Some(text) },
             "ndjson",
-            "skip",
+            None,
+            20,
         )
         .await
-        .expect("ndjson import validates on mock");
-        assert_eq!(res.inserted, 2);
-        let _ = std::fs::remove_file(&path);
+        .unwrap();
+        assert_eq!(p.docs.len(), 20);
+        assert!(p.error.is_none());
+
+        // Parse error surfaces inline, docs keep the good prefix.
+        let p = preview_import_impl(
+            ImportSourceArg { path: None, text: Some("{\"a\":1}\nboom\n".into()) },
+            "ndjson",
+            None,
+            20,
+        )
+        .await
+        .unwrap();
+        assert_eq!(p.docs.len(), 1);
+        assert!(p.error.as_deref().unwrap_or("").contains("line 2"));
     }
 
     #[tokio::test]
-    async fn test_mock_import_collection_file_bson() {
-        use mongodb::bson::doc;
+    async fn test_import_task_streams_ndjson_from_file_on_mock() {
+        use crate::db::import::{start_import_task_impl, ImportSourceArg};
         let state = AppState::new();
-        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
-            .await
-            .expect("connect mock");
-        let path = temp_import_path("bson");
-        let mut bytes = mongodb::bson::to_vec(&doc! { "_id": 1, "name": "Ada" }).unwrap();
-        bytes.extend(mongodb::bson::to_vec(&doc! { "_id": 2, "name": "Bob" }).unwrap());
-        std::fs::write(&path, &bytes).unwrap();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-import-test-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        // 1200 docs → 3 batches of 500/500/200.
+        let text: String = (0..1200).map(|i| format!("{{\"n\":{}}}\n", i)).collect();
+        std::fs::write(&path, text).unwrap();
 
-        let res = import_collection_file_impl(
+        let task = start_import_task_impl(
             &state,
             &conn_id,
             "sales_db",
             "customers",
-            &path.to_string_lossy(),
-            "bson",
+            ImportSourceArg { path: Some(path.to_string_lossy().to_string()), text: None },
+            "ndjson",
+            None,
             "skip",
         )
         .await
-        .expect("bson import validates on mock");
-        assert_eq!(res.inserted, 2);
+        .unwrap();
+        assert_eq!(task.kind, "import");
+        wait_for_task(&state, &task.id).await;
+
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 1200, "cap must not apply to task imports");
+        // TaskInfo.summary is the copy-task CopySummary struct, so import
+        // counts ride on the completion message instead.
+        assert!(finished.message.contains("1200 inserted"), "{}", finished.message);
         let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]
-    async fn test_import_collection_file_rejects_unknown_format() {
+    async fn test_import_task_fails_on_parse_error_and_reports_line() {
+        use crate::db::import::{start_import_task_impl, ImportSourceArg};
         let state = AppState::new();
-        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
-            .await
-            .expect("connect mock");
-        let path = temp_import_path("txt");
-        std::fs::write(&path, "nope").unwrap();
-        let res = import_collection_file_impl(
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let task = start_import_task_impl(
             &state,
             &conn_id,
             "sales_db",
             "customers",
-            &path.to_string_lossy(),
-            "yaml",
+            ImportSourceArg { path: None, text: Some("{\"a\":1}\nboom\n".into()) },
+            "ndjson",
+            None,
             "skip",
         )
-        .await;
-        assert!(res.is_err(), "unknown import format must error");
-        let _ = std::fs::remove_file(&path);
+        .await
+        .unwrap();
+        wait_for_task(&state, &task.id).await;
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "failed");
+        assert!(finished.error.as_deref().unwrap_or("").contains("line 2"));
+    }
+
+    #[tokio::test]
+    async fn test_import_task_validates_mode_and_source() {
+        use crate::db::import::{start_import_task_impl, ImportSourceArg};
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let err = start_import_task_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            ImportSourceArg { path: None, text: Some("[]".into()) },
+            "json",
+            None,
+            "yolo",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("mode"));
     }
 }

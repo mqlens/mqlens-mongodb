@@ -568,8 +568,21 @@ describe('App Component', () => {
     expect(await screen.findByText(/"VIP Vic"/)).toBeInTheDocument();
   });
 
-  it('imports documents from a file via import_collection_file (H5)', async () => {
+  it('opens the Import tab and starts a background import task', async () => {
     const calls: any[] = [];
+    const task = {
+      id: 'task-3',
+      kind: 'import',
+      label: 'Import into sales_db.customers',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Queued',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
     mockInvoke.mockImplementation((cmd: string, args: any) => {
       calls.push({ cmd, args });
       if (cmd === 'execute_mql_query') {
@@ -578,13 +591,18 @@ describe('App Component', () => {
       if (cmd === 'load_collection_queries') {
         return Promise.resolve({ saved: [], history: [], default: null });
       }
-      if (cmd === 'import_collection_file') {
-        return Promise.resolve({ inserted: 2, updated: 0, skipped: 0 });
+      if (cmd === 'preview_import') {
+        return Promise.resolve({ docs: [], columns: [], totalHint: null, error: null });
+      }
+      if (cmd === 'start_import_task') {
+        return Promise.resolve(task);
+      }
+      if (cmd === 'list_export_tasks') {
+        return Promise.resolve([task]);
       }
       return Promise.resolve([]);
     });
-    // The backend parses the file from disk; the frontend only forwards path + format.
-    openMock.mockResolvedValue('/tmp/data.jsonl');
+    openMock.mockResolvedValue('/tmp/d.jsonl');
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
     renderWithProviders(<App />);
@@ -594,21 +612,136 @@ describe('App Component', () => {
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('import-btn'));
+    expect(await screen.findByTestId('import-view')).toBeInTheDocument();
 
-    // Pick the duplicate-handling mode via the in-app choose dialog.
-    fireEvent.click(await screen.findByTestId('dialog-choice-skip'));
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+    await waitFor(() =>
+      expect(screen.getByTestId('import-file-path')).toHaveTextContent('/tmp/d.jsonl'));
+
+    fireEvent.click(screen.getByTestId('import-run-btn'));
 
     await waitFor(() => {
-      const imp = calls.find((c) => c.cmd === 'import_collection_file');
+      const imp = calls.find((c) => c.cmd === 'start_import_task');
       expect(imp).toBeTruthy();
       expect(imp.args).toMatchObject({
         database: 'sales_db',
         collection: 'customers',
-        path: '/tmp/data.jsonl',
+        source: { path: '/tmp/d.jsonl' },
         format: 'ndjson',
         mode: 'skip',
       });
     });
+    expect(await screen.findByTestId('task-manager')).toBeInTheDocument();
+  });
+
+  it('refreshes the source collection tab once its import task completes', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-import-refresh',
+        kind: 'import',
+        label: 'Import sales_db.customers from d.jsonl',
+        status: 'running',
+        processed: 0,
+        total: null,
+        message: 'Queued',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      let taskStatus = 'running';
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'preview_import') {
+          return Promise.resolve({ docs: [], columns: [], totalHint: null, error: null });
+        }
+        if (cmd === 'start_import_task') {
+          return Promise.resolve(runningTask);
+        }
+        if (cmd === 'list_export_tasks') {
+          return Promise.resolve([{ ...runningTask, status: taskStatus }]);
+        }
+        return Promise.resolve([]);
+      });
+      openMock.mockResolvedValue('/tmp/d.jsonl');
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('import-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('import-view')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+      await vi.waitFor(() =>
+        expect(screen.getByTestId('import-file-path')).toHaveTextContent('/tmp/d.jsonl'));
+
+      fireEvent.click(screen.getByTestId('import-run-btn'));
+      await vi.waitFor(() =>
+        expect(calls.some((c) => c.cmd === 'start_import_task')).toBe(true));
+
+      const execCallsBefore = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+
+      // The task completes; the next poll tick should notice and re-run the
+      // source collection tab's query.
+      taskStatus = 'completed';
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await vi.waitFor(() => {
+        const execCallsAfter = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+        expect(execCallsAfter).toBeGreaterThan(execCallsBefore);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('previews through preview_import', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'preview_import') {
+        return Promise.resolve({ docs: [], columns: [], totalHint: null, error: null });
+      }
+      return Promise.resolve([]);
+    });
+    openMock.mockResolvedValue('/tmp/d.jsonl');
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('import-btn'));
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+
+    await waitFor(
+      () => {
+        const prev = calls.find((c) => c.cmd === 'preview_import');
+        expect(prev).toBeTruthy();
+        expect(prev.args).toMatchObject({ format: 'ndjson', limit: 20 });
+      },
+      { timeout: 2000 }
+    );
   });
 
   it('starts a background task for full collection export', async () => {
@@ -668,6 +801,139 @@ describe('App Component', () => {
       });
     });
     expect(await screen.findByTestId('task-manager')).toBeInTheDocument();
+  });
+
+  it('sends options and skip/limit with a filtered export', async () => {
+    const calls: any[] = [];
+    const task = {
+      id: 'task-2',
+      kind: 'filtered_export',
+      label: 'Export sales_db.customers as CSV',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Queued',
+      path: '/tmp/customers.filtered.csv',
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'start_filtered_export') {
+        return Promise.resolve(task);
+      }
+      if (cmd === 'list_export_tasks') {
+        return Promise.resolve([task]);
+      }
+      return Promise.resolve([]);
+    });
+    saveMock.mockResolvedValue('/tmp/customers.filtered.csv');
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-format-csv'));
+    fireEvent.change(screen.getByTestId('export-options-csv-delimiter'), { target: { value: ';' } });
+    fireEvent.change(screen.getByTestId('export-filtered-skip'), { target: { value: '10' } });
+    fireEvent.change(screen.getByTestId('export-filtered-limit'), { target: { value: '50' } });
+    fireEvent.click(screen.getByTestId('export-filtered-btn'));
+
+    await waitFor(() => {
+      const exp = calls.find((c) => c.cmd === 'start_filtered_export');
+      expect(exp).toBeTruthy();
+      expect(exp.args).toMatchObject({
+        format: 'csv',
+        skip: 10,
+        limit: 50,
+        options: expect.objectContaining({ csv: expect.objectContaining({ delimiter: ';' }) }),
+      });
+    });
+  });
+
+  it('exports current results through format_current_docs', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'format_current_docs') {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve([]);
+    });
+    saveMock.mockResolvedValue('/tmp/customers.json');
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('export-current-btn'));
+
+    await waitFor(() => {
+      const exp = calls.find((c) => c.cmd === 'format_current_docs');
+      expect(exp).toBeTruthy();
+      expect(exp.args).toMatchObject({ format: 'json', path: expect.any(String) });
+    });
+  });
+
+  it('copies current results to the clipboard as text', async () => {
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'format_current_docs') {
+        return Promise.resolve('name\nA\n');
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('export-copy-current-btn'));
+
+    await waitFor(() => {
+      const exp = calls.find((c) => c.cmd === 'format_current_docs');
+      expect(exp).toBeTruthy();
+      expect(exp.args).toMatchObject({ path: null });
+    });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('name\nA\n'));
   });
 
   it('does not load profiles until the vault is unlocked', async () => {
@@ -757,35 +1023,6 @@ describe('App Component', () => {
     // No extra count: same filter.
     const countAfter = calls.filter(c => c.cmd === 'count_documents').length;
     expect(countAfter).toBe(1);
-  });
-
-  it('surfaces a malformed-file backend error as an import error toast (H5)', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'execute_mql_query') {
-        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
-      }
-      if (cmd === 'load_collection_queries') {
-        return Promise.resolve({ saved: [], history: [], default: null });
-      }
-      if (cmd === 'import_collection_file') {
-        // The backend parses the file and rejects on malformed input.
-        return Promise.reject('Invalid JSON: expected value at line 1');
-      }
-      return Promise.resolve([]);
-    });
-    openMock.mockResolvedValue('/tmp/bad.json');
-
-    const { fireEvent } = await import('@testing-library/react');
-    renderWithProviders(<App />);
-    await screen.findByTestId('mock-sidebar');
-
-    fireEvent.click(screen.getByTestId('select-collection-btn'));
-    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId('import-btn'));
-    // Pick a duplicate-handling mode, then the backend reports the parse failure.
-    fireEvent.click(await screen.findByTestId('dialog-choice-skip'));
-    expect(await screen.findByText(/Import failed/)).toBeInTheDocument();
   });
 
   it('isolates query editor state per collection tab (#120)', async () => {
