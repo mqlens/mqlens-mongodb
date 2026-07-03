@@ -813,6 +813,39 @@ pub async fn sample_export_fields_impl(
     filter: &str,
     pipeline: &str,
 ) -> Result<Vec<String>, String> {
+    let docs = collect_source_docs(
+        state,
+        id,
+        database,
+        collection,
+        filter,
+        "{}",
+        "{}",
+        pipeline,
+        FIELD_SAMPLE_SIZE as i64,
+    )
+    .await?;
+
+    let report = crate::db::schema::infer_schema(&docs);
+    Ok(report.fields.into_iter().map(|f| f.path).collect())
+}
+
+/// Collect up to `limit` documents from a find filter/sort/projection or an
+/// aggregation pipeline, on either a mock or real connection. Shared by the
+/// field-sampling and preview code paths, which differ only in `limit` and
+/// whether `sort`/`projection` are honored.
+#[allow(clippy::too_many_arguments)]
+async fn collect_source_docs(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    filter: &str,
+    sort: &str,
+    projection: &str,
+    pipeline: &str,
+    limit: i64,
+) -> Result<Vec<Document>, String> {
     use futures::stream::StreamExt;
 
     let docs: Vec<Document> = if crate::connection_is_mock(state, id)? {
@@ -820,14 +853,14 @@ pub async fn sample_export_fields_impl(
         if !pipeline_trimmed.is_empty() && pipeline_trimmed != "[]" {
             return Err("Aggregation pipelines are not supported on mock connections".to_string());
         }
-        mock_db::execute_mock_query(database, collection, filter, "{}", FIELD_SAMPLE_SIZE as i64, 0)?
+        mock_db::execute_mock_query(database, collection, filter, sort, limit, 0)?
             .iter()
             .map(|s| crate::json_to_bson_document(s))
             .collect::<Result<_, _>>()?
     } else {
         let client = crate::require_real_client(state, id)?;
         let coll = client.database(database).collection::<Document>(collection);
-        let source = build_source(filter, "{}", "{}", pipeline)?;
+        let source = build_source(filter, sort, projection, pipeline)?;
         let source = match source {
             ExportSource::Find {
                 filter,
@@ -839,10 +872,10 @@ pub async fn sample_export_fields_impl(
                 sort,
                 projection,
                 skip: None,
-                limit: Some(FIELD_SAMPLE_SIZE as i64),
+                limit: Some(limit),
             },
             ExportSource::Aggregate { mut stages } => {
-                stages.push(doc! {"$limit": FIELD_SAMPLE_SIZE as i64});
+                stages.push(doc! {"$limit": limit});
                 ExportSource::Aggregate { stages }
             }
         };
@@ -854,6 +887,161 @@ pub async fn sample_export_fields_impl(
         docs
     };
 
-    let report = crate::db::schema::infer_schema(&docs);
-    Ok(report.fields.into_iter().map(|f| f.path).collect())
+    Ok(docs)
+}
+
+/// Format docs as one text blob (preview + clipboard). Text formats only.
+pub fn format_docs_to_string(
+    docs: &[Document],
+    format: &str,
+    options: &options::ExportOptions,
+) -> Result<String, String> {
+    options::validate_options(format, options)?;
+    match format {
+        "json" => {
+            let lines = docs
+                .iter()
+                .map(|d| json::doc_to_json_string(d, options.json_mode))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(format!("[\n{}\n]\n", lines.join(",\n")))
+        }
+        "ndjson" => {
+            let lines = docs
+                .iter()
+                .map(|d| json::doc_to_json_string(d, options.json_mode))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(lines.join("\n") + "\n")
+        }
+        "csv" => {
+            let columns: Vec<String> = match &options.fields {
+                Some(f) => f.clone(),
+                None => {
+                    let mut set = BTreeSet::new();
+                    for d in docs {
+                        set.extend(d.keys().cloned());
+                    }
+                    set.into_iter().collect()
+                }
+            };
+            let mut out = Vec::new();
+            if options.csv.include_headers && !columns.is_empty() {
+                out.extend(csv::csv_record(&columns, &options.csv)?);
+            }
+            for d in docs {
+                let cells: Vec<String> = columns
+                    .iter()
+                    .map(|c| csv::csv_cell_value(d, c, &options.csv))
+                    .collect();
+                out.extend(csv::csv_record(&cells, &options.csv)?);
+            }
+            String::from_utf8(out).map_err(|e| format!("CSV encoding error: {}", e))
+        }
+        other => Err(format!("No text preview for binary format: {}", other)),
+    }
+}
+
+const PREVIEW_DOCS: i64 = 5;
+
+/// First `PREVIEW_DOCS` documents of a find filter/sort/projection or an
+/// aggregation pipeline, formatted as text for the export preview pane.
+#[allow(clippy::too_many_arguments)]
+pub async fn preview_export_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    format: &str,
+    filter: &str,
+    sort: &str,
+    projection: &str,
+    pipeline: &str,
+    options: Option<options::ExportOptions>,
+) -> Result<String, String> {
+    let docs = collect_source_docs(
+        state,
+        id,
+        database,
+        collection,
+        filter,
+        sort,
+        projection,
+        pipeline,
+        PREVIEW_DOCS,
+    )
+    .await?;
+    let options = options.unwrap_or_default();
+    format_docs_to_string(&docs, &format.trim().to_lowercase(), &options)
+}
+
+/// Format already-fetched (relaxed-EJSON) documents from the results grid,
+/// either as a text string (clipboard/preview, `path` is `None`) or written
+/// directly to a file (any format including bson/xlsx, `path` is `Some`).
+pub async fn format_current_docs_impl(
+    docs: Vec<serde_json::Value>,
+    format: &str,
+    options: Option<options::ExportOptions>,
+    path: Option<String>,
+) -> Result<Option<String>, String> {
+    let options = options.unwrap_or_default();
+    let format = format.trim().to_lowercase();
+    options::validate_options(&format, &options)?;
+    // Grid docs are relaxed EJSON — Bson::try_from revives real types.
+    let mut bson_docs = Vec::with_capacity(docs.len());
+    for value in docs {
+        let doc = match mongodb::bson::Bson::try_from(value)
+            .map_err(|e| format!("Invalid document: {}", e))?
+        {
+            mongodb::bson::Bson::Document(d) => d,
+            _ => return Err("Each document must be a JSON object".to_string()),
+        };
+        bson_docs.push(match &options.fields {
+            Some(fields) => options::project_document(&doc, fields),
+            None => doc,
+        });
+    }
+    // Keep options.fields set: docs are already projected (project_document is
+    // idempotent w.r.t. lookups), and the CSV/XLSX writers use it as the
+    // ordered column list — stripping it would lose the picker's order.
+
+    let Some(path) = path else {
+        return format_docs_to_string(&bson_docs, &format, &options).map(Some);
+    };
+    match format.as_str() {
+        "bson" => {
+            let mut bytes = Vec::new();
+            for d in &bson_docs {
+                bytes.extend(
+                    mongodb::bson::to_vec(d)
+                        .map_err(|e| format!("BSON serialization error: {}", e))?,
+                );
+            }
+            tokio::fs::write(&path, bytes)
+                .await
+                .map_err(|e| format!("Failed to write export file: {}", e))?;
+        }
+        "xlsx" => {
+            let columns: Vec<String> = match &options.fields {
+                Some(f) => f.clone(),
+                None => {
+                    let mut set = BTreeSet::new();
+                    for d in &bson_docs {
+                        set.extend(d.keys().cloned());
+                    }
+                    set.into_iter().collect()
+                }
+            };
+            let mut sink = xlsx::XlsxSink::new(&path, columns, options.xlsx.clone())?;
+            for d in &bson_docs {
+                sink.write_row(d)?;
+            }
+            sink.finish()?;
+        }
+        _ => {
+            let text = format_docs_to_string(&bson_docs, &format, &options)?;
+            tokio::fs::write(&path, text)
+                .await
+                .map_err(|e| format!("Failed to write export file: {}", e))?;
+        }
+    }
+    Ok(None)
 }

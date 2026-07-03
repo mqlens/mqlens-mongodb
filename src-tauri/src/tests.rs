@@ -6,10 +6,11 @@ mod tests {
         delete_document_impl, delete_gridfs_file_impl, disconnect_db_impl,
         download_gridfs_file_impl, drop_collection_impl,
         drop_database_impl, execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
-        import_collection_file_impl, import_documents_impl, insert_document_impl,
+        format_current_docs_impl, import_collection_file_impl, import_documents_impl,
+        insert_document_impl,
         json_to_bson_document, list_collections_impl, list_databases_impl, list_gridfs_files_impl,
         list_indexes_impl, parse_bson_docs, parse_csv_docs, parse_json_array_docs, parse_ndjson_docs,
-        rename_collection_impl, rename_database_impl, sample_export_fields_impl,
+        preview_export_impl, rename_collection_impl, rename_database_impl, sample_export_fields_impl,
         start_collection_export_impl, start_filtered_export_impl, update_document_impl,
         upload_gridfs_file_impl,
     };
@@ -554,6 +555,50 @@ mod tests {
         // mock customers embed an address sub-document → nested dot path present
         assert!(fields.iter().any(|f| f.contains('.')),
             "expected at least one nested dot path, got {:?}", fields);
+    }
+
+    #[tokio::test]
+    async fn test_preview_export_returns_first_docs_in_format() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let preview = preview_export_impl(
+            &state, &conn_id, "sales_db", "customers", "ndjson", "{}", "{}", "{}", "", None,
+        ).await.unwrap();
+        assert!(preview.lines().count() <= 5);
+        assert!(preview.contains("Alice Smith"));
+
+        let err = preview_export_impl(
+            &state, &conn_id, "sales_db", "customers", "bson", "{}", "{}", "{}", "", None,
+        ).await.unwrap_err();
+        assert!(err.to_lowercase().contains("preview"));
+    }
+
+    #[tokio::test]
+    async fn test_format_current_docs_string_and_file_targets() {
+        let docs: Vec<serde_json::Value> = vec![
+            serde_json::json!({"name": "A", "n": 1}),
+            serde_json::json!({"name": "B", "n": 2}),
+        ];
+        // Clipboard target: CSV string with only the selected column.
+        let options: crate::db::export::options::ExportOptions =
+            serde_json::from_str(r#"{"fields":["name"]}"#).unwrap();
+        let text = format_current_docs_impl(docs.clone(), "csv", Some(options), None)
+            .await.unwrap().unwrap();
+        assert_eq!(text.trim(), "name\nA\nB");
+
+        // File target: xlsx written to disk.
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-current-{}-{}.xlsx",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+        let none = format_current_docs_impl(docs, "xlsx", None, Some(path_str.clone()))
+            .await.unwrap();
+        assert!(none.is_none());
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..2], b"PK");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

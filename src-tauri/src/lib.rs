@@ -34,7 +34,8 @@ pub use db::documents::{
     parse_json_array_docs, parse_ndjson_docs, update_document_impl, update_many_impl, ImportResult,
 };
 pub use db::export::{
-    sample_export_fields_impl, start_collection_export_impl, start_filtered_export_impl,
+    format_current_docs_impl, preview_export_impl, sample_export_fields_impl,
+    start_collection_export_impl, start_filtered_export_impl,
 };
 pub use db::gridfs::{
     delete_gridfs_file_impl, download_gridfs_file_impl, list_gridfs_files_impl,
@@ -989,6 +990,45 @@ async fn sample_export_fields(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn preview_export(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    format: String,
+    filter: String,
+    sort: String,
+    projection: String,
+    pipeline: String,
+    options: Option<crate::db::export::options::ExportOptions>,
+) -> Result<String, String> {
+    preview_export_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        &format,
+        &filter,
+        &sort,
+        &projection,
+        &pipeline,
+        options,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn format_current_docs(
+    docs: Vec<serde_json::Value>,
+    format: String,
+    options: Option<crate::db::export::options::ExportOptions>,
+    path: Option<String>,
+) -> Result<Option<String>, String> {
+    format_current_docs_impl(docs, &format, options, path).await
+}
+
+#[tauri::command]
 async fn list_export_tasks(state: tauri::State<'_, AppState>) -> Result<Vec<TaskInfo>, String> {
     let mut tasks: Vec<TaskInfo> = state.tasks.lock_safe()?.values().cloned().collect();
     tasks.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
@@ -1619,6 +1659,8 @@ pub fn run() {
             start_collection_export,
             start_filtered_export,
             sample_export_fields,
+            preview_export,
+            format_current_docs,
             list_export_tasks,
             clear_finished_export_tasks,
             cancel_task,
