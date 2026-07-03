@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ImportView, detectImportFormat } from '../ImportView';
 
@@ -65,6 +65,10 @@ describe('ImportView preview', () => {
     docs: ['{"a":"1","b":"x"}'], columns: ['a', 'b'], totalHint: null, error: null,
   };
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('debounces and renders a CSV grid with type selects', async () => {
     vi.useFakeTimers();
     const onPreview = vi.fn().mockResolvedValue(csvPreview);
@@ -90,6 +94,44 @@ describe('ImportView preview', () => {
       expect.anything(), 'csv',
       expect.objectContaining({ columnTypes: { a: 'number' } }),
       'skip');
+  });
+
+  it('ignores a stale preview response that resolves after a newer one', async () => {
+    vi.useFakeTimers();
+    let resolveA!: (value: typeof csvPreview) => void;
+    let resolveB!: (value: typeof csvPreview) => void;
+    const pA = new Promise<typeof csvPreview>((r) => {
+      resolveA = r;
+    });
+    const pB = new Promise<typeof csvPreview>((r) => {
+      resolveB = r;
+    });
+    const onPreview = vi.fn().mockReturnValueOnce(pA).mockReturnValueOnce(pB);
+    renderImportView({ onPreview });
+
+    // Request A: pick the file, let the debounce fire.
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+    await vi.waitFor(() => expect(screen.getByTestId('import-file-path')).toBeInTheDocument());
+    await vi.advanceTimersByTimeAsync(350);
+    expect(onPreview).toHaveBeenCalledTimes(1);
+
+    // Request B: change the delimiter, let the debounce fire again.
+    fireEvent.change(screen.getByTestId('import-csv-delimiter'), { target: { value: ';' } });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(onPreview).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+
+    // B resolves first, with the fresh content.
+    resolveB({ docs: ['{"fresh":true}'], columns: [], totalHint: null, error: null });
+    await waitFor(() =>
+      expect(screen.getByTestId('import-preview-docs')).toHaveTextContent('fresh'));
+
+    // A resolves late, with stale content — it must not overwrite B's result.
+    resolveA({ docs: ['{"stale":true}'], columns: [], totalHint: null, error: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByTestId('import-preview-docs')).toHaveTextContent('fresh');
+    expect(screen.getByTestId('import-preview-docs')).not.toHaveTextContent('stale');
   });
 
   it('renders parse errors inline and non-csv docs as a list', async () => {

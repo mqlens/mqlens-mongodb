@@ -114,6 +114,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
   const [customDelimiter, setCustomDelimiter] = React.useState('|');
   const [mode, setMode] = React.useState<'skip' | 'update' | 'abort'>('skip');
   const [preview, setPreview] = React.useState<ImportPreviewData | null>(null);
+  const previewGen = React.useRef(0);
 
   const effectiveDelimiter = delimiterChoice === 'custom' ? customDelimiter : delimiterChoice;
   const delimiterValid =
@@ -139,9 +140,16 @@ export const ImportView: React.FC<ImportViewProps> = ({
     }
     const source: ImportSource = sourceKind === 'file' ? { path: filePath! } : { text };
     const timer = setTimeout(() => {
+      const gen = ++previewGen.current;
       onPreview(source, format, effectiveCsvOptions)
-        .then(setPreview)
-        .catch((err) => setPreview({ docs: [], columns: [], totalHint: null, error: String(err) }));
+        .then((data) => {
+          if (gen === previewGen.current) setPreview(data);
+        })
+        .catch((err) => {
+          if (gen === previewGen.current) {
+            setPreview({ docs: [], columns: [], totalHint: null, error: String(err) });
+          }
+        });
     }, PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(timer);
     // columnTypes changes intentionally excluded — they affect import, not the raw preview parse.
