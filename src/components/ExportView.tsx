@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, Filter, ListChecks, Hash } from 'lucide-react';
+import { Download, Filter, ListChecks, Hash, Copy, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -46,7 +46,16 @@ export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
 
 /** The edited query the user chose to export from the Filtered card. */
 export type FilteredExportQuery =
-  | { kind: 'find'; filter: string; sort: string; projection: string }
+  | {
+      kind: 'find';
+      filter: string;
+      sort: string;
+      projection: string;
+      /** 0 = unset, matching the query bar convention. */
+      skip: number;
+      /** 0 = unset, matching the query bar convention. */
+      limit: number;
+    }
   | { kind: 'aggregate'; pipeline: string };
 
 /** Seed values for the Filtered card, taken from the source tab's last run. */
@@ -81,6 +90,17 @@ interface ExportViewProps {
   onCountFilter?: (filter: string) => Promise<number>;
   /** Open the dedicated Tasks tab where background jobs (incl. full exports) appear. */
   onOpenTasks?: () => void;
+  /** Sample the source query/collection for field names, to power the field picker. */
+  onScanFields?: (query?: FilteredExportQuery) => Promise<string[]>;
+  /** Copy the current-results export output straight to the clipboard (text formats only). */
+  onCopyCurrent?: (format: 'json' | 'ndjson' | 'csv', options: ExportOptions) => void;
+  /** Render a sample of the export output without writing a file. */
+  onPreview?: (
+    format: ExportFormat,
+    scope: 'current' | 'full' | 'filtered',
+    options: ExportOptions,
+    query?: FilteredExportQuery
+  ) => Promise<string>;
 }
 
 /** Validate a JSON object string ('' and '{}' count as the empty object). */
@@ -142,6 +162,9 @@ export const ExportView: React.FC<ExportViewProps> = ({
   onExport,
   onCountFilter,
   onOpenTasks,
+  onScanFields,
+  onCopyCurrent,
+  onPreview,
 }) => {
   const hasCurrentResults = currentResultCount > 0;
   const mode: 'find' | 'aggregate' = filtered?.kind ?? 'find';
@@ -160,6 +183,20 @@ export const ExportView: React.FC<ExportViewProps> = ({
   const [options, setOptions] = React.useState<ExportOptions>(DEFAULT_EXPORT_OPTIONS);
   const [customDelimiter, setCustomDelimiter] = React.useState('|');
   const [delimiterChoice, setDelimiterChoice] = React.useState<',' | ';' | '\t' | 'custom'>(',');
+  const [skip, setSkip] = React.useState(0);
+  const [limit, setLimit] = React.useState(0);
+
+  // Field picker: sampled field paths from onScanFields, and the subset selected for export.
+  const [scannedFields, setScannedFields] = React.useState<string[]>([]);
+  const [selectedFields, setSelectedFields] = React.useState<Set<string>>(new Set());
+  const [fieldFilterText, setFieldFilterText] = React.useState('');
+  const [scanning, setScanning] = React.useState(false);
+  const [hasScanned, setHasScanned] = React.useState(false);
+
+  // Output preview panel.
+  const [previewOutput, setPreviewOutput] = React.useState<string | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [previewing, setPreviewing] = React.useState(false);
 
   const filterCheck = checkJsonObject(filter);
   const sortCheck = checkJsonObject(sort);
@@ -173,9 +210,20 @@ export const ExportView: React.FC<ExportViewProps> = ({
   const effectiveDelimiter = delimiterChoice === 'custom' ? customDelimiter : delimiterChoice;
   const delimiterValid =
     format !== 'csv' || (effectiveDelimiter.length === 1 && /^[\x00-\x7F]$/.test(effectiveDelimiter));
+
+  // A partial (not full, not empty) field selection restricts the exported output.
+  const fieldSelectionActive = scannedFields.length > 0 && selectedFields.size < scannedFields.length;
+  const noFieldsSelected = scannedFields.length > 0 && selectedFields.size === 0;
+  const visibleScannedFields = scannedFields.filter((f) =>
+    f.toLowerCase().includes(fieldFilterText.toLowerCase())
+  );
+
   const effectiveOptions: ExportOptions = {
     ...options,
     csv: { ...options.csv, delimiter: effectiveDelimiter },
+    ...(fieldSelectionActive
+      ? { fields: scannedFields.filter((f) => selectedFields.has(f)) }
+      : {}),
   };
 
   // Count only on demand — never automatically — so it stays stable while editing.
@@ -201,7 +249,52 @@ export const ExportView: React.FC<ExportViewProps> = ({
   const buildQuery = (): FilteredExportQuery =>
     mode === 'aggregate'
       ? { kind: 'aggregate', pipeline }
-      : { kind: 'find', filter, sort, projection };
+      : {
+          kind: 'find',
+          filter,
+          sort,
+          // A field selection replaces the projection editor entirely.
+          projection: fieldSelectionActive ? '{}' : projection,
+          skip,
+          limit,
+        };
+
+  const toggleField = (field: string) => {
+    setSelectedFields((prev) => {
+      const next = new Set(prev);
+      if (next.has(field)) next.delete(field);
+      else next.add(field);
+      return next;
+    });
+  };
+
+  const runScanFields = () => {
+    if (!onScanFields) return;
+    setScanning(true);
+    onScanFields(mode === 'find' || mode === 'aggregate' ? buildQuery() : undefined)
+      .then((fs) => {
+        setScannedFields(fs);
+        setSelectedFields(new Set(fs));
+        setHasScanned(true);
+      })
+      .catch(() => {
+        setScannedFields([]);
+        setSelectedFields(new Set());
+        setHasScanned(true);
+      })
+      .finally(() => setScanning(false));
+  };
+
+  const runPreview = () => {
+    if (!onPreview) return;
+    setPreviewing(true);
+    setPreviewError(null);
+    const scope: 'current' | 'full' | 'filtered' = filtered ? 'filtered' : 'full';
+    onPreview(format, scope, effectiveOptions, scope === 'filtered' ? buildQuery() : undefined)
+      .then((out) => setPreviewOutput(out))
+      .catch((err) => setPreviewError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setPreviewing(false));
+  };
 
   return (
     <div className="flex h-full flex-col overflow-auto p-4" data-testid="export-view">
@@ -444,6 +537,96 @@ export const ExportView: React.FC<ExportViewProps> = ({
         </div>
       )}
 
+      <Card className="mb-4" data-testid="export-field-picker">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <ListChecks size={14} />
+            <span>Fields</span>
+          </CardTitle>
+          <CardDescription>
+            Scan a sample of documents to choose which fields to export.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!onScanFields || scanning}
+              onClick={runScanFields}
+              data-testid="export-scan-fields-btn"
+            >
+              {scanning ? 'Scanning…' : 'Scan fields'}
+            </Button>
+            {scannedFields.length > 0 && (
+              <>
+                <Input
+                  value={fieldFilterText}
+                  onChange={(e) => setFieldFilterText(e.target.value)}
+                  placeholder="Filter fields"
+                  className="h-8 w-40 text-xs"
+                  data-testid="export-field-filter-input"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedFields(new Set(scannedFields))}
+                  data-testid="export-field-select-all"
+                >
+                  Select all
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedFields(new Set())}
+                  data-testid="export-field-deselect-all"
+                >
+                  Deselect all
+                </Button>
+              </>
+            )}
+          </div>
+
+          {hasScanned && scannedFields.length === 0 ? (
+            <span className="text-xs text-muted-foreground" data-testid="export-field-caption">
+              No documents to scan — exporting all fields.
+            </span>
+          ) : scannedFields.length > 0 ? (
+            <>
+              <span className="text-xs text-muted-foreground" data-testid="export-field-caption">
+                {selectedFields.size} of {scannedFields.length} selected
+              </span>
+              <div className="grid max-h-40 grid-cols-2 gap-x-4 gap-y-1 overflow-auto sm:grid-cols-3">
+                {visibleScannedFields.map((f) => (
+                  <label key={f} className={checkboxLabelClassName}>
+                    <input
+                      type="checkbox"
+                      checked={selectedFields.has(f)}
+                      onChange={() => toggleField(f)}
+                      className="rounded border-input"
+                      data-testid={`export-field-${f}`}
+                    />
+                    <span className="truncate">{f}</span>
+                  </label>
+                ))}
+              </div>
+            </>
+          ) : null}
+
+          {fieldSelectionActive && mode === 'find' && (
+            <span
+              className="text-xs text-muted-foreground"
+              data-testid="export-field-selection-hint"
+            >
+              Projection disabled — using field selection
+            </span>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
@@ -460,12 +643,23 @@ export const ExportView: React.FC<ExportViewProps> = ({
               type="button"
               variant="outline"
               size="sm"
-              disabled={!hasCurrentResults || !delimiterValid}
+              disabled={!hasCurrentResults || !delimiterValid || noFieldsSelected}
               onClick={() => onExport(format, 'current', effectiveOptions, undefined)}
               data-testid="export-current-btn"
             >
               <Download size={13} />
               Export {format.toUpperCase()}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!hasCurrentResults || format === 'bson' || format === 'xlsx'}
+              onClick={() => onCopyCurrent?.(format as 'json' | 'ndjson' | 'csv', effectiveOptions)}
+              data-testid="export-copy-current-btn"
+            >
+              <Copy size={13} />
+              Copy to clipboard
             </Button>
           </CardContent>
         </Card>
@@ -482,7 +676,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
             <Button
               type="button"
               size="sm"
-              disabled={!delimiterValid}
+              disabled={!delimiterValid || noFieldsSelected}
               onClick={() => onExport(format, 'full', effectiveOptions, undefined)}
               data-testid="export-full-btn"
             >
@@ -543,21 +737,45 @@ export const ExportView: React.FC<ExportViewProps> = ({
           )}
 
           {mode === 'find' && (
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={!onCountFilter || !filterCheck.ok || counting}
-                onClick={runCount}
-                data-testid="export-filtered-count-btn"
-              >
-                <Hash size={12} />
-                Count
-              </Button>
-              <span data-testid="export-filtered-count" className="text-xs text-muted-foreground">
-                {countLabel}
-              </span>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!onCountFilter || !filterCheck.ok || counting}
+                  onClick={runCount}
+                  data-testid="export-filtered-count-btn"
+                >
+                  <Hash size={12} />
+                  Count
+                </Button>
+                <span data-testid="export-filtered-count" className="text-xs text-muted-foreground">
+                  {countLabel}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs">Skip</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={skip}
+                  onChange={(e) => setSkip(Number(e.target.value) || 0)}
+                  className="h-8 w-24 text-xs"
+                  data-testid="export-filtered-skip"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs">Limit</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={limit}
+                  onChange={(e) => setLimit(Number(e.target.value) || 0)}
+                  className="h-8 w-24 text-xs"
+                  data-testid="export-filtered-limit"
+                />
+              </div>
             </div>
           )}
 
@@ -565,7 +783,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
             <Button
               type="button"
               size="sm"
-              disabled={!canExportFiltered || !delimiterValid}
+              disabled={!canExportFiltered || !delimiterValid || noFieldsSelected}
               onClick={() => onExport(format, 'filtered', effectiveOptions, buildQuery())}
               data-testid="export-filtered-btn"
             >
@@ -573,6 +791,39 @@ export const ExportView: React.FC<ExportViewProps> = ({
               Export {format.toUpperCase()}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-4" data-testid="export-preview-card">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Eye size={14} />
+            <span>Preview</span>
+          </CardTitle>
+          <CardDescription>See a sample of the exported output before running.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!onPreview || format === 'bson' || format === 'xlsx' || previewing}
+              onClick={runPreview}
+              data-testid="export-preview-btn"
+            >
+              <Eye size={13} />
+              {previewing ? 'Previewing…' : 'Preview'}
+            </Button>
+          </div>
+          {(previewOutput !== null || previewError) && (
+            <pre
+              data-testid="export-preview-output"
+              className="max-h-48 overflow-auto rounded-md border border-border bg-muted/30 p-2 text-xs"
+            >
+              {previewError ? `Preview failed: ${previewError}` : previewOutput}
+            </pre>
+          )}
         </CardContent>
       </Card>
 

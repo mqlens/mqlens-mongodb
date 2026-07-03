@@ -261,6 +261,8 @@ describe('ExportView', () => {
         filter: '{"tier":"silver"}',
         sort: '{"name":1}',
         projection: '{}',
+        skip: 0,
+        limit: 0,
       }
     );
   });
@@ -367,5 +369,69 @@ describe('ExportView', () => {
     fireEvent.click(screen.getByTestId('export-full-btn'));
 
     expect(await screen.findByText('Export failed: disk full')).toBeInTheDocument();
+  });
+
+  it('scans fields and applies the selection to options', async () => {
+    const onScanFields = vi.fn().mockResolvedValue(['_id', 'name', 'addr.city']);
+    const onExport = vi.fn();
+    renderExportView({ onScanFields, onExport });
+    fireEvent.click(screen.getByTestId('export-scan-fields-btn'));
+    expect(await screen.findByTestId('export-field-addr.city')).toBeChecked();
+
+    // Deselect one field → selection becomes active and flows into onExport
+    fireEvent.click(screen.getByTestId('export-field-_id'));
+    fireEvent.click(screen.getByTestId('export-full-btn'));
+    expect(onExport).toHaveBeenCalledWith(
+      'json', 'full',
+      expect.objectContaining({ fields: ['name', 'addr.city'] }),
+      undefined
+    );
+    // Projection editor disabled with hint while selection is active
+    expect(screen.getByTestId('export-field-selection-hint')).toBeInTheDocument();
+  });
+
+  it('all-selected scan sends no fields restriction', async () => {
+    const onScanFields = vi.fn().mockResolvedValue(['_id', 'name']);
+    const onExport = vi.fn();
+    renderExportView({ onScanFields, onExport });
+    fireEvent.click(screen.getByTestId('export-scan-fields-btn'));
+    await screen.findByTestId('export-field-name');
+    fireEvent.click(screen.getByTestId('export-full-btn'));
+    expect(onExport.mock.calls[0][2].fields).toBeUndefined();
+  });
+
+  it('deselecting every field disables export buttons', async () => {
+    const onScanFields = vi.fn().mockResolvedValue(['name']);
+    renderExportView({ onScanFields });
+    fireEvent.click(screen.getByTestId('export-scan-fields-btn'));
+    fireEvent.click(await screen.findByTestId('export-field-name'));
+    expect(screen.getByTestId('export-full-btn')).toBeDisabled();
+  });
+
+  it('includes skip and limit in the filtered query', () => {
+    const onExport = vi.fn();
+    renderExportView({ onExport, filtered: { kind: 'find', filter: '{}' } });
+    fireEvent.change(screen.getByTestId('export-filtered-skip'), { target: { value: '10' } });
+    fireEvent.change(screen.getByTestId('export-filtered-limit'), { target: { value: '50' } });
+    fireEvent.click(screen.getByTestId('export-filtered-btn'));
+    expect(onExport.mock.calls[0][3]).toMatchObject({ kind: 'find', skip: 10, limit: 50 });
+  });
+
+  it('copy-to-clipboard enabled for text formats only', () => {
+    const onCopyCurrent = vi.fn();
+    renderExportView({ onCopyCurrent, currentResultCount: 3 });
+    expect(screen.getByTestId('export-copy-current-btn')).toBeEnabled();
+    fireEvent.click(screen.getByTestId('export-format-xlsx'));
+    expect(screen.getByTestId('export-copy-current-btn')).toBeDisabled();
+  });
+
+  it('renders a preview from onPreview', async () => {
+    const onPreview = vi.fn().mockResolvedValue('{"a":1}\n');
+    renderExportView({ onPreview, currentResultCount: 1 });
+    fireEvent.click(screen.getByTestId('export-preview-btn'));
+    expect(await screen.findByTestId('export-preview-output')).toHaveTextContent('{"a":1}');
+    // binary format → button disabled
+    fireEvent.click(screen.getByTestId('export-format-bson'));
+    expect(screen.getByTestId('export-preview-btn')).toBeDisabled();
   });
 });
