@@ -27,6 +27,16 @@ mod tests {
         parts.concat()
     }
 
+    async fn wait_for_task(state: &AppState, task_id: &str) {
+        for _ in 0..50 {
+            let status = state.tasks.lock().unwrap().get(task_id).map(|t| t.status.clone());
+            if status.as_deref() != Some("running") {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
     #[test]
     fn test_resource_usage_sums_process_tree() {
         // The current (test) process always exists, so the summed tree memory
@@ -151,6 +161,7 @@ mod tests {
             "customers",
             "json",
             &path_str,
+            None,
         )
         .await
         .expect("Should start export task");
@@ -202,6 +213,7 @@ mod tests {
             "customers",
             "csv",
             &path_str,
+            None,
         )
         .await
         .expect("Should start CSV export task");
@@ -261,7 +273,7 @@ mod tests {
         let path = temp_import_path("ndjson");
         let path_str = path.to_string_lossy().to_string();
         let task = start_collection_export_impl(
-            &state, &conn_id, "sales_db", "customers", "ndjson", &path_str,
+            &state, &conn_id, "sales_db", "customers", "ndjson", &path_str, None,
         )
         .await
         .expect("start ndjson export");
@@ -289,7 +301,7 @@ mod tests {
         let path = temp_import_path("bson");
         let path_str = path.to_string_lossy().to_string();
         let task = start_collection_export_impl(
-            &state, &conn_id, "sales_db", "customers", "bson", &path_str,
+            &state, &conn_id, "sales_db", "customers", "bson", &path_str, None,
         )
         .await
         .expect("start bson export");
@@ -337,6 +349,9 @@ mod tests {
             "{}",
             "{}",
             "",
+            None,
+            None,
+            None,
         )
         .await
         .expect("Should start filtered export task");
@@ -384,6 +399,9 @@ mod tests {
             "{}",
             "{}",
             "[{\"$match\":{}}]",
+            None,
+            None,
+            None,
         )
         .await
         .err()
@@ -399,15 +417,20 @@ mod tests {
         let state = AppState::new();
 
         let invalid_format = start_filtered_export_impl(
-            &state, "missing", "db", "coll", "xml", "/tmp/out.xml", "{}", "{}", "{}", "",
+            &state, "missing", "db", "coll", "xml", "/tmp/out.xml", "{}", "{}", "{}", "", None,
+            None, None,
         )
         .await
         .err()
         .expect("invalid export format should error");
-        assert_eq!(invalid_format, "Export format must be json, ndjson, bson, or csv");
+        assert_eq!(
+            invalid_format,
+            "Export format must be json, ndjson, bson, csv, or xlsx"
+        );
 
         let missing_path = start_filtered_export_impl(
-            &state, "missing", "db", "coll", "json", "   ", "{}", "{}", "{}", "",
+            &state, "missing", "db", "coll", "json", "   ", "{}", "{}", "{}", "", None, None,
+            None,
         )
         .await
         .err()
@@ -415,7 +438,8 @@ mod tests {
         assert_eq!(missing_path, "Export path is required");
 
         let missing_connection = start_filtered_export_impl(
-            &state, "missing", "db", "coll", "json", "/tmp/out.json", "{}", "{}", "{}", "",
+            &state, "missing", "db", "coll", "json", "/tmp/out.json", "{}", "{}", "{}", "", None,
+            None, None,
         )
         .await
         .err()
@@ -424,7 +448,7 @@ mod tests {
 
         let bad_filter = start_filtered_export_impl(
             &state, "missing", "db", "coll", "json", "/tmp/out.json", "{not json}", "{}", "{}",
-            "",
+            "", None, None, None,
         )
         .await
         .err()
@@ -439,26 +463,93 @@ mod tests {
     async fn test_collection_export_validates_format_path_and_connection() {
         let state = AppState::new();
 
-        let invalid_format =
-            start_collection_export_impl(&state, "missing", "db", "coll", "xml", "/tmp/out.xml")
-                .await
-                .err()
-                .expect("invalid export format should error");
-        assert_eq!(invalid_format, "Export format must be json, ndjson, bson, or csv");
+        let invalid_format = start_collection_export_impl(
+            &state, "missing", "db", "coll", "xml", "/tmp/out.xml", None,
+        )
+        .await
+        .err()
+        .expect("invalid export format should error");
+        assert_eq!(
+            invalid_format,
+            "Export format must be json, ndjson, bson, csv, or xlsx"
+        );
 
-        let missing_path =
-            start_collection_export_impl(&state, "missing", "db", "coll", "json", "   ")
-                .await
-                .err()
-                .expect("blank export path should error");
+        let missing_path = start_collection_export_impl(
+            &state, "missing", "db", "coll", "json", "   ", None,
+        )
+        .await
+        .err()
+        .expect("blank export path should error");
         assert_eq!(missing_path, "Export path is required");
 
-        let missing_connection =
-            start_collection_export_impl(&state, "missing", "db", "coll", "json", "/tmp/out.json")
-                .await
-                .err()
-                .expect("missing export connection should error");
+        let missing_connection = start_collection_export_impl(
+            &state, "missing", "db", "coll", "json", "/tmp/out.json", None,
+        )
+        .await
+        .err()
+        .expect("missing export connection should error");
         assert_eq!(missing_connection, "Connection not found");
+    }
+
+    #[tokio::test]
+    async fn test_export_options_field_selection_and_delimiter() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-export-opts-{}-{}.csv",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        let options: crate::db::export::options::ExportOptions = serde_json::from_str(
+            r#"{"fields":["name"],"csv":{"delimiter":";"}}"#,
+        ).unwrap();
+        let task = start_collection_export_impl(
+            &state, &conn_id, "sales_db", "customers", "csv", &path_str, Some(options),
+        ).await.unwrap();
+        wait_for_task(&state, &task.id).await;
+
+        let exported = std::fs::read_to_string(&path).unwrap();
+        let mut lines = exported.lines();
+        assert_eq!(lines.next(), Some("name"), "only the selected column");
+        assert!(exported.contains("Alice Smith"));
+        assert!(!exported.contains("@"), "email column excluded");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_filtered_export_applies_skip_and_limit() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-export-skiplimit-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        let task = start_filtered_export_impl(
+            &state, &conn_id, "sales_db", "customers", "ndjson", &path_str,
+            "{}", "{}", "{}", "", Some(1), Some(1), None,
+        ).await.unwrap();
+        wait_for_task(&state, &task.id).await;
+
+        let exported = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(exported.lines().count(), 1, "skip 1, limit 1 of 3 docs");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_export_rejects_invalid_options() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let options: crate::db::export::options::ExportOptions =
+            serde_json::from_str(r#"{"csv":{"delimiter":"ab"}}"#).unwrap();
+        let err = start_collection_export_impl(
+            &state, &conn_id, "sales_db", "customers", "csv", "/tmp/x.csv", Some(options),
+        ).await.unwrap_err();
+        assert!(err.contains("delimiter"));
     }
 
     // Regression guard for the index-edit corruption bug (GO-LIVE C2/H4):

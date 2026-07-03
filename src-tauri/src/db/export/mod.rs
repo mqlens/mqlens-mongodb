@@ -3,17 +3,22 @@
 //! Two entry points share one background-task core ([`start_export_task`]):
 //! - [`start_collection_export_impl`] — the whole collection (find with an empty filter).
 //! - [`start_filtered_export_impl`] — the documents matching an active find filter
-//!   (filter + sort + projection) or an aggregation pipeline.
+//!   (filter + sort + projection, optionally skip/limit) or an aggregation pipeline.
+//!
+//! Both real (live MongoDB) and mock connections funnel through the same per-format
+//! writer ([`write_docs`]) once their documents are adapted into a
+//! `Stream<Item = Result<Document, String>>`.
 
 pub mod options;
 pub mod json;
 pub mod csv;
 pub mod xlsx;
 
-use options::{CsvOptions, JsonMode};
+use options::ExportOptions;
 
 use crate::state::LockExt;
 use crate::{mock_db, AppState, TaskInfo};
+use futures::stream::{Stream, StreamExt};
 use mongodb::bson::{doc, Document};
 use mongodb::Client;
 use std::collections::{BTreeSet, HashMap};
@@ -76,9 +81,9 @@ fn prune_export_tasks(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>) {
 }
 
 /// What a real-connection export reads from MongoDB. Filtered exports build a
-/// [`ExportSource::Find`] (filter + optional sort/projection, no pagination) or a
+/// [`ExportSource::Find`] (filter + optional sort/projection/skip/limit) or a
 /// [`ExportSource::Aggregate`] (the user's pipeline, run verbatim); a full-collection
-/// export is just `Find` with an empty filter.
+/// export is just `Find` with an empty filter and no pagination.
 // One ExportSource is built per export job (not a hot path), so the size gap
 // between the find and aggregate variants is irrelevant.
 #[allow(clippy::large_enum_variant)]
@@ -88,14 +93,17 @@ enum ExportSource {
         filter: Document,
         sort: Option<Document>,
         projection: Option<Document>,
+        skip: Option<u64>,
+        limit: Option<i64>,
     },
     Aggregate {
         stages: Vec<Document>,
     },
 }
 
-/// Open a fresh cursor over the source. Called once for JSON, and twice for CSV
-/// (field-scan pass + write pass) — so an aggregate CSV export runs the pipeline twice.
+/// Open a fresh cursor over the source. Called once for JSON/NDJSON/BSON/XLSX, and
+/// twice for CSV/XLSX when the column set must be scanned (field-scan pass + write
+/// pass) — so an aggregate export with no field selection runs the pipeline twice.
 async fn open_export_cursor(
     coll: &mongodb::Collection<Document>,
     source: &ExportSource,
@@ -105,6 +113,8 @@ async fn open_export_cursor(
             filter,
             sort,
             projection,
+            skip,
+            limit,
         } => {
             let mut builder = coll.find(filter.clone());
             if let Some(sort) = sort {
@@ -112,6 +122,12 @@ async fn open_export_cursor(
             }
             if let Some(projection) = projection {
                 builder = builder.projection(projection.clone());
+            }
+            if let Some(skip) = skip {
+                builder = builder.skip(*skip);
+            }
+            if let Some(limit) = limit {
+                builder = builder.limit(*limit);
             }
             builder.await.map_err(|e| format!("Export query failed: {}", e))
         }
@@ -122,18 +138,30 @@ async fn open_export_cursor(
     }
 }
 
-/// Best-effort total for the progress denominator. For find we count the filter; for
-/// aggregate we append a `$count` stage (an extra full pipeline run).
+/// Best-effort total for the progress denominator. For find we count the filter (then
+/// clamp for skip/limit); for aggregate we append a `$count` stage (an extra full
+/// pipeline run).
 async fn count_export_source(
     coll: &mongodb::Collection<Document>,
     source: &ExportSource,
 ) -> Result<u64, String> {
-    use futures::stream::StreamExt;
     match source {
-        ExportSource::Find { filter, .. } => coll
-            .count_documents(filter.clone())
-            .await
-            .map_err(|e| format!("Count failed: {}", e)),
+        ExportSource::Find {
+            filter,
+            skip,
+            limit,
+            ..
+        } => {
+            let n = coll
+                .count_documents(filter.clone())
+                .await
+                .map_err(|e| format!("Count failed: {}", e))?;
+            let n = n.saturating_sub(skip.unwrap_or(0));
+            Ok(match limit {
+                Some(l) if (*l as u64) < n => *l as u64,
+                _ => n,
+            })
+        }
         ExportSource::Aggregate { stages } => {
             let mut counting = stages.clone();
             counting.push(doc! { "$count": "n" });
@@ -158,6 +186,179 @@ async fn count_export_source(
     }
 }
 
+/// Write one already-opened stream of BSON documents in the requested format.
+/// `total` is the progress denominator; returns the processed count. `csv_columns`
+/// is the pre-resolved column set for csv/xlsx (empty for the other formats).
+#[allow(clippy::too_many_arguments)]
+async fn write_docs<S>(
+    tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>,
+    task_id: &str,
+    mut docs: S,
+    total: u64,
+    format: &str,
+    path: &str,
+    options: &ExportOptions,
+    csv_columns: Vec<String>,
+) -> Result<u64, String>
+where
+    S: Stream<Item = Result<Document, String>> + Unpin,
+{
+    match format {
+        "json" => {
+            update_task(tasks, task_id, |task| {
+                task.message = "Writing JSON".to_string();
+            });
+            let mut file = tokio::fs::File::create(path)
+                .await
+                .map_err(|e| format!("Failed to create export file: {}", e))?;
+            file.write_all(b"[\n")
+                .await
+                .map_err(|e| format!("Failed to write export file: {}", e))?;
+            let mut processed = 0u64;
+            while let Some(result) = docs.next().await {
+                let doc = result?;
+                let json = json::doc_to_json_string(&doc, options.json_mode)?;
+                if processed > 0 {
+                    file.write_all(b",\n")
+                        .await
+                        .map_err(|e| format!("Failed to write export file: {}", e))?;
+                }
+                file.write_all(json.as_bytes())
+                    .await
+                    .map_err(|e| format!("Failed to write export file: {}", e))?;
+                processed += 1;
+                if processed == total || processed % 100 == 0 {
+                    update_task(tasks, task_id, |task| {
+                        task.processed = processed;
+                    });
+                }
+            }
+            file.write_all(b"\n]\n")
+                .await
+                .map_err(|e| format!("Failed to write export file: {}", e))?;
+            update_task(tasks, task_id, |task| {
+                task.processed = processed;
+            });
+            Ok(processed)
+        }
+        "ndjson" => {
+            update_task(tasks, task_id, |task| {
+                task.message = "Writing NDJSON".to_string();
+            });
+            let mut file = tokio::fs::File::create(path)
+                .await
+                .map_err(|e| format!("Failed to create export file: {}", e))?;
+            let mut processed = 0u64;
+            while let Some(result) = docs.next().await {
+                let doc = result?;
+                let json = json::doc_to_json_string(&doc, options.json_mode)?;
+                file.write_all(json.as_bytes())
+                    .await
+                    .map_err(|e| format!("Failed to write export file: {}", e))?;
+                file.write_all(b"\n")
+                    .await
+                    .map_err(|e| format!("Failed to write export file: {}", e))?;
+                processed += 1;
+                if processed == total || processed % 100 == 0 {
+                    update_task(tasks, task_id, |task| {
+                        task.processed = processed;
+                    });
+                }
+            }
+            update_task(tasks, task_id, |task| {
+                task.processed = processed;
+            });
+            Ok(processed)
+        }
+        "bson" => {
+            update_task(tasks, task_id, |task| {
+                task.message = "Writing BSON".to_string();
+            });
+            let mut file = tokio::fs::File::create(path)
+                .await
+                .map_err(|e| format!("Failed to create export file: {}", e))?;
+            let mut processed = 0u64;
+            while let Some(result) = docs.next().await {
+                let doc = result?;
+                let bytes = mongodb::bson::to_vec(&doc)
+                    .map_err(|e| format!("BSON serialization error: {}", e))?;
+                file.write_all(&bytes)
+                    .await
+                    .map_err(|e| format!("Failed to write export file: {}", e))?;
+                processed += 1;
+                if processed == total || processed % 100 == 0 {
+                    update_task(tasks, task_id, |task| {
+                        task.processed = processed;
+                    });
+                }
+            }
+            update_task(tasks, task_id, |task| {
+                task.processed = processed;
+            });
+            Ok(processed)
+        }
+        "csv" => {
+            update_task(tasks, task_id, |task| {
+                task.message = "Writing CSV".to_string();
+            });
+            let mut file = tokio::fs::File::create(path)
+                .await
+                .map_err(|e| format!("Failed to create export file: {}", e))?;
+            if options.csv.include_headers && !csv_columns.is_empty() {
+                file.write_all(&csv::csv_record(&csv_columns, &options.csv)?)
+                    .await
+                    .map_err(|e| format!("Failed to write export file: {}", e))?;
+            }
+            let mut processed = 0u64;
+            while let Some(result) = docs.next().await {
+                let doc = result?;
+                let cells: Vec<String> = csv_columns
+                    .iter()
+                    .map(|field| csv::csv_cell_value(&doc, field, &options.csv))
+                    .collect();
+                file.write_all(&csv::csv_record(&cells, &options.csv)?)
+                    .await
+                    .map_err(|e| format!("Failed to write export file: {}", e))?;
+                processed += 1;
+                if processed == total || processed % 100 == 0 {
+                    update_task(tasks, task_id, |task| {
+                        task.processed = processed;
+                    });
+                }
+            }
+            update_task(tasks, task_id, |task| {
+                task.processed = processed;
+            });
+            Ok(processed)
+        }
+        "xlsx" => {
+            update_task(tasks, task_id, |task| {
+                task.message = "Writing Excel".to_string();
+            });
+            let mut sink = xlsx::XlsxSink::new(path, csv_columns, options.xlsx.clone())?;
+            let mut processed = 0u64;
+            while let Some(result) = docs.next().await {
+                let doc = result?;
+                sink.write_row(&doc)?;
+                processed += 1;
+                if processed == total || processed % 100 == 0 {
+                    update_task(tasks, task_id, |task| {
+                        task.processed = processed;
+                    });
+                }
+            }
+            // Workbook::save is a blocking (sync) file write, but this closure runs
+            // on a tokio::spawn-ed task, not the async executor's shared reactor.
+            sink.finish()?;
+            update_task(tasks, task_id, |task| {
+                task.processed = processed;
+            });
+            Ok(processed)
+        }
+        other => Err(format!("Unsupported export format: {}", other)),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn export_mock_to_file(
     tasks: Arc<Mutex<HashMap<String, TaskInfo>>>,
@@ -168,97 +369,63 @@ async fn export_mock_to_file(
     path: String,
     filter: String,
     sort: String,
+    skip: Option<u64>,
+    limit: Option<i64>,
+    options: ExportOptions,
 ) -> Result<u64, String> {
-    let docs = mock_db::execute_mock_query(&database, &collection, &filter, &sort, i64::MAX, 0)?;
+    let raw_docs = mock_db::execute_mock_query(
+        &database,
+        &collection,
+        &filter,
+        &sort,
+        limit.unwrap_or(i64::MAX),
+        skip.unwrap_or(0) as i64,
+    )?;
+    let mut docs: Vec<Document> = raw_docs
+        .iter()
+        .map(|s| crate::json_to_bson_document(s))
+        .collect::<Result<_, _>>()?;
+    // Mock connections never touch a server, so field selection is applied here —
+    // the client-side equivalent of the `$project`/find-projection the real path uses.
+    if let Some(fields) = &options.fields {
+        docs = docs
+            .iter()
+            .map(|doc| options::project_document(doc, fields))
+            .collect();
+    }
+
     let total = docs.len() as u64;
     update_task(&tasks, &task_id, |task| {
         task.total = Some(total);
         task.message = format!("Writing {} document(s)", total);
     });
 
-    let mut file = tokio::fs::File::create(&path)
-        .await
-        .map_err(|e| format!("Failed to create export file: {}", e))?;
-
-    if format == "json" {
-        file.write_all(b"[\n")
-            .await
-            .map_err(|e| format!("Failed to write export file: {}", e))?;
-        for (idx, doc) in docs.iter().enumerate() {
-            if idx > 0 {
-                file.write_all(b",\n")
-                    .await
-                    .map_err(|e| format!("Failed to write export file: {}", e))?;
-            }
-            file.write_all(doc.as_bytes())
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            let processed = idx as u64 + 1;
-            update_task(&tasks, &task_id, |task| {
-                task.processed = processed;
-            });
-        }
-        file.write_all(b"\n]\n")
-            .await
-            .map_err(|e| format!("Failed to write export file: {}", e))?;
-    } else if format == "ndjson" {
-        for (idx, doc) in docs.iter().enumerate() {
-            file.write_all(doc.as_bytes())
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            file.write_all(b"\n")
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            let processed = idx as u64 + 1;
-            update_task(&tasks, &task_id, |task| {
-                task.processed = processed;
-            });
-        }
-    } else if format == "bson" {
-        for (idx, doc) in docs.iter().enumerate() {
-            let bytes = mongodb::bson::to_vec(&crate::json_to_bson_document(doc)?)
-                .map_err(|e| format!("BSON serialization error: {}", e))?;
-            file.write_all(&bytes)
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            let processed = idx as u64 + 1;
-            update_task(&tasks, &task_id, |task| {
-                task.processed = processed;
-            });
+    let csv_columns: Vec<String> = if matches!(format.as_str(), "csv" | "xlsx") {
+        match &options.fields {
+            Some(fields) => fields.clone(),
+            None => docs
+                .iter()
+                .flat_map(|doc| doc.keys().cloned())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
         }
     } else {
-        let csv_opts = CsvOptions::default();
-        let bson_docs: Vec<Document> = docs
-            .iter()
-            .map(|doc| crate::json_to_bson_document(doc))
-            .collect::<Result<_, _>>()?;
-        let fields: Vec<String> = bson_docs
-            .iter()
-            .flat_map(|doc| doc.keys().cloned())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        if csv_opts.include_headers && !fields.is_empty() {
-            file.write_all(&csv::csv_record(&fields, &csv_opts)?)
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-        }
-        for (idx, doc) in bson_docs.iter().enumerate() {
-            let cells: Vec<String> = fields
-                .iter()
-                .map(|field| csv::csv_cell_value(doc, field, &csv_opts))
-                .collect();
-            file.write_all(&csv::csv_record(&cells, &csv_opts)?)
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            let processed = idx as u64 + 1;
-            update_task(&tasks, &task_id, |task| {
-                task.processed = processed;
-            });
-        }
-    }
+        Vec::new()
+    };
 
-    Ok(total)
+    let stream = futures::stream::iter(docs.into_iter().map(Ok));
+    write_docs(
+        &tasks,
+        &task_id,
+        stream,
+        total,
+        &format,
+        &path,
+        &options,
+        csv_columns,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -271,9 +438,8 @@ async fn export_real_to_file(
     format: String,
     path: String,
     source: ExportSource,
+    options: ExportOptions,
 ) -> Result<u64, String> {
-    use futures::stream::StreamExt;
-
     let coll = client
         .database(&database)
         .collection::<Document>(&collection);
@@ -286,159 +452,83 @@ async fn export_real_to_file(
         task.total = Some(total);
     });
 
-    let mut file = tokio::fs::File::create(&path)
-        .await
-        .map_err(|e| format!("Failed to create export file: {}", e))?;
+    // Selected fields become a server-side projection: overrides any user-supplied
+    // find projection, and is appended as a `$project` stage for aggregations.
+    let source = match &options.fields {
+        Some(fields) => match source {
+            ExportSource::Find {
+                filter,
+                sort,
+                skip,
+                limit,
+                ..
+            } => ExportSource::Find {
+                filter,
+                sort,
+                skip,
+                limit,
+                projection: Some(options::build_projection(fields)),
+            },
+            ExportSource::Aggregate { mut stages } => {
+                stages.push(doc! { "$project": options::build_projection(fields) });
+                ExportSource::Aggregate { stages }
+            }
+        },
+        None => source,
+    };
 
-    if format == "json" {
-        update_task(&tasks, &task_id, |task| {
-            task.message = "Writing JSON".to_string();
-        });
-        file.write_all(b"[\n")
-            .await
-            .map_err(|e| format!("Failed to write export file: {}", e))?;
-        let mut cursor = open_export_cursor(&coll, &source).await?;
-        let mut processed = 0u64;
-        while let Some(result) = cursor.next().await {
-            let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            let json = json::doc_to_json_string(&doc, JsonMode::Relaxed)?;
-            if processed > 0 {
-                file.write_all(b",\n")
-                    .await
-                    .map_err(|e| format!("Failed to write export file: {}", e))?;
-            }
-            file.write_all(json.as_bytes())
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            processed += 1;
-            if processed == total || processed % 100 == 0 {
+    let csv_columns: Vec<String> = if matches!(format.as_str(), "csv" | "xlsx") {
+        match &options.fields {
+            Some(fields) => fields.clone(),
+            None => {
                 update_task(&tasks, &task_id, |task| {
-                    task.processed = processed;
+                    task.message = "Scanning columns".to_string();
                 });
+                let mut fields_set = BTreeSet::new();
+                let mut scan_cursor = open_export_cursor(&coll, &source).await?;
+                let mut scanned = 0u64;
+                while let Some(result) = scan_cursor.next().await {
+                    let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
+                    for field in doc.keys().cloned() {
+                        fields_set.insert(field);
+                    }
+                    scanned += 1;
+                    if scanned == total || scanned % 250 == 0 {
+                        update_task(&tasks, &task_id, |task| {
+                            task.processed = scanned;
+                        });
+                    }
+                }
+                update_task(&tasks, &task_id, |task| {
+                    task.processed = 0;
+                });
+                fields_set.into_iter().collect()
             }
         }
-        file.write_all(b"\n]\n")
-            .await
-            .map_err(|e| format!("Failed to write export file: {}", e))?;
-        update_task(&tasks, &task_id, |task| {
-            task.processed = processed;
-        });
-        Ok(processed)
-    } else if format == "ndjson" {
-        // One relaxed-EJSON document per line — the same per-doc value as the JSON
-        // array path, so it round-trips identically.
-        update_task(&tasks, &task_id, |task| {
-            task.message = "Writing NDJSON".to_string();
-        });
-        let mut cursor = open_export_cursor(&coll, &source).await?;
-        let mut processed = 0u64;
-        while let Some(result) = cursor.next().await {
-            let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            let json = json::doc_to_json_string(&doc, JsonMode::Relaxed)?;
-            file.write_all(json.as_bytes())
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            file.write_all(b"\n")
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            processed += 1;
-            if processed == total || processed % 100 == 0 {
-                update_task(&tasks, &task_id, |task| {
-                    task.processed = processed;
-                });
-            }
-        }
-        update_task(&tasks, &task_id, |task| {
-            task.processed = processed;
-        });
-        Ok(processed)
-    } else if format == "bson" {
-        // Concatenated raw BSON — mongoexport's binary format, fully type-preserving.
-        update_task(&tasks, &task_id, |task| {
-            task.message = "Writing BSON".to_string();
-        });
-        let mut cursor = open_export_cursor(&coll, &source).await?;
-        let mut processed = 0u64;
-        while let Some(result) = cursor.next().await {
-            let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            let bytes = mongodb::bson::to_vec(&doc)
-                .map_err(|e| format!("BSON serialization error: {}", e))?;
-            file.write_all(&bytes)
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            processed += 1;
-            if processed == total || processed % 100 == 0 {
-                update_task(&tasks, &task_id, |task| {
-                    task.processed = processed;
-                });
-            }
-        }
-        update_task(&tasks, &task_id, |task| {
-            task.processed = processed;
-        });
-        Ok(processed)
     } else {
-        let csv_opts = CsvOptions::default();
-        update_task(&tasks, &task_id, |task| {
-            task.message = "Scanning CSV fields".to_string();
-        });
-        let mut fields = BTreeSet::new();
-        let mut scan_cursor = open_export_cursor(&coll, &source).await?;
-        let mut scanned = 0u64;
-        while let Some(result) = scan_cursor.next().await {
-            let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            for field in doc.keys().cloned() {
-                fields.insert(field);
-            }
-            scanned += 1;
-            if scanned == total || scanned % 250 == 0 {
-                update_task(&tasks, &task_id, |task| {
-                    task.processed = scanned;
-                });
-            }
-        }
-        let fields: Vec<String> = fields.into_iter().collect();
-        update_task(&tasks, &task_id, |task| {
-            task.processed = 0;
-            task.message = "Writing CSV".to_string();
-        });
+        Vec::new()
+    };
 
-        if csv_opts.include_headers && !fields.is_empty() {
-            file.write_all(&csv::csv_record(&fields, &csv_opts)?)
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-        }
-
-        let mut cursor = open_export_cursor(&coll, &source).await?;
-        let mut processed = 0u64;
-        while let Some(result) = cursor.next().await {
-            let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            let cells: Vec<String> = fields
-                .iter()
-                .map(|field| csv::csv_cell_value(&doc, field, &csv_opts))
-                .collect();
-            file.write_all(&csv::csv_record(&cells, &csv_opts)?)
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            processed += 1;
-            if processed == total || processed % 100 == 0 {
-                update_task(&tasks, &task_id, |task| {
-                    task.processed = processed;
-                });
-            }
-        }
-        update_task(&tasks, &task_id, |task| {
-            task.processed = processed;
-        });
-        Ok(processed)
-    }
+    let cursor = open_export_cursor(&coll, &source).await?;
+    let doc_stream = cursor.map(|r| r.map_err(|e| format!("Cursor read error: {}", e)));
+    write_docs(
+        &tasks,
+        &task_id,
+        doc_stream,
+        total,
+        &format,
+        &path,
+        &options,
+        csv_columns,
+    )
+    .await
 }
 
 /// Normalize + validate the format and path shared by both export entry points.
 fn validate_format_and_path(format: &str, path: &str) -> Result<String, String> {
     let format = format.trim().to_lowercase();
-    if !matches!(format.as_str(), "json" | "csv" | "bson" | "ndjson") {
-        return Err("Export format must be json, ndjson, bson, or csv".to_string());
+    if !matches!(format.as_str(), "json" | "csv" | "bson" | "ndjson" | "xlsx") {
+        return Err("Export format must be json, ndjson, bson, csv, or xlsx".to_string());
     }
     if path.trim().is_empty() {
         return Err("Export path is required".to_string());
@@ -447,8 +537,8 @@ fn validate_format_and_path(format: &str, path: &str) -> Result<String, String> 
 }
 
 /// Shared background-task core. `real_source` drives a live connection; `mock_find`
-/// carries the `(filter, sort)` for the mock path (`None` ⇒ unsupported on mock, e.g.
-/// aggregation pipelines).
+/// carries the `(filter, sort, skip, limit)` for the mock path (`None` ⇒ unsupported
+/// on mock, e.g. aggregation pipelines).
 #[allow(clippy::too_many_arguments)]
 async fn start_export_task(
     state: &AppState,
@@ -460,9 +550,11 @@ async fn start_export_task(
     kind: &str,
     label: String,
     real_source: ExportSource,
-    mock_find: Option<(String, String)>,
+    mock_find: Option<(String, String, Option<u64>, Option<i64>)>,
+    options: ExportOptions,
 ) -> Result<TaskInfo, String> {
     let format = validate_format_and_path(format, path)?;
+    options::validate_options(&format, &options)?;
 
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;
@@ -526,11 +618,13 @@ async fn start_export_task(
                 format,
                 path,
                 real_source,
+                options,
             )
             .await
         } else {
             // mock_find is guaranteed Some here (checked above before spawning).
-            let (filter, sort) = mock_find.unwrap_or_else(|| ("{}".to_string(), "{}".to_string()));
+            let (filter, sort, skip, limit) =
+                mock_find.unwrap_or_else(|| ("{}".to_string(), "{}".to_string(), None, None));
             export_mock_to_file(
                 tasks.clone(),
                 task_id.clone(),
@@ -540,6 +634,9 @@ async fn start_export_task(
                 path,
                 filter,
                 sort,
+                skip,
+                limit,
+                options,
             )
             .await
         };
@@ -559,6 +656,7 @@ pub async fn start_collection_export_impl(
     collection: &str,
     format: &str,
     path: &str,
+    options: Option<ExportOptions>,
 ) -> Result<TaskInfo, String> {
     let format_label = format.trim().to_uppercase();
     let label = format!("Export {}.{} as {}", database, collection, format_label);
@@ -575,8 +673,11 @@ pub async fn start_collection_export_impl(
             filter: Document::new(),
             sort: None,
             projection: None,
+            skip: None,
+            limit: None,
         },
-        Some(("{}".to_string(), "{}".to_string())),
+        Some(("{}".to_string(), "{}".to_string(), None, None)),
+        options.unwrap_or_default(),
     )
     .await
 }
@@ -595,8 +696,9 @@ fn parse_optional_object(raw: &str, what: &str) -> Result<Option<Document>, Stri
 }
 
 /// Export the documents matching an active find filter (filter + sort + projection,
-/// no pagination) or an aggregation pipeline. A non-empty `pipeline` selects aggregate
-/// mode and `filter`/`sort`/`projection` are ignored; otherwise it is a find export.
+/// optionally skip/limit) or an aggregation pipeline. A non-empty `pipeline` selects
+/// aggregate mode and `filter`/`sort`/`projection`/`skip`/`limit` are ignored;
+/// otherwise it is a find export.
 #[allow(clippy::too_many_arguments)]
 pub async fn start_filtered_export_impl(
     state: &AppState,
@@ -609,6 +711,9 @@ pub async fn start_filtered_export_impl(
     sort: &str,
     projection: &str,
     pipeline: &str,
+    skip: Option<u64>,
+    limit: Option<i64>,
+    options: Option<ExportOptions>,
 ) -> Result<TaskInfo, String> {
     let format_label = format.trim().to_uppercase();
     let pipeline_trimmed = pipeline.trim();
@@ -636,8 +741,10 @@ pub async fn start_filtered_export_impl(
                 filter: filter_doc,
                 sort: sort_doc,
                 projection: projection_doc,
+                skip,
+                limit,
             },
-            Some((filter.to_string(), sort.to_string())),
+            Some((filter.to_string(), sort.to_string(), skip, limit)),
         )
     };
 
@@ -658,6 +765,7 @@ pub async fn start_filtered_export_impl(
         label,
         real_source,
         mock_find,
+        options.unwrap_or_default(),
     )
     .await
 }

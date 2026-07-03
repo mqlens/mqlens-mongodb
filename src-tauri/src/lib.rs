@@ -180,14 +180,14 @@ pub struct AgentDetection {
     pub version: String,
 }
 
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, Clone, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CopyFailure {
     pub collection: String,
     pub error: String,
 }
 
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, Clone, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CopySummary {
     pub collections_copied: u64,
@@ -198,7 +198,7 @@ pub struct CopySummary {
     pub failed: Vec<CopyFailure>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskInfo {
     pub id: String,
@@ -933,8 +933,10 @@ async fn start_collection_export(
     collection: String,
     format: String,
     path: String,
+    options: Option<crate::db::export::options::ExportOptions>,
 ) -> Result<TaskInfo, String> {
-    start_collection_export_impl(&state, &id, &database, &collection, &format, &path).await
+    start_collection_export_impl(&state, &id, &database, &collection, &format, &path, options)
+        .await
 }
 
 #[tauri::command]
@@ -950,6 +952,9 @@ async fn start_filtered_export(
     sort: String,
     projection: String,
     pipeline: String,
+    skip: Option<u64>,
+    limit: Option<i64>,
+    options: Option<crate::db::export::options::ExportOptions>,
 ) -> Result<TaskInfo, String> {
     start_filtered_export_impl(
         &state,
@@ -962,6 +967,9 @@ async fn start_filtered_export(
         &sort,
         &projection,
         &pipeline,
+        skip,
+        limit,
+        options,
     )
     .await
 }
