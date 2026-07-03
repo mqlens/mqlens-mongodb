@@ -2928,4 +2928,85 @@ mod tests {
         assert_eq!(p.docs.len(), 1);
         assert!(p.error.as_deref().unwrap_or("").contains("line 2"));
     }
+
+    #[tokio::test]
+    async fn test_import_task_streams_ndjson_from_file_on_mock() {
+        use crate::db::import::{start_import_task_impl, ImportSourceArg};
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-import-test-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        // 1200 docs → 3 batches of 500/500/200.
+        let text: String = (0..1200).map(|i| format!("{{\"n\":{}}}\n", i)).collect();
+        std::fs::write(&path, text).unwrap();
+
+        let task = start_import_task_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            ImportSourceArg { path: Some(path.to_string_lossy().to_string()), text: None },
+            "ndjson",
+            None,
+            "skip",
+        )
+        .await
+        .unwrap();
+        assert_eq!(task.kind, "import");
+        wait_for_task(&state, &task.id).await;
+
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 1200, "cap must not apply to task imports");
+        // TaskInfo.summary is the copy-task CopySummary struct, so import
+        // counts ride on the completion message instead.
+        assert!(finished.message.contains("1200 inserted"), "{}", finished.message);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_import_task_fails_on_parse_error_and_reports_line() {
+        use crate::db::import::{start_import_task_impl, ImportSourceArg};
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let task = start_import_task_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            ImportSourceArg { path: None, text: Some("{\"a\":1}\nboom\n".into()) },
+            "ndjson",
+            None,
+            "skip",
+        )
+        .await
+        .unwrap();
+        wait_for_task(&state, &task.id).await;
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "failed");
+        assert!(finished.error.as_deref().unwrap_or("").contains("line 2"));
+    }
+
+    #[tokio::test]
+    async fn test_import_task_validates_mode_and_source() {
+        use crate::db::import::{start_import_task_impl, ImportSourceArg};
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let err = start_import_task_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            ImportSourceArg { path: None, text: Some("[]".into()) },
+            "json",
+            None,
+            "yolo",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("mode"));
+    }
 }

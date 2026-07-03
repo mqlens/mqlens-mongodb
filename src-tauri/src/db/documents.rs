@@ -478,7 +478,7 @@ async fn finalize_import(
 
 /// Write already-converted BSON documents to a live collection under the
 /// duplicate-handling mode. Shared by the JSON-value and file import paths.
-async fn write_imported_docs(
+pub(crate) async fn write_imported_docs(
     coll: &mongodb::Collection<Document>,
     bson_docs: Vec<Document>,
     mode: &str,

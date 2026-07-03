@@ -41,7 +41,7 @@ pub use db::gridfs::{
     delete_gridfs_file_impl, download_gridfs_file_impl, list_gridfs_files_impl,
     upload_gridfs_file_impl, GridFsFileInfo, GridFsTransferProgress,
 };
-pub use db::import::preview_import_impl;
+pub use db::import::{preview_import_impl, start_import_task_impl};
 pub use db::metadata::{
     create_index_impl, delete_index_impl, list_collections_impl, list_databases_impl,
     list_indexes_impl,
@@ -1406,6 +1406,31 @@ async fn preview_import(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_import_task(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    source: crate::db::import::ImportSourceArg,
+    format: String,
+    csv_options: Option<crate::db::documents::CsvImportOptions>,
+    mode: String,
+) -> Result<TaskInfo, String> {
+    start_import_task_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        source,
+        &format,
+        csv_options,
+        &mode,
+    )
+    .await
+}
+
+#[tauri::command]
 async fn update_document(
     state: tauri::State<'_, AppState>,
     id: String,
@@ -1664,6 +1689,7 @@ pub fn run() {
             insert_document,
             import_collection_file,
             preview_import,
+            start_import_task,
             update_document,
             execute_mql_query,
             execute_aggregate,

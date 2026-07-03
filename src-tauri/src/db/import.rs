@@ -5,9 +5,14 @@ use crate::db::documents::{
     csv_record_to_doc, generated_headers, parse_json_array_docs, validate_csv_import_options,
     CsvImportOptions,
 };
+use crate::db::tasks::{fail_task, finish_task, now_ms, update_task};
+use crate::{AppState, LockExt, TaskInfo};
 use mongodb::bson::Document;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -255,6 +260,187 @@ pub async fn preview_import_impl(
     })
     .await
     .map_err(|e| format!("Preview task failed: {}", e))?
+}
+
+/// Read → batch → write loop for the background import task. Returns the
+/// processed count plus the insert/update/skip totals across all batches.
+#[allow(clippy::too_many_arguments)]
+async fn run_import(
+    tasks: Arc<Mutex<HashMap<String, TaskInfo>>>,
+    task_id: String,
+    client: Option<mongodb::Client>,
+    database: String,
+    collection: String,
+    source: ImportSourceArg,
+    format: String,
+    csv: CsvImportOptions,
+    mode: String,
+) -> Result<(u64, crate::db::documents::ImportResult), String> {
+    use crate::db::documents::ImportResult;
+    use crate::limits::IMPORT_BATCH_SIZE;
+
+    // The reader is synchronous file I/O — open and read batches on
+    // spawn_blocking, threading the reader through each hop.
+    let mut reader = tokio::task::spawn_blocking({
+        let source = source.clone();
+        let format = format.clone();
+        let csv = csv.clone();
+        move || ImportReader::open(&source, &format, &csv)
+    })
+    .await
+    .map_err(|e| format!("Import task failed: {}", e))??;
+    if let Some(total) = reader.total_hint() {
+        update_task(&tasks, &task_id, |t| t.total = Some(total));
+    }
+
+    let mut totals = ImportResult { inserted: 0, updated: 0, skipped: 0 };
+    let mut processed = 0u64;
+    loop {
+        // Pull one batch synchronously (cheap CPU; reads are buffered).
+        let (next_reader, batch) = tokio::task::spawn_blocking(move || {
+            let mut r = reader;
+            let mut batch = Vec::with_capacity(IMPORT_BATCH_SIZE);
+            let result: Result<(), String> = loop {
+                if batch.len() >= IMPORT_BATCH_SIZE {
+                    break Ok(());
+                }
+                match r.next_doc() {
+                    Ok(Some(doc)) => batch.push(doc),
+                    Ok(None) => break Ok(()),
+                    Err(e) => break Err(e),
+                }
+            };
+            (r, result.map(|_| batch))
+        })
+        .await
+        .map_err(|e| format!("Import task failed: {}", e))?;
+        reader = next_reader;
+        let batch = batch?;
+        if batch.is_empty() {
+            break;
+        }
+        let n = batch.len() as u64;
+
+        match &client {
+            None => {
+                // Mock: validate-only semantics, mirroring the parse-and-count
+                // behavior of the non-task import path.
+                if mode == "update" {
+                    totals.updated += n;
+                } else {
+                    totals.inserted += n;
+                }
+            }
+            Some(client) => {
+                let coll = client
+                    .database(&database)
+                    .collection::<Document>(&collection);
+                let res = crate::db::documents::write_imported_docs(&coll, batch, &mode).await?;
+                totals.inserted += res.inserted;
+                totals.updated += res.updated;
+                totals.skipped += res.skipped;
+            }
+        }
+        processed += n;
+        update_task(&tasks, &task_id, |t| {
+            t.processed = processed;
+            t.message = format!("Importing ({} written)", processed);
+        });
+    }
+    Ok((processed, totals))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn start_import_task_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    source: ImportSourceArg,
+    format: &str,
+    csv_options: Option<CsvImportOptions>,
+    mode: &str,
+) -> Result<TaskInfo, String> {
+    if !matches!(mode, "skip" | "update" | "abort") {
+        return Err("Import mode must be skip, update, or abort".to_string());
+    }
+    let csv = csv_options.unwrap_or_default();
+    if format.trim().eq_ignore_ascii_case("csv") {
+        validate_csv_import_options(&csv)?;
+    }
+    // Validate the source shape up front (open errors surface on the task).
+    if source.path.is_some() == source.text.is_some() {
+        return Err("Import source must be exactly one of a file path or pasted text".to_string());
+    }
+
+    let is_mock = crate::connection_is_mock(state, id)?;
+    let client = if is_mock {
+        None
+    } else {
+        Some(crate::require_real_client(state, id)?)
+    };
+
+    let source_label = source
+        .path
+        .as_deref()
+        .and_then(|p| {
+            std::path::Path::new(p)
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "pasted text".to_string());
+    let task_id = Uuid::new_v4().to_string();
+    let task = TaskInfo {
+        id: task_id.clone(),
+        kind: "import".to_string(),
+        label: format!("Import {}.{} from {}", database, collection, source_label),
+        status: "running".to_string(),
+        processed: 0,
+        total: None,
+        message: "Queued".to_string(),
+        path: source.path.clone(),
+        error: None,
+        created_at_ms: now_ms(),
+        finished_at_ms: None,
+        sub_label: None,
+        items_processed: None,
+        items_total: None,
+        summary: None,
+    };
+    state.tasks.lock_safe()?.insert(task_id.clone(), task.clone());
+
+    let tasks = state.tasks.clone();
+    let database = database.to_string();
+    let collection = collection.to_string();
+    let format = format.to_string();
+    let mode = mode.to_string();
+    tokio::spawn(async move {
+        let result = run_import(
+            tasks.clone(),
+            task_id.clone(),
+            client,
+            database,
+            collection,
+            source,
+            format,
+            csv,
+            mode,
+        )
+        .await;
+        match result {
+            Ok((processed, totals)) => {
+                // TaskInfo.summary is typed for copy tasks (CopySummary), so
+                // the import counts ride on the completion message.
+                let message = format!(
+                    "Import complete: {} inserted, {} updated, {} skipped",
+                    totals.inserted, totals.updated, totals.skipped
+                );
+                finish_task(&tasks, &task_id, processed, message);
+            }
+            Err(err) => fail_task(&tasks, &task_id, err),
+        }
+    });
+    Ok(task)
 }
 
 #[cfg(test)]
