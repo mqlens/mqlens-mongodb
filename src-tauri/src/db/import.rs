@@ -57,6 +57,9 @@ impl std::fmt::Debug for ImportReader {
     }
 }
 
+// One ImportReader is built per import/preview job (not a hot path), so the
+// size gap between the Bson variant (a BufReader) and the others is irrelevant.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ImportReader {
     JsonArray {
         docs: std::vec::IntoIter<Document>,
@@ -212,9 +215,15 @@ impl ImportReader {
                     Err(e) => return Err(format!("Failed to read import file: {}", e)),
                 }
                 let chained = std::io::Cursor::new(peek).chain(reader.by_ref());
-                Document::from_reader(chained)
-                    .map(Some)
-                    .map_err(|e| format!("Invalid BSON: {}", e))
+                match Document::from_reader(chained) {
+                    Ok(doc) => Ok(Some(doc)),
+                    Err(e) => {
+                        // A parse error leaves the reader's position undefined for a
+                        // retry, so stop pulling further docs from this reader.
+                        *eof = true;
+                        Err(format!("Invalid BSON: {}", e))
+                    }
+                }
             }
         }
     }
@@ -238,12 +247,17 @@ pub async fn preview_import_impl(
         let mut error = None;
         while docs.len() < limit {
             match reader.next_doc() {
-                Ok(Some(doc)) => docs.push(
-                    serde_json::to_string(
+                Ok(Some(doc)) => {
+                    match serde_json::to_string(
                         &mongodb::bson::Bson::Document(doc).into_relaxed_extjson(),
-                    )
-                    .unwrap_or_default(),
-                ),
+                    ) {
+                        Ok(s) => docs.push(s),
+                        Err(e) => {
+                            error = Some(format!("Failed to serialize document for preview: {}", e));
+                            break;
+                        }
+                    }
+                }
                 Ok(None) => break,
                 Err(e) => {
                     error = Some(e);
@@ -444,12 +458,102 @@ pub async fn start_import_task_impl(
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use crate::db::documents::CsvImportOptions;
+    use crate::db::documents::{CsvColumnType, CsvImportOptions};
 
     fn text_source(s: &str) -> ImportSourceArg {
         ImportSourceArg { path: None, text: Some(s.to_string()) }
+    }
+
+    /// Drain an ImportReader into a Vec<Document>, mirroring the old
+    /// parse_csv_docs return shape for these ported option-matrix tests.
+    fn drain(r: &mut ImportReader) -> Result<Vec<Document>, String> {
+        let mut docs = Vec::new();
+        while let Some(doc) = r.next_doc()? {
+            docs.push(doc);
+        }
+        Ok(docs)
+    }
+
+    // The following csv_* tests port the option-matrix coverage that used to
+    // exercise documents::parse_csv_docs directly (now deleted — it had no
+    // production callers) onto ImportReader, the path the app actually ships.
+
+    #[test]
+    fn csv_default_options_match_previous_behavior() {
+        let mut r =
+            ImportReader::open(&text_source("a,b\n1,x\n"), "csv", &CsvImportOptions::default())
+                .unwrap();
+        let docs = drain(&mut r).unwrap();
+        assert_eq!(
+            docs[0].get_i64("a").ok().or(docs[0].get_i32("a").map(i64::from).ok()),
+            Some(1)
+        );
+        assert_eq!(docs[0].get_str("b").unwrap(), "x");
+    }
+
+    #[test]
+    fn csv_delimiter_qualifier_skip_and_headerless() {
+        let text = "junk line\nA;\"x;y\"\n2;z\n";
+        let mut o = CsvImportOptions::default();
+        o.delimiter = ";".into();
+        o.skip_lines = 1;
+        o.has_headers = false;
+        let mut r = ImportReader::open(&text_source(text), "csv", &o).unwrap();
+        let docs = drain(&mut r).unwrap();
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].get_str("col1").unwrap(), "A");
+        assert_eq!(docs[0].get_str("col2").unwrap(), "x;y");
+        assert_eq!(docs[1].get_str("col2").unwrap(), "z");
+    }
+
+    #[test]
+    fn csv_explicit_column_types_convert_and_error_with_context() {
+        let mut o = CsvImportOptions::default();
+        o.column_types.insert("n".into(), CsvColumnType::Number);
+        o.column_types.insert("ok".into(), CsvColumnType::Boolean);
+        o.column_types.insert("when".into(), CsvColumnType::Date);
+        o.column_types.insert("meta".into(), CsvColumnType::Json);
+        o.column_types.insert("s".into(), CsvColumnType::String);
+        let mut r = ImportReader::open(
+            &text_source("n,ok,when,meta,s\n4.5,TRUE,2024-01-02T03:04:05Z,{\"a\":1},42\n"),
+            "csv",
+            &o,
+        )
+        .unwrap();
+        let docs = drain(&mut r).unwrap();
+        let d = &docs[0];
+        assert_eq!(d.get_f64("n").unwrap(), 4.5);
+        assert!(d.get_bool("ok").unwrap());
+        assert!(matches!(d.get("when"), Some(mongodb::bson::Bson::DateTime(_))));
+        assert_eq!(
+            d.get_document("meta")
+                .unwrap()
+                .get_i64("a")
+                .ok()
+                .or(d.get_document("meta").unwrap().get_i32("a").map(i64::from).ok()),
+            Some(1)
+        );
+        assert_eq!(d.get_str("s").unwrap(), "42"); // String type keeps digits as text
+
+        let mut err_reader =
+            ImportReader::open(&text_source("n\nnot-a-number\n"), "csv", &o).unwrap();
+        let err = drain(&mut err_reader).unwrap_err();
+        assert!(err.contains("row 1") && err.contains("\"n\"") && err.contains("number"), "{err}");
+    }
+
+    #[test]
+    fn csv_date_accepts_epoch_millis_and_number_is_i64_when_integral() {
+        let mut o = CsvImportOptions::default();
+        o.column_types.insert("when".into(), CsvColumnType::Date);
+        o.column_types.insert("n".into(), CsvColumnType::Number);
+        let mut r =
+            ImportReader::open(&text_source("when,n\n1700000000000,7\n"), "csv", &o).unwrap();
+        let docs = drain(&mut r).unwrap();
+        assert!(matches!(docs[0].get("when"), Some(mongodb::bson::Bson::DateTime(_))));
+        assert_eq!(docs[0].get_i64("n").unwrap(), 7);
     }
 
     #[test]
@@ -516,6 +620,43 @@ mod tests {
         .unwrap();
         assert_eq!(r.next_doc().unwrap().unwrap().get_i32("_id").ok(), Some(1));
         assert_eq!(r.next_doc().unwrap().unwrap().get_i32("_id").ok(), Some(2));
+        assert!(r.next_doc().unwrap().is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn bson_reader_sets_eof_after_a_parse_error_so_it_does_not_retry() {
+        use mongodb::bson::doc;
+        // A valid document, then a malformed 12-byte "document" (declared
+        // length but not null-terminated, so it fails validation without
+        // consuming trailing bytes), then trailing bytes that would
+        // otherwise look like more input to (unsuccessfully) parse.
+        let mut bytes = mongodb::bson::to_vec(&doc! { "a": 1 }).unwrap();
+        bytes.extend_from_slice(&12i32.to_le_bytes());
+        bytes.extend_from_slice(&[0xFFu8; 8]);
+        bytes.extend_from_slice(b"TRAILING");
+
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-import-reader-bson-badeof-{}-{}.bson",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, &bytes).unwrap();
+
+        let mut r = ImportReader::open(
+            &ImportSourceArg { path: Some(path.to_string_lossy().to_string()), text: None },
+            "bson",
+            &CsvImportOptions::default(),
+        )
+        .unwrap();
+        assert!(r.next_doc().unwrap().is_some());
+        let err = r.next_doc().unwrap_err();
+        assert!(err.contains("Invalid BSON"), "{err}");
+        // The reader must report EOF rather than attempt to parse the
+        // trailing bytes as another document.
         assert!(r.next_doc().unwrap().is_none());
         let _ = std::fs::remove_file(&path);
     }

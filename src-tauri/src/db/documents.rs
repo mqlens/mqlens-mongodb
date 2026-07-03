@@ -36,34 +36,6 @@ pub fn parse_json_array_docs(text: &str) -> Result<Vec<Document>, String> {
     arr.into_iter().map(value_to_bson_document).collect()
 }
 
-/// Parse newline-delimited JSON (NDJSON/JSONL): one Extended JSON document per line.
-/// Blank and whitespace-only lines are tolerated (incl. a trailing newline).
-pub fn parse_ndjson_docs(text: &str) -> Result<Vec<Document>, String> {
-    let mut docs = Vec::new();
-    for (idx, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let doc =
-            json_to_bson_document(line).map_err(|e| format!("NDJSON line {}: {}", idx + 1, e))?;
-        docs.push(doc);
-    }
-    Ok(docs)
-}
-
-/// Parse concatenated BSON documents (mongoexport's `.bson` on-disk format).
-pub fn parse_bson_docs(bytes: &[u8]) -> Result<Vec<Document>, String> {
-    use std::io::Cursor;
-    let total = bytes.len() as u64;
-    let mut cursor = Cursor::new(bytes);
-    let mut docs = Vec::new();
-    while cursor.position() < total {
-        let doc = Document::from_reader(&mut cursor).map_err(|e| format!("Invalid BSON: {}", e))?;
-        docs.push(doc);
-    }
-    Ok(docs)
-}
-
 /// CSV import parsing options (camelCase over IPC). Defaults reproduce the
 /// pre-options behavior exactly.
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -190,58 +162,6 @@ pub fn csv_record_to_doc(
         map.insert(header.clone(), convert_csv_cell(cell, header, ty, row)?);
     }
     value_to_bson_document(serde_json::Value::Object(map))
-}
-
-/// Skip the first `n` lines of `text` (spec: before header detection).
-pub fn skip_lines(text: &str, n: u32) -> &str {
-    let mut rest = text;
-    for _ in 0..n {
-        match rest.find('\n') {
-            Some(idx) => rest = &rest[idx + 1..],
-            None => return "",
-        }
-    }
-    rest
-}
-
-/// Parse CSV text into documents under the given options.
-pub fn parse_csv_docs(text: &str, options: &CsvImportOptions) -> Result<Vec<Document>, String> {
-    validate_csv_import_options(options)?;
-    let body = skip_lines(text, options.skip_lines);
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(options.has_headers)
-        .delimiter(options.delimiter.as_bytes()[0])
-        .quote(options.quote.as_bytes()[0])
-        .flexible(true)
-        .from_reader(body.as_bytes());
-    let headers: Vec<String> = if options.has_headers {
-        reader
-            .headers()
-            .map_err(|e| format!("Invalid CSV header: {}", e))?
-            .iter()
-            .map(|h| h.to_string())
-            .collect()
-    } else {
-        // Peek the first record's width for generated names.
-        let mut peek = csv::ReaderBuilder::new()
-            .has_headers(false)
-            .delimiter(options.delimiter.as_bytes()[0])
-            .quote(options.quote.as_bytes()[0])
-            .flexible(true)
-            .from_reader(body.as_bytes());
-        match peek.records().next() {
-            Some(first) => generated_headers(
-                first.map_err(|e| format!("Invalid CSV row 1: {}", e))?.len(),
-            ),
-            None => Vec::new(),
-        }
-    };
-    let mut docs = Vec::new();
-    for (idx, record) in reader.records().enumerate() {
-        let record = record.map_err(|e| format!("Invalid CSV row {}: {}", idx + 1, e))?;
-        docs.push(csv_record_to_doc(&headers, &record, options, idx + 1)?);
-    }
-    Ok(docs)
 }
 
 /// A CSV cell becomes its JSON value when parseable, otherwise the raw string
@@ -572,65 +492,16 @@ pub(crate) async fn write_imported_docs(
     }
 }
 
+// The option-matrix CSV parsing tests that used to live here (default
+// options, delimiter/qualifier/skip_lines/headerless combos, explicit column
+// types incl. failure context) now exercise db::import::ImportReader — the
+// path the shipping import pipeline actually uses. See db/import.rs's `csv_*`
+// tests. validate_csv_import_options is a pure helper with no ImportReader
+// equivalent, so its test stays here.
 #[cfg(test)]
 #[allow(clippy::field_reassign_with_default)]
 mod csv_import_tests {
     use super::*;
-
-    #[test]
-    fn default_options_match_previous_behavior() {
-        let docs = parse_csv_docs("a,b\n1,x\n", &CsvImportOptions::default()).unwrap();
-        assert_eq!(docs[0].get_i64("a").ok().or(docs[0].get_i32("a").map(i64::from).ok()), Some(1));
-        assert_eq!(docs[0].get_str("b").unwrap(), "x");
-    }
-
-    #[test]
-    fn delimiter_qualifier_skip_and_headerless() {
-        let text = "junk line\nA;\"x;y\"\n2;z\n";
-        let mut o = CsvImportOptions::default();
-        o.delimiter = ";".into();
-        o.skip_lines = 1;
-        o.has_headers = false;
-        let docs = parse_csv_docs(text, &o).unwrap();
-        assert_eq!(docs.len(), 2);
-        assert_eq!(docs[0].get_str("col1").unwrap(), "A");
-        assert_eq!(docs[0].get_str("col2").unwrap(), "x;y");
-        assert_eq!(docs[1].get_str("col2").unwrap(), "z");
-    }
-
-    #[test]
-    fn explicit_column_types_convert_and_error_with_context() {
-        let mut o = CsvImportOptions::default();
-        o.column_types.insert("n".into(), CsvColumnType::Number);
-        o.column_types.insert("ok".into(), CsvColumnType::Boolean);
-        o.column_types.insert("when".into(), CsvColumnType::Date);
-        o.column_types.insert("meta".into(), CsvColumnType::Json);
-        o.column_types.insert("s".into(), CsvColumnType::String);
-        let docs = parse_csv_docs(
-            "n,ok,when,meta,s\n4.5,TRUE,2024-01-02T03:04:05Z,{\"a\":1},42\n",
-            &o,
-        )
-        .unwrap();
-        let d = &docs[0];
-        assert_eq!(d.get_f64("n").unwrap(), 4.5);
-        assert!(d.get_bool("ok").unwrap());
-        assert!(matches!(d.get("when"), Some(mongodb::bson::Bson::DateTime(_))));
-        assert_eq!(d.get_document("meta").unwrap().get_i64("a").ok().or(d.get_document("meta").unwrap().get_i32("a").map(i64::from).ok()), Some(1));
-        assert_eq!(d.get_str("s").unwrap(), "42"); // String type keeps digits as text
-
-        let err = parse_csv_docs("n\nnot-a-number\n", &o).unwrap_err();
-        assert!(err.contains("row 1") && err.contains("\"n\"") && err.contains("number"), "{err}");
-    }
-
-    #[test]
-    fn date_accepts_epoch_millis_and_number_is_i64_when_integral() {
-        let mut o = CsvImportOptions::default();
-        o.column_types.insert("when".into(), CsvColumnType::Date);
-        o.column_types.insert("n".into(), CsvColumnType::Number);
-        let docs = parse_csv_docs("when,n\n1700000000000,7\n", &o).unwrap();
-        assert!(matches!(docs[0].get("when"), Some(mongodb::bson::Bson::DateTime(_))));
-        assert_eq!(docs[0].get_i64("n").unwrap(), 7);
-    }
 
     #[test]
     fn validate_rejects_multi_char_delimiter_or_quote() {

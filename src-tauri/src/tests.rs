@@ -10,7 +10,7 @@ mod tests {
         format_current_docs_impl, import_documents_impl,
         insert_document_impl,
         json_to_bson_document, list_collections_impl, list_databases_impl, list_gridfs_files_impl,
-        list_indexes_impl, parse_bson_docs, parse_csv_docs, parse_json_array_docs, parse_ndjson_docs,
+        list_indexes_impl, parse_json_array_docs,
         preview_export_impl, rename_collection_impl, rename_database_impl, sample_export_fields_impl,
         start_collection_export_impl, start_filtered_export_impl, update_document_impl,
         upload_gridfs_file_impl,
@@ -267,6 +267,61 @@ mod tests {
         state.tasks.lock().unwrap().get(task_id).cloned().unwrap()
     }
 
+    /// Re-parse an on-disk export file through the shipping import reader
+    /// (used to round-trip-verify export output; `parse_ndjson_docs` /
+    /// `parse_bson_docs` were dead code and have been removed).
+    fn reparse_import_file(path: &std::path::Path, format: &str) -> Vec<mongodb::bson::Document> {
+        use crate::db::import::{ImportReader, ImportSourceArg};
+        let source = ImportSourceArg {
+            path: Some(path.to_string_lossy().to_string()),
+            text: None,
+        };
+        let mut reader =
+            ImportReader::open(&source, format, &CsvImportOptions::default()).expect("open reader");
+        let mut docs = Vec::new();
+        while let Some(doc) = reader.next_doc().expect("read doc") {
+            docs.push(doc);
+        }
+        docs
+    }
+
+    /// Parse a text source through the shipping import reader for a given
+    /// format (ports unit coverage that used to call the removed
+    /// `parse_ndjson_docs` / `parse_csv_docs` directly).
+    fn drain_text_source(
+        text: &str,
+        format: &str,
+        csv: &CsvImportOptions,
+    ) -> Result<Vec<mongodb::bson::Document>, String> {
+        use crate::db::import::{ImportReader, ImportSourceArg};
+        let source = ImportSourceArg { path: None, text: Some(text.to_string()) };
+        let mut reader = ImportReader::open(&source, format, csv)?;
+        let mut docs = Vec::new();
+        while let Some(doc) = reader.next_doc()? {
+            docs.push(doc);
+        }
+        Ok(docs)
+    }
+
+    /// Parse concatenated BSON bytes through the shipping import reader.
+    /// BSON import requires a file source, so this writes to a temp file
+    /// first (ports unit coverage that used to call the removed
+    /// `parse_bson_docs` directly).
+    fn drain_bson_bytes(bytes: &[u8]) -> Vec<mongodb::bson::Document> {
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-tests-bson-{}-{}.bson",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, bytes).expect("write temp bson");
+        let docs = reparse_import_file(&path, "bson");
+        let _ = std::fs::remove_file(&path);
+        docs
+    }
+
     #[tokio::test]
     async fn test_mock_full_collection_export_task_writes_ndjson() {
         let state = AppState::new();
@@ -289,7 +344,7 @@ mod tests {
         let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
         assert_eq!(lines.len(), 3);
         assert!(!text.contains('['));
-        let docs = parse_ndjson_docs(&text).expect("re-parse ndjson");
+        let docs = reparse_import_file(&path, "ndjson");
         assert_eq!(docs.len(), 3);
         assert!(text.contains("Alice Smith"));
         let _ = std::fs::remove_file(&path);
@@ -313,8 +368,7 @@ mod tests {
         assert_eq!(finished.processed, 3);
 
         // The on-disk bytes are concatenated BSON and parse back to 3 documents.
-        let bytes = std::fs::read(&path).expect("bson file");
-        let docs = parse_bson_docs(&bytes).expect("re-parse bson");
+        let docs = reparse_import_file(&path, "bson");
         assert_eq!(docs.len(), 3);
         let names: Vec<String> = docs
             .iter()
@@ -2764,7 +2818,8 @@ mod tests {
     fn test_parse_ndjson_docs_skips_blank_lines() {
         // One doc per line, blank lines (incl. trailing newline) tolerated.
         let text = "{\"_id\": 1, \"name\": \"Ada\"}\n\n{\"_id\": 2, \"name\": \"Bob\"}\n";
-        let docs = parse_ndjson_docs(text).expect("parse ndjson");
+        let docs =
+            drain_text_source(text, "ndjson", &CsvImportOptions::default()).expect("parse ndjson");
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0].get_str("name").unwrap(), "Ada");
         assert_eq!(docs[1].get_str("name").unwrap(), "Bob");
@@ -2775,7 +2830,8 @@ mod tests {
         // An $oid wrapper must revive to a real ObjectId, not a sub-document.
         let oid = mongodb::bson::oid::ObjectId::new();
         let line = format!("{{\"_id\": {{\"$oid\": \"{}\"}}}}", oid.to_hex());
-        let docs = parse_ndjson_docs(&line).expect("parse ndjson ejson");
+        let docs = drain_text_source(&line, "ndjson", &CsvImportOptions::default())
+            .expect("parse ndjson ejson");
         assert_eq!(docs[0].get_object_id("_id").unwrap(), oid);
     }
 
@@ -2791,7 +2847,7 @@ mod tests {
         let mut bytes = mongodb::bson::to_vec(&original).expect("serialize bson");
         bytes.extend(mongodb::bson::to_vec(&doc! { "_id": 2, "name": "Bob" }).unwrap());
 
-        let docs = parse_bson_docs(&bytes).expect("parse bson");
+        let docs = drain_bson_bytes(&bytes);
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0].get_object_id("_id").unwrap(), oid);
         assert_eq!(docs[0].get_datetime("when").unwrap(), &when);
@@ -2804,14 +2860,15 @@ mod tests {
 
     #[test]
     fn test_parse_bson_docs_empty_input() {
-        assert_eq!(parse_bson_docs(&[]).expect("empty bson").len(), 0);
+        assert_eq!(drain_bson_bytes(&[]).len(), 0);
     }
 
     #[test]
     fn test_parse_csv_docs_revives_cell_values() {
         // Numbers/bools/objects parse as JSON; bare text stays a string.
         let text = "_id,name,active,tags\n1,Ada,true,\"[1,2]\"\n2,Bob,false,plain";
-        let docs = parse_csv_docs(text, &CsvImportOptions::default()).expect("parse csv");
+        let docs =
+            drain_text_source(text, "csv", &CsvImportOptions::default()).expect("parse csv");
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0].get_i32("_id").unwrap(), 1);
         assert_eq!(docs[0].get_str("name").unwrap(), "Ada");

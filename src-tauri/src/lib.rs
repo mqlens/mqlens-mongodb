@@ -30,8 +30,8 @@ pub use db::ddl::{
 };
 pub use db::documents::{
     delete_document_impl, delete_many_impl, import_documents_impl, insert_document_impl,
-    json_to_bson_document, parse_bson_docs, parse_csv_docs, parse_json_array_docs,
-    parse_ndjson_docs, update_document_impl, update_many_impl, ImportResult,
+    json_to_bson_document, parse_json_array_docs, update_document_impl, update_many_impl,
+    ImportResult,
 };
 pub use db::export::{
     format_current_docs_impl, preview_export_impl, sample_export_fields_impl,
