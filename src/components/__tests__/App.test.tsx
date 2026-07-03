@@ -670,6 +670,139 @@ describe('App Component', () => {
     expect(await screen.findByTestId('task-manager')).toBeInTheDocument();
   });
 
+  it('sends options and skip/limit with a filtered export', async () => {
+    const calls: any[] = [];
+    const task = {
+      id: 'task-2',
+      kind: 'filtered_export',
+      label: 'Export sales_db.customers as CSV',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Queued',
+      path: '/tmp/customers.filtered.csv',
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'start_filtered_export') {
+        return Promise.resolve(task);
+      }
+      if (cmd === 'list_export_tasks') {
+        return Promise.resolve([task]);
+      }
+      return Promise.resolve([]);
+    });
+    saveMock.mockResolvedValue('/tmp/customers.filtered.csv');
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-format-csv'));
+    fireEvent.change(screen.getByTestId('export-options-csv-delimiter'), { target: { value: ';' } });
+    fireEvent.change(screen.getByTestId('export-filtered-skip'), { target: { value: '10' } });
+    fireEvent.change(screen.getByTestId('export-filtered-limit'), { target: { value: '50' } });
+    fireEvent.click(screen.getByTestId('export-filtered-btn'));
+
+    await waitFor(() => {
+      const exp = calls.find((c) => c.cmd === 'start_filtered_export');
+      expect(exp).toBeTruthy();
+      expect(exp.args).toMatchObject({
+        format: 'csv',
+        skip: 10,
+        limit: 50,
+        options: expect.objectContaining({ csv: expect.objectContaining({ delimiter: ';' }) }),
+      });
+    });
+  });
+
+  it('exports current results through format_current_docs', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'format_current_docs') {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve([]);
+    });
+    saveMock.mockResolvedValue('/tmp/customers.json');
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('export-current-btn'));
+
+    await waitFor(() => {
+      const exp = calls.find((c) => c.cmd === 'format_current_docs');
+      expect(exp).toBeTruthy();
+      expect(exp.args).toMatchObject({ format: 'json', path: expect.any(String) });
+    });
+  });
+
+  it('copies current results to the clipboard as text', async () => {
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'format_current_docs') {
+        return Promise.resolve('name\nA\n');
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('export-copy-current-btn'));
+
+    await waitFor(() => {
+      const exp = calls.find((c) => c.cmd === 'format_current_docs');
+      expect(exp).toBeTruthy();
+      expect(exp.args).toMatchObject({ path: null });
+    });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('name\nA\n'));
+  });
+
   it('does not load profiles until the vault is unlocked', async () => {
     const vault = await import('../../lib/vault');
     (vault.getVaultStatus as any).mockResolvedValueOnce('locked');
