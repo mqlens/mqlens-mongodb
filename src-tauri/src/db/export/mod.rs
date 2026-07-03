@@ -7,6 +7,7 @@
 
 pub mod options;
 pub mod json;
+pub mod xlsx;
 
 use options::JsonMode;
 
