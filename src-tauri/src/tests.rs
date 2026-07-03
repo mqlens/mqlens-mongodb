@@ -9,8 +9,9 @@ mod tests {
         import_collection_file_impl, import_documents_impl, insert_document_impl,
         json_to_bson_document, list_collections_impl, list_databases_impl, list_gridfs_files_impl,
         list_indexes_impl, parse_bson_docs, parse_csv_docs, parse_json_array_docs, parse_ndjson_docs,
-        rename_collection_impl, rename_database_impl, start_collection_export_impl,
-        start_filtered_export_impl, update_document_impl, upload_gridfs_file_impl,
+        rename_collection_impl, rename_database_impl, sample_export_fields_impl,
+        start_collection_export_impl, start_filtered_export_impl, update_document_impl,
+        upload_gridfs_file_impl,
     };
     use crate::{
         create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
@@ -538,6 +539,21 @@ mod tests {
         let exported = std::fs::read_to_string(&path).unwrap();
         assert_eq!(exported.lines().count(), 1, "skip 1, limit 1 of 3 docs");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_sample_export_fields_returns_dot_paths() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let fields =
+            sample_export_fields_impl(&state, &conn_id, "sales_db", "customers", "{}", "")
+                .await
+                .unwrap();
+        assert!(fields.contains(&"_id".to_string()));
+        assert!(fields.contains(&"name".to_string()));
+        // mock customers embed an address sub-document → nested dot path present
+        assert!(fields.iter().any(|f| f.contains('.')),
+            "expected at least one nested dot path, got {:?}", fields);
     }
 
     #[tokio::test]

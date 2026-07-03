@@ -695,6 +695,46 @@ fn parse_optional_object(raw: &str, what: &str) -> Result<Option<Document>, Stri
     Ok(Some(doc))
 }
 
+/// Build an [`ExportSource`] from a find filter/sort/projection or an aggregation
+/// pipeline. A non-empty, non-`"[]"` `pipeline` selects aggregate mode (`filter`/
+/// `sort`/`projection` are ignored); otherwise it is a find source with no
+/// skip/limit set (callers that need pagination fill it in on the returned value).
+fn build_source(
+    filter: &str,
+    sort: &str,
+    projection: &str,
+    pipeline: &str,
+) -> Result<ExportSource, String> {
+    let pipeline_trimmed = pipeline.trim();
+    let is_aggregate = !pipeline_trimmed.is_empty() && pipeline_trimmed != "[]";
+
+    if is_aggregate {
+        let pipeline_val: serde_json::Value = serde_json::from_str(pipeline_trimmed)
+            .map_err(|e| format!("Invalid aggregation pipeline JSON: {}", e))?;
+        let stages_val = pipeline_val
+            .as_array()
+            .ok_or_else(|| "Aggregation pipeline must be a JSON array of stages".to_string())?;
+        let mut stages: Vec<Document> = Vec::with_capacity(stages_val.len());
+        for stage in stages_val {
+            let stage_doc = mongodb::bson::to_document(stage)
+                .map_err(|e| format!("Invalid aggregation stage: {}", e))?;
+            stages.push(stage_doc);
+        }
+        Ok(ExportSource::Aggregate { stages })
+    } else {
+        let filter_doc = parse_optional_object(filter, "MQL filter")?.unwrap_or_default();
+        let sort_doc = parse_optional_object(sort, "MQL sort")?;
+        let projection_doc = parse_optional_object(projection, "MQL projection")?;
+        Ok(ExportSource::Find {
+            filter: filter_doc,
+            sort: sort_doc,
+            projection: projection_doc,
+            skip: None,
+            limit: None,
+        })
+    }
+}
+
 /// Export the documents matching an active find filter (filter + sort + projection,
 /// optionally skip/limit) or an aggregation pipeline. A non-empty `pipeline` selects
 /// aggregate mode and `filter`/`sort`/`projection`/`skip`/`limit` are ignored;
@@ -719,24 +759,15 @@ pub async fn start_filtered_export_impl(
     let pipeline_trimmed = pipeline.trim();
     let is_aggregate = !pipeline_trimmed.is_empty() && pipeline_trimmed != "[]";
 
-    let (real_source, mock_find) = if is_aggregate {
-        let pipeline_val: serde_json::Value = serde_json::from_str(pipeline_trimmed)
-            .map_err(|e| format!("Invalid aggregation pipeline JSON: {}", e))?;
-        let stages_val = pipeline_val
-            .as_array()
-            .ok_or_else(|| "Aggregation pipeline must be a JSON array of stages".to_string())?;
-        let mut stages: Vec<Document> = Vec::with_capacity(stages_val.len());
-        for stage in stages_val {
-            let stage_doc = mongodb::bson::to_document(stage)
-                .map_err(|e| format!("Invalid aggregation stage: {}", e))?;
-            stages.push(stage_doc);
-        }
-        (ExportSource::Aggregate { stages }, None)
-    } else {
-        let filter_doc = parse_optional_object(filter, "MQL filter")?.unwrap_or_default();
-        let sort_doc = parse_optional_object(sort, "MQL sort")?;
-        let projection_doc = parse_optional_object(projection, "MQL projection")?;
-        (
+    let source = build_source(filter, sort, projection, pipeline)?;
+    let (real_source, mock_find) = match source {
+        ExportSource::Aggregate { stages } => (ExportSource::Aggregate { stages }, None),
+        ExportSource::Find {
+            filter: filter_doc,
+            sort: sort_doc,
+            projection: projection_doc,
+            ..
+        } => (
             ExportSource::Find {
                 filter: filter_doc,
                 sort: sort_doc,
@@ -745,7 +776,7 @@ pub async fn start_filtered_export_impl(
                 limit,
             },
             Some((filter.to_string(), sort.to_string(), skip, limit)),
-        )
+        ),
     };
 
     let scope = if is_aggregate { "aggregate" } else { "filtered" };
@@ -768,4 +799,61 @@ pub async fn start_filtered_export_impl(
         options.unwrap_or_default(),
     )
     .await
+}
+
+/// Dot-notation field paths from the first docs of an export source, for the
+/// export view's field picker. A non-empty `pipeline` selects aggregate mode.
+const FIELD_SAMPLE_SIZE: usize = 100;
+
+pub async fn sample_export_fields_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    filter: &str,
+    pipeline: &str,
+) -> Result<Vec<String>, String> {
+    use futures::stream::StreamExt;
+
+    let docs: Vec<Document> = if crate::connection_is_mock(state, id)? {
+        let pipeline_trimmed = pipeline.trim();
+        if !pipeline_trimmed.is_empty() && pipeline_trimmed != "[]" {
+            return Err("Aggregation pipelines are not supported on mock connections".to_string());
+        }
+        mock_db::execute_mock_query(database, collection, filter, "{}", FIELD_SAMPLE_SIZE as i64, 0)?
+            .iter()
+            .map(|s| crate::json_to_bson_document(s))
+            .collect::<Result<_, _>>()?
+    } else {
+        let client = crate::require_real_client(state, id)?;
+        let coll = client.database(database).collection::<Document>(collection);
+        let source = build_source(filter, "{}", "{}", pipeline)?;
+        let source = match source {
+            ExportSource::Find {
+                filter,
+                sort,
+                projection,
+                ..
+            } => ExportSource::Find {
+                filter,
+                sort,
+                projection,
+                skip: None,
+                limit: Some(FIELD_SAMPLE_SIZE as i64),
+            },
+            ExportSource::Aggregate { mut stages } => {
+                stages.push(doc! {"$limit": FIELD_SAMPLE_SIZE as i64});
+                ExportSource::Aggregate { stages }
+            }
+        };
+        let mut cursor = open_export_cursor(&coll, &source).await?;
+        let mut docs = Vec::new();
+        while let Some(result) = cursor.next().await {
+            docs.push(result.map_err(|e| format!("Cursor read error: {}", e))?);
+        }
+        docs
+    };
+
+    let report = crate::db::schema::infer_schema(&docs);
+    Ok(report.fields.into_iter().map(|f| f.path).collect())
 }

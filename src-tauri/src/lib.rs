@@ -33,7 +33,9 @@ pub use db::documents::{
     insert_document_impl, json_to_bson_document, parse_bson_docs, parse_csv_docs,
     parse_json_array_docs, parse_ndjson_docs, update_document_impl, update_many_impl, ImportResult,
 };
-pub use db::export::{start_collection_export_impl, start_filtered_export_impl};
+pub use db::export::{
+    sample_export_fields_impl, start_collection_export_impl, start_filtered_export_impl,
+};
 pub use db::gridfs::{
     delete_gridfs_file_impl, download_gridfs_file_impl, list_gridfs_files_impl,
     upload_gridfs_file_impl, GridFsFileInfo, GridFsTransferProgress,
@@ -975,6 +977,18 @@ async fn start_filtered_export(
 }
 
 #[tauri::command]
+async fn sample_export_fields(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    filter: String,
+    pipeline: String,
+) -> Result<Vec<String>, String> {
+    sample_export_fields_impl(&state, &id, &database, &collection, &filter, &pipeline).await
+}
+
+#[tauri::command]
 async fn list_export_tasks(state: tauri::State<'_, AppState>) -> Result<Vec<TaskInfo>, String> {
     let mut tasks: Vec<TaskInfo> = state.tasks.lock_safe()?.values().cloned().collect();
     tasks.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
@@ -1604,6 +1618,7 @@ pub fn run() {
             count_documents,
             start_collection_export,
             start_filtered_export,
+            sample_export_fields,
             list_export_tasks,
             clear_finished_export_tasks,
             cancel_task,
