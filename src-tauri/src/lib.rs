@@ -29,9 +29,9 @@ pub use db::ddl::{
     rename_collection_impl, rename_database_impl, DatabaseRenameResult,
 };
 pub use db::documents::{
-    delete_document_impl, delete_many_impl, import_collection_file_impl, import_documents_impl,
-    insert_document_impl, json_to_bson_document, parse_bson_docs, parse_csv_docs,
-    parse_json_array_docs, parse_ndjson_docs, update_document_impl, update_many_impl, ImportResult,
+    delete_document_impl, delete_many_impl, import_documents_impl, insert_document_impl,
+    json_to_bson_document, parse_json_array_docs, update_document_impl, update_many_impl,
+    ImportResult,
 };
 pub use db::export::{
     format_current_docs_impl, preview_export_impl, sample_export_fields_impl,
@@ -41,6 +41,7 @@ pub use db::gridfs::{
     delete_gridfs_file_impl, download_gridfs_file_impl, list_gridfs_files_impl,
     upload_gridfs_file_impl, GridFsFileInfo, GridFsTransferProgress,
 };
+pub use db::import::{preview_import_impl, start_import_task_impl};
 pub use db::metadata::{
     create_index_impl, delete_index_impl, list_collections_impl, list_databases_impl,
     list_indexes_impl,
@@ -1382,16 +1383,38 @@ async fn insert_document(
 }
 
 #[tauri::command]
-async fn import_collection_file(
+async fn preview_import(
+    source: crate::db::import::ImportSourceArg,
+    format: String,
+    csv_options: Option<crate::db::documents::CsvImportOptions>,
+    limit: Option<usize>,
+) -> Result<crate::db::import::ImportPreview, String> {
+    preview_import_impl(source, &format, csv_options, limit.unwrap_or(20)).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_import_task(
     state: tauri::State<'_, AppState>,
     id: String,
     database: String,
     collection: String,
-    path: String,
+    source: crate::db::import::ImportSourceArg,
     format: String,
+    csv_options: Option<crate::db::documents::CsvImportOptions>,
     mode: String,
-) -> Result<ImportResult, String> {
-    import_collection_file_impl(&state, &id, &database, &collection, &path, &format, &mode).await
+) -> Result<TaskInfo, String> {
+    start_import_task_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        source,
+        &format,
+        csv_options,
+        &mode,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1651,7 +1674,8 @@ pub fn run() {
             upload_gridfs_file,
             delete_gridfs_file,
             insert_document,
-            import_collection_file,
+            preview_import,
+            start_import_task,
             update_document,
             execute_mql_query,
             execute_aggregate,

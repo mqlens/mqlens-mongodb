@@ -23,6 +23,7 @@ import {
   type FilteredExportSeed,
   type FilteredExportQuery,
 } from './components/ExportView';
+import { ImportView, type ImportPreviewData } from './components/ImportView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
@@ -44,12 +45,12 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks } from 'lucide-react';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users';
   connectionId: string;
   db: string;
   collection: string;
@@ -172,6 +173,8 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
       return <Rocket size={size} className={className} />;
     case 'export':
       return <Download size={size} className={className} />;
+    case 'import':
+      return <Upload size={size} className={className} />;
     case 'tasks':
       return <ListChecks size={size} className={className} />;
     case 'schema':
@@ -204,6 +207,8 @@ const tabLabelFor = (
       return 'Quick Start';
     case 'export':
       return `Export: ${tab.collection}`;
+    case 'import':
+      return `Import: ${tab.collection}`;
     case 'tasks':
       return 'Tasks';
     case 'schema':
@@ -222,7 +227,7 @@ const tabLabelFor = (
 };
 
 function Workspace() {
-  const { toast, confirm, choose, prompt } = useDialogs();
+  const { toast, confirm, prompt } = useDialogs();
   const { config, resolvedMode, setMode, setSpacingDensity, resetZoom } = useTheme();
   const density = config.spacingDensity;
   // Open the Quick Start tab by default so the app never starts on a blank canvas.
@@ -331,6 +336,13 @@ function Workspace() {
   }, []);
 
   const [exportTasks, setExportTasks] = useState<ExportTaskInfo[]>([]);
+  // Import tasks started from the Import tab, keyed by task id, so the poll
+  // below can refresh the source collection tab once the task completes.
+  // TaskInfo has no connection/db/collection fields, so we track them here
+  // at the point the task is started instead of trying to recover them later.
+  const pendingImportRefreshRef = React.useRef(
+    new Map<string, { connectionId: string; db: string; collection: string }>()
+  );
   const loadExportTasks = React.useCallback(async () => {
     try {
       const tasks = await invoke<ExportTaskInfo[]>('list_export_tasks');
@@ -692,6 +704,27 @@ function Workspace() {
         db: sourceTab.db,
         collection: sourceTab.collection,
         exportSourceTabId: sourceTab.id,
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      }]);
+    }
+    setActiveTabId(tabId);
+    loadExportTasks();
+  };
+
+  const handleOpenImportTab = (sourceTab: QueryTab) => {
+    if (sourceTab.type !== 'collection') return;
+    const tabId = `import.${sourceTab.connectionId}.${sourceTab.db}.${sourceTab.collection}`;
+    const tabExists = tabs.some(t => t.id === tabId);
+    if (!tabExists) {
+      setTabs(prev => [...prev, {
+        id: tabId,
+        type: 'import',
+        connectionId: sourceTab.connectionId,
+        db: sourceTab.db,
+        collection: sourceTab.collection,
         results: [],
         loading: false,
         error: null,
@@ -1252,6 +1285,29 @@ function Workspace() {
     }
   };
 
+  // When a tracked import task (started from the Import tab) is observed
+  // completed by the task poll, refresh the matching open collection tab so
+  // newly-imported documents show up without a manual re-run.
+  useEffect(() => {
+    const pending = pendingImportRefreshRef.current;
+    if (pending.size === 0) return;
+    for (const task of exportTasks) {
+      if (task.kind !== 'import' || task.status !== 'completed') continue;
+      const info = pending.get(task.id);
+      if (!info) continue;
+      pending.delete(task.id);
+      const match = tabs.find(
+        (t) =>
+          t.type === 'collection' &&
+          t.connectionId === info.connectionId &&
+          t.db === info.db &&
+          t.collection === info.collection
+      );
+      if (match) refreshTabResults(match);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportTasks]);
+
   const [documentModal, setDocumentModal] = useState<
     { mode: 'insert' | 'edit'; initialJson: string; targetDoc: Record<string, any> | null } | null
   >(null);
@@ -1412,52 +1468,9 @@ function Workspace() {
     };
   };
 
-  // Map a chosen import file to its backend format by extension.
-  const importFormatForPath = (path: string): 'json' | 'ndjson' | 'csv' | 'bson' => {
-    const lower = path.toLowerCase();
-    if (lower.endsWith('.bson')) return 'bson';
-    if (lower.endsWith('.csv')) return 'csv';
-    if (lower.endsWith('.jsonl') || lower.endsWith('.ndjson')) return 'ndjson';
-    return 'json';
-  };
-
-  const handleImport = async () => {
+  const handleImport = () => {
     if (!activeTab || activeTab.type !== 'collection') return;
-    try {
-      const path = await open({
-        multiple: false,
-        filters: [{ name: 'Data', extensions: ['json', 'jsonl', 'ndjson', 'csv', 'bson'] }],
-      });
-      if (!path || typeof path !== 'string') return; // cancelled
-      const format = importFormatForPath(path);
-      // Choose the duplicate-handling mode. The backend parses the file (binary
-      // BSON cannot be read in the browser), so a malformed file fails there.
-      const mode = await choose({
-        title: 'Import documents',
-        message: 'How should existing documents with the same _id be handled?',
-        choices: [
-          { value: 'skip', label: 'Skip duplicates (insert new only)' },
-          { value: 'update', label: 'Update existing by _id' },
-          { value: 'abort', label: 'Abort if any _id already exists', destructive: true },
-        ],
-      });
-      if (!mode) return; // cancelled
-      const res = await invoke<{ inserted: number; updated: number; skipped: number }>(
-        'import_collection_file',
-        {
-          id: activeTab.connectionId,
-          database: activeTab.db,
-          collection: activeTab.collection,
-          path,
-          format,
-          mode,
-        }
-      );
-      await refreshTabResults(activeTab);
-      toast(`Imported: ${res.inserted} inserted, ${res.updated} updated, ${res.skipped} skipped`, 'success');
-    } catch (err: any) {
-      toast(`Import failed: ${err?.message || err}`, 'error');
-    }
+    handleOpenImportTab(activeTab);
   };
 
   const handleEditDocument = (doc: Record<string, any>) => {
@@ -2033,6 +2046,52 @@ function Workspace() {
                     onScanFields={handleScanExportFields}
                     onCopyCurrent={handleCopyCurrentExport}
                     onPreview={handlePreviewExport}
+                  />
+                );
+              })()}
+              {activeTab && activeTab.type === 'import' && (() => {
+                const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
+                const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
+                return (
+                  <ImportView
+                    key={`import:${activeTab.connectionId}:${activeTab.db}:${activeTab.collection}`}
+                    connectionName={connectionName}
+                    databaseName={activeTab.db}
+                    collectionName={activeTab.collection}
+                    onOpenTasks={handleOpenTasksTab}
+                    onPickFile={async () => {
+                      const p = await open({
+                        multiple: false,
+                        filters: [{ name: 'Data', extensions: ['json', 'jsonl', 'ndjson', 'csv', 'bson'] }],
+                      });
+                      return typeof p === 'string' ? p : null;
+                    }}
+                    onPreview={(source, format, csvOptions) =>
+                      invoke<ImportPreviewData>('preview_import', { source, format, csvOptions, limit: 20 })
+                    }
+                    onRunImport={async (source, format, csvOptions, mode) => {
+                      try {
+                        const task = await invoke<ExportTaskInfo>('start_import_task', {
+                          id: activeTab.connectionId,
+                          database: activeTab.db,
+                          collection: activeTab.collection,
+                          source,
+                          format,
+                          csvOptions,
+                          mode,
+                        });
+                        pendingImportRefreshRef.current.set(task.id, {
+                          connectionId: activeTab.connectionId,
+                          db: activeTab.db,
+                          collection: activeTab.collection,
+                        });
+                        setExportTasks(prev => [task, ...prev.filter(t => t.id !== task.id)]);
+                        handleOpenTasksTab();
+                        await loadExportTasks();
+                      } catch (err: any) {
+                        toast(`Import failed to start: ${err?.message || err}`, 'error');
+                      }
+                    }}
                   />
                 );
               })()}

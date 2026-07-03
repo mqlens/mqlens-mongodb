@@ -4,6 +4,7 @@ use crate::limits::{IMPORT_BATCH_SIZE, MAX_IMPORT_DOCS};
 use crate::{connection_is_mock, require_real_client, AppState};
 
 use mongodb::bson::Document;
+use std::collections::HashMap;
 
 // Convert a parsed JSON value into a BSON Document, interpreting MongoDB Extended
 // JSON (e.g. {"$oid": "..."} -> ObjectId, {"$date": ...} -> DateTime) so that writes
@@ -35,57 +36,132 @@ pub fn parse_json_array_docs(text: &str) -> Result<Vec<Document>, String> {
     arr.into_iter().map(value_to_bson_document).collect()
 }
 
-/// Parse newline-delimited JSON (NDJSON/JSONL): one Extended JSON document per line.
-/// Blank and whitespace-only lines are tolerated (incl. a trailing newline).
-pub fn parse_ndjson_docs(text: &str) -> Result<Vec<Document>, String> {
-    let mut docs = Vec::new();
-    for (idx, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let doc =
-            json_to_bson_document(line).map_err(|e| format!("NDJSON line {}: {}", idx + 1, e))?;
-        docs.push(doc);
-    }
-    Ok(docs)
+/// CSV import parsing options (camelCase over IPC). Defaults reproduce the
+/// pre-options behavior exactly.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CsvImportOptions {
+    pub delimiter: String,
+    pub quote: String,
+    pub skip_lines: u32,
+    pub has_headers: bool,
+    pub column_types: HashMap<String, CsvColumnType>,
 }
 
-/// Parse concatenated BSON documents (mongoexport's `.bson` on-disk format).
-pub fn parse_bson_docs(bytes: &[u8]) -> Result<Vec<Document>, String> {
-    use std::io::Cursor;
-    let total = bytes.len() as u64;
-    let mut cursor = Cursor::new(bytes);
-    let mut docs = Vec::new();
-    while cursor.position() < total {
-        let doc = Document::from_reader(&mut cursor).map_err(|e| format!("Invalid BSON: {}", e))?;
-        docs.push(doc);
+impl Default for CsvImportOptions {
+    fn default() -> Self {
+        Self {
+            delimiter: ",".into(),
+            quote: "\"".into(),
+            skip_lines: 0,
+            has_headers: true,
+            column_types: HashMap::new(),
+        }
     }
-    Ok(docs)
 }
 
-/// Parse CSV text into documents. The first row is the header; each cell is revived
-/// to its JSON value when parseable (number/bool/object/array), else kept as a string.
-pub fn parse_csv_docs(text: &str) -> Result<Vec<Document>, String> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .from_reader(text.as_bytes());
-    let headers: Vec<String> = reader
-        .headers()
-        .map_err(|e| format!("Invalid CSV header: {}", e))?
-        .iter()
-        .map(|h| h.to_string())
-        .collect();
-    let mut docs = Vec::new();
-    for (idx, record) in reader.records().enumerate() {
-        let record = record.map_err(|e| format!("Invalid CSV row {}: {}", idx + 2, e))?;
-        let mut map = serde_json::Map::with_capacity(headers.len());
-        for (col, header) in headers.iter().enumerate() {
-            let cell = record.get(col).unwrap_or("");
-            map.insert(header.clone(), revive_csv_cell(cell));
-        }
-        docs.push(value_to_bson_document(serde_json::Value::Object(map))?);
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CsvColumnType {
+    #[default]
+    Auto,
+    String,
+    Number,
+    Boolean,
+    Date,
+    Json,
+}
+
+pub fn validate_csv_import_options(o: &CsvImportOptions) -> Result<(), String> {
+    if o.delimiter.len() != 1 || !o.delimiter.is_ascii() {
+        return Err("CSV delimiter must be a single ASCII character".to_string());
     }
-    Ok(docs)
+    if o.quote.len() != 1 || !o.quote.is_ascii() {
+        return Err("CSV text qualifier must be a single ASCII character".to_string());
+    }
+    Ok(())
+}
+
+pub fn generated_headers(n: usize) -> Vec<String> {
+    (1..=n).map(|i| format!("col{}", i)).collect()
+}
+
+/// Convert one CSV cell under an explicit or auto type. `row` is 1-based
+/// (data rows, excluding the header) for error messages.
+fn convert_csv_cell(
+    cell: &str,
+    column: &str,
+    ty: CsvColumnType,
+    row: usize,
+) -> Result<serde_json::Value, String> {
+    let fail = |ty_name: &str| {
+        Err(format!(
+            "CSV row {}, column \"{}\": cannot convert \"{}\" to {}",
+            row, column, cell, ty_name
+        ))
+    };
+    match ty {
+        CsvColumnType::Auto => Ok(revive_csv_cell(cell)),
+        CsvColumnType::String => Ok(serde_json::Value::String(cell.to_string())),
+        CsvColumnType::Number => {
+            if let Ok(i) = cell.trim().parse::<i64>() {
+                // Route through the canonical EJSON $numberLong wrapper so the
+                // revived value is always Bson::Int64, regardless of whether it
+                // happens to fit i32 (bson's plain-number TryFrom auto-downcasts
+                // in-range integers to Int32, which would make column typing
+                // magnitude-dependent instead of deterministic).
+                Ok(serde_json::json!({ "$numberLong": i.to_string() }))
+            } else if let Ok(f) = cell.trim().parse::<f64>() {
+                Ok(serde_json::Value::from(f))
+            } else {
+                fail("number")
+            }
+        }
+        CsvColumnType::Boolean => match cell.trim().to_ascii_lowercase().as_str() {
+            "true" => Ok(serde_json::Value::Bool(true)),
+            "false" => Ok(serde_json::Value::Bool(false)),
+            _ => fail("boolean"),
+        },
+        CsvColumnType::Date => {
+            // RFC-3339 or epoch millis → canonical EJSON $date, revived to
+            // Bson::DateTime by value_to_bson_document.
+            let millis: Option<i64> = if let Ok(ms) = cell.trim().parse::<i64>() {
+                Some(ms)
+            } else {
+                mongodb::bson::DateTime::parse_rfc3339_str(cell.trim())
+                    .ok()
+                    .map(|dt| dt.timestamp_millis())
+            };
+            match millis {
+                Some(ms) => Ok(serde_json::json!({
+                    "$date": { "$numberLong": ms.to_string() }
+                })),
+                None => fail("date (RFC-3339 or epoch millis)"),
+            }
+        }
+        CsvColumnType::Json => serde_json::from_str(cell).or_else(|_| fail("json")),
+    }
+}
+
+/// Build one document from a CSV record. Missing cells become empty strings
+/// (auto) / conversion errors (explicit types other than String).
+pub fn csv_record_to_doc(
+    headers: &[String],
+    record: &csv::StringRecord,
+    options: &CsvImportOptions,
+    row: usize,
+) -> Result<Document, String> {
+    let mut map = serde_json::Map::with_capacity(headers.len());
+    for (col, header) in headers.iter().enumerate() {
+        let cell = record.get(col).unwrap_or("");
+        let ty = options
+            .column_types
+            .get(header)
+            .copied()
+            .unwrap_or(CsvColumnType::Auto);
+        map.insert(header.clone(), convert_csv_cell(cell, header, ty, row)?);
+    }
+    value_to_bson_document(serde_json::Value::Object(map))
 }
 
 /// A CSV cell becomes its JSON value when parseable, otherwise the raw string
@@ -251,36 +327,6 @@ pub async fn import_documents_impl(
     finalize_import(state, id, database, collection, bson_docs, mode).await
 }
 
-/// Import a collection from a file on disk, parsing by `format`
-/// (`json` | `ndjson` | `bson` | `csv`). This is the source of truth for
-/// file-based import — binary BSON cannot ride the JSON-value IPC path.
-pub async fn import_collection_file_impl(
-    state: &AppState,
-    id: &str,
-    database: &str,
-    collection: &str,
-    path: &str,
-    format: &str,
-    mode: &str,
-) -> Result<ImportResult, String> {
-    let bson_docs = match format.trim().to_lowercase().as_str() {
-        "json" => parse_json_array_docs(&read_text(path)?)?,
-        "ndjson" | "jsonl" => parse_ndjson_docs(&read_text(path)?)?,
-        "csv" => parse_csv_docs(&read_text(path)?)?,
-        "bson" => parse_bson_docs(&read_bytes(path)?)?,
-        other => return Err(format!("Unsupported import format: {}", other)),
-    };
-    finalize_import(state, id, database, collection, bson_docs, mode).await
-}
-
-fn read_text(path: &str) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| format!("Failed to read import file: {}", e))
-}
-
-fn read_bytes(path: &str) -> Result<Vec<u8>, String> {
-    std::fs::read(path).map_err(|e| format!("Failed to read import file: {}", e))
-}
-
 /// Enforce the batch cap, short-circuit mock connections (validate only), then
 /// write the documents to the live collection under the duplicate-handling mode.
 async fn finalize_import(
@@ -322,7 +368,7 @@ async fn finalize_import(
 
 /// Write already-converted BSON documents to a live collection under the
 /// duplicate-handling mode. Shared by the JSON-value and file import paths.
-async fn write_imported_docs(
+pub(crate) async fn write_imported_docs(
     coll: &mongodb::Collection<Document>,
     bson_docs: Vec<Document>,
     mode: &str,
@@ -443,5 +489,28 @@ async fn write_imported_docs(
                 skipped: total - inserted,
             })
         }
+    }
+}
+
+// The option-matrix CSV parsing tests that used to live here (default
+// options, delimiter/qualifier/skip_lines/headerless combos, explicit column
+// types incl. failure context) now exercise db::import::ImportReader — the
+// path the shipping import pipeline actually uses. See db/import.rs's `csv_*`
+// tests. validate_csv_import_options is a pure helper with no ImportReader
+// equivalent, so its test stays here.
+#[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
+mod csv_import_tests {
+    use super::*;
+
+    #[test]
+    fn validate_rejects_multi_char_delimiter_or_quote() {
+        let mut o = CsvImportOptions::default();
+        o.delimiter = "ab".into();
+        assert!(validate_csv_import_options(&o).is_err());
+        let mut o = CsvImportOptions::default();
+        o.quote = "€".into();
+        assert!(validate_csv_import_options(&o).is_err());
+        assert!(validate_csv_import_options(&CsvImportOptions::default()).is_ok());
     }
 }

@@ -18,67 +18,14 @@ use options::ExportOptions;
 
 use crate::state::LockExt;
 use crate::{mock_db, AppState, TaskInfo};
+use crate::db::tasks::{fail_task, finish_task, now_ms, update_task};
 use futures::stream::{Stream, StreamExt};
 use mongodb::bson::{doc, Document};
 use mongodb::Client;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
-fn update_task<F>(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>, task_id: &str, update: F)
-where
-    F: FnOnce(&mut TaskInfo),
-{
-    if let Some(task) = tasks
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .get_mut(task_id)
-    {
-        update(task);
-    }
-}
-
-fn fail_task(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>, task_id: &str, err: String) {
-    update_task(tasks, task_id, |task| {
-        task.status = "failed".to_string();
-        task.message = "Export failed".to_string();
-        task.error = Some(err);
-        task.finished_at_ms = Some(now_ms());
-    });
-    prune_export_tasks(tasks);
-}
-
-fn finish_task(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>, task_id: &str, processed: u64) {
-    update_task(tasks, task_id, |task| {
-        task.status = "completed".to_string();
-        task.processed = processed;
-        task.message = "Export complete".to_string();
-        task.finished_at_ms = Some(now_ms());
-    });
-    prune_export_tasks(tasks);
-}
-
-fn prune_export_tasks(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>) {
-    use crate::limits::MAX_TASK_HISTORY;
-    let mut guard = tasks.lock().unwrap_or_else(|p| p.into_inner());
-    if guard.len() <= MAX_TASK_HISTORY {
-        return;
-    }
-    let mut entries: Vec<(String, TaskInfo)> = guard.drain().collect();
-    entries.sort_by(|a, b| b.1.created_at_ms.cmp(&a.1.created_at_ms));
-    for (id, task) in entries.into_iter().take(MAX_TASK_HISTORY) {
-        guard.insert(id, task);
-    }
-}
 
 /// What a real-connection export reads from MongoDB. Filtered exports build a
 /// [`ExportSource::Find`] (filter + optional sort/projection/skip/limit) or a
@@ -645,7 +592,7 @@ async fn start_export_task(
             .await
         };
         match result {
-            Ok(processed) => finish_task(&tasks, &task_id, processed),
+            Ok(processed) => finish_task(&tasks, &task_id, processed, "Export complete".to_string()),
             Err(err) => fail_task(&tasks, &task_id, err),
         }
     });
