@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, FileJson, FileSpreadsheet, Filter, ListChecks, Hash } from 'lucide-react';
+import { Download, Filter, ListChecks, Hash } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -7,6 +7,9 @@ import { cn } from '@/lib/utils';
 import { QueryEditor } from './QueryEditor';
 import { FindQueryBar } from './FindQueryBar';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
+
+/** File formats the export view can produce. */
+export type ExportFormat = 'json' | 'ndjson' | 'bson' | 'csv';
 
 /** The edited query the user chose to export from the Filtered card. */
 export type FilteredExportQuery =
@@ -36,7 +39,7 @@ interface ExportViewProps {
   /** Seeds the editable Filtered card from the source tab's active query. */
   filtered?: FilteredExportSeed;
   onExport: (
-    format: 'json' | 'csv',
+    format: ExportFormat,
     scope: 'current' | 'full' | 'filtered',
     query?: FilteredExportQuery
   ) => void;
@@ -80,6 +83,14 @@ const editorShell = (valid: boolean) =>
     valid ? 'border-input' : 'border-destructive focus-within:ring-destructive'
   );
 
+/** The four file formats every export scope can produce. */
+const EXPORT_FORMATS: { value: ExportFormat; label: string }[] = [
+  { value: 'json', label: 'JSON' },
+  { value: 'ndjson', label: 'NDJSON' },
+  { value: 'bson', label: 'BSON' },
+  { value: 'csv', label: 'CSV' },
+];
+
 export const ExportView: React.FC<ExportViewProps> = ({
   connectionId,
   connectionName,
@@ -105,6 +116,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
   const [count, setCount] = React.useState<number | null | undefined>(filtered?.matchCount);
   const [counting, setCounting] = React.useState(false);
   const [countError, setCountError] = React.useState<string | null>(null);
+  const [format, setFormat] = React.useState<ExportFormat>('json');
 
   const filterCheck = checkJsonObject(filter);
   const sortCheck = checkJsonObject(sort);
@@ -155,6 +167,26 @@ export const ExportView: React.FC<ExportViewProps> = ({
         </Button>
       </header>
 
+      <div className="mb-4 flex items-center gap-2" data-testid="export-format-picker">
+        <Label className="text-xs text-muted-foreground">Format</Label>
+        <div className="inline-flex rounded-md border border-border p-0.5">
+          {EXPORT_FORMATS.map((f) => (
+            <Button
+              key={f.value}
+              type="button"
+              size="sm"
+              variant={format === f.value ? 'default' : 'ghost'}
+              aria-pressed={format === f.value}
+              className="h-7 px-2.5"
+              onClick={() => setFormat(f.value)}
+              data-testid={`export-format-${f.value}`}
+            >
+              {f.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
@@ -172,22 +204,11 @@ export const ExportView: React.FC<ExportViewProps> = ({
               variant="outline"
               size="sm"
               disabled={!hasCurrentResults}
-              onClick={() => onExport('json', 'current')}
-              data-testid="export-current-json-btn"
+              onClick={() => onExport(format, 'current')}
+              data-testid="export-current-btn"
             >
-              <FileJson size={13} />
-              JSON
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!hasCurrentResults}
-              onClick={() => onExport('csv', 'current')}
-              data-testid="export-current-csv-btn"
-            >
-              <FileSpreadsheet size={13} />
-              CSV
+              <Download size={13} />
+              Export {format.toUpperCase()}
             </Button>
           </CardContent>
         </Card>
@@ -204,20 +225,11 @@ export const ExportView: React.FC<ExportViewProps> = ({
             <Button
               type="button"
               size="sm"
-              onClick={() => onExport('json', 'full')}
-              data-testid="export-full-json-btn"
+              onClick={() => onExport(format, 'full')}
+              data-testid="export-full-btn"
             >
-              <FileJson size={13} />
-              JSON
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => onExport('csv', 'full')}
-              data-testid="export-full-csv-btn"
-            >
-              <FileSpreadsheet size={13} />
-              CSV
+              <Download size={13} />
+              Export {format.toUpperCase()}
             </Button>
           </CardContent>
         </Card>
@@ -296,21 +308,11 @@ export const ExportView: React.FC<ExportViewProps> = ({
               type="button"
               size="sm"
               disabled={!canExportFiltered}
-              onClick={() => onExport('json', 'filtered', buildQuery())}
-              data-testid="export-filtered-json-btn"
+              onClick={() => onExport(format, 'filtered', buildQuery())}
+              data-testid="export-filtered-btn"
             >
-              <FileJson size={13} />
-              JSON
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={!canExportFiltered}
-              onClick={() => onExport('csv', 'filtered', buildQuery())}
-              data-testid="export-filtered-csv-btn"
-            >
-              <FileSpreadsheet size={13} />
-              CSV
+              <Download size={13} />
+              Export {format.toUpperCase()}
             </Button>
           </div>
         </CardContent>

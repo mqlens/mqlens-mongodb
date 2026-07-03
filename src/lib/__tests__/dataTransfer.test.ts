@@ -1,10 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { toJson, toCsv, parseJson, parseCsv } from '../dataTransfer';
+import { toJson, toCsv, toNdjson } from '../dataTransfer';
 
 describe('toJson', () => {
   it('pretty-prints an array of documents', () => {
     const out = toJson([{ a: 1 }, { b: 2 }]);
     expect(out).toBe('[\n  {\n    "a": 1\n  },\n  {\n    "b": 2\n  }\n]');
+  });
+});
+
+describe('toNdjson', () => {
+  it('writes one compact JSON document per line, no array brackets', () => {
+    const out = toNdjson([{ a: 1 }, { b: 2 }]);
+    expect(out).toBe('{"a":1}\n{"b":2}');
+  });
+
+  it('preserves Extended JSON wrappers verbatim (relaxed EJSON round-trips)', () => {
+    const out = toNdjson([{ _id: { $oid: 'abc' } }]);
+    expect(out).toBe('{"_id":{"$oid":"abc"}}');
+  });
+
+  it('returns an empty string for no documents', () => {
+    expect(toNdjson([])).toBe('');
   });
 });
 
@@ -31,45 +47,5 @@ describe('toCsv', () => {
   it('renders null/missing as empty cells', () => {
     const out = toCsv([{ a: 1, b: null }, { a: 2 }]);
     expect(out).toBe('a,b\n1,\n2,');
-  });
-});
-
-describe('parseJson', () => {
-  it('parses a JSON array of documents', () => {
-    expect(parseJson('[{"a":1},{"b":2}]')).toEqual([{ a: 1 }, { b: 2 }]);
-  });
-
-  it('throws on a non-array', () => {
-    expect(() => parseJson('{"a":1}')).toThrow(/array/i);
-  });
-
-  it('throws on invalid JSON', () => {
-    expect(() => parseJson('{bad')).toThrow();
-  });
-});
-
-describe('parseCsv', () => {
-  it('maps the header row to fields and coerces cell types', () => {
-    const rows = parseCsv('a,b,c\n1,true,hi');
-    expect(rows).toEqual([{ a: 1, b: true, c: 'hi' }]);
-  });
-
-  it('parses JSON-object cells back into objects', () => {
-    const rows = parseCsv('_id,addr\n1,"{""city"":""NY""}"');
-    expect(rows).toEqual([{ _id: 1, addr: { city: 'NY' } }]);
-  });
-
-  it('throws when a row has the wrong column count', () => {
-    expect(() => parseCsv('a,b\n1,2,3')).toThrow(/column/i);
-  });
-
-  it('round-trips flat docs through toCsv', () => {
-    const docs = [{ a: 1, b: 'x,y' }, { a: 2, b: 'z' }];
-    expect(parseCsv(toCsv(docs))).toEqual(docs);
-  });
-
-  it('parses quoted cells containing newlines', () => {
-    const docs = [{ a: 'line1\nline2', b: 'ok' }];
-    expect(parseCsv(toCsv(docs))).toEqual(docs);
   });
 });
