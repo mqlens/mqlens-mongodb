@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::db::documents::CsvImportOptions;
     use crate::AppState;
     use crate::{
         connect_db_impl, count_documents_impl, create_collection_impl, create_index_impl,
@@ -2810,7 +2811,7 @@ mod tests {
     fn test_parse_csv_docs_revives_cell_values() {
         // Numbers/bools/objects parse as JSON; bare text stays a string.
         let text = "_id,name,active,tags\n1,Ada,true,\"[1,2]\"\n2,Bob,false,plain";
-        let docs = parse_csv_docs(text).expect("parse csv");
+        let docs = parse_csv_docs(text, &CsvImportOptions::default()).expect("parse csv");
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0].get_i32("_id").unwrap(), 1);
         assert_eq!(docs[0].get_str("name").unwrap(), "Ada");
