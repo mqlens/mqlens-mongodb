@@ -8,6 +8,7 @@
 pub mod options;
 pub mod json;
 pub mod csv;
+pub mod xlsx;
 
 use options::{CsvOptions, JsonMode};
 
