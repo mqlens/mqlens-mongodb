@@ -53,9 +53,11 @@ impl XlsxSink {
             if sink.opts.bold_headers {
                 header = header.set_bold();
             }
-            let columns = sink.columns.clone();
-            let ws = sink.worksheet()?;
-            for (col, name) in columns.iter().enumerate() {
+            let ws = sink
+                .workbook
+                .worksheet_from_index(0)
+                .map_err(|e| format!("Excel write error: {}", e))?;
+            for (col, name) in sink.columns.iter().enumerate() {
                 ws.write_string_with_format(0, col as u16, name, &header)
                     .map_err(|e| format!("Excel write error: {}", e))?;
             }
@@ -72,72 +74,76 @@ impl XlsxSink {
 
     pub fn write_row(&mut self, doc: &Document) -> Result<(), String> {
         let row = self.next_row;
-        let columns = self.columns.clone();
-        let cell_format = self.cell_format.clone();
-        let date_format = self.date_format.clone();
-        for (idx, path) in columns.iter().enumerate() {
-            let col = idx as u16;
-            let mut width = 0usize;
-            {
-                let ws = self.worksheet()?;
+        let mut width_updates: Vec<(usize, usize)> = Vec::with_capacity(self.columns.len());
+        {
+            let ws = self
+                .workbook
+                .worksheet_from_index(0)
+                .map_err(|e| format!("Excel write error: {}", e))?;
+            for (idx, path) in self.columns.iter().enumerate() {
+                let col = idx as u16;
+                let mut width = 0usize;
                 let err = |e| format!("Excel write error: {}", e);
                 match lookup_path(doc, path) {
                     None | Some(Bson::Null) => {}
                     Some(Bson::String(s)) => {
                         width = s.chars().count();
-                        ws.write_string_with_format(row, col, s, &cell_format)
+                        ws.write_string_with_format(row, col, s, &self.cell_format)
                             .map_err(err)?;
                     }
                     Some(Bson::Int32(n)) => {
                         width = n.to_string().len();
-                        ws.write_number_with_format(row, col, *n as f64, &cell_format)
+                        ws.write_number_with_format(row, col, *n as f64, &self.cell_format)
                             .map_err(err)?;
                     }
                     Some(Bson::Int64(n)) => {
                         width = n.to_string().len();
-                        ws.write_number_with_format(row, col, *n as f64, &cell_format)
+                        ws.write_number_with_format(row, col, *n as f64, &self.cell_format)
                             .map_err(err)?;
                     }
                     Some(Bson::Double(n)) => {
                         width = n.to_string().len();
-                        ws.write_number_with_format(row, col, *n, &cell_format)
+                        ws.write_number_with_format(row, col, *n, &self.cell_format)
                             .map_err(err)?;
                     }
                     Some(Bson::Boolean(b)) => {
                         width = 5;
-                        ws.write_boolean_with_format(row, col, *b, &cell_format)
+                        ws.write_boolean_with_format(row, col, *b, &self.cell_format)
                             .map_err(err)?;
                     }
                     Some(Bson::DateTime(dt)) => {
                         width = 19;
                         let excel_dt = rust_xlsxwriter::ExcelDateTime::from_timestamp(
-                            dt.timestamp_millis() / 1000,
+                            dt.timestamp_millis().div_euclid(1000),
                         )
                         .map_err(|e| format!("Excel date error: {}", e))?;
-                        ws.write_datetime_with_format(row, col, &excel_dt, &date_format)
+                        ws.write_datetime_with_format(row, col, &excel_dt, &self.date_format)
                             .map_err(err)?;
                     }
                     Some(Bson::ObjectId(oid)) => {
                         let hex = oid.to_hex();
                         width = hex.len();
-                        ws.write_string_with_format(row, col, &hex, &cell_format)
+                        ws.write_string_with_format(row, col, &hex, &self.cell_format)
                             .map_err(err)?;
                     }
                     Some(Bson::Document(sub)) => {
                         let s = doc_to_json_string(sub, JsonMode::Relaxed)?;
                         width = s.chars().count();
-                        ws.write_string_with_format(row, col, &s, &cell_format)
+                        ws.write_string_with_format(row, col, &s, &self.cell_format)
                             .map_err(err)?;
                     }
                     Some(other) => {
                         let value = other.clone().into_relaxed_extjson();
                         let s = serde_json::to_string(&value).unwrap_or_default();
                         width = s.chars().count();
-                        ws.write_string_with_format(row, col, &s, &cell_format)
+                        ws.write_string_with_format(row, col, &s, &self.cell_format)
                             .map_err(err)?;
                     }
                 }
+                width_updates.push((idx, width));
             }
+        }
+        for (idx, width) in width_updates {
             if width > self.widths[idx] {
                 self.widths[idx] = width;
             }
