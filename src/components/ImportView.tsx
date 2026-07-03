@@ -119,7 +119,8 @@ export const ImportView: React.FC<ImportViewProps> = ({
   const effectiveDelimiter = delimiterChoice === 'custom' ? customDelimiter : delimiterChoice;
   const delimiterValid =
     format !== 'csv' || (effectiveDelimiter.length === 1 && /^[\x00-\x7F]$/.test(effectiveDelimiter));
-  const quoteValid = format !== 'csv' || csvOptions.quote.length === 1;
+  const quoteValid =
+    format !== 'csv' || (csvOptions.quote.length === 1 && /^[\x00-\x7F]$/.test(csvOptions.quote));
 
   const effectiveCsvOptions: CsvImportOptions = {
     ...csvOptions,
@@ -135,6 +136,9 @@ export const ImportView: React.FC<ImportViewProps> = ({
 
   React.useEffect(() => {
     if (!hasSource || !onPreview) {
+      // Bump the generation so a response already in flight from before the
+      // source/preview handler was cleared can't repopulate this cleared preview.
+      previewGen.current++;
       setPreview(null);
       return;
     }
@@ -343,7 +347,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
                 min={0}
                 value={csvOptions.skipLines}
                 onChange={(e) =>
-                  setCsvOptions((o) => ({ ...o, skipLines: Number(e.target.value) || 0 }))
+                  setCsvOptions((o) => ({ ...o, skipLines: Math.max(0, Number(e.target.value) || 0) }))
                 }
                 className="h-8 w-24 text-xs"
                 data-testid="import-csv-skiplines"
@@ -370,7 +374,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
             )}
             {!quoteValid && (
               <span className="w-full text-xs text-destructive">
-                Quote must be a single character.
+                Quote must be a single ASCII character
               </span>
             )}
           </section>

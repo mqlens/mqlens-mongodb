@@ -52,6 +52,23 @@ describe('ImportView sources and options', () => {
       expect.objectContaining({ delimiter: ';' }), 'update');
   });
 
+  it('clamps skip-lines input to a non-negative integer', async () => {
+    renderImportView();
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+    await waitFor(() => expect(screen.getByTestId('import-csv-skiplines')).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId('import-csv-skiplines'), { target: { value: '-5' } });
+    expect((screen.getByTestId('import-csv-skiplines') as HTMLInputElement).value).toBe('0');
+  });
+
+  it('quote validity requires a single ASCII character', async () => {
+    renderImportView();
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+    await waitFor(() => expect(screen.getByTestId('import-csv-quote')).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId('import-csv-quote'), { target: { value: '€' } });
+    expect(screen.getByText('Quote must be a single ASCII character')).toBeInTheDocument();
+    expect(screen.getByTestId('import-run-btn')).toBeDisabled();
+  });
+
   it('detectImportFormat maps extensions', () => {
     expect(detectImportFormat('/a/b.bson')).toBe('bson');
     expect(detectImportFormat('/a/b.CSV')).toBe('csv');
@@ -132,6 +149,34 @@ describe('ImportView preview', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.getByTestId('import-preview-docs')).toHaveTextContent('fresh');
     expect(screen.getByTestId('import-preview-docs')).not.toHaveTextContent('stale');
+  });
+
+  it('a stale preview response cannot repopulate a preview cleared by removing the source', async () => {
+    vi.useFakeTimers();
+    let resolvePreview!: (value: typeof csvPreview) => void;
+    const pending = new Promise<typeof csvPreview>((r) => {
+      resolvePreview = r;
+    });
+    const onPreview = vi.fn().mockReturnValueOnce(pending);
+    renderImportView({ onPreview });
+
+    // Kick off a preview request for the file source.
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+    await vi.waitFor(() => expect(screen.getByTestId('import-file-path')).toBeInTheDocument());
+    await vi.advanceTimersByTimeAsync(350);
+    expect(onPreview).toHaveBeenCalledTimes(1);
+
+    // Clear the source before the in-flight preview resolves — switching to
+    // paste with no text drops hasSource, which clears the preview.
+    fireEvent.click(screen.getByTestId('import-source-paste'));
+
+    vi.useRealTimers();
+    resolvePreview(csvPreview);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The stale response must not repopulate the cleared preview.
+    expect(screen.queryByTestId('import-preview-grid')).not.toBeInTheDocument();
+    expect(screen.getByTestId('import-preview-caption')).toHaveTextContent('Choose a source to preview');
   });
 
   it('renders parse errors inline and non-csv docs as a list', async () => {

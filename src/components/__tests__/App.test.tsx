@@ -634,6 +634,79 @@ describe('App Component', () => {
     expect(await screen.findByTestId('task-manager')).toBeInTheDocument();
   });
 
+  it('refreshes the source collection tab once its import task completes', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-import-refresh',
+        kind: 'import',
+        label: 'Import sales_db.customers from d.jsonl',
+        status: 'running',
+        processed: 0,
+        total: null,
+        message: 'Queued',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      let taskStatus = 'running';
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'preview_import') {
+          return Promise.resolve({ docs: [], columns: [], totalHint: null, error: null });
+        }
+        if (cmd === 'start_import_task') {
+          return Promise.resolve(runningTask);
+        }
+        if (cmd === 'list_export_tasks') {
+          return Promise.resolve([{ ...runningTask, status: taskStatus }]);
+        }
+        return Promise.resolve([]);
+      });
+      openMock.mockResolvedValue('/tmp/d.jsonl');
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('import-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('import-view')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+      await vi.waitFor(() =>
+        expect(screen.getByTestId('import-file-path')).toHaveTextContent('/tmp/d.jsonl'));
+
+      fireEvent.click(screen.getByTestId('import-run-btn'));
+      await vi.waitFor(() =>
+        expect(calls.some((c) => c.cmd === 'start_import_task')).toBe(true));
+
+      const execCallsBefore = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+
+      // The task completes; the next poll tick should notice and re-run the
+      // source collection tab's query.
+      taskStatus = 'completed';
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await vi.waitFor(() => {
+        const execCallsAfter = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+        expect(execCallsAfter).toBeGreaterThan(execCallsBefore);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('previews through preview_import', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd: string, args: any) => {

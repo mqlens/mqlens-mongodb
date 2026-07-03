@@ -336,6 +336,13 @@ function Workspace() {
   }, []);
 
   const [exportTasks, setExportTasks] = useState<ExportTaskInfo[]>([]);
+  // Import tasks started from the Import tab, keyed by task id, so the poll
+  // below can refresh the source collection tab once the task completes.
+  // TaskInfo has no connection/db/collection fields, so we track them here
+  // at the point the task is started instead of trying to recover them later.
+  const pendingImportRefreshRef = React.useRef(
+    new Map<string, { connectionId: string; db: string; collection: string }>()
+  );
   const loadExportTasks = React.useCallback(async () => {
     try {
       const tasks = await invoke<ExportTaskInfo[]>('list_export_tasks');
@@ -1278,6 +1285,29 @@ function Workspace() {
     }
   };
 
+  // When a tracked import task (started from the Import tab) is observed
+  // completed by the task poll, refresh the matching open collection tab so
+  // newly-imported documents show up without a manual re-run.
+  useEffect(() => {
+    const pending = pendingImportRefreshRef.current;
+    if (pending.size === 0) return;
+    for (const task of exportTasks) {
+      if (task.kind !== 'import' || task.status !== 'completed') continue;
+      const info = pending.get(task.id);
+      if (!info) continue;
+      pending.delete(task.id);
+      const match = tabs.find(
+        (t) =>
+          t.type === 'collection' &&
+          t.connectionId === info.connectionId &&
+          t.db === info.db &&
+          t.collection === info.collection
+      );
+      if (match) refreshTabResults(match);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportTasks]);
+
   const [documentModal, setDocumentModal] = useState<
     { mode: 'insert' | 'edit'; initialJson: string; targetDoc: Record<string, any> | null } | null
   >(null);
@@ -2049,6 +2079,11 @@ function Workspace() {
                           format,
                           csvOptions,
                           mode,
+                        });
+                        pendingImportRefreshRef.current.set(task.id, {
+                          connectionId: activeTab.connectionId,
+                          db: activeTab.db,
+                          collection: activeTab.collection,
                         });
                         setExportTasks(prev => [task, ...prev.filter(t => t.id !== task.id)]);
                         handleOpenTasksTab();
