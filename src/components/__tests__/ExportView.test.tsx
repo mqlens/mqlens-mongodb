@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '../../test/render-with-providers';
 import { DialogProvider, useDialogs } from '../dialogs/DialogProvider';
-import { ExportView } from '../ExportView';
+import { ExportView, DEFAULT_EXPORT_OPTIONS } from '../ExportView';
 
 // QueryEditor wraps @monaco-editor/react, which has no usable DOM under jsdom.
 // Mock it with a textarea that round-trips value/onChange and forwards the
@@ -62,7 +62,7 @@ function renderExportView(
   );
 }
 
-type ExportFormat = 'json' | 'csv' | 'bson' | 'ndjson';
+type ExportFormat = 'json' | 'csv' | 'bson' | 'ndjson' | 'xlsx';
 
 /** Mirrors App handleExportForTab enough to exercise invoke + error toasts. */
 function ExportViewHarness({
@@ -142,9 +142,9 @@ describe('ExportView', () => {
     expect(screen.getByText('3 loaded documents')).toBeInTheDocument();
   });
 
-  it('offers all four formats in the picker', () => {
+  it('offers all five formats in the picker', () => {
     renderExportView();
-    for (const fmt of ['json', 'ndjson', 'bson', 'csv'] as const) {
+    for (const fmt of ['json', 'ndjson', 'bson', 'csv', 'xlsx'] as const) {
       expect(screen.getByTestId(`export-format-${fmt}`)).toBeInTheDocument();
     }
   });
@@ -158,7 +158,7 @@ describe('ExportView', () => {
     const onExport = vi.fn();
     renderExportView({ onExport });
     fireEvent.click(screen.getByTestId('export-current-btn'));
-    expect(onExport).toHaveBeenCalledWith('json', 'current');
+    expect(onExport).toHaveBeenCalledWith('json', 'current', DEFAULT_EXPORT_OPTIONS, undefined);
   });
 
   it('exports current results in the selected format', () => {
@@ -166,7 +166,7 @@ describe('ExportView', () => {
     renderExportView({ onExport });
     fireEvent.click(screen.getByTestId('export-format-ndjson'));
     fireEvent.click(screen.getByTestId('export-current-btn'));
-    expect(onExport).toHaveBeenCalledWith('ndjson', 'current');
+    expect(onExport).toHaveBeenCalledWith('ndjson', 'current', DEFAULT_EXPORT_OPTIONS, undefined);
   });
 
   it('exports the full collection in the selected format', () => {
@@ -174,7 +174,57 @@ describe('ExportView', () => {
     renderExportView({ onExport });
     fireEvent.click(screen.getByTestId('export-format-bson'));
     fireEvent.click(screen.getByTestId('export-full-btn'));
-    expect(onExport).toHaveBeenCalledWith('bson', 'full');
+    expect(onExport).toHaveBeenCalledWith('bson', 'full', DEFAULT_EXPORT_OPTIONS, undefined);
+  });
+
+  it('shows the Excel format and per-format options panel', () => {
+    renderExportView();
+    expect(screen.getByTestId('export-format-xlsx')).toBeInTheDocument();
+
+    // JSON selected by default → JSON mode radio group visible
+    expect(screen.getByTestId('export-options-json-mode')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-format-csv'));
+    expect(screen.getByTestId('export-options-csv-delimiter')).toBeInTheDocument();
+    expect(screen.getByTestId('export-options-csv-headers')).toBeChecked();
+
+    fireEvent.click(screen.getByTestId('export-format-xlsx'));
+    expect(screen.getByTestId('export-options-xlsx-bold')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-format-bson'));
+    expect(screen.queryByTestId('export-options-panel')).not.toBeInTheDocument();
+  });
+
+  it('passes chosen options through onExport', () => {
+    const onExport = vi.fn();
+    renderExportView({ onExport });
+    fireEvent.click(screen.getByTestId('export-format-csv'));
+    fireEvent.change(screen.getByTestId('export-options-csv-delimiter'), {
+      target: { value: ';' },
+    });
+    fireEvent.click(screen.getByTestId('export-options-csv-headers'));
+    fireEvent.click(screen.getByTestId('export-full-btn'));
+    expect(onExport).toHaveBeenCalledWith(
+      'csv',
+      'full',
+      expect.objectContaining({
+        csv: expect.objectContaining({ delimiter: ';', includeHeaders: false }),
+      }),
+      undefined
+    );
+  });
+
+  it('disables export while a custom delimiter is invalid', () => {
+    renderExportView();
+    fireEvent.click(screen.getByTestId('export-format-csv'));
+    fireEvent.change(screen.getByTestId('export-options-csv-delimiter'), {
+      target: { value: 'custom' },
+    });
+    const custom = screen.getByTestId('export-options-csv-delimiter-custom');
+    fireEvent.change(custom, { target: { value: 'ab' } });
+    expect(screen.getByTestId('export-full-btn')).toBeDisabled();
+    fireEvent.change(custom, { target: { value: '|' } });
+    expect(screen.getByTestId('export-full-btn')).toBeEnabled();
   });
 
   it('seeds the filter editor and keeps filtered export enabled by default', () => {
@@ -202,12 +252,17 @@ describe('ExportView', () => {
 
     fireEvent.change(filterInput, { target: { value: '{"tier":"silver"}' } });
     fireEvent.click(screen.getByTestId('export-filtered-btn'));
-    expect(onExport).toHaveBeenCalledWith('json', 'filtered', {
-      kind: 'find',
-      filter: '{"tier":"silver"}',
-      sort: '{"name":1}',
-      projection: '{}',
-    });
+    expect(onExport).toHaveBeenCalledWith(
+      'json',
+      'filtered',
+      DEFAULT_EXPORT_OPTIONS,
+      {
+        kind: 'find',
+        filter: '{"tier":"silver"}',
+        sort: '{"name":1}',
+        projection: '{}',
+      }
+    );
   });
 
   it('disables filtered export and shows an error when the filter JSON is invalid', () => {
@@ -263,10 +318,15 @@ describe('ExportView', () => {
     fireEvent.change(pipelineInput, { target: { value: '[{"$limit":5}]' } });
     fireEvent.click(screen.getByTestId('export-format-csv'));
     fireEvent.click(screen.getByTestId('export-filtered-btn'));
-    expect(onExport).toHaveBeenCalledWith('csv', 'filtered', {
-      kind: 'aggregate',
-      pipeline: '[{"$limit":5}]',
-    });
+    expect(onExport).toHaveBeenCalledWith(
+      'csv',
+      'filtered',
+      DEFAULT_EXPORT_OPTIONS,
+      {
+        kind: 'aggregate',
+        pipeline: '[{"$limit":5}]',
+      }
+    );
   });
 
   it('opens the Tasks tab from the header action', () => {

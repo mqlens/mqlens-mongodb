@@ -15,7 +15,14 @@ import { IndexModal } from './components/IndexModal';
 import { MongoShell } from './components/MongoShell';
 import { QuickStart } from './components/QuickStart';
 import { DocumentEditModal } from './components/DocumentEditModal';
-import { ExportView, type FilteredExportSeed, type FilteredExportQuery } from './components/ExportView';
+import {
+  ExportView,
+  DEFAULT_EXPORT_OPTIONS,
+  type ExportFormat,
+  type ExportOptions,
+  type FilteredExportSeed,
+  type FilteredExportQuery,
+} from './components/ExportView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
@@ -1242,10 +1249,15 @@ function Workspace() {
 
   const handleExportForTab = async (
     targetTab: QueryTab | null,
-    format: 'json' | 'csv' | 'bson' | 'ndjson',
+    format: ExportFormat,
     scope: 'current' | 'full' | 'filtered' = 'current',
+    options: ExportOptions = DEFAULT_EXPORT_OPTIONS,
     query?: FilteredExportQuery
   ) => {
+    // Per-format export options (CSV delimiter/quote, XLSX styling, JSON mode) are
+    // threaded through to the backend writer in a later task; accepted here only
+    // to match ExportView's onExport contract.
+    void options;
     if (!targetTab || (targetTab.type !== 'collection' && targetTab.type !== 'export')) return;
     const docs = targetTab.type === 'collection' ? targetTab.results || [] : [];
     if (scope === 'current' && docs.length === 0) return;
@@ -1961,8 +1973,8 @@ function Workspace() {
                     currentResultCount={sourceTab?.results.length || 0}
                     availableFields={fieldsFromResults(sourceTab?.results)}
                     filtered={buildFilteredExportSeed(sourceTab)}
-                    onExport={(format, scope, query) =>
-                      handleExportForTab(sourceTab || activeTab, format, scope, query)
+                    onExport={(format, scope, options, query) =>
+                      handleExportForTab(sourceTab || activeTab, format, scope, options, query)
                     }
                     onCountFilter={(filter) =>
                       invoke<number>('count_documents', {

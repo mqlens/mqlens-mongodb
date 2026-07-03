@@ -2,6 +2,7 @@ import React from 'react';
 import { Download, Filter, ListChecks, Hash } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { QueryEditor } from './QueryEditor';
@@ -9,7 +10,39 @@ import { FindQueryBar } from './FindQueryBar';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
 
 /** File formats the export view can produce. */
-export type ExportFormat = 'json' | 'ndjson' | 'bson' | 'csv';
+export type ExportFormat = 'json' | 'ndjson' | 'bson' | 'csv' | 'xlsx';
+
+/** CSV-specific export options. */
+export interface CsvExportOptions {
+  /** Single char; UI presets , ; \t plus a custom character. */
+  delimiter: string;
+  quote: string;
+  recordSeparator: '\n' | '\r\n';
+  includeHeaders: boolean;
+  nullAsEmpty: boolean;
+}
+
+/** Excel (.xlsx) export options. */
+export interface XlsxExportOptions {
+  includeHeaders: boolean;
+  boldHeaders: boolean;
+  autoSize: boolean;
+  alignment: 'left' | 'center' | 'right';
+}
+
+/** Per-format export options threaded through to the backend writer. */
+export interface ExportOptions {
+  fields?: string[];
+  jsonMode: 'relaxed' | 'canonical';
+  csv: CsvExportOptions;
+  xlsx: XlsxExportOptions;
+}
+
+export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
+  jsonMode: 'relaxed',
+  csv: { delimiter: ',', quote: '"', recordSeparator: '\n', includeHeaders: true, nullAsEmpty: true },
+  xlsx: { includeHeaders: true, boldHeaders: false, autoSize: false, alignment: 'left' },
+};
 
 /** The edited query the user chose to export from the Filtered card. */
 export type FilteredExportQuery =
@@ -41,6 +74,7 @@ interface ExportViewProps {
   onExport: (
     format: ExportFormat,
     scope: 'current' | 'full' | 'filtered',
+    options: ExportOptions,
     query?: FilteredExportQuery
   ) => void;
   /** Resolve the match count for a filter (run on demand via the Count button). */
@@ -83,13 +117,19 @@ const editorShell = (valid: boolean) =>
     valid ? 'border-input' : 'border-destructive focus-within:ring-destructive'
   );
 
-/** The four file formats every export scope can produce. */
+/** The five file formats every export scope can produce. */
 const EXPORT_FORMATS: { value: ExportFormat; label: string }[] = [
   { value: 'json', label: 'JSON' },
   { value: 'ndjson', label: 'NDJSON' },
   { value: 'bson', label: 'BSON' },
   { value: 'csv', label: 'CSV' },
+  { value: 'xlsx', label: 'Excel' },
 ];
+
+const selectClassName =
+  'h-8 min-w-0 rounded-md border border-input bg-background px-2 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+const checkboxLabelClassName = 'flex cursor-pointer items-center gap-2 text-xs text-foreground';
 
 export const ExportView: React.FC<ExportViewProps> = ({
   connectionId,
@@ -117,6 +157,9 @@ export const ExportView: React.FC<ExportViewProps> = ({
   const [counting, setCounting] = React.useState(false);
   const [countError, setCountError] = React.useState<string | null>(null);
   const [format, setFormat] = React.useState<ExportFormat>('json');
+  const [options, setOptions] = React.useState<ExportOptions>(DEFAULT_EXPORT_OPTIONS);
+  const [customDelimiter, setCustomDelimiter] = React.useState('|');
+  const [delimiterChoice, setDelimiterChoice] = React.useState<',' | ';' | '\t' | 'custom'>(',');
 
   const filterCheck = checkJsonObject(filter);
   const sortCheck = checkJsonObject(sort);
@@ -126,6 +169,14 @@ export const ExportView: React.FC<ExportViewProps> = ({
     mode === 'aggregate'
       ? pipelineCheck.ok
       : filterCheck.ok && sortCheck.ok && projectionCheck.ok;
+
+  const effectiveDelimiter = delimiterChoice === 'custom' ? customDelimiter : delimiterChoice;
+  const delimiterValid =
+    format !== 'csv' || (effectiveDelimiter.length === 1 && /^[\x00-\x7F]$/.test(effectiveDelimiter));
+  const effectiveOptions: ExportOptions = {
+    ...options,
+    csv: { ...options.csv, delimiter: effectiveDelimiter },
+  };
 
   // Count only on demand — never automatically — so it stays stable while editing.
   const runCount = () => {
@@ -187,6 +238,212 @@ export const ExportView: React.FC<ExportViewProps> = ({
         </div>
       </div>
 
+      {format !== 'bson' && (
+        <div className="mb-4 rounded-md border border-border p-3" data-testid="export-options-panel">
+          {(format === 'json' || format === 'ndjson') && (
+            <div className="flex flex-col gap-2" data-testid="export-options-json-mode">
+              <Label className="text-xs">JSON mode</Label>
+              <label className={checkboxLabelClassName}>
+                <input
+                  type="radio"
+                  name="export-json-mode"
+                  value="relaxed"
+                  checked={options.jsonMode === 'relaxed'}
+                  onChange={() => setOptions((o) => ({ ...o, jsonMode: 'relaxed' }))}
+                />
+                <span>
+                  Relaxed <span className="text-muted-foreground">— Human-readable</span>
+                </span>
+              </label>
+              <label className={checkboxLabelClassName}>
+                <input
+                  type="radio"
+                  name="export-json-mode"
+                  value="canonical"
+                  checked={options.jsonMode === 'canonical'}
+                  onChange={() => setOptions((o) => ({ ...o, jsonMode: 'canonical' }))}
+                />
+                <span>
+                  Canonical{' '}
+                  <span className="text-muted-foreground">
+                    — mongoexport-compatible, lossless types
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
+
+          {format === 'csv' && (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Delimiter</Label>
+                  <select
+                    value={delimiterChoice}
+                    onChange={(e) =>
+                      setDelimiterChoice(e.target.value as ',' | ';' | '\t' | 'custom')
+                    }
+                    className={selectClassName}
+                    data-testid="export-options-csv-delimiter"
+                  >
+                    <option value=",">Comma (,)</option>
+                    <option value=";">Semicolon (;)</option>
+                    <option value={'\t'}>Tab</option>
+                    <option value="custom">Custom…</option>
+                  </select>
+                </div>
+                {delimiterChoice === 'custom' && (
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-xs">Custom delimiter</Label>
+                    <Input
+                      value={customDelimiter}
+                      onChange={(e) => setCustomDelimiter(e.target.value)}
+                      className="h-8 w-20 text-xs"
+                      data-testid="export-options-csv-delimiter-custom"
+                    />
+                  </div>
+                )}
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Quote</Label>
+                  <Input
+                    value={options.csv.quote}
+                    onChange={(e) =>
+                      setOptions((o) => ({ ...o, csv: { ...o.csv, quote: e.target.value } }))
+                    }
+                    className="h-8 w-16 text-xs"
+                    data-testid="export-options-csv-quote"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Record separator</Label>
+                  <select
+                    value={options.csv.recordSeparator}
+                    onChange={(e) =>
+                      setOptions((o) => ({
+                        ...o,
+                        csv: { ...o.csv, recordSeparator: e.target.value as '\n' | '\r\n' },
+                      }))
+                    }
+                    className={selectClassName}
+                    data-testid="export-options-csv-recordsep"
+                  >
+                    <option value={'\n'}>LF (\n)</option>
+                    <option value={'\r\n'}>CRLF (\r\n)</option>
+                  </select>
+                </div>
+              </div>
+              {!delimiterValid && (
+                <span className="text-xs text-destructive">
+                  Delimiter must be a single ASCII character.
+                </span>
+              )}
+              <div className="flex flex-wrap gap-4">
+                <label className={checkboxLabelClassName}>
+                  <input
+                    type="checkbox"
+                    checked={options.csv.includeHeaders}
+                    onChange={() =>
+                      setOptions((o) => ({
+                        ...o,
+                        csv: { ...o.csv, includeHeaders: !o.csv.includeHeaders },
+                      }))
+                    }
+                    className="rounded border-input"
+                    data-testid="export-options-csv-headers"
+                  />
+                  <span>Include column headers</span>
+                </label>
+                <label className={checkboxLabelClassName}>
+                  <input
+                    type="checkbox"
+                    checked={options.csv.nullAsEmpty}
+                    onChange={() =>
+                      setOptions((o) => ({
+                        ...o,
+                        csv: { ...o.csv, nullAsEmpty: !o.csv.nullAsEmpty },
+                      }))
+                    }
+                    className="rounded border-input"
+                    data-testid="export-options-csv-nullempty"
+                  />
+                  <span>Leave null fields empty</span>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {format === 'xlsx' && (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap gap-4">
+                <label className={checkboxLabelClassName}>
+                  <input
+                    type="checkbox"
+                    checked={options.xlsx.includeHeaders}
+                    onChange={() =>
+                      setOptions((o) => ({
+                        ...o,
+                        xlsx: { ...o.xlsx, includeHeaders: !o.xlsx.includeHeaders },
+                      }))
+                    }
+                    className="rounded border-input"
+                    data-testid="export-options-xlsx-headers"
+                  />
+                  <span>Include column headers</span>
+                </label>
+                <label className={checkboxLabelClassName}>
+                  <input
+                    type="checkbox"
+                    checked={options.xlsx.boldHeaders}
+                    onChange={() =>
+                      setOptions((o) => ({
+                        ...o,
+                        xlsx: { ...o.xlsx, boldHeaders: !o.xlsx.boldHeaders },
+                      }))
+                    }
+                    className="rounded border-input"
+                    data-testid="export-options-xlsx-bold"
+                  />
+                  <span>Bold header row</span>
+                </label>
+                <label className={checkboxLabelClassName}>
+                  <input
+                    type="checkbox"
+                    checked={options.xlsx.autoSize}
+                    onChange={() =>
+                      setOptions((o) => ({
+                        ...o,
+                        xlsx: { ...o.xlsx, autoSize: !o.xlsx.autoSize },
+                      }))
+                    }
+                    className="rounded border-input"
+                    data-testid="export-options-xlsx-autosize"
+                  />
+                  <span>Auto-size columns</span>
+                </label>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs">Alignment</Label>
+                <select
+                  value={options.xlsx.alignment}
+                  onChange={(e) =>
+                    setOptions((o) => ({
+                      ...o,
+                      xlsx: { ...o.xlsx, alignment: e.target.value as 'left' | 'center' | 'right' },
+                    }))
+                  }
+                  className={cn(selectClassName, 'w-32')}
+                  data-testid="export-options-xlsx-align"
+                >
+                  <option value="left">Left</option>
+                  <option value="center">Center</option>
+                  <option value="right">Right</option>
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
@@ -203,8 +460,8 @@ export const ExportView: React.FC<ExportViewProps> = ({
               type="button"
               variant="outline"
               size="sm"
-              disabled={!hasCurrentResults}
-              onClick={() => onExport(format, 'current')}
+              disabled={!hasCurrentResults || !delimiterValid}
+              onClick={() => onExport(format, 'current', effectiveOptions, undefined)}
               data-testid="export-current-btn"
             >
               <Download size={13} />
@@ -225,7 +482,8 @@ export const ExportView: React.FC<ExportViewProps> = ({
             <Button
               type="button"
               size="sm"
-              onClick={() => onExport(format, 'full')}
+              disabled={!delimiterValid}
+              onClick={() => onExport(format, 'full', effectiveOptions, undefined)}
               data-testid="export-full-btn"
             >
               <Download size={13} />
@@ -307,8 +565,8 @@ export const ExportView: React.FC<ExportViewProps> = ({
             <Button
               type="button"
               size="sm"
-              disabled={!canExportFiltered}
-              onClick={() => onExport(format, 'filtered', buildQuery())}
+              disabled={!canExportFiltered || !delimiterValid}
+              onClick={() => onExport(format, 'filtered', effectiveOptions, buildQuery())}
               data-testid="export-filtered-btn"
             >
               <Download size={13} />
