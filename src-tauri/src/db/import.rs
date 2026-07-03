@@ -494,6 +494,40 @@ mod tests {
     }
 
     #[test]
+    fn reader_bson_reads_docs_from_file_and_reports_eof() {
+        use mongodb::bson::doc;
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-import-reader-bson-test-{}-{}.bson",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut bytes = mongodb::bson::to_vec(&doc! { "_id": 1, "name": "Ada" }).unwrap();
+        bytes.extend(mongodb::bson::to_vec(&doc! { "_id": 2, "name": "Bob" }).unwrap());
+        std::fs::write(&path, &bytes).unwrap();
+
+        let mut r = ImportReader::open(
+            &ImportSourceArg { path: Some(path.to_string_lossy().to_string()), text: None },
+            "bson",
+            &CsvImportOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(r.next_doc().unwrap().unwrap().get_i32("_id").ok(), Some(1));
+        assert_eq!(r.next_doc().unwrap().unwrap().get_i32("_id").ok(), Some(2));
+        assert!(r.next_doc().unwrap().is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn open_rejects_unknown_format() {
+        let err = ImportReader::open(&text_source("nope"), "yaml", &CsvImportOptions::default())
+            .unwrap_err();
+        assert!(err.contains("Unsupported import format"), "{err}");
+    }
+
+    #[test]
     fn source_arg_validation() {
         let both = ImportSourceArg { path: Some("x".into()), text: Some("y".into()) };
         assert!(ImportReader::open(&both, "json", &CsvImportOptions::default()).is_err());

@@ -29,9 +29,9 @@ pub use db::ddl::{
     rename_collection_impl, rename_database_impl, DatabaseRenameResult,
 };
 pub use db::documents::{
-    delete_document_impl, delete_many_impl, import_collection_file_impl, import_documents_impl,
-    insert_document_impl, json_to_bson_document, parse_bson_docs, parse_csv_docs,
-    parse_json_array_docs, parse_ndjson_docs, update_document_impl, update_many_impl, ImportResult,
+    delete_document_impl, delete_many_impl, import_documents_impl, insert_document_impl,
+    json_to_bson_document, parse_bson_docs, parse_csv_docs, parse_json_array_docs,
+    parse_ndjson_docs, update_document_impl, update_many_impl, ImportResult,
 };
 pub use db::export::{
     format_current_docs_impl, preview_export_impl, sample_export_fields_impl,
@@ -1383,19 +1383,6 @@ async fn insert_document(
 }
 
 #[tauri::command]
-async fn import_collection_file(
-    state: tauri::State<'_, AppState>,
-    id: String,
-    database: String,
-    collection: String,
-    path: String,
-    format: String,
-    mode: String,
-) -> Result<ImportResult, String> {
-    import_collection_file_impl(&state, &id, &database, &collection, &path, &format, &mode).await
-}
-
-#[tauri::command]
 async fn preview_import(
     source: crate::db::import::ImportSourceArg,
     format: String,
@@ -1687,7 +1674,6 @@ pub fn run() {
             upload_gridfs_file,
             delete_gridfs_file,
             insert_document,
-            import_collection_file,
             preview_import,
             start_import_task,
             update_document,

@@ -7,7 +7,7 @@ mod tests {
         delete_document_impl, delete_gridfs_file_impl, disconnect_db_impl,
         download_gridfs_file_impl, drop_collection_impl,
         drop_database_impl, execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
-        format_current_docs_impl, import_collection_file_impl, import_documents_impl,
+        format_current_docs_impl, import_documents_impl,
         insert_document_impl,
         json_to_bson_document, list_collections_impl, list_databases_impl, list_gridfs_files_impl,
         list_indexes_impl, parse_bson_docs, parse_csv_docs, parse_json_array_docs, parse_ndjson_docs,
@@ -2821,83 +2821,6 @@ mod tests {
             &vec![mongodb::bson::Bson::Int32(1), mongodb::bson::Bson::Int32(2)]
         );
         assert_eq!(docs[1].get_str("tags").unwrap(), "plain");
-    }
-
-    #[tokio::test]
-    async fn test_mock_import_collection_file_ndjson() {
-        let state = AppState::new();
-        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
-            .await
-            .expect("connect mock");
-        let path = temp_import_path("ndjson");
-        std::fs::write(
-            &path,
-            "{\"_id\": 1, \"name\": \"Ada\"}\n{\"_id\": 2, \"name\": \"Bob\"}\n",
-        )
-        .unwrap();
-
-        let res = import_collection_file_impl(
-            &state,
-            &conn_id,
-            "sales_db",
-            "customers",
-            &path.to_string_lossy(),
-            "ndjson",
-            "skip",
-        )
-        .await
-        .expect("ndjson import validates on mock");
-        assert_eq!(res.inserted, 2);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[tokio::test]
-    async fn test_mock_import_collection_file_bson() {
-        use mongodb::bson::doc;
-        let state = AppState::new();
-        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
-            .await
-            .expect("connect mock");
-        let path = temp_import_path("bson");
-        let mut bytes = mongodb::bson::to_vec(&doc! { "_id": 1, "name": "Ada" }).unwrap();
-        bytes.extend(mongodb::bson::to_vec(&doc! { "_id": 2, "name": "Bob" }).unwrap());
-        std::fs::write(&path, &bytes).unwrap();
-
-        let res = import_collection_file_impl(
-            &state,
-            &conn_id,
-            "sales_db",
-            "customers",
-            &path.to_string_lossy(),
-            "bson",
-            "skip",
-        )
-        .await
-        .expect("bson import validates on mock");
-        assert_eq!(res.inserted, 2);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[tokio::test]
-    async fn test_import_collection_file_rejects_unknown_format() {
-        let state = AppState::new();
-        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
-            .await
-            .expect("connect mock");
-        let path = temp_import_path("txt");
-        std::fs::write(&path, "nope").unwrap();
-        let res = import_collection_file_impl(
-            &state,
-            &conn_id,
-            "sales_db",
-            "customers",
-            &path.to_string_lossy(),
-            "yaml",
-            "skip",
-        )
-        .await;
-        assert!(res.is_err(), "unknown import format must error");
-        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

@@ -407,36 +407,6 @@ pub async fn import_documents_impl(
     finalize_import(state, id, database, collection, bson_docs, mode).await
 }
 
-/// Import a collection from a file on disk, parsing by `format`
-/// (`json` | `ndjson` | `bson` | `csv`). This is the source of truth for
-/// file-based import — binary BSON cannot ride the JSON-value IPC path.
-pub async fn import_collection_file_impl(
-    state: &AppState,
-    id: &str,
-    database: &str,
-    collection: &str,
-    path: &str,
-    format: &str,
-    mode: &str,
-) -> Result<ImportResult, String> {
-    let bson_docs = match format.trim().to_lowercase().as_str() {
-        "json" => parse_json_array_docs(&read_text(path)?)?,
-        "ndjson" | "jsonl" => parse_ndjson_docs(&read_text(path)?)?,
-        "csv" => parse_csv_docs(&read_text(path)?, &CsvImportOptions::default())?,
-        "bson" => parse_bson_docs(&read_bytes(path)?)?,
-        other => return Err(format!("Unsupported import format: {}", other)),
-    };
-    finalize_import(state, id, database, collection, bson_docs, mode).await
-}
-
-fn read_text(path: &str) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| format!("Failed to read import file: {}", e))
-}
-
-fn read_bytes(path: &str) -> Result<Vec<u8>, String> {
-    std::fs::read(path).map_err(|e| format!("Failed to read import file: {}", e))
-}
-
 /// Enforce the batch cap, short-circuit mock connections (validate only), then
 /// write the documents to the live collection under the duplicate-handling mode.
 async fn finalize_import(
