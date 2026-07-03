@@ -1,7 +1,6 @@
 import React from 'react';
 import { Download, Filter, ListChecks, Hash, Copy, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
@@ -297,8 +296,8 @@ export const ExportView: React.FC<ExportViewProps> = ({
   };
 
   return (
-    <div className="flex h-full flex-col overflow-auto p-4" data-testid="export-view">
-      <header className="mb-4 flex items-start justify-between gap-4">
+    <div className="flex h-full flex-col overflow-auto" data-testid="export-view">
+      <header className="flex items-center justify-between gap-4 border-b border-border bg-muted/30 px-3.5 py-2">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Export</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
@@ -311,31 +310,34 @@ export const ExportView: React.FC<ExportViewProps> = ({
         </Button>
       </header>
 
-      <div className="mb-4 flex items-center gap-2" data-testid="export-format-picker">
-        <Label className="text-xs text-muted-foreground">Format</Label>
-        <div className="inline-flex rounded-md border border-border p-0.5">
-          {EXPORT_FORMATS.map((f) => (
-            <Button
-              key={f.value}
-              type="button"
-              size="sm"
-              variant={format === f.value ? 'default' : 'ghost'}
-              aria-pressed={format === f.value}
-              className="h-7 px-2.5"
-              onClick={() => setFormat(f.value)}
-              data-testid={`export-format-${f.value}`}
-            >
-              {f.label}
-            </Button>
-          ))}
+      {/* Full-bleed sections, document-viewer style: the tab itself is the box. */}
+      <div className="divide-y divide-border">
+      <section className="flex flex-wrap items-center gap-x-6 gap-y-2 px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center gap-3" data-testid="export-format-picker">
+          <h3 className="text-sm font-medium text-foreground">Format</h3>
+          <div className="inline-flex rounded-md border border-border bg-background p-0.5">
+            {EXPORT_FORMATS.map((f) => (
+              <Button
+                key={f.value}
+                type="button"
+                size="sm"
+                variant={format === f.value ? 'default' : 'ghost'}
+                aria-pressed={format === f.value}
+                className="h-7 px-2.5"
+                onClick={() => setFormat(f.value)}
+                data-testid={`export-format-${f.value}`}
+              >
+                {f.label}
+              </Button>
+            ))}
+          </div>
         </div>
-      </div>
 
       {format !== 'bson' && (
-        <div className="mb-4 rounded-md border border-border p-3" data-testid="export-options-panel">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2" data-testid="export-options-panel">
           {(format === 'json' || format === 'ndjson') && (
-            <div className="flex flex-col gap-2" data-testid="export-options-json-mode">
-              <Label className="text-xs">JSON mode</Label>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1" data-testid="export-options-json-mode">
+              <Label className="text-xs text-muted-foreground">JSON mode</Label>
               <label className={checkboxLabelClassName}>
                 <input
                   type="radio"
@@ -367,8 +369,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
           )}
 
           {format === 'csv' && (
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
                 <div className="flex flex-col gap-1">
                   <Label className="text-xs">Delimiter</Label>
                   <select
@@ -424,13 +425,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
                     <option value={'\r\n'}>CRLF (\r\n)</option>
                   </select>
                 </div>
-              </div>
-              {!delimiterValid && (
-                <span className="text-xs text-destructive">
-                  Delimiter must be a single ASCII character.
-                </span>
-              )}
-              <div className="flex flex-wrap gap-4">
+              <div className="flex flex-wrap items-center gap-4 pb-2">
                 <label className={checkboxLabelClassName}>
                   <input
                     type="checkbox"
@@ -462,12 +457,16 @@ export const ExportView: React.FC<ExportViewProps> = ({
                   <span>Leave null fields empty</span>
                 </label>
               </div>
+              {!delimiterValid && (
+                <span className="w-full text-xs text-destructive">
+                  Delimiter must be a single ASCII character.
+                </span>
+              )}
             </div>
           )}
 
           {format === 'xlsx' && (
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <label className={checkboxLabelClassName}>
                   <input
                     type="checkbox"
@@ -513,9 +512,8 @@ export const ExportView: React.FC<ExportViewProps> = ({
                   />
                   <span>Auto-size columns</span>
                 </label>
-              </div>
-              <div className="flex flex-col gap-1">
-                <Label className="text-xs">Alignment</Label>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground">Alignment</Label>
                 <select
                   value={options.xlsx.alignment}
                   onChange={(e) =>
@@ -536,18 +534,19 @@ export const ExportView: React.FC<ExportViewProps> = ({
           )}
         </div>
       )}
+      </section>
 
-      <Card className="mb-4" data-testid="export-field-picker">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-sm">
+      <section className="flex flex-col gap-2 px-3.5 py-3" data-testid="export-field-picker">
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
             <ListChecks size={14} />
             <span>Fields</span>
-          </CardTitle>
-          <CardDescription>
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
             Scan a sample of documents to choose which fields to export.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
+          </p>
+        </div>
+        <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
@@ -624,82 +623,80 @@ export const ExportView: React.FC<ExportViewProps> = ({
               Projection disabled — using field selection
             </span>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Download size={14} />
-              <span>Current Results</span>
-            </CardTitle>
-            <CardDescription>
-              {currentResultCount} loaded document{currentResultCount === 1 ? '' : 's'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!hasCurrentResults || !delimiterValid || noFieldsSelected}
-              onClick={() => onExport(format, 'current', effectiveOptions, undefined)}
-              data-testid="export-current-btn"
-            >
-              <Download size={13} />
-              Export {format.toUpperCase()}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!hasCurrentResults || format === 'bson' || format === 'xlsx' || noFieldsSelected}
-              onClick={() => onCopyCurrent?.(format as 'json' | 'ndjson' | 'csv', effectiveOptions)}
-              data-testid="export-copy-current-btn"
-            >
-              <Copy size={13} />
-              Copy to clipboard
-            </Button>
-          </CardContent>
-        </Card>
+      <section className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Download size={14} />
+            <span>Current Results</span>
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {currentResultCount} loaded document{currentResultCount === 1 ? '' : 's'}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!hasCurrentResults || !delimiterValid || noFieldsSelected}
+            onClick={() => onExport(format, 'current', effectiveOptions, undefined)}
+            data-testid="export-current-btn"
+          >
+            <Download size={13} />
+            Export {format.toUpperCase()}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!hasCurrentResults || format === 'bson' || format === 'xlsx' || noFieldsSelected}
+            onClick={() => onCopyCurrent?.(format as 'json' | 'ndjson' | 'csv', effectiveOptions)}
+            data-testid="export-copy-current-btn"
+          >
+            <Copy size={13} />
+            Copy to clipboard
+          </Button>
+        </div>
+      </section>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Download size={14} />
-              <span>Full Collection</span>
-            </CardTitle>
-            <CardDescription>Runs in the background and writes directly to disk.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              disabled={!delimiterValid || noFieldsSelected}
-              onClick={() => onExport(format, 'full', effectiveOptions, undefined)}
-              data-testid="export-full-btn"
-            >
-              <Download size={13} />
-              Export {format.toUpperCase()}
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      <section className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Download size={14} />
+            <span>Full Collection</span>
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Runs in the background and writes directly to disk.
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          disabled={!delimiterValid || noFieldsSelected}
+          onClick={() => onExport(format, 'full', effectiveOptions, undefined)}
+          data-testid="export-full-btn"
+        >
+          <Download size={13} />
+          Export {format.toUpperCase()}
+        </Button>
+      </section>
 
-      <Card className="mt-4" data-testid="export-filtered-card">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-sm">
+      <section className="flex flex-col gap-3 px-3.5 py-3" data-testid="export-filtered-card">
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Filter size={14} />
             <span>Filtered Results</span>
-          </CardTitle>
-          <CardDescription>
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
             {mode === 'aggregate'
               ? 'Edit the aggregation pipeline, then export every resulting document.'
               : 'Edit the query (reused from the document view), then export every match.'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
+          </p>
+        </div>
+        <div className="flex flex-col gap-3">
           {mode === 'aggregate' ? (
             <div className="flex flex-col gap-1">
               <Label className="text-xs">Pipeline</Label>
@@ -791,43 +788,44 @@ export const ExportView: React.FC<ExportViewProps> = ({
               Export {format.toUpperCase()}
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <Card className="mt-4" data-testid="export-preview-card">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <Eye size={14} />
-            <span>Preview</span>
-          </CardTitle>
-          <CardDescription>See a sample of the exported output before running.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
+      <section className="flex flex-col gap-2 px-3.5 py-3" data-testid="export-preview-card">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!onPreview || format === 'bson' || format === 'xlsx' || previewing}
-              onClick={runPreview}
-              data-testid="export-preview-btn"
-            >
-              <Eye size={13} />
-              {previewing ? 'Previewing…' : 'Preview'}
-            </Button>
+            <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <Eye size={14} />
+              <span>Preview</span>
+            </h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              See a sample of the exported output before running.
+            </p>
           </div>
-          {(previewOutput !== null || previewError) && (
-            <pre
-              data-testid="export-preview-output"
-              className="max-h-48 overflow-auto rounded-md border border-border bg-muted/30 p-2 text-xs"
-            >
-              {previewError ? `Preview failed: ${previewError}` : previewOutput}
-            </pre>
-          )}
-        </CardContent>
-      </Card>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!onPreview || format === 'bson' || format === 'xlsx' || previewing}
+            onClick={runPreview}
+            data-testid="export-preview-btn"
+          >
+            <Eye size={13} />
+            {previewing ? 'Previewing…' : 'Preview'}
+          </Button>
+        </div>
+        {(previewOutput !== null || previewError) && (
+          <pre
+            data-testid="export-preview-output"
+            className="max-h-48 overflow-auto rounded-md border border-border bg-muted/30 p-2 text-xs"
+          >
+            {previewError ? `Preview failed: ${previewError}` : previewOutput}
+          </pre>
+        )}
+      </section>
+      </div>
 
-      <p className="mt-4 text-xs text-muted-foreground">
+      <p className="px-3.5 py-3 text-xs text-muted-foreground">
         Filtered and full-collection exports run in the background. Track their progress in the{' '}
         <button type="button" className="underline hover:text-foreground" onClick={onOpenTasks}>
           Tasks
