@@ -8,8 +8,9 @@
 pub mod options;
 pub mod json;
 
-use crate::state::LockExt;
 use options::JsonMode;
+
+use crate::state::LockExt;
 use crate::{mock_db, AppState, TaskInfo};
 use mongodb::bson::{doc, Document};
 use mongodb::Client;

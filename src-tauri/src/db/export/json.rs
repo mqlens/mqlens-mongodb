@@ -34,4 +34,11 @@ mod tests {
         assert!(s.contains(r#"{"$numberLong":"5"}"#));
         assert!(s.contains(r#"$date"#));
     }
+
+    #[test]
+    fn relaxed_mode_renders_dates_as_iso_strings() {
+        let d = doc! {"when": DateTime::from_millis(1700000000000i64)};
+        let s = doc_to_json_string(&d, JsonMode::Relaxed).unwrap();
+        assert_eq!(s, r#"{"when":{"$date":"2023-11-14T22:13:20Z"}}"#);
+    }
 }
