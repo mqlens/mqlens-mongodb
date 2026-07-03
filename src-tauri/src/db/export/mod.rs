@@ -6,8 +6,10 @@
 //!   (filter + sort + projection) or an aggregation pipeline.
 
 pub mod options;
+pub mod json;
 
 use crate::state::LockExt;
+use options::JsonMode;
 use crate::{mock_db, AppState, TaskInfo};
 use mongodb::bson::{doc, Document};
 use mongodb::Client;
@@ -341,9 +343,7 @@ async fn export_real_to_file(
         let mut processed = 0u64;
         while let Some(result) = cursor.next().await {
             let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            let json_val = bson_doc_to_json_value(&doc)?;
-            let json = serde_json::to_string(&json_val)
-                .map_err(|e| format!("JSON serialization error: {}", e))?;
+            let json = json::doc_to_json_string(&doc, JsonMode::Relaxed)?;
             if processed > 0 {
                 file.write_all(b",\n")
                     .await
@@ -376,9 +376,7 @@ async fn export_real_to_file(
         let mut processed = 0u64;
         while let Some(result) = cursor.next().await {
             let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            let json_val = bson_doc_to_json_value(&doc)?;
-            let json = serde_json::to_string(&json_val)
-                .map_err(|e| format!("JSON serialization error: {}", e))?;
+            let json = json::doc_to_json_string(&doc, JsonMode::Relaxed)?;
             file.write_all(json.as_bytes())
                 .await
                 .map_err(|e| format!("Failed to write export file: {}", e))?;
