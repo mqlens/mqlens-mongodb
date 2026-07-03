@@ -47,14 +47,14 @@ vi.mock('@tauri-apps/api/path', () => ({
 const saveMock = vi.fn();
 const openMock = vi.fn();
 const writeTextFileMock = vi.fn();
-const readTextFileMock = vi.fn();
+const writeFileMock = vi.fn();
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   save: (...a: any[]) => saveMock(...a),
   open: (...a: any[]) => openMock(...a),
 }));
 vi.mock('@tauri-apps/plugin-fs', () => ({
   writeTextFile: (...a: any[]) => writeTextFileMock(...a),
-  readTextFile: (...a: any[]) => readTextFileMock(...a),
+  writeFile: (...a: any[]) => writeFileMock(...a),
 }));
 
 // Mock Sidebar component
@@ -568,7 +568,7 @@ describe('App Component', () => {
     expect(await screen.findByText(/"VIP Vic"/)).toBeInTheDocument();
   });
 
-  it('imports documents from a JSON file via import_documents (H5)', async () => {
+  it('imports documents from a file via import_collection_file (H5)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd: string, args: any) => {
       calls.push({ cmd, args });
@@ -578,13 +578,13 @@ describe('App Component', () => {
       if (cmd === 'load_collection_queries') {
         return Promise.resolve({ saved: [], history: [], default: null });
       }
-      if (cmd === 'import_documents') {
+      if (cmd === 'import_collection_file') {
         return Promise.resolve({ inserted: 2, updated: 0, skipped: 0 });
       }
       return Promise.resolve([]);
     });
-    openMock.mockResolvedValue('/tmp/data.json');
-    readTextFileMock.mockResolvedValue('[{"name":"Ada"},{"name":"Bob"}]');
+    // The backend parses the file from disk; the frontend only forwards path + format.
+    openMock.mockResolvedValue('/tmp/data.jsonl');
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
     renderWithProviders(<App />);
@@ -599,14 +599,15 @@ describe('App Component', () => {
     fireEvent.click(await screen.findByTestId('dialog-choice-skip'));
 
     await waitFor(() => {
-      const imp = calls.find((c) => c.cmd === 'import_documents');
+      const imp = calls.find((c) => c.cmd === 'import_collection_file');
       expect(imp).toBeTruthy();
       expect(imp.args).toMatchObject({
         database: 'sales_db',
         collection: 'customers',
+        path: '/tmp/data.jsonl',
+        format: 'ndjson',
         mode: 'skip',
       });
-      expect(imp.args.docs).toEqual([{ name: 'Ada' }, { name: 'Bob' }]);
     });
   });
 
@@ -654,7 +655,7 @@ describe('App Component', () => {
 
     fireEvent.click(screen.getByTestId('export-btn'));
     expect(await screen.findByTestId('export-view')).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('export-full-json-btn'));
+    fireEvent.click(screen.getByTestId('export-full-btn'));
 
     await waitFor(() => {
       const exp = calls.find((c) => c.cmd === 'start_collection_export');
@@ -758,20 +759,21 @@ describe('App Component', () => {
     expect(countAfter).toBe(1);
   });
 
-  it('aborts import on a malformed file without calling the backend (H5)', async () => {
-    const calls: any[] = [];
-    mockInvoke.mockImplementation((cmd: string, args: any) => {
-      calls.push({ cmd, args });
+  it('surfaces a malformed-file backend error as an import error toast (H5)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'execute_mql_query') {
         return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
       }
       if (cmd === 'load_collection_queries') {
         return Promise.resolve({ saved: [], history: [], default: null });
       }
+      if (cmd === 'import_collection_file') {
+        // The backend parses the file and rejects on malformed input.
+        return Promise.reject('Invalid JSON: expected value at line 1');
+      }
       return Promise.resolve([]);
     });
     openMock.mockResolvedValue('/tmp/bad.json');
-    readTextFileMock.mockResolvedValue('{not valid json');
 
     const { fireEvent } = await import('@testing-library/react');
     renderWithProviders(<App />);
@@ -781,10 +783,9 @@ describe('App Component', () => {
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('import-btn'));
-
-    // The malformed file surfaces an in-app error toast and no write happens.
-    expect(await screen.findByText(/Import aborted/)).toBeInTheDocument();
-    expect(calls.find((c) => c.cmd === 'import_documents')).toBeFalsy();
+    // Pick a duplicate-handling mode, then the backend reports the parse failure.
+    fireEvent.click(await screen.findByTestId('dialog-choice-skip'));
+    expect(await screen.findByText(/Import failed/)).toBeInTheDocument();
   });
 
   it('isolates query editor state per collection tab (#120)', async () => {

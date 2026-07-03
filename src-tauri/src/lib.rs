@@ -29,8 +29,9 @@ pub use db::ddl::{
     rename_collection_impl, rename_database_impl, DatabaseRenameResult,
 };
 pub use db::documents::{
-    delete_document_impl, delete_many_impl, import_documents_impl, insert_document_impl,
-    json_to_bson_document, update_document_impl, update_many_impl, ImportResult,
+    delete_document_impl, delete_many_impl, import_collection_file_impl, import_documents_impl,
+    insert_document_impl, json_to_bson_document, parse_bson_docs, parse_csv_docs,
+    parse_json_array_docs, parse_ndjson_docs, update_document_impl, update_many_impl, ImportResult,
 };
 pub use db::export::{start_collection_export_impl, start_filtered_export_impl};
 pub use db::gridfs::{
@@ -1319,15 +1320,16 @@ async fn insert_document(
 }
 
 #[tauri::command]
-async fn import_documents(
+async fn import_collection_file(
     state: tauri::State<'_, AppState>,
     id: String,
     database: String,
     collection: String,
-    docs: Vec<serde_json::Value>,
+    path: String,
+    format: String,
     mode: String,
 ) -> Result<ImportResult, String> {
-    import_documents_impl(&state, &id, &database, &collection, docs, &mode).await
+    import_collection_file_impl(&state, &id, &database, &collection, &path, &format, &mode).await
 }
 
 #[tauri::command]
@@ -1587,7 +1589,7 @@ pub fn run() {
             upload_gridfs_file,
             delete_gridfs_file,
             insert_document,
-            import_documents,
+            import_collection_file,
             update_document,
             execute_mql_query,
             execute_aggregate,

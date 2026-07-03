@@ -34,8 +34,9 @@ import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from '
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
 import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
-import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
+import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
+import { BSON, EJSON } from 'bson';
+import { toJson, toCsv, toNdjson } from './lib/dataTransfer';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
@@ -1241,7 +1242,7 @@ function Workspace() {
 
   const handleExportForTab = async (
     targetTab: QueryTab | null,
-    format: 'json' | 'csv',
+    format: 'json' | 'csv' | 'bson' | 'ndjson',
     scope: 'current' | 'full' | 'filtered' = 'current',
     query?: FilteredExportQuery
   ) => {
@@ -1254,9 +1255,11 @@ function Workspace() {
     }
     try {
       const suffix = scope === 'full' ? '.full' : scope === 'filtered' ? '.filtered' : '';
+      // NDJSON conventionally uses the .jsonl extension; the rest match the format.
+      const ext = format === 'ndjson' ? 'jsonl' : format;
       const path = await save({
-        defaultPath: `${targetTab.collection}${suffix}.${format}`,
-        filters: [{ name: format.toUpperCase(), extensions: [format] }],
+        defaultPath: `${targetTab.collection}${suffix}.${ext}`,
+        filters: [{ name: format.toUpperCase(), extensions: [ext] }],
       });
       if (!path) return; // cancelled
       if (scope === 'full') {
@@ -1291,8 +1294,23 @@ function Workspace() {
         return;
       }
 
-      const content = format === 'json' ? toJson(docs) : toCsv(docs);
-      await writeTextFile(path, content);
+      if (format === 'bson') {
+        // Revive relaxed-EJSON grid objects to real BSON types, then concatenate
+        // each serialized document (mongoexport's binary format).
+        const chunks = docs.map((d) => BSON.serialize(EJSON.parse(JSON.stringify(d))));
+        const total = chunks.reduce((n, c) => n + c.length, 0);
+        const bytes = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.length;
+        }
+        await writeFile(path, bytes);
+      } else {
+        const content =
+          format === 'json' ? toJson(docs) : format === 'ndjson' ? toNdjson(docs) : toCsv(docs);
+        await writeTextFile(path, content);
+      }
       toast(`Exported ${docs.length} document(s) to ${path}`, 'success');
     } catch (err: any) {
       toast(`Export failed: ${err?.message || err}`, 'error');
@@ -1329,30 +1347,28 @@ function Workspace() {
     };
   };
 
+  // Map a chosen import file to its backend format by extension.
+  const importFormatForPath = (path: string): 'json' | 'ndjson' | 'csv' | 'bson' => {
+    const lower = path.toLowerCase();
+    if (lower.endsWith('.bson')) return 'bson';
+    if (lower.endsWith('.csv')) return 'csv';
+    if (lower.endsWith('.jsonl') || lower.endsWith('.ndjson')) return 'ndjson';
+    return 'json';
+  };
+
   const handleImport = async () => {
     if (!activeTab || activeTab.type !== 'collection') return;
     try {
       const path = await open({
         multiple: false,
-        filters: [{ name: 'Data', extensions: ['json', 'csv'] }],
+        filters: [{ name: 'Data', extensions: ['json', 'jsonl', 'ndjson', 'csv', 'bson'] }],
       });
       if (!path || typeof path !== 'string') return; // cancelled
-      const text = await readTextFile(path);
-      // Parse by extension; a malformed file aborts before any write.
-      let docs: Record<string, any>[];
-      try {
-        docs = path.toLowerCase().endsWith('.csv') ? parseCsv(text) : parseJson(text);
-      } catch (parseErr: any) {
-        toast(`Import aborted — could not parse file: ${parseErr?.message || parseErr}`, 'error');
-        return;
-      }
-      if (docs.length === 0) {
-        toast('Nothing to import: the file has no documents.', 'error');
-        return;
-      }
-      // Choose the duplicate-handling mode.
+      const format = importFormatForPath(path);
+      // Choose the duplicate-handling mode. The backend parses the file (binary
+      // BSON cannot be read in the browser), so a malformed file fails there.
       const mode = await choose({
-        title: `Import ${docs.length} document(s)`,
+        title: 'Import documents',
         message: 'How should existing documents with the same _id be handled?',
         choices: [
           { value: 'skip', label: 'Skip duplicates (insert new only)' },
@@ -1362,12 +1378,13 @@ function Workspace() {
       });
       if (!mode) return; // cancelled
       const res = await invoke<{ inserted: number; updated: number; skipped: number }>(
-        'import_documents',
+        'import_collection_file',
         {
           id: activeTab.connectionId,
           database: activeTab.db,
           collection: activeTab.collection,
-          docs,
+          path,
+          format,
           mode,
         }
       );

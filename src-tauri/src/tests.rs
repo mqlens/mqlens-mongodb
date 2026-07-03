@@ -6,10 +6,11 @@ mod tests {
         delete_document_impl, delete_gridfs_file_impl, disconnect_db_impl,
         download_gridfs_file_impl, drop_collection_impl,
         drop_database_impl, execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
-        import_documents_impl, insert_document_impl, json_to_bson_document, list_collections_impl,
-        list_databases_impl, list_gridfs_files_impl, list_indexes_impl, rename_collection_impl,
-        rename_database_impl, start_collection_export_impl, start_filtered_export_impl,
-        update_document_impl, upload_gridfs_file_impl,
+        import_collection_file_impl, import_documents_impl, insert_document_impl,
+        json_to_bson_document, list_collections_impl, list_databases_impl, list_gridfs_files_impl,
+        list_indexes_impl, parse_bson_docs, parse_csv_docs, parse_json_array_docs, parse_ndjson_docs,
+        rename_collection_impl, rename_database_impl, start_collection_export_impl,
+        start_filtered_export_impl, update_document_impl, upload_gridfs_file_impl,
     };
     use crate::{
         create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
@@ -233,6 +234,81 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// Drive an export task to completion (or timeout) and return the finished TaskInfo.
+    async fn await_export(state: &AppState, task_id: &str) -> crate::TaskInfo {
+        for _ in 0..50 {
+            let status = state
+                .tasks
+                .lock()
+                .unwrap()
+                .get(task_id)
+                .map(|t| t.status.clone())
+                .unwrap();
+            if status != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        state.tasks.lock().unwrap().get(task_id).cloned().unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_mock_full_collection_export_task_writes_ndjson() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let path = temp_import_path("ndjson");
+        let path_str = path.to_string_lossy().to_string();
+        let task = start_collection_export_impl(
+            &state, &conn_id, "sales_db", "customers", "ndjson", &path_str,
+        )
+        .await
+        .expect("start ndjson export");
+        let finished = await_export(&state, &task.id).await;
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 3);
+
+        let text = std::fs::read_to_string(&path).expect("ndjson file");
+        // One document per line, no array brackets, and it round-trips back to 3 docs.
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 3);
+        assert!(!text.contains('['));
+        let docs = parse_ndjson_docs(&text).expect("re-parse ndjson");
+        assert_eq!(docs.len(), 3);
+        assert!(text.contains("Alice Smith"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_mock_full_collection_export_task_writes_bson() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let path = temp_import_path("bson");
+        let path_str = path.to_string_lossy().to_string();
+        let task = start_collection_export_impl(
+            &state, &conn_id, "sales_db", "customers", "bson", &path_str,
+        )
+        .await
+        .expect("start bson export");
+        let finished = await_export(&state, &task.id).await;
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 3);
+
+        // The on-disk bytes are concatenated BSON and parse back to 3 documents.
+        let bytes = std::fs::read(&path).expect("bson file");
+        let docs = parse_bson_docs(&bytes).expect("re-parse bson");
+        assert_eq!(docs.len(), 3);
+        let names: Vec<String> = docs
+            .iter()
+            .filter_map(|d| d.get_str("name").ok().map(|s| s.to_string()))
+            .collect();
+        assert!(names.iter().any(|n| n == "Alice Smith"));
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[tokio::test]
     async fn test_mock_filtered_export_writes_only_matching_subset() {
         let state = AppState::new();
@@ -328,7 +404,7 @@ mod tests {
         .await
         .err()
         .expect("invalid export format should error");
-        assert_eq!(invalid_format, "Export format must be json or csv");
+        assert_eq!(invalid_format, "Export format must be json, ndjson, bson, or csv");
 
         let missing_path = start_filtered_export_impl(
             &state, "missing", "db", "coll", "json", "   ", "{}", "{}", "{}", "",
@@ -368,7 +444,7 @@ mod tests {
                 .await
                 .err()
                 .expect("invalid export format should error");
-        assert_eq!(invalid_format, "Export format must be json or csv");
+        assert_eq!(invalid_format, "Export format must be json, ndjson, bson, or csv");
 
         let missing_path =
             start_collection_export_impl(&state, "missing", "db", "coll", "json", "   ")
@@ -2500,5 +2576,174 @@ mod tests {
         // Correct length but a key that doesn't match this vault.
         let wrong = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
         assert!(decode_and_verify_key(&meta, &wrong).is_err());
+    }
+
+    // ── Import file parsers (issue #127: BSON / NDJSON / JSON / CSV) ───────
+
+    fn temp_import_path(ext: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "mqlens-import-test-{}-{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            ext
+        ))
+    }
+
+    #[test]
+    fn test_parse_json_array_docs() {
+        let docs =
+            parse_json_array_docs(r#"[{"_id": 1, "name": "Ada"}, {"_id": 2, "name": "Bob"}]"#)
+                .expect("parse json array");
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].get_str("name").unwrap(), "Ada");
+        assert_eq!(docs[1].get_i32("_id").unwrap(), 2);
+    }
+
+    #[test]
+    fn test_parse_json_array_docs_rejects_non_array() {
+        assert!(parse_json_array_docs(r#"{"_id": 1}"#).is_err());
+    }
+
+    #[test]
+    fn test_parse_ndjson_docs_skips_blank_lines() {
+        // One doc per line, blank lines (incl. trailing newline) tolerated.
+        let text = "{\"_id\": 1, \"name\": \"Ada\"}\n\n{\"_id\": 2, \"name\": \"Bob\"}\n";
+        let docs = parse_ndjson_docs(text).expect("parse ndjson");
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].get_str("name").unwrap(), "Ada");
+        assert_eq!(docs[1].get_str("name").unwrap(), "Bob");
+    }
+
+    #[test]
+    fn test_parse_ndjson_docs_interprets_extended_json() {
+        // An $oid wrapper must revive to a real ObjectId, not a sub-document.
+        let oid = mongodb::bson::oid::ObjectId::new();
+        let line = format!("{{\"_id\": {{\"$oid\": \"{}\"}}}}", oid.to_hex());
+        let docs = parse_ndjson_docs(&line).expect("parse ndjson ejson");
+        assert_eq!(docs[0].get_object_id("_id").unwrap(), oid);
+    }
+
+    #[test]
+    fn test_parse_bson_docs_roundtrip_preserves_types() {
+        use mongodb::bson::{doc, oid::ObjectId, DateTime, Decimal128};
+        use std::str::FromStr;
+        let oid = ObjectId::new();
+        let when = DateTime::from_millis(1_700_000_000_000);
+        let dec = Decimal128::from_str("123.45").unwrap();
+        let original = doc! { "_id": oid, "when": when, "amount": dec, "name": "Ada" };
+        // Two concatenated BSON documents, mongoexport's on-disk format.
+        let mut bytes = mongodb::bson::to_vec(&original).expect("serialize bson");
+        bytes.extend(mongodb::bson::to_vec(&doc! { "_id": 2, "name": "Bob" }).unwrap());
+
+        let docs = parse_bson_docs(&bytes).expect("parse bson");
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].get_object_id("_id").unwrap(), oid);
+        assert_eq!(docs[0].get_datetime("when").unwrap(), &when);
+        assert_eq!(
+            docs[0].get("amount"),
+            Some(&mongodb::bson::Bson::Decimal128(dec))
+        );
+        assert_eq!(docs[1].get_str("name").unwrap(), "Bob");
+    }
+
+    #[test]
+    fn test_parse_bson_docs_empty_input() {
+        assert_eq!(parse_bson_docs(&[]).expect("empty bson").len(), 0);
+    }
+
+    #[test]
+    fn test_parse_csv_docs_revives_cell_values() {
+        // Numbers/bools/objects parse as JSON; bare text stays a string.
+        let text = "_id,name,active,tags\n1,Ada,true,\"[1,2]\"\n2,Bob,false,plain";
+        let docs = parse_csv_docs(text).expect("parse csv");
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].get_i32("_id").unwrap(), 1);
+        assert_eq!(docs[0].get_str("name").unwrap(), "Ada");
+        assert!(docs[0].get_bool("active").unwrap());
+        assert_eq!(
+            docs[0].get_array("tags").unwrap(),
+            &vec![mongodb::bson::Bson::Int32(1), mongodb::bson::Bson::Int32(2)]
+        );
+        assert_eq!(docs[1].get_str("tags").unwrap(), "plain");
+    }
+
+    #[tokio::test]
+    async fn test_mock_import_collection_file_ndjson() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let path = temp_import_path("ndjson");
+        std::fs::write(
+            &path,
+            "{\"_id\": 1, \"name\": \"Ada\"}\n{\"_id\": 2, \"name\": \"Bob\"}\n",
+        )
+        .unwrap();
+
+        let res = import_collection_file_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            &path.to_string_lossy(),
+            "ndjson",
+            "skip",
+        )
+        .await
+        .expect("ndjson import validates on mock");
+        assert_eq!(res.inserted, 2);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_mock_import_collection_file_bson() {
+        use mongodb::bson::doc;
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let path = temp_import_path("bson");
+        let mut bytes = mongodb::bson::to_vec(&doc! { "_id": 1, "name": "Ada" }).unwrap();
+        bytes.extend(mongodb::bson::to_vec(&doc! { "_id": 2, "name": "Bob" }).unwrap());
+        std::fs::write(&path, &bytes).unwrap();
+
+        let res = import_collection_file_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            &path.to_string_lossy(),
+            "bson",
+            "skip",
+        )
+        .await
+        .expect("bson import validates on mock");
+        assert_eq!(res.inserted, 2);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_import_collection_file_rejects_unknown_format() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let path = temp_import_path("txt");
+        std::fs::write(&path, "nope").unwrap();
+        let res = import_collection_file_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            &path.to_string_lossy(),
+            "yaml",
+            "skip",
+        )
+        .await;
+        assert!(res.is_err(), "unknown import format must error");
+        let _ = std::fs::remove_file(&path);
     }
 }

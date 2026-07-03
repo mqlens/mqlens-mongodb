@@ -62,6 +62,8 @@ function renderExportView(
   );
 }
 
+type ExportFormat = 'json' | 'csv' | 'bson' | 'ndjson';
+
 /** Mirrors App handleExportForTab enough to exercise invoke + error toasts. */
 function ExportViewHarness({
   currentResultCount = 3,
@@ -73,7 +75,7 @@ function ExportViewHarness({
   const { toast } = useDialogs();
 
   const onExport = async (
-    format: 'json' | 'csv',
+    format: ExportFormat,
     scope: 'current' | 'full' | 'filtered'
   ) => {
     if (scope === 'current' && currentResultCount === 0) return;
@@ -140,36 +142,46 @@ describe('ExportView', () => {
     expect(screen.getByText('3 loaded documents')).toBeInTheDocument();
   });
 
-  it('disables current-result export buttons when there are no loaded documents', () => {
+  it('offers all four formats in the picker', () => {
+    renderExportView();
+    for (const fmt of ['json', 'ndjson', 'bson', 'csv'] as const) {
+      expect(screen.getByTestId(`export-format-${fmt}`)).toBeInTheDocument();
+    }
+  });
+
+  it('disables the current-result export button when there are no loaded documents', () => {
     renderExportView({ currentResultCount: 0 });
-    expect(screen.getByTestId('export-current-json-btn')).toBeDisabled();
-    expect(screen.getByTestId('export-current-csv-btn')).toBeDisabled();
+    expect(screen.getByTestId('export-current-btn')).toBeDisabled();
   });
 
-  it('starts a current-results JSON export with the selected format', () => {
+  it('exports current results in the default (JSON) format', () => {
     const onExport = vi.fn();
     renderExportView({ onExport });
-    fireEvent.click(screen.getByTestId('export-current-json-btn'));
+    fireEvent.click(screen.getByTestId('export-current-btn'));
     expect(onExport).toHaveBeenCalledWith('json', 'current');
-    fireEvent.click(screen.getByTestId('export-current-csv-btn'));
-    expect(onExport).toHaveBeenCalledWith('csv', 'current');
   });
 
-  it('starts a full-collection export in the chosen format', () => {
+  it('exports current results in the selected format', () => {
     const onExport = vi.fn();
     renderExportView({ onExport });
-    fireEvent.click(screen.getByTestId('export-full-json-btn'));
-    expect(onExport).toHaveBeenCalledWith('json', 'full');
-    fireEvent.click(screen.getByTestId('export-full-csv-btn'));
-    expect(onExport).toHaveBeenCalledWith('csv', 'full');
+    fireEvent.click(screen.getByTestId('export-format-ndjson'));
+    fireEvent.click(screen.getByTestId('export-current-btn'));
+    expect(onExport).toHaveBeenCalledWith('ndjson', 'current');
+  });
+
+  it('exports the full collection in the selected format', () => {
+    const onExport = vi.fn();
+    renderExportView({ onExport });
+    fireEvent.click(screen.getByTestId('export-format-bson'));
+    fireEvent.click(screen.getByTestId('export-full-btn'));
+    expect(onExport).toHaveBeenCalledWith('bson', 'full');
   });
 
   it('seeds the filter editor and keeps filtered export enabled by default', () => {
     renderExportView({ filtered: { kind: 'find', filter: '{}', matchCount: null } });
     const input = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
     expect(input.value).toBe('{}');
-    expect(screen.getByTestId('export-filtered-json-btn')).not.toBeDisabled();
-    expect(screen.getByTestId('export-filtered-csv-btn')).not.toBeDisabled();
+    expect(screen.getByTestId('export-filtered-btn')).not.toBeDisabled();
   });
 
   it('seeds from the active find query and exports the edited query', () => {
@@ -189,7 +201,7 @@ describe('ExportView', () => {
     expect(screen.getByText('1,234 matching documents')).toBeInTheDocument();
 
     fireEvent.change(filterInput, { target: { value: '{"tier":"silver"}' } });
-    fireEvent.click(screen.getByTestId('export-filtered-json-btn'));
+    fireEvent.click(screen.getByTestId('export-filtered-btn'));
     expect(onExport).toHaveBeenCalledWith('json', 'filtered', {
       kind: 'find',
       filter: '{"tier":"silver"}',
@@ -203,8 +215,7 @@ describe('ExportView', () => {
     fireEvent.change(screen.getByTestId('query-filter-input'), {
       target: { value: '{bad' },
     });
-    expect(screen.getByTestId('export-filtered-json-btn')).toBeDisabled();
-    expect(screen.getByTestId('export-filtered-csv-btn')).toBeDisabled();
+    expect(screen.getByTestId('export-filtered-btn')).toBeDisabled();
     expect(screen.getAllByText('Invalid JSON').length).toBeGreaterThan(0);
   });
 
@@ -250,7 +261,8 @@ describe('ExportView', () => {
     expect(pipelineInput.value).toContain('$match');
 
     fireEvent.change(pipelineInput, { target: { value: '[{"$limit":5}]' } });
-    fireEvent.click(screen.getByTestId('export-filtered-csv-btn'));
+    fireEvent.click(screen.getByTestId('export-format-csv'));
+    fireEvent.click(screen.getByTestId('export-filtered-btn'));
     expect(onExport).toHaveBeenCalledWith('csv', 'filtered', {
       kind: 'aggregate',
       pipeline: '[{"$limit":5}]',
@@ -264,14 +276,14 @@ describe('ExportView', () => {
     expect(onOpenTasks).toHaveBeenCalledTimes(1);
   });
 
-  it('starts a background export via invoke when full collection JSON is chosen', async () => {
+  it('starts a background export via invoke when full collection is chosen', async () => {
     renderWithProviders(
       <DialogProvider>
         <ExportViewHarness />
       </DialogProvider>
     );
 
-    fireEvent.click(screen.getByTestId('export-full-json-btn'));
+    fireEvent.click(screen.getByTestId('export-full-btn'));
 
     await waitFor(() => {
       expect(saveMock).toHaveBeenCalled();
@@ -292,7 +304,7 @@ describe('ExportView', () => {
       </DialogProvider>
     );
 
-    fireEvent.click(screen.getByTestId('export-full-json-btn'));
+    fireEvent.click(screen.getByTestId('export-full-btn'));
 
     expect(await screen.findByText('Export failed: disk full')).toBeInTheDocument();
   });
