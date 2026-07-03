@@ -5,6 +5,11 @@
 //! - [`start_filtered_export_impl`] — the documents matching an active find filter
 //!   (filter + sort + projection) or an aggregation pipeline.
 
+pub mod options;
+pub mod json;
+
+use options::JsonMode;
+
 use crate::state::LockExt;
 use crate::{mock_db, AppState, TaskInfo};
 use mongodb::bson::{doc, Document};
@@ -223,6 +228,31 @@ async fn export_mock_to_file(
         file.write_all(b"\n]\n")
             .await
             .map_err(|e| format!("Failed to write export file: {}", e))?;
+    } else if format == "ndjson" {
+        for (idx, doc) in docs.iter().enumerate() {
+            file.write_all(doc.as_bytes())
+                .await
+                .map_err(|e| format!("Failed to write export file: {}", e))?;
+            file.write_all(b"\n")
+                .await
+                .map_err(|e| format!("Failed to write export file: {}", e))?;
+            let processed = idx as u64 + 1;
+            update_task(&tasks, &task_id, |task| {
+                task.processed = processed;
+            });
+        }
+    } else if format == "bson" {
+        for (idx, doc) in docs.iter().enumerate() {
+            let bytes = mongodb::bson::to_vec(&crate::json_to_bson_document(doc)?)
+                .map_err(|e| format!("BSON serialization error: {}", e))?;
+            file.write_all(&bytes)
+                .await
+                .map_err(|e| format!("Failed to write export file: {}", e))?;
+            let processed = idx as u64 + 1;
+            update_task(&tasks, &task_id, |task| {
+                task.processed = processed;
+            });
+        }
     } else {
         let values: Vec<serde_json::Value> = docs
             .iter()
@@ -314,9 +344,7 @@ async fn export_real_to_file(
         let mut processed = 0u64;
         while let Some(result) = cursor.next().await {
             let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            let json_val = bson_doc_to_json_value(&doc)?;
-            let json = serde_json::to_string(&json_val)
-                .map_err(|e| format!("JSON serialization error: {}", e))?;
+            let json = json::doc_to_json_string(&doc, JsonMode::Relaxed)?;
             if processed > 0 {
                 file.write_all(b",\n")
                     .await
@@ -335,6 +363,59 @@ async fn export_real_to_file(
         file.write_all(b"\n]\n")
             .await
             .map_err(|e| format!("Failed to write export file: {}", e))?;
+        update_task(&tasks, &task_id, |task| {
+            task.processed = processed;
+        });
+        Ok(processed)
+    } else if format == "ndjson" {
+        // One relaxed-EJSON document per line — the same per-doc value as the JSON
+        // array path, so it round-trips identically.
+        update_task(&tasks, &task_id, |task| {
+            task.message = "Writing NDJSON".to_string();
+        });
+        let mut cursor = open_export_cursor(&coll, &source).await?;
+        let mut processed = 0u64;
+        while let Some(result) = cursor.next().await {
+            let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
+            let json = json::doc_to_json_string(&doc, JsonMode::Relaxed)?;
+            file.write_all(json.as_bytes())
+                .await
+                .map_err(|e| format!("Failed to write export file: {}", e))?;
+            file.write_all(b"\n")
+                .await
+                .map_err(|e| format!("Failed to write export file: {}", e))?;
+            processed += 1;
+            if processed == total || processed % 100 == 0 {
+                update_task(&tasks, &task_id, |task| {
+                    task.processed = processed;
+                });
+            }
+        }
+        update_task(&tasks, &task_id, |task| {
+            task.processed = processed;
+        });
+        Ok(processed)
+    } else if format == "bson" {
+        // Concatenated raw BSON — mongoexport's binary format, fully type-preserving.
+        update_task(&tasks, &task_id, |task| {
+            task.message = "Writing BSON".to_string();
+        });
+        let mut cursor = open_export_cursor(&coll, &source).await?;
+        let mut processed = 0u64;
+        while let Some(result) = cursor.next().await {
+            let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
+            let bytes = mongodb::bson::to_vec(&doc)
+                .map_err(|e| format!("BSON serialization error: {}", e))?;
+            file.write_all(&bytes)
+                .await
+                .map_err(|e| format!("Failed to write export file: {}", e))?;
+            processed += 1;
+            if processed == total || processed % 100 == 0 {
+                update_task(&tasks, &task_id, |task| {
+                    task.processed = processed;
+                });
+            }
+        }
         update_task(&tasks, &task_id, |task| {
             task.processed = processed;
         });
@@ -415,8 +496,8 @@ async fn export_real_to_file(
 /// Normalize + validate the format and path shared by both export entry points.
 fn validate_format_and_path(format: &str, path: &str) -> Result<String, String> {
     let format = format.trim().to_lowercase();
-    if format != "json" && format != "csv" {
-        return Err("Export format must be json or csv".to_string());
+    if !matches!(format.as_str(), "json" | "csv" | "bson" | "ndjson") {
+        return Err("Export format must be json, ndjson, bson, or csv".to_string());
     }
     if path.trim().is_empty() {
         return Err("Export path is required".to_string());

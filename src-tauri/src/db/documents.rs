@@ -3,18 +3,98 @@
 use crate::limits::{IMPORT_BATCH_SIZE, MAX_IMPORT_DOCS};
 use crate::{connection_is_mock, require_real_client, AppState};
 
-// Parse a JSON string into a BSON Document, interpreting MongoDB Extended JSON
-// (e.g. {"$oid": "..."} -> ObjectId, {"$date": ...} -> DateTime) so that writes
+use mongodb::bson::Document;
+
+// Convert a parsed JSON value into a BSON Document, interpreting MongoDB Extended
+// JSON (e.g. {"$oid": "..."} -> ObjectId, {"$date": ...} -> DateTime) so that writes
 // match documents by their real _id type rather than a literal sub-document.
-pub fn json_to_bson_document(s: &str) -> Result<mongodb::bson::Document, String> {
-    let value: serde_json::Value =
-        serde_json::from_str(s).map_err(|e| format!("Invalid JSON: {}", e))?;
+fn value_to_bson_document(value: serde_json::Value) -> Result<Document, String> {
     let bson = mongodb::bson::Bson::try_from(value)
         .map_err(|e| format!("Invalid BSON/Extended JSON: {}", e))?;
     match bson {
         mongodb::bson::Bson::Document(doc) => Ok(doc),
         _ => Err("Expected a JSON object (e.g. { \"field\": value })".to_string()),
     }
+}
+
+// Parse a JSON string into a BSON Document, interpreting MongoDB Extended JSON.
+pub fn json_to_bson_document(s: &str) -> Result<Document, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(s).map_err(|e| format!("Invalid JSON: {}", e))?;
+    value_to_bson_document(value)
+}
+
+/// Parse a JSON array of documents (`[{…}, {…}]`) — the JSON-array import format.
+pub fn parse_json_array_docs(text: &str) -> Result<Vec<Document>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("Invalid JSON: {}", e))?;
+    let arr = match value {
+        serde_json::Value::Array(arr) => arr,
+        _ => return Err("Expected a JSON array of documents".to_string()),
+    };
+    arr.into_iter().map(value_to_bson_document).collect()
+}
+
+/// Parse newline-delimited JSON (NDJSON/JSONL): one Extended JSON document per line.
+/// Blank and whitespace-only lines are tolerated (incl. a trailing newline).
+pub fn parse_ndjson_docs(text: &str) -> Result<Vec<Document>, String> {
+    let mut docs = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let doc =
+            json_to_bson_document(line).map_err(|e| format!("NDJSON line {}: {}", idx + 1, e))?;
+        docs.push(doc);
+    }
+    Ok(docs)
+}
+
+/// Parse concatenated BSON documents (mongoexport's `.bson` on-disk format).
+pub fn parse_bson_docs(bytes: &[u8]) -> Result<Vec<Document>, String> {
+    use std::io::Cursor;
+    let total = bytes.len() as u64;
+    let mut cursor = Cursor::new(bytes);
+    let mut docs = Vec::new();
+    while cursor.position() < total {
+        let doc = Document::from_reader(&mut cursor).map_err(|e| format!("Invalid BSON: {}", e))?;
+        docs.push(doc);
+    }
+    Ok(docs)
+}
+
+/// Parse CSV text into documents. The first row is the header; each cell is revived
+/// to its JSON value when parseable (number/bool/object/array), else kept as a string.
+pub fn parse_csv_docs(text: &str) -> Result<Vec<Document>, String> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(text.as_bytes());
+    let headers: Vec<String> = reader
+        .headers()
+        .map_err(|e| format!("Invalid CSV header: {}", e))?
+        .iter()
+        .map(|h| h.to_string())
+        .collect();
+    let mut docs = Vec::new();
+    for (idx, record) in reader.records().enumerate() {
+        let record = record.map_err(|e| format!("Invalid CSV row {}: {}", idx + 2, e))?;
+        let mut map = serde_json::Map::with_capacity(headers.len());
+        for (col, header) in headers.iter().enumerate() {
+            let cell = record.get(col).unwrap_or("");
+            map.insert(header.clone(), revive_csv_cell(cell));
+        }
+        docs.push(value_to_bson_document(serde_json::Value::Object(map))?);
+    }
+    Ok(docs)
+}
+
+/// A CSV cell becomes its JSON value when parseable, otherwise the raw string
+/// (matching the frontend importer's `parseCell`).
+fn revive_csv_cell(cell: &str) -> serde_json::Value {
+    if cell.is_empty() {
+        return serde_json::Value::String(String::new());
+    }
+    serde_json::from_str(cell).unwrap_or_else(|_| serde_json::Value::String(cell.to_string()))
 }
 
 pub async fn delete_document_impl(
@@ -163,19 +243,60 @@ pub async fn import_documents_impl(
     docs: Vec<serde_json::Value>,
     mode: &str,
 ) -> Result<ImportResult, String> {
-    if docs.len() > MAX_IMPORT_DOCS {
+    // Convert all docs up front; a bad doc fails the whole import before writing.
+    let mut bson_docs: Vec<Document> = Vec::with_capacity(docs.len());
+    for value in docs {
+        bson_docs.push(value_to_bson_document(value)?);
+    }
+    finalize_import(state, id, database, collection, bson_docs, mode).await
+}
+
+/// Import a collection from a file on disk, parsing by `format`
+/// (`json` | `ndjson` | `bson` | `csv`). This is the source of truth for
+/// file-based import — binary BSON cannot ride the JSON-value IPC path.
+pub async fn import_collection_file_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    path: &str,
+    format: &str,
+    mode: &str,
+) -> Result<ImportResult, String> {
+    let bson_docs = match format.trim().to_lowercase().as_str() {
+        "json" => parse_json_array_docs(&read_text(path)?)?,
+        "ndjson" | "jsonl" => parse_ndjson_docs(&read_text(path)?)?,
+        "csv" => parse_csv_docs(&read_text(path)?)?,
+        "bson" => parse_bson_docs(&read_bytes(path)?)?,
+        other => return Err(format!("Unsupported import format: {}", other)),
+    };
+    finalize_import(state, id, database, collection, bson_docs, mode).await
+}
+
+fn read_text(path: &str) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| format!("Failed to read import file: {}", e))
+}
+
+fn read_bytes(path: &str) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("Failed to read import file: {}", e))
+}
+
+/// Enforce the batch cap, short-circuit mock connections (validate only), then
+/// write the documents to the live collection under the duplicate-handling mode.
+async fn finalize_import(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    bson_docs: Vec<Document>,
+    mode: &str,
+) -> Result<ImportResult, String> {
+    if bson_docs.len() > MAX_IMPORT_DOCS {
         return Err(format!(
             "Import too large ({} documents). Maximum per batch is {} — split the file or use collection export/import on disk.",
-            docs.len(),
+            bson_docs.len(),
             MAX_IMPORT_DOCS
         ));
-    }
-
-    // Convert all docs up front; a bad doc fails the whole import before writing.
-    let mut bson_docs: Vec<mongodb::bson::Document> = Vec::with_capacity(docs.len());
-    for value in &docs {
-        let s = serde_json::to_string(value).map_err(|e| format!("Invalid document: {}", e))?;
-        bson_docs.push(json_to_bson_document(&s)?);
     }
 
     if connection_is_mock(state, id)? {
@@ -195,10 +316,17 @@ pub async fn import_documents_impl(
     }
 
     let client = require_real_client(state, id)?;
-    let coll = client
-        .database(database)
-        .collection::<mongodb::bson::Document>(collection);
+    let coll = client.database(database).collection::<Document>(collection);
+    write_imported_docs(&coll, bson_docs, mode).await
+}
 
+/// Write already-converted BSON documents to a live collection under the
+/// duplicate-handling mode. Shared by the JSON-value and file import paths.
+async fn write_imported_docs(
+    coll: &mongodb::Collection<Document>,
+    bson_docs: Vec<Document>,
+    mode: &str,
+) -> Result<ImportResult, String> {
     // Collect the set of incoming _ids that already exist in the collection,
     // keyed by their stringified BSON (same rendering on both sides). Used by
     // skip (partition) and abort (pre-check) so we never rely on bulk-write
@@ -249,7 +377,7 @@ pub async fn import_documents_impl(
             // Existing _ids get replaced (counts as updated); everything else is
             // inserted. This is an upsert-by-_id without relying on the driver's
             // option setters, which vary across versions.
-            let existing = existing_ids(&coll, &bson_docs).await?;
+            let existing = existing_ids(coll, &bson_docs).await?;
             let mut inserted = 0u64;
             let mut updated = 0u64;
             for doc in bson_docs {
@@ -278,7 +406,7 @@ pub async fn import_documents_impl(
         }
         "abort" => {
             // Any incoming _id already present -> abort, write nothing.
-            let existing = existing_ids(&coll, &bson_docs).await?;
+            let existing = existing_ids(coll, &bson_docs).await?;
             if !existing.is_empty() {
                 return Err(format!(
                     "Import aborted: {} document(s) already exist",
@@ -286,7 +414,7 @@ pub async fn import_documents_impl(
                 ));
             }
             let total = bson_docs.len() as u64;
-            insert_many_batched(&coll, bson_docs).await?;
+            insert_many_batched(coll, bson_docs).await?;
             Ok(ImportResult {
                 inserted: total,
                 updated: 0,
@@ -296,7 +424,7 @@ pub async fn import_documents_impl(
         _ => {
             // "skip" (default): insert only docs whose _id does not already exist;
             // count existing ones as skipped. Docs without an _id always insert.
-            let existing = existing_ids(&coll, &bson_docs).await?;
+            let existing = existing_ids(coll, &bson_docs).await?;
             let total = bson_docs.len() as u64;
             let to_insert: Vec<mongodb::bson::Document> = bson_docs
                 .into_iter()
@@ -307,7 +435,7 @@ pub async fn import_documents_impl(
                 .collect();
             let inserted = to_insert.len() as u64;
             if !to_insert.is_empty() {
-                insert_many_batched(&coll, to_insert).await?;
+                insert_many_batched(coll, to_insert).await?;
             }
             Ok(ImportResult {
                 inserted,
