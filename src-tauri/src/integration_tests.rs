@@ -552,9 +552,10 @@ mod integration {
                 format
             ));
             let path_str = path.to_string_lossy().to_string();
-            let task = start_collection_export_impl(&state, &id, &db, "export_me", format, &path_str)
-                .await
-                .expect("start real export");
+            let task =
+                start_collection_export_impl(&state, &id, &db, "export_me", format, &path_str, None)
+                    .await
+                    .expect("start real export");
             let finished = wait_for_task(&state, &task.id).await;
             assert_eq!(finished.status, "completed", "export ({format}) should finish");
             assert_eq!(finished.processed, 2);

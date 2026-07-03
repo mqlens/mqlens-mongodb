@@ -71,7 +71,8 @@
     "vitest": "^4.1.7"
   },
   "overrides": {
-    "dompurify": "3.4.10",
+    "dompurify": "3.4.11",
+    "undici": "7.28.0",
     "@babel/core": "7.29.6",
     "esbuild": "0.28.1"
   }

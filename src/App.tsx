@@ -15,7 +15,14 @@ import { IndexModal } from './components/IndexModal';
 import { MongoShell } from './components/MongoShell';
 import { QuickStart } from './components/QuickStart';
 import { DocumentEditModal } from './components/DocumentEditModal';
-import { ExportView, type FilteredExportSeed, type FilteredExportQuery } from './components/ExportView';
+import {
+  ExportView,
+  DEFAULT_EXPORT_OPTIONS,
+  type ExportFormat,
+  type ExportOptions,
+  type FilteredExportSeed,
+  type FilteredExportQuery,
+} from './components/ExportView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
@@ -34,9 +41,6 @@ import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from '
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
 import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
-import { BSON, EJSON } from 'bson';
-import { toJson, toCsv, toNdjson } from './lib/dataTransfer';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
@@ -447,6 +451,22 @@ function Workspace() {
   }, [isResizing]);
 
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
+
+  // The collection tab an 'export' tab was opened from (results/query source for the
+  // Current Results and Filtered cards). Falls back to a matching collection tab by
+  // namespace when the originating tab has since closed.
+  const exportSourceTab =
+    activeTab && activeTab.type === 'export'
+      ? tabs.find(t => t.id === activeTab.exportSourceTabId && t.type === 'collection') ||
+        tabs.find(
+          t =>
+            t.type === 'collection' &&
+            t.connectionId === activeTab.connectionId &&
+            t.db === activeTab.db &&
+            t.collection === activeTab.collection
+        ) ||
+        null
+      : null;
 
   // MongoDB server version of the active connection, for the status bar.
   const activeConnId = activeTab && activeConnections.some(c => c.id === activeTab.connectionId) ? activeTab.connectionId : null;
@@ -1242,8 +1262,9 @@ function Workspace() {
 
   const handleExportForTab = async (
     targetTab: QueryTab | null,
-    format: 'json' | 'csv' | 'bson' | 'ndjson',
+    format: ExportFormat,
     scope: 'current' | 'full' | 'filtered' = 'current',
+    options: ExportOptions = DEFAULT_EXPORT_OPTIONS,
     query?: FilteredExportQuery
   ) => {
     if (!targetTab || (targetTab.type !== 'collection' && targetTab.type !== 'export')) return;
@@ -1269,6 +1290,7 @@ function Workspace() {
           collection: targetTab.collection,
           format,
           path,
+          options,
         });
         setExportTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
         handleOpenTasksTab();
@@ -1287,6 +1309,9 @@ function Workspace() {
           sort: isAgg ? '{}' : query.sort || '{}',
           projection: isAgg ? '{}' : query.projection || '{}',
           pipeline: isAgg ? query.pipeline : '',
+          skip: !isAgg && query.skip > 0 ? query.skip : null,
+          limit: !isAgg && query.limit > 0 ? query.limit : null,
+          options,
         });
         setExportTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
         handleOpenTasksTab();
@@ -1294,27 +1319,67 @@ function Workspace() {
         return;
       }
 
-      if (format === 'bson') {
-        // Revive relaxed-EJSON grid objects to real BSON types, then concatenate
-        // each serialized document (mongoexport's binary format).
-        const chunks = docs.map((d) => BSON.serialize(EJSON.parse(JSON.stringify(d))));
-        const total = chunks.reduce((n, c) => n + c.length, 0);
-        const bytes = new Uint8Array(total);
-        let offset = 0;
-        for (const chunk of chunks) {
-          bytes.set(chunk, offset);
-          offset += chunk.length;
-        }
-        await writeFile(path, bytes);
-      } else {
-        const content =
-          format === 'json' ? toJson(docs) : format === 'ndjson' ? toNdjson(docs) : toCsv(docs);
-        await writeTextFile(path, content);
-      }
+      // Current-results export: the backend's single formatter handles every
+      // format (including bson/xlsx binary output) so the frontend just forwards
+      // the in-memory docs and lets it write the file.
+      await invoke('format_current_docs', { docs, format, options, path });
       toast(`Exported ${docs.length} document(s) to ${path}`, 'success');
     } catch (err: any) {
       toast(`Export failed: ${err?.message || err}`, 'error');
     }
+  };
+
+  const handleCopyCurrentExport = async (
+    format: 'json' | 'ndjson' | 'csv',
+    options: ExportOptions
+  ) => {
+    if (!exportSourceTab?.results?.length) return;
+    try {
+      const text = await invoke<string | null>('format_current_docs', {
+        docs: exportSourceTab.results,
+        format,
+        options,
+        path: null,
+      });
+      if (text) await navigator.clipboard.writeText(text);
+      toast(`Copied ${exportSourceTab.results.length} document(s) as ${format.toUpperCase()}`, 'success');
+    } catch (err: any) {
+      toast(`Copy failed: ${err?.message || err}`, 'error');
+    }
+  };
+
+  const handleScanExportFields = (query?: FilteredExportQuery) =>
+    invoke<string[]>('sample_export_fields', {
+      id: activeTab?.connectionId,
+      database: activeTab?.db,
+      collection: activeTab?.collection,
+      filter: query?.kind === 'find' ? query.filter : '{}',
+      pipeline: query?.kind === 'aggregate' ? query.pipeline : '',
+    });
+
+  const handlePreviewExport = async (
+    format: ExportFormat,
+    scope: 'current' | 'full' | 'filtered',
+    options: ExportOptions,
+    query?: FilteredExportQuery
+  ): Promise<string> => {
+    if (scope === 'current') {
+      const docs = (exportSourceTab?.results ?? []).slice(0, 5);
+      return (
+        (await invoke<string | null>('format_current_docs', { docs, format, options, path: null })) ?? ''
+      );
+    }
+    return invoke<string>('preview_export', {
+      id: activeTab?.connectionId,
+      database: activeTab?.db,
+      collection: activeTab?.collection,
+      format,
+      filter: query?.kind === 'find' ? query.filter : '{}',
+      sort: query?.kind === 'find' ? query.sort : '{}',
+      projection: query?.kind === 'find' ? query.projection : '{}',
+      pipeline: query?.kind === 'aggregate' ? query.pipeline : '',
+      options,
+    });
   };
 
   // Top-level field names from a tab's loaded documents, for the export query editors'
@@ -1942,15 +2007,7 @@ function Workspace() {
               {activeTab && activeTab.type === 'export' && (() => {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
                 const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
-                const sourceTab =
-                  tabs.find(t => t.id === activeTab.exportSourceTabId && t.type === 'collection') ||
-                  tabs.find(t =>
-                    t.type === 'collection' &&
-                    t.connectionId === activeTab.connectionId &&
-                    t.db === activeTab.db &&
-                    t.collection === activeTab.collection
-                  ) ||
-                  null;
+                const sourceTab = exportSourceTab;
                 return (
                   <ExportView
                     key={`export:${activeTab.connectionId}:${activeTab.db}:${activeTab.collection}`}
@@ -1961,8 +2018,8 @@ function Workspace() {
                     currentResultCount={sourceTab?.results.length || 0}
                     availableFields={fieldsFromResults(sourceTab?.results)}
                     filtered={buildFilteredExportSeed(sourceTab)}
-                    onExport={(format, scope, query) =>
-                      handleExportForTab(sourceTab || activeTab, format, scope, query)
+                    onExport={(format, scope, options, query) =>
+                      handleExportForTab(sourceTab || activeTab, format, scope, options, query)
                     }
                     onCountFilter={(filter) =>
                       invoke<number>('count_documents', {
@@ -1973,6 +2030,9 @@ function Workspace() {
                       })
                     }
                     onOpenTasks={handleOpenTasksTab}
+                    onScanFields={handleScanExportFields}
+                    onCopyCurrent={handleCopyCurrentExport}
+                    onPreview={handlePreviewExport}
                   />
                 );
               })()}
