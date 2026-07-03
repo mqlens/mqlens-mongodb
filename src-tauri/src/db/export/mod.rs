@@ -5,6 +5,8 @@
 //! - [`start_filtered_export_impl`] — the documents matching an active find filter
 //!   (filter + sort + projection) or an aggregation pipeline.
 
+pub mod options;
+
 use crate::state::LockExt;
 use crate::{mock_db, AppState, TaskInfo};
 use mongodb::bson::{doc, Document};
