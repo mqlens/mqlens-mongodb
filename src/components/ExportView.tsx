@@ -654,7 +654,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
               type="button"
               variant="outline"
               size="sm"
-              disabled={!hasCurrentResults || format === 'bson' || format === 'xlsx'}
+              disabled={!hasCurrentResults || format === 'bson' || format === 'xlsx' || noFieldsSelected}
               onClick={() => onCopyCurrent?.(format as 'json' | 'ndjson' | 'csv', effectiveOptions)}
               data-testid="export-copy-current-btn"
             >

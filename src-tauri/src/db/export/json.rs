@@ -41,4 +41,11 @@ mod tests {
         let s = doc_to_json_string(&d, JsonMode::Relaxed).unwrap();
         assert_eq!(s, r#"{"when":{"$date":"2023-11-14T22:13:20Z"}}"#);
     }
+
+    #[test]
+    fn relaxed_mode_renders_sub_second_dates_with_milliseconds() {
+        let d = doc! {"when": DateTime::from_millis(1700000000123i64)};
+        let s = doc_to_json_string(&d, JsonMode::Relaxed).unwrap();
+        assert_eq!(s, r#"{"when":{"$date":"2023-11-14T22:13:20.123Z"}}"#);
+    }
 }

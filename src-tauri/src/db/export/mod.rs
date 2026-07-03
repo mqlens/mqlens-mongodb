@@ -347,9 +347,13 @@ where
                     });
                 }
             }
-            // Workbook::save is a blocking (sync) file write, but this closure runs
-            // on a tokio::spawn-ed task, not the async executor's shared reactor.
-            sink.finish()?;
+            // XlsxSink::finish() does a blocking zip/zopfli Workbook::save; run it on
+            // the blocking thread pool so it doesn't stall an async worker thread
+            // (this export job itself runs inside a tokio::spawn-ed task, which is
+            // scheduled on the runtime's shared worker pool like any other task).
+            tokio::task::spawn_blocking(move || sink.finish())
+                .await
+                .map_err(|e| format!("Excel save task failed: {}", e))??;
             update_task(tasks, task_id, |task| {
                 task.processed = processed;
             });

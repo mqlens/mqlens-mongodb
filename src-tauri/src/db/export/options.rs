@@ -116,9 +116,23 @@ pub fn lookup_path<'a>(doc: &'a Document, path: &str) -> Option<&'a Bson> {
 
 /// Build a find projection from selected dot paths. MongoDB includes `_id`
 /// unless explicitly excluded, so deselecting it adds `_id: 0`.
+///
+/// `sample_export_fields` (schema inference) returns both parent object paths
+/// and their children (e.g. `addr` and `addr.city`), so a field selection can
+/// keep an ancestor and a descendant together. MongoDB rejects a find
+/// projection with such a path collision (`{"addr": 1, "addr.city": 1}`), so
+/// descendants of an already-selected ancestor are dropped here — the
+/// ancestor's projection already includes them.
 pub fn build_projection(fields: &[String]) -> Document {
+    let segmented: Vec<Vec<&str>> = fields.iter().map(|f| f.split('.').collect()).collect();
     let mut projection = Document::new();
-    for field in fields {
+    for (field, segments) in fields.iter().zip(segmented.iter()) {
+        let has_selected_ancestor = segmented.iter().any(|other| {
+            other.len() < segments.len() && &segments[..other.len()] == other.as_slice()
+        });
+        if has_selected_ancestor {
+            continue;
+        }
         projection.insert(field.clone(), 1);
     }
     if !fields.iter().any(|f| f == "_id") {
@@ -212,6 +226,15 @@ mod tests {
         assert_eq!(p, doc! {"name": 1, "addr.city": 1, "_id": 0});
         let p = build_projection(&["_id".into(), "name".into()]);
         assert_eq!(p, doc! {"_id": 1, "name": 1});
+    }
+
+    #[test]
+    fn build_projection_drops_descendants_of_selected_ancestors() {
+        let p = build_projection(&["addr".into(), "addr.city".into(), "name".into()]);
+        assert_eq!(p, doc! {"addr": 1, "name": 1, "_id": 0});
+        // prefix-vs-segment: "addr2.city" is NOT a descendant of "addr"
+        let p = build_projection(&["addr".into(), "addr2.city".into()]);
+        assert_eq!(p, doc! {"addr": 1, "addr2.city": 1, "_id": 0});
     }
 
     #[test]

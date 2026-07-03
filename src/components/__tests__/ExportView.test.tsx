@@ -406,6 +406,7 @@ describe('ExportView', () => {
     fireEvent.click(screen.getByTestId('export-scan-fields-btn'));
     fireEvent.click(await screen.findByTestId('export-field-name'));
     expect(screen.getByTestId('export-full-btn')).toBeDisabled();
+    expect(screen.getByTestId('export-copy-current-btn')).toBeDisabled();
   });
 
   it('includes skip and limit in the filtered query', () => {
