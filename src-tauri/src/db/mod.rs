@@ -6,6 +6,7 @@ pub mod ddl;
 pub mod documents;
 pub mod export;
 pub mod gridfs;
+pub mod import;
 pub mod metadata;
 pub mod query;
 pub mod schema;

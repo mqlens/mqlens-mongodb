@@ -2899,4 +2899,33 @@ mod tests {
         assert!(res.is_err(), "unknown import format must error");
         let _ = std::fs::remove_file(&path);
     }
+
+    #[tokio::test]
+    async fn test_preview_import_truncates_and_reports_inline_errors() {
+        use crate::db::import::{preview_import_impl, ImportSourceArg};
+        // 30 NDJSON lines → only 20 previewed.
+        let text: String = (0..30).map(|i| format!("{{\"n\":{}}}\n", i)).collect();
+        let p = preview_import_impl(
+            ImportSourceArg { path: None, text: Some(text) },
+            "ndjson",
+            None,
+            20,
+        )
+        .await
+        .unwrap();
+        assert_eq!(p.docs.len(), 20);
+        assert!(p.error.is_none());
+
+        // Parse error surfaces inline, docs keep the good prefix.
+        let p = preview_import_impl(
+            ImportSourceArg { path: None, text: Some("{\"a\":1}\nboom\n".into()) },
+            "ndjson",
+            None,
+            20,
+        )
+        .await
+        .unwrap();
+        assert_eq!(p.docs.len(), 1);
+        assert!(p.error.as_deref().unwrap_or("").contains("line 2"));
+    }
 }

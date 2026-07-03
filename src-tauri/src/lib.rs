@@ -41,6 +41,7 @@ pub use db::gridfs::{
     delete_gridfs_file_impl, download_gridfs_file_impl, list_gridfs_files_impl,
     upload_gridfs_file_impl, GridFsFileInfo, GridFsTransferProgress,
 };
+pub use db::import::preview_import_impl;
 pub use db::metadata::{
     create_index_impl, delete_index_impl, list_collections_impl, list_databases_impl,
     list_indexes_impl,
@@ -1395,6 +1396,16 @@ async fn import_collection_file(
 }
 
 #[tauri::command]
+async fn preview_import(
+    source: crate::db::import::ImportSourceArg,
+    format: String,
+    csv_options: Option<crate::db::documents::CsvImportOptions>,
+    limit: Option<usize>,
+) -> Result<crate::db::import::ImportPreview, String> {
+    preview_import_impl(source, &format, csv_options, limit.unwrap_or(20)).await
+}
+
+#[tauri::command]
 async fn update_document(
     state: tauri::State<'_, AppState>,
     id: String,
@@ -1652,6 +1663,7 @@ pub fn run() {
             delete_gridfs_file,
             insert_document,
             import_collection_file,
+            preview_import,
             update_document,
             execute_mql_query,
             execute_aggregate,
