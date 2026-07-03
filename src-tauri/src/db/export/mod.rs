@@ -7,8 +7,9 @@
 
 pub mod options;
 pub mod json;
+pub mod csv;
 
-use options::JsonMode;
+use options::{CsvOptions, JsonMode};
 
 use crate::state::LockExt;
 use crate::{mock_db, AppState, TaskInfo};
@@ -71,35 +72,6 @@ fn prune_export_tasks(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>) {
     for (id, task) in entries.into_iter().take(MAX_TASK_HISTORY) {
         guard.insert(id, task);
     }
-}
-
-fn csv_escape(raw: &str) -> String {
-    if raw.contains(',') || raw.contains('"') || raw.contains('\n') || raw.contains('\r') {
-        format!("\"{}\"", raw.replace('"', "\"\""))
-    } else {
-        raw.to_string()
-    }
-}
-
-fn csv_cell(value: Option<&serde_json::Value>) -> String {
-    match value {
-        None | Some(serde_json::Value::Null) => String::new(),
-        Some(serde_json::Value::String(s)) => csv_escape(s),
-        Some(serde_json::Value::Bool(v)) => csv_escape(&v.to_string()),
-        Some(serde_json::Value::Number(v)) => csv_escape(&v.to_string()),
-        Some(v) => csv_escape(&serde_json::to_string(v).unwrap_or_default()),
-    }
-}
-
-fn top_level_fields(value: &serde_json::Value) -> Vec<String> {
-    match value.as_object() {
-        Some(obj) => obj.keys().cloned().collect(),
-        None => Vec::new(),
-    }
-}
-
-fn bson_doc_to_json_value(doc: &mongodb::bson::Document) -> Result<serde_json::Value, String> {
-    serde_json::to_value(doc).map_err(|e| format!("BSON to JSON error: {}", e))
 }
 
 /// What a real-connection export reads from MongoDB. Filtered exports build a
@@ -254,44 +226,28 @@ async fn export_mock_to_file(
             });
         }
     } else {
-        let values: Vec<serde_json::Value> = docs
+        let csv_opts = CsvOptions::default();
+        let bson_docs: Vec<Document> = docs
             .iter()
-            .map(|doc| {
-                serde_json::from_str(doc).map_err(|e| format!("Mock export JSON error: {}", e))
-            })
+            .map(|doc| crate::json_to_bson_document(doc))
             .collect::<Result<_, _>>()?;
-        let fields: Vec<String> = values
+        let fields: Vec<String> = bson_docs
             .iter()
-            .flat_map(top_level_fields)
+            .flat_map(|doc| doc.keys().cloned())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        if !fields.is_empty() {
-            file.write_all(
-                fields
-                    .iter()
-                    .map(|field| csv_escape(field))
-                    .collect::<Vec<_>>()
-                    .join(",")
-                    .as_bytes(),
-            )
-            .await
-            .map_err(|e| format!("Failed to write export file: {}", e))?;
-            file.write_all(b"\n")
+        if csv_opts.include_headers && !fields.is_empty() {
+            file.write_all(&csv::csv_record(&fields, &csv_opts)?)
                 .await
                 .map_err(|e| format!("Failed to write export file: {}", e))?;
         }
-        for (idx, value) in values.iter().enumerate() {
-            let obj = value.as_object();
-            let row = fields
+        for (idx, doc) in bson_docs.iter().enumerate() {
+            let cells: Vec<String> = fields
                 .iter()
-                .map(|field| csv_cell(obj.and_then(|o| o.get(field))))
-                .collect::<Vec<_>>()
-                .join(",");
-            file.write_all(row.as_bytes())
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            file.write_all(b"\n")
+                .map(|field| csv::csv_cell_value(doc, field, &csv_opts))
+                .collect();
+            file.write_all(&csv::csv_record(&cells, &csv_opts)?)
                 .await
                 .map_err(|e| format!("Failed to write export file: {}", e))?;
             let processed = idx as u64 + 1;
@@ -421,6 +377,7 @@ async fn export_real_to_file(
         });
         Ok(processed)
     } else {
+        let csv_opts = CsvOptions::default();
         update_task(&tasks, &task_id, |task| {
             task.message = "Scanning CSV fields".to_string();
         });
@@ -429,8 +386,7 @@ async fn export_real_to_file(
         let mut scanned = 0u64;
         while let Some(result) = scan_cursor.next().await {
             let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            let json_val = bson_doc_to_json_value(&doc)?;
-            for field in top_level_fields(&json_val) {
+            for field in doc.keys().cloned() {
                 fields.insert(field);
             }
             scanned += 1;
@@ -446,18 +402,8 @@ async fn export_real_to_file(
             task.message = "Writing CSV".to_string();
         });
 
-        if !fields.is_empty() {
-            file.write_all(
-                fields
-                    .iter()
-                    .map(|field| csv_escape(field))
-                    .collect::<Vec<_>>()
-                    .join(",")
-                    .as_bytes(),
-            )
-            .await
-            .map_err(|e| format!("Failed to write export file: {}", e))?;
-            file.write_all(b"\n")
+        if csv_opts.include_headers && !fields.is_empty() {
+            file.write_all(&csv::csv_record(&fields, &csv_opts)?)
                 .await
                 .map_err(|e| format!("Failed to write export file: {}", e))?;
         }
@@ -466,17 +412,11 @@ async fn export_real_to_file(
         let mut processed = 0u64;
         while let Some(result) = cursor.next().await {
             let doc = result.map_err(|e| format!("Cursor read error: {}", e))?;
-            let json_val = bson_doc_to_json_value(&doc)?;
-            let obj = json_val.as_object();
-            let row = fields
+            let cells: Vec<String> = fields
                 .iter()
-                .map(|field| csv_cell(obj.and_then(|o| o.get(field))))
-                .collect::<Vec<_>>()
-                .join(",");
-            file.write_all(row.as_bytes())
-                .await
-                .map_err(|e| format!("Failed to write export file: {}", e))?;
-            file.write_all(b"\n")
+                .map(|field| csv::csv_cell_value(&doc, field, &csv_opts))
+                .collect();
+            file.write_all(&csv::csv_record(&cells, &csv_opts)?)
                 .await
                 .map_err(|e| format!("Failed to write export file: {}", e))?;
             processed += 1;
