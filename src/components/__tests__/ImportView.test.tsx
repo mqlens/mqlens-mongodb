@@ -59,3 +59,46 @@ describe('ImportView sources and options', () => {
     expect(detectImportFormat('/a/b.json')).toBe('json');
   });
 });
+
+describe('ImportView preview', () => {
+  const csvPreview = {
+    docs: ['{"a":"1","b":"x"}'], columns: ['a', 'b'], totalHint: null, error: null,
+  };
+
+  it('debounces and renders a CSV grid with type selects', async () => {
+    vi.useFakeTimers();
+    const onPreview = vi.fn().mockResolvedValue(csvPreview);
+    renderImportView({ onPreview });
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+    await vi.waitFor(() => expect(screen.getByTestId('import-file-path')).toBeInTheDocument());
+    expect(onPreview).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(350);
+    expect(onPreview).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+    await waitFor(() => expect(screen.getByTestId('import-preview-grid')).toBeInTheDocument());
+    expect(screen.getByTestId('import-coltype-a')).toBeInTheDocument();
+  });
+
+  it('type select changes flow into onRunImport payload', async () => {
+    const onPreview = vi.fn().mockResolvedValue(csvPreview);
+    const props = renderImportView({ onPreview });
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+    await waitFor(() => expect(screen.queryByTestId('import-coltype-a')).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId('import-coltype-a'), { target: { value: 'number' } });
+    fireEvent.click(screen.getByTestId('import-run-btn'));
+    expect(props.onRunImport).toHaveBeenCalledWith(
+      expect.anything(), 'csv',
+      expect.objectContaining({ columnTypes: { a: 'number' } }),
+      'skip');
+  });
+
+  it('renders parse errors inline and non-csv docs as a list', async () => {
+    const onPreview = vi.fn().mockResolvedValue({
+      docs: ['{"n":1}'], columns: [], totalHint: null, error: 'NDJSON line 2: Invalid JSON',
+    });
+    renderImportView({ onPreview, onPickFile: vi.fn().mockResolvedValue('/tmp/x.jsonl') });
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+    await waitFor(() => expect(screen.getByTestId('import-preview-error')).toHaveTextContent('line 2'));
+    expect(screen.getByTestId('import-preview-docs')).toHaveTextContent('"n"');
+  });
+});

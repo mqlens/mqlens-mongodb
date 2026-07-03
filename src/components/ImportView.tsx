@@ -87,11 +87,16 @@ const selectClassName =
 
 const checkboxLabelClassName = 'flex cursor-pointer items-center gap-2 text-xs text-foreground';
 
+const CSV_COLUMN_TYPES: CsvColumnType[] = ['auto', 'string', 'number', 'boolean', 'date', 'json'];
+
+const PREVIEW_DEBOUNCE_MS = 300;
+
 export const ImportView: React.FC<ImportViewProps> = ({
   connectionName,
   databaseName,
   collectionName,
   onPickFile,
+  onPreview,
   onRunImport,
   onOpenTasks,
 }) => {
@@ -108,6 +113,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
   const [delimiterChoice, setDelimiterChoice] = React.useState<',' | ';' | '\t' | 'custom'>(',');
   const [customDelimiter, setCustomDelimiter] = React.useState('|');
   const [mode, setMode] = React.useState<'skip' | 'update' | 'abort'>('skip');
+  const [preview, setPreview] = React.useState<ImportPreviewData | null>(null);
 
   const effectiveDelimiter = delimiterChoice === 'custom' ? customDelimiter : delimiterChoice;
   const delimiterValid =
@@ -124,7 +130,45 @@ export const ImportView: React.FC<ImportViewProps> = ({
   const hasSource =
     sourceKind === 'file' ? filePath !== null : text.length > 0 && !pasteOverCap;
 
-  const canRun = hasSource && delimiterValid && quoteValid;
+  const canRun = hasSource && delimiterValid && quoteValid && preview?.error == null;
+
+  React.useEffect(() => {
+    if (!hasSource || !onPreview) {
+      setPreview(null);
+      return;
+    }
+    const source: ImportSource = sourceKind === 'file' ? { path: filePath! } : { text };
+    const timer = setTimeout(() => {
+      onPreview(source, format, effectiveCsvOptions)
+        .then(setPreview)
+        .catch((err) => setPreview({ docs: [], columns: [], totalHint: null, error: String(err) }));
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+    // columnTypes changes intentionally excluded — they affect import, not the raw preview parse.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    sourceKind,
+    filePath,
+    text,
+    format,
+    delimiterChoice,
+    customDelimiter,
+    csvOptions.quote,
+    csvOptions.skipLines,
+    csvOptions.hasHeaders,
+  ]);
+
+  const setColumnType = (column: string, type: CsvColumnType) => {
+    setCsvOptions((o) => {
+      const columnTypes = { ...o.columnTypes };
+      if (type === 'auto') {
+        delete columnTypes[column];
+      } else {
+        columnTypes[column] = type;
+      }
+      return { ...o, columnTypes };
+    });
+  };
 
   const pickFile = async () => {
     const path = await onPickFile();
@@ -323,6 +367,90 @@ export const ImportView: React.FC<ImportViewProps> = ({
             )}
           </section>
         )}
+
+        <section className="flex flex-col gap-2 px-3.5 py-3" data-testid="import-preview-section">
+          <div>
+            <h3 className="text-sm font-medium text-foreground">Preview</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground" data-testid="import-preview-caption">
+              {preview
+                ? `Previewing first ${preview.docs.length} document(s)` +
+                  (preview.totalHint !== null ? ` of ~${preview.totalHint}` : '')
+                : 'Choose a source to preview'}
+            </p>
+          </div>
+          {preview?.error && (
+            <div data-testid="import-preview-error" className="text-xs text-destructive">
+              {preview.error}
+            </div>
+          )}
+          {preview && format === 'csv' && preview.columns.length > 0 && (
+            <div className="max-h-64 overflow-auto">
+              <table data-testid="import-preview-grid" className="w-full border-collapse text-xs">
+                <thead>
+                  <tr>
+                    {preview.columns.map((col) => (
+                      <th
+                        key={col}
+                        className="border border-border bg-muted/30 px-2 py-1 text-left align-top font-medium"
+                      >
+                        <div className="flex flex-col gap-1">
+                          <span className="truncate">{col}</span>
+                          <select
+                            value={csvOptions.columnTypes[col] ?? 'auto'}
+                            onChange={(e) => setColumnType(col, e.target.value as CsvColumnType)}
+                            className={selectClassName}
+                            data-testid={'import-coltype-' + col}
+                          >
+                            {CSV_COLUMN_TYPES.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.docs.map((doc, i) => {
+                    let parsed: Record<string, unknown> = {};
+                    try {
+                      parsed = JSON.parse(doc) as Record<string, unknown>;
+                    } catch {
+                      // leave the row empty if a preview doc is malformed
+                    }
+                    return (
+                      <tr key={i}>
+                        {preview.columns.map((col) => (
+                          <td key={col} className="border border-border px-2 py-1">
+                            {String(parsed[col] ?? '')}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {preview && (format !== 'csv' || preview.columns.length === 0) && preview.docs.length > 0 && (
+            <pre
+              data-testid="import-preview-docs"
+              className="max-h-64 overflow-auto rounded-md border border-border bg-muted/30 p-2 text-xs"
+            >
+              {preview.docs
+                .map((d) => {
+                  try {
+                    return JSON.stringify(JSON.parse(d), null, 2);
+                  } catch {
+                    return d;
+                  }
+                })
+                .join('\n')}
+            </pre>
+          )}
+        </section>
 
         <section className="flex flex-col gap-2 px-3.5 py-3">
           <div>
