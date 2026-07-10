@@ -25,6 +25,20 @@ vi.mock('@tauri-apps/api/core', () => ({
   },
 }));
 
+// File dialogs and text-file IO used by URI import/export.
+const mockOpenDialog = vi.fn();
+const mockSaveDialog = vi.fn();
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: (...args: any[]) => mockOpenDialog(...args),
+  save: (...args: any[]) => mockSaveDialog(...args),
+}));
+const mockReadTextFile = vi.fn();
+const mockWriteTextFile = vi.fn();
+vi.mock('@tauri-apps/plugin-fs', () => ({
+  readTextFile: (...args: any[]) => mockReadTextFile(...args),
+  writeTextFile: (...args: any[]) => mockWriteTextFile(...args),
+}));
+
 const baseConn = {
   topology: 'standalone',
   hosts: [{ host: 'db.example.com', port: '27017' }],
@@ -847,6 +861,135 @@ describe('ConnectionManager Component', () => {
         id: 'p1',
         color_tag: null,
       });
+    });
+  });
+});
+
+describe('URI import and export', () => {
+  const prodProfile = {
+    id: 'p1',
+    name: 'Prod',
+    uri: 'mongodb://alice:pw@db1:27017/sales?tls=true&proxyHost=p&proxyPassword=ppw',
+    ssh: { enabled: true, host: 'jump', port: 22, user: 'ops', auth: { type: 'password', password: 'sp' } },
+    color_tag: null,
+  };
+  const redacted = 'mongodb://alice@db1:27017/sales?tls=true&proxyHost=p';
+
+  const setupClipboard = () => {
+    const readText = vi.fn();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { readText, writeText },
+      configurable: true,
+    });
+    return { readText, writeText };
+  };
+
+  const renderManager = (profiles: any[] = []) => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profiles);
+      return Promise.resolve([]);
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+  };
+
+  const openImportMenu = async () => {
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.pointerDown(screen.getByTestId('import-uri-btn'), { button: 0, ctrlKey: false });
+  };
+
+  beforeEach(() => {
+    mockOpenDialog.mockReset();
+    mockSaveDialog.mockReset();
+    mockReadTextFile.mockReset();
+    mockWriteTextFile.mockReset();
+  });
+
+  it('imports a URI from the clipboard into the editor form', async () => {
+    const { readText } = setupClipboard();
+    readText.mockResolvedValue('MONGO_URL="mongodb://u:p@db.imported.example:27017/app"');
+    renderManager();
+
+    await openImportMenu();
+    fireEvent.click(await screen.findByTestId('import-from-clipboard'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/db\.imported\.example/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows an inline error when the clipboard has no mongodb URI', async () => {
+    const { readText } = setupClipboard();
+    readText.mockResolvedValue('postgres://u:p@host/db');
+    renderManager();
+
+    await openImportMenu();
+    fireEvent.click(await screen.findByTestId('import-from-clipboard'));
+
+    expect(await screen.findByTestId('import-uri-error')).toHaveTextContent(/no mongodb/i);
+  });
+
+  it('imports the first URI found in a picked file', async () => {
+    setupClipboard();
+    mockOpenDialog.mockResolvedValue('/tmp/creds.env');
+    mockReadTextFile.mockResolvedValue('A=1\nURL=mongodb+srv://u@cluster.file.example/app\n');
+    renderManager();
+
+    await openImportMenu();
+    fireEvent.click(await screen.findByTestId('import-from-file'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/cluster\.file\.example/)).toBeInTheDocument();
+    });
+  });
+
+  it('exports a redacted URI by default, notes the SSH tunnel, and includes the password on demand', async () => {
+    const { writeText } = setupClipboard();
+    renderManager([prodProfile]);
+
+    fireEvent.click((await screen.findAllByText('Prod'))[0]);
+    fireEvent.click(screen.getByTestId('export-uri-btn'));
+
+    const preview = await screen.findByTestId('export-uri-preview');
+    expect(preview).toHaveTextContent(redacted);
+    expect(preview).not.toHaveTextContent('pw');
+    expect(screen.getByTestId('export-ssh-note')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-copy-btn'));
+    expect(writeText).toHaveBeenCalledWith(redacted);
+
+    fireEvent.click(screen.getByTestId('export-include-password'));
+    await waitFor(() => expect(preview).toHaveTextContent('alice:pw@'));
+
+    fireEvent.click(screen.getByTestId('export-copy-btn'));
+    expect(writeText).toHaveBeenLastCalledWith(prodProfile.uri);
+  });
+
+  it('drops the query string when connection settings are excluded', async () => {
+    setupClipboard();
+    renderManager([prodProfile]);
+
+    fireEvent.click((await screen.findAllByText('Prod'))[0]);
+    fireEvent.click(screen.getByTestId('export-uri-btn'));
+
+    const preview = await screen.findByTestId('export-uri-preview');
+    fireEvent.click(screen.getByTestId('export-include-settings'));
+    await waitFor(() => expect(preview).toHaveTextContent(/^mongodb:\/\/alice@db1:27017\/sales$/));
+  });
+
+  it('saves the export to a file via the save dialog', async () => {
+    setupClipboard();
+    mockSaveDialog.mockResolvedValue('/tmp/conn.txt');
+    mockWriteTextFile.mockResolvedValue(undefined);
+    renderManager([prodProfile]);
+
+    fireEvent.click((await screen.findAllByText('Prod'))[0]);
+    fireEvent.click(screen.getByTestId('export-uri-btn'));
+    await screen.findByTestId('export-uri-preview');
+    fireEvent.click(screen.getByTestId('export-save-btn'));
+
+    await waitFor(() => {
+      expect(mockWriteTextFile).toHaveBeenCalledWith('/tmp/conn.txt', `${redacted}\n`);
     });
   });
 });
