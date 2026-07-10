@@ -50,6 +50,51 @@ mod tests {
         assert!(usage.cpu_percent >= 0.0);
     }
 
+    /// The retained sysinfo System must not accumulate dead processes across
+    /// tree rebuilds — with `remove_dead_processes: false` every process (and,
+    /// on Linux, every thread) that ever existed while the app ran stayed in
+    /// the map forever, growing RSS without bound on busy hosts (issue #165).
+    #[cfg(unix)]
+    #[test]
+    fn test_resource_usage_purges_dead_processes_on_rebuild() {
+        use std::time::{Duration, Instant};
+
+        let state = AppState::new();
+        crate::resource_usage_impl(&state); // initial tree build
+
+        // A child of this process, alive across the next rebuild.
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep");
+        let child_pid = sysinfo::Pid::from_u32(child.id());
+
+        let force_rebuild = |state: &AppState| {
+            *state.resource_tree_at.lock().unwrap() = Instant::now()
+                .checked_sub(Duration::from_secs(
+                    crate::limits::RESOURCE_TREE_REFRESH_SECS + 1,
+                ))
+                .expect("system clock supports back-dating");
+            crate::resource_usage_impl(state);
+        };
+
+        force_rebuild(&state);
+        assert!(
+            state.sys.lock().unwrap().process(child_pid).is_some(),
+            "live child should be captured in the retained System"
+        );
+
+        child.kill().expect("kill child");
+        child.wait().expect("reap child");
+
+        force_rebuild(&state);
+        assert!(
+            state.sys.lock().unwrap().process(child_pid).is_none(),
+            "dead child must be purged from the retained System on rebuild"
+        );
+    }
+
     #[tokio::test]
     async fn test_mock_connection_lifecycle() {
         let state = AppState::new();
