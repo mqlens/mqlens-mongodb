@@ -385,7 +385,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const existing = connectionIdForName(connectionName);
     if (existing) return existing;
 
-    const profile = connectionProfiles.find((p) => p.name === connectionName);
+    // The mount-time profile load may not have landed yet — clicking a pinned
+    // item right after launch used to dead-end on the empty list with a
+    // "no saved connection" error. Fall back to a fresh on-demand load.
+    let profile = connectionProfiles.find((p) => p.name === connectionName);
+    if (!profile) {
+      try {
+        const fresh = (await invoke<ConnectionProfile[]>('load_connection_profiles')) ?? [];
+        setConnectionProfiles(fresh);
+        profile = fresh.find((p) => p.name === connectionName);
+      } catch {
+        /* fall through to the error toast below */
+      }
+    }
     if (!profile || !onConnectProfile) {
       toast(
         `No saved connection "${connectionName}". Add it in Connection Manager, then try again.`,
