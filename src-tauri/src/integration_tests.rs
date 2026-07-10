@@ -301,6 +301,9 @@ mod integration {
             return;
         };
 
+        // The normalized connection URI is retained for external tools (mongodump/mongorestore).
+        assert!(state.conn_uris.lock().unwrap().get(&id).unwrap().starts_with("mongodb"));
+
         // insert_document_impl returns the inserted id as extended JSON.
         let inserted = insert_document_impl(
             &state,

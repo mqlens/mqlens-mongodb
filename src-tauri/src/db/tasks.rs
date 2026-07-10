@@ -56,9 +56,63 @@ pub fn prune_tasks(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>) {
     if guard.len() <= MAX_TASK_HISTORY {
         return;
     }
-    let mut entries: Vec<(String, TaskInfo)> = guard.drain().collect();
-    entries.sort_by(|a, b| b.1.created_at_ms.cmp(&a.1.created_at_ms));
-    for (id, task) in entries.into_iter().take(MAX_TASK_HISTORY) {
+    // Never evict a running task: its background job would keep updating a
+    // ghost entry (update_task silently no-ops on a missing id) and the task
+    // would vanish from the UI while the process keeps running. Keep all
+    // running tasks plus the newest finished ones up to the cap.
+    let (running, mut finished): (Vec<(String, TaskInfo)>, Vec<(String, TaskInfo)>) =
+        guard.drain().partition(|(_, task)| task.status == "running");
+    finished.sort_by(|a, b| b.1.created_at_ms.cmp(&a.1.created_at_ms));
+    let finished_budget = MAX_TASK_HISTORY.saturating_sub(running.len());
+    for (id, task) in running.into_iter().chain(finished.into_iter().take(finished_budget)) {
         guard.insert(id, task);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::limits::MAX_TASK_HISTORY;
+
+    fn task(id: &str, status: &str, created_at_ms: u64) -> TaskInfo {
+        TaskInfo {
+            id: id.to_string(),
+            kind: "dump".to_string(),
+            label: String::new(),
+            status: status.to_string(),
+            processed: 0,
+            total: None,
+            message: String::new(),
+            path: None,
+            error: None,
+            created_at_ms,
+            finished_at_ms: None,
+            sub_label: None,
+            items_processed: None,
+            items_total: None,
+            summary: None,
+        }
+    }
+
+    /// A still-RUNNING task must never be pruned, even when it is the oldest
+    /// entry: its background job keeps calling update_task (which would
+    /// silently no-op) while the task vanishes from the UI with the process
+    /// still alive. Finished tasks absorb the eviction instead.
+    #[test]
+    fn prune_never_evicts_running_tasks() {
+        let tasks: Arc<Mutex<HashMap<String, TaskInfo>>> = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut guard = tasks.lock().unwrap();
+            guard.insert("running-old".into(), task("running-old", "running", 0));
+            for i in 0..MAX_TASK_HISTORY as u64 {
+                let id = format!("done-{}", i);
+                guard.insert(id.clone(), task(&id, "completed", 1 + i));
+            }
+        }
+        prune_tasks(&tasks);
+        let guard = tasks.lock().unwrap();
+        assert_eq!(guard.len(), MAX_TASK_HISTORY);
+        assert!(guard.contains_key("running-old"), "running task must survive pruning");
+        assert!(!guard.contains_key("done-0"), "oldest finished task is evicted instead");
     }
 }

@@ -34,6 +34,10 @@ pub struct AppState {
     pub resource_tree_at: Mutex<Instant>,
     // In-memory vault key; None when locked or uninitialized.
     pub vault_key: Mutex<Option<[u8; 32]>>,
+    /// Normalized connection URI (post-SSH-tunnel rewrite) retained per real
+    /// connection id, for tools that need to hand a URI to an external
+    /// process (mongodump/mongorestore). Never populated for mock connections.
+    pub conn_uris: Mutex<HashMap<String, String>>,
 }
 
 impl AppState {
@@ -50,6 +54,7 @@ impl AppState {
             resource_pids: Mutex::new(Vec::new()),
             resource_tree_at: Mutex::new(Instant::now()),
             vault_key: Mutex::new(None),
+            conn_uris: Mutex::new(HashMap::new()),
         }
     }
 
@@ -78,6 +83,28 @@ impl AppState {
                 None => false,
             },
             Err(_) => false,
+        }
+    }
+
+    /// Request cancellation, treating "already finished" as success: the
+    /// cancel flag is removed the moment a task completes, so a Cancel click
+    /// that races the task's natural end (or a double-click) must not surface
+    /// an error for a task that is genuinely done. Unknown ids and running
+    /// tasks that were never registered for cancellation still error.
+    pub fn cancel_or_ack(&self, task_id: &str) -> Result<(), String> {
+        if self.request_cancel(task_id) {
+            return Ok(());
+        }
+        let already_finished = self
+            .tasks
+            .lock_safe()?
+            .get(task_id)
+            .map(|t| t.status != "running")
+            .unwrap_or(false);
+        if already_finished {
+            Ok(())
+        } else {
+            Err("Task is not running or cannot be cancelled".to_string())
         }
     }
 

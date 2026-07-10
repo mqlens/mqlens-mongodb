@@ -1,6 +1,7 @@
+import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { SettingsView } from '../SettingsModal';
+import { SettingsView, MONGO_TOOLS_DIR_KEY } from '../SettingsModal';
 import { writeUpdateCheckSnapshot } from '../../lib/updateCheckState';
 
 const mockInvoke = vi.fn();
@@ -25,8 +26,8 @@ vi.mock('../../lib/vault', () => ({
   biometricDisable: () => mockBiometricDisable(),
 }));
 
-function renderSettings() {
-  return render(<SettingsView />);
+function renderSettings(props: Partial<ComponentProps<typeof SettingsView>> = {}) {
+  return render(<SettingsView {...props} />);
 }
 
 async function openTab(tabId: string) {
@@ -51,6 +52,12 @@ describe('SettingsView Component', () => {
       if (cmd === 'detect_local_agents') {
         return Promise.resolve([]);
       }
+      if (cmd === 'managed_tools_status') {
+        return Promise.resolve([
+          { name: 'database-tools', version: '100.9.4', installed: false, path: null },
+          { name: 'mongosh', version: '2.3.1', installed: true, path: '/data/tools/mongosh/bin/mongosh' },
+        ]);
+      }
       return Promise.resolve();
     });
   });
@@ -61,15 +68,81 @@ describe('SettingsView Component', () => {
     expect(await screen.findByText('Settings')).toBeInTheDocument();
     expect(await screen.findByText('Theme preset')).toBeInTheDocument();
 
-    await openTab('settings-tab-mongosh');
+    await openTab('settings-tab-tools');
     const pathInput = await screen.findByTestId('mongosh-path-input') as HTMLInputElement;
     expect(pathInput.value).toBe('/usr/local/bin/mongosh');
+  });
+
+  it('round-trips the MongoDB Database Tools directory through localStorage', async () => {
+    localStorage.setItem(MONGO_TOOLS_DIR_KEY, '/opt/homebrew/bin');
+    renderSettings();
+
+    await openTab('settings-tab-tools');
+    const dirInput = await screen.findByTestId('mongo-tools-dir-input') as HTMLInputElement;
+    expect(dirInput.value).toBe('/opt/homebrew/bin');
+
+    fireEvent.change(dirInput, { target: { value: '/usr/local/mongodb-tools/bin' } });
+    expect(dirInput.value).toBe('/usr/local/mongodb-tools/bin');
+    expect(localStorage.getItem(MONGO_TOOLS_DIR_KEY)).toBe('/usr/local/mongodb-tools/bin');
+  });
+
+  it('shows managed tool versions and wires the Install tools button', async () => {
+    const onInstallTools = vi.fn();
+    renderSettings({ onInstallTools });
+
+    await openTab('settings-tab-tools');
+
+    expect(await screen.findByTestId('settings-managed-tool-database-tools')).toHaveTextContent(
+      'not installed'
+    );
+    expect(screen.getByTestId('settings-managed-tool-mongosh')).toHaveTextContent(
+      'v2.3.1 installed'
+    );
+
+    fireEvent.click(screen.getByTestId('settings-install-tools-btn'));
+    expect(onInstallTools).toHaveBeenCalled();
+  });
+
+  it('refreshes the managed tools card when toolStatusRefreshNonce changes (regression: stale card after install)', async () => {
+    let call = 0;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '' });
+      if (cmd === 'detect_local_agents') return Promise.resolve([]);
+      if (cmd === 'managed_tools_status') {
+        call += 1;
+        if (call === 1) {
+          return Promise.resolve([
+            { name: 'database-tools', version: '100.9.4', installed: false, path: null },
+            { name: 'mongosh', version: '2.3.1', installed: false, path: null },
+          ]);
+        }
+        return Promise.resolve([
+          { name: 'database-tools', version: '100.9.4', installed: true, path: '/data/tools/database-tools/bin' },
+          { name: 'mongosh', version: '2.3.1', installed: true, path: '/data/tools/mongosh/bin/mongosh' },
+        ]);
+      }
+      return Promise.resolve();
+    });
+
+    const { rerender } = renderSettings({ toolStatusRefreshNonce: 0 });
+    await openTab('settings-tab-tools');
+
+    expect(await screen.findByTestId('settings-managed-tool-mongosh')).toHaveTextContent('not installed');
+
+    // Simulate the App-level ToolSetupDialog "Done" handler bumping the nonce
+    // after an install completes while Settings is still mounted.
+    rerender(<SettingsView toolStatusRefreshNonce={1} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-managed-tool-mongosh')).toHaveTextContent('v2.3.1 installed');
+    });
+    expect(call).toBeGreaterThanOrEqual(2);
   });
 
   it('saves and tests mongosh path through backend settings commands', async () => {
     renderSettings();
 
-    await openTab('settings-tab-mongosh');
+    await openTab('settings-tab-tools');
     const pathInput = await screen.findByTestId('mongosh-path-input') as HTMLInputElement;
     fireEvent.change(pathInput, { target: { value: '/opt/homebrew/bin/mongosh' } });
 
