@@ -106,8 +106,15 @@ pub fn resource_usage_impl(state: &AppState) -> ResourceUsage {
         pids.is_empty() || tree_at.elapsed().as_secs() >= RESOURCE_TREE_REFRESH_SECS
     };
 
+    // Only memory + CPU are read below. The default refresh kind would also
+    // collect disk usage, exe paths, and (Linux) one entry per THREAD via
+    // with_tasks — and with remove_dead_processes=false the retained System
+    // kept every process/thread that ever existed, growing RSS without bound
+    // on busy hosts (issue #165). Refresh minimally and always purge the dead.
+    let refresh_kind = sysinfo::ProcessRefreshKind::nothing().with_memory().with_cpu();
+
     if rebuild_tree {
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
+        sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, refresh_kind);
         let mut tree: HashSet<sysinfo::Pid> = HashSet::new();
         tree.insert(pid);
         loop {
@@ -135,7 +142,7 @@ pub fn resource_usage_impl(state: &AppState) -> ResourceUsage {
     } else {
         let pids = state.resource_pids.lock().unwrap_or_else(|p| p.into_inner());
         if !pids.is_empty() {
-            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&pids), false);
+            sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&pids), true, refresh_kind);
         }
     }
 
