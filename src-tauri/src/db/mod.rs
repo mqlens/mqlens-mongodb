@@ -8,6 +8,7 @@ pub mod export;
 pub mod gridfs;
 pub mod import;
 pub mod metadata;
+pub mod mongotools;
 pub mod query;
 pub mod schema;
 pub mod tasks;

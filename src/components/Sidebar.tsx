@@ -89,6 +89,8 @@ import {
   Heart,
   Copy,
   ClipboardPaste,
+  DatabaseBackup,
+  DatabaseZap,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
@@ -157,6 +159,10 @@ interface SidebarProps {
   onAnalyzeSchema?: (connectionId: string, dbName: string, collName: string) => void;
   onCreateView?: (connectionId: string, dbName: string) => void;
   onOpenGridfs?: (connectionId: string, dbName: string, bucket: string) => void;
+  /** Open a Dump tab scoped to the whole connection, a database, or a single collection. */
+  onOpenDump?: (connectionId: string, dbName?: string, collName?: string) => void;
+  /** Open a Restore tab for the connection. */
+  onOpenRestore?: (connectionId: string) => void;
   onCollectionRenamed?: (connectionId: string, dbName: string, oldName: string, newName: string) => void;
   onDatabaseDropped?: (connectionId: string, dbName: string) => void;
   onDatabaseRenamed?: (connectionId: string, oldName: string, newName: string) => void;
@@ -272,6 +278,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAnalyzeSchema,
   onCreateView,
   onOpenGridfs,
+  onOpenDump,
+  onOpenRestore,
   onCollectionRenamed,
   onDatabaseDropped,
   onDatabaseRenamed,
@@ -292,6 +300,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { toast, confirm, prompt } = useDialogs();
   const [filterQuery, setFilterQuery] = useState('');
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Mock connections (the bundled sample data, or ids/URIs marked as such) never
+  // reach a real mongodump/mongorestore binary — the backend rejects them outright
+  // (see require_real_conn_uri in mongotools.rs) — so hide the Dump/Restore
+  // context-menu items for them rather than surfacing a doomed invoke() call.
+  const isMockConnection = React.useCallback(
+    (connectionId: string): boolean => {
+      const conn = activeConnections.find((c) => c.id === connectionId);
+      return connectionId.startsWith('mock') || Boolean(conn?.uri.startsWith('mongodb://mock'));
+    },
+    [activeConnections]
+  );
 
   useEffect(() => {
     onFilterQueryChange?.(filterQuery);
@@ -1200,6 +1220,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Table2 />
               <span>Analyze Schema</span>
             </ContextMenuItem>
+            {!isMockConnection(connId) && (
+              <ContextMenuItem
+                className={ctxItemClass}
+                data-testid={`ctx-dump-coll-${connId}-${dbName}-${collName}`}
+                onClick={() => onOpenDump?.(connId, dbName, collName)}
+              >
+                <DatabaseBackup />
+                <span>Dump (mongodump)…</span>
+              </ContextMenuItem>
+            )}
             <ContextMenuItem
               className={ctxItemClass}
               onClick={() => onCopyToClipboard?.(connId, dbName, selectedNamesFor(connId, dbName, collName))}
@@ -1489,6 +1519,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <Users />
                     <span>Manage users</span>
                   </ContextMenuItem>
+                  {!isMockConnection(conn.id) && (
+                    <ContextMenuItem
+                      className={ctxItemClass}
+                      data-testid={`ctx-dump-${conn.id}`}
+                      onClick={() => onOpenDump?.(conn.id)}
+                    >
+                      <DatabaseBackup />
+                      <span>Dump (mongodump)…</span>
+                    </ContextMenuItem>
+                  )}
+                  {!isMockConnection(conn.id) && (
+                    <ContextMenuItem
+                      className={ctxItemClass}
+                      data-testid={`ctx-restore-${conn.id}`}
+                      onClick={() => onOpenRestore?.(conn.id)}
+                    >
+                      <DatabaseZap />
+                      <span>Restore (mongorestore)…</span>
+                    </ContextMenuItem>
+                  )}
                   <ContextMenuSeparator />
                   <ContextMenuItem
                     className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
@@ -1648,6 +1698,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <Users />
                               <span>Manage Users</span>
                             </ContextMenuItem>
+                            {!isMockConnection(conn.id) && (
+                              <ContextMenuItem
+                                className={ctxItemClass}
+                                data-testid={`ctx-dump-db-${conn.id}-${dbName}`}
+                                onClick={() => onOpenDump?.(conn.id, dbName)}
+                              >
+                                <DatabaseBackup />
+                                <span>Dump (mongodump)…</span>
+                              </ContextMenuItem>
+                            )}
                             <ContextMenuSeparator />
                             <ContextMenuItem
                               className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}

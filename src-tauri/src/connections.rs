@@ -500,13 +500,10 @@ pub fn reencrypt_data_files(
 }
 
 #[tauri::command]
-pub async fn test_mongosh_path(path: String) -> Result<String, String> {
-    let executable = if path.trim().is_empty() {
-        "mongosh"
-    } else {
-        path.trim()
-    };
-    let output = Command::new(executable)
+pub async fn test_mongosh_path(app_handle: tauri::AppHandle, path: String) -> Result<String, String> {
+    let app_data_dir = app_handle.path().app_data_dir().ok();
+    let executable = crate::toolsetup::resolve_mongosh_executable(&path, app_data_dir.as_deref());
+    let output = Command::new(&executable)
         .arg("--version")
         .output()
         .map_err(|e| format!("Failed to run mongosh: {}", e))?;

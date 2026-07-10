@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { TaskManager, type ExportTaskInfo } from '../TaskManager';
 
@@ -26,6 +26,40 @@ describe('TaskManager copy tasks', () => {
     expect(onCancel).toHaveBeenCalledWith('t1');
   });
 
+  it('re-enables the Cancel button when the cancel request fails (onCancel resolves false)', async () => {
+    const onCancel = vi.fn().mockResolvedValue(false);
+    const running: ExportTaskInfo = { ...copyTask, status: 'running', summary: undefined };
+    render(<TaskManager tasks={[running]} onRefresh={() => {}} onClearFinished={() => {}} onCancel={onCancel} />);
+
+    const btn = screen.getByRole('button', { name: /cancel/i });
+    fireEvent.click(btn);
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveTextContent('Cancelling…');
+    expect(onCancel).toHaveBeenCalledWith('t1');
+
+    // The cancel failed — the button must come back so the user can retry.
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    expect(btn).toHaveTextContent('Cancel');
+  });
+
+  it('prunes cancelling state once the task leaves running, so a later run gets a fresh Cancel', async () => {
+    const onCancel = vi.fn().mockResolvedValue(true);
+    const running: ExportTaskInfo = { ...copyTask, status: 'running', summary: undefined };
+    const { rerender } = render(
+      <TaskManager tasks={[running]} onRefresh={() => {}} onClearFinished={() => {}} onCancel={onCancel} />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    expect(screen.getByRole('button', { name: /cancelling/i })).toBeDisabled();
+
+    // Task reaches a terminal state — the stale id is pruned from the set…
+    const cancelled: ExportTaskInfo = { ...running, status: 'cancelled' };
+    rerender(<TaskManager tasks={[cancelled]} onRefresh={() => {}} onClearFinished={() => {}} onCancel={onCancel} />);
+    // …so when the same id runs again (e.g. a retried task), Cancel is enabled.
+    rerender(<TaskManager tasks={[running]} onRefresh={() => {}} onClearFinished={() => {}} onCancel={onCancel} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^cancel$/i })).not.toBeDisabled());
+  });
+
   it('renders cancelled task as muted/neutral, not as success', () => {
     const cancelled: ExportTaskInfo = {
       ...copyTask, status: 'cancelled', processed: 3, total: 5, message: 'Copy cancelled', summary: undefined,
@@ -48,6 +82,26 @@ describe('TaskManager copy tasks', () => {
     // No Cancel button shown for a cancelled task
     expect(screen.queryByRole('button', { name: /cancel/i })).toBeNull();
   });
+
+  it.each(['dump', 'restore'] as const)(
+    'shows a Cancel button for running %s tasks and calls onCancel',
+    (kind) => {
+      const onCancel = vi.fn();
+      const running: ExportTaskInfo = {
+        id: 'tool-task-1',
+        kind,
+        label: kind === 'dump' ? 'Dump sales_db → out' : 'Restore out → sales_db',
+        status: 'running',
+        processed: 0,
+        total: null,
+        message: 'Running',
+        createdAtMs: 1,
+      };
+      render(<TaskManager tasks={[running]} onRefresh={() => {}} onClearFinished={() => {}} onCancel={onCancel} />);
+      screen.getByRole('button', { name: /cancel/i }).click();
+      expect(onCancel).toHaveBeenCalledWith('tool-task-1');
+    }
+  );
 
   it('shows failure tooltip on summary block when failures present', () => {
     const withFailures: ExportTaskInfo = {

@@ -59,7 +59,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore }: any) => (
     <div data-testid="mock-sidebar">
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
@@ -78,6 +78,12 @@ vi.mock('../Sidebar', () => ({
       </button>
       <button data-testid="open-settings-btn" onClick={() => onOpenSettings && onOpenSettings()}>
         Open Settings
+      </button>
+      <button data-testid="open-dump-db-btn" onClick={() => onOpenDump && onOpenDump('conn-1', 'sales_db')}>
+        Dump sales_db
+      </button>
+      <button data-testid="open-restore-btn" onClick={() => onOpenRestore && onOpenRestore('conn-1')}>
+        Restore
       </button>
     </div>
   ),
@@ -454,7 +460,7 @@ describe('App Component', () => {
 
     expect(await screen.findByTestId('settings-view')).toBeInTheDocument();
     expect(screen.getAllByText('Settings').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByTestId('settings-tab-mongosh'));
+    fireEvent.click(screen.getByTestId('settings-tab-tools'));
     expect(await screen.findByTestId('mongosh-path-input')).toHaveValue('/usr/local/bin/mongosh');
   });
 
@@ -742,6 +748,481 @@ describe('App Component', () => {
       },
       { timeout: 2000 }
     );
+  });
+
+  it('opens the Dump tab from a database context menu and detects mongo tools', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') {
+        return Promise.resolve({
+          mongodump: { path: '/usr/local/bin/mongodump', version: '100.9.4' },
+          mongorestore: null,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+
+    expect(await screen.findByTestId('dump-view')).toBeInTheDocument();
+    expect(screen.getByText('Dump: sales_db')).toBeInTheDocument();
+    await waitFor(() => {
+      const detect = calls.find((c) => c.cmd === 'detect_mongo_tools');
+      expect(detect).toBeTruthy();
+      expect(detect.args).toMatchObject({ configuredDir: null });
+    });
+  });
+
+  it('runs a dump (payload includes toolPath), opens Tasks, and cancels the running task', async () => {
+    const calls: any[] = [];
+    const dumpTask = {
+      id: 'task-dump-1',
+      kind: 'dump',
+      label: 'Dump sales_db → out',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Running',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') {
+        return Promise.resolve({
+          mongodump: { path: '/usr/local/bin/mongodump', version: '100.9.4' },
+          mongorestore: null,
+        });
+      }
+      if (cmd === 'preview_dump_command') return Promise.resolve('mongodump --db=sales_db');
+      if (cmd === 'start_dump_task') return Promise.resolve(dumpTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([dumpTask]);
+      if (cmd === 'cancel_task') return Promise.resolve();
+      return Promise.resolve([]);
+    });
+    openMock.mockResolvedValue('/tmp/dumpout');
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    expect(await screen.findByTestId('dump-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('dump-pick-dest-btn'));
+    await waitFor(() =>
+      expect(screen.getByTestId('dump-dest-path')).toHaveTextContent('/tmp/dumpout'));
+
+    await waitFor(() => expect(screen.getByTestId('dump-run-btn')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('dump-run-btn'));
+
+    await waitFor(() => {
+      const started = calls.find((c) => c.cmd === 'start_dump_task');
+      expect(started).toBeTruthy();
+      expect(started.args).toMatchObject({
+        id: 'conn-1',
+        toolPath: '/usr/local/bin/mongodump',
+        options: expect.objectContaining({
+          scope: { kind: 'db', db: 'sales_db' },
+          target: { kind: 'folder', out: '/tmp/dumpout' },
+        }),
+      });
+    });
+
+    // Starting the dump opens the Tasks tab with the running task, cancellable.
+    expect(await screen.findByTestId('task-manager')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+
+    await waitFor(() => {
+      const cancelled = calls.find((c) => c.cmd === 'cancel_task');
+      expect(cancelled).toBeTruthy();
+      expect(cancelled.args).toMatchObject({ id: 'task-dump-1' });
+    });
+  });
+
+  it('opens the Restore tab from the connection context menu', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'detect_mongo_tools') {
+        return Promise.resolve({ mongodump: null, mongorestore: null });
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-restore-btn'));
+
+    expect(await screen.findByTestId('restore-view')).toBeInTheDocument();
+    expect(screen.getByText('Restore: conn-1')).toBeInTheDocument();
+  });
+
+  const managedStatusesFixture = [
+    { name: 'database-tools', version: '100.9.4', installed: false, path: null },
+    { name: 'mongosh', version: '2.3.1', installed: true, path: '/data/tools/mongosh/bin/mongosh' },
+  ];
+
+  it('opens the guided tool-setup dialog from the Dump guidance card and loads managed tool status', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    expect(await screen.findByTestId('dump-view')).toBeInTheDocument();
+    expect(await screen.findByTestId('dump-tools-missing')).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+
+    expect(await screen.findByTestId('toolsetup-dialog')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(calls.some((c) => c.cmd === 'managed_tools_status')).toBe(true);
+    });
+    expect(await screen.findByTestId('toolsetup-check-database-tools')).toBeInTheDocument();
+  });
+
+  it('runs a tool install (payload includes tools/force), tracks the task in the dialog, and cancels it', async () => {
+    const calls: any[] = [];
+    const installTask = {
+      id: 'task-tool-1',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Downloading database-tools…',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(installTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([installTask]);
+      if (cmd === 'cancel_task') return Promise.resolve();
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+
+    await waitFor(() => {
+      const started = calls.find((c) => c.cmd === 'start_tool_install_task');
+      expect(started).toBeTruthy();
+      expect(started.args).toMatchObject({ tools: ['database-tools'], force: false });
+    });
+
+    expect(await screen.findByTestId('toolsetup-cancel-btn')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('toolsetup-cancel-btn'));
+
+    await waitFor(() => {
+      const cancelled = calls.find((c) => c.cmd === 'cancel_task');
+      expect(cancelled).toBeTruthy();
+      expect(cancelled.args).toMatchObject({ id: 'task-tool-1' });
+    });
+  });
+
+  it('completing the tool install and clicking Done re-detects mongo tools, refreshes managed status, and closes the dialog', async () => {
+    const calls: any[] = [];
+    const completedTask = {
+      id: 'task-tool-2',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'completed',
+      processed: 2,
+      total: 2,
+      message: 'Installed database-tools, mongosh',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: 2,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(completedTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([completedTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    const detectCallCount = () => calls.filter((c) => c.cmd === 'detect_mongo_tools').length;
+    const detectBefore = detectCallCount();
+
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+
+    expect(await screen.findByTestId('toolsetup-done-btn')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('toolsetup-done-btn'));
+
+    await waitFor(() => {
+      expect(detectCallCount()).toBeGreaterThan(detectBefore);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('toolsetup-dialog')).not.toBeInTheDocument();
+    });
+  });
+
+  it('renders the cancelled state in the guided tool-setup dialog when the install task is cancelled', async () => {
+    const calls: any[] = [];
+    const cancelledTask = {
+      id: 'task-tool-3',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'cancelled',
+      processed: 1,
+      total: 2,
+      message: 'Install cancelled',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: 2,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(cancelledTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([cancelledTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+
+    expect(await screen.findByTestId('toolsetup-cancelled-heading')).toBeInTheDocument();
+  });
+
+  it('surfaces the real failure reason (task.error) instead of the generic task.message when the install task fails', async () => {
+    const calls: any[] = [];
+    const failedTask = {
+      id: 'task-tool-4',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'failed',
+      processed: 0,
+      total: 2,
+      message: 'Task failed',
+      path: null,
+      error: 'checksum mismatch — download corrupted or tampered',
+      createdAtMs: 1,
+      finishedAtMs: 2,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(failedTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([failedTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+
+    const errorEl = await screen.findByTestId('toolsetup-error');
+    expect(errorEl).toHaveTextContent('checksum mismatch — download corrupted or tampered');
+    expect(errorEl).not.toHaveTextContent('Task failed');
+  });
+
+  it('closing the completed tool-setup dialog without Done still finalizes, and reopening shows the checklist', async () => {
+    const calls: any[] = [];
+    const completedTask = {
+      id: 'task-tool-5',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'completed',
+      processed: 2,
+      total: 2,
+      message: 'Installed database-tools, mongosh',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: 2,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(completedTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([completedTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    const detectCallCount = () => calls.filter((c) => c.cmd === 'detect_mongo_tools').length;
+
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+    expect(await screen.findByTestId('toolsetup-done-btn')).toBeInTheDocument();
+
+    // Close via the dialog's X (Radix onOpenChange(false)) instead of Done —
+    // the completion side effects must still run.
+    const detectBefore = detectCallCount();
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('toolsetup-dialog')).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(detectCallCount()).toBeGreaterThan(detectBefore);
+    });
+
+    // Reopening shows the fresh checklist, not the stale completed screen.
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    expect(await screen.findByTestId('toolsetup-check-database-tools')).toBeInTheDocument();
+    expect(screen.queryByTestId('toolsetup-done-btn')).not.toBeInTheDocument();
+  });
+
+  it('a stale list_export_tasks response cannot clobber an optimistically inserted install task', async () => {
+    const installTask = {
+      id: 'task-tool-6',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Downloading database-tools…',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    // The FIRST list_export_tasks request (mount poll) is held open and only
+    // resolves — empty, as fetched before the task registered — after the
+    // optimistic insert. It must be dropped, not applied.
+    let resolveStaleList!: (tasks: any[]) => void;
+    const staleList = new Promise<any[]>((resolve) => { resolveStaleList = resolve; });
+    let listCalls = 0;
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(installTask);
+      if (cmd === 'list_export_tasks') {
+        listCalls += 1;
+        return listCalls === 1 ? staleList : Promise.resolve([installTask]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor, act } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+
+    // The dialog tracks the optimistically inserted running task.
+    expect(await screen.findByTestId('toolsetup-cancel-btn')).toBeInTheDocument();
+
+    // The pre-insert snapshot resolves late and empty.
+    await act(async () => {
+      resolveStaleList([]);
+    });
+
+    // The dialog must NOT flash back to the checklist.
+    await waitFor(() => {
+      expect(screen.getByTestId('toolsetup-cancel-btn')).toBeInTheDocument();
+      expect(screen.queryByTestId('toolsetup-install-btn')).not.toBeInTheDocument();
+    });
+  });
+
+  it('the dump guidance card "Open Settings" opens Settings on the Tools section', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'load_app_settings') return Promise.resolve({});
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, within } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    const guidance = await screen.findByTestId('dump-tools-missing');
+
+    fireEvent.click(within(guidance).getByRole('button', { name: /open settings/i }));
+
+    expect(await screen.findByTestId('settings-view')).toBeInTheDocument();
+    // The Tools section (mongosh/tools paths) is active, not Appearance.
+    expect(await screen.findByTestId('mongosh-path-input')).toBeInTheDocument();
   });
 
   it('starts a background task for full collection export', async () => {

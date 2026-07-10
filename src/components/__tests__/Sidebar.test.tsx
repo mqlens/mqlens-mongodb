@@ -612,6 +612,108 @@ describe('Sidebar Component', () => {
     expect(handleDisconnect).toHaveBeenCalledWith('uuid-1234');
   });
 
+  it('opens Dump/Restore from the connection, database, and collection context menus', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') {
+        return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    const handleOpenDump = vi.fn();
+    const handleOpenRestore = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Prod DB Server', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenDump={handleOpenDump}
+        onOpenRestore={handleOpenRestore}
+      />
+    );
+
+    // Connection-level: Dump (server scope) and Restore.
+    const serverNode = await screen.findByText('Prod DB Server');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    fireEvent.click(screen.getByTestId('ctx-dump-conn-1'));
+    expect(handleOpenDump).toHaveBeenCalledWith('conn-1');
+
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    fireEvent.click(screen.getByTestId('ctx-restore-conn-1'));
+    expect(handleOpenRestore).toHaveBeenCalledWith('conn-1');
+
+    // Database-level: Dump scoped to the database.
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.contextMenu(dbNode);
+    fireEvent.click(screen.getByTestId('ctx-dump-db-conn-1-sales_db'));
+    expect(handleOpenDump).toHaveBeenCalledWith('conn-1', 'sales_db');
+
+    // Collection-level: Dump scoped to the collection.
+    fireEvent.click(dbNode);
+    const collectionsFolder = await screen.findByText('Collections');
+    fireEvent.click(collectionsFolder);
+    const collectionNode = await screen.findByText('customers');
+    fireEvent.contextMenu(collectionNode);
+    fireEvent.click(screen.getByTestId('ctx-dump-coll-conn-1-sales_db-customers'));
+    expect(handleOpenDump).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
+  });
+
+  it('hides Dump/Restore context-menu items for mock connections', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') {
+        return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Sample (mqlens_demo)', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenDump={vi.fn()}
+        onOpenRestore={vi.fn()}
+      />
+    );
+
+    // Connection-level: neither Dump nor Restore is offered.
+    const serverNode = await screen.findByText('Sample (mqlens_demo)');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    expect(screen.queryByTestId('ctx-dump-conn-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ctx-restore-conn-1')).not.toBeInTheDocument();
+    // Close the menu before opening the next one.
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    // Database-level: no Dump item.
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.contextMenu(dbNode);
+    expect(screen.queryByTestId('ctx-dump-db-conn-1-sales_db')).not.toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    // Collection-level: no Dump item.
+    fireEvent.click(dbNode);
+    const collectionsFolder = await screen.findByText('Collections');
+    fireEvent.click(collectionsFolder);
+    const collectionNode = await screen.findByText('customers');
+    fireEvent.contextMenu(collectionNode);
+    expect(screen.queryByTestId('ctx-dump-coll-conn-1-sales_db-customers')).not.toBeInTheDocument();
+  });
+
   it('creates, renames, and drops collections/databases via the backend for a real connection (C6/H6)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {
@@ -833,12 +935,17 @@ describe('Sidebar Component', () => {
     fireEvent.click(screen.getByRole('button', { name: /pinned/i }));
     fireEvent.click(await screen.findByTestId('pinned-item-coll::Local::sales_db::orders'));
 
-    await waitFor(() => {
-      expect(onConnectProfile).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'prof-1', name: 'Local' }),
-      );
-      expect(onSelectCollection).toHaveBeenCalledWith('conn-new', 'sales_db', 'orders');
-    });
+    // The auto-connect chain (connect profile → select collection) crosses two
+    // awaits; under CI's coverage instrumentation the default 1s can flake.
+    await waitFor(
+      () => {
+        expect(onConnectProfile).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 'prof-1', name: 'Local' }),
+        );
+        expect(onSelectCollection).toHaveBeenCalledWith('conn-new', 'sales_db', 'orders');
+      },
+      { timeout: 5000 },
+    );
   });
 
   it('shows a color dot for tagged active connections', async () => {

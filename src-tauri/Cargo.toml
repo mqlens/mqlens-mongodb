@@ -44,4 +44,12 @@ aes-gcm = "0.10"
 rand = "0.8"
 base64 = "0.22"
 rust_xlsxwriter = "0.96.0"
+tempfile = "3.27.0"
+sha2 = "0.11.0"
+zip = "8.6.0"
+tar = "0.4.46"
+flate2 = "1.1.9"
+
+[dev-dependencies]
+tiny_http = "0.12.0"
 

@@ -334,6 +334,107 @@ describe('MongoShell Component', () => {
     });
   });
 
+  it('shows an Install tools button on the gate that opens the guided setup dialog', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '' });
+      if (cmd === 'test_mongosh_path') return Promise.reject('not found');
+      if (cmd === 'start_mongosh_session') return Promise.reject('mongosh not found');
+      return Promise.resolve([]);
+    });
+
+    const onInstallTools = vi.fn();
+    render(
+      <MongoShell
+        connectionId="conn-1"
+        connectionName="mock"
+        connectionUri="mongodb://prod-replica-set"
+        databaseName="user_analytics"
+        collectionName="events"
+        onInstallTools={onInstallTools}
+      />
+    );
+
+    fireEvent.click(await screen.findByTestId('shell-install-tools-btn'));
+    expect(onInstallTools).toHaveBeenCalled();
+  });
+
+  it('re-attempts the mongosh session when reconnectSignal changes (tool-install Done)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '' });
+      if (cmd === 'test_mongosh_path') return Promise.reject('not found');
+      if (cmd === 'start_mongosh_session') return Promise.reject('mongosh not found');
+      return Promise.resolve([]);
+    });
+
+    const { rerender } = render(
+      <MongoShell
+        connectionId="conn-1"
+        connectionName="mock"
+        connectionUri="mongodb://prod-replica-set"
+        databaseName="user_analytics"
+        collectionName="events"
+        reconnectSignal={0}
+      />
+    );
+
+    await screen.findByTestId('shell-session-gate');
+    const before = mockInvoke.mock.calls.filter((c) => c[0] === 'start_mongosh_session').length;
+
+    rerender(
+      <MongoShell
+        connectionId="conn-1"
+        connectionName="mock"
+        connectionUri="mongodb://prod-replica-set"
+        databaseName="user_analytics"
+        collectionName="events"
+        reconnectSignal={1}
+      />
+    );
+
+    await waitFor(() => {
+      const after = mockInvoke.mock.calls.filter((c) => c[0] === 'start_mongosh_session').length;
+      expect(after).toBeGreaterThan(before);
+    });
+  });
+
+  it('does not restart a healthy attached session when reconnectSignal changes', async () => {
+    const { rerender } = render(
+      <MongoShell
+        connectionId="conn-1"
+        connectionName="mock"
+        connectionUri="mongodb://prod-replica-set"
+        databaseName="user_analytics"
+        collectionName="events"
+        reconnectSignal={0}
+      />
+    );
+
+    // Default mocks: the session attaches successfully.
+    await screen.findByText(/mongosh session attached/);
+    const sessionStarts = () =>
+      mockInvoke.mock.calls.filter((c) => c[0] === 'start_mongosh_session').length;
+    const before = sessionStarts();
+
+    // A tool install completing bumps the signal for EVERY open shell tab —
+    // a healthy session must not be torn down and restarted.
+    rerender(
+      <MongoShell
+        connectionId="conn-1"
+        connectionName="mock"
+        connectionUri="mongodb://prod-replica-set"
+        databaseName="user_analytics"
+        collectionName="events"
+        reconnectSignal={1}
+      />
+    );
+
+    await waitFor(() => expect(sessionStarts()).toBe(before));
+    expect(mockInvoke).not.toHaveBeenCalledWith('stop_mongosh_session', expect.anything());
+    expect(screen.queryByTestId('shell-session-gate')).not.toBeInTheDocument();
+  });
+
   it('gates a destructive AI script behind a confirm modal', async () => {
     const script = 'db.users.deleteMany({ active: false })';
     mockInvoke.mockImplementation((cmd: string) => {

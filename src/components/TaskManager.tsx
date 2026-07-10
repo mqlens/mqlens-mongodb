@@ -37,7 +37,9 @@ interface TaskManagerProps {
   tasks: ExportTaskInfo[];
   onRefresh: () => void;
   onClearFinished: () => void;
-  onCancel?: (taskId: string) => void;
+  // Resolves false when the cancel request failed, so the button re-enables
+  // for a retry. A void return (tests, simple callers) keeps the old behavior.
+  onCancel?: (taskId: string) => Promise<boolean> | boolean | void;
   variant?: 'floating' | 'embedded';
 }
 
@@ -54,6 +56,33 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
   variant = 'floating',
 }) => {
   const running = tasks.filter((task) => task.status === 'running').length;
+  // Ids whose Cancel was clicked — disables the button so a double-click
+  // can't race the task's teardown and produce a spurious error.
+  const [cancelling, setCancelling] = React.useState<ReadonlySet<string>>(new Set());
+  const handleCancelClick = async (taskId: string) => {
+    setCancelling((prev) => new Set(prev).add(taskId));
+    const ok = await onCancel?.(taskId);
+    // A failed cancel re-enables the button so the user can retry.
+    if (ok === false) {
+      setCancelling((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  };
+  // Prune ids whose task is no longer running (finished or gone) so the set
+  // doesn't accumulate and a re-run of the same id gets a fresh Cancel button.
+  React.useEffect(() => {
+    setCancelling((prev) => {
+      if (prev.size === 0) return prev;
+      const stale = new Set(
+        [...prev].filter((id) => !tasks.some((t) => t.id === id && t.status === 'running'))
+      );
+      if (stale.size === 0) return prev;
+      return new Set([...prev].filter((id) => !stale.has(id)));
+    });
+  }, [tasks]);
 
   return (
     <Card
@@ -113,9 +142,12 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
               const isRunning = task.status === 'running';
               const isFailed = task.status === 'failed';
               const isCancelled = task.status === 'cancelled';
-              // Only copy tasks support cancellation; exports cannot be cancelled.
+              // Copy, dump, and restore tasks support cancellation; exports cannot be cancelled.
               const isCancellable =
-                task.kind === 'collection_copy' || task.kind === 'database_copy';
+                task.kind === 'collection_copy' ||
+                task.kind === 'database_copy' ||
+                task.kind === 'dump' ||
+                task.kind === 'restore';
               return (
                 <div
                   key={task.id}
@@ -163,7 +195,10 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
                       <div
                         className={cn(
                           'h-full rounded-full transition-all',
-                          isFailed ? 'bg-destructive' : isRunning ? 'bg-primary' : isCancelled ? 'bg-muted-foreground' : 'bg-success'
+                          isFailed ? 'bg-destructive' : isRunning ? 'bg-primary' : isCancelled ? 'bg-muted-foreground' : 'bg-success',
+                          // Indeterminate: no real percent yet — pulse so it reads as
+                          // "working", not as progress stuck at a fixed fraction.
+                          isRunning && percent === null && 'animate-pulse'
                         )}
                         style={{ width: `${percent ?? (isRunning ? 18 : isCancelled ? 0 : 100)}%` }}
                       />
@@ -204,10 +239,11 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
                     {isRunning && isCancellable && onCancel && (
                       <button
                         type="button"
-                        className="mt-1 text-[10px] text-destructive hover:underline"
-                        onClick={() => onCancel(task.id)}
+                        className="mt-1 text-[10px] text-destructive hover:underline disabled:opacity-50 disabled:no-underline"
+                        onClick={() => handleCancelClick(task.id)}
+                        disabled={cancelling.has(task.id)}
                       >
-                        Cancel
+                        {cancelling.has(task.id) ? 'Cancelling…' : 'Cancel'}
                       </button>
                     )}
                   </div>

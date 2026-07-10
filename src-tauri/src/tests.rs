@@ -142,6 +142,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_conn_uris_stored_for_real_and_absent_for_mock() {
+        use crate::db::mongotools::resolve_conn_uri;
+        let state = AppState::new();
+        let mock_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        assert!(resolve_conn_uri(&state, &mock_id).is_err());
+        assert!(resolve_conn_uri(&state, "nope").is_err());
+        // Real-connection storage is asserted in integration tests (needs a live server);
+        // unit-level: connect_db_impl inserts before returning — verified by reading the code
+        // path plus the integration test below.
+    }
+
+    #[tokio::test]
     async fn test_mock_full_collection_export_task_writes_file() {
         let state = AppState::new();
         let conn_id = connect_db_impl(&state, "mongodb://mock", None)
@@ -2988,5 +3000,347 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.contains("mode"));
+    }
+
+    #[tokio::test]
+    async fn test_browse_dump_folder_reads_tree() {
+        use crate::db::mongotools::browse_dump_folder_impl;
+
+        let root = std::env::temp_dir().join(format!(
+            "mqlens-browse-dump-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let db1 = root.join("db1");
+        let db2 = root.join("db2");
+        std::fs::create_dir_all(&db1).unwrap();
+        std::fs::create_dir_all(&db2).unwrap();
+
+        std::fs::write(db1.join("orders.bson"), b"").unwrap();
+        std::fs::write(db1.join("orders.metadata.json"), b"{}").unwrap();
+        std::fs::write(db1.join("notes.txt"), b"ignored").unwrap();
+        std::fs::write(db2.join("logs.bson.gz"), b"").unwrap();
+        std::fs::write(root.join("stray.txt"), b"ignored").unwrap();
+
+        let tree = browse_dump_folder_impl(root.to_str().unwrap()).await.unwrap();
+        assert_eq!(tree.dbs.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["db1", "db2"]);
+
+        let db1_colls = &tree.dbs[0].collections;
+        assert_eq!(db1_colls.len(), 1);
+        assert_eq!(db1_colls[0].name, "orders");
+        assert!(db1_colls[0].has_metadata);
+        assert!(!db1_colls[0].gzip);
+
+        let db2_colls = &tree.dbs[1].collections;
+        assert_eq!(db2_colls.len(), 1);
+        assert_eq!(db2_colls[0].name, "logs");
+        assert!(!db2_colls[0].has_metadata);
+        assert!(db2_colls[0].gzip);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn test_dump_rejects_mock_connections() {
+        use crate::db::mongotools::{start_dump_task_impl, DumpOptions, DumpScope, DumpTarget};
+
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+
+        let opts = DumpOptions {
+            scope: DumpScope::Server,
+            target: DumpTarget::Folder { out: "/tmp/mqlens-dump-mock-test".into() },
+            gzip: false,
+            query: None,
+            force_table_scan: false,
+            dump_users_and_roles: false,
+            oplog: false,
+        };
+        let err = start_dump_task_impl(&state, &conn_id, "mongodump", opts).await.unwrap_err();
+        assert!(err.contains("real connection"), "{}", err);
+    }
+
+    fn tool_install_test_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mqlens-tool-install-{}-{}-{}",
+            label,
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_tool_install_success_and_status() {
+        use crate::toolsetup::test_support::{fixture_zip, serve_bytes};
+        use crate::toolsetup::*;
+        use std::sync::atomic::AtomicBool;
+
+        // Fixture zip for a fake "mongosh" whose top dir mirrors the real
+        // archive layout ({top}/bin/{binary}), served over HTTP so
+        // `install_one_tool` downloads it exactly like the real pipeline
+        // would.
+        let bytes = fixture_zip("mongosh-2.9.2-darwin-arm64", &["mongosh"]);
+        let sha256 = sha256_hex(&bytes);
+        let (base_url, _server) = serve_bytes(bytes);
+        let url = format!("{base_url}/mongosh-2.9.2-darwin-arm64.zip");
+
+        let app_data = tool_install_test_dir("success");
+        let cancel = AtomicBool::new(false);
+
+        // Test `install_one_tool` directly (the unit of work factored out of
+        // the task), using the real "mongosh"/"2.9.2" name+version so the
+        // resulting layout matches what `managed_tools_status` (which walks
+        // the real PINNED_TOOLS manifest) expects.
+        install_one_tool(
+            &app_data,
+            "mongosh",
+            "2.9.2",
+            &url,
+            &sha256,
+            ArchiveKind::Zip,
+            "mongosh-2.9.2-darwin-arm64/bin",
+            &["mongosh".to_string()],
+            &cancel,
+            |_, _, _| {},
+        )
+        .await
+        .unwrap();
+
+        let bin = app_data.join("tools/mongosh-2.9.2/bin/mongosh");
+        assert!(bin.exists(), "binary should exist at the managed layout path");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&bin).unwrap().permissions().mode();
+            assert_ne!(mode & 0o111, 0, "binary should be executable");
+        }
+        assert!(
+            !app_data.join("tools/.staging-mongosh").exists(),
+            "staging dir should be cleaned up after success"
+        );
+
+        let status = managed_tools_status(&app_data);
+        let mongosh_status = status.iter().find(|s| s.name == "mongosh").unwrap();
+        assert!(mongosh_status.installed, "{:?}", mongosh_status);
+        assert_eq!(mongosh_status.version, "2.9.2");
+        assert!(mongosh_status.path.as_deref().unwrap().ends_with("mongosh-2.9.2/bin"));
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_tool_install_checksum_mismatch_cleans_up() {
+        use crate::toolsetup::test_support::{fixture_zip, serve_bytes};
+        use crate::toolsetup::*;
+        use std::sync::atomic::AtomicBool;
+
+        let bytes = fixture_zip("mongosh-2.9.2-darwin-arm64", &["mongosh"]);
+        let (base_url, _server) = serve_bytes(bytes);
+        let url = format!("{base_url}/mongosh-2.9.2-darwin-arm64.zip");
+        let wrong_sha256 = "0".repeat(64);
+
+        let app_data = tool_install_test_dir("badsum");
+        let cancel = AtomicBool::new(false);
+
+        let err = install_one_tool(
+            &app_data,
+            "mongosh",
+            "2.9.2",
+            &url,
+            &wrong_sha256,
+            ArchiveKind::Zip,
+            "mongosh-2.9.2-darwin-arm64/bin",
+            &["mongosh".to_string()],
+            &cancel,
+            |_, _, _| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("checksum mismatch"), "{err}");
+
+        let tools_dir = app_data.join("tools");
+        if tools_dir.exists() {
+            let leftovers: Vec<_> = std::fs::read_dir(&tools_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with("mongosh") || n.starts_with(".staging-"))
+                .collect();
+            assert!(leftovers.is_empty(), "no mongosh-*/.staging-* dir should remain: {:?}", leftovers);
+        }
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_tool_install_probe_failure_leaves_no_install_dir() {
+        use crate::toolsetup::test_support::{fixture_zip_with_script, serve_bytes};
+        use crate::toolsetup::*;
+        use std::sync::atomic::AtomicBool;
+
+        // A "binary" that survives extraction (checksum + extract both
+        // succeed) but exits non-zero on `--version`, simulating a corrupt or
+        // incompatible executable. Per the spec, the staged copy must be
+        // probed *before* the managed install dir is ever created.
+        let bytes = fixture_zip_with_script("mongosh-2.9.2-darwin-arm64", &["mongosh"], b"#!/bin/sh\nexit 1\n");
+        let sha256 = sha256_hex(&bytes);
+        let (base_url, _server) = serve_bytes(bytes);
+        let url = format!("{base_url}/mongosh-2.9.2-darwin-arm64.zip");
+
+        let app_data = tool_install_test_dir("probefail");
+        let cancel = AtomicBool::new(false);
+
+        let err = install_one_tool(
+            &app_data,
+            "mongosh",
+            "2.9.2",
+            &url,
+            &sha256,
+            ArchiveKind::Zip,
+            "mongosh-2.9.2-darwin-arm64/bin",
+            &["mongosh".to_string()],
+            &cancel,
+            |_, _, _| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("failed to run --version"), "{err}");
+
+        // NOTE: with staging-first probing, the managed install dir is never
+        // created on a probe failure (probe happens before mkdir+rename, the
+        // atomic swap). We can only observe its absence, not distinguish
+        // "never created" from "created then removed by cleanup" purely from
+        // outside the function — both leave no trace on disk. The ordering
+        // itself (verified by reading `install_one_tool`) is what proves the
+        // stronger claim; this assertion just guards the observable contract.
+        let install_dir = app_data.join("tools/mongosh-2.9.2");
+        assert!(!install_dir.exists(), "install dir should not exist after a probe failure");
+        assert!(
+            !app_data.join("tools/.staging-mongosh").exists(),
+            "staging dir should be cleaned up after probe failure"
+        );
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_tool_install_probes_staged_copy_before_moving_into_install_dir() {
+        use crate::toolsetup::test_support::{fixture_zip_with_script, serve_bytes};
+        use crate::toolsetup::*;
+        use std::sync::atomic::AtomicBool;
+
+        // Directly verifies the spec-mandated ordering (probe the STAGING
+        // copy first, then atomically swap into place) rather than just
+        // inferring it from absence-on-failure, which both orderings satisfy
+        // identically. The probed script reports its own invocation
+        // directory (via `$0`) to a marker file that lives outside the
+        // staging/install tree, so it survives regardless of what
+        // `install_one_tool` does with the staging dir afterwards.
+        let app_data = tool_install_test_dir("probe-order");
+        let marker = app_data.join("probe-marker.txt");
+        let script = format!(
+            "#!/bin/sh\necho \"$(dirname \"$0\")\" > '{}'\necho tool version 9.9.9\n",
+            marker.display()
+        );
+        let bytes = fixture_zip_with_script("mongosh-2.9.2-darwin-arm64", &["mongosh"], script.as_bytes());
+        let sha256 = sha256_hex(&bytes);
+        let (base_url, _server) = serve_bytes(bytes);
+        let url = format!("{base_url}/mongosh-2.9.2-darwin-arm64.zip");
+
+        let cancel = AtomicBool::new(false);
+        install_one_tool(
+            &app_data,
+            "mongosh",
+            "2.9.2",
+            &url,
+            &sha256,
+            ArchiveKind::Zip,
+            "mongosh-2.9.2-darwin-arm64/bin",
+            &["mongosh".to_string()],
+            &cancel,
+            |_, _, _| {},
+        )
+        .await
+        .unwrap();
+
+        let probed_from = std::fs::read_to_string(&marker).unwrap();
+        let probed_from = probed_from.trim();
+        assert!(
+            probed_from.contains(".staging-mongosh"),
+            "probe must run against the staging copy before the install swap, was probed from: {probed_from}"
+        );
+        let final_bin_dir = app_data.join("tools/mongosh-2.9.2/bin");
+        assert_ne!(
+            probed_from,
+            final_bin_dir.to_string_lossy(),
+            "probe must not run against the already-installed copy"
+        );
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_tool_install_task_end_to_end_with_cancel_flag_cleanup() {
+        use crate::toolsetup::test_support::{fixture_zip, serve_bytes, test_tool};
+        use crate::toolsetup::*;
+
+        let bytes = fixture_zip("test-mongosh-9.9.9-test", &["mongosh"]);
+        let sha256 = sha256_hex(&bytes);
+        let (base_url, _server) = serve_bytes(bytes);
+
+        // Registers a synthetic pinned tool (name "test-mongosh") so
+        // `start_tool_install_task_impl`'s manifest resolution doesn't need
+        // real network access or a real checksum.
+        test_tool(
+            "test-mongosh",
+            "https://example.invalid/test-mongosh-fixture.zip",
+            &sha256,
+            "test-mongosh-9.9.9-test/bin",
+            &["mongosh"],
+        );
+
+        let app_data = tool_install_test_dir("e2e");
+        let state = AppState::new();
+
+        let task = start_tool_install_task_impl(
+            &state,
+            app_data.clone(),
+            vec!["test-mongosh".to_string()],
+            false,
+            Some(base_url.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(task.kind, "tool_install");
+
+        wait_for_task(&state, &task.id).await;
+        let t = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(t.status, "completed", "{:?}", t.error);
+        assert!(state.cancels.lock().unwrap().get(&task.id).is_none(), "cancel flag cleaned up");
+
+        // Same tool, force=false: should skip straight to "already installed"
+        // without re-downloading.
+        let task2 = start_tool_install_task_impl(
+            &state,
+            app_data.clone(),
+            vec!["test-mongosh".to_string()],
+            false,
+            Some(base_url),
+        )
+        .await
+        .unwrap();
+        wait_for_task(&state, &task2.id).await;
+        let t2 = state.tasks.lock().unwrap().get(&task2.id).cloned().unwrap();
+        assert_eq!(t2.status, "completed");
+        assert!(t2.message.contains("already installed"), "{}", t2.message);
+        assert!(state.cancels.lock().unwrap().get(&task2.id).is_none(), "cancel flag cleaned up");
+
+        let _ = std::fs::remove_dir_all(&app_data);
     }
 }

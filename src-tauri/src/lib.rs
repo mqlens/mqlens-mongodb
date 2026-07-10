@@ -19,6 +19,7 @@ pub mod path_env;
 pub mod queries;
 pub mod ssh_tunnel;
 mod state;
+pub mod toolsetup;
 pub mod updater;
 mod vault;
 mod window;
@@ -42,6 +43,10 @@ pub use db::gridfs::{
     upload_gridfs_file_impl, GridFsFileInfo, GridFsTransferProgress,
 };
 pub use db::import::{preview_import_impl, start_import_task_impl};
+pub use db::mongotools::{
+    browse_dump_folder_impl, resolve_conn_uri, start_dump_task_impl, start_restore_task_impl,
+    DumpTree, ToolInfo, ToolsStatus,
+};
 pub use db::metadata::{
     create_index_impl, delete_index_impl, list_collections_impl, list_databases_impl,
     list_indexes_impl,
@@ -467,6 +472,10 @@ pub async fn connect_db_impl(
         let mut mocks = state.mocks.lock_safe()?;
         mocks.insert(connection_id.clone(), false);
     }
+    {
+        let mut conn_uris = state.conn_uris.lock_safe()?;
+        conn_uris.insert(connection_id.clone(), normalized_uri.clone());
+    }
     if let Some(t) = tunnel {
         let mut tunnels = state.ssh_tunnels.lock_safe()?;
         tunnels.insert(connection_id.clone(), t);
@@ -500,6 +509,10 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
     {
         let mut mocks = state.mocks.lock_safe()?;
         mocks.remove(id);
+    }
+    {
+        let mut conn_uris = state.conn_uris.lock_safe()?;
+        conn_uris.remove(id);
     }
     // Tear down the SSH tunnel (if any) — dropping SshTunnel aborts its accept loop.
     {
@@ -639,6 +652,111 @@ async fn connect_db(
 }
 
 #[tauri::command]
+async fn detect_mongo_tools(
+    app_handle: tauri::AppHandle,
+    configured_dir: Option<String>,
+) -> Result<ToolsStatus, String> {
+    use tauri::Manager;
+    // app_data_dir() can fail in headless/test environments; treat that as
+    // "no managed dir" rather than failing detection outright.
+    let app_data_dir = app_handle.path().app_data_dir().ok();
+    let managed_dir = app_data_dir
+        .as_deref()
+        .and_then(|dir| toolsetup::find_pinned_tool("database-tools").ok().map(|tool| toolsetup::managed_bin_dir(dir, tool)));
+    Ok(db::mongotools::detect_mongo_tools(configured_dir.as_deref(), managed_dir.as_deref()))
+}
+
+#[tauri::command]
+async fn start_dump_task(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    tool_path: String,
+    options: db::mongotools::DumpOptions,
+) -> Result<TaskInfo, String> {
+    start_dump_task_impl(&state, &id, &tool_path, options).await
+}
+
+#[tauri::command]
+async fn start_restore_task(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    tool_path: String,
+    options: db::mongotools::RestoreOptions,
+) -> Result<TaskInfo, String> {
+    start_restore_task_impl(&state, &id, &tool_path, options).await
+}
+
+#[tauri::command]
+async fn start_tool_install_task(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    tools: Vec<String>,
+    force: bool,
+) -> Result<TaskInfo, String> {
+    use tauri::Manager;
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
+    toolsetup::start_tool_install_task_impl(&state, app_data_dir, tools, force, None).await
+}
+
+#[tauri::command]
+async fn managed_tools_status(app_handle: tauri::AppHandle) -> Result<Vec<toolsetup::ManagedToolStatus>, String> {
+    use tauri::Manager;
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
+    Ok(toolsetup::managed_tools_status(&app_data_dir))
+}
+
+#[tauri::command]
+async fn browse_dump_folder(path: String) -> Result<DumpTree, String> {
+    browse_dump_folder_impl(&path).await
+}
+
+#[tauri::command]
+async fn preview_dump_command(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    tool_path: String,
+    options: db::mongotools::DumpOptions,
+) -> Result<String, String> {
+    let uri = resolve_conn_uri(&state, &id)?;
+    let tunneled = state.ssh_tunnels.lock_safe()?.contains_key(&id);
+    let mut args = db::mongotools::build_dump_args(&options)?;
+    let prepared_uri = db::mongotools::prepare_tool_uri(&uri, tunneled);
+    let (prepared_uri, tls_flags) = db::mongotools::extract_unsupported_tls_params(&prepared_uri);
+    args.extend(tls_flags);
+    Ok(db::mongotools::preview_tool_command(
+        &tool_path,
+        &db::mongotools::redact_uri_password(&prepared_uri),
+        &args,
+    ))
+}
+
+#[tauri::command]
+async fn preview_restore_command(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    tool_path: String,
+    options: db::mongotools::RestoreOptions,
+) -> Result<String, String> {
+    let uri = resolve_conn_uri(&state, &id)?;
+    let tunneled = state.ssh_tunnels.lock_safe()?.contains_key(&id);
+    let mut args = db::mongotools::build_restore_args(&options)?;
+    let prepared_uri = db::mongotools::prepare_tool_uri(&uri, tunneled);
+    let (prepared_uri, tls_flags) = db::mongotools::extract_unsupported_tls_params(&prepared_uri);
+    args.extend(tls_flags);
+    Ok(db::mongotools::preview_tool_command(
+        &tool_path,
+        &db::mongotools::redact_uri_password(&prepared_uri),
+        &args,
+    ))
+}
+
+#[tauri::command]
 async fn get_resource_usage(state: tauri::State<'_, AppState>) -> Result<ResourceUsage, String> {
     Ok(resource_usage_impl(&state))
 }
@@ -727,13 +845,17 @@ async fn get_mongodb_version(
 
 #[tauri::command]
 async fn start_mongosh_session(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     connection_id: String,
     uri: String,
     database: String,
     mongosh_path: String,
 ) -> Result<MongoshSessionInfo, String> {
-    start_mongosh_session_impl(&state, &connection_id, &uri, &database, &mongosh_path).await
+    use tauri::Manager;
+    let app_data_dir = app_handle.path().app_data_dir().ok();
+    let resolved_path = toolsetup::resolve_mongosh_executable(&mongosh_path, app_data_dir.as_deref());
+    start_mongosh_session_impl(&state, &connection_id, &uri, &database, &resolved_path).await
 }
 
 #[tauri::command]
@@ -1052,11 +1174,7 @@ async fn clear_finished_export_tasks(
 
 #[tauri::command]
 async fn cancel_task(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
-    if state.request_cancel(&id) {
-        Ok(())
-    } else {
-        Err("Task is not running or cannot be cancelled".to_string())
-    }
+    state.cancel_or_ack(&id)
 }
 
 #[tauri::command]
@@ -1653,6 +1771,14 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             connect_db,
+            detect_mongo_tools,
+            start_dump_task,
+            start_restore_task,
+            start_tool_install_task,
+            managed_tools_status,
+            browse_dump_folder,
+            preview_dump_command,
+            preview_restore_command,
             get_resource_usage,
             generate_mql_query,
             detect_local_agents,
