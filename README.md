@@ -170,6 +170,11 @@ npm install
 npm run tauri dev      # run the desktop app with hot reload
 ```
 
+For something to point the app at, seed the
+[local demo database](docs/demo-database.md) — synthetic collections, indexes,
+a view, and GridFS files that exercise every major workflow (and match the
+screenshots above).
+
 Other useful commands:
 
 ```bash

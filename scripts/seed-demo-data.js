@@ -101,15 +101,15 @@ const events = Array.from({ length: 260 }, (_, index) => ({
     rowsReturned: (index * 13) % 500,
   },
 }));
-db.events.insertMany(events);
+demoDb.events.insertMany(events);
 
-db.orders.createIndex({ status: 1, createdAt: -1 });
-db.orders.createIndex({ region: 1, total: -1 });
-db.orders.createIndex({ customerId: 1 });
-db.customers.createIndex({ email: 1 }, { unique: true });
-db.events.createIndex({ type: 1, createdAt: -1 });
+demoDb.orders.createIndex({ status: 1, createdAt: -1 });
+demoDb.orders.createIndex({ region: 1, total: -1 });
+demoDb.orders.createIndex({ customerId: 1 });
+demoDb.customers.createIndex({ email: 1 }, { unique: true });
+demoDb.events.createIndex({ type: 1, createdAt: -1 });
 
-db.createCollection('active_customer_revenue', {
+demoDb.createCollection('active_customer_revenue', {
   viewOn: 'orders',
   pipeline: [
     { $match: { status: { $in: ['shipped', 'delivered'] } } },
@@ -118,32 +118,71 @@ db.createCollection('active_customer_revenue', {
   ],
 });
 
-db.fs.files.insertMany([
+// GridFS files with real chunk data (lengths match the chunks), so listing,
+// downloading, and deleting in the GridFS view all work against them.
+const gridFsFiles = [
   {
-    _id: ObjectId(),
     filename: 'orders-q2-export.csv',
-    length: NumberLong('184320'),
-    chunkSize: 261120,
-    uploadDate: new Date(Date.UTC(2026, 5, 1, 10, 30)),
     contentType: 'text/csv',
+    uploadDate: new Date(Date.UTC(2026, 5, 1, 10, 30)),
     metadata: { owner: 'analytics', source: 'scheduled-export' },
+    content:
+      'orderNo,region,status,total\n' +
+      orders.slice(0, 25).map((o) => `${o.orderNo},${o.region},${o.status},${o.total}`).join('\n') +
+      '\n',
   },
   {
-    _id: ObjectId(),
     filename: 'customer-schema-snapshot.json',
-    length: NumberLong('32768'),
-    chunkSize: 261120,
-    uploadDate: new Date(Date.UTC(2026, 5, 2, 14, 15)),
     contentType: 'application/json',
+    uploadDate: new Date(Date.UTC(2026, 5, 2, 14, 15)),
     metadata: { owner: 'data-platform', source: 'schema-analysis' },
+    content: JSON.stringify(
+      {
+        collection: 'customers',
+        sampledAt: '2026-06-02T14:15:00Z',
+        fields: {
+          customerId: 'string',
+          name: 'string',
+          email: 'string',
+          region: 'string',
+          plan: 'string',
+          lifecycle: 'string',
+          seats: 'int',
+          spendToDate: 'int',
+          tags: 'array<string>',
+          createdAt: 'date',
+        },
+      },
+      null,
+      2,
+    ),
   },
-]);
+];
+
+for (const file of gridFsFiles) {
+  const bytes = Buffer.from(file.content, 'utf8');
+  const fileId = new ObjectId();
+  demoDb.fs.files.insertOne({
+    _id: fileId,
+    filename: file.filename,
+    length: Long.fromNumber(bytes.length),
+    chunkSize: 261120,
+    uploadDate: file.uploadDate,
+    contentType: file.contentType,
+    metadata: file.metadata,
+  });
+  demoDb.fs.chunks.insertOne({
+    files_id: fileId,
+    n: 0,
+    data: BinData(0, bytes.toString('base64')),
+  });
+}
 
 printjson({
   database: dbName,
-  products: db.products.countDocuments(),
-  customers: db.customers.countDocuments(),
-  orders: db.orders.countDocuments(),
-  events: db.events.countDocuments(),
-  gridFsFiles: db.fs.files.countDocuments(),
+  products: demoDb.products.countDocuments(),
+  customers: demoDb.customers.countDocuments(),
+  orders: demoDb.orders.countDocuments(),
+  events: demoDb.events.countDocuments(),
+  gridFsFiles: demoDb.fs.files.countDocuments(),
 });
