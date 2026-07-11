@@ -57,7 +57,8 @@ export type SshConfig = {
   user: string;
   auth:
     | { type: 'password'; password: string }
-    | { type: 'key'; path: string; passphrase?: string };
+    | { type: 'key'; path: string; passphrase?: string }
+    | { type: 'agent' };
 };
 
 interface ConnectionProfile {
@@ -363,7 +364,9 @@ export const buildSshConfig = (s: typeof BLANK_CONN): SshConfig | null => {
   const auth =
     s.sshAuth === 'password'
       ? { type: 'password' as const, password: s.sshPass }
-      : { type: 'key' as const, path: s.sshKey, passphrase: s.sshPass || undefined };
+      : s.sshAuth === 'agent'
+        ? { type: 'agent' as const }
+        : { type: 'key' as const, path: s.sshKey, passphrase: s.sshPass || undefined };
   return {
     enabled: true,
     host: s.sshHost,
@@ -503,12 +506,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           sshHost: ssh.host,
           sshPort: String(ssh.port),
           sshUser: ssh.user,
-          sshAuth: ssh.auth.type === 'password' ? 'password' : 'key',
+          sshAuth: ssh.auth.type,
           sshKey: ssh.auth.type === 'key' ? ssh.auth.path : '',
           sshPass:
             ssh.auth.type === 'password'
               ? ssh.auth.password
-              : ssh.auth.passphrase || '',
+              : ssh.auth.type === 'key'
+                ? ssh.auth.passphrase || ''
+                : '',
         }
       : {};
 
@@ -1680,18 +1685,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         <div className="flex flex-1 flex-col gap-1">
                           <Label>Auth Method</Label>
                           <Select value={editorState.sshAuth} onValueChange={(v) => setEditorState(prev => ({ ...prev, sshAuth: v }))}>
-                            <SelectTrigger className="h-8 text-xs">
+                            <SelectTrigger className="h-8 text-xs" data-testid="ssh-auth-select">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent className={NESTED_SELECT_Z}>
                               <SelectItem value="key">Private Key</SelectItem>
                               <SelectItem value="password">Password</SelectItem>
+                              <SelectItem value="agent">SSH Agent</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
                       </div>
 
-                      {editorState.sshAuth === 'key' ? (
+                      {editorState.sshAuth === 'key' && (
                         <>
                           <div className="flex flex-col gap-1">
                             <Label>Private Key Path</Label>
@@ -1713,7 +1719,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             />
                           </div>
                         </>
-                      ) : (
+                      )}
+                      {editorState.sshAuth === 'password' && (
                         <div className="flex flex-col gap-1">
                           <Label>SSH Password</Label>
                           <PasswordInput
@@ -1722,6 +1729,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             placeholder="••••••••"
                             className="font-mono"
                           />
+                        </div>
+                      )}
+                      {editorState.sshAuth === 'agent' && (
+                        <div
+                          data-testid="ssh-agent-note"
+                          className="rounded border border-border bg-muted/40 px-2 py-1.5 text-[10.5px] leading-relaxed text-muted-foreground"
+                        >
+                          Authentication uses your system ssh-agent (SSH_AUTH_SOCK). Keys and
+                          passphrases stay in the agent and never touch MQLens or the saved profile.
                         </div>
                       )}
 

@@ -7,6 +7,7 @@ fn default_ssh_port() -> u16 {
 /// SSH authentication method. Frontend-shaped, internally tagged:
 ///   {"type":"password","password":"..."}
 ///   {"type":"key","path":"...","passphrase":"..."}
+///   {"type":"agent"}
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum SshAuth {
@@ -18,6 +19,8 @@ pub enum SshAuth {
         #[serde(default)]
         passphrase: Option<String>,
     },
+    /// Delegate signing to the system ssh-agent; no key material is stored.
+    Agent,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -104,10 +107,64 @@ pub fn rewrite_uri_hosts(uri: &str, local_host: &str, local_port: u16) -> String
 // ── Live SSH tunnel (russh) ────────────────────────────────────────────────
 use std::sync::{Arc, Mutex as StdMutex};
 use russh::client::{self, Config};
+use russh::keys::agent::client::{AgentClient, AgentStream};
+use russh::keys::agent::AgentIdentity;
 use russh::keys::{check_known_hosts, load_secret_key, ssh_key, PrivateKeyWithHashAlg};
 use russh::{ChannelMsg, Disconnect};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+
+/// An ssh-agent connection over whatever transport the platform uses
+/// (unix socket, Windows named pipe).
+pub(crate) type BoxedAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
+
+/// Connect to the system ssh-agent. `sock` is the value of `SSH_AUTH_SOCK`
+/// (passed explicitly so tests don't depend on the ambient environment).
+/// Errors are user-readable and actionable.
+#[cfg(unix)]
+pub(crate) async fn connect_agent_at(sock: Option<String>) -> Result<BoxedAgentClient, String> {
+    let sock = match sock.filter(|s| !s.is_empty()) {
+        Some(s) => s,
+        None => {
+            return Err(
+                "SSH agent not reachable (SSH_AUTH_SOCK is not set). Start an ssh-agent and load your key with ssh-add."
+                    .to_string(),
+            )
+        }
+    };
+    AgentClient::connect_uds(&sock)
+        .await
+        .map(|c| c.dynamic())
+        .map_err(|e| {
+            format!(
+                "SSH agent not reachable at '{}': {}. Is your ssh-agent running?",
+                sock, e
+            )
+        })
+}
+
+/// Windows: the OpenSSH agent service listens on a well-known named pipe;
+/// `SSH_AUTH_SOCK`, when set, may point at an alternative pipe.
+#[cfg(windows)]
+pub(crate) async fn connect_agent_at(sock: Option<String>) -> Result<BoxedAgentClient, String> {
+    let pipe = sock
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| r"\\.\pipe\openssh-ssh-agent".to_string());
+    AgentClient::connect_named_pipe(&pipe)
+        .await
+        .map(|c| c.dynamic())
+        .map_err(|e| {
+            format!(
+                "SSH agent not reachable at '{}': {}. Is the 'OpenSSH Authentication Agent' service running?",
+                pipe, e
+            )
+        })
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(crate) async fn connect_agent_at(_sock: Option<String>) -> Result<BoxedAgentClient, String> {
+    Err("ssh-agent is not supported on this platform yet".to_string())
+}
 
 // russh client handler that verifies the server host key against ~/.ssh/known_hosts.
 struct TunnelClient {
@@ -209,6 +266,66 @@ pub async fn open_tunnel(
                 .await
                 .map_err(|e| format!("SSH public-key authentication error: {}", e))?
                 .success()
+        }
+        SshAuth::Agent => {
+            let mut agent = connect_agent_at(std::env::var("SSH_AUTH_SOCK").ok()).await?;
+            let identities = agent
+                .request_identities()
+                .await
+                .map_err(|e| format!("Failed to list SSH agent identities: {}", e))?;
+            if identities.is_empty() {
+                return Err(
+                    "SSH agent has no identities loaded — add one with ssh-add.".to_string()
+                );
+            }
+            let hash = session
+                .best_supported_rsa_hash()
+                .await
+                .map_err(|e| format!("SSH key hash negotiation failed: {}", e))?
+                .flatten();
+            // Try every identity the agent holds; signing stays in the agent.
+            let mut authed = false;
+            let mut last_err: Option<String> = None;
+            for identity in identities {
+                let result = match identity {
+                    AgentIdentity::PublicKey { key, .. } => {
+                        session
+                            .authenticate_publickey_with(cfg.user.clone(), key, hash, &mut agent)
+                            .await
+                    }
+                    AgentIdentity::Certificate { certificate, .. } => {
+                        session
+                            .authenticate_certificate_with(
+                                cfg.user.clone(),
+                                certificate,
+                                hash,
+                                &mut agent,
+                            )
+                            .await
+                    }
+                };
+                match result {
+                    Ok(r) if r.success() => {
+                        authed = true;
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(e) => last_err = Some(e.to_string()),
+                }
+            }
+            if !authed {
+                return Err(match last_err {
+                    Some(e) => format!(
+                        "SSH agent identities were rejected by the server for user '{}' (last agent error: {})",
+                        cfg.user, e
+                    ),
+                    None => format!(
+                        "SSH agent identities were rejected by the server for user '{}'.",
+                        cfg.user
+                    ),
+                });
+            }
+            true
         }
     };
     if !authed {
