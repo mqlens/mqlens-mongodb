@@ -91,6 +91,7 @@ import {
   ClipboardPaste,
   DatabaseBackup,
   DatabaseZap,
+  ChartLine,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
@@ -1118,6 +1119,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const collKey = `${connId}/${dbName}/${collName}`;
     const isCollExpanded = expandedCollections[collKey];
     const collIndexes = indexes[collKey] || [];
+    const collType = (collections[`${connId}/${dbName}`] || []).find((c) => c.name === collName)?.type;
     const isActive =
       activeCollection?.connectionId === connId &&
       activeCollection?.db === dbName &&
@@ -1146,7 +1148,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 size={10}
                 className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isCollExpanded && 'rotate-90')}
               />
-              <Layers size={11} className={cn('shrink-0', isActive ? 'text-primary' : 'text-emerald-500')} />
+              {collType === 'timeseries' ? (
+                <span
+                  title="Time-series collection"
+                  data-testid="coll-icon-timeseries"
+                  className="flex shrink-0 items-center"
+                >
+                  <ChartLine size={11} className={cn('shrink-0', isActive ? 'text-primary' : 'text-emerald-500')} />
+                </span>
+              ) : (
+                <Layers size={11} className={cn('shrink-0', isActive ? 'text-primary' : 'text-emerald-500')} />
+              )}
               <span className="min-w-0 truncate" title={collName}>
                 {collName}
               </span>
