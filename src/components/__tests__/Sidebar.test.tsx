@@ -257,6 +257,7 @@ describe('Sidebar Component', () => {
         return Promise.resolve([
           { name: 'customers', type: 'collection' },
           { name: 'sensor_readings', type: 'timeseries' },
+          { name: 'active_users', type: 'view' },
         ]);
       }
       return Promise.reject(new Error(`Unhandled mock: ${cmd}`));

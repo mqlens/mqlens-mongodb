@@ -126,6 +126,7 @@ mod tests {
         let collection_names: Vec<String> = collections.iter().map(|c| c.name.clone()).collect();
         assert!(collection_names.contains(&"customers".to_string()));
         assert!(collection_names.contains(&"transactions".to_string()));
+        // sensor_readings is timeseries; its type is asserted in test_mock_collections_report_timeseries_type
         assert!(collections
             .iter()
             .filter(|c| c.name != "sensor_readings")

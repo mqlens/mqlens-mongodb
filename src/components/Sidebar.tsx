@@ -87,11 +87,11 @@ import {
   X,
   Pin,
   Heart,
-  Copy,
+  ChartLine,
   ClipboardPaste,
+  Copy,
   DatabaseBackup,
   DatabaseZap,
-  ChartLine,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
