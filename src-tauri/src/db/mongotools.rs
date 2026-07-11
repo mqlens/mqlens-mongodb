@@ -736,6 +736,10 @@ async fn run_tool_process(
     let mut tail: VecDeque<String> = VecDeque::with_capacity(STDERR_TAIL_LINES);
     let mut processed: u64 = 0;
     let mut poll = tokio::time::interval(Duration::from_millis(250));
+    // Set once the child has exited while the pipe is still open — a
+    // grandchild that inherited the stderr write end would otherwise delay
+    // EOF (and so task completion) until IT exits.
+    let mut exited: Option<(std::process::ExitStatus, std::time::Instant)> = None;
 
     let cancelled = loop {
         tokio::select! {
@@ -806,6 +810,18 @@ async fn run_tool_process(
                         });
                     }
                 }
+                // Detect the child exiting while the pipe stays open; after a
+                // short grace for buffered output, stop reading — EOF may
+                // never come if something else inherited the write end.
+                match exited {
+                    None => {
+                        if let Ok(Some(status)) = child.try_wait() {
+                            exited = Some((status, std::time::Instant::now()));
+                        }
+                    }
+                    Some((_, at)) if at.elapsed() >= Duration::from_millis(500) => break false,
+                    Some(_) => {}
+                }
             }
         }
     };
@@ -817,17 +833,22 @@ async fn run_tool_process(
 
     // The tool can close stderr while still running; a bare wait() here would
     // leave the task uncancellable from that point on. Keep polling the
-    // cancel flag (killing on cancel) until the process actually exits.
-    let status = loop {
-        tokio::select! {
-            status = child.wait() => {
-                break status.map_err(|e| format!("Failed to wait for {}: {}", tool_path, e))?;
-            }
-            _ = poll.tick() => {
-                if cancel.load(Ordering::SeqCst) {
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
-                    return Ok(ToolOutcome::Cancelled);
+    // cancel flag (killing on cancel) until the process actually exits —
+    // unless the exit was already observed above.
+    let status = if let Some((status, _)) = exited {
+        status
+    } else {
+        loop {
+            tokio::select! {
+                status = child.wait() => {
+                    break status.map_err(|e| format!("Failed to wait for {}: {}", tool_path, e))?;
+                }
+                _ = poll.tick() => {
+                    if cancel.load(Ordering::SeqCst) {
+                        let _ = child.kill().await;
+                        let _ = child.wait().await;
+                        return Ok(ToolOutcome::Cancelled);
+                    }
                 }
             }
         }
@@ -1638,13 +1659,61 @@ mod tests {
     }
 
     async fn wait_for_task(state: &AppState, task_id: &str) {
-        for _ in 0..50 {
+        // Generous budget: under full-suite process-spawn load even a trivial
+        // task can take a while end to end. Returns as soon as it settles.
+        for _ in 0..500 {
             let status = state.tasks.lock().unwrap().get(task_id).map(|t| t.status.clone());
             if status.as_deref() != Some("running") {
                 return;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
+    }
+
+    /// Start a dump task and wait for proof the tool actually launched,
+    /// riding out the classic fork/exec ETXTBSY race (under parallel test
+    /// load a concurrently forked child can briefly hold the just-written
+    /// fake tool's fd, failing the spawn with "Failed to start").
+    ///
+    /// "Launched" is detected via the runner's own post-spawn signal — the
+    /// task message flips to "<tool> started — connecting…" — or any terminal
+    /// state. A "Failed to start" failure retries with a fresh task; every
+    /// other outcome is the test's real behavior and is returned as-is.
+    async fn start_dump_task_retrying(
+        state: &AppState,
+        tool: &std::path::Path,
+        out: &str,
+    ) -> TaskInfo {
+        for attempt in 0..10 {
+            let task = start_dump_task_impl(
+                state,
+                "c1",
+                tool.to_str().unwrap(),
+                dump_server_folder_opts(out),
+            )
+            .await
+            .unwrap();
+            for _ in 0..500 {
+                let snap = state.tasks.lock().unwrap().get(&task.id).cloned();
+                if let Some(t) = snap {
+                    if t.status == "failed"
+                        && t.error.as_deref().unwrap_or("").contains("Failed to start")
+                    {
+                        break; // transient spawn race — retry with a fresh task
+                    }
+                    let spawned = t.status != "running"
+                        || t.processed > 0
+                        || t.message.contains("started")
+                        || t.message.contains("running");
+                    if spawned {
+                        return task;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            eprintln!("fake-tool spawn raced (attempt {attempt}); retrying");
+        }
+        panic!("fake tool could not be spawned after retries");
     }
 
     #[cfg(unix)]
@@ -1658,8 +1727,7 @@ mod tests {
              echo 'ts\tdone dumping a.y (7 documents)' 1>&2\n\
              exit 0\n",
         );
-        let opts = dump_server_folder_opts("/tmp/mqlens-dump-test-out");
-        let task = start_dump_task_impl(&state, "c1", tool.to_str().unwrap(), opts).await.unwrap();
+        let task = start_dump_task_retrying(&state, &tool, "/tmp/mqlens-dump-test-out").await;
         assert_eq!(task.kind, "dump");
         wait_for_task(&state, &task.id).await;
         let t = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
@@ -1680,8 +1748,7 @@ mod tests {
              echo 'cannot connect to mongodb://u:sekrit@h:27017/db' 1>&2\n\
              exit 3\n",
         );
-        let opts = dump_server_folder_opts("/tmp/mqlens-dump-test-out2");
-        let task = start_dump_task_impl(&state, "c1", tool.to_str().unwrap(), opts).await.unwrap();
+        let task = start_dump_task_retrying(&state, &tool, "/tmp/mqlens-dump-test-out2").await;
         wait_for_task(&state, &task.id).await;
         let t = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
         assert_eq!(t.status, "failed");
@@ -1703,8 +1770,7 @@ mod tests {
         let tool = crate::db::mongotools::test_support::write_fake_tool(
             "echo 'ts\tdone dumping a.x (1 documents)' 1>&2\nsleep 30\n",
         );
-        let opts = dump_server_folder_opts("/tmp/mqlens-dump-test-out3");
-        let task = start_dump_task_impl(&state, "c1", tool.to_str().unwrap(), opts).await.unwrap();
+        let task = start_dump_task_retrying(&state, &tool, "/tmp/mqlens-dump-test-out3").await;
 
         // Wait until the fake tool has reported at least one namespace done.
         for _ in 0..100 {
@@ -1737,8 +1803,7 @@ mod tests {
         let state = AppState::new();
         state.conn_uris.lock().unwrap().insert("c1".into(), "mongodb://u:pw@localhost:27017".into());
         let tool = crate::db::mongotools::test_support::write_fake_tool("sleep 30\n");
-        let opts = dump_server_folder_opts("/tmp/mqlens-dump-test-out4");
-        let task = start_dump_task_impl(&state, "c1", tool.to_str().unwrap(), opts).await.unwrap();
+        let task = start_dump_task_retrying(&state, &tool, "/tmp/mqlens-dump-test-out4").await;
         assert_ne!(task.message, "Queued", "initial message should say the tool is starting");
 
         // Shortly after spawn the message must reflect a live process.
@@ -1786,8 +1851,7 @@ mod tests {
              echo 'ts\tdone dumping a.x (5 documents)' 1>&2\n\
              exit 0\n",
         );
-        let opts = dump_server_folder_opts("/tmp/mqlens-dump-test-out7");
-        let task = start_dump_task_impl(&state, "c1", tool.to_str().unwrap(), opts).await.unwrap();
+        let task = start_dump_task_retrying(&state, &tool, "/tmp/mqlens-dump-test-out7").await;
         wait_for_task(&state, &task.id).await;
         let t = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
         assert_eq!(t.status, "completed");
@@ -1807,8 +1871,7 @@ mod tests {
         let tool = crate::db::mongotools::test_support::write_fake_tool(
             "echo 'ts\tdone dumping a.x (1 documents)' 1>&2\nexec 2>&-\nsleep 30\n",
         );
-        let opts = dump_server_folder_opts("/tmp/mqlens-dump-test-out8");
-        let task = start_dump_task_impl(&state, "c1", tool.to_str().unwrap(), opts).await.unwrap();
+        let task = start_dump_task_retrying(&state, &tool, "/tmp/mqlens-dump-test-out8").await;
 
         // Wait until the stderr line was consumed, then a beat for the EOF.
         for _ in 0..100 {
@@ -1831,6 +1894,35 @@ mod tests {
         let _ = std::fs::remove_file(&tool);
     }
 
+    /// A grandchild that inherits the tool's stderr write end must not wedge
+    /// the task after the tool itself exits: without exit detection the read
+    /// loop waits for a pipe EOF that only arrives when the grandchild dies.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_lingering_grandchild_does_not_wedge_task_completion() {
+        use crate::db::mongotools::*;
+        let state = AppState::new();
+        state.conn_uris.lock().unwrap().insert("c1".into(), "mongodb://u:pw@localhost:27017".into());
+        // The backgrounded sleep inherits stderr and holds the pipe open for
+        // 20s; the tool itself exits immediately.
+        let tool = crate::db::mongotools::test_support::write_fake_tool(
+            "echo 'ts\tdone dumping a.x (3 documents)' 1>&2\nsleep 20 &\nexit 0\n",
+        );
+        let started = std::time::Instant::now();
+        let task = start_dump_task_retrying(&state, &tool, "/tmp/mqlens-dump-test-out9").await;
+        wait_for_task(&state, &task.id).await;
+        let elapsed = started.elapsed();
+
+        let t = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(t.status, "completed", "task: {t:?}");
+        assert_eq!(t.processed, 1);
+        assert!(
+            elapsed.as_secs() < 5,
+            "task must complete shortly after the tool exits, took {elapsed:?}"
+        );
+        let _ = std::fs::remove_file(&tool);
+    }
+
     /// Before the first parsable progress event, raw stderr lines (driver
     /// warnings, connection errors) must reach the task message instead of
     /// being dropped — they're the only clue when a tool can't connect. The
@@ -1844,8 +1936,7 @@ mod tests {
         let tool = crate::db::mongotools::test_support::write_fake_tool(
             "echo 'ts\tconnection warning: cluster unreachable' 1>&2\nsleep 30\n",
         );
-        let opts = dump_server_folder_opts("/tmp/mqlens-dump-test-out6");
-        let task = start_dump_task_impl(&state, "c1", tool.to_str().unwrap(), opts).await.unwrap();
+        let task = start_dump_task_retrying(&state, &tool, "/tmp/mqlens-dump-test-out6").await;
 
         let mut snapshot: Option<TaskInfo> = None;
         for _ in 0..250 {
@@ -1880,8 +1971,7 @@ mod tests {
         let state = AppState::new();
         state.conn_uris.lock().unwrap().insert("c1".into(), "mongodb://u:pw@localhost:27017".into());
         let tool = crate::db::mongotools::test_support::write_fake_tool("exit 0\n");
-        let opts = dump_server_folder_opts("/tmp/mqlens-dump-test-out5");
-        let task = start_dump_task_impl(&state, "c1", tool.to_str().unwrap(), opts).await.unwrap();
+        let task = start_dump_task_retrying(&state, &tool, "/tmp/mqlens-dump-test-out5").await;
         // Wait until the task has finished AND its cancel flag is gone (the
         // flag is removed just after the status flips; poll both). Generous
         // budget — under full-suite load process spawns can be slow.
