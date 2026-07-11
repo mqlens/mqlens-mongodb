@@ -621,6 +621,27 @@ describe('MongoShell Component', () => {
       });
     });
 
+    it('re-attempts the session even when the picked binary equals the configured path', async () => {
+      // Same path as already configured: without an explicit retry, the state
+      // update is a no-op and the session would never be re-attempted.
+      mockOpenDialog.mockResolvedValue('/already/configured/mongosh');
+      renderFailedShell({
+        load_app_settings: () => Promise.resolve({ mongosh_path: '/already/configured/mongosh' }),
+      });
+
+      const browseBtn = await screen.findByTestId('shell-browse-mongosh-btn');
+      const attemptsBefore = mockInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'start_mongosh_session'
+      ).length;
+      fireEvent.click(browseBtn);
+
+      await waitFor(() => {
+        expect(
+          mockInvoke.mock.calls.filter(([cmd]) => cmd === 'start_mongosh_session').length
+        ).toBeGreaterThan(attemptsBefore);
+      });
+    });
+
     it('shows install instructions and a MongoDB docs link when nothing is found', async () => {
       renderFailedShell();
 

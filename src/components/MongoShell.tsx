@@ -415,8 +415,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     };
   }, [sessionAttempted, sessionId, mongoshPath, retryNonce]);
 
-  // Persist a newly chosen mongosh path; updating `mongoshPath` re-attempts
-  // the session (it's a dependency of the session effect above).
+  // Persist a newly chosen mongosh path and re-attempt the session. The
+  // retry-nonce bump matters when the picked path equals the current one
+  // (setMongoshPath alone would be a no-op state update, so no re-attempt).
   const saveMongoshPath = async (path: string) => {
     try {
       const current = await invoke<AppSettings>('load_app_settings').catch(() => ({} as AppSettings));
@@ -428,6 +429,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     }
     setDetectedMongosh(null);
     setMongoshPath(path);
+    setRetryNonce((n) => n + 1);
   };
 
   const browseForMongosh = async () => {

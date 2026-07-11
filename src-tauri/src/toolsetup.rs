@@ -353,18 +353,50 @@ pub struct MongoshDetection {
     pub source: String,
 }
 
+/// Per-candidate budget for [`probe_version`]. Detection probes many
+/// locations sequentially (configured, managed, every PATH entry, common
+/// dirs), so one wedged binary must not stall the shell's guided-setup card —
+/// same rationale as [`PROBE_TIMEOUT`] in the install flow, but shorter since
+/// several candidates may be probed back to back.
+const DETECT_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Run `path --version` and return the first output line, or `None` when the
-/// binary is missing, not executable, or exits non-zero.
+/// binary is missing, not executable, exits non-zero, or hangs past
+/// [`DETECT_PROBE_TIMEOUT`].
 fn probe_version(path: &Path) -> Option<String> {
-    let out = std::process::Command::new(path)
+    probe_version_with_timeout(path, DETECT_PROBE_TIMEOUT)
+}
+
+fn probe_version_with_timeout(path: &Path, timeout: Duration) -> Option<String> {
+    use std::io::Read;
+    let mut child = std::process::Command::new(path)
         .arg("--version")
         .stdin(std::process::Stdio::null())
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
         .ok()?;
-    if !out.status.success() {
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    if !status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&out.stdout);
+    // Safe post-exit: `--version` output is one short line, far below the
+    // pipe buffer, so the child cannot have blocked on a full pipe.
+    let mut text = String::new();
+    child.stdout.take()?.read_to_string(&mut text).ok()?;
     let line = text.lines().next()?.trim();
     if line.is_empty() {
         None
@@ -1227,6 +1259,31 @@ mod tests {
         let found = detect_mongosh("", Some(&base), &[common_dir]).expect("managed hit");
         assert_eq!(found.source, "managed");
         assert_eq!(found.version, "2.9.2");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A wedged candidate (hangs on `--version`) must not stall detection:
+    /// the probe is killed at its deadline and the candidate reported as
+    /// unusable — same rationale as [`PROBE_TIMEOUT`] in the install flow.
+    #[cfg(unix)]
+    #[test]
+    fn probe_version_kills_wedged_binary_at_deadline() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = test_app_data("probe-wedged");
+        std::fs::create_dir_all(&base).unwrap();
+        let path = base.join("mongosh");
+        std::fs::write(&path, "#!/bin/sh\nsleep 30\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let started = std::time::Instant::now();
+        let probed = probe_version_with_timeout(&path, Duration::from_millis(300));
+        let elapsed = started.elapsed();
+        assert!(probed.is_none(), "wedged binary must be reported unusable");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "probe must be bounded by its deadline, took {elapsed:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
