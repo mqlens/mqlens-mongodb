@@ -342,6 +342,116 @@ pub fn resolve_mongosh_executable(configured: &str, app_data_dir: Option<&Path>)
     "mongosh".to_string()
 }
 
+/// One working mongosh binary found by [`detect_mongosh`], with where it came
+/// from so the UI can phrase the offer ("found on PATH", "managed install").
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MongoshDetection {
+    pub path: String,
+    pub version: String,
+    /// "configured" | "managed" | "path" | "common"
+    pub source: String,
+}
+
+/// Run `path --version` and return the first output line, or `None` when the
+/// binary is missing, not executable, or exits non-zero.
+fn probe_version(path: &Path) -> Option<String> {
+    let out = std::process::Command::new(path)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().next()?.trim();
+    if line.is_empty() {
+        None
+    } else {
+        Some(line.to_string())
+    }
+}
+
+/// Well-known install locations probed after PATH — covers packaged-app
+/// launches where the login-shell PATH merge didn't help (notably Windows,
+/// which has no `path_env` equivalent).
+fn common_mongosh_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    #[cfg(windows)]
+    {
+        if let Ok(pf) = std::env::var("ProgramFiles") {
+            dirs.push(PathBuf::from(pf).join("mongosh"));
+        }
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            dirs.push(PathBuf::from(local).join("Programs").join("mongosh"));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        dirs.extend(
+            ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/snap/bin"]
+                .iter()
+                .map(PathBuf::from),
+        );
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.push(PathBuf::from(home).join(".local/bin"));
+        }
+    }
+    dirs
+}
+
+/// Find a working mongosh, probing (in order) the configured path, the
+/// managed install, every PATH entry, and finally `common_mongosh_dirs()`
+/// plus `extra_dirs` (tests inject temp dirs there). Unlike
+/// [`resolve_mongosh_executable`] — which decides what to *spawn* — this
+/// verifies each candidate actually runs, for the shell's guided-setup card.
+pub fn detect_mongosh(
+    configured: &str,
+    app_data_dir: Option<&Path>,
+    extra_dirs: &[PathBuf],
+) -> Option<MongoshDetection> {
+    let hit = |path: &Path, source: &str| -> Option<MongoshDetection> {
+        probe_version(path).map(|version| MongoshDetection {
+            path: path.to_string_lossy().into_owned(),
+            version,
+            source: source.to_string(),
+        })
+    };
+
+    let trimmed = configured.trim();
+    if !trimmed.is_empty() {
+        if let Some(found) = hit(Path::new(trimmed), "configured") {
+            return Some(found);
+        }
+    }
+
+    let bin_name = binary_file_name("mongosh");
+    if let Some(app_data_dir) = app_data_dir {
+        if let Ok(tool) = find_pinned_tool("mongosh") {
+            if let Some(found) = hit(&managed_bin_dir(app_data_dir, tool).join(&bin_name), "managed") {
+                return Some(found);
+            }
+        }
+    }
+
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            if let Some(found) = hit(&dir.join(&bin_name), "path") {
+                return Some(found);
+            }
+        }
+    }
+
+    for dir in common_mongosh_dirs().iter().chain(extra_dirs) {
+        if let Some(found) = hit(&dir.join(&bin_name), "common") {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
 /// Runs `path --version`, treating any spawn failure or non-zero exit as
 /// "not usable" — the safety net after extraction, and the check
 /// `managed_tools_status` uses to decide `installed`.
@@ -1054,6 +1164,71 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[cfg(unix)]
+    fn write_fake_mongosh(dir: &Path, version_line: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join("mongosh");
+        std::fs::write(&path, format!("#!/bin/sh\necho '{version_line}'\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    /// `detect_mongosh` probes configured → managed → PATH → common locations
+    /// and reports where the working binary came from, so the shell's failure
+    /// card can offer "use this path" for binaries outside the configured one.
+    #[cfg(unix)]
+    #[test]
+    fn detect_mongosh_probes_in_order_and_reports_source() {
+        let base = test_app_data("detect-mongosh");
+
+        // Nothing anywhere -> None (empty extra dirs keep PATH from mattering:
+        // a real mongosh on the test machine's PATH would be reported as
+        // source "path", which the assertions below tolerate).
+        let empty = detect_mongosh("", None, &[base.join("nowhere")]);
+        assert!(
+            empty.is_none() || empty.as_ref().unwrap().source == "path",
+            "unexpected detection: {empty:?}"
+        );
+
+        // A working binary in a "common" dir is found with its version.
+        let common_dir = base.join("common-bin");
+        write_fake_mongosh(&common_dir, "2.9.9");
+        let found = detect_mongosh("", None, &[common_dir.clone()]).expect("common dir hit");
+        assert!(found.source == "common" || found.source == "path");
+        if found.source == "common" {
+            assert_eq!(found.version, "2.9.9");
+            assert_eq!(found.path, common_dir.join("mongosh").to_string_lossy());
+        }
+
+        // A configured binary wins over everything else.
+        let configured_dir = base.join("configured-bin");
+        let configured = write_fake_mongosh(&configured_dir, "3.0.0");
+        let found = detect_mongosh(configured.to_str().unwrap(), None, &[common_dir.clone()])
+            .expect("configured hit");
+        assert_eq!(found.source, "configured");
+        assert_eq!(found.version, "3.0.0");
+
+        // A broken configured path falls through to the next tier.
+        let found = detect_mongosh(
+            base.join("missing/mongosh").to_str().unwrap(),
+            None,
+            &[common_dir.clone()],
+        )
+        .expect("fallback hit");
+        assert_ne!(found.source, "configured");
+
+        // The managed install beats common dirs.
+        let tool = find_pinned_tool("mongosh").unwrap();
+        let managed = managed_bin_dir(&base, tool);
+        write_fake_mongosh(&managed, "2.9.2");
+        let found = detect_mongosh("", Some(&base), &[common_dir]).expect("managed hit");
+        assert_eq!(found.source, "managed");
+        assert_eq!(found.version, "2.9.2");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// Polls the task map until `task_id` leaves "running", returning its

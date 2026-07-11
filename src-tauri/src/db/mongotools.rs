@@ -1883,8 +1883,9 @@ mod tests {
         let opts = dump_server_folder_opts("/tmp/mqlens-dump-test-out5");
         let task = start_dump_task_impl(&state, "c1", tool.to_str().unwrap(), opts).await.unwrap();
         // Wait until the task has finished AND its cancel flag is gone (the
-        // flag is removed just after the status flips; poll both).
-        for _ in 0..250 {
+        // flag is removed just after the status flips; poll both). Generous
+        // budget — under full-suite load process spawns can be slow.
+        for _ in 0..750 {
             let finished = state.tasks.lock().unwrap().get(&task.id).map(|t| t.status != "running").unwrap_or(false);
             let flag_gone = state.cancels.lock().unwrap().get(&task.id).is_none();
             if finished && flag_gone {
@@ -1892,7 +1893,11 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
-        assert!(state.cancels.lock().unwrap().get(&task.id).is_none(), "flag cleaned up");
+        let snapshot = state.tasks.lock().unwrap().get(&task.id).cloned();
+        assert!(
+            state.cancels.lock().unwrap().get(&task.id).is_none(),
+            "flag cleaned up (task snapshot: {snapshot:?})"
+        );
 
         assert!(state.cancel_or_ack(&task.id).is_ok(), "cancel after finish should be a quiet no-op");
         assert!(state.cancel_or_ack("no-such-task").is_err(), "unknown task ids still error");

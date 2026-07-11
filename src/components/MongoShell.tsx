@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { invoke } from '@tauri-apps/api/core';
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, Sparkles, Terminal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -236,6 +238,11 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionAttempted, setSessionAttempted] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
+  // Guided setup on session failure: a working mongosh found outside the
+  // configured path (offered as one click), or null when nothing was found.
+  const [detectedMongosh, setDetectedMongosh] = useState<
+    { path: string; version: string; source: string } | null
+  >(null);
   // Reuses the retry-nonce mechanism above: when a parent-driven reconnect signal
   // changes (e.g. the guided tool-install dialog finished), re-attempt the session
   // the same way the gate's own Retry button does.
@@ -384,6 +391,62 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [entries, tab]);
+
+  // When the session failed to attach, probe for a usable mongosh (managed
+  // install, PATH, well-known locations) so the gate can offer a one-click
+  // fix instead of only pointing at Settings.
+  useEffect(() => {
+    if (!sessionAttempted || sessionId !== null || mongoshPath === null) return;
+    let alive = true;
+    invoke<{ path: string; version: string; source: string } | null>('detect_mongosh_binary', {
+      configured: mongoshPath || '',
+    })
+      .then((found) => {
+        if (!alive) return;
+        // A hit at the configured path means the session failure has some
+        // other cause — offering "use this path" would be a no-op.
+        setDetectedMongosh(found && found.source !== 'configured' ? found : null);
+      })
+      .catch(() => {
+        if (alive) setDetectedMongosh(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sessionAttempted, sessionId, mongoshPath, retryNonce]);
+
+  // Persist a newly chosen mongosh path; updating `mongoshPath` re-attempts
+  // the session (it's a dependency of the session effect above).
+  const saveMongoshPath = async (path: string) => {
+    try {
+      const current = await invoke<AppSettings>('load_app_settings').catch(() => ({} as AppSettings));
+      await invoke('save_app_settings', {
+        settings: { ...current, mongosh_path: path },
+      });
+    } catch {
+      /* settings persistence is best-effort — still try the new path below */
+    }
+    setDetectedMongosh(null);
+    setMongoshPath(path);
+  };
+
+  const browseForMongosh = async () => {
+    try {
+      const picked = await openFileDialog({ multiple: false, title: 'Locate the mongosh binary' });
+      if (typeof picked === 'string' && picked) await saveMongoshPath(picked);
+    } catch {
+      /* user cancelled */
+    }
+  };
+
+  // OS-specific manual install hint for the gate card.
+  const installHint = useMemo(() => {
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    if (/mac/i.test(ua)) return 'brew install mongosh';
+    if (/win/i.test(ua)) return 'winget install MongoDB.Shell (or the MSI from mongodb.com)';
+    if (/linux/i.test(ua)) return 'sudo apt install mongodb-mongosh (or your distro’s package)';
+    return 'install mongosh from mongodb.com';
+  }, []);
 
   const executeFind = async (
     collName: string,
@@ -635,26 +698,57 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               <div className="text-sm font-semibold text-foreground">MongoShell requires mongosh</div>
               <div className="max-w-sm text-xs leading-relaxed text-muted-foreground">
                 A live mongosh session is required to run queries and scripts here.
-                Install mongosh and set its path in Settings, then retry.
               </div>
+              {detectedMongosh && (
+                <div
+                  className="max-w-sm rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs"
+                  data-testid="shell-detected-mongosh"
+                >
+                  <div className="text-foreground">
+                    Found <span className="font-semibold">mongosh {detectedMongosh.version}</span>
+                  </div>
+                  <div className="truncate font-mono text-ui-2xs text-muted-foreground" title={detectedMongosh.path}>
+                    {detectedMongosh.path}
+                  </div>
+                  <Button
+                    size="sm"
+                    className="mt-1.5"
+                    onClick={() => void saveMongoshPath(detectedMongosh.path)}
+                    data-testid="shell-use-detected-btn"
+                  >
+                    Use this binary
+                  </Button>
+                </div>
+              )}
               <div className="mt-1 flex items-center gap-2">
-                {onOpenSettings && (
-                  <Button onClick={onOpenSettings} data-testid="gate-open-settings">
-                    Open Settings
+                {onInstallTools && (
+                  <Button onClick={onInstallTools} data-testid="shell-install-tools-btn">
+                    Install tools…
                   </Button>
                 )}
-                {onInstallTools && (
-                  <Button
-                    variant="outline"
-                    onClick={onInstallTools}
-                    data-testid="shell-install-tools-btn"
-                  >
-                    Install tools…
+                <Button variant="outline" onClick={() => void browseForMongosh()} data-testid="shell-browse-mongosh-btn">
+                  Browse for binary…
+                </Button>
+                {onOpenSettings && (
+                  <Button variant="outline" onClick={onOpenSettings} data-testid="gate-open-settings">
+                    Open Settings
                   </Button>
                 )}
                 <Button variant="outline" onClick={() => setRetryNonce((n) => n + 1)} data-testid="gate-retry">
                   Retry
                 </Button>
+              </div>
+              <div className="max-w-sm text-ui-2xs text-muted-foreground" data-testid="shell-install-hint">
+                Or install it yourself: <code className="font-mono">{installHint}</code> — see the{' '}
+                <button
+                  type="button"
+                  className="text-primary underline-offset-2 hover:underline"
+                  onClick={() => void openUrl('https://www.mongodb.com/docs/mongodb-shell/install/')}
+                  data-testid="shell-mongosh-docs-link"
+                >
+                  mongosh install docs
+                </button>
+                .
               </div>
             </>
           )}
