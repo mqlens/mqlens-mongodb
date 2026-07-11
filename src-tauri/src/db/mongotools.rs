@@ -1701,10 +1701,12 @@ mod tests {
                     {
                         break; // transient spawn race — retry with a fresh task
                     }
+                    // Any message past the initial "Starting <tool>…" means the
+                    // runner got beyond spawn — matching specific phrases races
+                    // against surfaced stderr overwriting the message.
                     let spawned = t.status != "running"
                         || t.processed > 0
-                        || t.message.contains("started")
-                        || t.message.contains("running");
+                        || !t.message.starts_with("Starting");
                     if spawned {
                         return task;
                     }
