@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useDialogs } from './dialogs/DialogProvider';
 import { fuzzyMatch } from '../lib/fuzzyMatch';
+import { type CollectionSelection, emptySelection, toggleCollection, selectionScope } from '@/lib/collectionSelection';
 import {
   type FolderNode,
   FOLDERS_CHANGED_EVENT,
@@ -86,6 +87,10 @@ import {
   X,
   Pin,
   Heart,
+  Copy,
+  ClipboardPaste,
+  DatabaseBackup,
+  DatabaseZap,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
@@ -113,6 +118,17 @@ export interface IndexInfo {
 
 const compareCollectionNames = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+
+const validateGridfsBucketName = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Bucket name is required';
+  if (trimmed.includes('.')) return 'Bucket name cannot contain "."';
+  if (trimmed.startsWith('system')) return 'Bucket name cannot start with "system"';
+  if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+    return 'Use letters, numbers, underscore, or hyphen only';
+  }
+  return null;
+};
 
 interface ConnectionProfile {
   id: string;
@@ -143,6 +159,10 @@ interface SidebarProps {
   onAnalyzeSchema?: (connectionId: string, dbName: string, collName: string) => void;
   onCreateView?: (connectionId: string, dbName: string) => void;
   onOpenGridfs?: (connectionId: string, dbName: string, bucket: string) => void;
+  /** Open a Dump tab scoped to the whole connection, a database, or a single collection. */
+  onOpenDump?: (connectionId: string, dbName?: string, collName?: string) => void;
+  /** Open a Restore tab for the connection. */
+  onOpenRestore?: (connectionId: string) => void;
   onCollectionRenamed?: (connectionId: string, dbName: string, oldName: string, newName: string) => void;
   onDatabaseDropped?: (connectionId: string, dbName: string) => void;
   onDatabaseRenamed?: (connectionId: string, oldName: string, newName: string) => void;
@@ -152,6 +172,22 @@ interface SidebarProps {
   collectionMutationTrigger?: number;
   onConnectProfile?: (profile: ConnectionProfile) => Promise<string | null> | string | null;
   profilesRefreshKey?: number;
+  onCopyCollections?: (connectionId: string, db: string, collections: string[]) => void;
+  onCopyDatabase?: (connectionId: string, db: string) => void;
+  /** Copy source to the in-app clipboard (collections=[] means whole database). */
+  onCopyToClipboard?: (connectionId: string, db: string, collections: string[]) => void;
+  /** Paste the clipboard into a target (db omitted = paste onto a connection). */
+  onPasteInto?: (connectionId: string, db?: string) => void;
+  /** Whether the clipboard currently holds something to paste. */
+  canPaste?: boolean;
+  /**
+   * Destination to refresh after a copy starts (and periodically while it runs),
+   * so newly-copied databases/collections appear. `expand` auto-opens the target
+   * db (only on copy start, so a manual collapse mid-copy is respected).
+   */
+  refreshTarget?: { connectionId: string; db?: string; expand: boolean } | null;
+  /** Bumped by the parent to fire a refresh of `refreshTarget`. */
+  refreshTargetNonce?: number;
 }
 
 const treeRowClass = (active?: boolean) =>
@@ -242,6 +278,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAnalyzeSchema,
   onCreateView,
   onOpenGridfs,
+  onOpenDump,
+  onOpenRestore,
   onCollectionRenamed,
   onDatabaseDropped,
   onDatabaseRenamed,
@@ -251,10 +289,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
   collectionMutationTrigger,
   onConnectProfile,
   profilesRefreshKey = 0,
+  onCopyCollections,
+  onCopyDatabase,
+  onCopyToClipboard,
+  onPasteInto,
+  canPaste,
+  refreshTarget,
+  refreshTargetNonce,
 }) => {
   const { toast, confirm, prompt } = useDialogs();
   const [filterQuery, setFilterQuery] = useState('');
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Mock connections (the bundled sample data, or ids/URIs marked as such) never
+  // reach a real mongodump/mongorestore binary — the backend rejects them outright
+  // (see require_real_conn_uri in mongotools.rs) — so hide the Dump/Restore
+  // context-menu items for them rather than surfacing a doomed invoke() call.
+  const isMockConnection = React.useCallback(
+    (connectionId: string): boolean => {
+      const conn = activeConnections.find((c) => c.id === connectionId);
+      return connectionId.startsWith('mock') || Boolean(conn?.uri.startsWith('mongodb://mock'));
+    },
+    [activeConnections]
+  );
 
   useEffect(() => {
     onFilterQueryChange?.(filterQuery);
@@ -309,6 +366,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [expandedCollections, setExpandedCollections] = useState<{ [connectionDbCollKey: string]: boolean }>({});
   const [expandedIndexesFolders, setExpandedIndexesFolders] = useState<{ [connectionDbCollKey: string]: boolean }>({});
 
+  const [selection, setSelection] = useState<CollectionSelection>(emptySelection());
+
   const [pinnedItems, setPinnedItems] = useState<PinnedItem[]>(() => loadPinnedCollections());
   const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>(() => loadFavoriteItems());
   const [savedQueryCatalog, setSavedQueryCatalog] = useState<SavedQueryRef[]>([]);
@@ -326,7 +385,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const existing = connectionIdForName(connectionName);
     if (existing) return existing;
 
-    const profile = connectionProfiles.find((p) => p.name === connectionName);
+    // The mount-time profile load may not have landed yet — clicking a pinned
+    // item right after launch used to dead-end on the empty list with a
+    // "no saved connection" error. Fall back to a fresh on-demand load.
+    let profile = connectionProfiles.find((p) => p.name === connectionName);
+    if (!profile) {
+      try {
+        const fresh = (await invoke<ConnectionProfile[]>('load_connection_profiles')) ?? [];
+        setConnectionProfiles(fresh);
+        profile = fresh.find((p) => p.name === connectionName);
+      } catch {
+        /* fall through to the error toast below */
+      }
+    }
     if (!profile || !onConnectProfile) {
       toast(
         `No saved connection "${connectionName}". Add it in Connection Manager, then try again.`,
@@ -580,6 +651,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [collectionMutationTrigger]);
 
+  // Refresh a copy destination when the parent bumps the nonce — on copy start
+  // and periodically while it runs — so new databases/collections appear live.
+  useEffect(() => {
+    if (!refreshTargetNonce || !refreshTarget) return;
+    const { connectionId, db, expand } = refreshTarget;
+    loadDatabases(connectionId);
+    if (db) {
+      const key = `${connectionId}/${db}`;
+      if (expand) {
+        setExpandedDbs((prev) => ({ ...prev, [key]: true }));
+        setExpandedCollectionsFolders((prev) => ({ ...prev, [`${key}/collections`]: true }));
+      }
+      handleRefreshDb(connectionId, db);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTargetNonce]);
+
   const loadDatabases = async (connectionId: string) => {
     try {
       const dbs = await invoke<string[]>('list_databases', { id: connectionId });
@@ -719,6 +807,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     } catch (err) {
       toast(`Failed to create collection: ${err}`, 'error');
     }
+  };
+
+  const handleOpenGridfsBucket = async (connectionId: string, dbName: string) => {
+    const name = await prompt({
+      title: 'Open GridFS bucket',
+      message: 'Bucket name (collections are created on first upload):',
+      defaultValue: 'fs',
+      placeholder: 'fs',
+      validate: validateGridfsBucketName,
+    });
+    if (!name) return;
+    onOpenGridfs?.(connectionId, dbName, name.trim());
   };
 
   const handleDropCollection = async (connectionId: string, dbName: string, collName: string) => {
@@ -1006,6 +1106,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const selectedNamesFor = (connId: string, dbName: string, collName: string): string[] => {
+    const scope = selectionScope(connId, dbName);
+    if (selection.scope === scope && selection.names.has(collName)) {
+      return [...selection.names];
+    }
+    return [collName];
+  };
+
   const renderCollectionNode = (connId: string, dbName: string, collName: string) => {
     const collKey = `${connId}/${dbName}/${collName}`;
     const isCollExpanded = expandedCollections[collKey];
@@ -1015,17 +1123,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
       activeCollection?.db === dbName &&
       activeCollection?.collection === collName &&
       !activeCollection?.indexName;
+    const isSelected = selection.scope === selectionScope(connId, dbName) && selection.names.has(collName);
 
     return (
       <div key={collName}>
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
-              onClick={() => {
-                onSelectCollection(connId, dbName, collName);
-                toggleCollectionNode(connId, dbName, collName);
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSelection((s) => toggleCollection(s, connId, dbName, collName));
+                } else {
+                  onSelectCollection(connId, dbName, collName);
+                  toggleCollectionNode(connId, dbName, collName);
+                }
               }}
-              className={treeRowClass(isActive)}
+              className={cn(treeRowClass(isActive), isSelected && 'bg-accent')}
             >
               <ChevronRight
                 size={10}
@@ -1116,6 +1231,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <ContextMenuItem className={ctxItemClass} onClick={() => onAnalyzeSchema?.(connId, dbName, collName)}>
               <Table2 />
               <span>Analyze Schema</span>
+            </ContextMenuItem>
+            {!isMockConnection(connId) && (
+              <ContextMenuItem
+                className={ctxItemClass}
+                data-testid={`ctx-dump-coll-${connId}-${dbName}-${collName}`}
+                onClick={() => onOpenDump?.(connId, dbName, collName)}
+              >
+                <DatabaseBackup />
+                <span>Dump (mongodump)…</span>
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem
+              className={ctxItemClass}
+              onClick={() => onCopyToClipboard?.(connId, dbName, selectedNamesFor(connId, dbName, collName))}
+            >
+              <Copy />
+              <span>Copy</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={ctxItemClass}
+              onClick={() => onCopyCollections?.(connId, dbName, selectedNamesFor(connId, dbName, collName))}
+            >
+              Copy to…
             </ContextMenuItem>
             <ContextMenuItem
               className={ctxItemClass}
@@ -1305,6 +1443,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
                       onClick={(e) => {
                         e.stopPropagation();
+                        loadDatabases(conn.id);
+                      }}
+                      title="Refresh Databases"
+                      aria-label="Refresh databases"
+                    >
+                      <RefreshCw className="size-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
                         onDisconnect(conn.id);
                       }}
                       title="Disconnect Connection"
@@ -1319,6 +1470,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <Plus />
                     <span>Add Database</span>
                   </ContextMenuItem>
+                  <ContextMenuItem className={ctxItemClass} onClick={() => loadDatabases(conn.id)}>
+                    <RefreshCw />
+                    <span>Refresh Databases</span>
+                  </ContextMenuItem>
+                  {canPaste && (
+                    <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id)}>
+                      <ClipboardPaste />
+                      <span>Paste here</span>
+                    </ContextMenuItem>
+                  )}
                   <ContextMenuItem
                     className={ctxItemClass}
                     data-testid={`ctx-pin-conn-${conn.id}`}
@@ -1370,6 +1531,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <Users />
                     <span>Manage users</span>
                   </ContextMenuItem>
+                  {!isMockConnection(conn.id) && (
+                    <ContextMenuItem
+                      className={ctxItemClass}
+                      data-testid={`ctx-dump-${conn.id}`}
+                      onClick={() => onOpenDump?.(conn.id)}
+                    >
+                      <DatabaseBackup />
+                      <span>Dump (mongodump)…</span>
+                    </ContextMenuItem>
+                  )}
+                  {!isMockConnection(conn.id) && (
+                    <ContextMenuItem
+                      className={ctxItemClass}
+                      data-testid={`ctx-restore-${conn.id}`}
+                      onClick={() => onOpenRestore?.(conn.id)}
+                    >
+                      <DatabaseZap />
+                      <span>Restore (mongorestore)…</span>
+                    </ContextMenuItem>
+                  )}
                   <ContextMenuSeparator />
                   <ContextMenuItem
                     className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
@@ -1485,6 +1666,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <Eye />
                               <span>Create View</span>
                             </ContextMenuItem>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => onCopyToClipboard?.(conn.id, dbName, [])}>
+                              <Copy />
+                              <span>Copy database</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem className={ctxItemClass} onClick={() => onCopyDatabase?.(conn.id, dbName)}>
+                              Copy database to…
+                            </ContextMenuItem>
+                            {canPaste && (
+                              <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id, dbName)}>
+                                <ClipboardPaste />
+                                <span>Paste here</span>
+                              </ContextMenuItem>
+                            )}
+                            <ContextMenuItem
+                              className={ctxItemClass}
+                              data-testid={`ctx-add-gridfs-bucket-${conn.id}-${dbName}`}
+                              onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
+                            >
+                              <Archive />
+                              <span>New Bucket</span>
+                            </ContextMenuItem>
                             <ContextMenuItem
                               className={ctxItemClass}
                               onClick={() => onOpenShell?.(conn.id, dbName, undefined, 'show collections')}
@@ -1508,6 +1710,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <Users />
                               <span>Manage Users</span>
                             </ContextMenuItem>
+                            {!isMockConnection(conn.id) && (
+                              <ContextMenuItem
+                                className={ctxItemClass}
+                                data-testid={`ctx-dump-db-${conn.id}-${dbName}`}
+                                onClick={() => onOpenDump?.(conn.id, dbName)}
+                              >
+                                <DatabaseBackup />
+                                <span>Dump (mongodump)…</span>
+                              </ContextMenuItem>
+                            )}
                             <ContextMenuSeparator />
                             <ContextMenuItem
                               className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
@@ -1521,96 +1733,193 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                         {isDbExpanded && (
                           <div className="ml-3 border-l border-border/50 pl-1">
-                            <div className={treeRowClass()} onClick={() => toggleCollectionsFolder(conn.id, dbName)}>
-                              <ChevronRight
-                                size={10}
-                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isFolderExpanded && 'rotate-90')}
-                              />
-                              <Folder size={11} className="shrink-0 text-amber-500" />
-                              <span className="text-muted-foreground">Collections</span>
-                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="collections-count">
-                                ({regularColls.length})
-                              </Badge>
-                            </div>
-                            {isFolderExpanded && (
-                              <div className="ml-3 border-l border-border/50 pl-1">
-                                {regularColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
-                                {regularColls.length === 0 && (
-                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
-                                )}
-                              </div>
-                            )}
-
-                            <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/views`)}>
-                              <ChevronRight
-                                size={10}
-                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isViewsExpanded && 'rotate-90')}
-                              />
-                              <Eye size={11} className="shrink-0 text-amber-500" />
-                              <span className="text-muted-foreground">Views</span>
-                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="views-count">
-                                ({views.length})
-                              </Badge>
-                            </div>
-                            {isViewsExpanded && (
-                              <div className="ml-3 border-l border-border/50 pl-1">
-                                {views.map((viewName) => renderCollectionNode(conn.id, dbName, viewName))}
-                                {views.length === 0 && (
-                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
-                                )}
-                              </div>
-                            )}
-
-                            <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/gridfs`)}>
-                              <ChevronRight
-                                size={10}
-                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isGridfsExpanded && 'rotate-90')}
-                              />
-                              <Archive size={11} className="shrink-0 text-amber-500" />
-                              <span className="text-muted-foreground">GridFS Buckets</span>
-                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="gridfs-count">
-                                ({gridfsBuckets.length})
-                              </Badge>
-                            </div>
-                            {isGridfsExpanded && (
-                              <div className="ml-3 border-l border-border/50 pl-1">
-                                {gridfsBuckets.map((bucket) => (
-                                  <div
-                                    key={bucket}
-                                    className={treeRowClass()}
-                                    onClick={() => onOpenGridfs?.(conn.id, dbName, bucket)}
-                                  >
-                                    <Archive size={11} className="ml-3.5 shrink-0 text-emerald-500" />
-                                    <span className="min-w-0 truncate" title={bucket}>
-                                      {bucket}
-                                    </span>
+                            <ContextMenu>
+                              <ContextMenuTrigger asChild>
+                                <div>
+                                  <div className={treeRowClass()} onClick={() => toggleCollectionsFolder(conn.id, dbName)}>
+                                    <ChevronRight
+                                      size={10}
+                                      className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isFolderExpanded && 'rotate-90')}
+                                    />
+                                    <Folder size={11} className="shrink-0 text-amber-500" />
+                                    <span className="text-muted-foreground">Collections</span>
+                                    <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="collections-count">
+                                      ({regularColls.length})
+                                    </Badge>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                                      data-testid={`collections-new-${conn.id}-${dbName}`}
+                                      title="New collection"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleAddCollection(conn.id, dbName);
+                                      }}
+                                    >
+                                      <Plus size={11} />
+                                    </Button>
                                   </div>
-                                ))}
-                                {gridfsBuckets.length === 0 && (
-                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
-                                )}
-                              </div>
-                            )}
+                                  {isFolderExpanded && (
+                                    <div className="ml-3 border-l border-border/50 pl-1">
+                                      {regularColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
+                                      {regularColls.length === 0 && (
+                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem
+                                  className={ctxItemClass}
+                                  data-testid={`ctx-collections-new-${conn.id}-${dbName}`}
+                                  onClick={() => void handleAddCollection(conn.id, dbName)}
+                                >
+                                  <Plus />
+                                  <span>New Collection</span>
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
 
-                            <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/system`)}>
-                              <ChevronRight
-                                size={10}
-                                className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isSystemExpanded && 'rotate-90')}
-                              />
-                              <Cog size={11} className="shrink-0 text-amber-500" />
-                              <span className="text-muted-foreground">System</span>
-                              <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="system-count">
-                                ({systemColls.length})
-                              </Badge>
-                            </div>
-                            {isSystemExpanded && (
-                              <div className="ml-3 border-l border-border/50 pl-1">
-                                {systemColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
-                                {systemColls.length === 0 && (
-                                  <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
-                                )}
-                              </div>
-                            )}
+                            <ContextMenu>
+                              <ContextMenuTrigger asChild>
+                                <div>
+                                  <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/views`)}>
+                                    <ChevronRight
+                                      size={10}
+                                      className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isViewsExpanded && 'rotate-90')}
+                                    />
+                                    <Eye size={11} className="shrink-0 text-amber-500" />
+                                    <span className="text-muted-foreground">Views</span>
+                                    <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="views-count">
+                                      ({views.length})
+                                    </Badge>
+                                  </div>
+                                  {isViewsExpanded && (
+                                    <div className="ml-3 border-l border-border/50 pl-1">
+                                      {views.map((viewName) => renderCollectionNode(conn.id, dbName, viewName))}
+                                      {views.length === 0 && (
+                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem
+                                  className={ctxItemClass}
+                                  data-testid={`ctx-views-create-${conn.id}-${dbName}`}
+                                  onClick={() => onCreateView?.(conn.id, dbName)}
+                                >
+                                  <Eye />
+                                  <span>Create View</span>
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
+
+                            <ContextMenu>
+                              <ContextMenuTrigger asChild>
+                                <div>
+                                  <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/gridfs`)}>
+                                    <ChevronRight
+                                      size={10}
+                                      className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isGridfsExpanded && 'rotate-90')}
+                                    />
+                                    <Archive size={11} className="shrink-0 text-amber-500" />
+                                    <span className="text-muted-foreground">GridFS Buckets</span>
+                                    <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="gridfs-count">
+                                      ({gridfsBuckets.length})
+                                    </Badge>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                                      data-testid={`gridfs-new-bucket-${conn.id}-${dbName}`}
+                                      title="New bucket"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleOpenGridfsBucket(conn.id, dbName);
+                                      }}
+                                    >
+                                      <Plus size={11} />
+                                    </Button>
+                                  </div>
+                                  {isGridfsExpanded && (
+                                    <div className="ml-3 border-l border-border/50 pl-1">
+                                      {gridfsBuckets.map((bucket) => (
+                                        <div
+                                          key={bucket}
+                                          className={treeRowClass()}
+                                          onClick={() => onOpenGridfs?.(conn.id, dbName, bucket)}
+                                        >
+                                          <Archive size={11} className="ml-3.5 shrink-0 text-emerald-500" />
+                                          <span className="min-w-0 truncate" title={bucket}>
+                                            {bucket}
+                                          </span>
+                                        </div>
+                                      ))}
+                                      <div
+                                        className={cn(treeRowClass(), 'text-[10px] text-primary')}
+                                        data-testid={`gridfs-open-bucket-${conn.id}-${dbName}`}
+                                        onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
+                                      >
+                                        <Plus size={11} className="ml-3.5 shrink-0" />
+                                        <span>New bucket…</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem
+                                  className={ctxItemClass}
+                                  data-testid={`ctx-gridfs-new-bucket-${conn.id}-${dbName}`}
+                                  onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
+                                >
+                                  <Plus />
+                                  <span>New Bucket</span>
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
+
+                            <ContextMenu>
+                              <ContextMenuTrigger asChild>
+                                <div>
+                                  <div className={treeRowClass()} onClick={() => toggleVirtualFolder(`${dbKey}/system`)}>
+                                    <ChevronRight
+                                      size={10}
+                                      className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isSystemExpanded && 'rotate-90')}
+                                    />
+                                    <Cog size={11} className="shrink-0 text-amber-500" />
+                                    <span className="text-muted-foreground">System</span>
+                                    <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="system-count">
+                                      ({systemColls.length})
+                                    </Badge>
+                                  </div>
+                                  {isSystemExpanded && (
+                                    <div className="ml-3 border-l border-border/50 pl-1">
+                                      {systemColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
+                                      {systemColls.length === 0 && (
+                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem
+                                  className={ctxItemClass}
+                                  data-testid={`ctx-system-refresh-${conn.id}-${dbName}`}
+                                  onClick={() => void handleRefreshDb(conn.id, dbName)}
+                                >
+                                  <RefreshCw />
+                                  <span>Refresh Database</span>
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
                           </div>
                         )}
                       </div>

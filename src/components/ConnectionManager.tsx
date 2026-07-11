@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { invoke, Channel } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { buildExportUri, findMongoUriInText } from '@/lib/connection';
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
 import { useEscapeClose } from '../lib/useEscapeClose';
@@ -25,6 +27,13 @@ import {
   DialogOverlay,
 } from '@/components/ui/dialog';
 import { DraggableDialogContent } from '@/components/ui/draggable-dialog-content';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -387,6 +396,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   // Editor Dialog nested modal states
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editMode, setEditMode] = useState<'new' | 'edit' | 'duplicate'>('new');
+
+  // URI import (clipboard/file) error — shown inline next to the Import menu,
+  // since those sources fail without a dialog of their own to host a message.
+  const [importError, setImportError] = useState<string | null>(null);
+  // Export-URI dialog: the URI being exported and whether the source profile
+  // has an SSH tunnel (which can't be represented in a mongodb:// URI).
+  const [exportDialog, setExportDialog] = useState<{ uri: string; hasSsh: boolean } | null>(null);
+  const [exportIncludePassword, setExportIncludePassword] = useState(false);
+  const [exportIncludeSettings, setExportIncludeSettings] = useState(true);
   const [editorState, setEditorState] = useState<typeof BLANK_CONN>(BLANK_CONN);
   const [activeEditorTab, setActiveEditorTab] = useState('server');
   const [showPassword, setShowPassword] = useState(false);
@@ -670,7 +688,41 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     }
   };
 
-  // Paste a connection string → auto-detect protocol, hosts, auth, and topology.
+  // Apply an imported connection string → auto-detect protocol, hosts, auth,
+  // and topology. Accepts free-form text (a .env line, a note) and extracts
+  // the first mongodb:// / mongodb+srv:// URI from it.
+  const applyImportedUri = (raw: string | null | undefined, sourceHint: string) => {
+    const found = raw ? findMongoUriInText(raw) : null;
+    if (!found) {
+      setImportError(`No mongodb:// or mongodb+srv:// connection string found ${sourceHint}.`);
+      return;
+    }
+    setImportError(null);
+    setEditorState(prev => ({ ...prev, uri: found, ...parseUriIntoFields(found) }));
+    setActiveEditorTab('server');
+  };
+
+  const handleImportFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard?.readText?.();
+      applyImportedUri(text, 'in the clipboard');
+    } catch {
+      setImportError('Could not read the clipboard.');
+    }
+  };
+
+  const handleImportFromFile = async () => {
+    try {
+      const path = await open({ multiple: false, title: 'Import connection URI from file' });
+      if (typeof path !== 'string') return;
+      const text = await readTextFile(path);
+      applyImportedUri(text, `in ${path.split(/[\\/]/).pop()}`);
+    } catch {
+      setImportError('Could not read the selected file.');
+    }
+  };
+
+  // Manual paste fallback (the original Import URI dialog).
   const handleImportUri = async () => {
     const uri = await prompt({
       title: 'Import Connection URI',
@@ -681,9 +733,37 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       validate: (v) => (/^mongodb(\+srv)?:\/\//i.test(v.trim()) ? null : 'Enter a mongodb:// or mongodb+srv:// URI'),
     });
     if (!uri || !uri.trim()) return;
+    setImportError(null);
     const clean = uri.trim();
     setEditorState(prev => ({ ...prev, uri: clean, ...parseUriIntoFields(clean) }));
     setActiveEditorTab('server');
+  };
+
+  // Export a URI with the password stripped by default (SSH/proxy secrets too);
+  // the toggles opt back into secrets or drop the settings query entirely.
+  const openExportDialog = (uri: string, hasSsh: boolean) => {
+    setExportIncludePassword(false);
+    setExportIncludeSettings(true);
+    setExportDialog({ uri, hasSsh });
+  };
+
+  const exportPreview = exportDialog
+    ? buildExportUri(exportDialog.uri, {
+        includePassword: exportIncludePassword,
+        includeSettings: exportIncludeSettings,
+      })
+    : '';
+
+  const handleExportSave = async () => {
+    if (!exportDialog) return;
+    try {
+      const path = await save({ defaultPath: 'connection-uri.txt', title: 'Save connection URI' });
+      if (!path) return;
+      await writeTextFile(path, `${exportPreview}\n`);
+      setExportDialog(null);
+    } catch {
+      /* user cancelled or write failed — keep the dialog open */
+    }
   };
 
   const runTestStepSequence = async () => {
@@ -818,11 +898,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <Trash2 size={12} />
                 <span>Delete</span>
               </Button>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={() => {
-                if (selectedProfile) navigator.clipboard?.writeText(selectedProfile.uri);
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" data-testid="export-uri-btn" onClick={() => {
+                if (selectedProfile) openExportDialog(selectedProfile.uri, !!selectedProfile.ssh?.enabled);
               }}>
                 <ExternalLink size={12} />
-                <span>Copy URI</span>
+                <span>Export URI</span>
               </Button>
             </>
           )}
@@ -1212,9 +1292,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
                 <Badge variant="secondary" className="shrink-0 text-ui-2xs">URI</Badge>
                 <code className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{maskUriPassword(buildUri(editorState))}</code>
-                <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 gap-1 text-ui-2xs" onClick={() => navigator.clipboard?.writeText(buildUri(editorState))}>
+                <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 gap-1 text-ui-2xs" data-testid="editor-export-uri-btn" onClick={() => openExportDialog(buildUri(editorState), editorState.sshEnabled)}>
                   <Copy size={12} />
-                  <span>Copy</span>
+                  <span>Export…</span>
                 </Button>
               </div>
             </section>
@@ -1842,10 +1922,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
                   <span>Test Connection</span>
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleImportUri} data-testid="import-uri-btn">
-                  <ClipboardPaste size={11} />
-                  <span>Import URI</span>
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" data-testid="import-uri-btn">
+                      <ClipboardPaste size={11} />
+                      <span>Import URI</span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem onClick={handleImportFromClipboard} data-testid="import-from-clipboard">
+                      From clipboard
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleImportFromFile} data-testid="import-from-file">
+                      From a file…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleImportUri} data-testid="import-paste-manually">
+                      Paste manually…
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                {importError && (
+                  <span className="self-center text-ui-2xs text-destructive" data-testid="import-uri-error">
+                    {importError}
+                  </span>
+                )}
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => setShowEditDialog(false)}>Cancel</Button>
@@ -1858,6 +1958,73 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </div>
             </div>
         </DraggableDialogContent>
+      </Dialog>
+
+      <Dialog open={!!exportDialog} onOpenChange={(o) => !o && setExportDialog(null)}>
+        <DialogContent className="max-w-lg" data-testid="export-uri-dialog">
+          <DialogHeader>
+            <DialogTitle>Export connection URI</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <code
+              className="block break-all rounded-lg border border-border bg-muted/30 px-3 py-2 font-mono text-ui-2xs"
+              data-testid="export-uri-preview"
+            >
+              {exportPreview}
+            </code>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <Label htmlFor="export-include-password" className="text-ui-xs">Include password</Label>
+                <p className="text-ui-2xs text-muted-foreground">
+                  Off strips the auth password and proxy/token secrets so the URI is safe to share.
+                </p>
+              </div>
+              <Switch
+                id="export-include-password"
+                checked={exportIncludePassword}
+                onCheckedChange={setExportIncludePassword}
+                data-testid="export-include-password"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <Label htmlFor="export-include-settings" className="text-ui-xs">Include connection settings</Label>
+                <p className="text-ui-2xs text-muted-foreground">
+                  TLS files, replica set, auth mechanism, appName, proxy, and timeouts.
+                </p>
+              </div>
+              <Switch
+                id="export-include-settings"
+                checked={exportIncludeSettings}
+                onCheckedChange={setExportIncludeSettings}
+                data-testid="export-include-settings"
+              />
+            </div>
+            {exportDialog?.hasSsh && (
+              <p className="text-ui-2xs text-muted-foreground" data-testid="export-ssh-note">
+                This connection uses an SSH tunnel. Tunnel settings can’t be represented in a
+                MongoDB URI and are not exported.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="export-save-btn"
+              onClick={handleExportSave}
+            >
+              Save to file…
+            </Button>
+            <Button
+              size="sm"
+              data-testid="export-copy-btn"
+              onClick={() => navigator.clipboard?.writeText(exportPreview)}
+            >
+              Copy to clipboard
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
     </>
   );

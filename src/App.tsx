@@ -9,19 +9,40 @@ import { CommandPalette, type PaletteAction } from './components/CommandPalette'
 import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
 import { DataGrid } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
-import { SettingsView, type SettingsTabId } from './components/SettingsModal';
+import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
 import { IndexViewer } from './components/IndexViewer';
 import { IndexModal } from './components/IndexModal';
 import { MongoShell } from './components/MongoShell';
+import { ToolSetupDialog, type ManagedToolStatusUi, type InstallTaskUi } from './components/ToolSetupDialog';
 import { QuickStart } from './components/QuickStart';
 import { DocumentEditModal } from './components/DocumentEditModal';
-import { ExportView } from './components/ExportView';
+import {
+  ExportView,
+  DEFAULT_EXPORT_OPTIONS,
+  type ExportFormat,
+  type ExportOptions,
+  type FilteredExportSeed,
+  type FilteredExportQuery,
+} from './components/ExportView';
+import { ImportView, type ImportPreviewData } from './components/ImportView';
+import {
+  DumpView,
+  type ToolsStatusUi,
+  type DumpScopeUi,
+  type DumpOptionsUi,
+} from './components/DumpView';
+import {
+  RestoreView,
+  type DumpTreeUi,
+  type RestoreOptionsUi,
+} from './components/RestoreView';
+import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
 import { GridFsView } from './components/GridFsView';
 import { MonitoringView } from './components/MonitoringView';
 import { UserManagementView } from './components/UserManagementView';
-import { type ExportTaskInfo } from './components/TaskManager';
+import { TaskManager, type ExportTaskInfo } from './components/TaskManager';
 import { VaultGate } from './components/VaultGate';
 import { UpdatePrompt } from './components/UpdatePrompt';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
@@ -33,17 +54,15 @@ import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from '
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
 import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
-import { toJson, toCsv, parseJson, parseCsv } from './lib/dataTransfer';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Table2, Eye, HardDrive, Activity, Copy, Users } from 'lucide-react';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore';
   connectionId: string;
   db: string;
   collection: string;
@@ -69,6 +88,15 @@ const DEFAULT_QUERY = { filter: '{}', sort: '{}', projection: '{}', limit: 50, s
 const isEmptyFilter = (s: string): boolean => {
   const t = (s || '').trim();
   return t === '' || t === '{}';
+};
+
+/** The configured MongoDB Database Tools directory (mongodump/mongorestore); '' means unset (use PATH). */
+const getMongoToolsDir = (): string => {
+  try {
+    return localStorage.getItem(MONGO_TOOLS_DIR_KEY) || '';
+  } catch {
+    return '';
+  }
 };
 
 // Describe whatever a tab last executed, for the DataGrid "Query Code" tab
@@ -138,6 +166,20 @@ const createQuickStartTab = (): QueryTab => ({
   explainResult: null,
 });
 
+const TASKS_TAB_ID = 'tasks';
+
+const createTasksTab = (): QueryTab => ({
+  id: TASKS_TAB_ID,
+  type: 'tasks',
+  connectionId: '',
+  db: '',
+  collection: '',
+  results: [],
+  loading: false,
+  error: null,
+  explainResult: null,
+});
+
 const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
   const className = isActive ? 'text-primary' : 'text-muted-foreground';
   const size = 11;
@@ -152,6 +194,10 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
       return <Rocket size={size} className={className} />;
     case 'export':
       return <Download size={size} className={className} />;
+    case 'import':
+      return <Upload size={size} className={className} />;
+    case 'tasks':
+      return <ListChecks size={size} className={className} />;
     case 'schema':
       return <Table2 size={size} className={className} />;
     case 'create-view':
@@ -162,6 +208,10 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
       return <Activity size={size} className={className} />;
     case 'users':
       return <Users size={size} className={className} />;
+    case 'dump':
+      return <DatabaseBackup size={size} className={className} />;
+    case 'restore':
+      return <DatabaseZap size={size} className={className} />;
     default:
       return <FolderCode size={size} className={className} />;
   }
@@ -182,6 +232,10 @@ const tabLabelFor = (
       return 'Quick Start';
     case 'export':
       return `Export: ${tab.collection}`;
+    case 'import':
+      return `Import: ${tab.collection}`;
+    case 'tasks':
+      return 'Tasks';
     case 'schema':
       return `Schema: ${tab.collection}`;
     case 'create-view':
@@ -192,13 +246,17 @@ const tabLabelFor = (
       return `Monitor: ${connectionName(tab.connectionId)}`;
     case 'users':
       return `Users: ${connectionName(tab.connectionId)}`;
+    case 'dump':
+      return `Dump: ${tab.db || connectionName(tab.connectionId)}`;
+    case 'restore':
+      return `Restore: ${connectionName(tab.connectionId)}`;
     default:
       return tab.collection;
   }
 };
 
 function Workspace() {
-  const { toast, confirm, choose, prompt } = useDialogs();
+  const { toast, confirm, prompt } = useDialogs();
   const { config, resolvedMode, setMode, setSpacingDensity, resetZoom } = useTheme();
   const density = config.spacingDensity;
   // Open the Quick Start tab by default so the app never starts on a blank canvas.
@@ -307,13 +365,31 @@ function Workspace() {
   }, []);
 
   const [exportTasks, setExportTasks] = useState<ExportTaskInfo[]>([]);
+  // Import tasks started from the Import tab, keyed by task id, so the poll
+  // below can refresh the source collection tab once the task completes.
+  // TaskInfo has no connection/db/collection fields, so we track them here
+  // at the point the task is started instead of trying to recover them later.
+  const pendingImportRefreshRef = React.useRef(
+    new Map<string, { connectionId: string; db: string; collection: string }>()
+  );
+  // Bumped on every optimistic task insert below. A list_export_tasks response
+  // requested BEFORE a start_*_task registered could otherwise resolve AFTER the
+  // optimistic insert and clobber it for a whole poll cycle — so a load only
+  // applies when no insert happened since it started (the next poll is ≤1s away).
+  const exportTasksSeqRef = React.useRef(0);
   const loadExportTasks = React.useCallback(async () => {
+    const seq = exportTasksSeqRef.current;
     try {
       const tasks = await invoke<ExportTaskInfo[]>('list_export_tasks');
-      setExportTasks(tasks);
+      if (exportTasksSeqRef.current === seq) setExportTasks(tasks);
     } catch {
       /* ignore — task polling should not interrupt the main workspace */
     }
+  }, []);
+  // Optimistically surface freshly-started tasks ahead of the next poll.
+  const insertExportTasks = React.useCallback((tasks: ExportTaskInfo[]) => {
+    exportTasksSeqRef.current += 1;
+    setExportTasks((prev) => [...tasks, ...prev.filter((t) => !tasks.some((n) => n.id === t.id))]);
   }, []);
 
   useEffect(() => {
@@ -336,6 +412,71 @@ function Workspace() {
       setExportTasks(tasks);
     } catch {
       /* ignore */
+    }
+  };
+
+  type CopySource = { connectionId: string; db: string; collections: string[] };
+  const [copyDialog, setCopyDialog] = useState<
+    { source: CopySource; target?: { connectionId: string; db?: string } } | null
+  >(null);
+  // In-app clipboard for the Copy → Paste-here flow.
+  const [copyClipboard, setCopyClipboard] = useState<CopySource | null>(null);
+
+  // Destination to refresh in the sidebar after a copy starts (and periodically
+  // while it runs), so newly-copied databases/collections show up live.
+  const [copyRefresh, setCopyRefresh] = useState<
+    { connectionId: string; db?: string; expand: boolean } | null
+  >(null);
+  const [copyRefreshNonce, setCopyRefreshNonce] = useState(0);
+  const triggerCopyRefresh = React.useCallback(
+    (target: { connectionId: string; db?: string }, expand: boolean) => {
+      setCopyRefresh({ ...target, expand });
+      setCopyRefreshNonce((n) => n + 1);
+    },
+    []
+  );
+
+  // While a copy task is running, periodically re-refresh its destination so
+  // collections that trickle in during a long copy stay visible. `expand: false`
+  // keeps reloading collections without re-opening a db the user has collapsed.
+  const copyRunning = exportTasks.some(
+    (t) => (t.kind === 'collection_copy' || t.kind === 'database_copy') && t.status === 'running'
+  );
+  const refreshConnId = copyRefresh?.connectionId;
+  const refreshDb = copyRefresh?.db;
+  useEffect(() => {
+    if (!copyRunning || !refreshConnId) return;
+    const id = setInterval(() => {
+      setCopyRefresh((prev) => (prev ? { ...prev, expand: false } : prev));
+      setCopyRefreshNonce((n) => n + 1);
+    }, 4000);
+    return () => clearInterval(id);
+  }, [copyRunning, refreshConnId, refreshDb]);
+
+  const handleCopyCollections = (connectionId: string, db: string, collections: string[]) =>
+    setCopyDialog({ source: { connectionId, db, collections } });
+  const handleCopyDatabase = (connectionId: string, db: string) =>
+    setCopyDialog({ source: { connectionId, db, collections: [] } });
+
+  // Copy → clipboard (no dialog); Paste-here opens the dialog pre-filled with that target.
+  const handleCopyToClipboard = (connectionId: string, db: string, collections: string[]) => {
+    setCopyClipboard({ connectionId, db, collections });
+    const what = collections.length === 0 ? `database ${db}` : `${collections.length} collection(s)`;
+    toast(`Copied ${what} — right-click a target and choose “Paste here”.`, 'success');
+  };
+  const handlePasteInto = (connectionId: string, db?: string) => {
+    if (!copyClipboard) return;
+    setCopyDialog({ source: copyClipboard, target: { connectionId, db } });
+  };
+
+  const handleCancelTask = async (taskId: string): Promise<boolean> => {
+    try {
+      await invoke('cancel_task', { id: taskId });
+      await loadExportTasks();
+      return true;
+    } catch (err: any) {
+      toast(`Could not cancel: ${err?.message || err}`, 'error');
+      return false;
     }
   };
 
@@ -364,6 +505,22 @@ function Workspace() {
   }, [isResizing]);
 
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
+
+  // The collection tab an 'export' tab was opened from (results/query source for the
+  // Current Results and Filtered cards). Falls back to a matching collection tab by
+  // namespace when the originating tab has since closed.
+  const exportSourceTab =
+    activeTab && activeTab.type === 'export'
+      ? tabs.find(t => t.id === activeTab.exportSourceTabId && t.type === 'collection') ||
+        tabs.find(
+          t =>
+            t.type === 'collection' &&
+            t.connectionId === activeTab.connectionId &&
+            t.db === activeTab.db &&
+            t.collection === activeTab.collection
+        ) ||
+        null
+      : null;
 
   // MongoDB server version of the active connection, for the status bar.
   const activeConnId = activeTab && activeConnections.some(c => c.id === activeTab.connectionId) ? activeTab.connectionId : null;
@@ -568,7 +725,17 @@ function Workspace() {
   };
 
   const handleOpenSettingsTab = () => openSettingsTab('appearance');
+  // Tool guidance cards ("mongodump was not found…") point the user at the
+  // tool paths, so they land on the Tools section rather than Appearance.
+  const handleOpenToolsSettings = () => openSettingsTab('tools');
   const handleOpenShortcutsReference = () => openSettingsTab('shortcuts');
+
+  const handleOpenTasksTab = () => {
+    if (!tabs.some(t => t.id === TASKS_TAB_ID)) {
+      setTabs(prev => [...prev, createTasksTab()]);
+    }
+    setActiveTabId(TASKS_TAB_ID);
+  };
 
   const handleOpenExportTab = (sourceTab: QueryTab) => {
     if (sourceTab.type !== 'collection') return;
@@ -590,6 +757,230 @@ function Workspace() {
     }
     setActiveTabId(tabId);
     loadExportTasks();
+  };
+
+  const handleOpenImportTab = (sourceTab: QueryTab) => {
+    if (sourceTab.type !== 'collection') return;
+    const tabId = `import.${sourceTab.connectionId}.${sourceTab.db}.${sourceTab.collection}`;
+    const tabExists = tabs.some(t => t.id === tabId);
+    if (!tabExists) {
+      setTabs(prev => [...prev, {
+        id: tabId,
+        type: 'import',
+        connectionId: sourceTab.connectionId,
+        db: sourceTab.db,
+        collection: sourceTab.collection,
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      }]);
+    }
+    setActiveTabId(tabId);
+    loadExportTasks();
+  };
+
+  // Detection of the mongodump/mongorestore binaries, refreshed whenever a Dump
+  // or Restore tab is opened (so a Settings change to the tools directory takes
+  // effect the next time either tab is opened).
+  const [mongoTools, setMongoTools] = useState<ToolsStatusUi | null>(null);
+  const loadMongoTools = React.useCallback(async () => {
+    try {
+      const dir = getMongoToolsDir();
+      const status = await invoke<ToolsStatusUi>('detect_mongo_tools', {
+        configuredDir: dir || null,
+      });
+      setMongoTools(status);
+    } catch {
+      setMongoTools({ mongodump: null, mongorestore: null });
+    }
+  }, []);
+
+  // Guided MongoDB tool setup — a single dialog instance at app level. Entry
+  // points (Dump/Restore guidance cards, the shell's spawn-failure gate,
+  // Settings) all call handleOpenToolSetup(); the running/most-recent install
+  // task is fed in from the existing task-polling list (exportTasks) by id.
+  const [toolSetupOpen, setToolSetupOpen] = useState(false);
+  const [managedToolStatuses, setManagedToolStatuses] = useState<ManagedToolStatusUi[] | null>(null);
+  const [toolInstallTaskId, setToolInstallTaskId] = useState<string | null>(null);
+  // Bumped when the tool-install dialog finishes, so an open mongosh tab (gated
+  // on a failed session) re-attempts its session the same way its own Retry does.
+  const [shellReconnectNonce, setShellReconnectNonce] = useState(0);
+  // Bumped when the tool-install dialog finishes, so a mounted Settings view
+  // re-fetches managed_tools_status instead of showing a stale "Managed tools" card.
+  const [toolStatusRefreshNonce, setToolStatusRefreshNonce] = useState(0);
+
+  const refreshManagedToolStatuses = React.useCallback(async () => {
+    try {
+      const statuses = await invoke<ManagedToolStatusUi[]>('managed_tools_status');
+      setManagedToolStatuses(statuses);
+      return statuses;
+    } catch {
+      setManagedToolStatuses([]);
+      return [];
+    }
+  }, []);
+
+  const handleOpenToolSetup = React.useCallback(async () => {
+    setManagedToolStatuses(null);
+    await refreshManagedToolStatuses();
+    setToolSetupOpen(true);
+  }, [refreshManagedToolStatuses]);
+
+  const handleInstallTools = React.useCallback(
+    async (tools: string[], force: boolean) => {
+      try {
+        const task = await invoke<ExportTaskInfo>('start_tool_install_task', { tools, force });
+        setToolInstallTaskId(task.id);
+        insertExportTasks([task]);
+        await loadExportTasks();
+      } catch (err: any) {
+        toast(`Could not start tool install: ${err?.message || err}`, 'error');
+      }
+    },
+    [loadExportTasks, toast]
+  );
+
+  const handleCancelToolInstall = React.useCallback(() => {
+    if (toolInstallTaskId) void handleCancelTask(toolInstallTaskId);
+  }, [toolInstallTaskId]);
+
+  // Completion side effects — refresh tool discovery, managed statuses, and the
+  // shell/Settings nonces. Runs from the Done button AND from any other way of
+  // closing the dialog after the install reached a terminal state (ESC, X,
+  // overlay), so guidance cards can't keep showing "not found" for tools that
+  // just got installed.
+  const finalizeToolSetup = React.useCallback(() => {
+    setToolInstallTaskId(null);
+    void loadMongoTools();
+    void refreshManagedToolStatuses();
+    setShellReconnectNonce((n) => n + 1);
+    setToolStatusRefreshNonce((n) => n + 1);
+  }, [loadMongoTools, refreshManagedToolStatuses]);
+
+  const handleToolSetupDone = React.useCallback(() => {
+    setToolSetupOpen(false);
+    finalizeToolSetup();
+  }, [finalizeToolSetup]);
+
+  const handleToolSetupOpenChange = React.useCallback(
+    (open: boolean) => {
+      setToolSetupOpen(open);
+      if (!open && toolInstallTaskId) {
+        const task = exportTasks.find((t) => t.id === toolInstallTaskId);
+        if (task && task.status !== 'running') finalizeToolSetup();
+      }
+    },
+    [toolInstallTaskId, exportTasks, finalizeToolSetup]
+  );
+
+  const toolInstallTask: InstallTaskUi | null = React.useMemo(() => {
+    if (!toolInstallTaskId) return null;
+    const task = exportTasks.find((t) => t.id === toolInstallTaskId);
+    if (!task) return null;
+    return {
+      status: task.status,
+      message: task.status === 'failed' ? task.error || task.message : task.message,
+      processed: task.processed,
+      total: task.total ?? null,
+    };
+  }, [exportTasks, toolInstallTaskId]);
+
+  // Database/collection tree per connection, for the Dump view's scope picker.
+  // Dump has no standing sidebar-tree state to reuse from App, so this loads it
+  // directly via list_databases/list_collections when a Dump tab is opened.
+  const [dumpDbTrees, setDumpDbTrees] = useState<Record<string, { name: string; collections: string[] }[]>>({});
+  const loadDumpDbTree = React.useCallback(async (connectionId: string) => {
+    try {
+      const dbs = await invoke<string[]>('list_databases', { id: connectionId });
+      const withColls = await Promise.all(
+        dbs.map(async (name) => {
+          try {
+            const colls = await invoke<{ name: string }[]>('list_collections', { id: connectionId, db: name });
+            return { name, collections: colls.map((c) => c.name) };
+          } catch {
+            return { name, collections: [] as string[] };
+          }
+        })
+      );
+      setDumpDbTrees((prev) => ({ ...prev, [connectionId]: withColls }));
+    } catch {
+      setDumpDbTrees((prev) => ({ ...prev, [connectionId]: [] }));
+    }
+  }, []);
+
+  const handleOpenDumpTab = (connectionId: string, db?: string, coll?: string) => {
+    const idParts = ['dump', connectionId, db, coll].filter((p): p is string => !!p);
+    const tabId = idParts.join('.');
+    if (!tabs.some(t => t.id === tabId)) {
+      setTabs(prev => [...prev, {
+        id: tabId,
+        type: 'dump',
+        connectionId,
+        db: db ?? '',
+        collection: coll ?? '',
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      }]);
+    }
+    setActiveTabId(tabId);
+    void loadMongoTools();
+    void loadDumpDbTree(connectionId);
+  };
+
+  const handleOpenRestoreTab = (connectionId: string) => {
+    const tabId = `restore.${connectionId}`;
+    if (!tabs.some(t => t.id === tabId)) {
+      setTabs(prev => [...prev, {
+        id: tabId,
+        type: 'restore',
+        connectionId,
+        db: '',
+        collection: '',
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      }]);
+    }
+    setActiveTabId(tabId);
+    void loadMongoTools();
+  };
+
+  const handleRunDump = async (tab: QueryTab, options: DumpOptionsUi) => {
+    const toolPath = mongoTools?.mongodump?.path;
+    if (!toolPath) return;
+    try {
+      const task = await invoke<ExportTaskInfo>('start_dump_task', {
+        id: tab.connectionId,
+        toolPath,
+        options,
+      });
+      insertExportTasks([task]);
+      handleOpenTasksTab();
+      await loadExportTasks();
+    } catch (err: any) {
+      toast(`Dump failed to start: ${err?.message || err}`, 'error');
+    }
+  };
+
+  const handleRunRestore = async (tab: QueryTab, options: RestoreOptionsUi) => {
+    const toolPath = mongoTools?.mongorestore?.path;
+    if (!toolPath) return;
+    try {
+      const task = await invoke<ExportTaskInfo>('start_restore_task', {
+        id: tab.connectionId,
+        toolPath,
+        options,
+      });
+      insertExportTasks([task]);
+      handleOpenTasksTab();
+      await loadExportTasks();
+    } catch (err: any) {
+      toast(`Restore failed to start: ${err?.message || err}`, 'error');
+    }
   };
 
   // M7: open a Create-View tab for a database.
@@ -1142,6 +1533,29 @@ function Workspace() {
     }
   };
 
+  // When a tracked import task (started from the Import tab) is observed
+  // completed by the task poll, refresh the matching open collection tab so
+  // newly-imported documents show up without a manual re-run.
+  useEffect(() => {
+    const pending = pendingImportRefreshRef.current;
+    if (pending.size === 0) return;
+    for (const task of exportTasks) {
+      if (task.kind !== 'import' || task.status !== 'completed') continue;
+      const info = pending.get(task.id);
+      if (!info) continue;
+      pending.delete(task.id);
+      const match = tabs.find(
+        (t) =>
+          t.type === 'collection' &&
+          t.connectionId === info.connectionId &&
+          t.db === info.db &&
+          t.collection === info.collection
+      );
+      if (match) refreshTabResults(match);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportTasks]);
+
   const [documentModal, setDocumentModal] = useState<
     { mode: 'insert' | 'edit'; initialJson: string; targetDoc: Record<string, any> | null } | null
   >(null);
@@ -1152,16 +1566,25 @@ function Workspace() {
 
   const handleExportForTab = async (
     targetTab: QueryTab | null,
-    format: 'json' | 'csv',
-    scope: 'current' | 'full' = 'current'
+    format: ExportFormat,
+    scope: 'current' | 'full' | 'filtered' = 'current',
+    options: ExportOptions = DEFAULT_EXPORT_OPTIONS,
+    query?: FilteredExportQuery
   ) => {
     if (!targetTab || (targetTab.type !== 'collection' && targetTab.type !== 'export')) return;
     const docs = targetTab.type === 'collection' ? targetTab.results || [] : [];
     if (scope === 'current' && docs.length === 0) return;
+    if (scope === 'filtered' && !query) {
+      toast('No query to export — edit the filter first.', 'error');
+      return;
+    }
     try {
+      const suffix = scope === 'full' ? '.full' : scope === 'filtered' ? '.filtered' : '';
+      // NDJSON conventionally uses the .jsonl extension; the rest match the format.
+      const ext = format === 'ndjson' ? 'jsonl' : format;
       const path = await save({
-        defaultPath: `${targetTab.collection}${scope === 'full' ? '.full' : ''}.${format}`,
-        filters: [{ name: format.toUpperCase(), extensions: [format] }],
+        defaultPath: `${targetTab.collection}${suffix}.${ext}`,
+        filters: [{ name: format.toUpperCase(), extensions: [ext] }],
       });
       if (!path) return; // cancelled
       if (scope === 'full') {
@@ -1171,67 +1594,131 @@ function Workspace() {
           collection: targetTab.collection,
           format,
           path,
+          options,
         });
-        setExportTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
+        insertExportTasks([task]);
+        handleOpenTasksTab();
+        await loadExportTasks();
+        return;
+      }
+      if (scope === 'filtered' && query) {
+        const isAgg = query.kind === 'aggregate';
+        const task = await invoke<ExportTaskInfo>('start_filtered_export', {
+          id: targetTab.connectionId,
+          database: targetTab.db,
+          collection: targetTab.collection,
+          format,
+          path,
+          filter: isAgg ? '{}' : query.filter || '{}',
+          sort: isAgg ? '{}' : query.sort || '{}',
+          projection: isAgg ? '{}' : query.projection || '{}',
+          pipeline: isAgg ? query.pipeline : '',
+          skip: !isAgg && query.skip > 0 ? query.skip : null,
+          limit: !isAgg && query.limit > 0 ? query.limit : null,
+          options,
+        });
+        insertExportTasks([task]);
+        handleOpenTasksTab();
         await loadExportTasks();
         return;
       }
 
-      const content = format === 'json' ? toJson(docs) : toCsv(docs);
-      await writeTextFile(path, content);
+      // Current-results export: the backend's single formatter handles every
+      // format (including bson/xlsx binary output) so the frontend just forwards
+      // the in-memory docs and lets it write the file.
+      await invoke('format_current_docs', { docs, format, options, path });
       toast(`Exported ${docs.length} document(s) to ${path}`, 'success');
     } catch (err: any) {
       toast(`Export failed: ${err?.message || err}`, 'error');
     }
   };
 
-  const handleImport = async () => {
-    if (!activeTab || activeTab.type !== 'collection') return;
+  const handleCopyCurrentExport = async (
+    format: 'json' | 'ndjson' | 'csv',
+    options: ExportOptions
+  ) => {
+    if (!exportSourceTab?.results?.length) return;
     try {
-      const path = await open({
-        multiple: false,
-        filters: [{ name: 'Data', extensions: ['json', 'csv'] }],
+      const text = await invoke<string | null>('format_current_docs', {
+        docs: exportSourceTab.results,
+        format,
+        options,
+        path: null,
       });
-      if (!path || typeof path !== 'string') return; // cancelled
-      const text = await readTextFile(path);
-      // Parse by extension; a malformed file aborts before any write.
-      let docs: Record<string, any>[];
-      try {
-        docs = path.toLowerCase().endsWith('.csv') ? parseCsv(text) : parseJson(text);
-      } catch (parseErr: any) {
-        toast(`Import aborted — could not parse file: ${parseErr?.message || parseErr}`, 'error');
-        return;
-      }
-      if (docs.length === 0) {
-        toast('Nothing to import: the file has no documents.', 'error');
-        return;
-      }
-      // Choose the duplicate-handling mode.
-      const mode = await choose({
-        title: `Import ${docs.length} document(s)`,
-        message: 'How should existing documents with the same _id be handled?',
-        choices: [
-          { value: 'skip', label: 'Skip duplicates (insert new only)' },
-          { value: 'update', label: 'Update existing by _id' },
-          { value: 'abort', label: 'Abort if any _id already exists', destructive: true },
-        ],
-      });
-      if (!mode) return; // cancelled
-      const res = await invoke<{ inserted: number; updated: number; skipped: number }>(
-        'import_documents',
-        {
-          id: activeTab.connectionId,
-          database: activeTab.db,
-          collection: activeTab.collection,
-          docs,
-          mode,
-        }
-      );
-      await refreshTabResults(activeTab);
-      toast(`Imported: ${res.inserted} inserted, ${res.updated} updated, ${res.skipped} skipped`, 'success');
+      if (text) await navigator.clipboard.writeText(text);
+      toast(`Copied ${exportSourceTab.results.length} document(s) as ${format.toUpperCase()}`, 'success');
     } catch (err: any) {
-      toast(`Import failed: ${err?.message || err}`, 'error');
+      toast(`Copy failed: ${err?.message || err}`, 'error');
     }
+  };
+
+  const handleScanExportFields = (query?: FilteredExportQuery) =>
+    invoke<string[]>('sample_export_fields', {
+      id: activeTab?.connectionId,
+      database: activeTab?.db,
+      collection: activeTab?.collection,
+      filter: query?.kind === 'find' ? query.filter : '{}',
+      pipeline: query?.kind === 'aggregate' ? query.pipeline : '',
+    });
+
+  const handlePreviewExport = async (
+    format: ExportFormat,
+    scope: 'current' | 'full' | 'filtered',
+    options: ExportOptions,
+    query?: FilteredExportQuery
+  ): Promise<string> => {
+    if (scope === 'current') {
+      const docs = (exportSourceTab?.results ?? []).slice(0, 5);
+      return (
+        (await invoke<string | null>('format_current_docs', { docs, format, options, path: null })) ?? ''
+      );
+    }
+    return invoke<string>('preview_export', {
+      id: activeTab?.connectionId,
+      database: activeTab?.db,
+      collection: activeTab?.collection,
+      format,
+      filter: query?.kind === 'find' ? query.filter : '{}',
+      sort: query?.kind === 'find' ? query.sort : '{}',
+      projection: query?.kind === 'find' ? query.projection : '{}',
+      pipeline: query?.kind === 'aggregate' ? query.pipeline : '',
+      options,
+    });
+  };
+
+  // Top-level field names from a tab's loaded documents, for the export query editors'
+  // autocomplete (the export tab itself has no results, so derive from the source tab).
+  const fieldsFromResults = (results?: any[]): string[] => {
+    if (!results || results.length === 0) return ['_id'];
+    const keys = new Set<string>();
+    results.forEach((doc) => {
+      if (doc && typeof doc === 'object') Object.keys(doc).forEach((k) => keys.add(k));
+    });
+    keys.add('_id');
+    return Array.from(keys).sort((a, b) => {
+      if (a === '_id') return -1;
+      if (b === '_id') return 1;
+      return a.localeCompare(b);
+    });
+  };
+
+  // Seed the Export view's editable Filtered card from the source tab's last run.
+  const buildFilteredExportSeed = (tab: QueryTab | null): FilteredExportSeed => {
+    if (tab?.lastAggregate) {
+      return { kind: 'aggregate', pipeline: JSON.stringify(tab.lastAggregate, null, 2) };
+    }
+    return {
+      kind: 'find',
+      filter: tab?.lastQuery?.filter || '{}',
+      sort: tab?.lastQuery?.sort || '{}',
+      projection: tab?.lastQuery?.projection || '{}',
+      matchCount: typeof tab?.totalCount === 'number' ? tab.totalCount : null,
+    };
+  };
+
+  const handleImport = () => {
+    if (!activeTab || activeTab.type !== 'collection') return;
+    handleOpenImportTab(activeTab);
   };
 
   const handleEditDocument = (doc: Record<string, any>) => {
@@ -1470,6 +1957,8 @@ function Workspace() {
           onAnalyzeSchema={handleOpenSchemaTab}
           onCreateView={handleOpenCreateViewTab}
           onOpenGridfs={handleOpenGridfsTab}
+          onOpenDump={handleOpenDumpTab}
+          onOpenRestore={handleOpenRestoreTab}
           collectionMutationTrigger={collectionMutationTrigger}
           onCollectionRenamed={handleCollectionRenamed}
           onDatabaseDropped={handleDatabaseDropped}
@@ -1500,6 +1989,13 @@ function Workspace() {
             });
           }}
           onOpenSettings={handleOpenSettingsTab}
+          onCopyCollections={handleCopyCollections}
+          onCopyDatabase={handleCopyDatabase}
+          onCopyToClipboard={handleCopyToClipboard}
+          onPasteInto={handlePasteInto}
+          canPaste={!!copyClipboard}
+          refreshTarget={copyRefresh}
+          refreshTargetNonce={copyRefreshNonce}
         />
       }
       sidebarWidth={sidebarWidth}
@@ -1522,6 +2018,8 @@ function Workspace() {
           appVersion={appVersion ? `v${appVersion}` : undefined}
           zoomPercent={Math.round(config.uiZoom * 100)}
           onZoomReset={resetZoom}
+          onOpenTasks={handleOpenTasksTab}
+          runningTasks={exportTasks.filter((t) => t.status === 'running').length}
         />
       }
       overlays={
@@ -1571,6 +2069,73 @@ function Workspace() {
           />
 
           <UpdatePrompt />
+
+          <ToolSetupDialog
+            open={toolSetupOpen}
+            onOpenChange={handleToolSetupOpenChange}
+            statuses={managedToolStatuses}
+            installTask={toolInstallTask}
+            onInstall={handleInstallTools}
+            onCancel={handleCancelToolInstall}
+            onDone={handleToolSetupDone}
+          />
+
+          {copyDialog && (
+            <CopyToDialog
+              open={!!copyDialog}
+              onOpenChange={(o) => !o && setCopyDialog(null)}
+              source={copyDialog.source}
+              presetTargetId={copyDialog.target?.connectionId}
+              presetTargetDb={copyDialog.target?.db}
+              activeConnections={activeConnections.map((c) => ({ id: c.id, name: c.name, uri: c.uri }))}
+              listDatabases={(id) => invoke<string[]>('list_databases', { id })}
+              listCollections={(id, db) =>
+                invoke<{ name: string }[]>('list_collections', { id, db }).then((cs) => cs.map((c) => c.name))
+              }
+              preflight={(req) =>
+                invoke('preflight_copy', {
+                  sourceId: req.sourceId,
+                  sourceDb: req.sourceDb,
+                  sourceCollections: req.sourceCollections,
+                  targets: req.targets,
+                })
+              }
+              onConfirm={async (req) => {
+                handleOpenTasksTab();
+                // Surface the destination right away and expand it; the periodic
+                // effect keeps it fresh while the copy runs.
+                triggerCopyRefresh({ connectionId: req.targetId, db: req.targetDb }, true);
+                let task: ExportTaskInfo;
+                if (req.type === 'database') {
+                  task = await invoke<ExportTaskInfo>('start_database_copy', {
+                    sourceId: req.sourceId, sourceDb: req.sourceDb,
+                    targetId: req.targetId, targetDb: req.targetDb,
+                    collections: req.collections, includeIndexes: req.includeIndexes,
+                    includeViews: req.includeViews, conflictMode: req.conflictMode,
+                  });
+                } else if (req.type === 'collections') {
+                  // Copy each selected collection as its own task (same target db, same name).
+                  const tasks = await Promise.all(req.collections.map((name) =>
+                    invoke<ExportTaskInfo>('start_collection_copy', {
+                      sourceId: req.sourceId, sourceDb: req.sourceDb, sourceCollection: name,
+                      targetId: req.targetId, targetDb: req.targetDb, targetCollection: name,
+                      filter: null, includeIndexes: req.includeIndexes, conflictMode: req.conflictMode,
+                    })));
+                  insertExportTasks(tasks);
+                  await loadExportTasks();
+                  return;
+                } else {
+                  task = await invoke<ExportTaskInfo>('start_collection_copy', {
+                    sourceId: req.sourceId, sourceDb: req.sourceDb, sourceCollection: req.sourceCollection,
+                    targetId: req.targetId, targetDb: req.targetDb, targetCollection: req.targetCollection,
+                    filter: req.filter ?? null, includeIndexes: req.includeIndexes, conflictMode: req.conflictMode,
+                  });
+                }
+                insertExportTasks([task]);
+                await loadExportTasks();
+              }}
+            />
+          )}
         </>
       }
     >
@@ -1703,6 +2268,7 @@ function Workspace() {
                   connectionId={activeTab.connectionId}
                   databaseName={activeTab.db}
                   bucket={activeTab.collection}
+                  onNamespaceMutated={() => setCollectionMutationTrigger((prev) => prev + 1)}
                 />
               )}
               {activeTab && activeTab.type === 'monitoring' && (
@@ -1714,28 +2280,166 @@ function Workspace() {
               {activeTab && activeTab.type === 'export' && (() => {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
                 const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
-                const sourceTab =
-                  tabs.find(t => t.id === activeTab.exportSourceTabId && t.type === 'collection') ||
-                  tabs.find(t =>
-                    t.type === 'collection' &&
-                    t.connectionId === activeTab.connectionId &&
-                    t.db === activeTab.db &&
-                    t.collection === activeTab.collection
-                  ) ||
-                  null;
+                const sourceTab = exportSourceTab;
                 return (
                   <ExportView
+                    key={`export:${activeTab.connectionId}:${activeTab.db}:${activeTab.collection}`}
+                    connectionId={activeTab.connectionId}
                     connectionName={connectionName}
                     databaseName={activeTab.db}
                     collectionName={activeTab.collection}
                     currentResultCount={sourceTab?.results.length || 0}
-                    tasks={exportTasks}
-                    onExport={(format, scope) => handleExportForTab(sourceTab || activeTab, format, scope)}
-                    onRefreshTasks={loadExportTasks}
-                    onClearFinishedTasks={handleClearFinishedTasks}
+                    availableFields={fieldsFromResults(sourceTab?.results)}
+                    filtered={buildFilteredExportSeed(sourceTab)}
+                    onExport={(format, scope, options, query) =>
+                      handleExportForTab(sourceTab || activeTab, format, scope, options, query)
+                    }
+                    onCountFilter={(filter) =>
+                      invoke<number>('count_documents', {
+                        id: activeTab.connectionId,
+                        database: activeTab.db,
+                        collection: activeTab.collection,
+                        filter,
+                      })
+                    }
+                    onOpenTasks={handleOpenTasksTab}
+                    onScanFields={handleScanExportFields}
+                    onCopyCurrent={handleCopyCurrentExport}
+                    onPreview={handlePreviewExport}
                   />
                 );
               })()}
+              {activeTab && activeTab.type === 'import' && (() => {
+                const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
+                const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
+                return (
+                  <ImportView
+                    key={`import:${activeTab.connectionId}:${activeTab.db}:${activeTab.collection}`}
+                    connectionName={connectionName}
+                    databaseName={activeTab.db}
+                    collectionName={activeTab.collection}
+                    onOpenTasks={handleOpenTasksTab}
+                    onPickFile={async () => {
+                      const p = await open({
+                        multiple: false,
+                        filters: [{ name: 'Data', extensions: ['json', 'jsonl', 'ndjson', 'csv', 'bson'] }],
+                      });
+                      return typeof p === 'string' ? p : null;
+                    }}
+                    onPreview={(source, format, csvOptions) =>
+                      invoke<ImportPreviewData>('preview_import', { source, format, csvOptions, limit: 20 })
+                    }
+                    onRunImport={async (source, format, csvOptions, mode) => {
+                      try {
+                        const task = await invoke<ExportTaskInfo>('start_import_task', {
+                          id: activeTab.connectionId,
+                          database: activeTab.db,
+                          collection: activeTab.collection,
+                          source,
+                          format,
+                          csvOptions,
+                          mode,
+                        });
+                        pendingImportRefreshRef.current.set(task.id, {
+                          connectionId: activeTab.connectionId,
+                          db: activeTab.db,
+                          collection: activeTab.collection,
+                        });
+                        insertExportTasks([task]);
+                        handleOpenTasksTab();
+                        await loadExportTasks();
+                      } catch (err: any) {
+                        toast(`Import failed to start: ${err?.message || err}`, 'error');
+                      }
+                    }}
+                  />
+                );
+              })()}
+              {activeTab && activeTab.type === 'dump' && (() => {
+                const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
+                const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
+                const initialScope: DumpScopeUi = activeTab.collection
+                  ? { kind: 'collection', db: activeTab.db, coll: activeTab.collection }
+                  : activeTab.db
+                    ? { kind: 'db', db: activeTab.db }
+                    : { kind: 'server' };
+                return (
+                  <DumpView
+                    key={activeTab.id}
+                    connectionName={connectionName}
+                    databases={dumpDbTrees[activeTab.connectionId] ?? []}
+                    initialScope={initialScope}
+                    tools={mongoTools}
+                    onOpenSettings={handleOpenToolsSettings}
+                    onInstallTools={handleOpenToolSetup}
+                    onPickFolder={async () => {
+                      const p = await open({ directory: true });
+                      return typeof p === 'string' ? p : null;
+                    }}
+                    onPickArchiveFile={async (defaultName) => {
+                      const p = await save({ defaultPath: defaultName });
+                      return p ?? null;
+                    }}
+                    onPreviewCommand={(options) =>
+                      invoke<string>('preview_dump_command', {
+                        id: activeTab.connectionId,
+                        toolPath: mongoTools?.mongodump?.path ?? '',
+                        options,
+                      })
+                    }
+                    onRunDump={(options) => handleRunDump(activeTab, options)}
+                    onOpenTasks={handleOpenTasksTab}
+                  />
+                );
+              })()}
+              {activeTab && activeTab.type === 'restore' && (() => {
+                const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
+                const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
+                return (
+                  <RestoreView
+                    key={activeTab.id}
+                    connectionName={connectionName}
+                    tools={mongoTools}
+                    onOpenSettings={handleOpenToolsSettings}
+                    onInstallTools={handleOpenToolSetup}
+                    onPickFolder={async () => {
+                      const p = await open({ directory: true });
+                      return typeof p === 'string' ? p : null;
+                    }}
+                    onPickArchiveFile={async () => {
+                      const p = await open({ multiple: false });
+                      return typeof p === 'string' ? p : null;
+                    }}
+                    onBrowseFolder={(path) => invoke<DumpTreeUi>('browse_dump_folder', { path })}
+                    onPreviewCommand={(options) =>
+                      invoke<string>('preview_restore_command', {
+                        id: activeTab.connectionId,
+                        toolPath: mongoTools?.mongorestore?.path ?? '',
+                        options,
+                      })
+                    }
+                    onRunRestore={(options) => handleRunRestore(activeTab, options)}
+                    onOpenTasks={handleOpenTasksTab}
+                  />
+                );
+              })()}
+              {activeTab && activeTab.type === 'tasks' && (
+                <div className="flex h-full flex-col overflow-auto p-4" data-testid="tasks-view">
+                  <header className="mb-3">
+                    <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Background copy and export jobs.
+                    </p>
+                  </header>
+                  <TaskManager
+                    tasks={exportTasks}
+                    onRefresh={loadExportTasks}
+                    onClearFinished={handleClearFinishedTasks}
+                    onCancel={handleCancelTask}
+                    variant="embedded"
+                  />
+                </div>
+              )}
               {activeTab && activeTab.type === 'shell' && (() => {
                 const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
                 const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
@@ -1749,12 +2453,18 @@ function Workspace() {
                     collectionName={activeTab.collection || undefined}
                     initialCommand={activeTab.initialShellCommand}
                     density={density}
-                    onOpenSettings={handleOpenSettingsTab}
+                    onOpenSettings={handleOpenToolsSettings}
+                    onInstallTools={handleOpenToolSetup}
+                    reconnectSignal={shellReconnectNonce}
                   />
                 );
               })()}
               {activeTab && activeTab.type === 'settings' && (
-                <SettingsView initialTab={settingsInitialTab} />
+                <SettingsView
+                  initialTab={settingsInitialTab}
+                  onInstallTools={handleOpenToolSetup}
+                  toolStatusRefreshNonce={toolStatusRefreshNonce}
+                />
               )}
               {activeTab && activeTab.type === 'quickstart' && (
                 <QuickStart

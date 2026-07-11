@@ -47,19 +47,19 @@ vi.mock('@tauri-apps/api/path', () => ({
 const saveMock = vi.fn();
 const openMock = vi.fn();
 const writeTextFileMock = vi.fn();
-const readTextFileMock = vi.fn();
+const writeFileMock = vi.fn();
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   save: (...a: any[]) => saveMock(...a),
   open: (...a: any[]) => openMock(...a),
 }));
 vi.mock('@tauri-apps/plugin-fs', () => ({
   writeTextFile: (...a: any[]) => writeTextFileMock(...a),
-  readTextFile: (...a: any[]) => readTextFileMock(...a),
+  writeFile: (...a: any[]) => writeFileMock(...a),
 }));
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore }: any) => (
     <div data-testid="mock-sidebar">
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
@@ -78,6 +78,12 @@ vi.mock('../Sidebar', () => ({
       </button>
       <button data-testid="open-settings-btn" onClick={() => onOpenSettings && onOpenSettings()}>
         Open Settings
+      </button>
+      <button data-testid="open-dump-db-btn" onClick={() => onOpenDump && onOpenDump('conn-1', 'sales_db')}>
+        Dump sales_db
+      </button>
+      <button data-testid="open-restore-btn" onClick={() => onOpenRestore && onOpenRestore('conn-1')}>
+        Restore
       </button>
     </div>
   ),
@@ -454,7 +460,7 @@ describe('App Component', () => {
 
     expect(await screen.findByTestId('settings-view')).toBeInTheDocument();
     expect(screen.getAllByText('Settings').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByTestId('settings-tab-mongosh'));
+    fireEvent.click(screen.getByTestId('settings-tab-tools'));
     expect(await screen.findByTestId('mongosh-path-input')).toHaveValue('/usr/local/bin/mongosh');
   });
 
@@ -568,8 +574,21 @@ describe('App Component', () => {
     expect(await screen.findByText(/"VIP Vic"/)).toBeInTheDocument();
   });
 
-  it('imports documents from a JSON file via import_documents (H5)', async () => {
+  it('opens the Import tab and starts a background import task', async () => {
     const calls: any[] = [];
+    const task = {
+      id: 'task-3',
+      kind: 'import',
+      label: 'Import into sales_db.customers',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Queued',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
     mockInvoke.mockImplementation((cmd: string, args: any) => {
       calls.push({ cmd, args });
       if (cmd === 'execute_mql_query') {
@@ -578,13 +597,18 @@ describe('App Component', () => {
       if (cmd === 'load_collection_queries') {
         return Promise.resolve({ saved: [], history: [], default: null });
       }
-      if (cmd === 'import_documents') {
-        return Promise.resolve({ inserted: 2, updated: 0, skipped: 0 });
+      if (cmd === 'preview_import') {
+        return Promise.resolve({ docs: [], columns: [], totalHint: null, error: null });
+      }
+      if (cmd === 'start_import_task') {
+        return Promise.resolve(task);
+      }
+      if (cmd === 'list_export_tasks') {
+        return Promise.resolve([task]);
       }
       return Promise.resolve([]);
     });
-    openMock.mockResolvedValue('/tmp/data.json');
-    readTextFileMock.mockResolvedValue('[{"name":"Ada"},{"name":"Bob"}]');
+    openMock.mockResolvedValue('/tmp/d.jsonl');
 
     const { fireEvent, waitFor } = await import('@testing-library/react');
     renderWithProviders(<App />);
@@ -594,20 +618,611 @@ describe('App Component', () => {
     expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('import-btn'));
+    expect(await screen.findByTestId('import-view')).toBeInTheDocument();
 
-    // Pick the duplicate-handling mode via the in-app choose dialog.
-    fireEvent.click(await screen.findByTestId('dialog-choice-skip'));
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+    await waitFor(() =>
+      expect(screen.getByTestId('import-file-path')).toHaveTextContent('/tmp/d.jsonl'));
+
+    fireEvent.click(screen.getByTestId('import-run-btn'));
 
     await waitFor(() => {
-      const imp = calls.find((c) => c.cmd === 'import_documents');
+      const imp = calls.find((c) => c.cmd === 'start_import_task');
       expect(imp).toBeTruthy();
       expect(imp.args).toMatchObject({
         database: 'sales_db',
         collection: 'customers',
+        source: { path: '/tmp/d.jsonl' },
+        format: 'ndjson',
         mode: 'skip',
       });
-      expect(imp.args.docs).toEqual([{ name: 'Ada' }, { name: 'Bob' }]);
     });
+    expect(await screen.findByTestId('task-manager')).toBeInTheDocument();
+  });
+
+  it('refreshes the source collection tab once its import task completes', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-import-refresh',
+        kind: 'import',
+        label: 'Import sales_db.customers from d.jsonl',
+        status: 'running',
+        processed: 0,
+        total: null,
+        message: 'Queued',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      let taskStatus = 'running';
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'preview_import') {
+          return Promise.resolve({ docs: [], columns: [], totalHint: null, error: null });
+        }
+        if (cmd === 'start_import_task') {
+          return Promise.resolve(runningTask);
+        }
+        if (cmd === 'list_export_tasks') {
+          return Promise.resolve([{ ...runningTask, status: taskStatus }]);
+        }
+        return Promise.resolve([]);
+      });
+      openMock.mockResolvedValue('/tmp/d.jsonl');
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('import-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('import-view')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+      await vi.waitFor(() =>
+        expect(screen.getByTestId('import-file-path')).toHaveTextContent('/tmp/d.jsonl'));
+
+      fireEvent.click(screen.getByTestId('import-run-btn'));
+      await vi.waitFor(() =>
+        expect(calls.some((c) => c.cmd === 'start_import_task')).toBe(true));
+
+      const execCallsBefore = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+
+      // The task completes; the next poll tick should notice and re-run the
+      // source collection tab's query.
+      taskStatus = 'completed';
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await vi.waitFor(() => {
+        const execCallsAfter = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+        expect(execCallsAfter).toBeGreaterThan(execCallsBefore);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('previews through preview_import', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'preview_import') {
+        return Promise.resolve({ docs: [], columns: [], totalHint: null, error: null });
+      }
+      return Promise.resolve([]);
+    });
+    openMock.mockResolvedValue('/tmp/d.jsonl');
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('import-btn'));
+    fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+
+    await waitFor(
+      () => {
+        const prev = calls.find((c) => c.cmd === 'preview_import');
+        expect(prev).toBeTruthy();
+        expect(prev.args).toMatchObject({ format: 'ndjson', limit: 20 });
+      },
+      { timeout: 2000 }
+    );
+  });
+
+  it('opens the Dump tab from a database context menu and detects mongo tools', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') {
+        return Promise.resolve({
+          mongodump: { path: '/usr/local/bin/mongodump', version: '100.9.4' },
+          mongorestore: null,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+
+    expect(await screen.findByTestId('dump-view')).toBeInTheDocument();
+    expect(screen.getByText('Dump: sales_db')).toBeInTheDocument();
+    await waitFor(() => {
+      const detect = calls.find((c) => c.cmd === 'detect_mongo_tools');
+      expect(detect).toBeTruthy();
+      expect(detect.args).toMatchObject({ configuredDir: null });
+    });
+  });
+
+  it('runs a dump (payload includes toolPath), opens Tasks, and cancels the running task', async () => {
+    const calls: any[] = [];
+    const dumpTask = {
+      id: 'task-dump-1',
+      kind: 'dump',
+      label: 'Dump sales_db → out',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Running',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') {
+        return Promise.resolve({
+          mongodump: { path: '/usr/local/bin/mongodump', version: '100.9.4' },
+          mongorestore: null,
+        });
+      }
+      if (cmd === 'preview_dump_command') return Promise.resolve('mongodump --db=sales_db');
+      if (cmd === 'start_dump_task') return Promise.resolve(dumpTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([dumpTask]);
+      if (cmd === 'cancel_task') return Promise.resolve();
+      return Promise.resolve([]);
+    });
+    openMock.mockResolvedValue('/tmp/dumpout');
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    expect(await screen.findByTestId('dump-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('dump-pick-dest-btn'));
+    await waitFor(() =>
+      expect(screen.getByTestId('dump-dest-path')).toHaveTextContent('/tmp/dumpout'));
+
+    await waitFor(() => expect(screen.getByTestId('dump-run-btn')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('dump-run-btn'));
+
+    await waitFor(() => {
+      const started = calls.find((c) => c.cmd === 'start_dump_task');
+      expect(started).toBeTruthy();
+      expect(started.args).toMatchObject({
+        id: 'conn-1',
+        toolPath: '/usr/local/bin/mongodump',
+        options: expect.objectContaining({
+          scope: { kind: 'db', db: 'sales_db' },
+          target: { kind: 'folder', out: '/tmp/dumpout' },
+        }),
+      });
+    });
+
+    // Starting the dump opens the Tasks tab with the running task, cancellable.
+    expect(await screen.findByTestId('task-manager')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+
+    await waitFor(() => {
+      const cancelled = calls.find((c) => c.cmd === 'cancel_task');
+      expect(cancelled).toBeTruthy();
+      expect(cancelled.args).toMatchObject({ id: 'task-dump-1' });
+    });
+  });
+
+  it('opens the Restore tab from the connection context menu', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'detect_mongo_tools') {
+        return Promise.resolve({ mongodump: null, mongorestore: null });
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-restore-btn'));
+
+    expect(await screen.findByTestId('restore-view')).toBeInTheDocument();
+    expect(screen.getByText('Restore: conn-1')).toBeInTheDocument();
+  });
+
+  const managedStatusesFixture = [
+    { name: 'database-tools', version: '100.9.4', installed: false, path: null },
+    { name: 'mongosh', version: '2.3.1', installed: true, path: '/data/tools/mongosh/bin/mongosh' },
+  ];
+
+  it('opens the guided tool-setup dialog from the Dump guidance card and loads managed tool status', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    expect(await screen.findByTestId('dump-view')).toBeInTheDocument();
+    expect(await screen.findByTestId('dump-tools-missing')).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+
+    expect(await screen.findByTestId('toolsetup-dialog')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(calls.some((c) => c.cmd === 'managed_tools_status')).toBe(true);
+    });
+    expect(await screen.findByTestId('toolsetup-check-database-tools')).toBeInTheDocument();
+  });
+
+  it('runs a tool install (payload includes tools/force), tracks the task in the dialog, and cancels it', async () => {
+    const calls: any[] = [];
+    const installTask = {
+      id: 'task-tool-1',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Downloading database-tools…',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(installTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([installTask]);
+      if (cmd === 'cancel_task') return Promise.resolve();
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+
+    await waitFor(() => {
+      const started = calls.find((c) => c.cmd === 'start_tool_install_task');
+      expect(started).toBeTruthy();
+      expect(started.args).toMatchObject({ tools: ['database-tools'], force: false });
+    });
+
+    expect(await screen.findByTestId('toolsetup-cancel-btn')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('toolsetup-cancel-btn'));
+
+    await waitFor(() => {
+      const cancelled = calls.find((c) => c.cmd === 'cancel_task');
+      expect(cancelled).toBeTruthy();
+      expect(cancelled.args).toMatchObject({ id: 'task-tool-1' });
+    });
+  });
+
+  it('completing the tool install and clicking Done re-detects mongo tools, refreshes managed status, and closes the dialog', async () => {
+    const calls: any[] = [];
+    const completedTask = {
+      id: 'task-tool-2',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'completed',
+      processed: 2,
+      total: 2,
+      message: 'Installed database-tools, mongosh',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: 2,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(completedTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([completedTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    const detectCallCount = () => calls.filter((c) => c.cmd === 'detect_mongo_tools').length;
+    const detectBefore = detectCallCount();
+
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+
+    expect(await screen.findByTestId('toolsetup-done-btn')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('toolsetup-done-btn'));
+
+    await waitFor(() => {
+      expect(detectCallCount()).toBeGreaterThan(detectBefore);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('toolsetup-dialog')).not.toBeInTheDocument();
+    });
+  });
+
+  it('renders the cancelled state in the guided tool-setup dialog when the install task is cancelled', async () => {
+    const calls: any[] = [];
+    const cancelledTask = {
+      id: 'task-tool-3',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'cancelled',
+      processed: 1,
+      total: 2,
+      message: 'Install cancelled',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: 2,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(cancelledTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([cancelledTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+
+    expect(await screen.findByTestId('toolsetup-cancelled-heading')).toBeInTheDocument();
+  });
+
+  it('surfaces the real failure reason (task.error) instead of the generic task.message when the install task fails', async () => {
+    const calls: any[] = [];
+    const failedTask = {
+      id: 'task-tool-4',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'failed',
+      processed: 0,
+      total: 2,
+      message: 'Task failed',
+      path: null,
+      error: 'checksum mismatch — download corrupted or tampered',
+      createdAtMs: 1,
+      finishedAtMs: 2,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(failedTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([failedTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+
+    const errorEl = await screen.findByTestId('toolsetup-error');
+    expect(errorEl).toHaveTextContent('checksum mismatch — download corrupted or tampered');
+    expect(errorEl).not.toHaveTextContent('Task failed');
+  });
+
+  it('closing the completed tool-setup dialog without Done still finalizes, and reopening shows the checklist', async () => {
+    const calls: any[] = [];
+    const completedTask = {
+      id: 'task-tool-5',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'completed',
+      processed: 2,
+      total: 2,
+      message: 'Installed database-tools, mongosh',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: 2,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(completedTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([completedTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    const detectCallCount = () => calls.filter((c) => c.cmd === 'detect_mongo_tools').length;
+
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+    expect(await screen.findByTestId('toolsetup-done-btn')).toBeInTheDocument();
+
+    // Close via the dialog's X (Radix onOpenChange(false)) instead of Done —
+    // the completion side effects must still run.
+    const detectBefore = detectCallCount();
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('toolsetup-dialog')).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(detectCallCount()).toBeGreaterThan(detectBefore);
+    });
+
+    // Reopening shows the fresh checklist, not the stale completed screen.
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    expect(await screen.findByTestId('toolsetup-check-database-tools')).toBeInTheDocument();
+    expect(screen.queryByTestId('toolsetup-done-btn')).not.toBeInTheDocument();
+  });
+
+  it('a stale list_export_tasks response cannot clobber an optimistically inserted install task', async () => {
+    const installTask = {
+      id: 'task-tool-6',
+      kind: 'tool_install',
+      label: 'Install MongoDB tools',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Downloading database-tools…',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    // The FIRST list_export_tasks request (mount poll) is held open and only
+    // resolves — empty, as fetched before the task registered — after the
+    // optimistic insert. It must be dropped, not applied.
+    let resolveStaleList!: (tasks: any[]) => void;
+    const staleList = new Promise<any[]>((resolve) => { resolveStaleList = resolve; });
+    let listCalls = 0;
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'start_tool_install_task') return Promise.resolve(installTask);
+      if (cmd === 'list_export_tasks') {
+        listCalls += 1;
+        return listCalls === 1 ? staleList : Promise.resolve([installTask]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor, act } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    await screen.findByTestId('dump-view');
+    fireEvent.click(await screen.findByTestId('dump-install-tools-btn'));
+    await screen.findByTestId('toolsetup-check-database-tools');
+    fireEvent.click(screen.getByTestId('toolsetup-install-btn'));
+
+    // The dialog tracks the optimistically inserted running task.
+    expect(await screen.findByTestId('toolsetup-cancel-btn')).toBeInTheDocument();
+
+    // The pre-insert snapshot resolves late and empty.
+    await act(async () => {
+      resolveStaleList([]);
+    });
+
+    // The dialog must NOT flash back to the checklist.
+    await waitFor(() => {
+      expect(screen.getByTestId('toolsetup-cancel-btn')).toBeInTheDocument();
+      expect(screen.queryByTestId('toolsetup-install-btn')).not.toBeInTheDocument();
+    });
+  });
+
+  it('the dump guidance card "Open Settings" opens Settings on the Tools section', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      if (cmd === 'detect_mongo_tools') return Promise.resolve({ mongodump: null, mongorestore: null });
+      if (cmd === 'managed_tools_status') return Promise.resolve(managedStatusesFixture);
+      if (cmd === 'load_app_settings') return Promise.resolve({});
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, within } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-dump-db-btn'));
+    const guidance = await screen.findByTestId('dump-tools-missing');
+
+    fireEvent.click(within(guidance).getByRole('button', { name: /open settings/i }));
+
+    expect(await screen.findByTestId('settings-view')).toBeInTheDocument();
+    // The Tools section (mongosh/tools paths) is active, not Appearance.
+    expect(await screen.findByTestId('mongosh-path-input')).toBeInTheDocument();
   });
 
   it('starts a background task for full collection export', async () => {
@@ -654,7 +1269,7 @@ describe('App Component', () => {
 
     fireEvent.click(screen.getByTestId('export-btn'));
     expect(await screen.findByTestId('export-view')).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('export-full-json-btn'));
+    fireEvent.click(screen.getByTestId('export-full-btn'));
 
     await waitFor(() => {
       const exp = calls.find((c) => c.cmd === 'start_collection_export');
@@ -667,6 +1282,139 @@ describe('App Component', () => {
       });
     });
     expect(await screen.findByTestId('task-manager')).toBeInTheDocument();
+  });
+
+  it('sends options and skip/limit with a filtered export', async () => {
+    const calls: any[] = [];
+    const task = {
+      id: 'task-2',
+      kind: 'filtered_export',
+      label: 'Export sales_db.customers as CSV',
+      status: 'running',
+      processed: 0,
+      total: null,
+      message: 'Queued',
+      path: '/tmp/customers.filtered.csv',
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'start_filtered_export') {
+        return Promise.resolve(task);
+      }
+      if (cmd === 'list_export_tasks') {
+        return Promise.resolve([task]);
+      }
+      return Promise.resolve([]);
+    });
+    saveMock.mockResolvedValue('/tmp/customers.filtered.csv');
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-format-csv'));
+    fireEvent.change(screen.getByTestId('export-options-csv-delimiter'), { target: { value: ';' } });
+    fireEvent.change(screen.getByTestId('export-filtered-skip'), { target: { value: '10' } });
+    fireEvent.change(screen.getByTestId('export-filtered-limit'), { target: { value: '50' } });
+    fireEvent.click(screen.getByTestId('export-filtered-btn'));
+
+    await waitFor(() => {
+      const exp = calls.find((c) => c.cmd === 'start_filtered_export');
+      expect(exp).toBeTruthy();
+      expect(exp.args).toMatchObject({
+        format: 'csv',
+        skip: 10,
+        limit: 50,
+        options: expect.objectContaining({ csv: expect.objectContaining({ delimiter: ';' }) }),
+      });
+    });
+  });
+
+  it('exports current results through format_current_docs', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'format_current_docs') {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve([]);
+    });
+    saveMock.mockResolvedValue('/tmp/customers.json');
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('export-current-btn'));
+
+    await waitFor(() => {
+      const exp = calls.find((c) => c.cmd === 'format_current_docs');
+      expect(exp).toBeTruthy();
+      expect(exp.args).toMatchObject({ format: 'json', path: expect.any(String) });
+    });
+  });
+
+  it('copies current results to the clipboard as text', async () => {
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'format_current_docs') {
+        return Promise.resolve('name\nA\n');
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('export-copy-current-btn'));
+
+    await waitFor(() => {
+      const exp = calls.find((c) => c.cmd === 'format_current_docs');
+      expect(exp).toBeTruthy();
+      expect(exp.args).toMatchObject({ path: null });
+    });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('name\nA\n'));
   });
 
   it('does not load profiles until the vault is unlocked', async () => {
@@ -756,35 +1504,6 @@ describe('App Component', () => {
     // No extra count: same filter.
     const countAfter = calls.filter(c => c.cmd === 'count_documents').length;
     expect(countAfter).toBe(1);
-  });
-
-  it('aborts import on a malformed file without calling the backend (H5)', async () => {
-    const calls: any[] = [];
-    mockInvoke.mockImplementation((cmd: string, args: any) => {
-      calls.push({ cmd, args });
-      if (cmd === 'execute_mql_query') {
-        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
-      }
-      if (cmd === 'load_collection_queries') {
-        return Promise.resolve({ saved: [], history: [], default: null });
-      }
-      return Promise.resolve([]);
-    });
-    openMock.mockResolvedValue('/tmp/bad.json');
-    readTextFileMock.mockResolvedValue('{not valid json');
-
-    const { fireEvent } = await import('@testing-library/react');
-    renderWithProviders(<App />);
-    await screen.findByTestId('mock-sidebar');
-
-    fireEvent.click(screen.getByTestId('select-collection-btn'));
-    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId('import-btn'));
-
-    // The malformed file surfaces an in-app error toast and no write happens.
-    expect(await screen.findByText(/Import aborted/)).toBeInTheDocument();
-    expect(calls.find((c) => c.cmd === 'import_documents')).toBeFalsy();
   });
 
   it('isolates query editor state per collection tab (#120)', async () => {

@@ -9,6 +9,7 @@ import {
   ArrowUpCircle,
   Server,
   Keyboard,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -44,6 +45,7 @@ import {
 } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import type { ManagedToolStatusUi } from './ToolSetupDialog';
 
 interface AppSettings {
   mongosh_path: string;
@@ -75,6 +77,9 @@ const DEFAULT_LOCAL_COMMANDS: Record<string, string> = {
   cursor: 'cursor-agent -p {prompt}',
   antigravity: 'antigravity {prompt}',
 };
+/** localStorage key for the MongoDB Database Tools directory (mongodump/mongorestore). */
+export const MONGO_TOOLS_DIR_KEY = 'mqlens.mongoToolsDir';
+
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic (Claude)',
   openai: 'OpenAI (ChatGPT)',
@@ -85,7 +90,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   antigravity: 'Antigravity (local)',
 };
 
-type SettingsTabId = 'appearance' | 'ai' | 'mcp' | 'mongosh' | 'updates' | 'shortcuts' | 'security';
+type SettingsTabId = 'appearance' | 'ai' | 'mcp' | 'tools' | 'updates' | 'shortcuts' | 'security';
 
 const SETTINGS_TABS: {
   id: SettingsTabId;
@@ -114,10 +119,10 @@ const SETTINGS_TABS: {
     Icon: Server,
   },
   {
-    id: 'mongosh',
-    label: 'Mongosh',
-    description: 'Path to the MongoDB shell binary used by the integrated terminal.',
-    Icon: Terminal,
+    id: 'tools',
+    label: 'Tools',
+    description: 'Mongosh and MongoDB Database Tools binaries, plus managed installs.',
+    Icon: Wrench,
     persistFooter: true,
   },
   {
@@ -145,11 +150,27 @@ export type { SettingsTabId };
 
 export interface SettingsViewProps {
   initialTab?: SettingsTabId;
+  onInstallTools?: () => void;
+  /**
+   * Bumped by the parent (e.g. after the guided tool-setup dialog's "Done"
+   * handler) to re-trigger this view's own `managed_tools_status` fetch, so
+   * the "Managed tools" card doesn't go stale after an install completes
+   * while Settings is still mounted.
+   */
+  toolStatusRefreshNonce?: number;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstallTools, toolStatusRefreshNonce }) => {
   const [tab, setTab] = useState<SettingsTabId>(initialTab ?? 'appearance');
   const [mongoshPath, setMongoshPath] = useState('');
+  const [managedTools, setManagedTools] = useState<ManagedToolStatusUi[] | null>(null);
+  const [mongoToolsDir, setMongoToolsDir] = useState(() => {
+    try {
+      return localStorage.getItem(MONGO_TOOLS_DIR_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
   const [aiProvider, setAiProvider] = useState('anthropic');
   const [anthropicKey, setAnthropicKey] = useState('');
   const [anthropicModel, setAnthropicModel] = useState('claude-opus-4-8');
@@ -216,6 +237,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab }) => {
     biometricStatus().then(setBio).catch(() => setBio(null));
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    invoke<ManagedToolStatusUi[]>('managed_tools_status')
+      .then((s) => { if (!cancelled) setManagedTools(s); })
+      .catch(() => { if (!cancelled) setManagedTools([]); });
+    return () => { cancelled = true; };
+  }, [toolStatusRefreshNonce]);
+
   const localCommandFor = (agent: string) =>
     localCommands[agent] ?? DEFAULT_LOCAL_COMMANDS[agent] ?? '{prompt}';
 
@@ -246,6 +275,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab }) => {
       setError(String(err));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const onChangeMongoToolsDir = (value: string) => {
+    setMongoToolsDir(value);
+    try {
+      localStorage.setItem(MONGO_TOOLS_DIR_KEY, value);
+    } catch {
+      /* localStorage unavailable — best-effort persistence only */
     }
   };
 
@@ -399,8 +437,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab }) => {
           </div>
         );
 
-      case 'mongosh':
+      case 'tools':
         return (
+          <>
           <Card className="max-w-3xl">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
@@ -431,6 +470,78 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab }) => {
               </div>
             </CardContent>
           </Card>
+
+          <Card className="max-w-3xl mt-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Terminal className="h-4 w-4 text-success" />
+                MongoDB Database Tools
+              </CardTitle>
+              <CardDescription>
+                Directory containing the mongodump/mongorestore binaries, used by the Dump and
+                Restore tabs.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Label htmlFor="mongo-tools-dir">Tools directory</Label>
+              <Input
+                id="mongo-tools-dir"
+                className="font-mono"
+                value={mongoToolsDir}
+                onChange={(event) => onChangeMongoToolsDir(event.target.value)}
+                placeholder="/usr/local/bin"
+                data-testid="mongo-tools-dir-input"
+              />
+              <p className="text-xs text-muted-foreground">
+                Directory containing mongodump/mongorestore. Leave empty to use PATH.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="max-w-3xl mt-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Wrench className="h-4 w-4 text-success" />
+                Managed tools
+              </CardTitle>
+              <CardDescription>
+                MQLens can download and manage mongodump/mongorestore and mongosh for you instead
+                of relying on your system PATH.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {managedTools === null ? (
+                <p className="text-xs text-muted-foreground">Checking installed tools…</p>
+              ) : (
+                <ul className="space-y-1">
+                  {managedTools.map((t) => (
+                    <li
+                      key={t.name}
+                      className="text-xs text-muted-foreground"
+                      data-testid={`settings-managed-tool-${t.name}`}
+                    >
+                      {t.name}: {t.installed ? `v${t.version} installed` : 'not installed'}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {onInstallTools && (
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onInstallTools}
+                    data-testid="settings-install-tools-btn"
+                  >
+                    <Wrench className="h-3 w-3" />
+                    Install tools…
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          </>
         );
 
       case 'ai':

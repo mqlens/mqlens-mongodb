@@ -53,6 +53,9 @@ interface MongoShellProps {
   initialCommand?: string;
   density?: 'roomy' | 'cozy' | 'compact';
   onOpenSettings?: () => void;
+  onInstallTools?: () => void;
+  /** Bump this (e.g. after a tool install completes) to re-attempt the mongosh session. */
+  reconnectSignal?: number;
 }
 
 interface ParsedCall {
@@ -205,6 +208,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   initialCommand,
   density = 'cozy',
   onOpenSettings,
+  onInstallTools,
+  reconnectSignal,
 }) => {
   const [currentDb, setCurrentDb] = useState(databaseName);
   const startupLogId = useMemo(createLogId, []);
@@ -231,6 +236,21 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionAttempted, setSessionAttempted] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
+  // Reuses the retry-nonce mechanism above: when a parent-driven reconnect signal
+  // changes (e.g. the guided tool-install dialog finished), re-attempt the session
+  // the same way the gate's own Retry button does.
+  const reconnectSignalRef = useRef(reconnectSignal);
+  useEffect(() => {
+    if (reconnectSignal !== undefined && reconnectSignal !== reconnectSignalRef.current) {
+      reconnectSignalRef.current = reconnectSignal;
+      // The signal fires after ANY tool install completes — only re-attempt
+      // when no session is attached (failed/not running). A healthy session
+      // must not be restarted; that would drop its state mid-work.
+      if (sessionId === null) setRetryNonce((n) => n + 1);
+    }
+    // sessionId is only read when the signal actually changed; including it
+    // keeps the read fresh without re-triggering (the ref guard above).
+  }, [reconnectSignal, sessionId]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<() => void>(() => {});
@@ -621,6 +641,15 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                 {onOpenSettings && (
                   <Button onClick={onOpenSettings} data-testid="gate-open-settings">
                     Open Settings
+                  </Button>
+                )}
+                {onInstallTools && (
+                  <Button
+                    variant="outline"
+                    onClick={onInstallTools}
+                    data-testid="shell-install-tools-btn"
+                  >
+                    Install tools…
                   </Button>
                 )}
                 <Button variant="outline" onClick={() => setRetryNonce((n) => n + 1)} data-testid="gate-retry">

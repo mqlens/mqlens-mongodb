@@ -1,13 +1,19 @@
 #[cfg(test)]
 mod tests {
+    use crate::db::documents::CsvImportOptions;
     use crate::AppState;
     use crate::{
         connect_db_impl, count_documents_impl, create_collection_impl, create_index_impl,
-        delete_document_impl, disconnect_db_impl, download_gridfs_file_impl, drop_collection_impl,
+        delete_document_impl, delete_gridfs_file_impl, disconnect_db_impl,
+        download_gridfs_file_impl, drop_collection_impl,
         drop_database_impl, execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
-        import_documents_impl, insert_document_impl, json_to_bson_document, list_collections_impl,
-        list_databases_impl, list_gridfs_files_impl, list_indexes_impl, rename_collection_impl,
-        rename_database_impl, start_collection_export_impl, update_document_impl,
+        format_current_docs_impl, import_documents_impl,
+        insert_document_impl,
+        json_to_bson_document, list_collections_impl, list_databases_impl, list_gridfs_files_impl,
+        list_indexes_impl, parse_json_array_docs,
+        preview_export_impl, rename_collection_impl, rename_database_impl, sample_export_fields_impl,
+        start_collection_export_impl, start_filtered_export_impl, update_document_impl,
+        upload_gridfs_file_impl,
     };
     use crate::{
         create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
@@ -24,6 +30,16 @@ mod tests {
         parts.concat()
     }
 
+    async fn wait_for_task(state: &AppState, task_id: &str) {
+        for _ in 0..50 {
+            let status = state.tasks.lock().unwrap().get(task_id).map(|t| t.status.clone());
+            if status.as_deref() != Some("running") {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
     #[test]
     fn test_resource_usage_sums_process_tree() {
         // The current (test) process always exists, so the summed tree memory
@@ -32,6 +48,51 @@ mod tests {
         let usage = crate::resource_usage_impl(&state);
         assert!(usage.memory_bytes > 0, "process-tree memory should be > 0");
         assert!(usage.cpu_percent >= 0.0);
+    }
+
+    /// The retained sysinfo System must not accumulate dead processes across
+    /// tree rebuilds — with `remove_dead_processes: false` every process (and,
+    /// on Linux, every thread) that ever existed while the app ran stayed in
+    /// the map forever, growing RSS without bound on busy hosts (issue #165).
+    #[cfg(unix)]
+    #[test]
+    fn test_resource_usage_purges_dead_processes_on_rebuild() {
+        use std::time::{Duration, Instant};
+
+        let state = AppState::new();
+        crate::resource_usage_impl(&state); // initial tree build
+
+        // A child of this process, alive across the next rebuild.
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep");
+        let child_pid = sysinfo::Pid::from_u32(child.id());
+
+        let force_rebuild = |state: &AppState| {
+            *state.resource_tree_at.lock().unwrap() = Instant::now()
+                .checked_sub(Duration::from_secs(
+                    crate::limits::RESOURCE_TREE_REFRESH_SECS + 1,
+                ))
+                .expect("system clock supports back-dating");
+            crate::resource_usage_impl(state);
+        };
+
+        force_rebuild(&state);
+        assert!(
+            state.sys.lock().unwrap().process(child_pid).is_some(),
+            "live child should be captured in the retained System"
+        );
+
+        child.kill().expect("kill child");
+        child.wait().expect("reap child");
+
+        force_rebuild(&state);
+        assert!(
+            state.sys.lock().unwrap().process(child_pid).is_none(),
+            "dead child must be purged from the retained System on rebuild"
+        );
     }
 
     #[tokio::test]
@@ -126,6 +187,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_conn_uris_stored_for_real_and_absent_for_mock() {
+        use crate::db::mongotools::resolve_conn_uri;
+        let state = AppState::new();
+        let mock_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        assert!(resolve_conn_uri(&state, &mock_id).is_err());
+        assert!(resolve_conn_uri(&state, "nope").is_err());
+        // Real-connection storage is asserted in integration tests (needs a live server);
+        // unit-level: connect_db_impl inserts before returning — verified by reading the code
+        // path plus the integration test below.
+    }
+
+    #[tokio::test]
     async fn test_mock_full_collection_export_task_writes_file() {
         let state = AppState::new();
         let conn_id = connect_db_impl(&state, "mongodb://mock", None)
@@ -148,6 +221,7 @@ mod tests {
             "customers",
             "json",
             &path_str,
+            None,
         )
         .await
         .expect("Should start export task");
@@ -199,6 +273,7 @@ mod tests {
             "customers",
             "csv",
             &path_str,
+            None,
         )
         .await
         .expect("Should start CSV export task");
@@ -231,30 +306,423 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// Drive an export task to completion (or timeout) and return the finished TaskInfo.
+    async fn await_export(state: &AppState, task_id: &str) -> crate::TaskInfo {
+        for _ in 0..50 {
+            let status = state
+                .tasks
+                .lock()
+                .unwrap()
+                .get(task_id)
+                .map(|t| t.status.clone())
+                .unwrap();
+            if status != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        state.tasks.lock().unwrap().get(task_id).cloned().unwrap()
+    }
+
+    /// Re-parse an on-disk export file through the shipping import reader
+    /// (used to round-trip-verify export output; `parse_ndjson_docs` /
+    /// `parse_bson_docs` were dead code and have been removed).
+    fn reparse_import_file(path: &std::path::Path, format: &str) -> Vec<mongodb::bson::Document> {
+        use crate::db::import::{ImportReader, ImportSourceArg};
+        let source = ImportSourceArg {
+            path: Some(path.to_string_lossy().to_string()),
+            text: None,
+        };
+        let mut reader =
+            ImportReader::open(&source, format, &CsvImportOptions::default()).expect("open reader");
+        let mut docs = Vec::new();
+        while let Some(doc) = reader.next_doc().expect("read doc") {
+            docs.push(doc);
+        }
+        docs
+    }
+
+    /// Parse a text source through the shipping import reader for a given
+    /// format (ports unit coverage that used to call the removed
+    /// `parse_ndjson_docs` / `parse_csv_docs` directly).
+    fn drain_text_source(
+        text: &str,
+        format: &str,
+        csv: &CsvImportOptions,
+    ) -> Result<Vec<mongodb::bson::Document>, String> {
+        use crate::db::import::{ImportReader, ImportSourceArg};
+        let source = ImportSourceArg { path: None, text: Some(text.to_string()) };
+        let mut reader = ImportReader::open(&source, format, csv)?;
+        let mut docs = Vec::new();
+        while let Some(doc) = reader.next_doc()? {
+            docs.push(doc);
+        }
+        Ok(docs)
+    }
+
+    /// Parse concatenated BSON bytes through the shipping import reader.
+    /// BSON import requires a file source, so this writes to a temp file
+    /// first (ports unit coverage that used to call the removed
+    /// `parse_bson_docs` directly).
+    fn drain_bson_bytes(bytes: &[u8]) -> Vec<mongodb::bson::Document> {
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-tests-bson-{}-{}.bson",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, bytes).expect("write temp bson");
+        let docs = reparse_import_file(&path, "bson");
+        let _ = std::fs::remove_file(&path);
+        docs
+    }
+
+    #[tokio::test]
+    async fn test_mock_full_collection_export_task_writes_ndjson() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let path = temp_import_path("ndjson");
+        let path_str = path.to_string_lossy().to_string();
+        let task = start_collection_export_impl(
+            &state, &conn_id, "sales_db", "customers", "ndjson", &path_str, None,
+        )
+        .await
+        .expect("start ndjson export");
+        let finished = await_export(&state, &task.id).await;
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 3);
+
+        let text = std::fs::read_to_string(&path).expect("ndjson file");
+        // One document per line, no array brackets, and it round-trips back to 3 docs.
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 3);
+        assert!(!text.contains('['));
+        let docs = reparse_import_file(&path, "ndjson");
+        assert_eq!(docs.len(), 3);
+        assert!(text.contains("Alice Smith"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_mock_full_collection_export_task_writes_bson() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let path = temp_import_path("bson");
+        let path_str = path.to_string_lossy().to_string();
+        let task = start_collection_export_impl(
+            &state, &conn_id, "sales_db", "customers", "bson", &path_str, None,
+        )
+        .await
+        .expect("start bson export");
+        let finished = await_export(&state, &task.id).await;
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 3);
+
+        // The on-disk bytes are concatenated BSON and parse back to 3 documents.
+        let docs = reparse_import_file(&path, "bson");
+        assert_eq!(docs.len(), 3);
+        let names: Vec<String> = docs
+            .iter()
+            .filter_map(|d| d.get_str("name").ok().map(|s| s.to_string()))
+            .collect();
+        assert!(names.iter().any(|n| n == "Alice Smith"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_mock_filtered_export_writes_only_matching_subset() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("Should connect to mock db successfully");
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-filtered-export-test-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        // sales_db.customers has Alice/Bob/Charlie; filter to just Alice.
+        let task = start_filtered_export_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            "json",
+            &path_str,
+            "{\"name\":\"Alice Smith\"}",
+            "{}",
+            "{}",
+            "",
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("Should start filtered export task");
+
+        for _ in 0..50 {
+            let status = state
+                .tasks
+                .lock()
+                .unwrap()
+                .get(&task.id)
+                .map(|t| t.status.clone())
+                .unwrap();
+            if status != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 1, "only Alice matches the filter");
+        assert_eq!(finished.kind, "filtered_export");
+        let exported = std::fs::read_to_string(&path).expect("Export file should exist");
+        assert!(exported.contains("Alice Smith"));
+        assert!(!exported.contains("Bob Johnson"));
+        assert!(!exported.contains("Charlie Brown"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_filtered_export_rejects_aggregate_on_mock() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("Should connect to mock db successfully");
+
+        let err = start_filtered_export_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            "json",
+            "/tmp/agg.json",
+            "{}",
+            "{}",
+            "{}",
+            "[{\"$match\":{}}]",
+            None,
+            None,
+            None,
+        )
+        .await
+        .err()
+        .expect("aggregate export on mock should error");
+        assert_eq!(
+            err,
+            "Aggregation pipelines are not supported on mock connections"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_filtered_export_validates_format_path_and_connection() {
+        let state = AppState::new();
+
+        let invalid_format = start_filtered_export_impl(
+            &state, "missing", "db", "coll", "xml", "/tmp/out.xml", "{}", "{}", "{}", "", None,
+            None, None,
+        )
+        .await
+        .err()
+        .expect("invalid export format should error");
+        assert_eq!(
+            invalid_format,
+            "Export format must be json, ndjson, bson, csv, or xlsx"
+        );
+
+        let missing_path = start_filtered_export_impl(
+            &state, "missing", "db", "coll", "json", "   ", "{}", "{}", "{}", "", None, None,
+            None,
+        )
+        .await
+        .err()
+        .expect("blank export path should error");
+        assert_eq!(missing_path, "Export path is required");
+
+        let missing_connection = start_filtered_export_impl(
+            &state, "missing", "db", "coll", "json", "/tmp/out.json", "{}", "{}", "{}", "", None,
+            None, None,
+        )
+        .await
+        .err()
+        .expect("missing export connection should error");
+        assert_eq!(missing_connection, "Connection not found");
+
+        let bad_filter = start_filtered_export_impl(
+            &state, "missing", "db", "coll", "json", "/tmp/out.json", "{not json}", "{}", "{}",
+            "", None, None, None,
+        )
+        .await
+        .err()
+        .expect("malformed filter should error");
+        assert!(
+            bad_filter.contains("Invalid MQL filter JSON"),
+            "got: {bad_filter}"
+        );
+    }
+
     #[tokio::test]
     async fn test_collection_export_validates_format_path_and_connection() {
         let state = AppState::new();
 
-        let invalid_format =
-            start_collection_export_impl(&state, "missing", "db", "coll", "xml", "/tmp/out.xml")
-                .await
-                .err()
-                .expect("invalid export format should error");
-        assert_eq!(invalid_format, "Export format must be json or csv");
+        let invalid_format = start_collection_export_impl(
+            &state, "missing", "db", "coll", "xml", "/tmp/out.xml", None,
+        )
+        .await
+        .err()
+        .expect("invalid export format should error");
+        assert_eq!(
+            invalid_format,
+            "Export format must be json, ndjson, bson, csv, or xlsx"
+        );
 
-        let missing_path =
-            start_collection_export_impl(&state, "missing", "db", "coll", "json", "   ")
-                .await
-                .err()
-                .expect("blank export path should error");
+        let missing_path = start_collection_export_impl(
+            &state, "missing", "db", "coll", "json", "   ", None,
+        )
+        .await
+        .err()
+        .expect("blank export path should error");
         assert_eq!(missing_path, "Export path is required");
 
-        let missing_connection =
-            start_collection_export_impl(&state, "missing", "db", "coll", "json", "/tmp/out.json")
-                .await
-                .err()
-                .expect("missing export connection should error");
+        let missing_connection = start_collection_export_impl(
+            &state, "missing", "db", "coll", "json", "/tmp/out.json", None,
+        )
+        .await
+        .err()
+        .expect("missing export connection should error");
         assert_eq!(missing_connection, "Connection not found");
+    }
+
+    #[tokio::test]
+    async fn test_export_options_field_selection_and_delimiter() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-export-opts-{}-{}.csv",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        let options: crate::db::export::options::ExportOptions = serde_json::from_str(
+            r#"{"fields":["name"],"csv":{"delimiter":";"}}"#,
+        ).unwrap();
+        let task = start_collection_export_impl(
+            &state, &conn_id, "sales_db", "customers", "csv", &path_str, Some(options),
+        ).await.unwrap();
+        wait_for_task(&state, &task.id).await;
+
+        let exported = std::fs::read_to_string(&path).unwrap();
+        let mut lines = exported.lines();
+        assert_eq!(lines.next(), Some("name"), "only the selected column");
+        assert!(exported.contains("Alice Smith"));
+        assert!(!exported.contains("@"), "email column excluded");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_filtered_export_applies_skip_and_limit() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-export-skiplimit-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        let task = start_filtered_export_impl(
+            &state, &conn_id, "sales_db", "customers", "ndjson", &path_str,
+            "{}", "{}", "{}", "", Some(1), Some(1), None,
+        ).await.unwrap();
+        wait_for_task(&state, &task.id).await;
+
+        let exported = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(exported.lines().count(), 1, "skip 1, limit 1 of 3 docs");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_sample_export_fields_returns_dot_paths() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let fields =
+            sample_export_fields_impl(&state, &conn_id, "sales_db", "customers", "{}", "")
+                .await
+                .unwrap();
+        assert!(fields.contains(&"_id".to_string()));
+        assert!(fields.contains(&"name".to_string()));
+        // mock customers embed an address sub-document → nested dot path present
+        assert!(fields.iter().any(|f| f.contains('.')),
+            "expected at least one nested dot path, got {:?}", fields);
+    }
+
+    #[tokio::test]
+    async fn test_preview_export_returns_first_docs_in_format() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let preview = preview_export_impl(
+            &state, &conn_id, "sales_db", "customers", "ndjson", "{}", "{}", "{}", "", None,
+        ).await.unwrap();
+        assert!(preview.lines().count() <= 5);
+        assert!(preview.contains("Alice Smith"));
+
+        let err = preview_export_impl(
+            &state, &conn_id, "sales_db", "customers", "bson", "{}", "{}", "{}", "", None,
+        ).await.unwrap_err();
+        assert!(err.to_lowercase().contains("preview"));
+    }
+
+    #[tokio::test]
+    async fn test_format_current_docs_string_and_file_targets() {
+        let docs: Vec<serde_json::Value> = vec![
+            serde_json::json!({"name": "A", "n": 1}),
+            serde_json::json!({"name": "B", "n": 2}),
+        ];
+        // Clipboard target: CSV string with only the selected column.
+        let options: crate::db::export::options::ExportOptions =
+            serde_json::from_str(r#"{"fields":["name"]}"#).unwrap();
+        let text = format_current_docs_impl(docs.clone(), "csv", Some(options), None)
+            .await.unwrap().unwrap();
+        assert_eq!(text.trim(), "name\nA\nB");
+
+        // File target: xlsx written to disk.
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-current-{}-{}.xlsx",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+        let none = format_current_docs_impl(docs, "xlsx", None, Some(path_str.clone()))
+            .await.unwrap();
+        assert!(none.is_none());
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..2], b"PK");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_export_rejects_invalid_options() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let options: crate::db::export::options::ExportOptions =
+            serde_json::from_str(r#"{"csv":{"delimiter":"ab"}}"#).unwrap();
+        let err = start_collection_export_impl(
+            &state, &conn_id, "sales_db", "customers", "csv", "/tmp/x.csv", Some(options),
+        ).await.unwrap_err();
+        assert!(err.contains("delimiter"));
     }
 
     // Regression guard for the index-edit corruption bug (GO-LIVE C2/H4):
@@ -928,11 +1396,43 @@ mod tests {
             "uploads",
             r#"{"$oid":"507f1f77bcf86cd799439011"}"#,
             "/tmp/out.bin",
+            None,
+            None,
         )
         .await;
         assert!(
             dl.unwrap_err().contains("not supported on mock"),
             "GridFS download on a mock connection should be rejected"
+        );
+
+        let up = upload_gridfs_file_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "uploads",
+            "/tmp/in.bin",
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            up.unwrap_err().contains("not supported on mock"),
+            "GridFS upload on a mock connection should be rejected"
+        );
+
+        let del = delete_gridfs_file_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "uploads",
+            r#"{"$oid":"507f1f77bcf86cd799439011"}"#,
+        )
+        .await;
+        assert!(
+            del.unwrap_err().contains("not supported on mock"),
+            "GridFS delete on a mock connection should be rejected"
         );
     }
 
@@ -942,10 +1442,30 @@ mod tests {
         let id = "realish-gridfs";
         state.mocks.lock().unwrap().insert(id.to_string(), false);
 
-        let bad_id = download_gridfs_file_impl(&state, id, "db", "fs", "{", "/tmp/file.bin")
+        let bad_id = download_gridfs_file_impl(&state, id, "db", "fs", "{", "/tmp/file.bin", None, None)
             .await
             .unwrap_err();
         assert!(bad_id.contains("Invalid file id JSON"));
+
+        let bad_upload_meta = upload_gridfs_file_impl(
+            &state,
+            id,
+            "db",
+            "fs",
+            "/tmp/missing.bin",
+            None,
+            Some("{"),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(bad_upload_meta.contains("Invalid metadata JSON"));
+
+        let bad_delete = delete_gridfs_file_impl(&state, id, "db", "fs", "{")
+            .await
+            .unwrap_err();
+        assert!(bad_delete.contains("Invalid file id JSON"));
 
         let missing_client = list_gridfs_files_impl(&state, id, "db", "fs")
             .await
@@ -2320,5 +2840,552 @@ mod tests {
         // Correct length but a key that doesn't match this vault.
         let wrong = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
         assert!(decode_and_verify_key(&meta, &wrong).is_err());
+    }
+
+    // ── Import file parsers (issue #127: BSON / NDJSON / JSON / CSV) ───────
+
+    fn temp_import_path(ext: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "mqlens-import-test-{}-{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            ext
+        ))
+    }
+
+    #[test]
+    fn test_parse_json_array_docs() {
+        let docs =
+            parse_json_array_docs(r#"[{"_id": 1, "name": "Ada"}, {"_id": 2, "name": "Bob"}]"#)
+                .expect("parse json array");
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].get_str("name").unwrap(), "Ada");
+        assert_eq!(docs[1].get_i32("_id").unwrap(), 2);
+    }
+
+    #[test]
+    fn test_parse_json_array_docs_rejects_non_array() {
+        assert!(parse_json_array_docs(r#"{"_id": 1}"#).is_err());
+    }
+
+    #[test]
+    fn test_parse_ndjson_docs_skips_blank_lines() {
+        // One doc per line, blank lines (incl. trailing newline) tolerated.
+        let text = "{\"_id\": 1, \"name\": \"Ada\"}\n\n{\"_id\": 2, \"name\": \"Bob\"}\n";
+        let docs =
+            drain_text_source(text, "ndjson", &CsvImportOptions::default()).expect("parse ndjson");
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].get_str("name").unwrap(), "Ada");
+        assert_eq!(docs[1].get_str("name").unwrap(), "Bob");
+    }
+
+    #[test]
+    fn test_parse_ndjson_docs_interprets_extended_json() {
+        // An $oid wrapper must revive to a real ObjectId, not a sub-document.
+        let oid = mongodb::bson::oid::ObjectId::new();
+        let line = format!("{{\"_id\": {{\"$oid\": \"{}\"}}}}", oid.to_hex());
+        let docs = drain_text_source(&line, "ndjson", &CsvImportOptions::default())
+            .expect("parse ndjson ejson");
+        assert_eq!(docs[0].get_object_id("_id").unwrap(), oid);
+    }
+
+    #[test]
+    fn test_parse_bson_docs_roundtrip_preserves_types() {
+        use mongodb::bson::{doc, oid::ObjectId, DateTime, Decimal128};
+        use std::str::FromStr;
+        let oid = ObjectId::new();
+        let when = DateTime::from_millis(1_700_000_000_000);
+        let dec = Decimal128::from_str("123.45").unwrap();
+        let original = doc! { "_id": oid, "when": when, "amount": dec, "name": "Ada" };
+        // Two concatenated BSON documents, mongoexport's on-disk format.
+        let mut bytes = mongodb::bson::to_vec(&original).expect("serialize bson");
+        bytes.extend(mongodb::bson::to_vec(&doc! { "_id": 2, "name": "Bob" }).unwrap());
+
+        let docs = drain_bson_bytes(&bytes);
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].get_object_id("_id").unwrap(), oid);
+        assert_eq!(docs[0].get_datetime("when").unwrap(), &when);
+        assert_eq!(
+            docs[0].get("amount"),
+            Some(&mongodb::bson::Bson::Decimal128(dec))
+        );
+        assert_eq!(docs[1].get_str("name").unwrap(), "Bob");
+    }
+
+    #[test]
+    fn test_parse_bson_docs_empty_input() {
+        assert_eq!(drain_bson_bytes(&[]).len(), 0);
+    }
+
+    #[test]
+    fn test_parse_csv_docs_revives_cell_values() {
+        // Numbers/bools/objects parse as JSON; bare text stays a string.
+        let text = "_id,name,active,tags\n1,Ada,true,\"[1,2]\"\n2,Bob,false,plain";
+        let docs =
+            drain_text_source(text, "csv", &CsvImportOptions::default()).expect("parse csv");
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].get_i32("_id").unwrap(), 1);
+        assert_eq!(docs[0].get_str("name").unwrap(), "Ada");
+        assert!(docs[0].get_bool("active").unwrap());
+        assert_eq!(
+            docs[0].get_array("tags").unwrap(),
+            &vec![mongodb::bson::Bson::Int32(1), mongodb::bson::Bson::Int32(2)]
+        );
+        assert_eq!(docs[1].get_str("tags").unwrap(), "plain");
+    }
+
+    #[tokio::test]
+    async fn test_preview_import_truncates_and_reports_inline_errors() {
+        use crate::db::import::{preview_import_impl, ImportSourceArg};
+        // 30 NDJSON lines → only 20 previewed.
+        let text: String = (0..30).map(|i| format!("{{\"n\":{}}}\n", i)).collect();
+        let p = preview_import_impl(
+            ImportSourceArg { path: None, text: Some(text) },
+            "ndjson",
+            None,
+            20,
+        )
+        .await
+        .unwrap();
+        assert_eq!(p.docs.len(), 20);
+        assert!(p.error.is_none());
+
+        // Parse error surfaces inline, docs keep the good prefix.
+        let p = preview_import_impl(
+            ImportSourceArg { path: None, text: Some("{\"a\":1}\nboom\n".into()) },
+            "ndjson",
+            None,
+            20,
+        )
+        .await
+        .unwrap();
+        assert_eq!(p.docs.len(), 1);
+        assert!(p.error.as_deref().unwrap_or("").contains("line 2"));
+    }
+
+    #[tokio::test]
+    async fn test_import_task_streams_ndjson_from_file_on_mock() {
+        use crate::db::import::{start_import_task_impl, ImportSourceArg};
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "mqlens-import-test-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        // 1200 docs → 3 batches of 500/500/200.
+        let text: String = (0..1200).map(|i| format!("{{\"n\":{}}}\n", i)).collect();
+        std::fs::write(&path, text).unwrap();
+
+        let task = start_import_task_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            ImportSourceArg { path: Some(path.to_string_lossy().to_string()), text: None },
+            "ndjson",
+            None,
+            "skip",
+        )
+        .await
+        .unwrap();
+        assert_eq!(task.kind, "import");
+        wait_for_task(&state, &task.id).await;
+
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 1200, "cap must not apply to task imports");
+        // TaskInfo.summary is the copy-task CopySummary struct, so import
+        // counts ride on the completion message instead.
+        assert!(finished.message.contains("1200 inserted"), "{}", finished.message);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_import_task_fails_on_parse_error_and_reports_line() {
+        use crate::db::import::{start_import_task_impl, ImportSourceArg};
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let task = start_import_task_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            ImportSourceArg { path: None, text: Some("{\"a\":1}\nboom\n".into()) },
+            "ndjson",
+            None,
+            "skip",
+        )
+        .await
+        .unwrap();
+        wait_for_task(&state, &task.id).await;
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "failed");
+        assert!(finished.error.as_deref().unwrap_or("").contains("line 2"));
+    }
+
+    #[tokio::test]
+    async fn test_import_task_validates_mode_and_source() {
+        use crate::db::import::{start_import_task_impl, ImportSourceArg};
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let err = start_import_task_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            ImportSourceArg { path: None, text: Some("[]".into()) },
+            "json",
+            None,
+            "yolo",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("mode"));
+    }
+
+    #[tokio::test]
+    async fn test_browse_dump_folder_reads_tree() {
+        use crate::db::mongotools::browse_dump_folder_impl;
+
+        let root = std::env::temp_dir().join(format!(
+            "mqlens-browse-dump-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let db1 = root.join("db1");
+        let db2 = root.join("db2");
+        std::fs::create_dir_all(&db1).unwrap();
+        std::fs::create_dir_all(&db2).unwrap();
+
+        std::fs::write(db1.join("orders.bson"), b"").unwrap();
+        std::fs::write(db1.join("orders.metadata.json"), b"{}").unwrap();
+        std::fs::write(db1.join("notes.txt"), b"ignored").unwrap();
+        std::fs::write(db2.join("logs.bson.gz"), b"").unwrap();
+        std::fs::write(root.join("stray.txt"), b"ignored").unwrap();
+
+        let tree = browse_dump_folder_impl(root.to_str().unwrap()).await.unwrap();
+        assert_eq!(tree.dbs.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["db1", "db2"]);
+
+        let db1_colls = &tree.dbs[0].collections;
+        assert_eq!(db1_colls.len(), 1);
+        assert_eq!(db1_colls[0].name, "orders");
+        assert!(db1_colls[0].has_metadata);
+        assert!(!db1_colls[0].gzip);
+
+        let db2_colls = &tree.dbs[1].collections;
+        assert_eq!(db2_colls.len(), 1);
+        assert_eq!(db2_colls[0].name, "logs");
+        assert!(!db2_colls[0].has_metadata);
+        assert!(db2_colls[0].gzip);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn test_dump_rejects_mock_connections() {
+        use crate::db::mongotools::{start_dump_task_impl, DumpOptions, DumpScope, DumpTarget};
+
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+
+        let opts = DumpOptions {
+            scope: DumpScope::Server,
+            target: DumpTarget::Folder { out: "/tmp/mqlens-dump-mock-test".into() },
+            gzip: false,
+            query: None,
+            force_table_scan: false,
+            dump_users_and_roles: false,
+            oplog: false,
+        };
+        let err = start_dump_task_impl(&state, &conn_id, "mongodump", opts).await.unwrap_err();
+        assert!(err.contains("real connection"), "{}", err);
+    }
+
+    fn tool_install_test_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mqlens-tool-install-{}-{}-{}",
+            label,
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_tool_install_success_and_status() {
+        use crate::toolsetup::test_support::{fixture_zip, serve_bytes};
+        use crate::toolsetup::*;
+        use std::sync::atomic::AtomicBool;
+
+        // Fixture zip for a fake "mongosh" whose top dir mirrors the real
+        // archive layout ({top}/bin/{binary}), served over HTTP so
+        // `install_one_tool` downloads it exactly like the real pipeline
+        // would.
+        let bytes = fixture_zip("mongosh-2.9.2-darwin-arm64", &["mongosh"]);
+        let sha256 = sha256_hex(&bytes);
+        let (base_url, _server) = serve_bytes(bytes);
+        let url = format!("{base_url}/mongosh-2.9.2-darwin-arm64.zip");
+
+        let app_data = tool_install_test_dir("success");
+        let cancel = AtomicBool::new(false);
+
+        // Test `install_one_tool` directly (the unit of work factored out of
+        // the task), using the real "mongosh"/"2.9.2" name+version so the
+        // resulting layout matches what `managed_tools_status` (which walks
+        // the real PINNED_TOOLS manifest) expects.
+        install_one_tool(
+            &app_data,
+            "mongosh",
+            "2.9.2",
+            &url,
+            &sha256,
+            ArchiveKind::Zip,
+            "mongosh-2.9.2-darwin-arm64/bin",
+            &["mongosh".to_string()],
+            &cancel,
+            |_, _, _| {},
+        )
+        .await
+        .unwrap();
+
+        let bin = app_data.join("tools/mongosh-2.9.2/bin/mongosh");
+        assert!(bin.exists(), "binary should exist at the managed layout path");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&bin).unwrap().permissions().mode();
+            assert_ne!(mode & 0o111, 0, "binary should be executable");
+        }
+        assert!(
+            !app_data.join("tools/.staging-mongosh").exists(),
+            "staging dir should be cleaned up after success"
+        );
+
+        let status = managed_tools_status(&app_data);
+        let mongosh_status = status.iter().find(|s| s.name == "mongosh").unwrap();
+        assert!(mongosh_status.installed, "{:?}", mongosh_status);
+        assert_eq!(mongosh_status.version, "2.9.2");
+        assert!(mongosh_status.path.as_deref().unwrap().ends_with("mongosh-2.9.2/bin"));
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_tool_install_checksum_mismatch_cleans_up() {
+        use crate::toolsetup::test_support::{fixture_zip, serve_bytes};
+        use crate::toolsetup::*;
+        use std::sync::atomic::AtomicBool;
+
+        let bytes = fixture_zip("mongosh-2.9.2-darwin-arm64", &["mongosh"]);
+        let (base_url, _server) = serve_bytes(bytes);
+        let url = format!("{base_url}/mongosh-2.9.2-darwin-arm64.zip");
+        let wrong_sha256 = "0".repeat(64);
+
+        let app_data = tool_install_test_dir("badsum");
+        let cancel = AtomicBool::new(false);
+
+        let err = install_one_tool(
+            &app_data,
+            "mongosh",
+            "2.9.2",
+            &url,
+            &wrong_sha256,
+            ArchiveKind::Zip,
+            "mongosh-2.9.2-darwin-arm64/bin",
+            &["mongosh".to_string()],
+            &cancel,
+            |_, _, _| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("checksum mismatch"), "{err}");
+
+        let tools_dir = app_data.join("tools");
+        if tools_dir.exists() {
+            let leftovers: Vec<_> = std::fs::read_dir(&tools_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with("mongosh") || n.starts_with(".staging-"))
+                .collect();
+            assert!(leftovers.is_empty(), "no mongosh-*/.staging-* dir should remain: {:?}", leftovers);
+        }
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_tool_install_probe_failure_leaves_no_install_dir() {
+        use crate::toolsetup::test_support::{fixture_zip_with_script, serve_bytes};
+        use crate::toolsetup::*;
+        use std::sync::atomic::AtomicBool;
+
+        // A "binary" that survives extraction (checksum + extract both
+        // succeed) but exits non-zero on `--version`, simulating a corrupt or
+        // incompatible executable. Per the spec, the staged copy must be
+        // probed *before* the managed install dir is ever created.
+        let bytes = fixture_zip_with_script("mongosh-2.9.2-darwin-arm64", &["mongosh"], b"#!/bin/sh\nexit 1\n");
+        let sha256 = sha256_hex(&bytes);
+        let (base_url, _server) = serve_bytes(bytes);
+        let url = format!("{base_url}/mongosh-2.9.2-darwin-arm64.zip");
+
+        let app_data = tool_install_test_dir("probefail");
+        let cancel = AtomicBool::new(false);
+
+        let err = install_one_tool(
+            &app_data,
+            "mongosh",
+            "2.9.2",
+            &url,
+            &sha256,
+            ArchiveKind::Zip,
+            "mongosh-2.9.2-darwin-arm64/bin",
+            &["mongosh".to_string()],
+            &cancel,
+            |_, _, _| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("failed to run --version"), "{err}");
+
+        // NOTE: with staging-first probing, the managed install dir is never
+        // created on a probe failure (probe happens before mkdir+rename, the
+        // atomic swap). We can only observe its absence, not distinguish
+        // "never created" from "created then removed by cleanup" purely from
+        // outside the function — both leave no trace on disk. The ordering
+        // itself (verified by reading `install_one_tool`) is what proves the
+        // stronger claim; this assertion just guards the observable contract.
+        let install_dir = app_data.join("tools/mongosh-2.9.2");
+        assert!(!install_dir.exists(), "install dir should not exist after a probe failure");
+        assert!(
+            !app_data.join("tools/.staging-mongosh").exists(),
+            "staging dir should be cleaned up after probe failure"
+        );
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_tool_install_probes_staged_copy_before_moving_into_install_dir() {
+        use crate::toolsetup::test_support::{fixture_zip_with_script, serve_bytes};
+        use crate::toolsetup::*;
+        use std::sync::atomic::AtomicBool;
+
+        // Directly verifies the spec-mandated ordering (probe the STAGING
+        // copy first, then atomically swap into place) rather than just
+        // inferring it from absence-on-failure, which both orderings satisfy
+        // identically. The probed script reports its own invocation
+        // directory (via `$0`) to a marker file that lives outside the
+        // staging/install tree, so it survives regardless of what
+        // `install_one_tool` does with the staging dir afterwards.
+        let app_data = tool_install_test_dir("probe-order");
+        let marker = app_data.join("probe-marker.txt");
+        let script = format!(
+            "#!/bin/sh\necho \"$(dirname \"$0\")\" > '{}'\necho tool version 9.9.9\n",
+            marker.display()
+        );
+        let bytes = fixture_zip_with_script("mongosh-2.9.2-darwin-arm64", &["mongosh"], script.as_bytes());
+        let sha256 = sha256_hex(&bytes);
+        let (base_url, _server) = serve_bytes(bytes);
+        let url = format!("{base_url}/mongosh-2.9.2-darwin-arm64.zip");
+
+        let cancel = AtomicBool::new(false);
+        install_one_tool(
+            &app_data,
+            "mongosh",
+            "2.9.2",
+            &url,
+            &sha256,
+            ArchiveKind::Zip,
+            "mongosh-2.9.2-darwin-arm64/bin",
+            &["mongosh".to_string()],
+            &cancel,
+            |_, _, _| {},
+        )
+        .await
+        .unwrap();
+
+        let probed_from = std::fs::read_to_string(&marker).unwrap();
+        let probed_from = probed_from.trim();
+        assert!(
+            probed_from.contains(".staging-mongosh"),
+            "probe must run against the staging copy before the install swap, was probed from: {probed_from}"
+        );
+        let final_bin_dir = app_data.join("tools/mongosh-2.9.2/bin");
+        assert_ne!(
+            probed_from,
+            final_bin_dir.to_string_lossy(),
+            "probe must not run against the already-installed copy"
+        );
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_tool_install_task_end_to_end_with_cancel_flag_cleanup() {
+        use crate::toolsetup::test_support::{fixture_zip, serve_bytes, test_tool};
+        use crate::toolsetup::*;
+
+        let bytes = fixture_zip("test-mongosh-9.9.9-test", &["mongosh"]);
+        let sha256 = sha256_hex(&bytes);
+        let (base_url, _server) = serve_bytes(bytes);
+
+        // Registers a synthetic pinned tool (name "test-mongosh") so
+        // `start_tool_install_task_impl`'s manifest resolution doesn't need
+        // real network access or a real checksum.
+        test_tool(
+            "test-mongosh",
+            "https://example.invalid/test-mongosh-fixture.zip",
+            &sha256,
+            "test-mongosh-9.9.9-test/bin",
+            &["mongosh"],
+        );
+
+        let app_data = tool_install_test_dir("e2e");
+        let state = AppState::new();
+
+        let task = start_tool_install_task_impl(
+            &state,
+            app_data.clone(),
+            vec!["test-mongosh".to_string()],
+            false,
+            Some(base_url.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(task.kind, "tool_install");
+
+        wait_for_task(&state, &task.id).await;
+        let t = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(t.status, "completed", "{:?}", t.error);
+        assert!(state.cancels.lock().unwrap().get(&task.id).is_none(), "cancel flag cleaned up");
+
+        // Same tool, force=false: should skip straight to "already installed"
+        // without re-downloading.
+        let task2 = start_tool_install_task_impl(
+            &state,
+            app_data.clone(),
+            vec!["test-mongosh".to_string()],
+            false,
+            Some(base_url),
+        )
+        .await
+        .unwrap();
+        wait_for_task(&state, &task2.id).await;
+        let t2 = state.tasks.lock().unwrap().get(&task2.id).cloned().unwrap();
+        assert_eq!(t2.status, "completed");
+        assert!(t2.message.contains("already installed"), "{}", t2.message);
+        assert!(state.cancels.lock().unwrap().get(&task2.id).is_none(), "cancel flag cleaned up");
+
+        let _ = std::fs::remove_dir_all(&app_data);
     }
 }

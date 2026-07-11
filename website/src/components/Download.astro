@@ -4,8 +4,10 @@ import { SITE } from '../consts';
 interface Asset { name: string; size: number; browser_download_url: string; download_count: number }
 
 // At build time, pull the latest release: its assets (for direct download links +
-// real sizes) and the total download count across all releases. Everything degrades
-// gracefully — on any error the buttons fall back to the releases page.
+// real sizes) and the total download count across all releases. The total counts
+// every asset across every release so it matches the README's shields.io badge
+// (github/downloads/.../total). Everything degrades gracefully — on any error the
+// buttons fall back to the releases page.
 async function fetchRelease(): Promise<{ totalDownloads: number | null; assets: Asset[] }> {
   try {
     const headers: Record<string, string> = {
@@ -21,14 +23,11 @@ async function fetchRelease(): Promise<{ totalDownloads: number | null; assets: 
     if (!res.ok) return { totalDownloads: null, assets: [] };
     const releases: any = await res.json();
     if (!Array.isArray(releases) || releases.length === 0) return { totalDownloads: null, assets: [] };
+    // Sum every asset across every release — matching the shields.io
+    // github/downloads/.../total badge shown in the README, so the two never disagree.
     const total = releases
       .flatMap((r) => (Array.isArray(r.assets) ? r.assets : []))
-      // Count real installer downloads only — not signatures (.sig), checksums
-      // (.asc), the updater manifest (latest.json), or .app.tar.gz updater bundles.
-      .filter(
-        (a) => a && typeof a.name === 'string' && /\.(dmg|msi|exe|deb|rpm|AppImage)$/i.test(a.name),
-      )
-      .reduce((sum, a) => sum + (Number(a.download_count) || 0), 0);
+      .reduce((sum, a) => sum + (Number(a?.download_count) || 0), 0);
     const latest = releases.find((r) => !r.draft && !r.prerelease) ?? releases[0];
     const assets: Asset[] = Array.isArray(latest?.assets) ? latest.assets : [];
     return { totalDownloads: total > 0 ? total : null, assets };

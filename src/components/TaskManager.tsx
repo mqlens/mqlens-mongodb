@@ -1,16 +1,25 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 
+export interface CopySummaryInfo {
+  collectionsCopied: number;
+  documentsCopied: number;
+  documentsSkipped: number;
+  indexesCreated: number;
+  skipped: string[];
+  failed: { collection: string; error: string }[];
+}
+
 export interface ExportTaskInfo {
   id: string;
   kind: string;
   label: string;
-  status: 'running' | 'completed' | 'failed' | string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | string;
   processed: number;
   total?: number | null;
   message: string;
@@ -18,12 +27,19 @@ export interface ExportTaskInfo {
   error?: string | null;
   createdAtMs: number;
   finishedAtMs?: number | null;
+  subLabel?: string | null;
+  itemsProcessed?: number | null;
+  itemsTotal?: number | null;
+  summary?: CopySummaryInfo | null;
 }
 
 interface TaskManagerProps {
   tasks: ExportTaskInfo[];
   onRefresh: () => void;
   onClearFinished: () => void;
+  // Resolves false when the cancel request failed, so the button re-enables
+  // for a retry. A void return (tests, simple callers) keeps the old behavior.
+  onCancel?: (taskId: string) => Promise<boolean> | boolean | void;
   variant?: 'floating' | 'embedded';
 }
 
@@ -36,9 +52,37 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
   tasks,
   onRefresh,
   onClearFinished,
+  onCancel,
   variant = 'floating',
 }) => {
   const running = tasks.filter((task) => task.status === 'running').length;
+  // Ids whose Cancel was clicked — disables the button so a double-click
+  // can't race the task's teardown and produce a spurious error.
+  const [cancelling, setCancelling] = React.useState<ReadonlySet<string>>(new Set());
+  const handleCancelClick = async (taskId: string) => {
+    setCancelling((prev) => new Set(prev).add(taskId));
+    const ok = await onCancel?.(taskId);
+    // A failed cancel re-enables the button so the user can retry.
+    if (ok === false) {
+      setCancelling((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  };
+  // Prune ids whose task is no longer running (finished or gone) so the set
+  // doesn't accumulate and a re-run of the same id gets a fresh Cancel button.
+  React.useEffect(() => {
+    setCancelling((prev) => {
+      if (prev.size === 0) return prev;
+      const stale = new Set(
+        [...prev].filter((id) => !tasks.some((t) => t.id === id && t.status === 'running'))
+      );
+      if (stale.size === 0) return prev;
+      return new Set([...prev].filter((id) => !stale.has(id)));
+    });
+  }, [tasks]);
 
   return (
     <Card
@@ -90,13 +134,20 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
           <div className="flex flex-col">
             {tasks.length === 0 && (
               <div className="px-3 py-6 text-center text-xs text-muted-foreground" data-testid="task-empty">
-                No export tasks yet.
+                No background tasks yet.
               </div>
             )}
             {tasks.map((task) => {
               const percent = taskPercent(task);
               const isRunning = task.status === 'running';
               const isFailed = task.status === 'failed';
+              const isCancelled = task.status === 'cancelled';
+              // Copy, dump, and restore tasks support cancellation; exports cannot be cancelled.
+              const isCancellable =
+                task.kind === 'collection_copy' ||
+                task.kind === 'database_copy' ||
+                task.kind === 'dump' ||
+                task.kind === 'restore';
               return (
                 <div
                   key={task.id}
@@ -108,7 +159,8 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
                       'mt-0.5 flex-shrink-0',
                       isRunning && 'text-primary',
                       isFailed && 'text-destructive',
-                      !isRunning && !isFailed && 'text-success'
+                      isCancelled && 'text-muted-foreground',
+                      !isRunning && !isFailed && !isCancelled && 'text-success'
                     )}
                     aria-hidden="true"
                   >
@@ -116,6 +168,8 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
                       <Loader2 size={13} className="animate-spin" />
                     ) : isFailed ? (
                       <AlertTriangle size={13} />
+                    ) : isCancelled ? (
+                      <Ban size={13} />
                     ) : (
                       <CheckCircle2 size={13} />
                     )}
@@ -141,15 +195,56 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
                       <div
                         className={cn(
                           'h-full rounded-full transition-all',
-                          isFailed ? 'bg-destructive' : isRunning ? 'bg-primary' : 'bg-success'
+                          isFailed ? 'bg-destructive' : isRunning ? 'bg-primary' : isCancelled ? 'bg-muted-foreground' : 'bg-success',
+                          // Indeterminate: no real percent yet — pulse so it reads as
+                          // "working", not as progress stuck at a fixed fraction.
+                          isRunning && percent === null && 'animate-pulse'
                         )}
-                        style={{ width: `${percent ?? (isRunning ? 18 : 100)}%` }}
+                        style={{ width: `${percent ?? (isRunning ? 18 : isCancelled ? 0 : 100)}%` }}
                       />
                     </div>
                     {task.path && (
                       <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground" title={task.path}>
                         {task.path}
                       </div>
+                    )}
+                    {task.subLabel && (
+                      <div className="mt-0.5 truncate text-[10px] text-muted-foreground" title={task.subLabel}>
+                        {task.subLabel}
+                        {task.itemsTotal ? ` · ${task.itemsProcessed ?? 0}/${task.itemsTotal} collections` : ''}
+                      </div>
+                    )}
+                    {task.summary && (
+                      <div
+                        className="mt-1 text-[10px] text-muted-foreground"
+                        title={
+                          [
+                            ...(task.summary.failed.length > 0
+                              ? task.summary.failed.map((f) => `${f.collection}: ${f.error}`)
+                              : []),
+                            ...(task.summary.skipped.length > 0
+                              ? [`Skipped: ${task.summary.skipped.join(', ')}`]
+                              : []),
+                          ].join('\n') || undefined
+                        }
+                      >
+                        {task.summary.documentsCopied} copied
+                        {task.summary.documentsSkipped > 0 && `, ${task.summary.documentsSkipped} skipped`}
+                        {task.summary.indexesCreated > 0 && `, ${task.summary.indexesCreated} indexes`}
+                        {task.summary.failed.length > 0 && (
+                          <span className="text-destructive"> · {task.summary.failed.length} failed</span>
+                        )}
+                      </div>
+                    )}
+                    {isRunning && isCancellable && onCancel && (
+                      <button
+                        type="button"
+                        className="mt-1 text-[10px] text-destructive hover:underline disabled:opacity-50 disabled:no-underline"
+                        onClick={() => handleCancelClick(task.id)}
+                        disabled={cancelling.has(task.id)}
+                      >
+                        {cancelling.has(task.id) ? 'Cancelling…' : 'Cancel'}
+                      </button>
                     )}
                   </div>
                 </div>

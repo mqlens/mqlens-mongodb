@@ -61,7 +61,7 @@ describe('TaskManager', () => {
   it('shows an empty state when there are no tasks', () => {
     renderTaskManager();
     expect(screen.getByTestId('task-manager')).toBeInTheDocument();
-    expect(screen.getByTestId('task-empty')).toHaveTextContent('No export tasks yet.');
+    expect(screen.getByTestId('task-empty')).toHaveTextContent('No background tasks yet.');
   });
 
   it('renders running, completed, and failed tasks', () => {

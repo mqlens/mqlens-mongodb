@@ -19,6 +19,7 @@ pub mod path_env;
 pub mod queries;
 pub mod ssh_tunnel;
 mod state;
+pub mod toolsetup;
 pub mod updater;
 mod vault;
 mod window;
@@ -30,10 +31,22 @@ pub use db::ddl::{
 };
 pub use db::documents::{
     delete_document_impl, delete_many_impl, import_documents_impl, insert_document_impl,
-    json_to_bson_document, update_document_impl, update_many_impl, ImportResult,
+    json_to_bson_document, parse_json_array_docs, update_document_impl, update_many_impl,
+    ImportResult,
 };
-pub use db::export::start_collection_export_impl;
-pub use db::gridfs::{download_gridfs_file_impl, list_gridfs_files_impl, GridFsFileInfo};
+pub use db::export::{
+    format_current_docs_impl, preview_export_impl, sample_export_fields_impl,
+    start_collection_export_impl, start_filtered_export_impl,
+};
+pub use db::gridfs::{
+    delete_gridfs_file_impl, download_gridfs_file_impl, list_gridfs_files_impl,
+    upload_gridfs_file_impl, GridFsFileInfo, GridFsTransferProgress,
+};
+pub use db::import::{preview_import_impl, start_import_task_impl};
+pub use db::mongotools::{
+    browse_dump_folder_impl, resolve_conn_uri, start_dump_task_impl, start_restore_task_impl,
+    DumpTree, ToolInfo, ToolsStatus,
+};
 pub use db::metadata::{
     create_index_impl, delete_index_impl, list_collections_impl, list_databases_impl,
     list_indexes_impl,
@@ -45,6 +58,7 @@ pub use db::users::{
     MongoUser, RoleInfo, RoleSpec,
 };
 pub use db::version::get_mongodb_version_impl;
+pub use db::copy::{preflight_copy_impl, start_collection_copy_impl, start_database_copy_impl, CopyTargetRef};
 pub use biometric::{decode_and_verify_key, encode_key, BiometricStatus};
 pub use state::{AppState, LockExt};
 pub use window::target_window_size;
@@ -92,8 +106,15 @@ pub fn resource_usage_impl(state: &AppState) -> ResourceUsage {
         pids.is_empty() || tree_at.elapsed().as_secs() >= RESOURCE_TREE_REFRESH_SECS
     };
 
+    // Only memory + CPU are read below. The default refresh kind would also
+    // collect disk usage, exe paths, and (Linux) one entry per THREAD via
+    // with_tasks — and with remove_dead_processes=false the retained System
+    // kept every process/thread that ever existed, growing RSS without bound
+    // on busy hosts (issue #165). Refresh minimally and always purge the dead.
+    let refresh_kind = sysinfo::ProcessRefreshKind::nothing().with_memory().with_cpu();
+
     if rebuild_tree {
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
+        sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, refresh_kind);
         let mut tree: HashSet<sysinfo::Pid> = HashSet::new();
         tree.insert(pid);
         loop {
@@ -121,7 +142,7 @@ pub fn resource_usage_impl(state: &AppState) -> ResourceUsage {
     } else {
         let pids = state.resource_pids.lock().unwrap_or_else(|p| p.into_inner());
         if !pids.is_empty() {
-            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&pids), false);
+            sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&pids), true, refresh_kind);
         }
     }
 
@@ -175,7 +196,25 @@ pub struct AgentDetection {
     pub version: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Default, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyFailure {
+    pub collection: String,
+    pub error: String,
+}
+
+#[derive(Serialize, Clone, Default, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CopySummary {
+    pub collections_copied: u64,
+    pub documents_copied: u64,
+    pub documents_skipped: u64,
+    pub indexes_created: u64,
+    pub skipped: Vec<String>,
+    pub failed: Vec<CopyFailure>,
+}
+
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskInfo {
     pub id: String,
@@ -189,6 +228,14 @@ pub struct TaskInfo {
     pub error: Option<String>,
     pub created_at_ms: u64,
     pub finished_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items_processed: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items_total: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<CopySummary>,
 }
 
 /// Probe each local agent's binary with `--version` (short, blocking). NotFound -> not available.
@@ -432,6 +479,10 @@ pub async fn connect_db_impl(
         let mut mocks = state.mocks.lock_safe()?;
         mocks.insert(connection_id.clone(), false);
     }
+    {
+        let mut conn_uris = state.conn_uris.lock_safe()?;
+        conn_uris.insert(connection_id.clone(), normalized_uri.clone());
+    }
     if let Some(t) = tunnel {
         let mut tunnels = state.ssh_tunnels.lock_safe()?;
         tunnels.insert(connection_id.clone(), t);
@@ -465,6 +516,10 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
     {
         let mut mocks = state.mocks.lock_safe()?;
         mocks.remove(id);
+    }
+    {
+        let mut conn_uris = state.conn_uris.lock_safe()?;
+        conn_uris.remove(id);
     }
     // Tear down the SSH tunnel (if any) — dropping SshTunnel aborts its accept loop.
     {
@@ -604,6 +659,111 @@ async fn connect_db(
 }
 
 #[tauri::command]
+async fn detect_mongo_tools(
+    app_handle: tauri::AppHandle,
+    configured_dir: Option<String>,
+) -> Result<ToolsStatus, String> {
+    use tauri::Manager;
+    // app_data_dir() can fail in headless/test environments; treat that as
+    // "no managed dir" rather than failing detection outright.
+    let app_data_dir = app_handle.path().app_data_dir().ok();
+    let managed_dir = app_data_dir
+        .as_deref()
+        .and_then(|dir| toolsetup::find_pinned_tool("database-tools").ok().map(|tool| toolsetup::managed_bin_dir(dir, tool)));
+    Ok(db::mongotools::detect_mongo_tools(configured_dir.as_deref(), managed_dir.as_deref()))
+}
+
+#[tauri::command]
+async fn start_dump_task(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    tool_path: String,
+    options: db::mongotools::DumpOptions,
+) -> Result<TaskInfo, String> {
+    start_dump_task_impl(&state, &id, &tool_path, options).await
+}
+
+#[tauri::command]
+async fn start_restore_task(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    tool_path: String,
+    options: db::mongotools::RestoreOptions,
+) -> Result<TaskInfo, String> {
+    start_restore_task_impl(&state, &id, &tool_path, options).await
+}
+
+#[tauri::command]
+async fn start_tool_install_task(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    tools: Vec<String>,
+    force: bool,
+) -> Result<TaskInfo, String> {
+    use tauri::Manager;
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
+    toolsetup::start_tool_install_task_impl(&state, app_data_dir, tools, force, None).await
+}
+
+#[tauri::command]
+async fn managed_tools_status(app_handle: tauri::AppHandle) -> Result<Vec<toolsetup::ManagedToolStatus>, String> {
+    use tauri::Manager;
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
+    Ok(toolsetup::managed_tools_status(&app_data_dir))
+}
+
+#[tauri::command]
+async fn browse_dump_folder(path: String) -> Result<DumpTree, String> {
+    browse_dump_folder_impl(&path).await
+}
+
+#[tauri::command]
+async fn preview_dump_command(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    tool_path: String,
+    options: db::mongotools::DumpOptions,
+) -> Result<String, String> {
+    let uri = resolve_conn_uri(&state, &id)?;
+    let tunneled = state.ssh_tunnels.lock_safe()?.contains_key(&id);
+    let mut args = db::mongotools::build_dump_args(&options)?;
+    let prepared_uri = db::mongotools::prepare_tool_uri(&uri, tunneled);
+    let (prepared_uri, tls_flags) = db::mongotools::extract_unsupported_tls_params(&prepared_uri);
+    args.extend(tls_flags);
+    Ok(db::mongotools::preview_tool_command(
+        &tool_path,
+        &db::mongotools::redact_uri_password(&prepared_uri),
+        &args,
+    ))
+}
+
+#[tauri::command]
+async fn preview_restore_command(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    tool_path: String,
+    options: db::mongotools::RestoreOptions,
+) -> Result<String, String> {
+    let uri = resolve_conn_uri(&state, &id)?;
+    let tunneled = state.ssh_tunnels.lock_safe()?.contains_key(&id);
+    let mut args = db::mongotools::build_restore_args(&options)?;
+    let prepared_uri = db::mongotools::prepare_tool_uri(&uri, tunneled);
+    let (prepared_uri, tls_flags) = db::mongotools::extract_unsupported_tls_params(&prepared_uri);
+    args.extend(tls_flags);
+    Ok(db::mongotools::preview_tool_command(
+        &tool_path,
+        &db::mongotools::redact_uri_password(&prepared_uri),
+        &args,
+    ))
+}
+
+#[tauri::command]
 async fn get_resource_usage(state: tauri::State<'_, AppState>) -> Result<ResourceUsage, String> {
     Ok(resource_usage_impl(&state))
 }
@@ -692,13 +852,17 @@ async fn get_mongodb_version(
 
 #[tauri::command]
 async fn start_mongosh_session(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     connection_id: String,
     uri: String,
     database: String,
     mongosh_path: String,
 ) -> Result<MongoshSessionInfo, String> {
-    start_mongosh_session_impl(&state, &connection_id, &uri, &database, &mongosh_path).await
+    use tauri::Manager;
+    let app_data_dir = app_handle.path().app_data_dir().ok();
+    let resolved_path = toolsetup::resolve_mongosh_executable(&mongosh_path, app_data_dir.as_deref());
+    start_mongosh_session_impl(&state, &connection_id, &uri, &database, &resolved_path).await
 }
 
 #[tauri::command]
@@ -902,8 +1066,96 @@ async fn start_collection_export(
     collection: String,
     format: String,
     path: String,
+    options: Option<crate::db::export::options::ExportOptions>,
 ) -> Result<TaskInfo, String> {
-    start_collection_export_impl(&state, &id, &database, &collection, &format, &path).await
+    start_collection_export_impl(&state, &id, &database, &collection, &format, &path, options)
+        .await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_filtered_export(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    format: String,
+    path: String,
+    filter: String,
+    sort: String,
+    projection: String,
+    pipeline: String,
+    skip: Option<u64>,
+    limit: Option<i64>,
+    options: Option<crate::db::export::options::ExportOptions>,
+) -> Result<TaskInfo, String> {
+    start_filtered_export_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        &format,
+        &path,
+        &filter,
+        &sort,
+        &projection,
+        &pipeline,
+        skip,
+        limit,
+        options,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn sample_export_fields(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    filter: String,
+    pipeline: String,
+) -> Result<Vec<String>, String> {
+    sample_export_fields_impl(&state, &id, &database, &collection, &filter, &pipeline).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn preview_export(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    format: String,
+    filter: String,
+    sort: String,
+    projection: String,
+    pipeline: String,
+    options: Option<crate::db::export::options::ExportOptions>,
+) -> Result<String, String> {
+    preview_export_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        &format,
+        &filter,
+        &sort,
+        &projection,
+        &pipeline,
+        options,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn format_current_docs(
+    docs: Vec<serde_json::Value>,
+    format: String,
+    options: Option<crate::db::export::options::ExportOptions>,
+    path: Option<String>,
+) -> Result<Option<String>, String> {
+    format_current_docs_impl(docs, &format, options, path).await
 }
 
 #[tauri::command]
@@ -925,6 +1177,62 @@ async fn clear_finished_export_tasks(
     let mut tasks: Vec<TaskInfo> = state.tasks.lock_safe()?.values().cloned().collect();
     tasks.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
     Ok(tasks)
+}
+
+#[tauri::command]
+async fn cancel_task(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    state.cancel_or_ack(&id)
+}
+
+#[tauri::command]
+async fn preflight_copy(
+    state: tauri::State<'_, AppState>,
+    source_id: String,
+    source_db: String,
+    source_collections: Vec<String>,
+    targets: Vec<CopyTargetRef>,
+) -> Result<db::copy::PreflightResult, String> {
+    preflight_copy_impl(&state, &source_id, &source_db, source_collections, targets).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_collection_copy(
+    state: tauri::State<'_, AppState>,
+    source_id: String,
+    source_db: String,
+    source_collection: String,
+    target_id: String,
+    target_db: String,
+    target_collection: String,
+    filter: Option<String>,
+    include_indexes: bool,
+    conflict_mode: String,
+) -> Result<TaskInfo, String> {
+    start_collection_copy_impl(
+        &state, &source_id, &source_db, &source_collection,
+        &target_id, &target_db, &target_collection,
+        filter, include_indexes, conflict_mode,
+    ).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_database_copy(
+    state: tauri::State<'_, AppState>,
+    source_id: String,
+    source_db: String,
+    target_id: String,
+    target_db: String,
+    collections: Option<Vec<String>>,
+    include_indexes: bool,
+    include_views: bool,
+    conflict_mode: String,
+) -> Result<TaskInfo, String> {
+    start_database_copy_impl(
+        &state, &source_id, &source_db, &target_id, &target_db,
+        collections, include_indexes, include_views, conflict_mode,
+    ).await
 }
 
 #[tauri::command]
@@ -1129,8 +1437,63 @@ async fn download_gridfs_file(
     bucket: String,
     file_id: String,
     dest_path: String,
+    total_bytes: Option<u64>,
+    on_progress: tauri::ipc::Channel<GridFsTransferProgress>,
 ) -> Result<u64, String> {
-    download_gridfs_file_impl(&state, &id, &database, &bucket, &file_id, &dest_path).await
+    let emit = |update: GridFsTransferProgress| {
+        let _ = on_progress.send(update);
+    };
+    download_gridfs_file_impl(
+        &state,
+        &id,
+        &database,
+        &bucket,
+        &file_id,
+        &dest_path,
+        total_bytes,
+        Some(&emit),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn upload_gridfs_file(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    bucket: String,
+    source_path: String,
+    filename: Option<String>,
+    metadata_json: Option<String>,
+    content_type: Option<String>,
+    on_progress: tauri::ipc::Channel<GridFsTransferProgress>,
+) -> Result<String, String> {
+    let emit = |update: GridFsTransferProgress| {
+        let _ = on_progress.send(update);
+    };
+    upload_gridfs_file_impl(
+        &state,
+        &id,
+        &database,
+        &bucket,
+        &source_path,
+        filename.as_deref(),
+        metadata_json.as_deref(),
+        content_type.as_deref(),
+        Some(&emit),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn delete_gridfs_file(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    bucket: String,
+    file_id: String,
+) -> Result<(), String> {
+    delete_gridfs_file_impl(&state, &id, &database, &bucket, &file_id).await
 }
 
 #[tauri::command]
@@ -1145,15 +1508,38 @@ async fn insert_document(
 }
 
 #[tauri::command]
-async fn import_documents(
+async fn preview_import(
+    source: crate::db::import::ImportSourceArg,
+    format: String,
+    csv_options: Option<crate::db::documents::CsvImportOptions>,
+    limit: Option<usize>,
+) -> Result<crate::db::import::ImportPreview, String> {
+    preview_import_impl(source, &format, csv_options, limit.unwrap_or(20)).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_import_task(
     state: tauri::State<'_, AppState>,
     id: String,
     database: String,
     collection: String,
-    docs: Vec<serde_json::Value>,
+    source: crate::db::import::ImportSourceArg,
+    format: String,
+    csv_options: Option<crate::db::documents::CsvImportOptions>,
     mode: String,
-) -> Result<ImportResult, String> {
-    import_documents_impl(&state, &id, &database, &collection, docs, &mode).await
+) -> Result<TaskInfo, String> {
+    start_import_task_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        source,
+        &format,
+        csv_options,
+        &mode,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1392,6 +1778,14 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             connect_db,
+            detect_mongo_tools,
+            start_dump_task,
+            start_restore_task,
+            start_tool_install_task,
+            managed_tools_status,
+            browse_dump_folder,
+            preview_dump_command,
+            preview_restore_command,
             get_resource_usage,
             generate_mql_query,
             detect_local_agents,
@@ -1410,15 +1804,26 @@ pub fn run() {
             update_many,
             list_gridfs_files,
             download_gridfs_file,
+            upload_gridfs_file,
+            delete_gridfs_file,
             insert_document,
-            import_documents,
+            preview_import,
+            start_import_task,
             update_document,
             execute_mql_query,
             execute_aggregate,
             count_documents,
             start_collection_export,
+            start_filtered_export,
+            sample_export_fields,
+            preview_export,
+            format_current_docs,
             list_export_tasks,
             clear_finished_export_tasks,
+            cancel_task,
+            preflight_copy,
+            start_collection_copy,
+            start_database_copy,
             create_collection,
             create_view,
             drop_collection,

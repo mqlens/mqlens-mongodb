@@ -12,12 +12,14 @@ mod integration {
     use crate::{
         analyze_schema_impl, connect_db_impl, count_documents_impl, create_collection_impl,
         create_index_impl, create_view_impl, delete_document_impl, delete_index_impl,
-        delete_many_impl, disconnect_db_impl, download_gridfs_file_impl, drop_collection_impl,
-        drop_database_impl, execute_aggregate_impl, execute_mql_query_impl,
+        delete_many_impl, delete_gridfs_file_impl, disconnect_db_impl, download_gridfs_file_impl,
+        drop_collection_impl, drop_database_impl, execute_aggregate_impl, execute_mql_query_impl,
         explain_aggregate_query_impl, explain_mql_query_impl, get_mongodb_version_impl,
         import_documents_impl, insert_document_impl, list_collections_impl, list_databases_impl,
-        list_gridfs_files_impl, list_indexes_impl, rename_collection_impl, rename_database_impl,
-        start_collection_export_impl, update_document_impl, update_many_impl, AppState,
+        list_gridfs_files_impl, list_indexes_impl, preflight_copy_impl, rename_collection_impl,
+        rename_database_impl, start_collection_copy_impl, start_collection_export_impl,
+        start_database_copy_impl, update_document_impl, update_many_impl, upload_gridfs_file_impl,
+        AppState, CopyTargetRef,
     };
     use mongodb::bson::{doc, Document};
 
@@ -299,6 +301,9 @@ mod integration {
             return;
         };
 
+        // The normalized connection URI is retained for external tools (mongodump/mongorestore).
+        assert!(state.conn_uris.lock().unwrap().get(&id).unwrap().starts_with("mongodb"));
+
         // insert_document_impl returns the inserted id as extended JSON.
         let inserted = insert_document_impl(
             &state,
@@ -550,9 +555,10 @@ mod integration {
                 format
             ));
             let path_str = path.to_string_lossy().to_string();
-            let task = start_collection_export_impl(&state, &id, &db, "export_me", format, &path_str)
-                .await
-                .expect("start real export");
+            let task =
+                start_collection_export_impl(&state, &id, &db, "export_me", format, &path_str, None)
+                    .await
+                    .expect("start real export");
             let finished = wait_for_task(&state, &task.id).await;
             assert_eq!(finished.status, "completed", "export ({format}) should finish");
             assert_eq!(finished.processed, 2);
@@ -569,22 +575,31 @@ mod integration {
     }
 
     #[tokio::test]
-    async fn it_gridfs_list_and_download_real() {
+    async fn it_gridfs_list_upload_download_and_delete_real() {
         use futures::AsyncWriteExt;
         let Some((state, id, db)) = connect().await else {
             return;
         };
 
-        // Upload a file into the "uploads" GridFS bucket via the driver.
-        let bucket = client_of(&state, &id).database(&db).gridfs_bucket(
-            mongodb::options::GridFsBucketOptions::builder()
-                .bucket_name("uploads".to_string())
-                .build(),
-        );
+        let src = std::env::temp_dir().join(format!("mqlens-it-gridfs-src-{}.txt", uuid::Uuid::new_v4().simple()));
         let payload = b"hello gridfs integration".to_vec();
-        let mut upload = bucket.open_upload_stream("greeting.txt").await.unwrap();
-        upload.write_all(&payload).await.unwrap();
-        upload.close().await.unwrap();
+        std::fs::write(&src, &payload).expect("write temp upload source");
+        let src_str = src.to_string_lossy().to_string();
+
+        let uploaded_id = upload_gridfs_file_impl(
+            &state,
+            &id,
+            &db,
+            "uploads",
+            &src_str,
+            Some("greeting.txt"),
+            Some(r#"{"source":"integration-test"}"#),
+            None,
+            None,
+        )
+        .await
+        .expect("upload gridfs");
+        assert!(!uploaded_id.is_empty());
 
         // list_gridfs_files_impl returns JSON of files; find ours.
         let listed = list_gridfs_files_impl(&state, &id, &db, "uploads")
@@ -597,8 +612,7 @@ mod integration {
             .find(|f| f["filename"] == "greeting.txt")
             .expect("uploaded file listed");
         assert_eq!(entry["length"].as_u64().unwrap(), payload.len() as u64);
-        // `id` is already the file _id rendered as extended JSON (e.g. {"$oid":"..."}),
-        // which is exactly what download_gridfs_file_impl expects — pass it through as-is.
+        assert_eq!(entry["content_type"].as_str(), Some("text/plain"));
         let file_id_json = entry["id"].as_str().expect("gridfs id is a json string").to_string();
 
         // Download it back to disk and verify the bytes.
@@ -611,6 +625,8 @@ mod integration {
             "uploads",
             &file_id_json,
             &dest_str,
+            Some(payload.len() as u64),
+            None,
         )
         .await
         .unwrap_or_else(|e| panic!("download gridfs (id={file_id_json}): {e}"));
@@ -619,6 +635,23 @@ mod integration {
         assert_eq!(got, payload);
         let _ = std::fs::remove_file(&dest);
 
+        delete_gridfs_file_impl(&state, &id, &db, "uploads", &file_id_json)
+            .await
+            .expect("delete gridfs");
+        let listed_after = list_gridfs_files_impl(&state, &id, &db, "uploads")
+            .await
+            .expect("list after delete");
+        let after: serde_json::Value = serde_json::from_str(&listed_after).unwrap();
+        assert!(
+            !after
+                .as_array()
+                .expect("files array")
+                .iter()
+                .any(|f| f["filename"] == "greeting.txt"),
+            "deleted file should no longer be listed"
+        );
+
+        let _ = std::fs::remove_file(&src);
         cleanup(&state, &id, &db).await;
     }
 
@@ -655,6 +688,142 @@ mod integration {
             "nested fields should be reported with dotted paths"
         );
 
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_copy_collection_real_conflict_modes() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(
+            &state,
+            &id,
+            &db,
+            "orders",
+            vec![
+                doc! { "_id": 1, "amount": 10 },
+                doc! { "_id": 2, "amount": 20 },
+                doc! { "_id": 3, "amount": 30 },
+                doc! { "_id": 4, "amount": 40 },
+                doc! { "_id": 5, "amount": 50 },
+            ],
+        )
+        .await;
+        // A non-default index so copy_indexes has something to recreate.
+        create_index_impl(&state, &id, &db, "orders", "amount_1", r#"{"amount":1}"#, false, false)
+            .await
+            .expect("source index");
+
+        // 1) Merge copy into a fresh target collection (same connection, copies docs + index).
+        let task = start_collection_copy_impl(
+            &state, &id, &db, "orders", &id, &db, "orders_copy", None, true, "merge".into(),
+        )
+        .await
+        .expect("start collection copy");
+        let done = wait_for_task(&state, &task.id).await;
+        assert_eq!(done.status, "completed");
+        let s = done.summary.as_ref().unwrap();
+        assert_eq!(s.documents_copied, 5);
+        assert!(s.indexes_created >= 1, "non-_id index should be recreated");
+        let copied = count_documents_impl(&state, &id, &db, "orders_copy", "{}").await.unwrap();
+        assert_eq!(copied, 5);
+
+        // 2) Preflight now sees the existing target with its doc count (real count path).
+        let pf = preflight_copy_impl(
+            &state, &id, &db, vec!["orders".into()],
+            vec![CopyTargetRef { connection_id: id.clone(), db: db.clone(), collection: "orders_copy".into() }],
+        )
+        .await
+        .expect("preflight");
+        assert!(pf.conflicts[0].target_exists);
+        assert_eq!(pf.conflicts[0].target_doc_count, 5);
+
+        // 3) Skip mode against the existing target leaves it untouched and reports a skip.
+        let skip_task = start_collection_copy_impl(
+            &state, &id, &db, "orders", &id, &db, "orders_copy", None, false, "skip".into(),
+        )
+        .await
+        .expect("skip copy");
+        let skip_done = wait_for_task(&state, &skip_task.id).await;
+        let skip_s = skip_done.summary.as_ref().unwrap();
+        assert_eq!(skip_s.collections_copied, 0);
+        assert!(skip_s.skipped.iter().any(|n| n == "orders_copy"));
+
+        // 4) Merge against a fully-duplicate target exercises the dup-key retry → all skipped.
+        let merge_task = start_collection_copy_impl(
+            &state, &id, &db, "orders", &id, &db, "orders_copy", None, false, "merge".into(),
+        )
+        .await
+        .expect("merge copy");
+        let merge_done = wait_for_task(&state, &merge_task.id).await;
+        let merge_s = merge_done.summary.as_ref().unwrap();
+        assert_eq!(merge_s.documents_copied, 0);
+        assert_eq!(merge_s.documents_skipped, 5, "all five _ids already exist");
+
+        // 5) Overwrite drops and replaces the target.
+        let ow_task = start_collection_copy_impl(
+            &state, &id, &db, "orders", &id, &db, "orders_copy", None, false, "overwrite".into(),
+        )
+        .await
+        .expect("overwrite copy");
+        let ow_done = wait_for_task(&state, &ow_task.id).await;
+        assert_eq!(ow_done.summary.as_ref().unwrap().documents_copied, 5);
+
+        // 6) Filtered copy carries only the matching documents.
+        let filt_task = start_collection_copy_impl(
+            &state, &id, &db, "orders", &id, &db, "orders_big",
+            Some(r#"{"amount":{"$gte":30}}"#.into()), false, "merge".into(),
+        )
+        .await
+        .expect("filtered copy");
+        let filt_done = wait_for_task(&state, &filt_task.id).await;
+        assert_eq!(filt_done.summary.as_ref().unwrap().documents_copied, 3);
+
+        cleanup(&state, &id, &db).await;
+    }
+
+    #[tokio::test]
+    async fn it_copy_database_real_with_view() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+        seed(
+            &state,
+            &id,
+            &db,
+            "items",
+            vec![doc! { "_id": 1, "qty": 2 }, doc! { "_id": 2, "qty": 8 }],
+        )
+        .await;
+        create_index_impl(&state, &id, &db, "items", "qty_1", r#"{"qty":1}"#, false, false)
+            .await
+            .expect("source index");
+        create_view_impl(&state, &id, &db, "big_items", "items", r#"[{"$match":{"qty":{"$gte":5}}}]"#)
+            .await
+            .expect("source view");
+
+        let target = format!("{}_copy", db);
+        let task = start_database_copy_impl(
+            &state, &id, &db, &id, &target, None, true, true, "merge".into(),
+        )
+        .await
+        .expect("start database copy");
+        let done = wait_for_task(&state, &task.id).await;
+        assert_eq!(done.status, "completed");
+        let s = done.summary.as_ref().unwrap();
+        // The base collection plus the recreated view.
+        assert_eq!(s.collections_copied, 2);
+        assert_eq!(s.documents_copied, 2);
+
+        // The target db has the collection (with data + index) and the view.
+        let cols = list_collections_impl(&state, &id, &target).await.unwrap();
+        assert!(cols.iter().any(|c| c.name == "items" && c.collection_type == "collection"));
+        assert!(cols.iter().any(|c| c.name == "big_items" && c.collection_type == "view"));
+        let idxs = list_indexes_impl(&state, &id, &target, "items").await.unwrap();
+        assert!(idxs.iter().any(|i| i.name == "qty_1"), "index should be recreated on target");
+
+        let _ = client_of(&state, &id).database(&target).drop().await;
         cleanup(&state, &id, &db).await;
     }
 

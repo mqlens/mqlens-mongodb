@@ -3,18 +3,174 @@
 use crate::limits::{IMPORT_BATCH_SIZE, MAX_IMPORT_DOCS};
 use crate::{connection_is_mock, require_real_client, AppState};
 
-// Parse a JSON string into a BSON Document, interpreting MongoDB Extended JSON
-// (e.g. {"$oid": "..."} -> ObjectId, {"$date": ...} -> DateTime) so that writes
+use mongodb::bson::Document;
+use std::collections::HashMap;
+
+// Convert a parsed JSON value into a BSON Document, interpreting MongoDB Extended
+// JSON (e.g. {"$oid": "..."} -> ObjectId, {"$date": ...} -> DateTime) so that writes
 // match documents by their real _id type rather than a literal sub-document.
-pub fn json_to_bson_document(s: &str) -> Result<mongodb::bson::Document, String> {
-    let value: serde_json::Value =
-        serde_json::from_str(s).map_err(|e| format!("Invalid JSON: {}", e))?;
+fn value_to_bson_document(value: serde_json::Value) -> Result<Document, String> {
     let bson = mongodb::bson::Bson::try_from(value)
         .map_err(|e| format!("Invalid BSON/Extended JSON: {}", e))?;
     match bson {
         mongodb::bson::Bson::Document(doc) => Ok(doc),
         _ => Err("Expected a JSON object (e.g. { \"field\": value })".to_string()),
     }
+}
+
+// Parse a JSON string into a BSON Document, interpreting MongoDB Extended JSON.
+pub fn json_to_bson_document(s: &str) -> Result<Document, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(s).map_err(|e| format!("Invalid JSON: {}", e))?;
+    value_to_bson_document(value)
+}
+
+/// Parse a JSON array of documents (`[{…}, {…}]`) — the JSON-array import format.
+pub fn parse_json_array_docs(text: &str) -> Result<Vec<Document>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("Invalid JSON: {}", e))?;
+    let arr = match value {
+        serde_json::Value::Array(arr) => arr,
+        _ => return Err("Expected a JSON array of documents".to_string()),
+    };
+    arr.into_iter().map(value_to_bson_document).collect()
+}
+
+/// CSV import parsing options (camelCase over IPC). Defaults reproduce the
+/// pre-options behavior exactly.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CsvImportOptions {
+    pub delimiter: String,
+    pub quote: String,
+    pub skip_lines: u32,
+    pub has_headers: bool,
+    pub column_types: HashMap<String, CsvColumnType>,
+}
+
+impl Default for CsvImportOptions {
+    fn default() -> Self {
+        Self {
+            delimiter: ",".into(),
+            quote: "\"".into(),
+            skip_lines: 0,
+            has_headers: true,
+            column_types: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CsvColumnType {
+    #[default]
+    Auto,
+    String,
+    Number,
+    Boolean,
+    Date,
+    Json,
+}
+
+pub fn validate_csv_import_options(o: &CsvImportOptions) -> Result<(), String> {
+    if o.delimiter.len() != 1 || !o.delimiter.is_ascii() {
+        return Err("CSV delimiter must be a single ASCII character".to_string());
+    }
+    if o.quote.len() != 1 || !o.quote.is_ascii() {
+        return Err("CSV text qualifier must be a single ASCII character".to_string());
+    }
+    Ok(())
+}
+
+pub fn generated_headers(n: usize) -> Vec<String> {
+    (1..=n).map(|i| format!("col{}", i)).collect()
+}
+
+/// Convert one CSV cell under an explicit or auto type. `row` is 1-based
+/// (data rows, excluding the header) for error messages.
+fn convert_csv_cell(
+    cell: &str,
+    column: &str,
+    ty: CsvColumnType,
+    row: usize,
+) -> Result<serde_json::Value, String> {
+    let fail = |ty_name: &str| {
+        Err(format!(
+            "CSV row {}, column \"{}\": cannot convert \"{}\" to {}",
+            row, column, cell, ty_name
+        ))
+    };
+    match ty {
+        CsvColumnType::Auto => Ok(revive_csv_cell(cell)),
+        CsvColumnType::String => Ok(serde_json::Value::String(cell.to_string())),
+        CsvColumnType::Number => {
+            if let Ok(i) = cell.trim().parse::<i64>() {
+                // Route through the canonical EJSON $numberLong wrapper so the
+                // revived value is always Bson::Int64, regardless of whether it
+                // happens to fit i32 (bson's plain-number TryFrom auto-downcasts
+                // in-range integers to Int32, which would make column typing
+                // magnitude-dependent instead of deterministic).
+                Ok(serde_json::json!({ "$numberLong": i.to_string() }))
+            } else if let Ok(f) = cell.trim().parse::<f64>() {
+                Ok(serde_json::Value::from(f))
+            } else {
+                fail("number")
+            }
+        }
+        CsvColumnType::Boolean => match cell.trim().to_ascii_lowercase().as_str() {
+            "true" => Ok(serde_json::Value::Bool(true)),
+            "false" => Ok(serde_json::Value::Bool(false)),
+            _ => fail("boolean"),
+        },
+        CsvColumnType::Date => {
+            // RFC-3339 or epoch millis → canonical EJSON $date, revived to
+            // Bson::DateTime by value_to_bson_document.
+            let millis: Option<i64> = if let Ok(ms) = cell.trim().parse::<i64>() {
+                Some(ms)
+            } else {
+                mongodb::bson::DateTime::parse_rfc3339_str(cell.trim())
+                    .ok()
+                    .map(|dt| dt.timestamp_millis())
+            };
+            match millis {
+                Some(ms) => Ok(serde_json::json!({
+                    "$date": { "$numberLong": ms.to_string() }
+                })),
+                None => fail("date (RFC-3339 or epoch millis)"),
+            }
+        }
+        CsvColumnType::Json => serde_json::from_str(cell).or_else(|_| fail("json")),
+    }
+}
+
+/// Build one document from a CSV record. Missing cells become empty strings
+/// (auto) / conversion errors (explicit types other than String).
+pub fn csv_record_to_doc(
+    headers: &[String],
+    record: &csv::StringRecord,
+    options: &CsvImportOptions,
+    row: usize,
+) -> Result<Document, String> {
+    let mut map = serde_json::Map::with_capacity(headers.len());
+    for (col, header) in headers.iter().enumerate() {
+        let cell = record.get(col).unwrap_or("");
+        let ty = options
+            .column_types
+            .get(header)
+            .copied()
+            .unwrap_or(CsvColumnType::Auto);
+        map.insert(header.clone(), convert_csv_cell(cell, header, ty, row)?);
+    }
+    value_to_bson_document(serde_json::Value::Object(map))
+}
+
+/// A CSV cell becomes its JSON value when parseable, otherwise the raw string
+/// (matching the frontend importer's `parseCell`).
+fn revive_csv_cell(cell: &str) -> serde_json::Value {
+    if cell.is_empty() {
+        return serde_json::Value::String(String::new());
+    }
+    serde_json::from_str(cell).unwrap_or_else(|_| serde_json::Value::String(cell.to_string()))
 }
 
 pub async fn delete_document_impl(
@@ -163,19 +319,30 @@ pub async fn import_documents_impl(
     docs: Vec<serde_json::Value>,
     mode: &str,
 ) -> Result<ImportResult, String> {
-    if docs.len() > MAX_IMPORT_DOCS {
+    // Convert all docs up front; a bad doc fails the whole import before writing.
+    let mut bson_docs: Vec<Document> = Vec::with_capacity(docs.len());
+    for value in docs {
+        bson_docs.push(value_to_bson_document(value)?);
+    }
+    finalize_import(state, id, database, collection, bson_docs, mode).await
+}
+
+/// Enforce the batch cap, short-circuit mock connections (validate only), then
+/// write the documents to the live collection under the duplicate-handling mode.
+async fn finalize_import(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    bson_docs: Vec<Document>,
+    mode: &str,
+) -> Result<ImportResult, String> {
+    if bson_docs.len() > MAX_IMPORT_DOCS {
         return Err(format!(
             "Import too large ({} documents). Maximum per batch is {} — split the file or use collection export/import on disk.",
-            docs.len(),
+            bson_docs.len(),
             MAX_IMPORT_DOCS
         ));
-    }
-
-    // Convert all docs up front; a bad doc fails the whole import before writing.
-    let mut bson_docs: Vec<mongodb::bson::Document> = Vec::with_capacity(docs.len());
-    for value in &docs {
-        let s = serde_json::to_string(value).map_err(|e| format!("Invalid document: {}", e))?;
-        bson_docs.push(json_to_bson_document(&s)?);
     }
 
     if connection_is_mock(state, id)? {
@@ -195,10 +362,17 @@ pub async fn import_documents_impl(
     }
 
     let client = require_real_client(state, id)?;
-    let coll = client
-        .database(database)
-        .collection::<mongodb::bson::Document>(collection);
+    let coll = client.database(database).collection::<Document>(collection);
+    write_imported_docs(&coll, bson_docs, mode).await
+}
 
+/// Write already-converted BSON documents to a live collection under the
+/// duplicate-handling mode. Shared by the JSON-value and file import paths.
+pub(crate) async fn write_imported_docs(
+    coll: &mongodb::Collection<Document>,
+    bson_docs: Vec<Document>,
+    mode: &str,
+) -> Result<ImportResult, String> {
     // Collect the set of incoming _ids that already exist in the collection,
     // keyed by their stringified BSON (same rendering on both sides). Used by
     // skip (partition) and abort (pre-check) so we never rely on bulk-write
@@ -249,7 +423,7 @@ pub async fn import_documents_impl(
             // Existing _ids get replaced (counts as updated); everything else is
             // inserted. This is an upsert-by-_id without relying on the driver's
             // option setters, which vary across versions.
-            let existing = existing_ids(&coll, &bson_docs).await?;
+            let existing = existing_ids(coll, &bson_docs).await?;
             let mut inserted = 0u64;
             let mut updated = 0u64;
             for doc in bson_docs {
@@ -278,7 +452,7 @@ pub async fn import_documents_impl(
         }
         "abort" => {
             // Any incoming _id already present -> abort, write nothing.
-            let existing = existing_ids(&coll, &bson_docs).await?;
+            let existing = existing_ids(coll, &bson_docs).await?;
             if !existing.is_empty() {
                 return Err(format!(
                     "Import aborted: {} document(s) already exist",
@@ -286,7 +460,7 @@ pub async fn import_documents_impl(
                 ));
             }
             let total = bson_docs.len() as u64;
-            insert_many_batched(&coll, bson_docs).await?;
+            insert_many_batched(coll, bson_docs).await?;
             Ok(ImportResult {
                 inserted: total,
                 updated: 0,
@@ -296,7 +470,7 @@ pub async fn import_documents_impl(
         _ => {
             // "skip" (default): insert only docs whose _id does not already exist;
             // count existing ones as skipped. Docs without an _id always insert.
-            let existing = existing_ids(&coll, &bson_docs).await?;
+            let existing = existing_ids(coll, &bson_docs).await?;
             let total = bson_docs.len() as u64;
             let to_insert: Vec<mongodb::bson::Document> = bson_docs
                 .into_iter()
@@ -307,7 +481,7 @@ pub async fn import_documents_impl(
                 .collect();
             let inserted = to_insert.len() as u64;
             if !to_insert.is_empty() {
-                insert_many_batched(&coll, to_insert).await?;
+                insert_many_batched(coll, to_insert).await?;
             }
             Ok(ImportResult {
                 inserted,
@@ -315,5 +489,28 @@ pub async fn import_documents_impl(
                 skipped: total - inserted,
             })
         }
+    }
+}
+
+// The option-matrix CSV parsing tests that used to live here (default
+// options, delimiter/qualifier/skip_lines/headerless combos, explicit column
+// types incl. failure context) now exercise db::import::ImportReader — the
+// path the shipping import pipeline actually uses. See db/import.rs's `csv_*`
+// tests. validate_csv_import_options is a pure helper with no ImportReader
+// equivalent, so its test stays here.
+#[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
+mod csv_import_tests {
+    use super::*;
+
+    #[test]
+    fn validate_rejects_multi_char_delimiter_or_quote() {
+        let mut o = CsvImportOptions::default();
+        o.delimiter = "ab".into();
+        assert!(validate_csv_import_options(&o).is_err());
+        let mut o = CsvImportOptions::default();
+        o.quote = "€".into();
+        assert!(validate_csv_import_options(&o).is_err());
+        assert!(validate_csv_import_options(&CsvImportOptions::default()).is_ok());
     }
 }
