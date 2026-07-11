@@ -280,8 +280,14 @@ describe('Sidebar Component', () => {
     await screen.findByText('sensor_readings');
     expect(screen.getByText('customers')).toBeInTheDocument();
 
+    // Views live in their own folder — expand it so the view row is actually
+    // rendered; otherwise the "views unaffected" check below is vacuous.
+    fireEvent.click(screen.getByText('Views'));
+    await screen.findByText('active_users');
+
     // Exactly one row gets the time-series icon — the regular collection
-    // (and anything else in the tree) keeps the generic Layers icon.
+    // (and anything else in the tree, including the view row) keeps the
+    // generic Layers icon.
     const tsIcons = screen.getAllByTestId('coll-icon-timeseries');
     expect(tsIcons).toHaveLength(1);
     expect(tsIcons[0]).toHaveAttribute('title', 'Time-series collection');
