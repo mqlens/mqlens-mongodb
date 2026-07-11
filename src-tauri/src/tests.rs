@@ -1048,6 +1048,139 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_ssh_auth_agent_serde_roundtrip() {
+        use crate::ssh_tunnel::{SshAuth, SshConfig};
+        let cfg = SshConfig {
+            enabled: true,
+            host: "bastion".into(),
+            port: 22,
+            user: "ops".into(),
+            auth: SshAuth::Agent,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            json.contains(r#""auth":{"type":"agent"}"#),
+            "agent auth must serialize frontend-shaped, got: {}",
+            json
+        );
+        let back: SshConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.auth, SshAuth::Agent);
+
+        // agent variant from frontend-shaped JSON
+        let fe: SshConfig = serde_json::from_str(
+            r#"{"enabled":true,"host":"h","port":22,"user":"u","auth":{"type":"agent"}}"#,
+        )
+        .unwrap();
+        assert_eq!(fe.auth, SshAuth::Agent);
+    }
+
+    // Agent auth must fail with an actionable message when SSH_AUTH_SOCK is not
+    // set. The helper takes the socket path as a parameter so this test does not
+    // depend on (or mutate) the ambient environment.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_agent_connect_error_when_sock_unset() {
+        let err = crate::ssh_tunnel::connect_agent_at(None)
+            .await
+            .err()
+            .expect("connecting without SSH_AUTH_SOCK must fail");
+        assert!(
+            err.contains("SSH_AUTH_SOCK is not set"),
+            "error should name the missing env var, got: {}",
+            err
+        );
+        assert!(err.contains("SSH agent not reachable"), "got: {}", err);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_agent_connect_error_when_sock_missing() {
+        let err = crate::ssh_tunnel::connect_agent_at(Some(
+            "/nonexistent/mqlens-test-agent.sock".to_string(),
+        ))
+        .await
+        .err()
+        .expect("connecting to a missing socket must fail");
+        assert!(
+            err.contains("SSH agent not reachable") && err.contains("/nonexistent/mqlens-test-agent.sock"),
+            "error should name the socket path, got: {}",
+            err
+        );
+    }
+
+    // Live agent integration: spawn a real ssh-agent, add a throwaway ed25519
+    // key, and list identities through the russh agent client. Skips (does not
+    // fail) when ssh-agent/ssh-keygen/ssh-add are unavailable on this machine.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_agent_lists_identities_via_live_agent() {
+        use std::process::Command;
+
+        let agent_out = match Command::new("ssh-agent").arg("-s").output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => {
+                eprintln!("skipping: ssh-agent not available");
+                return;
+            }
+        };
+        // Parse `SSH_AUTH_SOCK=/path; export SSH_AUTH_SOCK;` / `SSH_AGENT_PID=123; ...`
+        let parse_var = |name: &str| -> Option<String> {
+            agent_out.lines().find_map(|l| {
+                let rest = l.trim().strip_prefix(&format!("{}=", name))?;
+                Some(rest.split(';').next()?.to_string())
+            })
+        };
+        let sock = parse_var("SSH_AUTH_SOCK").expect("ssh-agent output has SSH_AUTH_SOCK");
+        let pid = parse_var("SSH_AGENT_PID");
+        // Ensure the agent is killed even if assertions below fail.
+        struct KillAgent(Option<String>);
+        impl Drop for KillAgent {
+            fn drop(&mut self) {
+                if let Some(pid) = self.0.take() {
+                    let _ = std::process::Command::new("kill").arg(pid).status();
+                }
+            }
+        }
+        let _kill = KillAgent(pid);
+
+        let dir = std::env::temp_dir().join(format!("mqlens-agent-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp key dir");
+        let key_path = dir.join("id_ed25519");
+        let keygen = Command::new("ssh-keygen")
+            .args(["-t", "ed25519", "-N", "", "-q", "-f"])
+            .arg(&key_path)
+            .status();
+        if !matches!(keygen, Ok(s) if s.success()) {
+            eprintln!("skipping: ssh-keygen not available");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        let added = Command::new("ssh-add")
+            .arg(&key_path)
+            .env("SSH_AUTH_SOCK", &sock)
+            .status();
+        if !matches!(added, Ok(s) if s.success()) {
+            eprintln!("skipping: ssh-add not available or failed");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+
+        let mut agent = crate::ssh_tunnel::connect_agent_at(Some(sock))
+            .await
+            .expect("connect to live ssh-agent");
+        let identities = agent
+            .request_identities()
+            .await
+            .expect("list identities from live ssh-agent");
+        assert!(
+            !identities.is_empty(),
+            "agent should hold the key we just added"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // GO-LIVE H2: count must reflect the true match count, not the page size.
     #[tokio::test]
     async fn test_mock_count_documents() {
