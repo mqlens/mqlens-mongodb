@@ -128,6 +128,7 @@ mod tests {
         assert!(collection_names.contains(&"transactions".to_string()));
         assert!(collections
             .iter()
+            .filter(|c| c.name != "sensor_readings")
             .all(|c| c.collection_type == "collection"));
 
         // 3b. Test list indexes
@@ -184,6 +185,32 @@ mod tests {
             let mocks = state.mocks.lock().unwrap();
             assert!(!mocks.contains_key(&conn_id));
         }
+    }
+
+    // Issue #137: demo mode must surface a time-series collection so the
+    // sidebar's distinct icon is visible without a live cluster.
+    #[tokio::test]
+    async fn test_mock_collections_report_timeseries_type() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let collections = list_collections_impl(&state, &conn_id, "sales_db")
+            .await
+            .expect("list mock collections");
+
+        let sensor = collections
+            .iter()
+            .find(|c| c.name == "sensor_readings")
+            .expect("sales_db should include sensor_readings");
+        assert_eq!(sensor.collection_type, "timeseries");
+
+        let customers = collections
+            .iter()
+            .find(|c| c.name == "customers")
+            .expect("customers still listed");
+        assert_eq!(customers.collection_type, "collection");
     }
 
     #[tokio::test]
@@ -2878,12 +2905,21 @@ mod tests {
         };
 
         // Collections per database, plus the empty fallback for an unknown db.
-        assert!(get_mock_collections("sales_db").contains(&"transactions".to_string()));
+        let sales_names: Vec<String> = get_mock_collections("sales_db")
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert!(sales_names.contains(&"transactions".to_string()));
         assert_eq!(
             get_mock_collections("user_analytics"),
-            vec!["events".to_string(), "sessions".to_string()]
+            vec![
+                ("events".to_string(), "collection"),
+                ("sessions".to_string(), "collection"),
+            ]
         );
-        assert!(get_mock_collections("admin").contains(&"system.users".to_string()));
+        assert!(get_mock_collections("admin")
+            .iter()
+            .any(|(name, _)| name == "system.users"));
         assert!(get_mock_collections("nope").is_empty());
 
         // Query + count across the non-products datasets (each hits a distinct match arm).

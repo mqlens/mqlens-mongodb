@@ -52,9 +52,9 @@ pub async fn list_collections_impl(
     if is_mock {
         return Ok(mock_db::get_mock_collections(db)
             .into_iter()
-            .map(|name| CollectionInfo {
+            .map(|(name, collection_type)| CollectionInfo {
                 name,
-                collection_type: "collection".to_string(),
+                collection_type: collection_type.to_string(),
             })
             .collect());
     }

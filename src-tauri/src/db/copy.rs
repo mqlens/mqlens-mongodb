@@ -775,8 +775,8 @@ mod tests {
         ).await.unwrap();
         let tasks = state.tasks.lock().unwrap();
         let s = tasks.get(&task.id).unwrap().summary.as_ref().unwrap();
-        // sales_db mock has customers, transactions, products -> 3 collections.
-        assert_eq!(s.collections_copied, 3);
+        // sales_db mock has customers, transactions, products, sensor_readings -> 4 collections.
+        assert_eq!(s.collections_copied, 4);
     }
 
     #[tokio::test]
