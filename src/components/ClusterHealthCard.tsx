@@ -30,7 +30,7 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({ connection
 
   return (
     <div className="flex w-64 flex-col gap-1.5 text-xs" data-testid="cluster-health-card">
-      {err && <div className="text-red-500">{err}</div>}
+      {err && <div className="text-destructive">{err}</div>}
       {!err && !data && <div className="text-muted-foreground">Loading cluster health…</div>}
       {!err && data && !data.isReplicaSet && (
         <div className="text-muted-foreground" data-testid="cluster-card-standalone">

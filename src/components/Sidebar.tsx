@@ -320,6 +320,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
   const scheduleHealthOpen = (connId: string) => {
     cancelHealthTimers();
+    // Moving to a different row: close the previous popover immediately
+    // instead of letting it linger for the open delay.
+    setHealthPopoverConn((cur) => (cur !== null && cur !== connId ? null : cur));
     healthOpenTimer.current = setTimeout(() => setHealthPopoverConn(connId), clusterHoverDelayMs);
   };
   const scheduleHealthClose = () => {
@@ -1443,7 +1446,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           return (
             <div key={conn.id}>
-              <Popover open={healthPopoverConn === conn.id}>
+              <Popover
+                open={healthPopoverConn === conn.id}
+                onOpenChange={(open) => {
+                  if (!open) {
+                    cancelHealthTimers();
+                    setHealthPopoverConn(null);
+                  }
+                }}
+              >
               <ContextMenu>
                 <ContextMenuTrigger asChild>
                   <PopoverAnchor asChild>

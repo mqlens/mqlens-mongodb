@@ -327,6 +327,81 @@ describe('Sidebar Component', () => {
     expect(mockInvoke).toHaveBeenCalledWith('repl_set_status', { id: 'conn-1' });
   });
 
+  it('closes the cluster-health popover on Escape (#114)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      if (cmd === 'repl_set_status')
+        return Promise.resolve({
+          isReplicaSet: true, set: 'rs0', myStateStr: 'PRIMARY', mongoVersion: '7.0.0',
+          members: [
+            { name: 'db1:27017', stateStr: 'PRIMARY', health: 1, self: true, uptimeSecs: 1, optimeDateMs: 1, pingMs: null, syncSource: '', lagSecs: null },
+          ],
+        });
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        clusterHoverDelayMs={0}
+      />
+    );
+    const row = await screen.findByLabelText('Connection Mock DB');
+    fireEvent.mouseEnter(row);
+    expect(await screen.findByTestId('cluster-health-card')).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByTestId('cluster-health-card')).toBeNull());
+  });
+
+  it('refetches cluster health once per open when closed then reopened (#114)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      if (cmd === 'repl_set_status')
+        return Promise.resolve({
+          isReplicaSet: true, set: 'rs0', myStateStr: 'PRIMARY', mongoVersion: '7.0.0',
+          members: [
+            { name: 'db1:27017', stateStr: 'PRIMARY', health: 1, self: true, uptimeSecs: 1, optimeDateMs: 1, pingMs: null, syncSource: '', lagSecs: null },
+          ],
+        });
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        clusterHoverDelayMs={0}
+      />
+    );
+    const row = await screen.findByLabelText('Connection Mock DB');
+
+    fireEvent.mouseEnter(row);
+    expect(await screen.findByTestId('cluster-health-card')).toBeInTheDocument();
+
+    fireEvent.mouseLeave(row);
+    // Grace close is 150ms of real time before the popover actually closes.
+    await waitFor(() => expect(screen.queryByTestId('cluster-health-card')).toBeNull());
+
+    fireEvent.mouseEnter(row);
+    expect(await screen.findByTestId('cluster-health-card')).toBeInTheDocument();
+
+    const replSetStatusCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'repl_set_status');
+    expect(replSetStatusCalls).toHaveLength(2);
+  });
+
   it('sorts collections by name before rendering', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases') {
