@@ -1,5 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { uriUser, uriReadPreference } from '../clusterHealth';
+import { uriUser, uriReadPreference, formatBytes } from '../clusterHealth';
+
+describe('formatBytes', () => {
+  it('shows raw bytes with no decimal below 1 KB', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(999)).toBe('999 B');
+    expect(formatBytes(512)).toBe('512 B');
+  });
+
+  it('formats KB with one decimal', () => {
+    expect(formatBytes(1536)).toBe('1.5 KB');
+  });
+
+  it('formats MB with one decimal', () => {
+    expect(formatBytes(24_576_000)).toBe('23.4 MB');
+  });
+
+  it('formats GB with one decimal', () => {
+    expect(formatBytes(1_288_490_189)).toBe('1.2 GB');
+  });
+});
 
 describe('uriUser', () => {
   it('extracts the user from a user+pass URI', () => {
