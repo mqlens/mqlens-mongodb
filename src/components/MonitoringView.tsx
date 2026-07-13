@@ -48,6 +48,7 @@ import {
   type ProfileEntry,
   type ReplSetStatus,
 } from '../lib/monitoringApi';
+import { lagText, lagClass, memberUnhealthy, memberDotClass, fmtMemberUptime } from '@/lib/clusterHealth';
 
 interface MonitoringViewProps {
   connectionId: string;
@@ -533,32 +534,6 @@ const ProfileFilterBar: React.FC<{
     <FilterCount shown={shown} total={total} />
   </div>
 );
-
-const lagText = (lagSecs: number | null | undefined): string =>
-  lagSecs == null ? 'n/a' : `${lagSecs < 10 ? lagSecs.toFixed(1) : Math.round(lagSecs)}s`;
-
-const lagClass = (lagSecs: number | null | undefined): string => {
-  if (lagSecs == null) return 'text-muted-foreground';
-  if (lagSecs >= 60) return 'font-semibold text-red-500';
-  if (lagSecs >= 10) return 'font-semibold text-amber-500';
-  return 'text-muted-foreground';
-};
-
-const memberUnhealthy = (m: { health: number; stateStr: string }): boolean =>
-  m.health !== 1 || /not reachable|DOWN|UNKNOWN/i.test(m.stateStr);
-
-const memberDotClass = (m: { health: number; stateStr: string }): string => {
-  if (memberUnhealthy(m)) return 'bg-red-500';
-  if (m.stateStr === 'PRIMARY') return 'bg-emerald-500';
-  if (m.stateStr === 'SECONDARY') return 'bg-sky-500';
-  return 'bg-amber-500';
-};
-
-const fmtMemberUptime = (secs: number): string => {
-  const d = Math.floor(secs / 86_400);
-  const h = Math.floor((secs % 86_400) / 3_600);
-  return d > 0 ? `${d}d ${h}h` : `${h}h ${Math.floor((secs % 3_600) / 60)}m`;
-};
 
 export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) => {
   const [status, setStatus] = useState<ServerStatus | null>(null);

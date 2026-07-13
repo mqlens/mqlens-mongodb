@@ -56,6 +56,8 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
+import { ClusterHealthCard } from '@/components/ClusterHealthCard';
 import { ThemePicker } from '@/components/theme/ThemePicker';
 import {
   Database,
@@ -189,6 +191,8 @@ interface SidebarProps {
   refreshTarget?: { connectionId: string; db?: string; expand: boolean } | null;
   /** Bumped by the parent to fire a refresh of `refreshTarget`. */
   refreshTargetNonce?: number;
+  /** Hover delay before the connection cluster-health popover opens (ms). */
+  clusterHoverDelayMs?: number;
 }
 
 const treeRowClass = (active?: boolean) =>
@@ -297,10 +301,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
   canPaste,
   refreshTarget,
   refreshTargetNonce,
+  clusterHoverDelayMs = 400,
 }) => {
   const { toast, confirm, prompt } = useDialogs();
   const [filterQuery, setFilterQuery] = useState('');
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Cluster-health hover popover: which connection's card is open, plus
+  // open-delay and grace-close timers so the pointer can travel into the card.
+  const [healthPopoverConn, setHealthPopoverConn] = useState<string | null>(null);
+  const healthOpenTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const healthCloseTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelHealthTimers = () => {
+    if (healthOpenTimer.current) clearTimeout(healthOpenTimer.current);
+    if (healthCloseTimer.current) clearTimeout(healthCloseTimer.current);
+    healthOpenTimer.current = null;
+    healthCloseTimer.current = null;
+  };
+  const scheduleHealthOpen = (connId: string) => {
+    cancelHealthTimers();
+    healthOpenTimer.current = setTimeout(() => setHealthPopoverConn(connId), clusterHoverDelayMs);
+  };
+  const scheduleHealthClose = () => {
+    if (healthOpenTimer.current) clearTimeout(healthOpenTimer.current);
+    healthCloseTimer.current = setTimeout(() => setHealthPopoverConn(null), 150);
+  };
+  useEffect(() => cancelHealthTimers, []);
 
   // Mock connections (the bundled sample data, or ids/URIs marked as such) never
   // reach a real mongodump/mongorestore binary — the backend rejects them outright
@@ -1417,8 +1443,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           return (
             <div key={conn.id}>
+              <Popover open={healthPopoverConn === conn.id}>
               <ContextMenu>
                 <ContextMenuTrigger asChild>
+                  <PopoverAnchor asChild>
                   <div
                     className={cn(
                       'group flex h-7 cursor-pointer items-center gap-1 rounded-sm px-2 text-xs hover:bg-accent/80',
@@ -1429,6 +1457,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     aria-expanded={isConnExpanded}
                     aria-label={`Connection ${conn.name}`}
                     onClick={() => setExpandedConnections((prev) => ({ ...prev, [conn.id]: !prev[conn.id] }))}
+                    onMouseEnter={() => scheduleHealthOpen(conn.id)}
+                    onMouseLeave={scheduleHealthClose}
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-1">
                       <ChevronRight
@@ -1476,6 +1506,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <LogOut className="size-3" />
                     </Button>
                   </div>
+                  </PopoverAnchor>
                 </ContextMenuTrigger>
                 <ContextMenuContent>
                   <ContextMenuItem className={ctxItemClass} onClick={() => handleAddDatabase(conn.id)}>
@@ -1573,6 +1604,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
+                <PopoverContent
+                  side="right"
+                  align="start"
+                  onOpenAutoFocus={(e) => e.preventDefault()}
+                  onMouseEnter={cancelHealthTimers}
+                  onMouseLeave={scheduleHealthClose}
+                >
+                  <ClusterHealthCard connectionId={conn.id} onOpenMonitoring={onOpenMonitoring} />
+                </PopoverContent>
+              </Popover>
 
               {isConnExpanded && (
                 <div className="ml-3 border-l border-border/50 pl-1">
