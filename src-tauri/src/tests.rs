@@ -13,7 +13,7 @@ mod tests {
         list_indexes_impl, parse_json_array_docs,
         preview_export_impl, rename_collection_impl, rename_database_impl, sample_export_fields_impl,
         start_collection_export_impl, start_filtered_export_impl, update_document_impl,
-        upload_gridfs_file_impl,
+        upload_gridfs_file_impl, get_collection_options_impl,
     };
     use crate::{
         create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
@@ -212,6 +212,22 @@ mod tests {
             .find(|c| c.name == "customers")
             .expect("customers still listed");
         assert_eq!(customers.collection_type, "collection");
+    }
+
+    #[tokio::test]
+    async fn test_get_collection_options_mock_path() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let opts = get_collection_options_impl(&state, &conn_id, "sales_db", "customers")
+            .await
+            .expect("get collection options");
+
+        assert_eq!(opts.validator, "{}");
+        assert_eq!(opts.validation_level, "");
+        assert_eq!(opts.validation_action, "");
     }
 
     // Issue #114: demo mode returns a synthetic replica set so the Cluster

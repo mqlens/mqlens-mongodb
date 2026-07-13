@@ -8,6 +8,14 @@ pub struct DatabaseRenameResult {
     pub documents: u64,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionValidation {
+    pub validator: String,
+    pub validation_level: String,
+    pub validation_action: String,
+}
+
 pub async fn create_collection_impl(
     state: &AppState,
     id: &str,
@@ -117,6 +125,56 @@ pub async fn rename_collection_impl(
         .await
         .map(|_| ())
         .map_err(|e| format!("Failed to rename collection: {}", e))
+}
+
+pub async fn get_collection_options_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+) -> Result<CollectionValidation, String> {
+    if connection_is_mock(state, id)? {
+        return Ok(CollectionValidation {
+            validator: "{}".into(),
+            validation_level: String::new(),
+            validation_action: String::new(),
+        });
+    }
+    let client = require_real_client(state, id)?;
+    let db = client.database(database);
+    let mut cursor = db
+        .list_collections()
+        .filter(mongodb::bson::doc! { "name": collection })
+        .await
+        .map_err(|e| format!("Failed to read collection options: {}", e))?;
+    use futures::stream::StreamExt;
+    let spec = match cursor.next().await {
+        Some(r) => r.map_err(|e| format!("Collection read error: {}", e))?,
+        None => return Err(format!("Collection \"{}\" not found", collection)),
+    };
+    let validator = match &spec.options.validator {
+        Some(doc) => serde_json::to_string_pretty(doc)
+            .map_err(|e| format!("Failed to serialize validator: {}", e))?,
+        None => "{}".to_string(),
+    };
+    let validation_level = match &spec.options.validation_level {
+        Some(mongodb::options::ValidationLevel::Off) => "off",
+        Some(mongodb::options::ValidationLevel::Moderate) => "moderate",
+        Some(mongodb::options::ValidationLevel::Strict) => "strict",
+        _ => "",
+    }
+    .to_string();
+    let validation_action = match &spec.options.validation_action {
+        Some(mongodb::options::ValidationAction::Error) => "error",
+        Some(mongodb::options::ValidationAction::Warn) => "warn",
+        _ => "",
+    }
+    .to_string();
+    Ok(CollectionValidation {
+        validator,
+        validation_level,
+        validation_action,
+    })
 }
 
 pub async fn drop_database_impl(state: &AppState, id: &str, database: &str) -> Result<(), String> {
@@ -374,5 +432,21 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("validationLevel"));
+    }
+
+    #[tokio::test]
+    async fn test_get_collection_options_mock() {
+        let state = crate::AppState::new();
+        let conn_id = crate::connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let opts = get_collection_options_impl(&state, &conn_id, "sales_db", "customers")
+            .await
+            .expect("get collection options");
+
+        assert_eq!(opts.validator, "{}");
+        assert_eq!(opts.validation_level, "");
+        assert_eq!(opts.validation_action, "");
     }
 }
