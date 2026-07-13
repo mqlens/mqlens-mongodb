@@ -461,6 +461,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [pendingCompare, setPendingCompare] = useState<Record<string, any> | null>(null);
   const [diffPair, setDiffPair] = useState<{ a: Record<string, any>; b: Record<string, any> } | null>(null);
 
+  // A new result set invalidates any armed compare source: the armed doc may
+  // no longer exist (or may differ) in the fresh documents array, and matching
+  // is by reference — silently diffing a stale doc would mislead.
+  useEffect(() => {
+    setPendingCompare(null);
+    setDiffPair(null);
+  }, [documents]);
+
   const writeClipboard = (text: string) => {
     try { navigator.clipboard?.writeText(text); } catch { /* clipboard unavailable */ }
   };

@@ -322,6 +322,7 @@ describe('DataGrid Component', () => {
     fireEvent.contextMenu(screen.getByText(/"Alice Smith"/));
     expect(screen.getByTestId('context-menu')).toBeInTheDocument();
     expect(screen.getByText('Edit document')).toBeInTheDocument();
+    expect(screen.getByText('Compare with…')).toBeInTheDocument();
   });
 
   it('copies a document as pretty-printed JSON via the copy button and shows a confirmation', () => {
@@ -417,6 +418,26 @@ describe('DataGrid — Compare documents', () => {
     expect(within(modal).getByTestId('diff-left')).toHaveTextContent(/"Bob"/);
     expect(within(modal).getByTestId('diff-right')).toHaveTextContent(/"Carol"/);
     expect(within(modal).queryByText(/"Alice"/)).not.toBeInTheDocument();
+  });
+
+  it('clears an armed compare source when the documents array is replaced (query re-run)', () => {
+    const { rerender } = render(<DataGrid documents={docs} onEditDocument={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    // Arm Alice as the compare source.
+    openMenuForRow('Alice');
+    fireEvent.click(screen.getByText('Compare with…'));
+
+    // Query re-run / paging / sorting replaces the documents array (same
+    // instance, but a fresh reference — content can even be identical).
+    const freshDocs = docs.map((d) => ({ ...d }));
+    rerender(<DataGrid documents={freshDocs} onEditDocument={() => {}} />);
+
+    // Bob's menu should offer only the plain arm action, not "Compare with
+    // selected" — the old armed source must not survive the new result set.
+    openMenuForRow('Bob');
+    expect(screen.getByText('Compare with…')).toBeInTheDocument();
+    expect(screen.queryByText('Compare with selected')).not.toBeInTheDocument();
   });
 });
 
