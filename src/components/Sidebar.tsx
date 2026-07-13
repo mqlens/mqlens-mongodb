@@ -312,6 +312,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [healthPopoverConn, setHealthPopoverConn] = useState<string | null>(null);
   const healthOpenTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const healthCloseTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The popover opens at the mouse cursor, not beside the row: a virtual
+  // anchor reports a zero-size rect at the last pointer position (updated
+  // until the popover opens, then frozen so the card doesn't chase the mouse).
+  const healthAnchorPoint = React.useRef({ x: 0, y: 0 });
+  const healthVirtualAnchor = React.useRef({
+    getBoundingClientRect: () => {
+      const { x, y } = healthAnchorPoint.current;
+      return { width: 0, height: 0, x, y, top: y, bottom: y, left: x, right: x, toJSON: () => ({}) } as DOMRect;
+    },
+  });
   const cancelHealthTimers = () => {
     if (healthOpenTimer.current) clearTimeout(healthOpenTimer.current);
     if (healthCloseTimer.current) clearTimeout(healthCloseTimer.current);
@@ -1457,7 +1467,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
               <ContextMenu>
                 <ContextMenuTrigger asChild>
-                  <PopoverAnchor asChild>
                   <div
                     className={cn(
                       'group flex h-7 cursor-pointer items-center gap-1 rounded-sm px-2 text-xs hover:bg-accent/80',
@@ -1468,7 +1477,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     aria-expanded={isConnExpanded}
                     aria-label={`Connection ${conn.name}`}
                     onClick={() => setExpandedConnections((prev) => ({ ...prev, [conn.id]: !prev[conn.id] }))}
-                    onMouseEnter={() => scheduleHealthOpen(conn.id)}
+                    onMouseEnter={(e) => {
+                      healthAnchorPoint.current = { x: e.clientX, y: e.clientY };
+                      scheduleHealthOpen(conn.id);
+                    }}
+                    onMouseMove={(e) => {
+                      // Track the pointer until the popover opens so the card
+                      // appears where the cursor is, not where it entered.
+                      if (healthPopoverConn !== conn.id) {
+                        healthAnchorPoint.current = { x: e.clientX, y: e.clientY };
+                      }
+                    }}
                     onMouseLeave={scheduleHealthClose}
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-1">
@@ -1517,7 +1536,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <LogOut className="size-3" />
                     </Button>
                   </div>
-                  </PopoverAnchor>
                 </ContextMenuTrigger>
                 <ContextMenuContent>
                   <ContextMenuItem className={ctxItemClass} onClick={() => handleAddDatabase(conn.id)}>
@@ -1615,9 +1633,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
+                <PopoverAnchor virtualRef={healthVirtualAnchor} />
                 <PopoverContent
-                  side="right"
+                  side="bottom"
                   align="start"
+                  sideOffset={8}
                   onOpenAutoFocus={(e) => e.preventDefault()}
                   onMouseEnter={cancelHealthTimers}
                   onMouseLeave={scheduleHealthClose}
