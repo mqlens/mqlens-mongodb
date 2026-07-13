@@ -69,3 +69,54 @@ describe('diffDocuments — flat objects', () => {
     expect(d.left[i].status).toBe('gap'); // empty filler on the side that lacks the key
   });
 });
+
+describe('diffDocuments — nested objects and arrays', () => {
+  it('recurses into nested objects and marks only the changed leaf', () => {
+    const left = { addr: { city: 'London', zip: 'N1' } };
+    const right = { addr: { city: 'Paris', zip: 'N1' } };
+    const d = diffDocuments(left, right);
+
+    // Columns are aligned and contain a container "open" line for `addr`.
+    expect(d.left.length).toBe(d.right.length);
+    const open = d.left.find((l) => l.path === 'addr')!;
+    expect(open.kind).toBe('object');
+    expect(open.bracket).toBe('{');
+
+    const city = d.left.find((l) => l.path === 'addr.city')!;
+    expect(city.depth).toBe(1);
+    expect(city.status).toBe('changed');
+    expect(d.left.find((l) => l.path === 'addr.zip')!.status).toBe('unchanged');
+    expect(d.changedCount).toBe(1);
+  });
+
+  it('treats a scalar->object change as a single changed entry, not a recurse', () => {
+    const d = diffDocuments({ x: 1 }, { x: { y: 2 } });
+    const lx = d.left.find((l) => l.path === 'x')!;
+    const rx = d.right.find((l) => l.path === 'x')!;
+    expect(lx.status).toBe('changed');
+    expect(rx.status).toBe('changed');
+    // No recursion into x.y because the kinds differ.
+    expect(d.left.some((l) => l.path === 'x.y')).toBe(false);
+    expect(d.changedCount).toBe(1);
+  });
+
+  it('diffs arrays positionally, marking added/removed/changed elements', () => {
+    const d = diffDocuments({ tags: ['a', 'b', 'c'] }, { tags: ['a', 'B', 'c', 'd'] });
+    expect(d.left.find((l) => l.path === 'tags[0]')!.status).toBe('unchanged');
+    expect(d.left.find((l) => l.path === 'tags[1]')!.status).toBe('changed');
+    const added = d.right.find((l) => l.path === 'tags[3]')!;
+    expect(added.status).toBe('added');
+    // The left column has a gap opposite the right-only element.
+    const i = d.right.findIndex((l) => l.path === 'tags[3]');
+    expect(d.left[i].status).toBe('gap');
+    expect(d.addedCount).toBe(1);
+    expect(d.changedCount).toBe(1);
+  });
+
+  it('recurses into nested objects inside array elements', () => {
+    const left = { items: [{ q: 1 }] };
+    const right = { items: [{ q: 2 }] };
+    const d = diffDocuments(left, right);
+    expect(d.left.find((l) => l.path === 'items[0].q')!.status).toBe('changed');
+  });
+});

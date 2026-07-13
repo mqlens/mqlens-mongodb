@@ -114,43 +114,155 @@ function walkLevel(
   right: DiffLine[],
   counts: Counts,
 ): void {
-  const lKind = valueKind(lv);
-  const rKind = valueKind(rv);
+  const lArr = Array.isArray(lv);
+  const rArr = Array.isArray(rv);
+  const isIndex = lArr || rArr;
 
-  // For Task 2 both sides are plain objects; the union of keys preserves left
-  // order first, then right-only keys, so columns read naturally.
-  const lObj = (lKind === 'object' ? (lv as Record<string, unknown>) : {});
-  const rObj = (rKind === 'object' ? (rv as Record<string, unknown>) : {});
-  const keys: string[] = [];
-  const seen = new Set<string>();
-  for (const k of Object.keys(lObj)) { keys.push(k); seen.add(k); }
-  for (const k of Object.keys(rObj)) { if (!seen.has(k)) keys.push(k); }
+  // Build the aligned key list for this level.
+  let keys: string[];
+  if (isIndex) {
+    const len = Math.max(lArr ? (lv as unknown[]).length : 0, rArr ? (rv as unknown[]).length : 0);
+    keys = Array.from({ length: len }, (_, i) => String(i));
+  } else {
+    const lObj = (valueKind(lv) === 'object' ? (lv as Record<string, unknown>) : {});
+    const rObj = (valueKind(rv) === 'object' ? (rv as Record<string, unknown>) : {});
+    keys = [];
+    const seen = new Set<string>();
+    for (const k of Object.keys(lObj)) { keys.push(k); seen.add(k); }
+    for (const k of Object.keys(rObj)) { if (!seen.has(k)) keys.push(k); }
+  }
+
+  const getL = (key: string) => (valueKind(lv) === 'object' || lArr ? (lv as any)[key] : undefined);
+  const getR = (key: string) => (valueKind(rv) === 'object' || rArr ? (rv as any)[key] : undefined);
+  const hasL = (key: string) =>
+    lArr ? Number(key) < (lv as unknown[]).length
+         : valueKind(lv) === 'object' && Object.prototype.hasOwnProperty.call(lv, key);
+  const hasR = (key: string) =>
+    rArr ? Number(key) < (rv as unknown[]).length
+         : valueKind(rv) === 'object' && Object.prototype.hasOwnProperty.call(rv, key);
 
   for (const key of keys) {
-    const inL = Object.prototype.hasOwnProperty.call(lObj, key);
-    const inR = Object.prototype.hasOwnProperty.call(rObj, key);
-    const path = joinPath(parentPath, key, false);
-    const a = lObj[key];
-    const b = rObj[key];
+    const inL = hasL(key);
+    const inR = hasR(key);
+    const path = joinPath(parentPath, key, isIndex);
+    const a = getL(key);
+    const b = getR(key);
 
     if (inL && !inR) {
-      counts.removed++;
-      left.push({ path, keyLabel: key, depth, status: 'removed', kind: 'scalar', value: a });
-      right.push(gap(depth));
+      emitRemoved(path, key, depth, a, left, right, counts);
       continue;
     }
     if (!inL && inR) {
-      counts.added++;
-      left.push(gap(depth));
-      right.push({ path, keyLabel: key, depth, status: 'added', kind: 'scalar', value: b });
+      emitAdded(path, key, depth, b, left, right, counts);
       continue;
     }
 
-    // Present on both sides (Task 2: scalars only).
-    const equal = bsonEqual(a, b);
+    const aKind = valueKind(a);
+    const bKind = valueKind(b);
+
+    // Both are the same container kind -> emit an open line on both sides and recurse.
+    if (aKind === bKind && (aKind === 'object' || aKind === 'array')) {
+      const bracket = aKind === 'array' ? '[' : '{';
+      const closeBracket = aKind === 'array' ? ']' : '}';
+      const aChildren = aKind === 'array' ? (a as unknown[]).length : Object.keys(a as object).length;
+      const bChildren = bKind === 'array' ? (b as unknown[]).length : Object.keys(b as object).length;
+      left.push({ path, keyLabel: key, depth, status: 'unchanged', kind: aKind, bracket, childCount: aChildren });
+      right.push({ path, keyLabel: key, depth, status: 'unchanged', kind: bKind, bracket, childCount: bChildren });
+
+      const beforeChanged = counts.changed, beforeAdded = counts.added, beforeRemoved = counts.removed;
+      walkLevel(a, b, path, depth + 1, left, right, counts);
+
+      // Close lines.
+      left.push({ path, keyLabel: '', depth, status: 'unchanged', kind: aKind, bracket: closeBracket });
+      right.push({ path, keyLabel: '', depth, status: 'unchanged', kind: bKind, bracket: closeBracket });
+
+      // Mark the container "changed" (visually) if any descendant changed.
+      const touched =
+        counts.changed !== beforeChanged ||
+        counts.added !== beforeAdded ||
+        counts.removed !== beforeRemoved;
+      if (touched) {
+        const openIdxL = left.length - 1; // not used; container header status update below
+      }
+      // Re-tag the open lines as 'changed' when descendants differ.
+      if (touched) {
+        // open lines are the pair pushed just before recursion.
+        const openL = left.findIndex((l) => l.path === path && l.bracket === bracket);
+        const openR = right.findIndex((l) => l.path === path && l.bracket === bracket);
+        if (openL >= 0) left[openL] = { ...left[openL], status: 'changed' };
+        if (openR >= 0) right[openR] = { ...right[openR], status: 'changed' };
+      }
+      continue;
+    }
+
+    // Scalar-vs-scalar, or kind mismatch (scalar<->container): single line, no recurse.
+    const equal = aKind === 'scalar' && bKind === 'scalar' && bsonEqual(a, b);
     if (!equal) counts.changed++;
     const status: DiffStatus = equal ? 'unchanged' : 'changed';
     left.push({ path, keyLabel: key, depth, status, kind: 'scalar', value: a });
     right.push({ path, keyLabel: key, depth, status, kind: 'scalar', value: b });
+  }
+}
+
+function emitRemoved(
+  path: string, key: string, depth: number, a: unknown,
+  left: DiffLine[], right: DiffLine[], counts: Counts,
+): void {
+  counts.removed++;
+  const kind = valueKind(a);
+  if (kind === 'object' || kind === 'array') {
+    // Flatten the removed container as scalar-ish lines on the left only.
+    left.push({ path, keyLabel: key, depth, status: 'removed', kind, bracket: kind === 'array' ? '[' : '{', childCount: kind === 'array' ? (a as unknown[]).length : Object.keys(a as object).length });
+    right.push(gap(depth));
+    flattenOneSide(a, path, depth + 1, 'removed', left, right);
+    left.push({ path, keyLabel: '', depth, status: 'removed', kind, bracket: kind === 'array' ? ']' : '}' });
+    right.push(gap(depth));
+    return;
+  }
+  left.push({ path, keyLabel: key, depth, status: 'removed', kind: 'scalar', value: a });
+  right.push(gap(depth));
+}
+
+function emitAdded(
+  path: string, key: string, depth: number, b: unknown,
+  left: DiffLine[], right: DiffLine[], counts: Counts,
+): void {
+  counts.added++;
+  const kind = valueKind(b);
+  if (kind === 'object' || kind === 'array') {
+    right.push({ path, keyLabel: key, depth, status: 'added', kind, bracket: kind === 'array' ? '[' : '{', childCount: kind === 'array' ? (b as unknown[]).length : Object.keys(b as object).length });
+    left.push(gap(depth));
+    flattenOneSide(b, path, depth + 1, 'added', right, left);
+    right.push({ path, keyLabel: '', depth, status: 'added', kind, bracket: kind === 'array' ? ']' : '}' });
+    left.push(gap(depth));
+    return;
+  }
+  right.push({ path, keyLabel: key, depth, status: 'added', kind: 'scalar', value: b });
+  left.push(gap(depth));
+}
+
+// Emit every leaf of a one-sided (added or removed) container into `side`, with a
+// matching gap pushed into `other` so the two columns stay aligned.
+function flattenOneSide(
+  val: unknown, parentPath: string, depth: number, status: DiffStatus,
+  side: DiffLine[], other: DiffLine[],
+): void {
+  const isArr = Array.isArray(val);
+  const entries: [string, unknown][] = isArr
+    ? (val as unknown[]).map((v, i) => [String(i), v])
+    : Object.entries(val as Record<string, unknown>);
+  for (const [key, v] of entries) {
+    const path = joinPath(parentPath, key, isArr);
+    const kind = valueKind(v);
+    if (kind === 'object' || kind === 'array') {
+      side.push({ path, keyLabel: key, depth, status, kind, bracket: kind === 'array' ? '[' : '{', childCount: kind === 'array' ? (v as unknown[]).length : Object.keys(v as object).length });
+      other.push(gap(depth));
+      flattenOneSide(v, path, depth + 1, status, side, other);
+      side.push({ path, keyLabel: '', depth, status, kind, bracket: kind === 'array' ? ']' : '}' });
+      other.push(gap(depth));
+    } else {
+      side.push({ path, keyLabel: key, depth, status, kind: 'scalar', value: v });
+      other.push(gap(depth));
+    }
   }
 }
