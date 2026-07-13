@@ -47,7 +47,7 @@ describe('DbStatsCard', () => {
     expect(card).toHaveTextContent('Database:');
     expect(card).toHaveTextContent('sales_db');
     expect(card).toHaveTextContent('12,345');
-    expect(card).toHaveTextContent('6.0 MB'); // dataSize
+    expect(card).toHaveTextContent('6 MB'); // dataSize
     expect(card).toHaveTextContent('9'); // indexes
   });
 
@@ -99,7 +99,7 @@ describe('IndexStatsCard', () => {
 
     expect(card).toHaveTextContent('Index:');
     expect(card).toHaveTextContent('email_1 on sales_db.orders');
-    expect(card).toHaveTextContent('20.0 KB');
+    expect(card).toHaveTextContent('20 KB');
     expect(card).toHaveTextContent('42 ops');
     expect(card).toHaveTextContent(new Date(1_749_427_200_000).toLocaleDateString());
   });

@@ -38,16 +38,3 @@ export const uriReadPreference = (uri: string): string => {
   return m ? decodeURIComponent(m[1]) : 'primary';
 };
 
-/** Human-readable byte size for the stats popovers: raw bytes below 1 KB,
- *  one decimal place for KB/MB/GB/TB (divisor 1024). */
-export const formatBytes = (bytes: number): string => {
-  if (!Number.isFinite(bytes) || bytes < 1024) return `${Math.round(bytes)} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = bytes / 1024;
-  let i = 0;
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024;
-    i++;
-  }
-  return `${value.toFixed(1)} ${units[i]}`;
-};

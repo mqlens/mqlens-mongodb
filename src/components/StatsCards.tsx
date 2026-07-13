@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { formatBytes } from '@/lib/clusterHealth';
+import { formatBytes } from '@/lib/format';
 
 interface DbStatsUi {
   collections: number;

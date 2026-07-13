@@ -15,4 +15,8 @@ describe('formatBytes', () => {
     expect(formatBytes(150 * 1024 * 1024)).toBe('150 MB');
     expect(formatBytes(2 * 1024 * 1024 * 1024)).toBe('2 GB');
   });
+
+  it('scales past TB into PB', () => {
+    expect(formatBytes(2 * 1024 ** 5)).toBe('2 PB');
+  });
 });
