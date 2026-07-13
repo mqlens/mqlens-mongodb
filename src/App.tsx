@@ -39,6 +39,7 @@ import {
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
+import { ValidationRulesView } from './components/ValidationRulesView';
 import { GridFsView } from './components/GridFsView';
 import { MonitoringView } from './components/MonitoringView';
 import { UserManagementView } from './components/UserManagementView';
@@ -57,12 +58,12 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap } from 'lucide-react';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation';
   connectionId: string;
   db: string;
   collection: string;
@@ -212,6 +213,8 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
       return <DatabaseBackup size={size} className={className} />;
     case 'restore':
       return <DatabaseZap size={size} className={className} />;
+    case 'validation':
+      return <ShieldCheck size={size} className={className} />;
     default:
       return <FolderCode size={size} className={className} />;
   }
@@ -250,6 +253,8 @@ const tabLabelFor = (
       return `Dump: ${tab.db || connectionName(tab.connectionId)}`;
     case 'restore':
       return `Restore: ${connectionName(tab.connectionId)}`;
+    case 'validation':
+      return `Validation: ${tab.collection}`;
     default:
       return tab.collection;
   }
@@ -993,6 +998,25 @@ function Workspace() {
         connectionId,
         db,
         collection: '',
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      }]);
+    }
+    setActiveTabId(tabId);
+  };
+
+  // #93: open a Validation Rules tab for a collection.
+  const handleOpenValidationTab = (connectionId: string, db: string, collection: string) => {
+    const tabId = `validation.${connectionId}.${db}.${collection}`;
+    if (!tabs.some(t => t.id === tabId)) {
+      setTabs(prev => [...prev, {
+        id: tabId,
+        type: 'validation',
+        connectionId,
+        db,
+        collection,
         results: [],
         loading: false,
         error: null,
@@ -1955,6 +1979,7 @@ function Workspace() {
           onOpenMonitoring={handleOpenMonitoringTab}
           onOpenUsers={handleOpenUsersTab}
           onAnalyzeSchema={handleOpenSchemaTab}
+          onEditValidation={handleOpenValidationTab}
           onCreateView={handleOpenCreateViewTab}
           onOpenGridfs={handleOpenGridfsTab}
           onOpenDump={handleOpenDumpTab}
@@ -2261,6 +2286,14 @@ function Workspace() {
                     setCollectionMutationTrigger(prev => prev + 1);
                     handleSelectCollection(activeTab.connectionId, activeTab.db, viewName);
                   }}
+                />
+              )}
+              {activeTab && activeTab.type === 'validation' && (
+                <ValidationRulesView
+                  connectionId={activeTab.connectionId}
+                  databaseName={activeTab.db}
+                  collectionName={activeTab.collection}
+                  onApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
                 />
               )}
               {activeTab && activeTab.type === 'gridfs' && (
