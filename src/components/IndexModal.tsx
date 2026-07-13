@@ -48,6 +48,12 @@ interface IndexModalProps {
     unique: boolean;
     sparse: boolean;
   } | null;
+  // Pre-fills the create-mode form (e.g. from a COLLSCAN index suggestion).
+  // Ignored when initialData is set (edit mode) — unique/sparse always start false.
+  prefill?: {
+    name: string;
+    keys: Record<string, number>;
+  } | null;
 }
 
 const defaultIndexName = (json: string): string => {
@@ -77,6 +83,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
   databaseName,
   collectionName,
   initialData,
+  prefill,
 }) => {
   const [indexName, setIndexName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
@@ -120,6 +127,15 @@ export const IndexModal: React.FC<IndexModalProps> = ({
         );
         setKeysList(list.length > 0 ? list : [newKeyRule()]);
         setRawKeysJson(JSON.stringify(initialData.keys, null, 2));
+      } else if (prefill && Object.keys(prefill.keys).length > 0) {
+        setIndexName(prefill.name);
+        setUnique(false);
+        setSparse(false);
+        const list: IndexKeyRule[] = Object.entries(prefill.keys).map(([field, dir]) =>
+          newKeyRule(field, dir === -1 ? -1 : 1)
+        );
+        setKeysList(list);
+        setRawKeysJson(JSON.stringify(prefill.keys, null, 2));
       } else {
         setIndexName('');
         setUnique(false);
@@ -131,7 +147,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
       setIsRawMode(false);
       setNameTouched(false);
     }
-  }, [isOpen, initialData]);
+  }, [isOpen, initialData, prefill]);
 
   useEffect(() => {
     if (!isOpen || initialData || nameTouched) return;
