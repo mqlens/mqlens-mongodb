@@ -251,6 +251,31 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[tokio::test]
+    async fn test_validator_get_set_roundtrip() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let opts = get_collection_options_impl(&state, &conn_id, "sales_db", "customers")
+            .await
+            .expect("get collection options");
+
+        let result = set_validator_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            &opts.validator,
+            &opts.validation_level,
+            &opts.validation_action,
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
     // Issue #114: demo mode returns a synthetic replica set so the Cluster
     // tab is populated without a live cluster — including a lagging
     // secondary so the warning styling is visible.

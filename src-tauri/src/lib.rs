@@ -1354,6 +1354,38 @@ async fn rename_collection(
 }
 
 #[tauri::command]
+async fn get_collection_options(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+) -> Result<CollectionValidation, String> {
+    get_collection_options_impl(&state, &id, &database, &collection).await
+}
+
+#[tauri::command]
+async fn set_validator(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    validator: String,
+    validation_level: String,
+    validation_action: String,
+) -> Result<(), String> {
+    set_validator_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        &validator,
+        &validation_level,
+        &validation_action,
+    )
+    .await
+}
+
+#[tauri::command]
 async fn drop_database(
     state: tauri::State<'_, AppState>,
     id: String,
@@ -1888,6 +1920,8 @@ pub fn run() {
             create_view,
             drop_collection,
             rename_collection,
+            get_collection_options,
+            set_validator,
             drop_database,
             rename_database,
             explain_mql_query,
