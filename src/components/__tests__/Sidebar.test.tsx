@@ -325,6 +325,10 @@ describe('Sidebar Component', () => {
     expect(await screen.findByTestId('cluster-health-card')).toBeInTheDocument();
     expect(await screen.findByText('rs0')).toBeInTheDocument();
     expect(mockInvoke).toHaveBeenCalledWith('repl_set_status', { id: 'conn-1' });
+    // #114 follow-up: connection name is passed through; the fixture's
+    // auth-less uri ('mongodb://mock') means no user line.
+    expect(screen.getByTestId('cluster-card-connection')).toHaveTextContent('Mock DB');
+    expect(screen.queryByTestId('cluster-card-user')).toBeNull();
   });
 
   it('closes the cluster-health popover on Escape (#114)', async () => {

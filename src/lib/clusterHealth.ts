@@ -23,3 +23,17 @@ export const fmtMemberUptime = (secs: number): string => {
   const h = Math.floor((secs % 86_400) / 3_600);
   return d > 0 ? `${d}d ${h}h` : `${h}h ${Math.floor((secs % 3_600) / 60)}m`;
 };
+
+/** Username from a mongodb:// or mongodb+srv:// URI, or null when auth-less.
+ *  Multi-host URIs (mongodb://u:p@h1:27017,h2:27017/db) break `new URL`, so
+ *  this is regex-based rather than parsed via the URL API. */
+export const uriUser = (uri: string): string | null => {
+  const m = /^mongodb(?:\+srv)?:\/\/([^:@/]+)(?::[^@/]*)?@/.exec(uri);
+  return m ? decodeURIComponent(m[1]) : null;
+};
+
+/** readPreference from the URI query string; MongoDB's default is "primary". */
+export const uriReadPreference = (uri: string): string => {
+  const m = /[?&]readPreference=([^&]+)/i.exec(uri);
+  return m ? decodeURIComponent(m[1]) : 'primary';
+};

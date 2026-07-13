@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => mockInvoke(...a) }));
@@ -23,28 +23,55 @@ const CLUSTER = {
 beforeEach(() => mockInvoke.mockReset());
 
 describe('ClusterHealthCard', () => {
-  it('renders the set summary and members with lag styling', async () => {
+  it('renders the connection header, member rows, read-pref and version', async () => {
     mockInvoke.mockResolvedValue(CLUSTER);
-    render(<ClusterHealthCard connectionId="conn-1" />);
+    render(
+      <ClusterHealthCard
+        connectionId="conn-1"
+        connectionName="Mock DB"
+        connectionUri="mongodb://root:pw@h1:27017,h2:27017/?readPreference=primary"
+      />
+    );
     const card = await screen.findByTestId('cluster-health-card');
-    expect(card).toHaveTextContent('Replica set');
-    expect(card).toHaveTextContent('rs0');
-    expect(card).toHaveTextContent('you: PRIMARY');
     expect(mockInvoke).toHaveBeenCalledWith('repl_set_status', { id: 'conn-1' });
+
+    expect(screen.getByTestId('cluster-card-connection')).toHaveTextContent('Mock DB');
+    expect(screen.getByTestId('cluster-card-connection')).toHaveTextContent('replica set: rs0');
+    expect(screen.getByTestId('cluster-card-user')).toHaveTextContent('root');
+    expect(screen.getByTestId('cluster-card-read-pref')).toHaveTextContent('Primary');
+    expect(screen.getByTestId('cluster-card-version')).toHaveTextContent('7.0.0');
+
     expect(screen.getByTestId('cluster-card-member-db1:27017')).toHaveTextContent('PRIMARY');
+    expect(screen.getByTestId('cluster-card-member-db2:27017')).toHaveTextContent('Online [SECONDARY]');
     expect(screen.getByTestId('cluster-card-member-db2:27017')).toHaveTextContent('lag 0.8s');
     // 42s >= 10s threshold: amber class somewhere inside the row.
     expect(screen.getByTestId('cluster-card-member-db3:27017').innerHTML).toMatch(/amber/);
-    // Unhealthy member: destructive styling + stateStr instead of lag.
+    // Unhealthy member: destructive styling + Offline instead of lag.
     const down = screen.getByTestId('cluster-card-member-db4:27017');
     expect(down.className).toMatch(/destructive/);
+    expect(down).toHaveTextContent('Offline');
     expect(down).toHaveTextContent('(not reachable/healthy)');
+    expect(card).toBeInTheDocument();
   });
 
-  it('shows the standalone one-liner for non-replica-set servers', async () => {
+  it('refetches when Refresh is clicked', async () => {
+    mockInvoke.mockResolvedValue(CLUSTER);
+    render(<ClusterHealthCard connectionId="conn-1" />);
+    await screen.findByTestId('cluster-health-card');
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+    screen.getByTestId('cluster-card-refresh').click();
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(2));
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'repl_set_status', { id: 'conn-1' });
+  });
+
+  it('shows the standalone one-liner for non-replica-set servers, without header lines when props are omitted', async () => {
     mockInvoke.mockResolvedValue({ isReplicaSet: false, clusterType: 'standalone', set: '', myStateStr: '', mongoVersion: '', members: [] });
     render(<ClusterHealthCard connectionId="conn-1" />);
     expect(await screen.findByTestId('cluster-card-standalone')).toBeInTheDocument();
+    expect(screen.queryByTestId('cluster-card-connection')).toBeNull();
+    expect(screen.queryByTestId('cluster-card-user')).toBeNull();
+    expect(screen.queryByTestId('cluster-card-read-pref')).toBeNull();
   });
 
   it('shows the sharded one-liner for mongos connections', async () => {

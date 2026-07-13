@@ -1642,7 +1642,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onMouseEnter={cancelHealthTimers}
                   onMouseLeave={scheduleHealthClose}
                 >
-                  <ClusterHealthCard connectionId={conn.id} onOpenMonitoring={onOpenMonitoring} />
+                  <ClusterHealthCard
+                    connectionId={conn.id}
+                    connectionName={conn.name}
+                    connectionUri={conn.uri}
+                    onOpenMonitoring={onOpenMonitoring}
+                  />
                 </PopoverContent>
               </Popover>
 

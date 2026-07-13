@@ -510,10 +510,16 @@ pub async fn repl_set_status_impl(state: &AppState, id: &str) -> Result<ReplSetS
         .run_command(doc! { "hello": 1 })
         .await
         .map_err(|e| format!("hello failed: {}", e))?;
+    // Server version applies to every topology; buildInfo needs no privileges.
+    let version = match admin.run_command(doc! { "buildInfo": 1 }).await {
+        Ok(b) => b.get_str("version").unwrap_or_default().to_string(),
+        Err(_) => String::new(),
+    };
     let cluster_type = classify_topology(&hello);
     if cluster_type != "replicaSet" {
         return Ok(ReplSetStatus {
             cluster_type: cluster_type.to_string(),
+            mongo_version: version,
             ..Default::default()
         });
     }
@@ -537,12 +543,6 @@ pub async fn repl_set_status_impl(state: &AppState, id: &str) -> Result<ReplSetS
             }
             return Err(format!("replSetGetStatus failed: {}", e));
         }
-    };
-    // rs.status() carries no server version; buildInfo is a cheap admin call
-    // and only runs while the Cluster tab is actively polling.
-    let version = match admin.run_command(doc! { "buildInfo": 1 }).await {
-        Ok(b) => b.get_str("version").unwrap_or_default().to_string(),
-        Err(_) => String::new(),
     };
     Ok(curate_repl_set_status(&raw, &version))
 }
