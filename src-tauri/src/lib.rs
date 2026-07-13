@@ -51,6 +51,7 @@ pub use db::metadata::{
     create_index_impl, delete_index_impl, list_collections_impl, list_databases_impl,
     list_indexes_impl,
 };
+pub use db::stats::{db_stats_impl, coll_stats_impl, index_stats_impl};
 pub use db::query::{count_documents_impl, execute_mql_query_impl, explain_mql_query_impl};
 pub use db::schema::{analyze_schema_impl, infer_schema, FieldStat, SchemaReport, TypeCount};
 pub use db::users::{
@@ -929,6 +930,35 @@ async fn list_indexes(
     collection: String,
 ) -> Result<Vec<IndexInfo>, String> {
     list_indexes_impl(&state, &id, &db, &collection).await
+}
+
+#[tauri::command]
+async fn db_stats(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    db: String,
+) -> Result<db::stats::DbStatsUi, String> {
+    db::stats::db_stats_impl(&state, &id, &db).await
+}
+
+#[tauri::command]
+async fn coll_stats(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    db: String,
+    collection: String,
+) -> Result<db::stats::CollStatsUi, String> {
+    db::stats::coll_stats_impl(&state, &id, &db, &collection).await
+}
+
+#[tauri::command]
+async fn index_stats(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    db: String,
+    collection: String,
+) -> Result<Vec<db::stats::IndexStatUi>, String> {
+    db::stats::index_stats_impl(&state, &id, &db, &collection).await
 }
 
 // ── Cluster monitoring ────────────────────────────────────────────────────────
@@ -1823,6 +1853,9 @@ pub fn run() {
             list_databases,
             list_collections,
             list_indexes,
+            db_stats,
+            coll_stats,
+            index_stats,
             create_index,
             delete_index,
             delete_document,
