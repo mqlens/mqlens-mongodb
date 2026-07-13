@@ -32,7 +32,12 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({ connection
     <div className="flex w-64 flex-col gap-1.5 text-xs" data-testid="cluster-health-card">
       {err && <div className="text-destructive">{err}</div>}
       {!err && !data && <div className="text-muted-foreground">Loading cluster health…</div>}
-      {!err && data && !data.isReplicaSet && (
+      {!err && data && !data.isReplicaSet && data.clusterType === 'sharded' && (
+        <div className="text-muted-foreground" data-testid="cluster-card-sharded">
+          Sharded cluster (mongos).
+        </div>
+      )}
+      {!err && data && !data.isReplicaSet && data.clusterType !== 'sharded' && (
         <div className="text-muted-foreground" data-testid="cluster-card-standalone">
           Standalone server — no replica set.
         </div>
@@ -40,7 +45,7 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({ connection
       {!err && data && data.isReplicaSet && (
         <>
           <div className="text-muted-foreground">
-            <span className="font-semibold text-foreground">{data.set}</span>
+            Replica set <span className="font-semibold text-foreground">{data.set}</span>
             {data.myStateStr && <> · you: {data.myStateStr}</>}
           </div>
           <div className="flex flex-col gap-1">

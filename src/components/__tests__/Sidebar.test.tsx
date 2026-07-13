@@ -300,7 +300,7 @@ describe('Sidebar Component', () => {
       if (cmd === 'list_collections') return Promise.resolve([]);
       if (cmd === 'repl_set_status')
         return Promise.resolve({
-          isReplicaSet: true, set: 'rs0', myStateStr: 'PRIMARY', mongoVersion: '7.0.0',
+          isReplicaSet: true, clusterType: 'replicaSet', set: 'rs0', myStateStr: 'PRIMARY', mongoVersion: '7.0.0',
           members: [
             { name: 'db1:27017', stateStr: 'PRIMARY', health: 1, self: true, uptimeSecs: 1, optimeDateMs: 1, pingMs: null, syncSource: '', lagSecs: null },
           ],
@@ -333,7 +333,7 @@ describe('Sidebar Component', () => {
       if (cmd === 'list_collections') return Promise.resolve([]);
       if (cmd === 'repl_set_status')
         return Promise.resolve({
-          isReplicaSet: true, set: 'rs0', myStateStr: 'PRIMARY', mongoVersion: '7.0.0',
+          isReplicaSet: true, clusterType: 'replicaSet', set: 'rs0', myStateStr: 'PRIMARY', mongoVersion: '7.0.0',
           members: [
             { name: 'db1:27017', stateStr: 'PRIMARY', health: 1, self: true, uptimeSecs: 1, optimeDateMs: 1, pingMs: null, syncSource: '', lagSecs: null },
           ],
@@ -367,7 +367,7 @@ describe('Sidebar Component', () => {
       if (cmd === 'list_collections') return Promise.resolve([]);
       if (cmd === 'repl_set_status')
         return Promise.resolve({
-          isReplicaSet: true, set: 'rs0', myStateStr: 'PRIMARY', mongoVersion: '7.0.0',
+          isReplicaSet: true, clusterType: 'replicaSet', set: 'rs0', myStateStr: 'PRIMARY', mongoVersion: '7.0.0',
           members: [
             { name: 'db1:27017', stateStr: 'PRIMARY', health: 1, self: true, uptimeSecs: 1, optimeDateMs: 1, pingMs: null, syncSource: '', lagSecs: null },
           ],

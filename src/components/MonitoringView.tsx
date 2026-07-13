@@ -1016,7 +1016,16 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
       {section === 'cluster' && (
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3" data-testid="mon-panel-cluster">
           {clusterErr && <div className="text-xs text-red-500">{clusterErr}</div>}
-          {!clusterErr && cluster && !cluster.isReplicaSet && (
+          {!clusterErr && cluster && !cluster.isReplicaSet && cluster.clusterType === 'sharded' && (
+            <div
+              className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground"
+              data-testid="cluster-sharded"
+            >
+              Sharded cluster — member-level health isn&apos;t available through mongos. Connect directly to a
+              shard&apos;s replica set to inspect its members.
+            </div>
+          )}
+          {!clusterErr && cluster && !cluster.isReplicaSet && cluster.clusterType !== 'sharded' && (
             <div
               className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground"
               data-testid="cluster-not-replset"

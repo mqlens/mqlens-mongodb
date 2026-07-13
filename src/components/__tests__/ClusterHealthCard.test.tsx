@@ -8,6 +8,7 @@ import { ClusterHealthCard } from '../ClusterHealthCard';
 
 const CLUSTER = {
   isReplicaSet: true,
+  clusterType: 'replicaSet',
   set: 'rs0',
   myStateStr: 'PRIMARY',
   mongoVersion: '7.0.0',
@@ -26,6 +27,7 @@ describe('ClusterHealthCard', () => {
     mockInvoke.mockResolvedValue(CLUSTER);
     render(<ClusterHealthCard connectionId="conn-1" />);
     const card = await screen.findByTestId('cluster-health-card');
+    expect(card).toHaveTextContent('Replica set');
     expect(card).toHaveTextContent('rs0');
     expect(card).toHaveTextContent('you: PRIMARY');
     expect(mockInvoke).toHaveBeenCalledWith('repl_set_status', { id: 'conn-1' });
@@ -40,9 +42,16 @@ describe('ClusterHealthCard', () => {
   });
 
   it('shows the standalone one-liner for non-replica-set servers', async () => {
-    mockInvoke.mockResolvedValue({ isReplicaSet: false, set: '', myStateStr: '', mongoVersion: '', members: [] });
+    mockInvoke.mockResolvedValue({ isReplicaSet: false, clusterType: 'standalone', set: '', myStateStr: '', mongoVersion: '', members: [] });
     render(<ClusterHealthCard connectionId="conn-1" />);
     expect(await screen.findByTestId('cluster-card-standalone')).toBeInTheDocument();
+  });
+
+  it('shows the sharded one-liner for mongos connections', async () => {
+    mockInvoke.mockResolvedValue({ isReplicaSet: false, clusterType: 'sharded', set: '', myStateStr: '', mongoVersion: '', members: [] });
+    render(<ClusterHealthCard connectionId="conn-1" />);
+    expect(await screen.findByTestId('cluster-card-sharded')).toBeInTheDocument();
+    expect(screen.queryByTestId('cluster-card-standalone')).toBeNull();
   });
 
   it('renders errors quietly and fires onOpenMonitoring from the footer link', async () => {

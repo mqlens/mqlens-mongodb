@@ -17,6 +17,7 @@ const STATUS = {
 
 const CLUSTER = {
   isReplicaSet: true,
+  clusterType: 'replicaSet',
   set: 'rs0',
   myStateStr: 'PRIMARY',
   mongoVersion: '7.0.0',
@@ -186,12 +187,27 @@ describe('MonitoringView', () => {
       if (cmd === 'server_status') return Promise.resolve(STATUS);
       if (cmd === 'current_ops') return Promise.resolve([]);
       if (cmd === 'repl_set_status')
-        return Promise.resolve({ isReplicaSet: false, set: '', myStateStr: '', mongoVersion: '', members: [] });
+        return Promise.resolve({ isReplicaSet: false, clusterType: 'standalone', set: '', myStateStr: '', mongoVersion: '', members: [] });
       return Promise.resolve(null);
     });
     render(<MonitoringView connectionId="conn-1" />);
     fireEvent.click(await screen.findByTestId('mon-tab-cluster'));
     expect(await screen.findByTestId('cluster-not-replset')).toBeInTheDocument();
+    expect(screen.queryByTestId('cluster-members-table')).toBeNull();
+  });
+
+  it('shows a sharded-cluster notice for mongos connections', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'server_status') return Promise.resolve(STATUS);
+      if (cmd === 'current_ops') return Promise.resolve([]);
+      if (cmd === 'repl_set_status')
+        return Promise.resolve({ isReplicaSet: false, clusterType: 'sharded', set: '', myStateStr: '', mongoVersion: '', members: [] });
+      return Promise.resolve(null);
+    });
+    render(<MonitoringView connectionId="conn-1" />);
+    fireEvent.click(await screen.findByTestId('mon-tab-cluster'));
+    expect(await screen.findByTestId('cluster-sharded')).toBeInTheDocument();
+    expect(screen.queryByTestId('cluster-not-replset')).toBeNull();
     expect(screen.queryByTestId('cluster-members-table')).toBeNull();
   });
 });

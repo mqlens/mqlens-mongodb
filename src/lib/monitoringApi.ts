@@ -60,6 +60,7 @@ export interface ReplSetMember {
 
 export interface ReplSetStatus {
   isReplicaSet: boolean;
+  clusterType: string;
   set: string;
   myStateStr: string;
   mongoVersion: string;

@@ -224,6 +224,7 @@ mod tests {
         let s = crate::monitoring::repl_set_status_impl(&state, &conn_id).await.unwrap();
         assert!(s.is_replica_set);
         assert_eq!(s.set, "rs0");
+        assert_eq!(s.cluster_type, "replicaSet");
         assert_eq!(s.members.len(), 3);
         assert_eq!(s.members.iter().filter(|m| m.state_str == "PRIMARY").count(), 1);
         assert!(

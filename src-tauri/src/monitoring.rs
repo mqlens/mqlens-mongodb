@@ -251,10 +251,24 @@ pub struct ReplSetMember {
 pub struct ReplSetStatus {
     /// false = standalone server (replSetGetStatus said NoReplicationEnabled).
     pub is_replica_set: bool,
+    /// "replicaSet" | "sharded" | "standalone"
+    pub cluster_type: String,
     pub set: String,
     pub my_state_str: String,
     pub mongo_version: String,
     pub members: Vec<ReplSetMember>,
+}
+
+/// Classify a `hello` response: mongos advertises msg "isdbgrid", replica-set
+/// members carry setName, anything else is a standalone server.
+pub fn classify_topology(hello: &Document) -> &'static str {
+    if hello.get_str("msg").ok() == Some("isdbgrid") {
+        return "sharded";
+    }
+    if hello.get_str("setName").is_ok() {
+        return "replicaSet";
+    }
+    "standalone"
 }
 
 /// Curate a raw `replSetGetStatus` document. Lag per non-primary member is
@@ -306,6 +320,7 @@ pub fn curate_repl_set_status(raw: &Document, mongo_version: &str) -> ReplSetSta
 
     ReplSetStatus {
         is_replica_set: true,
+        cluster_type: "replicaSet".to_string(),
         set: raw.get_str("set").unwrap_or_default().to_string(),
         my_state_str,
         mongo_version: mongo_version.to_string(),
@@ -344,6 +359,7 @@ fn mock_repl_set_status() -> ReplSetStatus {
     };
     ReplSetStatus {
         is_replica_set: true,
+        cluster_type: "replicaSet".into(),
         set: "rs0".into(),
         my_state_str: "PRIMARY".into(),
         mongo_version: "7.0.0".into(),
@@ -490,14 +506,30 @@ pub async fn repl_set_status_impl(state: &AppState, id: &str) -> Result<ReplSetS
     }
     let client = require_real_client(state, id)?;
     let admin = client.database("admin");
+    let hello = admin
+        .run_command(doc! { "hello": 1 })
+        .await
+        .map_err(|e| format!("hello failed: {}", e))?;
+    let cluster_type = classify_topology(&hello);
+    if cluster_type != "replicaSet" {
+        return Ok(ReplSetStatus {
+            cluster_type: cluster_type.to_string(),
+            ..Default::default()
+        });
+    }
     let raw = match admin.run_command(doc! { "replSetGetStatus": 1 }).await {
         Ok(raw) => raw,
         Err(e) => {
             // Standalone servers answer NoReplicationEnabled (code 76): a
-            // valid "not a replica set" state, not an error.
+            // valid "not a replica set" state, not an error. Kept as a safety
+            // net even though hello now classifies standalones up front.
             if let mongodb::error::ErrorKind::Command(ref ce) = *e.kind {
                 if ce.code == 76 {
-                    return Ok(ReplSetStatus { is_replica_set: false, ..Default::default() });
+                    return Ok(ReplSetStatus {
+                        is_replica_set: false,
+                        cluster_type: "standalone".to_string(),
+                        ..Default::default()
+                    });
                 }
                 if ce.code == 13 {
                     return Err("Not authorized to run replSetGetStatus — the connection's user needs the clusterMonitor role.".to_string());
@@ -622,12 +654,20 @@ mod tests {
     }
 
     #[test]
+    fn classifies_topology_from_hello() {
+        assert_eq!(classify_topology(&doc! { "msg": "isdbgrid", "ok": 1.0 }), "sharded");
+        assert_eq!(classify_topology(&doc! { "setName": "rs0", "ok": 1.0 }), "replicaSet");
+        assert_eq!(classify_topology(&doc! { "ok": 1.0 }), "standalone");
+    }
+
+    #[test]
     fn curates_repl_set_status_with_lag() {
         let s = curate_repl_set_status(&repl_status_doc(), "7.0.5");
         assert!(s.is_replica_set);
         assert_eq!(s.set, "rs0");
         assert_eq!(s.my_state_str, "PRIMARY", "role comes from the self member");
         assert_eq!(s.mongo_version, "7.0.5");
+        assert_eq!(s.cluster_type, "replicaSet");
         assert_eq!(s.members.len(), 3);
 
         let primary = &s.members[0];
