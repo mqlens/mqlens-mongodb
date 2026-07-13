@@ -166,6 +166,8 @@ function walkLevel(
       const closeBracket = aKind === 'array' ? ']' : '}';
       const aChildren = aKind === 'array' ? (a as unknown[]).length : Object.keys(a as object).length;
       const bChildren = bKind === 'array' ? (b as unknown[]).length : Object.keys(b as object).length;
+      const openL = left.length;
+      const openR = right.length;
       left.push({ path, keyLabel: key, depth, status: 'unchanged', kind: aKind, bracket, childCount: aChildren });
       right.push({ path, keyLabel: key, depth, status: 'unchanged', kind: bKind, bracket, childCount: bChildren });
 
@@ -181,13 +183,11 @@ function walkLevel(
         counts.changed !== beforeChanged ||
         counts.added !== beforeAdded ||
         counts.removed !== beforeRemoved;
-      // Re-tag the open lines as 'changed' when descendants differ.
+      // Re-tag the open lines (captured by index before the push) as
+      // 'changed' when descendants differ — O(1) instead of re-scanning.
       if (touched) {
-        // open lines are the pair pushed just before recursion.
-        const openL = left.findIndex((l) => l.path === path && l.bracket === bracket);
-        const openR = right.findIndex((l) => l.path === path && l.bracket === bracket);
-        if (openL >= 0) left[openL] = { ...left[openL], status: 'changed' };
-        if (openR >= 0) right[openR] = { ...right[openR], status: 'changed' };
+        left[openL] = { ...left[openL], status: 'changed' };
+        right[openR] = { ...right[openR], status: 'changed' };
       }
       continue;
     }

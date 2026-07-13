@@ -463,10 +463,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   // A new result set invalidates any armed compare source: the armed doc may
   // no longer exist (or may differ) in the fresh documents array, and matching
-  // is by reference — silently diffing a stale doc would mislead.
+  // is by reference — silently diffing a stale doc would mislead. An OPEN diff
+  // modal is deliberately left alone: it deep-copied its two docs and stays
+  // valid regardless of what the grid refreshes to underneath it.
   useEffect(() => {
     setPendingCompare(null);
-    setDiffPair(null);
   }, [documents]);
 
   const writeClipboard = (text: string) => {
