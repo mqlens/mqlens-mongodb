@@ -45,3 +45,25 @@ export const setProfilingLevel = (id: string, database: string, level: number, s
   invoke<ProfilingStatus>('set_profiling_level', { id, database, level, slowMs });
 export const readProfile = (id: string, database: string, limit: number) =>
   invoke<ProfileEntry[]>('read_profile', { id, database, limit });
+
+export interface ReplSetMember {
+  name: string;
+  stateStr: string;
+  health: number;
+  self: boolean;
+  uptimeSecs: number;
+  optimeDateMs: number;
+  pingMs?: number | null;
+  syncSource: string;
+  lagSecs?: number | null;
+}
+
+export interface ReplSetStatus {
+  isReplicaSet: boolean;
+  set: string;
+  myStateStr: string;
+  mongoVersion: string;
+  members: ReplSetMember[];
+}
+
+export const replSetStatus = (id: string) => invoke<ReplSetStatus>('repl_set_status', { id });

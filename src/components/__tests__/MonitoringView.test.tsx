@@ -15,6 +15,18 @@ const STATUS = {
   cache: { bytesInCache: 1024, maxBytes: 4096, dirtyBytes: 0 },
 };
 
+const CLUSTER = {
+  isReplicaSet: true,
+  set: 'rs0',
+  myStateStr: 'PRIMARY',
+  mongoVersion: '7.0.0',
+  members: [
+    { name: 'db1:27017', stateStr: 'PRIMARY', health: 1, self: true, uptimeSecs: 86400, optimeDateMs: 1749427200000, pingMs: null, syncSource: '', lagSecs: null },
+    { name: 'db2:27017', stateStr: 'SECONDARY', health: 1, self: false, uptimeSecs: 86300, optimeDateMs: 1749427199200, pingMs: 1, syncSource: 'db1:27017', lagSecs: 0.8 },
+    { name: 'db3:27017', stateStr: 'SECONDARY', health: 1, self: false, uptimeSecs: 4200, optimeDateMs: 1749427158000, pingMs: 3, syncSource: 'db1:27017', lagSecs: 42 },
+  ],
+};
+
 beforeEach(() => {
   mockInvoke.mockReset();
   mockInvoke.mockImplementation((cmd: string) => {
@@ -26,6 +38,7 @@ beforeEach(() => {
       case 'list_databases': return Promise.resolve(['admin', 'sales_db']);
       case 'get_profiling_status': return Promise.resolve({ level: 0, slowMs: 100 });
       case 'read_profile': return Promise.resolve([]);
+      case 'repl_set_status': return Promise.resolve(CLUSTER);
       case 'kill_op': return Promise.resolve();
       default: return Promise.resolve(null);
     }
@@ -130,5 +143,51 @@ describe('MonitoringView', () => {
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('set_profiling_level', expect.objectContaining({ id: 'conn-1', level: 1 }));
     });
+  });
+
+  it('does not fetch replica-set status until the Cluster tab is active', async () => {
+    render(<MonitoringView connectionId="conn-1" />);
+    expect(await screen.findByTestId('current-ops-table')).toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith('repl_set_status', expect.anything());
+    fireEvent.click(screen.getByTestId('mon-tab-cluster'));
+    expect(await screen.findByTestId('mon-panel-cluster')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('repl_set_status', { id: 'conn-1' });
+    });
+  });
+
+  it('renders replica-set members with roles and lag warning styling', async () => {
+    render(<MonitoringView connectionId="conn-1" />);
+    fireEvent.click(await screen.findByTestId('mon-tab-cluster'));
+
+    const summary = await screen.findByTestId('cluster-summary');
+    expect(summary).toHaveTextContent('rs0');
+    expect(summary).toHaveTextContent('3 members');
+    expect(summary).toHaveTextContent('7.0.0');
+    expect(summary).toHaveTextContent('PRIMARY');
+
+    expect(screen.getByTestId('cluster-member-db1:27017')).toHaveTextContent('PRIMARY');
+    // Healthy secondary: sub-threshold lag, no warning class.
+    const okLag = screen.getByTestId('cluster-lag-db2:27017');
+    expect(okLag).toHaveTextContent('0.8s');
+    expect(okLag.className).not.toMatch(/amber|red/);
+    // Lagging secondary (42s >= 10s): amber warning.
+    const warnLag = screen.getByTestId('cluster-lag-db3:27017');
+    expect(warnLag).toHaveTextContent('42');
+    expect(warnLag.className).toMatch(/amber/);
+  });
+
+  it('shows a friendly empty state for standalone (non-replica-set) servers', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'server_status') return Promise.resolve(STATUS);
+      if (cmd === 'current_ops') return Promise.resolve([]);
+      if (cmd === 'repl_set_status')
+        return Promise.resolve({ isReplicaSet: false, set: '', myStateStr: '', mongoVersion: '', members: [] });
+      return Promise.resolve(null);
+    });
+    render(<MonitoringView connectionId="conn-1" />);
+    fireEvent.click(await screen.findByTestId('mon-tab-cluster'));
+    expect(await screen.findByTestId('cluster-not-replset')).toBeInTheDocument();
+    expect(screen.queryByTestId('cluster-members-table')).toBeNull();
   });
 });
