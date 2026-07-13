@@ -13,13 +13,17 @@ import {
   Edit,
   Trash2,
   Loader2,
+  HardDrive,
+  Activity,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { formatBytes } from '@/lib/format';
 import type { IndexInfo } from './Sidebar';
+import type { IndexStatUi } from './StatsCards';
 import { useDialogs } from './dialogs/DialogProvider';
 
 interface IndexViewerProps {
@@ -44,12 +48,14 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
   const [info, setInfo] = useState<IndexInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<IndexStatUi[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setInfo(null);
+    setStats(null);
 
     (async () => {
       try {
@@ -72,10 +78,27 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
       }
     })();
 
+    // Fetched independently, in its own try/catch: a stats failure must
+    // never block rendering the index definition above.
+    (async () => {
+      try {
+        const s = await invoke<IndexStatUi[]>('index_stats', {
+          id: connectionId,
+          db: databaseName,
+          collection: collectionName,
+        });
+        if (!cancelled) setStats(s);
+      } catch {
+        // Usage/size stats are a nice-to-have; ignore failures silently.
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
   }, [connectionId, databaseName, collectionName, indexName]);
+
+  const statEntry = useMemo(() => stats?.find((s) => s.name === indexName) ?? null, [stats, indexName]);
 
   const indexSpecs = useMemo(() => {
     let keyPattern: Record<string, number | string> = {};
@@ -308,6 +331,43 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
               </p>
             </CardContent>
           </Card>
+
+          {statEntry && (
+            <Card className="relative overflow-hidden" data-testid="index-size-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <HardDrive size={12} className="text-primary" />
+                  Size
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-lg font-semibold text-foreground">{formatBytes(statEntry.sizeBytes)}</div>
+                <p className="mt-1 text-[11px] text-muted-foreground">On-disk index size</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {statEntry && (
+            <Card className="relative overflow-hidden" data-testid="index-usage-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <Activity size={12} className="text-success" />
+                  Usage
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-2">
+                  <div className="text-lg font-semibold text-foreground">{statEntry.ops.toLocaleString()} ops</div>
+                  {statEntry.ops === 0 && (
+                    <Badge variant="outline" data-testid="index-unused-badge">
+                      Unused
+                    </Badge>
+                  )}
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">Index accesses since last restart</p>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">

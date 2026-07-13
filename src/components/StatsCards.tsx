@@ -23,7 +23,7 @@ interface CollStatsUi {
   capped: boolean;
 }
 
-interface IndexStatUi {
+export interface IndexStatUi {
   name: string;
   sizeBytes: number;
   ops: number;
