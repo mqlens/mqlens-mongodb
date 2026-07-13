@@ -302,3 +302,77 @@ pub async fn rename_database_impl(
         }
     }
 }
+
+// Helper functions for validation rules (Tasks 1-3)
+fn validation_level_value(level: Option<&str>) -> Result<Option<&str>, String> {
+    match level {
+        None | Some("") => Ok(None),
+        Some(v @ ("off" | "moderate" | "strict")) => Ok(Some(v)),
+        Some(other) => Err(format!("Invalid validationLevel: {}", other)),
+    }
+}
+
+fn validation_action_value(action: Option<&str>) -> Result<Option<&str>, String> {
+    match action {
+        None | Some("") => Ok(None),
+        Some(v @ ("error" | "warn")) => Ok(Some(v)),
+        Some(other) => Err(format!("Invalid validationAction: {}", other)),
+    }
+}
+
+fn build_collmod_command(
+    collection: &str,
+    validator: mongodb::bson::Document,
+    level: Option<&str>,
+    action: Option<&str>,
+) -> Result<mongodb::bson::Document, String> {
+    let mut cmd = mongodb::bson::doc! { "collMod": collection, "validator": validator };
+    if let Some(lvl) = validation_level_value(level)? {
+        cmd.insert("validationLevel", lvl);
+    }
+    if let Some(act) = validation_action_value(action)? {
+        cmd.insert("validationAction", act);
+    }
+    Ok(cmd)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_collmod_full() {
+        let validator = mongodb::bson::doc! { "$jsonSchema": { "type": "object" } };
+        let result = build_collmod_command("test_coll", validator.clone(), Some("moderate"), Some("error"));
+
+        assert!(result.is_ok());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.get_str("collMod").unwrap(), "test_coll");
+        assert!(cmd.contains_key("validator"));
+        assert_eq!(cmd.get_str("validationLevel").unwrap(), "moderate");
+        assert_eq!(cmd.get_str("validationAction").unwrap(), "error");
+    }
+
+    #[test]
+    fn test_build_collmod_empty_opts() {
+        let validator = mongodb::bson::doc! { "$jsonSchema": { "type": "object" } };
+        let result = build_collmod_command("test_coll", validator.clone(), Some(""), Some(""));
+
+        assert!(result.is_ok());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.get_str("collMod").unwrap(), "test_coll");
+        assert!(cmd.contains_key("validator"));
+        assert!(!cmd.contains_key("validationLevel"));
+        assert!(!cmd.contains_key("validationAction"));
+    }
+
+    #[test]
+    fn test_build_collmod_invalid_level() {
+        let validator = mongodb::bson::doc! { "$jsonSchema": { "type": "object" } };
+        let result = build_collmod_command("test_coll", validator, Some("invalid"), Some("error"));
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("validationLevel"));
+    }
+}
