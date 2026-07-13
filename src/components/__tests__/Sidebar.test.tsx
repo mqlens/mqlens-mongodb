@@ -982,6 +982,42 @@ describe('Sidebar Component', () => {
     expect(handleOpenDump).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
   });
 
+  it('opens Validation Rules from the collection context menu', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') {
+        return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    const handleEditValidation = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Prod DB Server', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onEditValidation={handleEditValidation}
+      />
+    );
+
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.click(dbNode);
+    const collectionsFolder = await screen.findByText('Collections');
+    fireEvent.click(collectionsFolder);
+    const collectionNode = await screen.findByText('customers');
+    fireEvent.contextMenu(collectionNode);
+    fireEvent.click(screen.getByText('Validation Rules'));
+    expect(handleEditValidation).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
+  });
+
   it('hides Dump/Restore context-menu items for mock connections', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases' && args.id === 'conn-1') {
