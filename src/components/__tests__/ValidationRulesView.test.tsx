@@ -131,6 +131,14 @@ describe('ValidationRulesView', () => {
       })
     );
     await waitFor(() => expect(onApplied).toHaveBeenCalled());
+
+    expect(await screen.findByTestId('validation-success')).toBeInTheDocument();
+
+    fireEvent.change(editor, {
+      target: { value: '{"$jsonSchema":{"bsonType":"object","required":["email"]}}' },
+    });
+
+    expect(screen.queryByTestId('validation-success')).not.toBeInTheDocument();
   });
 
   it('applies an empty validator to clear validation rules', async () => {

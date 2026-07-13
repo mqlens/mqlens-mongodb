@@ -124,7 +124,10 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
             <QueryEditor
               surface="filter"
               value={validator}
-              onChange={setValidator}
+              onChange={(v) => {
+                setValidator(v);
+                setSuccess(false);
+              }}
               fields={['_id']}
               height={220}
               data-testid="validation-editor"
@@ -139,7 +142,10 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
               <Label>Validation Level</Label>
               <Select
                 value={validationLevel || NONE_VALUE}
-                onValueChange={(v) => setValidationLevel(v === NONE_VALUE ? '' : v)}
+                onValueChange={(v) => {
+                  setValidationLevel(v === NONE_VALUE ? '' : v);
+                  setSuccess(false);
+                }}
               >
                 <SelectTrigger data-testid="validation-level-select">
                   <SelectValue placeholder="(default)" />
@@ -157,7 +163,10 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
               <Label>Validation Action</Label>
               <Select
                 value={validationAction || NONE_VALUE}
-                onValueChange={(v) => setValidationAction(v === NONE_VALUE ? '' : v)}
+                onValueChange={(v) => {
+                  setValidationAction(v === NONE_VALUE ? '' : v);
+                  setSuccess(false);
+                }}
               >
                 <SelectTrigger data-testid="validation-action-select">
                   <SelectValue placeholder="(default)" />
