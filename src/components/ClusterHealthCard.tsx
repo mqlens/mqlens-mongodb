@@ -43,7 +43,7 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
   const readPref = connectionUri ? uriReadPreference(connectionUri) : null;
 
   return (
-    <div className="flex w-64 flex-col gap-1.5 text-xs" data-testid="cluster-health-card">
+    <div className="flex w-max min-w-64 max-w-96 flex-col gap-1.5 text-xs" data-testid="cluster-health-card">
       {err && <div className="text-destructive">{err}</div>}
       {!err && !data && <div className="text-muted-foreground">Loading cluster health…</div>}
       {(data || err) && connectionName && (
@@ -78,12 +78,12 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
               return (
                 <div
                   key={m.name}
-                  className={cn('flex items-center gap-1.5', unhealthy && 'text-destructive')}
+                  className={cn('flex flex-wrap items-center gap-x-1.5', unhealthy && 'text-destructive')}
                   data-testid={`cluster-card-member-${m.name}`}
                 >
                   <span className={cn('h-2 w-2 shrink-0 rounded-full', memberDotClass(m))} />
-                  <span className="min-w-0 flex-1 truncate font-mono">{m.name}</span>
-                  <span className="shrink-0 text-muted-foreground">
+                  <span className="whitespace-nowrap font-mono">{m.name}</span>
+                  <span className="whitespace-nowrap text-muted-foreground">
                     {unhealthy ? (
                       '— Offline [(not reachable/healthy)]'
                     ) : isPrimary ? (
