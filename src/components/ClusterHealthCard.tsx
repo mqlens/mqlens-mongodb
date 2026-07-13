@@ -52,7 +52,7 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
           {data?.isReplicaSet && (
             <>
               {' '}
-              [replica set: <span>{data.set}</span>]
+              [replica set: <span className="font-semibold text-foreground">{data.set}</span>]
             </>
           )}
         </div>
@@ -78,7 +78,7 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
               return (
                 <div
                   key={m.name}
-                  className={cn('flex flex-wrap items-center gap-x-1.5', unhealthy && 'text-destructive')}
+                  className={cn('flex flex-wrap items-center gap-x-1.5 gap-y-0.5', unhealthy && 'text-destructive')}
                   data-testid={`cluster-card-member-${m.name}`}
                 >
                   <span className={cn('h-2 w-2 shrink-0 rounded-full', memberDotClass(m))} />
@@ -90,7 +90,7 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
                       '— Online [PRIMARY]'
                     ) : (
                       <>
-                        — Online [SECONDARY] · <span className={lagClass(m.lagSecs)}>lag {lagText(m.lagSecs)}</span>
+                        — Online [{m.stateStr}] · <span className={lagClass(m.lagSecs)}>lag {lagText(m.lagSecs)}</span>
                       </>
                     )}
                   </span>
