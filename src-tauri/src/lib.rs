@@ -673,6 +673,23 @@ async fn detect_mongo_tools(
     Ok(db::mongotools::detect_mongo_tools(configured_dir.as_deref(), managed_dir.as_deref()))
 }
 
+/// Find a working mongosh for the shell's guided-setup card: configured path,
+/// managed install, PATH, then well-known install locations. Probing spawns
+/// several `--version` children, so it runs off the async runtime.
+#[tauri::command]
+async fn detect_mongosh_binary(
+    app_handle: tauri::AppHandle,
+    configured: String,
+) -> Result<Option<toolsetup::MongoshDetection>, String> {
+    use tauri::Manager;
+    let app_data_dir = app_handle.path().app_data_dir().ok();
+    tokio::task::spawn_blocking(move || {
+        toolsetup::detect_mongosh(&configured, app_data_dir.as_deref(), &[])
+    })
+    .await
+    .map_err(|e| format!("mongosh detection failed: {}", e))
+}
+
 #[tauri::command]
 async fn start_dump_task(
     state: tauri::State<'_, AppState>,
@@ -1779,6 +1796,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             connect_db,
             detect_mongo_tools,
+            detect_mongosh_binary,
             start_dump_task,
             start_restore_task,
             start_tool_install_task,

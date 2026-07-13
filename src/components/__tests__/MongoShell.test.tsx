@@ -7,6 +7,15 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
 }));
 
+const mockOpenDialog = vi.fn();
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: (...args: any[]) => mockOpenDialog(...args),
+}));
+const mockOpenUrl = vi.fn();
+vi.mock('@tauri-apps/plugin-opener', () => ({
+  openUrl: (...args: any[]) => mockOpenUrl(...args),
+}));
+
 vi.mock('@monaco-editor/react', () => ({
   default: ({ value, onChange }: any) => (
     <textarea
@@ -543,5 +552,107 @@ describe('MongoShell Component', () => {
       'run_mongosh_command',
       expect.objectContaining({ command: script })
     );
+  });
+
+  describe('guided mongosh setup on session failure', () => {
+    const renderFailedShell = (overrides: Record<string, (args: any) => any> = {}) => {
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        if (overrides[cmd]) return overrides[cmd](args);
+        if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+        if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '' });
+        if (cmd === 'test_mongosh_path') return Promise.reject(new Error('Failed to run mongosh'));
+        if (cmd === 'start_mongosh_session')
+          return Promise.reject(new Error('Failed to start mongosh'));
+        if (cmd === 'detect_mongosh_binary') return Promise.resolve(null);
+        if (cmd === 'save_app_settings') return Promise.resolve();
+        return Promise.resolve([]);
+      });
+      render(
+        <MongoShell
+          connectionId="conn-1"
+          connectionName="mock"
+          connectionUri="mongodb://prod-replica-set"
+          databaseName="sales_db"
+        />
+      );
+    };
+
+    it('offers a detected mongosh and saves it on confirmation', async () => {
+      renderFailedShell({
+        detect_mongosh_binary: () =>
+          Promise.resolve({ path: '/opt/homebrew/bin/mongosh', version: '2.9.9', source: 'path' }),
+      });
+
+      expect(await screen.findByTestId('shell-detected-mongosh')).toHaveTextContent(
+        /2\.9\.9.*\/opt\/homebrew\/bin\/mongosh|\/opt\/homebrew\/bin\/mongosh.*2\.9\.9/
+      );
+      fireEvent.click(screen.getByTestId('shell-use-detected-btn'));
+
+      await waitFor(() => {
+        expect(mockInvoke).toHaveBeenCalledWith(
+          'save_app_settings',
+          expect.objectContaining({
+            settings: expect.objectContaining({ mongosh_path: '/opt/homebrew/bin/mongosh' }),
+          })
+        );
+      });
+      // Saving retries the session.
+      const sessionAttempts = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'start_mongosh_session');
+      await waitFor(() => {
+        expect(
+          mockInvoke.mock.calls.filter(([cmd]) => cmd === 'start_mongosh_session').length
+        ).toBeGreaterThan(sessionAttempts.length - 1);
+      });
+    });
+
+    it('lets the user browse for a binary and saves the pick', async () => {
+      mockOpenDialog.mockResolvedValue('/custom/tools/mongosh');
+      renderFailedShell();
+
+      fireEvent.click(await screen.findByTestId('shell-browse-mongosh-btn'));
+
+      await waitFor(() => {
+        expect(mockInvoke).toHaveBeenCalledWith(
+          'save_app_settings',
+          expect.objectContaining({
+            settings: expect.objectContaining({ mongosh_path: '/custom/tools/mongosh' }),
+          })
+        );
+      });
+    });
+
+    it('re-attempts the session even when the picked binary equals the configured path', async () => {
+      // Same path as already configured: without an explicit retry, the state
+      // update is a no-op and the session would never be re-attempted.
+      mockOpenDialog.mockResolvedValue('/already/configured/mongosh');
+      renderFailedShell({
+        load_app_settings: () => Promise.resolve({ mongosh_path: '/already/configured/mongosh' }),
+      });
+
+      const browseBtn = await screen.findByTestId('shell-browse-mongosh-btn');
+      const attemptsBefore = mockInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'start_mongosh_session'
+      ).length;
+      fireEvent.click(browseBtn);
+
+      await waitFor(() => {
+        expect(
+          mockInvoke.mock.calls.filter(([cmd]) => cmd === 'start_mongosh_session').length
+        ).toBeGreaterThan(attemptsBefore);
+      });
+    });
+
+    it('shows install instructions and a MongoDB docs link when nothing is found', async () => {
+      renderFailedShell();
+
+      expect(await screen.findByTestId('shell-install-hint')).toBeInTheDocument();
+      const docsLink = screen.getByTestId('shell-mongosh-docs-link');
+      fireEvent.click(docsLink);
+      await waitFor(() => {
+        expect(mockOpenUrl).toHaveBeenCalledWith(
+          expect.stringContaining('mongodb.com/docs/mongodb-shell')
+        );
+      });
+    });
   });
 });

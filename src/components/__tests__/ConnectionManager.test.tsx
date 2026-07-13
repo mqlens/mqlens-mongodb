@@ -371,6 +371,111 @@ describe('buildSshConfig (C7)', () => {
     });
     expect(cfg?.auth).toEqual({ type: 'password', password: 'pw' });
   });
+
+  it('builds an agent-auth config without any secret material', () => {
+    const cfg = buildSshConfig({
+      ...sshBase,
+      sshEnabled: true,
+      sshHost: 'h',
+      sshUser: 'u',
+      sshAuth: 'agent',
+      sshKey: '~/.ssh/id_ed25519', // stale form state must not leak into the config
+      sshPass: 'leftover',
+    });
+    expect(cfg?.auth).toEqual({ type: 'agent' });
+  });
+});
+
+describe('SSH agent auth in the editor (issue #130)', () => {
+  const agentProfile = {
+    id: 'p-agent',
+    name: 'Bastion',
+    uri: 'mongodb://db.internal:27017',
+    ssh: { enabled: true, host: 'jump.example.com', port: 22, user: 'ops', auth: { type: 'agent' } },
+    color_tag: null,
+  };
+
+  const renderWithProfiles = (profiles: any[], onSave: (p: any) => void = () => {}) => {
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(profiles);
+      if (cmd === 'save_connection_profile') {
+        onSave(args.profile);
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+  };
+
+  const openSshTab = async () => {
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.click(screen.getByRole('button', { name: /ssh tunnel/i }));
+    fireEvent.click(screen.getByLabelText(/enable ssh tunnel/i));
+  };
+
+  it('selecting "SSH agent" hides key/password inputs, shows the security note, and saves auth {type: agent}', async () => {
+    let savedProfile: any = null;
+    renderWithProfiles([], (p) => { savedProfile = p; });
+
+    await openSshTab();
+    fireEvent.change(screen.getByPlaceholderText('ssh.server.com'), { target: { value: 'jump.example.com' } });
+    fireEvent.change(screen.getByPlaceholderText('deploy'), { target: { value: 'ops' } });
+
+    await pickSelectOption('ssh-auth-select', /ssh agent/i);
+
+    // Key/password inputs are hidden; the security note is shown instead.
+    expect(screen.queryByPlaceholderText('~/.ssh/id_ed25519')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('••••••••')).not.toBeInTheDocument();
+    const note = screen.getByTestId('ssh-agent-note');
+    expect(note).toHaveTextContent(/SSH_AUTH_SOCK/);
+    expect(note).toHaveTextContent(/never/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => {
+      expect(savedProfile?.ssh).toEqual({
+        enabled: true,
+        host: 'jump.example.com',
+        port: 22,
+        user: 'ops',
+        auth: { type: 'agent' },
+      });
+    });
+  });
+
+  it('switching back from agent to key/password restores those inputs', async () => {
+    renderWithProfiles([]);
+    await openSshTab();
+
+    await pickSelectOption('ssh-auth-select', /ssh agent/i);
+    expect(screen.getByTestId('ssh-agent-note')).toBeInTheDocument();
+
+    await pickSelectOption('ssh-auth-select', /private key/i);
+    expect(screen.queryByTestId('ssh-agent-note')).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText('~/.ssh/id_ed25519')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/leave blank if the key is unencrypted/i)).toBeInTheDocument();
+
+    await pickSelectOption('ssh-auth-select', /^password$/i);
+    expect(screen.queryByTestId('ssh-agent-note')).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText('••••••••')).toBeInTheDocument();
+  });
+
+  it('round-trips a saved profile with agent auth through edit and save', async () => {
+    let savedProfile: any = null;
+    renderWithProfiles([agentProfile], (p) => { savedProfile = p; });
+
+    fireEvent.click((await screen.findAllByText('Bastion'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // The SSH tab reflects the persisted agent auth without touching anything.
+    fireEvent.click(screen.getByRole('button', { name: /ssh tunnel/i }));
+    expect(screen.getByTestId('ssh-agent-note')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('~/.ssh/id_ed25519')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => {
+      expect(savedProfile?.ssh).toEqual(agentProfile.ssh);
+    });
+  });
 });
 
 describe('ConnectionManager Component', () => {
