@@ -19,6 +19,7 @@ mod integration {
         list_gridfs_files_impl, list_indexes_impl, preflight_copy_impl, rename_collection_impl,
         rename_database_impl, start_collection_copy_impl, start_collection_export_impl,
         start_database_copy_impl, update_document_impl, update_many_impl, upload_gridfs_file_impl,
+        get_collection_options_impl, set_validator_impl,
         AppState, CopyTargetRef,
     };
     use mongodb::bson::{doc, Document};
@@ -849,5 +850,48 @@ mod integration {
         assert!(ok_phases.contains(&TestPhase::Resolve));
         assert!(ok_phases.contains(&TestPhase::Connect));
         assert!(ok_phases.contains(&TestPhase::Ping));
+    }
+
+    #[tokio::test]
+    async fn it_set_and_get_validator() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+
+        let coll = "test_validator_coll";
+        create_collection_impl(&state, &id, &db, coll)
+            .await
+            .expect("create collection");
+
+        let validator_json = r#"{"$jsonSchema": {"type": "object", "properties": {"name": {"type": "string"}}}}"#;
+        set_validator_impl(
+            &state,
+            &id,
+            &db,
+            coll,
+            validator_json,
+            "moderate",
+            "error",
+        )
+        .await
+        .expect("set validator");
+
+        let opts = get_collection_options_impl(&state, &id, &db, coll)
+            .await
+            .expect("get collection options");
+
+        assert!(!opts.validator.is_empty(), "validator should not be empty");
+        assert_eq!(opts.validation_level, "moderate");
+        assert_eq!(opts.validation_action, "error");
+
+        // Verify the returned validator contains the $jsonSchema we set
+        let validator_val: serde_json::Value = serde_json::from_str(&opts.validator)
+            .expect("validator should be valid JSON");
+        assert!(
+            validator_val.get("$jsonSchema").is_some(),
+            "validator should contain $jsonSchema"
+        );
+
+        cleanup(&state, &id, &db).await;
     }
 }
