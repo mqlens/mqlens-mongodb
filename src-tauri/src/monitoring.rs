@@ -279,14 +279,15 @@ pub fn curate_repl_set_status(raw: &Document, mongo_version: &str) -> ReplSetSta
         .map(|m| {
             let state_str = m.get_str("stateStr").unwrap_or_default().to_string();
             let optime_date_ms = optime_ms(m);
-            let lag_secs = if state_str == "PRIMARY" {
+            let health = num(m, "health");
+            let lag_secs = if state_str == "PRIMARY" || health != 1 || optime_date_ms == 0 {
                 None
             } else {
                 primary_optime_ms.map(|p| ((p - optime_date_ms).max(0)) as f64 / 1000.0)
             };
             ReplSetMember {
                 name: m.get_str("name").unwrap_or_default().to_string(),
-                health: num(m, "health"),
+                health,
                 self_member: m.get_bool("self").unwrap_or(false),
                 uptime_secs: num(m, "uptime"),
                 optime_date_ms,
@@ -498,6 +499,9 @@ pub async fn repl_set_status_impl(state: &AppState, id: &str) -> Result<ReplSetS
                 if ce.code == 76 {
                     return Ok(ReplSetStatus { is_replica_set: false, ..Default::default() });
                 }
+                if ce.code == 13 {
+                    return Err("Not authorized to run replSetGetStatus — the connection's user needs the clusterMonitor role.".to_string());
+                }
             }
             return Err(format!("replSetGetStatus failed: {}", e));
         }
@@ -639,7 +643,7 @@ mod tests {
         let down = &s.members[2];
         assert_eq!(down.health, 0);
         assert_eq!(down.state_str, "(not reachable/healthy)");
-        assert_eq!(down.lag_secs, Some(42.0));
+        assert_eq!(down.lag_secs, None, "unhealthy members report no lag, even with a real optimeDate");
     }
 
     #[test]
@@ -677,5 +681,20 @@ mod tests {
         assert!(s.is_replica_set);
         assert!(s.members.is_empty());
         assert_eq!(s.my_state_str, "");
+    }
+
+    #[test]
+    fn repl_set_down_member_gets_no_lag_not_a_bogus_epoch_delta() {
+        let d = doc! {
+            "set": "rs0",
+            "members": [
+                { "name": "p:1", "stateStr": "PRIMARY", "health": 1.0, "optimeDate": DateTime::from_millis(1_700_000_000_000) },
+                { "name": "down:1", "stateStr": "(not reachable/healthy)", "health": 0.0, "optimeDate": DateTime::from_millis(0) },
+                { "name": "gone:1", "stateStr": "(not reachable/healthy)", "health": 0.0 },
+            ],
+        };
+        let s = curate_repl_set_status(&d, "x");
+        assert_eq!(s.members[1].lag_secs, None, "epoch-0 optime must not become a multi-year lag");
+        assert_eq!(s.members[2].lag_secs, None, "missing optime must not become a lag");
     }
 }

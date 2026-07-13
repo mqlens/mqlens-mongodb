@@ -24,6 +24,7 @@ const CLUSTER = {
     { name: 'db1:27017', stateStr: 'PRIMARY', health: 1, self: true, uptimeSecs: 86400, optimeDateMs: 1749427200000, pingMs: null, syncSource: '', lagSecs: null },
     { name: 'db2:27017', stateStr: 'SECONDARY', health: 1, self: false, uptimeSecs: 86300, optimeDateMs: 1749427199200, pingMs: 1, syncSource: 'db1:27017', lagSecs: 0.8 },
     { name: 'db3:27017', stateStr: 'SECONDARY', health: 1, self: false, uptimeSecs: 4200, optimeDateMs: 1749427158000, pingMs: 3, syncSource: 'db1:27017', lagSecs: 42 },
+    { name: 'db4:27017', stateStr: '(not reachable/healthy)', health: 0, self: false, uptimeSecs: 0, optimeDateMs: 0, pingMs: null, syncSource: '', lagSecs: null },
   ],
 };
 
@@ -162,7 +163,7 @@ describe('MonitoringView', () => {
 
     const summary = await screen.findByTestId('cluster-summary');
     expect(summary).toHaveTextContent('rs0');
-    expect(summary).toHaveTextContent('3 members');
+    expect(summary).toHaveTextContent('4 members');
     expect(summary).toHaveTextContent('7.0.0');
     expect(summary).toHaveTextContent('PRIMARY');
 
@@ -175,6 +176,9 @@ describe('MonitoringView', () => {
     const warnLag = screen.getByTestId('cluster-lag-db3:27017');
     expect(warnLag).toHaveTextContent('42');
     expect(warnLag.className).toMatch(/amber/);
+    // Down/unreachable member: unhealthy styling and no bogus lag.
+    expect(screen.getByTestId('cluster-member-db4:27017').className).toMatch(/destructive/);
+    expect(screen.getByTestId('cluster-lag-db4:27017')).toHaveTextContent('n/a');
   });
 
   it('shows a friendly empty state for standalone (non-replica-set) servers', async () => {

@@ -1075,6 +1075,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                       <tr
                         key={m.name}
                         data-testid={`cluster-member-${m.name}`}
+                        title={m.optimeDateMs > 0 ? `optime: ${new Date(m.optimeDateMs).toISOString()}` : undefined}
                         className={cn(
                           'border-t border-border/50',
                           memberUnhealthy(m) && 'bg-destructive/10 text-destructive',
@@ -1084,7 +1085,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                           <span className="flex items-center gap-1.5">
                             <span className={cn('h-2 w-2 shrink-0 rounded-full', memberDotClass(m))} />
                             <span className="font-mono">{m.name}</span>
-                            {m.self && <span className="text-[10px] text-muted-foreground">(you)</span>}
+                            {m.self && <span className="text-ui-2xs text-muted-foreground">(you)</span>}
                           </span>
                         </td>
                         <td className="px-3 py-1.5">{m.stateStr}</td>
