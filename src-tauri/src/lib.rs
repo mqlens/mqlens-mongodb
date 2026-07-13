@@ -950,6 +950,14 @@ async fn current_ops(
 }
 
 #[tauri::command]
+async fn repl_set_status(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<monitoring::ReplSetStatus, String> {
+    monitoring::repl_set_status_impl(&state, &id).await
+}
+
+#[tauri::command]
 async fn kill_op(state: tauri::State<'_, AppState>, id: String, opid: i64) -> Result<(), String> {
     monitoring::kill_op_impl(&state, &id, opid).await
 }
@@ -1876,6 +1884,7 @@ pub fn run() {
             queries::list_all_saved_queries,
             server_status,
             current_ops,
+            repl_set_status,
             kill_op,
             list_users,
             create_user,
