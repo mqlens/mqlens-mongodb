@@ -250,6 +250,50 @@ describe('Sidebar Component', () => {
     expect(handleDisconnect).toHaveBeenCalledWith('conn-1');
   });
 
+  it('renders a distinct icon for time-series collections (#137)', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections' && args.db === 'sales_db') {
+        return Promise.resolve([
+          { name: 'customers', type: 'collection' },
+          { name: 'sensor_readings', type: 'timeseries' },
+          { name: 'active_users', type: 'view' },
+        ]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    fireEvent.click(await screen.findByText('Collections'));
+    await screen.findByText('sensor_readings');
+    expect(screen.getByText('customers')).toBeInTheDocument();
+
+    // Views live in their own folder — expand it so the view row is actually
+    // rendered; otherwise the "views unaffected" check below is vacuous.
+    fireEvent.click(screen.getByText('Views'));
+    await screen.findByText('active_users');
+
+    // Exactly one row gets the time-series icon — the regular collection
+    // (and anything else in the tree, including the view row) keeps the
+    // generic Layers icon.
+    const tsIcons = screen.getAllByTestId('coll-icon-timeseries');
+    expect(tsIcons).toHaveLength(1);
+    expect(tsIcons[0]).toHaveAttribute('title', 'Time-series collection');
+    expect(tsIcons[0].closest('div')).toHaveTextContent('sensor_readings');
+  });
+
   it('sorts collections by name before rendering', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases') {
