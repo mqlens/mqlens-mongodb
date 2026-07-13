@@ -227,6 +227,91 @@ pub fn curate_profile_entry(d: &Document) -> ProfileEntry {
     }
 }
 
+// ── Replica-set health (issue #114) ──────────────────────────────────────────
+
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplSetMember {
+    pub name: String,
+    pub state_str: String,
+    pub health: i64,
+    #[serde(rename = "self")]
+    pub self_member: bool,
+    pub uptime_secs: i64,
+    pub optime_date_ms: i64,
+    pub ping_ms: Option<i64>,
+    pub sync_source: String,
+    /// Seconds behind the primary; None for the primary itself and whenever
+    /// the set has no primary (election in progress).
+    pub lag_secs: Option<f64>,
+}
+
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplSetStatus {
+    /// false = standalone server (replSetGetStatus said NoReplicationEnabled).
+    pub is_replica_set: bool,
+    pub set: String,
+    pub my_state_str: String,
+    pub mongo_version: String,
+    pub members: Vec<ReplSetMember>,
+}
+
+/// Curate a raw `replSetGetStatus` document. Lag per non-primary member is
+/// primary optimeDate − member optimeDate (clamped at 0); without a primary
+/// there is no reference point, so lag stays None.
+pub fn curate_repl_set_status(raw: &Document, mongo_version: &str) -> ReplSetStatus {
+    let raw_members: Vec<&Document> = raw
+        .get_array("members")
+        .map(|a| a.iter().filter_map(|b| b.as_document()).collect())
+        .unwrap_or_default();
+    let optime_ms = |m: &Document| match m.get("optimeDate") {
+        Some(Bson::DateTime(dt)) => dt.timestamp_millis(),
+        _ => 0,
+    };
+    let primary_optime_ms = raw_members
+        .iter()
+        .find(|m| m.get_str("stateStr").ok() == Some("PRIMARY"))
+        .map(|m| optime_ms(m));
+
+    let members: Vec<ReplSetMember> = raw_members
+        .iter()
+        .map(|m| {
+            let state_str = m.get_str("stateStr").unwrap_or_default().to_string();
+            let optime_date_ms = optime_ms(m);
+            let lag_secs = if state_str == "PRIMARY" {
+                None
+            } else {
+                primary_optime_ms.map(|p| ((p - optime_date_ms).max(0)) as f64 / 1000.0)
+            };
+            ReplSetMember {
+                name: m.get_str("name").unwrap_or_default().to_string(),
+                health: num(m, "health"),
+                self_member: m.get_bool("self").unwrap_or(false),
+                uptime_secs: num(m, "uptime"),
+                optime_date_ms,
+                ping_ms: m.get("pingMs").map(|_| num(m, "pingMs")),
+                sync_source: m.get_str("syncSourceHost").unwrap_or_default().to_string(),
+                state_str,
+                lag_secs,
+            }
+        })
+        .collect();
+    let my_state_str = members
+        .iter()
+        .find(|m| m.self_member)
+        .map(|m| m.state_str.clone())
+        .unwrap_or_default();
+
+    ReplSetStatus {
+        is_replica_set: true,
+        set: raw.get_str("set").unwrap_or_default().to_string(),
+        my_state_str,
+        mongo_version: mongo_version.to_string(),
+        members,
+    }
+}
+
 // ── Mock data (demo connections) ──────────────────────────────────────────────
 
 fn mock_server_status() -> ServerStatus {
@@ -240,6 +325,32 @@ fn mock_server_status() -> ServerStatus {
         network: Network { bytes_in: 8_400_000, bytes_out: 19_200_000, num_requests: 64_000 },
         cache: Some(CacheStats { bytes_in_cache: 268_435_456, max_bytes: 536_870_912, dirty_bytes: 12_582_912 }),
         repl_set: None,
+    }
+}
+
+fn mock_repl_set_status() -> ReplSetStatus {
+    let now = 1_749_427_200_000i64;
+    let member = |name: &str, state: &str, self_m: bool, uptime: i64, optime: i64, ping: Option<i64>, sync: &str, lag: Option<f64>| ReplSetMember {
+        name: name.into(),
+        state_str: state.into(),
+        health: 1,
+        self_member: self_m,
+        uptime_secs: uptime,
+        optime_date_ms: optime,
+        ping_ms: ping,
+        sync_source: sync.into(),
+        lag_secs: lag,
+    };
+    ReplSetStatus {
+        is_replica_set: true,
+        set: "rs0".into(),
+        my_state_str: "PRIMARY".into(),
+        mongo_version: "7.0.0".into(),
+        members: vec![
+            member("mqlens-demo:27017", "PRIMARY", true, 86_400, now, None, "", None),
+            member("mqlens-demo-2:27017", "SECONDARY", false, 86_300, now - 800, Some(1), "mqlens-demo:27017", Some(0.8)),
+            member("mqlens-demo-3:27017", "SECONDARY", false, 4_200, now - 42_000, Some(3), "mqlens-demo:27017", Some(42.0)),
+        ],
     }
 }
 
@@ -372,6 +483,34 @@ pub async fn read_profile_impl(
     Ok(out)
 }
 
+pub async fn repl_set_status_impl(state: &AppState, id: &str) -> Result<ReplSetStatus, String> {
+    if connection_is_mock(state, id)? {
+        return Ok(mock_repl_set_status());
+    }
+    let client = require_real_client(state, id)?;
+    let admin = client.database("admin");
+    let raw = match admin.run_command(doc! { "replSetGetStatus": 1 }).await {
+        Ok(raw) => raw,
+        Err(e) => {
+            // Standalone servers answer NoReplicationEnabled (code 76): a
+            // valid "not a replica set" state, not an error.
+            if let mongodb::error::ErrorKind::Command(ref ce) = *e.kind {
+                if ce.code == 76 {
+                    return Ok(ReplSetStatus { is_replica_set: false, ..Default::default() });
+                }
+            }
+            return Err(format!("replSetGetStatus failed: {}", e));
+        }
+    };
+    // rs.status() carries no server version; buildInfo is a cheap admin call
+    // and only runs while the Cluster tab is actively polling.
+    let version = match admin.run_command(doc! { "buildInfo": 1 }).await {
+        Ok(b) => b.get_str("version").unwrap_or_default().to_string(),
+        Err(_) => String::new(),
+    };
+    Ok(curate_repl_set_status(&raw, &version))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,5 +598,84 @@ mod tests {
         assert_eq!(p.millis, 142);
         assert_eq!(p.ts_ms, 1_700_000_000_000);
         assert_eq!(p.plan_summary, "COLLSCAN");
+    }
+
+    fn repl_status_doc() -> Document {
+        doc! {
+            "set": "rs0",
+            "myState": 1i32,
+            "members": [
+                { "name": "db1:27017", "stateStr": "PRIMARY", "health": 1.0, "self": true,
+                  "uptime": 1_209_600i64, "optimeDate": DateTime::from_millis(1_700_000_042_000) },
+                { "name": "db2:27017", "stateStr": "SECONDARY", "health": 1.0,
+                  "uptime": 86_400i64, "optimeDate": DateTime::from_millis(1_700_000_041_200),
+                  "pingMs": 1i64, "syncSourceHost": "db1:27017" },
+                { "name": "db3:27017", "stateStr": "(not reachable/healthy)", "health": 0.0,
+                  "uptime": 0i64, "optimeDate": DateTime::from_millis(1_700_000_000_000),
+                  "pingMs": 3i64, "syncSourceHost": "" },
+            ],
+        }
+    }
+
+    #[test]
+    fn curates_repl_set_status_with_lag() {
+        let s = curate_repl_set_status(&repl_status_doc(), "7.0.5");
+        assert!(s.is_replica_set);
+        assert_eq!(s.set, "rs0");
+        assert_eq!(s.my_state_str, "PRIMARY", "role comes from the self member");
+        assert_eq!(s.mongo_version, "7.0.5");
+        assert_eq!(s.members.len(), 3);
+
+        let primary = &s.members[0];
+        assert!(primary.self_member);
+        assert_eq!(primary.lag_secs, None, "primary carries no lag");
+        assert_eq!(primary.ping_ms, None, "self member has no pingMs");
+
+        let healthy = &s.members[1];
+        assert_eq!(healthy.lag_secs, Some(0.8));
+        assert_eq!(healthy.ping_ms, Some(1));
+        assert_eq!(healthy.sync_source, "db1:27017");
+
+        let down = &s.members[2];
+        assert_eq!(down.health, 0);
+        assert_eq!(down.state_str, "(not reachable/healthy)");
+        assert_eq!(down.lag_secs, Some(42.0));
+    }
+
+    #[test]
+    fn repl_set_lag_is_none_without_primary() {
+        let d = doc! {
+            "set": "rs0",
+            "members": [
+                { "name": "db2:27017", "stateStr": "SECONDARY", "health": 1.0, "self": true,
+                  "uptime": 5i64, "optimeDate": DateTime::from_millis(1_700_000_000_000) },
+                { "name": "db3:27017", "stateStr": "SECONDARY", "health": 1.0,
+                  "uptime": 5i64, "optimeDate": DateTime::from_millis(1_699_999_000_000) },
+            ],
+        };
+        let s = curate_repl_set_status(&d, "7.0.5");
+        assert!(s.members.iter().all(|m| m.lag_secs.is_none()), "no primary -> no lag numbers");
+        assert_eq!(s.my_state_str, "SECONDARY");
+    }
+
+    #[test]
+    fn repl_set_lag_clamps_ahead_of_primary_to_zero() {
+        let d = doc! {
+            "set": "rs0",
+            "members": [
+                { "name": "p:1", "stateStr": "PRIMARY", "health": 1.0, "optimeDate": DateTime::from_millis(1_000) },
+                { "name": "s:1", "stateStr": "SECONDARY", "health": 1.0, "optimeDate": DateTime::from_millis(2_000) },
+            ],
+        };
+        let s = curate_repl_set_status(&d, "x");
+        assert_eq!(s.members[1].lag_secs, Some(0.0));
+    }
+
+    #[test]
+    fn repl_set_status_is_resilient_to_empty_doc() {
+        let s = curate_repl_set_status(&doc! {}, "");
+        assert!(s.is_replica_set);
+        assert!(s.members.is_empty());
+        assert_eq!(s.my_state_str, "");
     }
 }

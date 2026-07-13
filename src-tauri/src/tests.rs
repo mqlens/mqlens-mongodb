@@ -214,6 +214,24 @@ mod tests {
         assert_eq!(customers.collection_type, "collection");
     }
 
+    // Issue #114: demo mode returns a synthetic replica set so the Cluster
+    // tab is populated without a live cluster — including a lagging
+    // secondary so the warning styling is visible.
+    #[tokio::test]
+    async fn test_mock_repl_set_status_returns_synthetic_set() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let s = crate::monitoring::repl_set_status_impl(&state, &conn_id).await.unwrap();
+        assert!(s.is_replica_set);
+        assert_eq!(s.set, "rs0");
+        assert_eq!(s.members.len(), 3);
+        assert_eq!(s.members.iter().filter(|m| m.state_str == "PRIMARY").count(), 1);
+        assert!(
+            s.members.iter().any(|m| m.lag_secs.map(|l| l >= 10.0).unwrap_or(false)),
+            "demo set includes a lagging secondary"
+        );
+    }
+
     #[tokio::test]
     async fn test_conn_uris_stored_for_real_and_absent_for_mock() {
         use crate::db::mongotools::resolve_conn_uri;
