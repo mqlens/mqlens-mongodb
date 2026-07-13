@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ObjectId, Int32, Double, Long, Decimal128 } from 'bson';
+import { ObjectId, Int32, Double, Long, Decimal128, EJSON } from 'bson';
 import { bsonEqual, valueKind, diffDocuments } from '../docDiff';
 
 describe('valueKind', () => {
@@ -118,5 +118,29 @@ describe('diffDocuments — nested objects and arrays', () => {
     const right = { items: [{ q: 2 }] };
     const d = diffDocuments(left, right);
     expect(d.left.find((l) => l.path === 'items[0].q')!.status).toBe('changed');
+  });
+});
+
+describe('diffDocuments — BSON-typed values', () => {
+  // Parse like DataGrid does (EJSON.parse of JSON.stringify) so the engine sees
+  // real ObjectId/Date/Long instances.
+  const parse = (o: unknown) => EJSON.parse(JSON.stringify(o));
+
+  it('treats equal ObjectIds/Dates as unchanged and differing ones as changed', () => {
+    const left = parse({
+      _id: { $oid: '603d779f4f102e3a185c3220' },
+      at: { $date: '2025-01-01T00:00:00Z' },
+      n: { $numberLong: '42' },
+    });
+    const right = parse({
+      _id: { $oid: '603d779f4f102e3a185c3220' },
+      at: { $date: '2025-02-01T00:00:00Z' },
+      n: { $numberLong: '42' },
+    });
+    const d = diffDocuments(left, right);
+    expect(d.left.find((l) => l.path === '_id')!.status).toBe('unchanged');
+    expect(d.left.find((l) => l.path === 'n')!.status).toBe('unchanged');
+    expect(d.left.find((l) => l.path === 'at')!.status).toBe('changed');
+    expect(d.changedCount).toBe(1);
   });
 });
