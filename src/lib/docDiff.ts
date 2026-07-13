@@ -181,9 +181,6 @@ function walkLevel(
         counts.changed !== beforeChanged ||
         counts.added !== beforeAdded ||
         counts.removed !== beforeRemoved;
-      if (touched) {
-        const openIdxL = left.length - 1; // not used; container header status update below
-      }
       // Re-tag the open lines as 'changed' when descendants differ.
       if (touched) {
         // open lines are the pair pushed just before recursion.
