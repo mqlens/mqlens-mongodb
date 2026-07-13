@@ -37,3 +37,4 @@ export const uriReadPreference = (uri: string): string => {
   const m = /[?&]readPreference=([^&]+)/i.exec(uri);
   return m ? decodeURIComponent(m[1]) : 'primary';
 };
+

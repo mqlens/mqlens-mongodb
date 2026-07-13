@@ -406,6 +406,166 @@ describe('Sidebar Component', () => {
     expect(replSetStatusCalls).toHaveLength(2);
   });
 
+  it('shows a database stats popover when hovering a database row (#178)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      if (cmd === 'db_stats')
+        return Promise.resolve({
+          collections: 3, views: 0, objects: 100, avgObjSize: 128,
+          dataSize: 12800, storageSize: 20000, indexes: 4, totalIndexSize: 4096,
+        });
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        clusterHoverDelayMs={0}
+      />
+    );
+
+    const dbRow = await screen.findByLabelText('Database sales_db');
+    fireEvent.mouseEnter(dbRow);
+    expect(await screen.findByTestId('db-stats-card')).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith('db_stats', { id: 'conn-1', db: 'sales_db' });
+  });
+
+  it('shows a collection stats popover when hovering a collection row (#178)', async () => {
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      if (cmd === 'coll_stats')
+        return Promise.resolve({
+          count: 500, avgObjSize: 256, size: 128000, storageSize: 150000,
+          nindexes: 2, totalIndexSize: 8192, capped: false,
+        });
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        clusterHoverDelayMs={0}
+      />
+    );
+
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.click(dbNode);
+    const collectionsFolder = await screen.findByText('Collections');
+    fireEvent.click(collectionsFolder);
+    const collText = await screen.findByText('customers');
+    const collRow = collText.closest('div')!;
+    fireEvent.mouseEnter(collRow);
+    expect(await screen.findByTestId('coll-stats-card')).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith('coll_stats', { id: 'conn-1', db: 'sales_db', collection: 'customers' });
+  });
+
+  it('shows an index stats popover when hovering an index row (#178)', async () => {
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      if (cmd === 'list_indexes') {
+        return Promise.resolve([
+          { name: '_id_', keys: '{"_id":1}', unique: true, sparse: false },
+          { name: 'email_1', keys: '{"email":1}', unique: false, sparse: false },
+        ]);
+      }
+      if (cmd === 'index_stats')
+        return Promise.resolve([
+          { name: '_id_', sizeBytes: 4096, ops: 10, sinceMs: 0 },
+          { name: 'email_1', sizeBytes: 2048, ops: 5, sinceMs: 0 },
+        ]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        clusterHoverDelayMs={0}
+      />
+    );
+
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.click(dbNode);
+    const collectionsFolder = await screen.findByText('Collections');
+    fireEvent.click(collectionsFolder);
+    const collNode = await screen.findByText('customers');
+    fireEvent.click(collNode);
+    const indexesFolder = await screen.findByText('indexes');
+    fireEvent.click(indexesFolder);
+    const indexText = await screen.findByText('email_1');
+    const indexRow = indexText.closest('div')!;
+    fireEvent.mouseEnter(indexRow);
+    expect(await screen.findByTestId('index-stats-card')).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith('index_stats', { id: 'conn-1', db: 'sales_db', collection: 'customers' });
+  });
+
+  it('closes the db popover and opens the health popover moving from a database row to the connection row (#178)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      if (cmd === 'db_stats')
+        return Promise.resolve({
+          collections: 1, views: 0, objects: 1, avgObjSize: 1,
+          dataSize: 1, storageSize: 1, indexes: 1, totalIndexSize: 1,
+        });
+      if (cmd === 'repl_set_status')
+        return Promise.resolve({
+          isReplicaSet: true, clusterType: 'replicaSet', set: 'rs0', myStateStr: 'PRIMARY', mongoVersion: '7.0.0',
+          members: [
+            { name: 'db1:27017', stateStr: 'PRIMARY', health: 1, self: true, uptimeSecs: 1, optimeDateMs: 1, pingMs: null, syncSource: '', lagSecs: null },
+          ],
+        });
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Mock DB', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        clusterHoverDelayMs={0}
+      />
+    );
+
+    const connRow = await screen.findByLabelText('Connection Mock DB');
+    const dbRow = await screen.findByLabelText('Database sales_db');
+
+    fireEvent.mouseEnter(dbRow);
+    expect(await screen.findByTestId('db-stats-card')).toBeInTheDocument();
+
+    fireEvent.mouseEnter(connRow);
+    await waitFor(() => expect(screen.queryByTestId('db-stats-card')).toBeNull());
+    expect(await screen.findByTestId('cluster-health-card')).toBeInTheDocument();
+  });
+
   it('sorts collections by name before rendering', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases') {

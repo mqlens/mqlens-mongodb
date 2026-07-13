@@ -58,6 +58,7 @@ import {
 } from '@/components/ui/context-menu';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { ClusterHealthCard } from '@/components/ClusterHealthCard';
+import { DbStatsCard, CollStatsCard, IndexStatsCard } from '@/components/StatsCards';
 import { ThemePicker } from '@/components/theme/ThemePicker';
 import {
   Database,
@@ -118,6 +119,27 @@ export interface IndexInfo {
   unique: boolean;
   sparse: boolean;
 }
+
+// Discriminated target for the row-hover stats popover (issue #178):
+// connection → cluster health, database/collection/index → their stats cards.
+type StatsPopoverTarget =
+  | { kind: 'connection'; connId: string }
+  | { kind: 'database'; connId: string; db: string }
+  | { kind: 'collection'; connId: string; db: string; coll: string }
+  | { kind: 'index'; connId: string; db: string; coll: string; index: string };
+
+const targetKey = (t: StatsPopoverTarget): string => {
+  switch (t.kind) {
+    case 'connection':
+      return `connection:${t.connId}`;
+    case 'database':
+      return `database:${t.connId}/${t.db}`;
+    case 'collection':
+      return `collection:${t.connId}/${t.db}/${t.coll}`;
+    case 'index':
+      return `index:${t.connId}/${t.db}/${t.coll}/${t.index}`;
+  }
+};
 
 const compareCollectionNames = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
@@ -307,39 +329,57 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [filterQuery, setFilterQuery] = useState('');
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Cluster-health hover popover: which connection's card is open, plus
-  // open-delay and grace-close timers so the pointer can travel into the card.
-  const [healthPopoverConn, setHealthPopoverConn] = useState<string | null>(null);
-  const healthOpenTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const healthCloseTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Stats hover popover: which row's card is open (connection → cluster
+  // health, database/collection/index → their stats cards), plus open-delay
+  // and grace-close timers so the pointer can travel into the card.
+  const [statsPopover, setStatsPopover] = useState<StatsPopoverTarget | null>(null);
+  const statsOpenTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statsCloseTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   // The popover opens at the mouse cursor, not beside the row: a virtual
   // anchor reports a zero-size rect at the last pointer position (updated
   // until the popover opens, then frozen so the card doesn't chase the mouse).
-  const healthAnchorPoint = React.useRef({ x: 0, y: 0 });
-  const healthVirtualAnchor = React.useRef({
+  const statsAnchorPoint = React.useRef({ x: 0, y: 0 });
+  const statsVirtualAnchor = React.useRef({
     getBoundingClientRect: () => {
-      const { x, y } = healthAnchorPoint.current;
+      const { x, y } = statsAnchorPoint.current;
       return { width: 0, height: 0, x, y, top: y, bottom: y, left: x, right: x, toJSON: () => ({}) } as DOMRect;
     },
   });
-  const cancelHealthTimers = () => {
-    if (healthOpenTimer.current) clearTimeout(healthOpenTimer.current);
-    if (healthCloseTimer.current) clearTimeout(healthCloseTimer.current);
-    healthOpenTimer.current = null;
-    healthCloseTimer.current = null;
+  const cancelStatsTimers = () => {
+    if (statsOpenTimer.current) clearTimeout(statsOpenTimer.current);
+    if (statsCloseTimer.current) clearTimeout(statsCloseTimer.current);
+    statsOpenTimer.current = null;
+    statsCloseTimer.current = null;
   };
-  const scheduleHealthOpen = (connId: string) => {
-    cancelHealthTimers();
+  const scheduleStatsOpen = (target: StatsPopoverTarget) => {
+    cancelStatsTimers();
     // Moving to a different row: close the previous popover immediately
     // instead of letting it linger for the open delay.
-    setHealthPopoverConn((cur) => (cur !== null && cur !== connId ? null : cur));
-    healthOpenTimer.current = setTimeout(() => setHealthPopoverConn(connId), clusterHoverDelayMs);
+    setStatsPopover((cur) => (cur !== null && targetKey(cur) !== targetKey(target) ? null : cur));
+    statsOpenTimer.current = setTimeout(() => setStatsPopover(target), clusterHoverDelayMs);
   };
-  const scheduleHealthClose = () => {
-    if (healthOpenTimer.current) clearTimeout(healthOpenTimer.current);
-    healthCloseTimer.current = setTimeout(() => setHealthPopoverConn(null), 150);
+  const scheduleStatsClose = () => {
+    if (statsOpenTimer.current) clearTimeout(statsOpenTimer.current);
+    statsCloseTimer.current = setTimeout(() => setStatsPopover(null), 150);
   };
-  useEffect(() => cancelHealthTimers, []);
+  useEffect(() => cancelStatsTimers, []);
+
+  // Hover props for a stats-popover row: capture the cursor position on
+  // enter and schedule the open; keep tracking the pointer until this row's
+  // popover actually opens; grace-close on leave so the pointer can travel
+  // into the card without it disappearing.
+  const statsHoverHandlers = (target: StatsPopoverTarget) => ({
+    onMouseEnter: (e: React.MouseEvent) => {
+      statsAnchorPoint.current = { x: e.clientX, y: e.clientY };
+      scheduleStatsOpen(target);
+    },
+    onMouseMove: (e: React.MouseEvent) => {
+      if (statsPopover === null || targetKey(statsPopover) !== targetKey(target)) {
+        statsAnchorPoint.current = { x: e.clientX, y: e.clientY };
+      }
+    },
+    onMouseLeave: scheduleStatsClose,
+  });
 
   // Mock connections (the bundled sample data, or ids/URIs marked as such) never
   // reach a real mongodump/mongorestore binary — the backend rejects them outright
@@ -1182,6 +1222,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 }
               }}
               className={cn(treeRowClass(isActive), isSelected && 'bg-accent')}
+              {...statsHoverHandlers({ kind: 'collection', connId, db: dbName, coll: collName })}
             >
               <ChevronRight
                 size={10}
@@ -1385,6 +1426,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             onSelectIndex(connId, dbName, collName, indexName);
                           }}
                           className={treeRowClass(isIndexActive)}
+                          {...statsHoverHandlers({ kind: 'index', connId, db: dbName, coll: collName, index: indexName })}
                         >
                           <KeyRound
                             size={10}
@@ -1456,15 +1498,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           return (
             <div key={conn.id}>
-              <Popover
-                open={healthPopoverConn === conn.id}
-                onOpenChange={(open) => {
-                  if (!open) {
-                    cancelHealthTimers();
-                    setHealthPopoverConn(null);
-                  }
-                }}
-              >
               <ContextMenu>
                 <ContextMenuTrigger asChild>
                   <div
@@ -1477,18 +1510,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     aria-expanded={isConnExpanded}
                     aria-label={`Connection ${conn.name}`}
                     onClick={() => setExpandedConnections((prev) => ({ ...prev, [conn.id]: !prev[conn.id] }))}
-                    onMouseEnter={(e) => {
-                      healthAnchorPoint.current = { x: e.clientX, y: e.clientY };
-                      scheduleHealthOpen(conn.id);
-                    }}
-                    onMouseMove={(e) => {
-                      // Track the pointer until the popover opens so the card
-                      // appears where the cursor is, not where it entered.
-                      if (healthPopoverConn !== conn.id) {
-                        healthAnchorPoint.current = { x: e.clientX, y: e.clientY };
-                      }
-                    }}
-                    onMouseLeave={scheduleHealthClose}
+                    {...statsHoverHandlers({ kind: 'connection', connId: conn.id })}
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-1">
                       <ChevronRight
@@ -1633,23 +1655,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
-                <PopoverAnchor virtualRef={healthVirtualAnchor} />
-                <PopoverContent
-                  side="bottom"
-                  align="start"
-                  sideOffset={8}
-                  onOpenAutoFocus={(e) => e.preventDefault()}
-                  onMouseEnter={cancelHealthTimers}
-                  onMouseLeave={scheduleHealthClose}
-                >
-                  <ClusterHealthCard
-                    connectionId={conn.id}
-                    connectionName={conn.name}
-                    connectionUri={conn.uri}
-                    onOpenMonitoring={onOpenMonitoring}
-                  />
-                </PopoverContent>
-              </Popover>
 
               {isConnExpanded && (
                 <div className="ml-3 border-l border-border/50 pl-1">
@@ -1698,6 +1703,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               aria-expanded={isDbExpanded}
                               aria-label={`Database ${dbName}`}
                               onClick={() => toggleDb(conn.id, dbName)}
+                              {...statsHoverHandlers({ kind: 'database', connId: conn.id, db: dbName })}
                             >
                               <ChevronRight
                                 size={11}
@@ -2385,6 +2391,56 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <ThemePicker />
         <span className="text-[10px] text-muted-foreground">Theme</span>
       </footer>
+
+      {/* Single root-level stats popover shared by connection/database/collection/index
+          rows (issue #178) — the virtual anchor positions it at the cursor regardless
+          of which row triggered it, so it doesn't need to live inside the tree map. */}
+      <Popover
+        open={statsPopover !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            cancelStatsTimers();
+            setStatsPopover(null);
+          }
+        }}
+      >
+        <PopoverAnchor virtualRef={statsVirtualAnchor} />
+        <PopoverContent
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          onMouseEnter={cancelStatsTimers}
+          onMouseLeave={scheduleStatsClose}
+        >
+          {statsPopover?.kind === 'connection' &&
+            (() => {
+              const conn = activeConnections.find((c) => c.id === statsPopover.connId);
+              return (
+                <ClusterHealthCard
+                  connectionId={statsPopover.connId}
+                  connectionName={conn?.name}
+                  connectionUri={conn?.uri}
+                  onOpenMonitoring={onOpenMonitoring}
+                />
+              );
+            })()}
+          {statsPopover?.kind === 'database' && (
+            <DbStatsCard connectionId={statsPopover.connId} db={statsPopover.db} />
+          )}
+          {statsPopover?.kind === 'collection' && (
+            <CollStatsCard connectionId={statsPopover.connId} db={statsPopover.db} collection={statsPopover.coll} />
+          )}
+          {statsPopover?.kind === 'index' && (
+            <IndexStatsCard
+              connectionId={statsPopover.connId}
+              db={statsPopover.db}
+              collection={statsPopover.coll}
+              indexName={statsPopover.index}
+            />
+          )}
+        </PopoverContent>
+      </Popover>
     </aside>
     </EmptySpaceContextMenu>
   );

@@ -233,6 +233,33 @@ mod tests {
         );
     }
 
+    // Issue #178: demo mode returns believable stats so all three popovers
+    // render without a live server.
+    #[tokio::test]
+    async fn test_mock_stats_impls_return_demo_numbers() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+
+        let db = crate::db::stats::db_stats_impl(&state, &conn_id, "sales_db").await.unwrap();
+        assert!(db.collections >= 4);
+        assert!(db.objects > 0);
+        assert!(db.data_size > 0);
+
+        let coll = crate::db::stats::coll_stats_impl(&state, &conn_id, "sales_db", "customers")
+            .await
+            .unwrap();
+        assert!(coll.count > 0);
+        assert!(coll.size > 0);
+        assert!(coll.nindexes >= 1);
+
+        let idx = crate::db::stats::index_stats_impl(&state, &conn_id, "sales_db", "customers")
+            .await
+            .unwrap();
+        assert!(!idx.is_empty());
+        assert!(idx.iter().any(|i| i.name == "_id_"));
+        assert!(idx.iter().all(|i| i.size_bytes > 0));
+    }
+
     #[tokio::test]
     async fn test_conn_uris_stored_for_real_and_absent_for_mock() {
         use crate::db::mongotools::resolve_conn_uri;
