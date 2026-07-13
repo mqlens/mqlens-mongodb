@@ -43,7 +43,7 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
   const readPref = connectionUri ? uriReadPreference(connectionUri) : null;
 
   return (
-    <div className="flex w-max min-w-64 max-w-96 flex-col gap-1.5 text-xs" data-testid="cluster-health-card">
+    <div className="flex w-max min-w-72 max-w-[28rem] flex-col gap-1.5 text-xs" data-testid="cluster-health-card">
       {err && <div className="text-destructive">{err}</div>}
       {!err && !data && <div className="text-muted-foreground">Loading cluster health…</div>}
       {(data || err) && connectionName && (
