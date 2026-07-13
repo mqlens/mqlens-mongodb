@@ -177,6 +177,52 @@ pub async fn get_collection_options_impl(
     })
 }
 
+pub async fn set_validator_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    validator: &str,
+    validation_level: &str,
+    validation_action: &str,
+) -> Result<(), String> {
+    if collection.trim().is_empty() {
+        return Err("Collection name is required".into());
+    }
+    let validator_val: serde_json::Value = if validator.trim().is_empty() {
+        serde_json::Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(validator)
+            .map_err(|e| format!("Invalid validator JSON: {}", e))?
+    };
+    if !validator_val.is_object() {
+        return Err("Validator must be a JSON object".into());
+    }
+    let validator_doc = mongodb::bson::to_document(&validator_val)
+        .map_err(|e| format!("Failed to convert validator to BSON: {}", e))?;
+    let level = if validation_level.is_empty() {
+        None
+    } else {
+        Some(validation_level)
+    };
+    let action = if validation_action.is_empty() {
+        None
+    } else {
+        Some(validation_action)
+    };
+    let command = build_collmod_command(collection, validator_doc, level, action)?;
+    if connection_is_mock(state, id)? {
+        return Ok(());
+    }
+    let client = require_real_client(state, id)?;
+    client
+        .database(database)
+        .run_command(command)
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("Failed to apply validation rules: {}", e))
+}
+
 pub async fn drop_database_impl(state: &AppState, id: &str, database: &str) -> Result<(), String> {
     if database.trim().is_empty() {
         return Err("Database name is required".to_string());
@@ -448,5 +494,97 @@ mod tests {
         assert_eq!(opts.validator, "{}");
         assert_eq!(opts.validation_level, "");
         assert_eq!(opts.validation_action, "");
+    }
+
+    #[tokio::test]
+    async fn test_set_validator_malformed_json() {
+        let state = crate::AppState::new();
+        let conn_id = crate::connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let result = set_validator_impl(
+            &state,
+            &conn_id,
+            "db",
+            "coll",
+            "{invalid json",
+            "moderate",
+            "error",
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid validator JSON"));
+    }
+
+    #[tokio::test]
+    async fn test_set_validator_non_object_rejected() {
+        let state = crate::AppState::new();
+        let conn_id = crate::connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let result = set_validator_impl(&state, &conn_id, "db", "coll", "[1,2,3]", "", "")
+            .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must be a JSON object"));
+    }
+
+    #[tokio::test]
+    async fn test_set_validator_invalid_level_rejected() {
+        let state = crate::AppState::new();
+        let conn_id = crate::connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let result = set_validator_impl(
+            &state,
+            &conn_id,
+            "db",
+            "coll",
+            "{}",
+            "invalid_level",
+            "error",
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("validationLevel"));
+    }
+
+    #[tokio::test]
+    async fn test_set_validator_empty_clears() {
+        let state = crate::AppState::new();
+        let conn_id = crate::connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let result = set_validator_impl(&state, &conn_id, "db", "coll", "", "", "")
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_set_validator_valid() {
+        let state = crate::AppState::new();
+        let conn_id = crate::connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let result = set_validator_impl(
+            &state,
+            &conn_id,
+            "db",
+            "coll",
+            r#"{"$jsonSchema": {"type": "object"}}"#,
+            "moderate",
+            "error",
+        )
+        .await;
+
+        assert!(result.is_ok());
     }
 }

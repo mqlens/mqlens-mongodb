@@ -28,7 +28,7 @@ pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
 pub use db::ddl::{
     create_collection_impl, create_view_impl, drop_collection_impl, drop_database_impl,
     rename_collection_impl, rename_database_impl, DatabaseRenameResult, CollectionValidation,
-    get_collection_options_impl,
+    get_collection_options_impl, set_validator_impl,
 };
 pub use db::documents::{
     delete_document_impl, delete_many_impl, import_documents_impl, insert_document_impl,

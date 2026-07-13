@@ -13,7 +13,7 @@ mod tests {
         list_indexes_impl, parse_json_array_docs,
         preview_export_impl, rename_collection_impl, rename_database_impl, sample_export_fields_impl,
         start_collection_export_impl, start_filtered_export_impl, update_document_impl,
-        upload_gridfs_file_impl, get_collection_options_impl,
+        upload_gridfs_file_impl, get_collection_options_impl, set_validator_impl,
     };
     use crate::{
         create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
@@ -228,6 +228,27 @@ mod tests {
         assert_eq!(opts.validator, "{}");
         assert_eq!(opts.validation_level, "");
         assert_eq!(opts.validation_action, "");
+    }
+
+    #[tokio::test]
+    async fn test_set_validator_mock_path() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let result = set_validator_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            r#"{"$jsonSchema": {"type": "object"}}"#,
+            "moderate",
+            "error",
+        )
+        .await;
+
+        assert!(result.is_ok());
     }
 
     // Issue #114: demo mode returns a synthetic replica set so the Cluster
