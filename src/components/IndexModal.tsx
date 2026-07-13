@@ -150,9 +150,9 @@ export const IndexModal: React.FC<IndexModalProps> = ({
   }, [isOpen, initialData, prefill]);
 
   useEffect(() => {
-    if (!isOpen || initialData || nameTouched) return;
+    if (!isOpen || initialData || prefill || nameTouched) return;
     setIndexName(defaultIndexName(rawKeysJson));
-  }, [isOpen, initialData, nameTouched, rawKeysJson]);
+  }, [isOpen, initialData, prefill, nameTouched, rawKeysJson]);
 
   useEffect(() => {
     if (!isRawMode) {

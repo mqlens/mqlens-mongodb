@@ -2992,6 +2992,23 @@ mod tests {
         // Explain renders a plan namespaced to the requested collection.
         let explain = get_mock_explain("user_analytics", "events", "{}");
         assert!(explain.contains("user_analytics.events"));
+        assert!(explain.contains("IXSCAN"));
+
+        // sales_db.transactions is the one namespace that demos a COLLSCAN plan,
+        // so the index-suggestion banner is reachable without a real server.
+        let tx_explain = get_mock_explain("sales_db", "transactions", "{}");
+        assert!(tx_explain.contains("COLLSCAN"));
+        assert!(!tx_explain.contains("IXSCAN"));
+        let tx_plan: serde_json::Value = serde_json::from_str(&tx_explain).unwrap();
+        assert_eq!(
+            tx_plan["queryPlanner"]["parsedQuery"]["$and"][0]["customer_name"]["$eq"],
+            "Alice Smith"
+        );
+
+        // Every other namespace (e.g. sales_db.products) keeps the original IXSCAN shape.
+        let products_explain = get_mock_explain("sales_db", "products", "{}");
+        assert!(products_explain.contains("IXSCAN"));
+        assert!(!products_explain.contains("COLLSCAN"));
 
         // Index sets for each collection, including the admin and unknown fallbacks.
         let idx = |db, coll| -> Vec<String> {

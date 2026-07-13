@@ -26,12 +26,29 @@ const walk = (stage: any, acc: { hasIxscan: boolean; sort?: Record<string, numbe
   if (Array.isArray(stage.inputStages)) stage.inputStages.forEach((s: any) => walk(s, acc));
 };
 
+const flattenTopLevelAnd = (parsed: any): [string, any][] => {
+  const entries: [string, any][] = [];
+  Object.entries(parsed || {}).forEach(([field, cond]) => {
+    if (field === '$and' && Array.isArray(cond)) {
+      cond.forEach((clause) => {
+        if (clause && typeof clause === 'object' && !Array.isArray(clause)) {
+          entries.push(...Object.entries(clause));
+        }
+      });
+      return;
+    }
+    entries.push([field, cond]);
+  });
+  return entries;
+};
+
 const classify = (parsed: any): { eq: string[]; range: string[] } => {
   const eq: string[] = []; const range: string[] = [];
-  Object.entries(parsed || {}).forEach(([field, cond]) => {
+  flattenTopLevelAnd(parsed).forEach(([field, cond]) => {
     if (field.startsWith('$')) return;
     if (cond && typeof cond === 'object' && !Array.isArray(cond)) {
       const ops = Object.keys(cond);
+      if (ops.includes('$not') || ops.includes('$regex')) return;
       if (ops.includes('$eq')) eq.push(field);
       else if (ops.some((o) => RANGE_OPS.has(o))) range.push(field);
       else eq.push(field);
