@@ -37,12 +37,24 @@ function renderScalar(val: unknown): React.ReactNode {
   if (typeof val === 'string') return <span className="text-syntax-string">{printableString(val)}</span>;
   if (val instanceof ObjectId) return <><span className="text-syntax-boolean">ObjectId</span>(<span className="text-syntax-string">{printableString(val.toString())}</span>)</>;
   if (val instanceof Date) return <><span className="text-syntax-boolean">ISODate</span>(<span className="text-syntax-string">{printableString(val.toISOString())}</span>)</>;
+  // Timestamp extends Long in bson, so this check MUST precede the Long
+  // check below, otherwise every Timestamp would render as NumberLong(...).
+  if (val instanceof Timestamp) return <><span className="text-syntax-boolean">Timestamp</span>(<span className="text-syntax-number">{val.t}</span>, <span className="text-syntax-number">{val.i}</span>)</>;
   if (val instanceof Long) return <><span className="text-syntax-boolean">NumberLong</span>(<span className="text-syntax-number">{val.toString()}</span>)</>;
   if (val instanceof Decimal128) return <><span className="text-syntax-boolean">NumberDecimal</span>(<span className="text-syntax-string">{printableString(val.toString())}</span>)</>;
   if (val instanceof Int32) return <><span className="text-syntax-boolean">NumberInt</span>(<span className="text-syntax-number">{val.toString()}</span>)</>;
   if (val instanceof Double) return <><span className="text-syntax-boolean">Double</span>(<span className="text-syntax-number">{val.toString()}</span>)</>;
   if (val instanceof Binary) return <><span className="text-syntax-boolean">BinData</span>(<span className="text-syntax-number">{val.sub_type}</span>, <span className="text-syntax-string">{printableString(val.toString('base64'))}</span>)</>;
-  if (val instanceof Timestamp) return <><span className="text-syntax-boolean">Timestamp</span>(<span className="text-syntax-number">{val.toString()}</span>)</>;
+  if (Array.isArray(val) || (typeof val === 'object' && val !== null)) {
+    let preview: string;
+    try {
+      preview = EJSON.stringify(val, { relaxed: true });
+    } catch {
+      preview = String(val);
+    }
+    if (preview.length > 120) preview = `${preview.slice(0, 120)}…`;
+    return <span className="text-muted-foreground">{preview}</span>;
+  }
   return <span>{String(val)}</span>;
 }
 
@@ -109,8 +121,14 @@ const DiffColumn: React.FC<{ lines: DiffLine[]; testid: string }> = ({ lines, te
   </div>
 );
 
+// No virtualization in v1 — past this many lines the DOM cost of rendering
+// every row outweighs the value of the raw diff view, so we show an honest
+// guard instead of a laggy/broken column.
+const MAX_DIFF_LINES = 4000;
+
 export const DocumentDiffModal: React.FC<DocumentDiffModalProps> = ({ isOpen, left, right, onClose }) => {
   const diff = useMemo(() => diffDocuments(toBson(left), toBson(right)), [left, right]);
+  const tooLarge = diff.left.length > MAX_DIFF_LINES;
 
   useEscapeClose(isOpen, onClose);
 
@@ -154,20 +172,29 @@ export const DocumentDiffModal: React.FC<DocumentDiffModalProps> = ({ isOpen, le
             </Button>
           </DialogHeader>
 
-          <div className="mql-diff-grid grid min-h-0 flex-1 grid-cols-2 gap-3 p-4">
-            <div className="flex min-h-0 flex-col gap-1">
-              <div className="mql-diff-colhead text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                Document A
-              </div>
-              <DiffColumn lines={diff.left} testid="diff-left" />
+          {tooLarge ? (
+            <div
+              className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground"
+              data-testid="diff-too-large"
+            >
+              This diff is too large to display ({diff.left.length} lines)
             </div>
-            <div className="flex min-h-0 flex-col gap-1">
-              <div className="mql-diff-colhead text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                Document B
+          ) : (
+            <div className="mql-diff-grid grid min-h-0 flex-1 grid-cols-2 gap-3 p-4">
+              <div className="flex min-h-0 flex-col gap-1">
+                <div className="mql-diff-colhead text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Document A
+                </div>
+                <DiffColumn lines={diff.left} testid="diff-left" />
               </div>
-              <DiffColumn lines={diff.right} testid="diff-right" />
+              <div className="flex min-h-0 flex-col gap-1">
+                <div className="mql-diff-colhead text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Document B
+                </div>
+                <DiffColumn lines={diff.right} testid="diff-right" />
+              </div>
             </div>
-          </div>
+          )}
         </DraggableDialogContent>
       )}
     </Dialog>

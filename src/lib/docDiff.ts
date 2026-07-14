@@ -38,18 +38,34 @@ function asNumber(val: unknown): number {
 export function bsonEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
 
-  // Numeric equivalence across plain numbers and BSON numeric wrappers.
+  // Exact comparisons for 64-bit / high-precision wrappers MUST precede the
+  // lossy `asNumber` fallback below. Timestamp extends Long in bson, so the
+  // Timestamp check must come first, otherwise it would be caught by the
+  // Long check (or by asNumber's toNumber()) and lose precision.
+  if (a instanceof Timestamp && b instanceof Timestamp) {
+    return a.equals(b);
+  }
+  if (
+    a instanceof Long && b instanceof Long &&
+    !(a instanceof Timestamp) && !(b instanceof Timestamp)
+  ) {
+    return a.equals(b);
+  }
+  if (a instanceof Decimal128 && b instanceof Decimal128) {
+    return a.toString() === b.toString();
+  }
+
+  // Numeric equivalence across plain numbers and mixed BSON numeric wrapper
+  // types. Same-wrapper 64-bit/high-precision values are handled exactly above.
   const an = asNumber(a);
   const bn = asNumber(b);
   if (!Number.isNaN(an) && !Number.isNaN(bn)) return an === bn;
 
   if (a instanceof ObjectId && b instanceof ObjectId) return a.equals(b);
   if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
-  if (a instanceof Decimal128 && b instanceof Decimal128) return a.toString() === b.toString();
   if (a instanceof Binary && b instanceof Binary) {
     return a.sub_type === b.sub_type && a.toString('base64') === b.toString('base64');
   }
-  if (a instanceof Timestamp && b instanceof Timestamp) return a.toString() === b.toString();
 
   // Anything else (mismatched kinds, distinct primitives) is unequal.
   return false;

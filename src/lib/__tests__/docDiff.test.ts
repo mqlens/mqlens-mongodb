@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ObjectId, Int32, Double, Long, Decimal128, EJSON } from 'bson';
+import { ObjectId, Int32, Double, Long, Decimal128, Timestamp, EJSON } from 'bson';
 import { bsonEqual, valueKind, diffDocuments } from '../docDiff';
 
 describe('valueKind', () => {
@@ -39,6 +39,45 @@ describe('bsonEqual', () => {
   it('different kinds are not equal', () => {
     expect(bsonEqual(1, '1')).toBe(false);
     expect(bsonEqual(new ObjectId('507f1f77bcf86cd799439011'), '507f1f77bcf86cd799439011')).toBe(false);
+  });
+
+  // Timestamp extends Long in bson, and the numeric fallback (asNumber) uses
+  // lossy toNumber()/Number(toString()) conversions. Exact wrapper-vs-wrapper
+  // comparisons must happen before that lossy path is ever reached.
+  it('distinguishes distinct Timestamps with the same seconds but different increments', () => {
+    const a = Timestamp.fromBits(1, 1700000000);
+    const b = Timestamp.fromBits(2, 1700000000);
+    expect(bsonEqual(a, b)).toBe(false);
+  });
+
+  it('treats equal Timestamps as equal', () => {
+    const a = Timestamp.fromBits(1, 1700000000);
+    const b = Timestamp.fromBits(1, 1700000000);
+    expect(bsonEqual(a, b)).toBe(true);
+  });
+
+  it('distinguishes distinct Longs above 2^53 that toNumber() would collapse', () => {
+    const a = Long.fromString('9007199254740993');
+    const b = Long.fromString('9007199254740992');
+    expect(bsonEqual(a, b)).toBe(false);
+  });
+
+  it('treats equal large Longs as equal', () => {
+    const a = Long.fromString('9007199254740993');
+    const b = Long.fromString('9007199254740993');
+    expect(bsonEqual(a, b)).toBe(true);
+  });
+
+  it('distinguishes distinct Decimal128s that collapse to the same double', () => {
+    const a = Decimal128.fromString('1.00000000000000000001');
+    const b = Decimal128.fromString('1.00000000000000000002');
+    expect(bsonEqual(a, b)).toBe(false);
+  });
+
+  it('treats equal Decimal128s as equal', () => {
+    const a = Decimal128.fromString('1.00000000000000000001');
+    const b = Decimal128.fromString('1.00000000000000000001');
+    expect(bsonEqual(a, b)).toBe(true);
   });
 });
 
