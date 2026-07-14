@@ -357,7 +357,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-2">
-                  <div className="text-lg font-semibold text-foreground">{statEntry.ops.toLocaleString()} ops</div>
+                  <div className="text-lg font-semibold text-foreground">{statEntry.ops.toLocaleString('en-US')} ops</div>
                   {statEntry.ops === 0 && (
                     <Badge variant="outline" data-testid="index-unused-badge">
                       Unused

@@ -18,9 +18,12 @@ const extractPlan = (json: any): { wp: any; parsed: any; ns: string } | null => 
   return { wp: qp.winningPlan, parsed: qp.parsedQuery ?? {}, ns: qp.namespace ?? '' };
 };
 
-const walk = (stage: any, acc: { hasIxscan: boolean; sort?: Record<string, number> }) => {
+const INDEX_SERVED_STAGES = new Set(['IXSCAN', 'IDHACK', 'COUNT_SCAN', 'DISTINCT_SCAN', 'CLUSTERED_IXSCAN']);
+
+const walk = (stage: any, acc: { served: boolean; hasCollscan: boolean; sort?: Record<string, number> }) => {
   if (!stage || typeof stage !== 'object') return;
-  if (stage.stage === 'IXSCAN') acc.hasIxscan = true;
+  if (INDEX_SERVED_STAGES.has(stage.stage)) acc.served = true;
+  if (stage.stage === 'COLLSCAN') acc.hasCollscan = true;
   if (stage.stage === 'SORT' && stage.sortPattern) acc.sort = stage.sortPattern;
   if (stage.inputStage) walk(stage.inputStage, acc);
   if (Array.isArray(stage.inputStages)) stage.inputStages.forEach((s: any) => walk(s, acc));
@@ -48,10 +51,9 @@ const classify = (parsed: any): { eq: string[]; range: string[] } => {
     if (field.startsWith('$')) return;
     if (cond && typeof cond === 'object' && !Array.isArray(cond)) {
       const ops = Object.keys(cond);
-      if (ops.includes('$not') || ops.includes('$regex')) return;
       if (ops.includes('$eq')) eq.push(field);
-      else if (ops.some((o) => RANGE_OPS.has(o))) range.push(field);
-      else eq.push(field);
+      else if (ops.every((o) => RANGE_OPS.has(o))) range.push(field);
+      else return;
     } else { eq.push(field); }
   });
   return { eq, range };
@@ -62,9 +64,9 @@ export const suggestESRIndex = (explainStr: string): IndexSuggestion | null => {
   try { json = JSON.parse(explainStr); } catch { return null; }
   const plan = extractPlan(json);
   if (!plan?.wp) return null;
-  const acc = { hasIxscan: false as boolean, sort: undefined as Record<string, number> | undefined };
+  const acc = { served: false as boolean, hasCollscan: false as boolean, sort: undefined as Record<string, number> | undefined };
   walk(plan.wp, acc);
-  if (acc.hasIxscan) return null;
+  if (acc.served || !acc.hasCollscan) return null;
   const { eq, range } = classify(plan.parsed);
   const sortFields = acc.sort ? Object.keys(acc.sort) : [];
   const ordered: string[] = [];
