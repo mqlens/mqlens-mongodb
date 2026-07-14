@@ -894,4 +894,64 @@ mod integration {
 
         cleanup(&state, &id, &db).await;
     }
+
+    /// Regression guard for the `bson::to_document` human-readable extended-JSON
+    /// invariant: `set_validator_impl` converts the validator JSON via
+    /// `mongodb::bson::to_document`, a plain serde bridge — not the extended-JSON-aware
+    /// `Bson::try_from` used elsewhere in this crate — so wrapper keys like `$date` are
+    /// stored (and later re-serialized by `get_collection_options_impl`) as ordinary
+    /// nested documents rather than being parsed into real BSON types. This test proves
+    /// that behavior is stable across a get -> re-apply-unchanged -> get cycle: the
+    /// `$date` literal must survive untouched every time, not just on the first read.
+    #[tokio::test]
+    async fn it_validator_bson_types_round_trip() {
+        let Some((state, id, db)) = connect().await else {
+            return;
+        };
+
+        let coll = "test_validator_bson_types_coll";
+        create_collection_impl(&state, &id, &db, coll)
+            .await
+            .expect("create collection");
+
+        let validator_json =
+            r#"{"created": {"$gte": {"$date": "2026-01-01T00:00:00Z"}}}"#;
+        set_validator_impl(&state, &id, &db, coll, validator_json, "moderate", "error")
+            .await
+            .expect("set validator with extended-JSON $date literal");
+
+        let opts1 = get_collection_options_impl(&state, &id, &db, coll)
+            .await
+            .expect("get collection options after initial set");
+        assert!(
+            opts1.validator.contains("$date"),
+            "extended JSON $date wrapper should survive the round trip, got: {}",
+            opts1.validator
+        );
+
+        // Re-apply the exact string we got back, unchanged.
+        set_validator_impl(
+            &state,
+            &id,
+            &db,
+            coll,
+            &opts1.validator,
+            &opts1.validation_level,
+            &opts1.validation_action,
+        )
+        .await
+        .expect("re-applying the returned validator unchanged should succeed");
+
+        let opts2 = get_collection_options_impl(&state, &id, &db, coll)
+            .await
+            .expect("get collection options after re-apply");
+        assert!(
+            opts2.validator.contains("$date"),
+            "extended JSON $date wrapper should still be present after a lossless \
+             get -> apply-unchanged -> get cycle, got: {}",
+            opts2.validator
+        );
+
+        cleanup(&state, &id, &db).await;
+    }
 }

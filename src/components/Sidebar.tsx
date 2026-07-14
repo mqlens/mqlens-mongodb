@@ -1327,7 +1327,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Table2 />
               <span>Analyze Schema</span>
             </ContextMenuItem>
-            {collType !== 'view' && !collName.startsWith('system.') && !/\.(files|chunks)$/.test(collName) && (
+            {collType !== 'view' && collType !== 'timeseries' && !collName.startsWith('system.') && !/\.(files|chunks)$/.test(collName) && (
               <ContextMenuItem className={ctxItemClass} onClick={() => onEditValidation?.(connId, dbName, collName)}>
                 <ShieldCheck />
                 <span>Validation Rules</span>
