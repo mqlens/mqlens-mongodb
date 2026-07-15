@@ -982,6 +982,129 @@ describe('Sidebar Component', () => {
     expect(handleOpenDump).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
   });
 
+  it('opens Validation Rules from the collection context menu', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') {
+        return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    const handleEditValidation = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Prod DB Server', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onEditValidation={handleEditValidation}
+      />
+    );
+
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.click(dbNode);
+    const collectionsFolder = await screen.findByText('Collections');
+    fireEvent.click(collectionsFolder);
+    const collectionNode = await screen.findByText('customers');
+    fireEvent.contextMenu(collectionNode);
+    fireEvent.click(screen.getByText('Validation Rules'));
+    expect(handleEditValidation).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
+  });
+
+  it('hides Validation Rules for views but shows it for regular collections (#93)', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') {
+        return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([
+          { name: 'customers', type: 'collection' },
+          { name: 'active_users', type: 'view' },
+        ]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Prod DB Server', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onEditValidation={vi.fn()}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+
+    // Views live in their own folder — expand it and right-click the view row.
+    fireEvent.click(await screen.findByText('Views'));
+    const viewNode = await screen.findByText('active_users');
+    fireEvent.contextMenu(viewNode);
+    expect(screen.queryByText('Validation Rules')).not.toBeInTheDocument();
+    expect(screen.getByText('Analyze Schema')).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    // Regular collection still offers it.
+    fireEvent.click(await screen.findByText('Collections'));
+    const collectionNode = await screen.findByText('customers');
+    fireEvent.contextMenu(collectionNode);
+    expect(screen.getByText('Validation Rules')).toBeInTheDocument();
+  });
+
+  it('hides Validation Rules for time-series collections but shows it for regular collections (#93)', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') {
+        return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([
+          { name: 'customers', type: 'collection' },
+          { name: 'sensor_readings', type: 'timeseries' },
+        ]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Prod DB Server', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onEditValidation={vi.fn()}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+    fireEvent.click(await screen.findByText('Collections'));
+
+    // Time-series collection: MongoDB rejects collMod validators on these.
+    const tsNode = await screen.findByText('sensor_readings');
+    fireEvent.contextMenu(tsNode);
+    expect(screen.queryByText('Validation Rules')).not.toBeInTheDocument();
+    expect(screen.getByText('Analyze Schema')).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    // Regular collection still offers it.
+    const collectionNode = screen.getByText('customers');
+    fireEvent.contextMenu(collectionNode);
+    expect(screen.getByText('Validation Rules')).toBeInTheDocument();
+  });
+
   it('hides Dump/Restore context-menu items for mock connections', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases' && args.id === 'conn-1') {

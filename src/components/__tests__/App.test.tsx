@@ -59,7 +59,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation }: any) => (
     <div data-testid="mock-sidebar">
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
@@ -84,6 +84,12 @@ vi.mock('../Sidebar', () => ({
       </button>
       <button data-testid="open-restore-btn" onClick={() => onOpenRestore && onOpenRestore('conn-1')}>
         Restore
+      </button>
+      <button
+        data-testid="open-validation-btn"
+        onClick={() => onEditValidation && onEditValidation('conn-1', 'sales_db', 'customers')}
+      >
+        Validation Rules
       </button>
     </div>
   ),
@@ -867,6 +873,31 @@ describe('App Component', () => {
 
     expect(await screen.findByTestId('restore-view')).toBeInTheDocument();
     expect(screen.getByText('Restore: conn-1')).toBeInTheDocument();
+  });
+
+  it('opens the Validation Rules tab from the collection context menu', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'get_collection_options') {
+        return Promise.resolve({ validator: '{}', validationLevel: '', validationAction: '' });
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-validation-btn'));
+
+    expect(await screen.findByTestId('validation-rules-view')).toBeInTheDocument();
+    expect(screen.getByText('Validation: customers')).toBeInTheDocument();
+    await waitFor(() => {
+      const opts = calls.find((c) => c.cmd === 'get_collection_options');
+      expect(opts).toBeTruthy();
+      expect(opts.args).toMatchObject({ id: 'conn-1', database: 'sales_db', collection: 'customers' });
+    });
   });
 
   const managedStatusesFixture = [

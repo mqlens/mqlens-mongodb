@@ -95,6 +95,7 @@ import {
   Copy,
   DatabaseBackup,
   DatabaseZap,
+  ShieldCheck,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
@@ -182,6 +183,7 @@ interface SidebarProps {
   onOpenMonitoring?: (connectionId: string) => void;
   onOpenUsers?: (connectionId: string, db?: string) => void;
   onAnalyzeSchema?: (connectionId: string, dbName: string, collName: string) => void;
+  onEditValidation?: (connectionId: string, dbName: string, collName: string) => void;
   onCreateView?: (connectionId: string, dbName: string) => void;
   onOpenGridfs?: (connectionId: string, dbName: string, bucket: string) => void;
   /** Open a Dump tab scoped to the whole connection, a database, or a single collection. */
@@ -303,6 +305,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenMonitoring,
   onOpenUsers,
   onAnalyzeSchema,
+  onEditValidation,
   onCreateView,
   onOpenGridfs,
   onOpenDump,
@@ -1324,6 +1327,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Table2 />
               <span>Analyze Schema</span>
             </ContextMenuItem>
+            {collType !== 'view' && collType !== 'timeseries' && !collName.startsWith('system.') && !/\.(files|chunks)$/.test(collName) && (
+              <ContextMenuItem className={ctxItemClass} onClick={() => onEditValidation?.(connId, dbName, collName)}>
+                <ShieldCheck />
+                <span>Validation Rules</span>
+              </ContextMenuItem>
+            )}
             {!isMockConnection(connId) && (
               <ContextMenuItem
                 className={ctxItemClass}
