@@ -1233,7 +1233,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               />
               {collType === 'timeseries' ? (
                 <span
-                  title="Time-series collection"
+                  aria-label="Time-series collection"
                   data-testid="coll-icon-timeseries"
                   className="flex shrink-0 items-center"
                 >
@@ -1242,7 +1242,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               ) : (
                 <Layers size={11} className={cn('shrink-0', isActive ? 'text-primary' : 'text-emerald-500')} />
               )}
-              <span className="min-w-0 truncate" title={collName}>
+              <span className="min-w-0 truncate">
                 {collName}
               </span>
             </div>
@@ -1530,14 +1530,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <span
                           className="h-2 w-2 shrink-0 rounded-full"
                           style={{ backgroundColor: conn.color_tag }}
-                          title="Connection color"
+                          aria-label="Connection color"
                         />
                       )}
                       <Server size={12} className="shrink-0 text-primary" />
                       <span className="min-w-0 truncate font-medium">{conn.name}</span>
                       <span
                         className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                        title="Connected"
+                        aria-label="Connected"
                       />
                     </div>
                     <Button
@@ -1548,7 +1548,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         e.stopPropagation();
                         loadDatabases(conn.id);
                       }}
-                      title="Refresh Databases"
                       aria-label="Refresh databases"
                     >
                       <RefreshCw className="size-3" />
@@ -1561,7 +1560,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         e.stopPropagation();
                         onDisconnect(conn.id);
                       }}
-                      title="Disconnect Connection"
                       aria-label="Disconnect"
                     >
                       <LogOut className="size-3" />
@@ -1856,7 +1854,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       size="icon"
                                       className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
                                       data-testid={`collections-new-${conn.id}-${dbName}`}
-                                      title="New collection"
+                                      aria-label="New collection"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         void handleAddCollection(conn.id, dbName);
@@ -1942,7 +1940,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       size="icon"
                                       className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
                                       data-testid={`gridfs-new-bucket-${conn.id}-${dbName}`}
-                                      title="New bucket"
+                                      aria-label="New bucket"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         void handleOpenGridfsBucket(conn.id, dbName);
@@ -1960,7 +1958,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                           onClick={() => onOpenGridfs?.(conn.id, dbName, bucket)}
                                         >
                                           <Archive size={11} className="ml-3.5 shrink-0 text-emerald-500" />
-                                          <span className="min-w-0 truncate" title={bucket}>
+                                          <span className="min-w-0 truncate">
                                             {bucket}
                                           </span>
                                         </div>
@@ -2053,7 +2051,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="text-ui-xs font-semibold tracking-wide">MQLens Workspace</span>
         </div>
         <div className="flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onOpenSettings} title="Settings" aria-label="Open Settings">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onOpenSettings} aria-label="Open Settings">
             <Settings className="size-3.5" />
           </Button>
           <DropdownMenu>
@@ -2062,7 +2060,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
-                title="Help & feedback"
                 aria-label="Help and feedback"
                 data-testid="help-menu-btn"
               >
@@ -2083,7 +2080,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             size="icon"
             className="h-7 w-7"
             onClick={onOpenConnectionManager}
-            title="Manage Connections"
             aria-label="Manage Connections"
           >
             <Plus className="size-3.5" />
@@ -2174,7 +2170,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     : 'text-emerald-500',
                               )}
                             />
-                            <span className="min-w-0 truncate" title={label}>
+                            <span className="min-w-0 truncate">
                               {label}
                             </span>
                             <span className="ml-auto truncate text-[10px] text-muted-foreground">
@@ -2238,7 +2234,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           <div
                             className={treeRowClass()}
                             onClick={() => void navigateToFavorite(fav)}
-                            title={`${fav.connectionName}${fav.db ? ` · ${fav.db}` : ''}${fav.collection ? `.${fav.collection}` : ''}`}
                           >
                             <FavIcon
                               size={10}
@@ -2333,7 +2328,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   key={profile.id}
                                   className={treeRowClass()}
                                   onClick={() => onConnectProfile?.(profile)}
-                                  title={profile.name}
                                 >
                                   <Server
                                     size={11}
@@ -2346,7 +2340,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   {isConnected && (
                                     <span
                                       className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                                      title="Connected"
+                                      aria-label="Connected"
                                     />
                                   )}
                                 </div>
@@ -2366,7 +2360,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           key={profile.id}
                           className={treeRowClass()}
                           onClick={() => onConnectProfile?.(profile)}
-                          title={profile.name}
                         >
                           <Server
                             size={11}

@@ -1945,7 +1945,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       <span>Import URI</span>
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
+                  <DropdownMenuContent align="start" className={NESTED_SELECT_Z}>
                     <DropdownMenuItem onClick={handleImportFromClipboard} data-testid="import-from-clipboard">
                       From clipboard
                     </DropdownMenuItem>

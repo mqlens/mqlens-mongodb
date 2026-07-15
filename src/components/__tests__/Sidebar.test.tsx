@@ -290,7 +290,7 @@ describe('Sidebar Component', () => {
     // generic Layers icon.
     const tsIcons = screen.getAllByTestId('coll-icon-timeseries');
     expect(tsIcons).toHaveLength(1);
-    expect(tsIcons[0]).toHaveAttribute('title', 'Time-series collection');
+    expect(tsIcons[0]).toHaveAttribute('aria-label', 'Time-series collection');
     expect(tsIcons[0].closest('div')).toHaveTextContent('sensor_readings');
   });
 
@@ -1410,7 +1410,7 @@ describe('Sidebar Component', () => {
       />
     );
 
-    expect(await screen.findByTitle('Connection color')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Connection color')).toBeInTheDocument();
     expect(screen.getByText('Staging')).toBeInTheDocument();
   });
 
