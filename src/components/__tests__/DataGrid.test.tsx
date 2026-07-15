@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 
 // Monaco renders the Query Code panel; mock it as a plain textarea (same shape
 // as the other component tests) so assertions can read the generated code.
@@ -360,6 +360,7 @@ describe('DataGrid Component', () => {
     fireEvent.contextMenu(screen.getByText(/"Alice Smith"/));
     expect(screen.getByTestId('context-menu')).toBeInTheDocument();
     expect(screen.getByText('Edit document')).toBeInTheDocument();
+    expect(screen.getByText('Compare with…')).toBeInTheDocument();
   });
 
   it('copies a document as pretty-printed JSON via the copy button and shows a confirmation', () => {
@@ -376,6 +377,105 @@ describe('DataGrid Component', () => {
     expect(writeText).toHaveBeenCalledWith(JSON.stringify(mockDocuments[0], null, 2));
     // The control flips to a "Copied" confirmation state.
     expect(screen.getAllByLabelText('Copied').length).toBeGreaterThan(0);
+  });
+});
+
+describe('DataGrid — Compare documents', () => {
+  const docs = [
+    { _id: { $oid: '603d779f4f102e3a185c3220' }, name: 'Alice', city: 'NYC' },
+    { _id: { $oid: '603d779f4f102e3a185c3221' }, name: 'Bob', country: 'UK' },
+    { _id: { $oid: '603d779f4f102e3a185c3222' }, name: 'Carol', country: 'FR' },
+  ];
+
+  // The JSON view is virtualized and (in JSDOM, with no real layout height)
+  // only renders the first document's lines, so the two-step flow — which
+  // needs to right-click several distinct rows — exercises Table view
+  // instead, where react-window renders every row of this small fixture.
+  const openMenuForRow = (name: string) => {
+    fireEvent.contextMenu(screen.getByText(name));
+  };
+
+  const renderInTableView = () => {
+    render(<DataGrid documents={docs} onEditDocument={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+  };
+
+  it('two-step compare: first pick arms, second pick opens the diff modal', () => {
+    renderInTableView();
+
+    // First doc: open menu, choose "Compare with…".
+    openMenuForRow('Alice');
+    fireEvent.click(screen.getByText('Compare with…'));
+    // No modal yet — we are armed, waiting for the second pick.
+    expect(screen.queryByTestId('document-diff-modal')).not.toBeInTheDocument();
+
+    // Second doc: the menu now offers "Compare with selected".
+    openMenuForRow('Bob');
+    fireEvent.click(screen.getByText('Compare with selected'));
+
+    const modal = screen.getByTestId('document-diff-modal');
+    expect(modal).toBeInTheDocument();
+    expect(within(modal).getByTestId('diff-left')).toHaveTextContent(/"Alice"/);
+    expect(within(modal).getByTestId('diff-right')).toHaveTextContent(/"Bob"/);
+  });
+
+  it('armed source can be canceled from its own context menu', () => {
+    renderInTableView();
+
+    openMenuForRow('Alice');
+    fireEvent.click(screen.getByText('Compare with…'));
+
+    // Re-opening Alice's own menu offers a cancel action, not "compare with selected".
+    openMenuForRow('Alice');
+    expect(screen.queryByText('Compare with selected')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Cancel compare selection'));
+
+    // Armed state cleared: Alice's menu offers "Compare with…" again, and no
+    // modal ever opened.
+    openMenuForRow('Alice');
+    expect(screen.getByText('Compare with…')).toBeInTheDocument();
+    expect(screen.queryByTestId('document-diff-modal')).not.toBeInTheDocument();
+  });
+
+  it('re-arming with a different document replaces the pending compare source', () => {
+    renderInTableView();
+
+    openMenuForRow('Alice');
+    fireEvent.click(screen.getByText('Compare with…'));
+
+    // Arm Bob instead of finishing the compare with Alice — this should
+    // replace Alice as the pending source.
+    openMenuForRow('Bob');
+    fireEvent.click(screen.getByText('Compare with… (replace selection)'));
+
+    // Finishing the compare now pairs Bob with Carol, not Alice.
+    openMenuForRow('Carol');
+    fireEvent.click(screen.getByText('Compare with selected'));
+
+    const modal = screen.getByTestId('document-diff-modal');
+    expect(within(modal).getByTestId('diff-left')).toHaveTextContent(/"Bob"/);
+    expect(within(modal).getByTestId('diff-right')).toHaveTextContent(/"Carol"/);
+    expect(within(modal).queryByText(/"Alice"/)).not.toBeInTheDocument();
+  });
+
+  it('clears an armed compare source when the documents array is replaced (query re-run)', () => {
+    const { rerender } = render(<DataGrid documents={docs} onEditDocument={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    // Arm Alice as the compare source.
+    openMenuForRow('Alice');
+    fireEvent.click(screen.getByText('Compare with…'));
+
+    // Query re-run / paging / sorting replaces the documents array (same
+    // instance, but a fresh reference — content can even be identical).
+    const freshDocs = docs.map((d) => ({ ...d }));
+    rerender(<DataGrid documents={freshDocs} onEditDocument={() => {}} />);
+
+    // Bob's menu should offer only the plain arm action, not "Compare with
+    // selected" — the old armed source must not survive the new result set.
+    openMenuForRow('Bob');
+    expect(screen.getByText('Compare with…')).toBeInTheDocument();
+    expect(screen.queryByText('Compare with selected')).not.toBeInTheDocument();
   });
 });
 
