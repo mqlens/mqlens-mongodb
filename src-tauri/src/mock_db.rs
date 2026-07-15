@@ -145,19 +145,38 @@ pub fn execute_mock_query(
 }
 
 pub fn get_mock_explain(database: &str, collection: &str, filter: &str) -> String {
+    // Only sales_db.transactions returns a COLLSCAN plan, so the index-suggestion
+    // banner has somewhere to demo without a real server. Every other namespace
+    // keeps the pre-existing IXSCAN shape.
+    let winning_plan = if database == "sales_db" && collection == "transactions" {
+        serde_json::json!({
+            "stage": "SORT",
+            "sortPattern": { "timestamp": -1 },
+            "inputStage": { "stage": "COLLSCAN" }
+        })
+    } else {
+        serde_json::json!({
+            "stage": "IXSCAN",
+            "keyPattern": { "category": 1 },
+            "indexName": "category_1",
+            "isMultiKey": false,
+            "direction": "forward"
+        })
+    };
+
+    let parsed_query = if database == "sales_db" && collection == "transactions" {
+        serde_json::json!({ "$and": [ { "customer_name": { "$eq": "Alice Smith" } } ] })
+    } else {
+        serde_json::from_str::<serde_json::Value>(filter).unwrap_or_default()
+    };
+
     let plan = serde_json::json!({
         "explainVersion": "1",
         "queryPlanner": {
             "namespace": format!("{}.{}", database, collection),
             "indexFilterSet": false,
-            "parsedQuery": serde_json::from_str::<serde_json::Value>(filter).unwrap_or_default(),
-            "winningPlan": {
-                "stage": "IXSCAN",
-                "keyPattern": { "category": 1 },
-                "indexName": "category_1",
-                "isMultiKey": false,
-                "direction": "forward"
-            }
+            "parsedQuery": parsed_query,
+            "winningPlan": winning_plan
         },
         "executionStats": {
             "executionSuccess": true,

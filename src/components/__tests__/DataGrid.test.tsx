@@ -224,6 +224,44 @@ describe('DataGrid Component', () => {
     expect(screen.getByText(/"David Miller"/)).toBeInTheDocument();
   });
 
+  it('shows a COLLSCAN suggestion banner in the explain panel and fires onCreateSuggestedIndex', () => {
+    const collscanExplain = JSON.stringify({
+      queryPlanner: {
+        namespace: 'shop.orders',
+        parsedQuery: { status: { $eq: 'open' } },
+        winningPlan: { stage: 'COLLSCAN' },
+      },
+    });
+    const onCreateSuggestedIndex = vi.fn();
+    render(
+      <DataGrid
+        documents={mockDocuments}
+        explainResult={collscanExplain}
+        onCreateSuggestedIndex={onCreateSuggestedIndex}
+      />
+    );
+
+    const btn = screen.getByTestId('create-suggested-index-btn');
+    expect(btn).toBeInTheDocument();
+    fireEvent.click(btn);
+
+    expect(onCreateSuggestedIndex).toHaveBeenCalledTimes(1);
+    const suggestion = onCreateSuggestedIndex.mock.calls[0][0];
+    expect(suggestion.namespace).toBe('shop.orders');
+    expect(suggestion.keys).toEqual({ status: 1 });
+  });
+
+  it('does not show a suggestion banner when the plan already uses an index', () => {
+    const ixscanExplain = JSON.stringify({
+      queryPlanner: {
+        namespace: 'shop.orders',
+        winningPlan: { stage: 'FETCH', inputStage: { stage: 'IXSCAN', indexName: 'status_1' } },
+      },
+    });
+    render(<DataGrid documents={mockDocuments} explainResult={ixscanExplain} />);
+    expect(screen.queryByTestId('create-suggested-index-btn')).not.toBeInTheDocument();
+  });
+
   it('shows a Query Code tab rendering the query spec in the selected language', () => {
     const spec = {
       db: 'shop',
