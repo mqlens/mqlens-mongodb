@@ -48,6 +48,7 @@ import { UpdatePrompt } from './components/UpdatePrompt';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
 import type { QueryCodeSpec } from './lib/queryCodeGen';
+import type { IndexSuggestion } from './lib/indexSuggestions';
 import { docToShell } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib/queryStore';
 import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from './lib/paletteIndex';
@@ -320,6 +321,10 @@ function Workspace() {
       keys: Record<string, number>;
       unique: boolean;
       sparse: boolean;
+    } | null;
+    prefill?: {
+      name: string;
+      keys: Record<string, number>;
     } | null;
   } | null>(null);
   const [indexMutationTrigger, setIndexMutationTrigger] = useState(0);
@@ -1171,6 +1176,24 @@ function Workspace() {
       db: dbName,
       collection: collName,
       initialData: null,
+    });
+    setIsIndexModalOpen(true);
+  };
+
+  // Fired by the DataGrid COLLSCAN suggestion banner: opens the create-index
+  // flow pre-filled with the ESR-ordered keys, scoped to the active tab's own
+  // connection/db/collection (preferred over parsing the explain namespace).
+  const handleCreateSuggestedIndex = (suggestion: IndexSuggestion) => {
+    if (!activeTab || activeTab.type !== 'collection') return;
+    setIndexModalTarget({
+      connectionId: activeTab.connectionId,
+      db: activeTab.db,
+      collection: activeTab.collection,
+      initialData: null,
+      prefill: {
+        name: suggestion.suggestedName,
+        keys: suggestion.keys,
+      },
     });
     setIsIndexModalOpen(true);
   };
@@ -2058,6 +2081,7 @@ function Workspace() {
             collectionName={indexModalTarget?.collection}
             availableFields={availableFields}
             initialData={indexModalTarget?.initialData}
+            prefill={indexModalTarget?.prefill}
           />
 
           <DocumentEditModal
@@ -2236,6 +2260,7 @@ function Workspace() {
                           countLoading={activeTab.countLoading}
                           skip={activeTab.lastQuery?.skip ?? 0}
                           limit={activeTab.lastQuery?.limit ?? 50}
+                          onCreateSuggestedIndex={handleCreateSuggestedIndex}
                           {...(!activeTab.lastAggregate ? {
                             onPageChange: handlePageChange,
                             onPageSizeChange: handlePageSizeChange,
