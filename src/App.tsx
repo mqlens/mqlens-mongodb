@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useReducer } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { WorkspaceTabBar } from '@/components/layout/WorkspaceTabBar';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { Toaster } from '@/components/ui/sonner';
 import { useTheme } from '@/hooks/use-theme';
@@ -38,7 +37,8 @@ import {
 } from './components/RestoreView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
-import { workspaceReducer, createInitialLayout, findPane } from './workspace/model';
+import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, type WorkspaceAction } from './workspace/model';
+import { WorkspaceRoot } from './workspace/WorkspaceRoot';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
 import { GridFsView } from './components/GridFsView';
@@ -275,6 +275,12 @@ function Workspace() {
   );
   const focusedPane = findPane(layout.root, layout.focusedPaneId);
   const activeTabId = focusedPane?.activeTabId ?? null;
+  if (import.meta.env.DEV) {
+    const known = new Set(tabs.map(t => t.id));
+    for (const id of allTabIds(layout)) {
+      if (!known.has(id)) console.error(`workspace layout references unknown tab: ${id}`);
+    }
+  }
   const tabBuilderStateCache = useRef(new Map<string, BuilderState>());
   const handleBuilderStateChange = useCallback((tabId: string, state: BuilderState) => {
     tabBuilderStateCache.current.set(tabId, state);
@@ -1208,12 +1214,12 @@ function Workspace() {
   // Fired by the DataGrid COLLSCAN suggestion banner: opens the create-index
   // flow pre-filled with the ESR-ordered keys, scoped to the active tab's own
   // connection/db/collection (preferred over parsing the explain namespace).
-  const handleCreateSuggestedIndex = (suggestion: IndexSuggestion) => {
-    if (!activeTab || activeTab.type !== 'collection') return;
+  const handleCreateSuggestedIndex = (tab: QueryTab, suggestion: IndexSuggestion) => {
+    if (tab.type !== 'collection') return;
     setIndexModalTarget({
-      connectionId: activeTab.connectionId,
-      db: activeTab.db,
-      collection: activeTab.collection,
+      connectionId: tab.connectionId,
+      db: tab.db,
+      collection: tab.collection,
       initialData: null,
       prefill: {
         name: suggestion.suggestedName,
@@ -1316,6 +1322,18 @@ function Workspace() {
     const updatedTabs = tabs.filter(t => t.id !== tabId);
     setTabs(updatedTabs);
     dispatchLayout({ type: 'close_tab', tabId });
+  };
+
+  // Passed to WorkspaceRoot/PaneView as their `dispatch`. Panes close their own
+  // tabs by dispatching `close_tab` directly (drag/drop and split ops only need
+  // the layout reducer), so we intercept that one action to also keep `tabs`
+  // state and the builder-state cache in sync — mirroring closeTabById.
+  const dispatchWorkspace = (action: WorkspaceAction) => {
+    if (action.type === 'close_tab') {
+      closeTabById(action.tabId);
+      return;
+    }
+    dispatchLayout(action);
   };
 
   const cycleTab = (dir: 1 | -1) => {
@@ -1434,6 +1452,17 @@ function Workspace() {
     ...(tabs.length > 1 ? [
       { id: 'next-tab', title: 'Next Tab', keywords: 'tab switch', run: () => cycleTab(1) },
       { id: 'prev-tab', title: 'Previous Tab', keywords: 'tab switch', run: () => cycleTab(-1) },
+    ] : []),
+    ...(activeTabId && focusedPane && focusedPane.tabIds.length > 1 ? [
+      { id: 'workspace.split-right', title: 'Split Right', keywords: 'workspace pane layout', run: () => dispatchLayout({ type: 'split_pane', paneId: focusedPane.id, dir: 'row', side: 'end', moveTabId: activeTabId }) },
+      { id: 'workspace.split-down', title: 'Split Down', keywords: 'workspace pane layout', run: () => dispatchLayout({ type: 'split_pane', paneId: focusedPane.id, dir: 'col', side: 'end', moveTabId: activeTabId }) },
+    ] : []),
+    ...(allPanes(layout.root).length > 1 ? [
+      { id: 'workspace.focus-next-pane', title: 'Focus Next Pane', keywords: 'workspace pane layout switch', run: () => {
+        const panes = allPanes(layout.root);
+        const i = panes.findIndex(p => p.id === layout.focusedPaneId);
+        dispatchLayout({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
+      } },
     ] : []),
     ...activeConnections.map(c => ({
       id: `monitoring:${c.id}`,
@@ -1944,16 +1973,6 @@ function Workspace() {
     return plan;
   };
 
-  const workspaceTabs = React.useMemo(
-    () =>
-      tabs.map((tab) => ({
-        id: tab.id,
-        label: tabLabelFor(tab, connectionNameFor),
-        icon: tabIconFor(tab, tab.id === activeTabId),
-      })),
-    [tabs, activeTabId, activeConnections]
-  );
-
   // Renders the content pane for a single tab. Parameterized by `tab` (not the
   // module-level `activeTab`) so multiple panes can each render their own tab
   // simultaneously.
@@ -2057,7 +2076,7 @@ function Workspace() {
                     countLoading={tab.countLoading}
                     skip={tab.lastQuery?.skip ?? 0}
                     limit={tab.lastQuery?.limit ?? 50}
-                    onCreateSuggestedIndex={handleCreateSuggestedIndex}
+                    onCreateSuggestedIndex={s => handleCreateSuggestedIndex(tab, s)}
                     {...(!tab.lastAggregate ? {
                       onPageChange: (newSkip: number) => handlePageChange(tab, newSkip),
                       onPageSizeChange: (newLimit: number) => handlePageSizeChange(tab, newLimit),
@@ -2381,16 +2400,7 @@ function Workspace() {
       }
       sidebarWidth={sidebarWidth}
       onResizeStart={startResizing}
-      tabBar={
-        tabs.length > 0 ? (
-          <WorkspaceTabBar
-            tabs={workspaceTabs}
-            activeTabId={activeTabId}
-            onSelectTab={(id) => dispatchLayout({ type: 'set_active', paneId: layout.focusedPaneId, tabId: id })}
-            onCloseTab={closeTabById}
-          />
-        ) : null
-      }
+      tabBar={null}
       statusBar={
         <StatusBar
           cpu={resUsage ? `${resUsage.cpu_percent.toFixed(0)}%` : undefined}
@@ -2521,7 +2531,18 @@ function Workspace() {
         </>
       }
     >
-      {activeTabId ? renderTabContent(activeTabId) : renderEmptyPane()}
+      <WorkspaceRoot
+        layout={layout}
+        dispatch={dispatchWorkspace}
+        tabsFor={pane =>
+          pane.tabIds
+            .map(id => tabs.find(t => t.id === id))
+            .filter((t): t is QueryTab => !!t)
+            .map(t => ({ id: t.id, label: tabLabelFor(t, connectionNameFor), icon: tabIconFor(t, t.id === pane.activeTabId) }))
+        }
+        renderTabContent={renderTabContent}
+        renderEmptyPane={renderEmptyPane}
+      />
     </AppShell>
   );
 }
