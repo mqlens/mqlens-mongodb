@@ -39,6 +39,7 @@ import {
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { CreateViewView } from './components/CreateViewView';
+import { ValidationRulesView } from './components/ValidationRulesView';
 import { GridFsView } from './components/GridFsView';
 import { MonitoringView } from './components/MonitoringView';
 import { UserManagementView } from './components/UserManagementView';
@@ -48,6 +49,7 @@ import { UpdatePrompt } from './components/UpdatePrompt';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
 import { formatBytes } from './lib/format';
 import type { QueryCodeSpec } from './lib/queryCodeGen';
+import type { IndexSuggestion } from './lib/indexSuggestions';
 import { docToShell } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib/queryStore';
 import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from './lib/paletteIndex';
@@ -57,12 +59,12 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap } from 'lucide-react';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation';
   connectionId: string;
   db: string;
   collection: string;
@@ -212,6 +214,8 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
       return <DatabaseBackup size={size} className={className} />;
     case 'restore':
       return <DatabaseZap size={size} className={className} />;
+    case 'validation':
+      return <ShieldCheck size={size} className={className} />;
     default:
       return <FolderCode size={size} className={className} />;
   }
@@ -250,6 +254,8 @@ const tabLabelFor = (
       return `Dump: ${tab.db || connectionName(tab.connectionId)}`;
     case 'restore':
       return `Restore: ${connectionName(tab.connectionId)}`;
+    case 'validation':
+      return `Validation: ${tab.collection}`;
     default:
       return tab.collection;
   }
@@ -320,6 +326,10 @@ function Workspace() {
       keys: Record<string, number>;
       unique: boolean;
       sparse: boolean;
+    } | null;
+    prefill?: {
+      name: string;
+      keys: Record<string, number>;
     } | null;
   } | null>(null);
   const [indexMutationTrigger, setIndexMutationTrigger] = useState(0);
@@ -1002,6 +1012,25 @@ function Workspace() {
     setActiveTabId(tabId);
   };
 
+  // #93: open a Validation Rules tab for a collection.
+  const handleOpenValidationTab = (connectionId: string, db: string, collection: string) => {
+    const tabId = `validation.${connectionId}.${db}.${collection}`;
+    if (!tabs.some(t => t.id === tabId)) {
+      setTabs(prev => [...prev, {
+        id: tabId,
+        type: 'validation',
+        connectionId,
+        db,
+        collection,
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      }]);
+    }
+    setActiveTabId(tabId);
+  };
+
   // M7: open a GridFS browser tab for a bucket (bucket stored in `collection`).
   const handleOpenGridfsTab = (connectionId: string, db: string, bucket: string) => {
     const tabId = `gridfs.${connectionId}.${db}.${bucket}`;
@@ -1171,6 +1200,24 @@ function Workspace() {
       db: dbName,
       collection: collName,
       initialData: null,
+    });
+    setIsIndexModalOpen(true);
+  };
+
+  // Fired by the DataGrid COLLSCAN suggestion banner: opens the create-index
+  // flow pre-filled with the ESR-ordered keys, scoped to the active tab's own
+  // connection/db/collection (preferred over parsing the explain namespace).
+  const handleCreateSuggestedIndex = (suggestion: IndexSuggestion) => {
+    if (!activeTab || activeTab.type !== 'collection') return;
+    setIndexModalTarget({
+      connectionId: activeTab.connectionId,
+      db: activeTab.db,
+      collection: activeTab.collection,
+      initialData: null,
+      prefill: {
+        name: suggestion.suggestedName,
+        keys: suggestion.keys,
+      },
     });
     setIsIndexModalOpen(true);
   };
@@ -1955,6 +2002,7 @@ function Workspace() {
           onOpenMonitoring={handleOpenMonitoringTab}
           onOpenUsers={handleOpenUsersTab}
           onAnalyzeSchema={handleOpenSchemaTab}
+          onEditValidation={handleOpenValidationTab}
           onCreateView={handleOpenCreateViewTab}
           onOpenGridfs={handleOpenGridfsTab}
           onOpenDump={handleOpenDumpTab}
@@ -2058,6 +2106,7 @@ function Workspace() {
             collectionName={indexModalTarget?.collection}
             availableFields={availableFields}
             initialData={indexModalTarget?.initialData}
+            prefill={indexModalTarget?.prefill}
           />
 
           <DocumentEditModal
@@ -2236,6 +2285,7 @@ function Workspace() {
                           countLoading={activeTab.countLoading}
                           skip={activeTab.lastQuery?.skip ?? 0}
                           limit={activeTab.lastQuery?.limit ?? 50}
+                          onCreateSuggestedIndex={handleCreateSuggestedIndex}
                           {...(!activeTab.lastAggregate ? {
                             onPageChange: handlePageChange,
                             onPageSizeChange: handlePageSizeChange,
@@ -2261,6 +2311,14 @@ function Workspace() {
                     setCollectionMutationTrigger(prev => prev + 1);
                     handleSelectCollection(activeTab.connectionId, activeTab.db, viewName);
                   }}
+                />
+              )}
+              {activeTab && activeTab.type === 'validation' && (
+                <ValidationRulesView
+                  connectionId={activeTab.connectionId}
+                  databaseName={activeTab.db}
+                  collectionName={activeTab.collection}
+                  onApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
                 />
               )}
               {activeTab && activeTab.type === 'gridfs' && (

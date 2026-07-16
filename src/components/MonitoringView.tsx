@@ -41,11 +41,14 @@ import {
   getProfilingStatus,
   setProfilingLevel,
   readProfile,
+  replSetStatus,
   type ServerStatus,
   type CurrentOp,
   type ProfilingStatus,
   type ProfileEntry,
+  type ReplSetStatus,
 } from '../lib/monitoringApi';
+import { lagText, lagClass, memberUnhealthy, memberDotClass, fmtMemberUptime } from '@/lib/clusterHealth';
 
 interface MonitoringViewProps {
   connectionId: string;
@@ -62,7 +65,7 @@ const DEFAULT_POLL_MS = 10000;
 const MAX_SAMPLES = 30;
 const TABLE_CMD_CHARS = 120;
 
-type Section = 'ops' | 'profiler';
+type Section = 'ops' | 'profiler' | 'cluster';
 
 /** Lean time-series point — avoids retaining full ServerStatus per sample. */
 interface MetricSample {
@@ -559,12 +562,26 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
   const [profileLoading, setProfileLoading] = useState(false);
   const profilerLoadedRef = useRef(false);
 
+  const [cluster, setCluster] = useState<ReplSetStatus | null>(null);
+  const [clusterErr, setClusterErr] = useState<string | null>(null);
+
   const [pollMs, setPollMs] = useState(DEFAULT_POLL_MS);
   const aliveRef = useRef(true);
 
+  // Read by pollOnce so its identity stays stable across tab switches (the
+  // interval effect resets the samples history whenever pollOnce changes).
+  const sectionRef = useRef(section);
+  useEffect(() => {
+    sectionRef.current = section;
+  }, [section]);
+
   const pollOnce = useCallback(async () => {
     if (typeof document !== 'undefined' && document.hidden) return;
-    const [sRes, oRes] = await Promise.allSettled([serverStatus(connectionId), currentOps(connectionId)]);
+    const [sRes, oRes, cRes] = await Promise.allSettled([
+      serverStatus(connectionId),
+      currentOps(connectionId),
+      sectionRef.current === 'cluster' ? replSetStatus(connectionId) : Promise.resolve(null),
+    ]);
     if (!aliveRef.current) return;
     if (sRes.status === 'fulfilled') {
       const s = sRes.value;
@@ -579,6 +596,14 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
       setOpsErr(null);
     } else {
       setOpsErr(String((oRes.reason as Error)?.message || oRes.reason));
+    }
+    if (cRes.status === 'fulfilled') {
+      if (cRes.value) {
+        setCluster(cRes.value);
+        setClusterErr(null);
+      }
+    } else {
+      setClusterErr(String((cRes.reason as Error)?.message || cRes.reason));
     }
   }, [connectionId]);
 
@@ -597,6 +622,12 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
       clearInterval(iv);
     };
   }, [pollOnce, pollMs, connectionId]);
+
+  // Entering the Cluster tab fetches right away; pollOnce reads the section
+  // from a ref, so this does not disturb the interval or the sample history.
+  useEffect(() => {
+    if (section === 'cluster') void pollOnce();
+  }, [section, pollOnce]);
 
   const refreshProfiler = useCallback(async () => {
     if (!profilerDb) return;
@@ -742,6 +773,14 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
               onClick={() => setSection('profiler')}
             >
               Profiler
+            </TabsTrigger>
+            <TabsTrigger
+              value="cluster"
+              className="h-7 px-3 text-xs"
+              data-testid="mon-tab-cluster"
+              onClick={() => setSection('cluster')}
+            >
+              Cluster
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -973,6 +1012,88 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
             )}
           </div>
         )}
+
+      {section === 'cluster' && (
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3" data-testid="mon-panel-cluster">
+          {clusterErr && <div className="text-xs text-red-500">{clusterErr}</div>}
+          {!clusterErr && cluster && !cluster.isReplicaSet && cluster.clusterType === 'sharded' && (
+            <div
+              className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground"
+              data-testid="cluster-sharded"
+            >
+              Sharded cluster — member-level health isn&apos;t available through mongos. Connect directly to a
+              shard&apos;s replica set to inspect its members.
+            </div>
+          )}
+          {!clusterErr && cluster && !cluster.isReplicaSet && cluster.clusterType !== 'sharded' && (
+            <div
+              className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground"
+              data-testid="cluster-not-replset"
+            >
+              This connection is a standalone MongoDB server — replica-set health does not apply here.
+            </div>
+          )}
+          {!clusterErr && cluster && cluster.isReplicaSet && (
+            <>
+              <div className="text-xs text-muted-foreground" data-testid="cluster-summary">
+                Replica set <span className="font-semibold text-foreground">{cluster.set}</span>
+                {' · '}
+                {cluster.members.length} members
+                {cluster.mongoVersion && <> · MongoDB {cluster.mongoVersion}</>}
+                {cluster.myStateStr && <> · you: {cluster.myStateStr}</>}
+              </div>
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="w-full text-xs" data-testid="cluster-members-table">
+                  <thead className="bg-muted/50 text-left text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-1.5 font-medium">Member</th>
+                      <th className="px-3 py-1.5 font-medium">State</th>
+                      <th className="px-3 py-1.5 font-medium">Uptime</th>
+                      <th className="px-3 py-1.5 font-medium">Ping</th>
+                      <th className="px-3 py-1.5 font-medium">Sync source</th>
+                      <th className="px-3 py-1.5 font-medium">Lag</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cluster.members.map((m) => (
+                      <tr
+                        key={m.name}
+                        data-testid={`cluster-member-${m.name}`}
+                        title={m.optimeDateMs > 0 ? `optime: ${new Date(m.optimeDateMs).toISOString()}` : undefined}
+                        className={cn(
+                          'border-t border-border/50',
+                          memberUnhealthy(m) && 'bg-destructive/10 text-destructive',
+                        )}
+                      >
+                        <td className="px-3 py-1.5">
+                          <span className="flex items-center gap-1.5">
+                            <span className={cn('h-2 w-2 shrink-0 rounded-full', memberDotClass(m))} />
+                            <span className="font-mono">{m.name}</span>
+                            {m.self && <span className="text-ui-2xs text-muted-foreground">(you)</span>}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5">{m.stateStr}</td>
+                        <td className="px-3 py-1.5">{fmtMemberUptime(m.uptimeSecs)}</td>
+                        <td className="px-3 py-1.5">{m.pingMs == null ? '—' : `${m.pingMs}ms`}</td>
+                        <td className="px-3 py-1.5 font-mono">{m.syncSource || '—'}</td>
+                        <td
+                          className={cn('px-3 py-1.5', m.stateStr === 'PRIMARY' ? 'text-muted-foreground' : lagClass(m.lagSecs))}
+                          data-testid={`cluster-lag-${m.name}`}
+                        >
+                          {m.stateStr === 'PRIMARY' ? '—' : lagText(m.lagSecs)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          {!clusterErr && !cluster && (
+            <div className="text-xs text-muted-foreground">Loading replica-set status…</div>
+          )}
+        </div>
+      )}
 
       {detail && <MonitoringDetail detail={detail} onClose={() => setDetail(null)} />}
     </div>

@@ -13,7 +13,7 @@ mod tests {
         list_indexes_impl, parse_json_array_docs,
         preview_export_impl, rename_collection_impl, rename_database_impl, sample_export_fields_impl,
         start_collection_export_impl, start_filtered_export_impl, update_document_impl,
-        upload_gridfs_file_impl,
+        upload_gridfs_file_impl, get_collection_options_impl, set_validator_impl,
     };
     use crate::{
         create_user_impl, drop_user_impl, list_roles_impl, list_users_impl, update_user_impl,
@@ -212,6 +212,114 @@ mod tests {
             .find(|c| c.name == "customers")
             .expect("customers still listed");
         assert_eq!(customers.collection_type, "collection");
+    }
+
+    #[tokio::test]
+    async fn test_get_collection_options_mock_path() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let opts = get_collection_options_impl(&state, &conn_id, "sales_db", "customers")
+            .await
+            .expect("get collection options");
+
+        assert_eq!(opts.validator, "{}");
+        assert_eq!(opts.validation_level, "");
+        assert_eq!(opts.validation_action, "");
+    }
+
+    #[tokio::test]
+    async fn test_set_validator_mock_path() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let result = set_validator_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            r#"{"$jsonSchema": {"type": "object"}}"#,
+            "moderate",
+            "error",
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validator_get_set_roundtrip() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+
+        let opts = get_collection_options_impl(&state, &conn_id, "sales_db", "customers")
+            .await
+            .expect("get collection options");
+
+        let result = set_validator_impl(
+            &state,
+            &conn_id,
+            "sales_db",
+            "customers",
+            &opts.validator,
+            &opts.validation_level,
+            &opts.validation_action,
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    // Issue #114: demo mode returns a synthetic replica set so the Cluster
+    // tab is populated without a live cluster — including a lagging
+    // secondary so the warning styling is visible.
+    #[tokio::test]
+    async fn test_mock_repl_set_status_returns_synthetic_set() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+        let s = crate::monitoring::repl_set_status_impl(&state, &conn_id).await.unwrap();
+        assert!(s.is_replica_set);
+        assert_eq!(s.set, "rs0");
+        assert_eq!(s.cluster_type, "replicaSet");
+        assert_eq!(s.members.len(), 3);
+        assert_eq!(s.members.iter().filter(|m| m.state_str == "PRIMARY").count(), 1);
+        assert!(
+            s.members.iter().any(|m| m.lag_secs.map(|l| l >= 10.0).unwrap_or(false)),
+            "demo set includes a lagging secondary"
+        );
+    }
+
+    // Issue #178: demo mode returns believable stats so all three popovers
+    // render without a live server.
+    #[tokio::test]
+    async fn test_mock_stats_impls_return_demo_numbers() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
+
+        let db = crate::db::stats::db_stats_impl(&state, &conn_id, "sales_db").await.unwrap();
+        assert!(db.collections >= 4);
+        assert!(db.objects > 0);
+        assert!(db.data_size > 0);
+
+        let coll = crate::db::stats::coll_stats_impl(&state, &conn_id, "sales_db", "customers")
+            .await
+            .unwrap();
+        assert!(coll.count > 0);
+        assert!(coll.size > 0);
+        assert!(coll.nindexes >= 1);
+
+        let idx = crate::db::stats::index_stats_impl(&state, &conn_id, "sales_db", "customers")
+            .await
+            .unwrap();
+        assert!(!idx.is_empty());
+        assert!(idx.iter().any(|i| i.name == "_id_"));
+        assert!(idx.iter().all(|i| i.size_bytes > 0));
     }
 
     #[tokio::test]
@@ -2946,6 +3054,23 @@ mod tests {
         // Explain renders a plan namespaced to the requested collection.
         let explain = get_mock_explain("user_analytics", "events", "{}");
         assert!(explain.contains("user_analytics.events"));
+        assert!(explain.contains("IXSCAN"));
+
+        // sales_db.transactions is the one namespace that demos a COLLSCAN plan,
+        // so the index-suggestion banner is reachable without a real server.
+        let tx_explain = get_mock_explain("sales_db", "transactions", "{}");
+        assert!(tx_explain.contains("COLLSCAN"));
+        assert!(!tx_explain.contains("IXSCAN"));
+        let tx_plan: serde_json::Value = serde_json::from_str(&tx_explain).unwrap();
+        assert_eq!(
+            tx_plan["queryPlanner"]["parsedQuery"]["$and"][0]["customer_name"]["$eq"],
+            "Alice Smith"
+        );
+
+        // Every other namespace (e.g. sales_db.products) keeps the original IXSCAN shape.
+        let products_explain = get_mock_explain("sales_db", "products", "{}");
+        assert!(products_explain.contains("IXSCAN"));
+        assert!(!products_explain.contains("COLLSCAN"));
 
         // Index sets for each collection, including the admin and unknown fallbacks.
         let idx = |db, coll| -> Vec<String> {

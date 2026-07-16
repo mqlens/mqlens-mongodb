@@ -56,6 +56,9 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
+import { ClusterHealthCard } from '@/components/ClusterHealthCard';
+import { DbStatsCard, CollStatsCard, IndexStatsCard } from '@/components/StatsCards';
 import { ThemePicker } from '@/components/theme/ThemePicker';
 import {
   Database,
@@ -92,6 +95,7 @@ import {
   Copy,
   DatabaseBackup,
   DatabaseZap,
+  ShieldCheck,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
@@ -116,6 +120,27 @@ export interface IndexInfo {
   unique: boolean;
   sparse: boolean;
 }
+
+// Discriminated target for the row-hover stats popover (issue #178):
+// connection → cluster health, database/collection/index → their stats cards.
+type StatsPopoverTarget =
+  | { kind: 'connection'; connId: string }
+  | { kind: 'database'; connId: string; db: string }
+  | { kind: 'collection'; connId: string; db: string; coll: string }
+  | { kind: 'index'; connId: string; db: string; coll: string; index: string };
+
+const targetKey = (t: StatsPopoverTarget): string => {
+  switch (t.kind) {
+    case 'connection':
+      return `connection:${t.connId}`;
+    case 'database':
+      return `database:${t.connId}/${t.db}`;
+    case 'collection':
+      return `collection:${t.connId}/${t.db}/${t.coll}`;
+    case 'index':
+      return `index:${t.connId}/${t.db}/${t.coll}/${t.index}`;
+  }
+};
 
 const compareCollectionNames = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
@@ -158,6 +183,7 @@ interface SidebarProps {
   onOpenMonitoring?: (connectionId: string) => void;
   onOpenUsers?: (connectionId: string, db?: string) => void;
   onAnalyzeSchema?: (connectionId: string, dbName: string, collName: string) => void;
+  onEditValidation?: (connectionId: string, dbName: string, collName: string) => void;
   onCreateView?: (connectionId: string, dbName: string) => void;
   onOpenGridfs?: (connectionId: string, dbName: string, bucket: string) => void;
   /** Open a Dump tab scoped to the whole connection, a database, or a single collection. */
@@ -189,6 +215,8 @@ interface SidebarProps {
   refreshTarget?: { connectionId: string; db?: string; expand: boolean } | null;
   /** Bumped by the parent to fire a refresh of `refreshTarget`. */
   refreshTargetNonce?: number;
+  /** Hover delay before the connection cluster-health popover opens (ms). */
+  clusterHoverDelayMs?: number;
 }
 
 const treeRowClass = (active?: boolean) =>
@@ -277,6 +305,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenMonitoring,
   onOpenUsers,
   onAnalyzeSchema,
+  onEditValidation,
   onCreateView,
   onOpenGridfs,
   onOpenDump,
@@ -297,10 +326,63 @@ export const Sidebar: React.FC<SidebarProps> = ({
   canPaste,
   refreshTarget,
   refreshTargetNonce,
+  clusterHoverDelayMs = 400,
 }) => {
   const { toast, confirm, prompt } = useDialogs();
   const [filterQuery, setFilterQuery] = useState('');
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Stats hover popover: which row's card is open (connection → cluster
+  // health, database/collection/index → their stats cards), plus open-delay
+  // and grace-close timers so the pointer can travel into the card.
+  const [statsPopover, setStatsPopover] = useState<StatsPopoverTarget | null>(null);
+  const statsOpenTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statsCloseTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The popover opens at the mouse cursor, not beside the row: a virtual
+  // anchor reports a zero-size rect at the last pointer position (updated
+  // until the popover opens, then frozen so the card doesn't chase the mouse).
+  const statsAnchorPoint = React.useRef({ x: 0, y: 0 });
+  const statsVirtualAnchor = React.useRef({
+    getBoundingClientRect: () => {
+      const { x, y } = statsAnchorPoint.current;
+      return { width: 0, height: 0, x, y, top: y, bottom: y, left: x, right: x, toJSON: () => ({}) } as DOMRect;
+    },
+  });
+  const cancelStatsTimers = () => {
+    if (statsOpenTimer.current) clearTimeout(statsOpenTimer.current);
+    if (statsCloseTimer.current) clearTimeout(statsCloseTimer.current);
+    statsOpenTimer.current = null;
+    statsCloseTimer.current = null;
+  };
+  const scheduleStatsOpen = (target: StatsPopoverTarget) => {
+    cancelStatsTimers();
+    // Moving to a different row: close the previous popover immediately
+    // instead of letting it linger for the open delay.
+    setStatsPopover((cur) => (cur !== null && targetKey(cur) !== targetKey(target) ? null : cur));
+    statsOpenTimer.current = setTimeout(() => setStatsPopover(target), clusterHoverDelayMs);
+  };
+  const scheduleStatsClose = () => {
+    if (statsOpenTimer.current) clearTimeout(statsOpenTimer.current);
+    statsCloseTimer.current = setTimeout(() => setStatsPopover(null), 150);
+  };
+  useEffect(() => cancelStatsTimers, []);
+
+  // Hover props for a stats-popover row: capture the cursor position on
+  // enter and schedule the open; keep tracking the pointer until this row's
+  // popover actually opens; grace-close on leave so the pointer can travel
+  // into the card without it disappearing.
+  const statsHoverHandlers = (target: StatsPopoverTarget) => ({
+    onMouseEnter: (e: React.MouseEvent) => {
+      statsAnchorPoint.current = { x: e.clientX, y: e.clientY };
+      scheduleStatsOpen(target);
+    },
+    onMouseMove: (e: React.MouseEvent) => {
+      if (statsPopover === null || targetKey(statsPopover) !== targetKey(target)) {
+        statsAnchorPoint.current = { x: e.clientX, y: e.clientY };
+      }
+    },
+    onMouseLeave: scheduleStatsClose,
+  });
 
   // Mock connections (the bundled sample data, or ids/URIs marked as such) never
   // reach a real mongodump/mongorestore binary — the backend rejects them outright
@@ -1143,6 +1225,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 }
               }}
               className={cn(treeRowClass(isActive), isSelected && 'bg-accent')}
+              {...statsHoverHandlers({ kind: 'collection', connId, db: dbName, coll: collName })}
             >
               <ChevronRight
                 size={10}
@@ -1150,7 +1233,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               />
               {collType === 'timeseries' ? (
                 <span
-                  title="Time-series collection"
+                  aria-label="Time-series collection"
                   data-testid="coll-icon-timeseries"
                   className="flex shrink-0 items-center"
                 >
@@ -1159,7 +1242,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               ) : (
                 <Layers size={11} className={cn('shrink-0', isActive ? 'text-primary' : 'text-emerald-500')} />
               )}
-              <span className="min-w-0 truncate" title={collName}>
+              <span className="min-w-0 truncate">
                 {collName}
               </span>
             </div>
@@ -1244,6 +1327,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Table2 />
               <span>Analyze Schema</span>
             </ContextMenuItem>
+            {collType !== 'view' && collType !== 'timeseries' && !collName.startsWith('system.') && !/\.(files|chunks)$/.test(collName) && (
+              <ContextMenuItem className={ctxItemClass} onClick={() => onEditValidation?.(connId, dbName, collName)}>
+                <ShieldCheck />
+                <span>Validation Rules</span>
+              </ContextMenuItem>
+            )}
             {!isMockConnection(connId) && (
               <ContextMenuItem
                 className={ctxItemClass}
@@ -1346,6 +1435,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             onSelectIndex(connId, dbName, collName, indexName);
                           }}
                           className={treeRowClass(isIndexActive)}
+                          {...statsHoverHandlers({ kind: 'index', connId, db: dbName, coll: collName, index: indexName })}
                         >
                           <KeyRound
                             size={10}
@@ -1429,6 +1519,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     aria-expanded={isConnExpanded}
                     aria-label={`Connection ${conn.name}`}
                     onClick={() => setExpandedConnections((prev) => ({ ...prev, [conn.id]: !prev[conn.id] }))}
+                    {...statsHoverHandlers({ kind: 'connection', connId: conn.id })}
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-1">
                       <ChevronRight
@@ -1439,14 +1530,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <span
                           className="h-2 w-2 shrink-0 rounded-full"
                           style={{ backgroundColor: conn.color_tag }}
-                          title="Connection color"
+                          aria-label="Connection color"
                         />
                       )}
                       <Server size={12} className="shrink-0 text-primary" />
                       <span className="min-w-0 truncate font-medium">{conn.name}</span>
                       <span
                         className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                        title="Connected"
+                        aria-label="Connected"
                       />
                     </div>
                     <Button
@@ -1457,7 +1548,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         e.stopPropagation();
                         loadDatabases(conn.id);
                       }}
-                      title="Refresh Databases"
                       aria-label="Refresh databases"
                     >
                       <RefreshCw className="size-3" />
@@ -1470,7 +1560,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         e.stopPropagation();
                         onDisconnect(conn.id);
                       }}
-                      title="Disconnect Connection"
                       aria-label="Disconnect"
                     >
                       <LogOut className="size-3" />
@@ -1621,6 +1710,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               aria-expanded={isDbExpanded}
                               aria-label={`Database ${dbName}`}
                               onClick={() => toggleDb(conn.id, dbName)}
+                              {...statsHoverHandlers({ kind: 'database', connId: conn.id, db: dbName })}
                             >
                               <ChevronRight
                                 size={11}
@@ -1764,7 +1854,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       size="icon"
                                       className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
                                       data-testid={`collections-new-${conn.id}-${dbName}`}
-                                      title="New collection"
+                                      aria-label="New collection"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         void handleAddCollection(conn.id, dbName);
@@ -1850,7 +1940,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       size="icon"
                                       className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
                                       data-testid={`gridfs-new-bucket-${conn.id}-${dbName}`}
-                                      title="New bucket"
+                                      aria-label="New bucket"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         void handleOpenGridfsBucket(conn.id, dbName);
@@ -1868,7 +1958,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                           onClick={() => onOpenGridfs?.(conn.id, dbName, bucket)}
                                         >
                                           <Archive size={11} className="ml-3.5 shrink-0 text-emerald-500" />
-                                          <span className="min-w-0 truncate" title={bucket}>
+                                          <span className="min-w-0 truncate">
                                             {bucket}
                                           </span>
                                         </div>
@@ -1961,7 +2051,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="text-ui-xs font-semibold tracking-wide">MQLens Workspace</span>
         </div>
         <div className="flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onOpenSettings} title="Settings" aria-label="Open Settings">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onOpenSettings} aria-label="Open Settings">
             <Settings className="size-3.5" />
           </Button>
           <DropdownMenu>
@@ -1970,7 +2060,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
-                title="Help & feedback"
                 aria-label="Help and feedback"
                 data-testid="help-menu-btn"
               >
@@ -1991,7 +2080,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             size="icon"
             className="h-7 w-7"
             onClick={onOpenConnectionManager}
-            title="Manage Connections"
             aria-label="Manage Connections"
           >
             <Plus className="size-3.5" />
@@ -2082,7 +2170,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     : 'text-emerald-500',
                               )}
                             />
-                            <span className="min-w-0 truncate" title={label}>
+                            <span className="min-w-0 truncate">
                               {label}
                             </span>
                             <span className="ml-auto truncate text-[10px] text-muted-foreground">
@@ -2146,7 +2234,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           <div
                             className={treeRowClass()}
                             onClick={() => void navigateToFavorite(fav)}
-                            title={`${fav.connectionName}${fav.db ? ` · ${fav.db}` : ''}${fav.collection ? `.${fav.collection}` : ''}`}
                           >
                             <FavIcon
                               size={10}
@@ -2241,7 +2328,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   key={profile.id}
                                   className={treeRowClass()}
                                   onClick={() => onConnectProfile?.(profile)}
-                                  title={profile.name}
                                 >
                                   <Server
                                     size={11}
@@ -2254,7 +2340,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   {isConnected && (
                                     <span
                                       className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                                      title="Connected"
+                                      aria-label="Connected"
                                     />
                                   )}
                                 </div>
@@ -2274,7 +2360,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           key={profile.id}
                           className={treeRowClass()}
                           onClick={() => onConnectProfile?.(profile)}
-                          title={profile.name}
                         >
                           <Server
                             size={11}
@@ -2308,6 +2393,56 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <ThemePicker />
         <span className="text-[10px] text-muted-foreground">Theme</span>
       </footer>
+
+      {/* Single root-level stats popover shared by connection/database/collection/index
+          rows (issue #178) — the virtual anchor positions it at the cursor regardless
+          of which row triggered it, so it doesn't need to live inside the tree map. */}
+      <Popover
+        open={statsPopover !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            cancelStatsTimers();
+            setStatsPopover(null);
+          }
+        }}
+      >
+        <PopoverAnchor virtualRef={statsVirtualAnchor} />
+        <PopoverContent
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          onMouseEnter={cancelStatsTimers}
+          onMouseLeave={scheduleStatsClose}
+        >
+          {statsPopover?.kind === 'connection' &&
+            (() => {
+              const conn = activeConnections.find((c) => c.id === statsPopover.connId);
+              return (
+                <ClusterHealthCard
+                  connectionId={statsPopover.connId}
+                  connectionName={conn?.name}
+                  connectionUri={conn?.uri}
+                  onOpenMonitoring={onOpenMonitoring}
+                />
+              );
+            })()}
+          {statsPopover?.kind === 'database' && (
+            <DbStatsCard connectionId={statsPopover.connId} db={statsPopover.db} />
+          )}
+          {statsPopover?.kind === 'collection' && (
+            <CollStatsCard connectionId={statsPopover.connId} db={statsPopover.db} collection={statsPopover.coll} />
+          )}
+          {statsPopover?.kind === 'index' && (
+            <IndexStatsCard
+              connectionId={statsPopover.connId}
+              db={statsPopover.db}
+              collection={statsPopover.coll}
+              indexName={statsPopover.index}
+            />
+          )}
+        </PopoverContent>
+      </Popover>
     </aside>
     </EmptySpaceContextMenu>
   );

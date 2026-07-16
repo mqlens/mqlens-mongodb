@@ -1,11 +1,13 @@
 import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3 } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
+import { DocumentDiffModal } from './DocumentDiffModal';
 import Editor from '@monaco-editor/react';
 import { generateQueryCode, CODE_LANGUAGES, CODE_LANGUAGE_MONACO_IDS, type CodeLanguage, type QueryCodeSpec } from '../lib/queryCodeGen';
+import { suggestESRIndex, type IndexSuggestion } from '../lib/indexSuggestions';
 import { useMonacoTheme } from '../lib/useMonacoTheme';
 import { EJSON, ObjectId, Long, Decimal128, Int32, Double, Binary, Timestamp } from 'bson';
 import { Button } from '@/components/ui/button';
@@ -36,6 +38,8 @@ interface DataGridProps {
   limit?: number;
   onPageChange?: (newSkip: number) => void;
   onPageSizeChange?: (newLimit: number) => void;
+  // Fired when the user accepts the COLLSCAN suggestion banner's "Create Index" CTA.
+  onCreateSuggestedIndex?: (suggestion: IndexSuggestion) => void;
 }
 
 type ViewMode = 'table' | 'tree' | 'json' | 'chart';
@@ -445,15 +449,36 @@ export const DataGrid: React.FC<DataGridProps> = ({
   limit,
   onPageChange,
   onPageSizeChange,
+  onCreateSuggestedIndex,
 }) => {
   const themeCtx = useThemeOptional();
   const density: SpacingDensity =
     densityProp ?? themeCtx?.config.spacingDensity ?? 'cozy';
 
+  // ESR-rule suggestion derived from the current explain plan (null unless it's a COLLSCAN).
+  const indexSuggestion = useMemo(
+    () => (explainResult ? suggestESRIndex(explainResult) : null),
+    [explainResult]
+  );
+
   // Right-click context menu shared by all result views (Table / Tree / JSON).
   const [ctxMenu, setCtxMenu] = useState<
     { x: number; y: number; doc: Record<string, any>; field?: string; value?: any } | null
   >(null);
+
+  // Two-step "Compare with…" flow: the first pick is held here as the armed
+  // source; the second pick (a different document) opens the diff modal.
+  const [pendingCompare, setPendingCompare] = useState<Record<string, any> | null>(null);
+  const [diffPair, setDiffPair] = useState<{ a: Record<string, any>; b: Record<string, any> } | null>(null);
+
+  // A new result set invalidates any armed compare source: the armed doc may
+  // no longer exist (or may differ) in the fresh documents array, and matching
+  // is by reference — silently diffing a stale doc would mislead. An OPEN diff
+  // modal is deliberately left alone: it deep-copied its two docs and stays
+  // valid regardless of what the grid refreshes to underneath it.
+  useEffect(() => {
+    setPendingCompare(null);
+  }, [documents]);
 
   const writeClipboard = (text: string) => {
     try { navigator.clipboard?.writeText(text); } catch { /* clipboard unavailable */ }
@@ -481,6 +506,36 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (onEditDocument) items.push({ label: 'Edit document', icon: <Edit size={13} />, onClick: () => onEditDocument(m.doc) });
     if (onDuplicateDocument) items.push({ label: 'Duplicate document', icon: <Plus size={13} />, onClick: () => onDuplicateDocument(m.doc) });
     items.push({ label: 'Copy document (JSON)', icon: <Copy size={13} />, onClick: () => writeClipboard(JSON.stringify(m.doc, null, 2)) });
+    if (!pendingCompare) {
+      items.push({
+        label: 'Compare with…',
+        icon: <GitCompareArrows size={13} />,
+        separatorBefore: true,
+        onClick: () => setPendingCompare(m.doc),
+      });
+    } else if (pendingCompare === m.doc) {
+      items.push({
+        label: 'Cancel compare selection',
+        icon: <GitCompareArrows size={13} />,
+        separatorBefore: true,
+        onClick: () => setPendingCompare(null),
+      });
+    } else {
+      items.push({
+        label: 'Compare with selected',
+        icon: <GitCompareArrows size={13} />,
+        separatorBefore: true,
+        onClick: () => {
+          setDiffPair({ a: pendingCompare, b: m.doc });
+          setPendingCompare(null);
+        },
+      });
+      items.push({
+        label: 'Compare with… (replace selection)',
+        icon: <GitCompareArrows size={13} />,
+        onClick: () => setPendingCompare(m.doc),
+      });
+    }
     if (m.field) {
       items.push({ label: 'Copy value', icon: <Copy size={13} />, separatorBefore: true, onClick: () => writeClipboard(valueToText(m.value)) });
       items.push({ label: 'Copy field name', icon: <Copy size={13} />, onClick: () => writeClipboard(m.field!) });
@@ -1480,6 +1535,29 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 </div>
               </div>
 
+              {indexSuggestion && (
+                <div
+                  className="mx-3 mt-3 flex shrink-0 items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5"
+                  data-testid="index-suggestion-banner"
+                >
+                  <Lightbulb size={16} className="mt-0.5 shrink-0 text-warning" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                    <p className="text-xs leading-relaxed text-foreground">{indexSuggestion.reason}</p>
+                    <code className="w-fit rounded bg-background/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                      {JSON.stringify(indexSuggestion.keys)}
+                    </code>
+                  </div>
+                  <Button
+                    size="sm"
+                    className="h-7 shrink-0 gap-1.5 text-[11px] font-semibold"
+                    onClick={() => onCreateSuggestedIndex?.(indexSuggestion)}
+                    data-testid="create-suggested-index-btn"
+                  >
+                    Create Index
+                  </Button>
+                </div>
+              )}
+
               {explainView === 'visual' ? (
                 <div
                   className="flex flex-1 flex-col items-center gap-5 overflow-auto bg-background px-8 py-6"
@@ -1585,6 +1663,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
           </div>
         );
       })()}
+      {diffPair && (
+        <DocumentDiffModal
+          isOpen
+          left={diffPair.a}
+          right={diffPair.b}
+          onClose={() => setDiffPair(null)}
+        />
+      )}
       {ctxMenu && (
         <ContextMenu
           x={ctxMenu.x}
