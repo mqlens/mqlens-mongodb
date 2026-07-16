@@ -526,18 +526,17 @@ function Workspace() {
   // The collection tab an 'export' tab was opened from (results/query source for the
   // Current Results and Filtered cards). Falls back to a matching collection tab by
   // namespace when the originating tab has since closed.
-  const exportSourceTab =
-    activeTab && activeTab.type === 'export'
-      ? tabs.find(t => t.id === activeTab.exportSourceTabId && t.type === 'collection') ||
-        tabs.find(
-          t =>
-            t.type === 'collection' &&
-            t.connectionId === activeTab.connectionId &&
-            t.db === activeTab.db &&
-            t.collection === activeTab.collection
-        ) ||
-        null
-      : null;
+  const deriveExportSourceTab = (exportTab: QueryTab): QueryTab | null =>
+    tabs.find(t => t.id === exportTab.exportSourceTabId && t.type === 'collection') ||
+    tabs.find(
+      t =>
+        t.type === 'collection' &&
+        t.connectionId === exportTab.connectionId &&
+        t.db === exportTab.db &&
+        t.collection === exportTab.collection
+    ) ||
+    null;
+  const exportSourceTab = activeTab && activeTab.type === 'export' ? deriveExportSourceTab(activeTab) : null;
 
   // MongoDB server version of the active connection, for the status bar.
   const activeConnId = activeTab && activeConnections.some(c => c.id === activeTab.connectionId) ? activeTab.connectionId : null;
@@ -1452,17 +1451,15 @@ function Workspace() {
     ...paletteDynamicItems,
   ];
 
-  const handleExecuteQuery = async (query: { filter: string; sort: string; projection: string; limit: number; skip: number }) => {
-    if (!activeTab) return;
-
-    // Update active tab loading state
-    setTabs(prev => prev.map(t => t.id === activeTab.id ? { ...t, loading: true, error: null } : t));
+  const handleExecuteQuery = async (tab: QueryTab, query: { filter: string; sort: string; projection: string; limit: number; skip: number }) => {
+    // Update the tab's loading state
+    setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, loading: true, error: null } : t));
 
     try {
       const resultStrs = await invoke<string[]>('execute_mql_query', {
-        id: activeTab.connectionId,
-        database: activeTab.db,
-        collection: activeTab.collection,
+        id: tab.connectionId,
+        database: tab.db,
+        collection: tab.collection,
         filter: query.filter,
         sort: query.sort,
         projection: query.projection,
@@ -1471,9 +1468,9 @@ function Workspace() {
       });
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
-      setTabs(prev => prev.map(t => t.id === activeTab.id ? { ...t, results: parsedResults, loading: false, lastQuery: query, lastAggregate: undefined } : t));
+      setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastQuery: query, lastAggregate: undefined } : t));
       // History is best-effort: never surface an error after a successful run.
-      recordHistory(connectionNameFor(activeTab.connectionId), activeTab.db, activeTab.collection, {
+      recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'find',
         filter: JSON.parse(query.filter || '{}'),
         sort: JSON.parse(query.sort || '{}'),
@@ -1482,58 +1479,54 @@ function Workspace() {
         skip: query.skip,
       }).catch(() => {});
       // Pagination count: recount only when the filter changed since the last count.
-      const prevFilter = activeTab.lastQuery?.filter;
-      if (query.filter !== prevFilter || activeTab.totalCount === undefined) {
-        setTabs(prev => prev.map(t => t.id === activeTab.id ? { ...t, countLoading: true } : t));
+      const prevFilter = tab.lastQuery?.filter;
+      if (query.filter !== prevFilter || tab.totalCount === undefined) {
+        setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, countLoading: true } : t));
         try {
           const total = await invoke<number>('count_documents', {
-            id: activeTab.connectionId, database: activeTab.db, collection: activeTab.collection, filter: query.filter,
+            id: tab.connectionId, database: tab.db, collection: tab.collection, filter: query.filter,
           });
-          setTabs(prev => prev.map(t => t.id === activeTab.id
+          setTabs(prev => prev.map(t => t.id === tab.id
             ? { ...t, totalCount: total, estimated: isEmptyFilter(query.filter), countLoading: false }
             : t));
         } catch {
-          setTabs(prev => prev.map(t => t.id === activeTab.id ? { ...t, countLoading: false } : t));
+          setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, countLoading: false } : t));
         }
       }
     } catch (err: any) {
-      setTabs(prev => prev.map(t => t.id === activeTab.id ? { ...t, error: String(err), loading: false } : t));
+      setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, error: String(err), loading: false } : t));
     }
   };
 
-  const handlePageChange = (newSkip: number) => {
-    const tab = tabs.find(t => t.id === activeTabId);
-    if (!tab || !tab.lastQuery) return;
-    handleExecuteQuery({ ...tab.lastQuery, skip: Math.max(0, newSkip) });
+  const handlePageChange = (tab: QueryTab, newSkip: number) => {
+    if (!tab.lastQuery) return;
+    handleExecuteQuery(tab, { ...tab.lastQuery, skip: Math.max(0, newSkip) });
   };
 
-  const handlePageSizeChange = (newLimit: number) => {
-    const tab = tabs.find(t => t.id === activeTabId);
-    if (!tab || !tab.lastQuery) return;
-    handleExecuteQuery({ ...tab.lastQuery, limit: newLimit, skip: 0 });
+  const handlePageSizeChange = (tab: QueryTab, newLimit: number) => {
+    if (!tab.lastQuery) return;
+    handleExecuteQuery(tab, { ...tab.lastQuery, limit: newLimit, skip: 0 });
   };
 
-  const handleExecuteAggregate = async (pipeline: Record<string, unknown>[]) => {
-    if (!activeTab) return;
-
-    setTabs(prev => prev.map(t => t.id === activeTab.id ? { ...t, loading: true, error: null } : t));
+  const handleExecuteAggregate = async (tab: QueryTab, pipeline: Record<string, unknown>[]) => {
+    setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, loading: true, error: null } : t));
 
     try {
       const resultStrs = await invoke<string[]>('execute_aggregate', {
-        id: activeTab.connectionId,
-        database: activeTab.db,
-        collection: activeTab.collection,
+        id: tab.connectionId,
+        database: tab.db,
+        collection: tab.collection,
         pipeline: JSON.stringify(pipeline),
       });
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
-      setTabs(prev => prev.map(t => t.id === activeTab.id ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
-      recordHistory(connectionNameFor(activeTab.connectionId), activeTab.db, activeTab.collection, {
+      setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
+      recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'aggregate',
         pipeline,
       }).catch(() => {});
     } catch (err: any) {
-      setTabs(prev => prev.map(t => t.id === activeTab.id ? { ...t, error: String(err), loading: false } : t));
+      setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, error: String(err), loading: false } : t));
     }
   };
 
@@ -1594,11 +1587,11 @@ function Workspace() {
   }, [exportTasks]);
 
   const [documentModal, setDocumentModal] = useState<
-    { mode: 'insert' | 'edit'; initialJson: string; targetDoc: Record<string, any> | null } | null
+    { mode: 'insert' | 'edit'; initialJson: string; targetDoc: Record<string, any> | null; tabId: string } | null
   >(null);
 
-  const handleInsertDocument = () => {
-    setDocumentModal({ mode: 'insert', initialJson: '{\n  \n}', targetDoc: null });
+  const handleInsertDocument = (tab: QueryTab) => {
+    setDocumentModal({ mode: 'insert', initialJson: '{\n  \n}', targetDoc: null, tabId: tab.id });
   };
 
   const handleExportForTab = async (
@@ -1753,23 +1746,22 @@ function Workspace() {
     };
   };
 
-  const handleImport = () => {
-    if (!activeTab || activeTab.type !== 'collection') return;
-    handleOpenImportTab(activeTab);
+  const handleImport = (tab: QueryTab) => {
+    if (tab.type !== 'collection') return;
+    handleOpenImportTab(tab);
   };
 
-  const handleEditDocument = (doc: Record<string, any>) => {
-    setDocumentModal({ mode: 'edit', initialJson: docToShell(doc), targetDoc: doc });
+  const handleEditDocument = (tab: QueryTab, doc: Record<string, any>) => {
+    setDocumentModal({ mode: 'edit', initialJson: docToShell(doc), targetDoc: doc, tabId: tab.id });
   };
 
   // Duplicate: open the insert modal pre-filled with the document minus its _id.
-  const handleDuplicateDocument = (doc: Record<string, any>) => {
+  const handleDuplicateDocument = (tab: QueryTab, doc: Record<string, any>) => {
     const { _id, ...rest } = doc;
-    setDocumentModal({ mode: 'insert', initialJson: docToShell(rest), targetDoc: null });
+    setDocumentModal({ mode: 'insert', initialJson: docToShell(rest), targetDoc: null, tabId: tab.id });
   };
 
-  const handleDeleteDocument = async (doc: Record<string, any>) => {
-    if (!activeTab) return;
+  const handleDeleteDocument = async (tab: QueryTab, doc: Record<string, any>) => {
     if (doc._id === undefined) {
       toast('Cannot delete: this document has no _id.', 'error');
       return;
@@ -1785,20 +1777,20 @@ function Workspace() {
       return;
     try {
       await invoke('delete_document', {
-        id: activeTab.connectionId,
-        database: activeTab.db,
-        collection: activeTab.collection,
+        id: tab.connectionId,
+        database: tab.db,
+        collection: tab.collection,
         filter: JSON.stringify({ _id: doc._id }),
       });
-      await refreshTabResults(activeTab);
-      toast(`Document deleted from ${activeTab.collection}`, 'success', { title: 'Deleted' });
+      await refreshTabResults(tab);
+      toast(`Document deleted from ${tab.collection}`, 'success', { title: 'Deleted' });
     } catch (err: any) {
       toast(`Failed to delete document: ${err}`, 'error');
     }
   };
 
-  // M7: bulk operations on the active collection's current query filter.
-  const bulkFilter = () => activeTab?.lastQuery?.filter?.trim() || '{}';
+  // M7: bulk operations on a collection tab's current query filter.
+  const bulkFilter = (tab: QueryTab) => tab.lastQuery?.filter?.trim() || '{}';
   const isEmptyFilterStr = (f: string) => {
     try { return Object.keys(JSON.parse(f)).length === 0; } catch { return false; }
   };
@@ -1809,14 +1801,14 @@ function Workspace() {
       : base;
   };
 
-  const handleDeleteMany = async () => {
-    if (!activeTab || activeTab.type !== 'collection') return;
-    const filter = bulkFilter();
+  const handleDeleteMany = async (tab: QueryTab) => {
+    if (tab.type !== 'collection') return;
+    const filter = bulkFilter(tab);
     try {
       const count = await invoke<number>('count_documents', {
-        id: activeTab.connectionId,
-        database: activeTab.db,
-        collection: activeTab.collection,
+        id: tab.connectionId,
+        database: tab.db,
+        collection: tab.collection,
         filter,
       });
       if (
@@ -1829,21 +1821,21 @@ function Workspace() {
       )
         return;
       const deleted = await invoke<number>('delete_many', {
-        id: activeTab.connectionId,
-        database: activeTab.db,
-        collection: activeTab.collection,
+        id: tab.connectionId,
+        database: tab.db,
+        collection: tab.collection,
         filter,
       });
-      await refreshTabResults(activeTab);
+      await refreshTabResults(tab);
       toast(`Deleted ${deleted} document(s)`, 'success', { title: 'Deleted' });
     } catch (err: any) {
       toast(`Delete failed: ${err?.message || err}`, 'error');
     }
   };
 
-  const handleUpdateMany = async () => {
-    if (!activeTab || activeTab.type !== 'collection') return;
-    const filter = bulkFilter();
+  const handleUpdateMany = async (tab: QueryTab) => {
+    if (tab.type !== 'collection') return;
+    const filter = bulkFilter(tab);
     const update = await prompt({
       title: 'Update many',
       message: 'Update document (operators, e.g. {"$set": {...}}):',
@@ -1867,9 +1859,9 @@ function Workspace() {
     if (!update) return; // cancelled
     try {
       const count = await invoke<number>('count_documents', {
-        id: activeTab.connectionId,
-        database: activeTab.db,
-        collection: activeTab.collection,
+        id: tab.connectionId,
+        database: tab.db,
+        collection: tab.collection,
         filter,
       });
       if (
@@ -1882,13 +1874,13 @@ function Workspace() {
       )
         return;
       const modified = await invoke<number>('update_many', {
-        id: activeTab.connectionId,
-        database: activeTab.db,
-        collection: activeTab.collection,
+        id: tab.connectionId,
+        database: tab.db,
+        collection: tab.collection,
         filter,
         update,
       });
-      await refreshTabResults(activeTab);
+      await refreshTabResults(tab);
       toast(`Modified ${modified} document(s)`, 'success', { title: 'Updated' });
     } catch (err: any) {
       toast(`Update failed: ${err?.message || err}`, 'error');
@@ -1896,17 +1888,19 @@ function Workspace() {
   };
 
   const handleSaveDocument = async (json: string) => {
-    if (!activeTab || !documentModal) return;
-    const collection = activeTab.collection;
+    if (!documentModal) return;
+    const tab = tabs.find(t => t.id === documentModal.tabId);
+    if (!tab) return;
+    const collection = tab.collection;
     if (documentModal.mode === 'insert') {
       await invoke('insert_document', {
-        id: activeTab.connectionId,
-        database: activeTab.db,
+        id: tab.connectionId,
+        database: tab.db,
         collection,
         document: json,
       });
       setDocumentModal(null);
-      await refreshTabResults(activeTab);
+      await refreshTabResults(tab);
       toast(`Document inserted into ${collection}`, 'success', { title: 'Inserted' });
       return;
     }
@@ -1916,59 +1910,39 @@ function Workspace() {
       throw new Error('Cannot update: this document has no _id.');
     }
     await invoke('update_document', {
-      id: activeTab.connectionId,
-      database: activeTab.db,
+      id: tab.connectionId,
+      database: tab.db,
       collection,
       filter: JSON.stringify({ _id: target._id }),
       replacement: json,
     });
     setDocumentModal(null);
-    await refreshTabResults(activeTab);
+    await refreshTabResults(tab);
     toast(`Document saved in ${collection}`, 'success', { title: 'Saved' });
   };
 
-  const handleExplainQuery = async (filter: string): Promise<string> => {
-    if (!activeTab) throw new Error("No active tab");
+  const handleExplainQuery = async (tab: QueryTab, filter: string): Promise<string> => {
     const plan = await invoke<string>('explain_mql_query', {
-      id: activeTab.connectionId,
-      database: activeTab.db,
-      collection: activeTab.collection,
+      id: tab.connectionId,
+      database: tab.db,
+      collection: tab.collection,
       filter
     });
-    setTabs(prev => prev.map(t => t.id === activeTab.id ? { ...t, explainResult: plan } : t));
+    setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, explainResult: plan } : t));
     return plan;
   };
 
   // M1: explain the full aggregation pipeline (not just its $match stage).
-  const handleExplainAggregate = async (pipeline: string): Promise<string> => {
-    if (!activeTab) throw new Error("No active tab");
+  const handleExplainAggregate = async (tab: QueryTab, pipeline: string): Promise<string> => {
     const plan = await invoke<string>('explain_aggregate_query', {
-      id: activeTab.connectionId,
-      database: activeTab.db,
-      collection: activeTab.collection,
+      id: tab.connectionId,
+      database: tab.db,
+      collection: tab.collection,
       pipeline
     });
-    setTabs(prev => prev.map(t => t.id === activeTab.id ? { ...t, explainResult: plan } : t));
+    setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, explainResult: plan } : t));
     return plan;
   };
-
-  const availableFields = React.useMemo(() => {
-    if (!activeTab || activeTab.type !== 'collection' || !activeTab.results || activeTab.results.length === 0) {
-      return ['_id'];
-    }
-    const keys = new Set<string>();
-    activeTab.results.forEach(doc => {
-      if (doc && typeof doc === 'object') {
-        Object.keys(doc).forEach(k => keys.add(k));
-      }
-    });
-    keys.add('_id');
-    return Array.from(keys).sort((a, b) => {
-      if (a === '_id') return -1;
-      if (b === '_id') return 1;
-      return a.localeCompare(b);
-    });
-  }, [activeTab?.results, activeTab?.type]);
 
   const workspaceTabs = React.useMemo(
     () =>
@@ -1978,6 +1952,383 @@ function Workspace() {
         icon: tabIconFor(tab, tab.id === activeTabId),
       })),
     [tabs, activeTabId, activeConnections]
+  );
+
+  // Renders the content pane for a single tab. Parameterized by `tab` (not the
+  // module-level `activeTab`) so multiple panes can each render their own tab
+  // simultaneously.
+  const renderTabContent = (tabId: string): React.ReactNode => {
+    const tab = tabs.find(t => t.id === tabId);
+    if (!tab) return null;
+    return (
+      <>
+        {tab.type === 'index' && (
+          <IndexViewer
+            connectionId={tab.connectionId}
+            databaseName={tab.db}
+            collectionName={tab.collection}
+            indexName={tab.indexName || ''}
+            onEditIndex={(indexName, keys, unique, sparse) =>
+              handleOpenIndexModalForEdit(
+                tab.connectionId,
+                tab.db,
+                tab.collection,
+                indexName,
+                keys,
+                unique,
+                sparse
+              )
+            }
+            onDeleteIndex={(indexName) =>
+              handleDeleteIndex(
+                tab.connectionId,
+                tab.db,
+                tab.collection,
+                indexName
+              )
+            }
+          />
+        )}
+        {tab.type === 'collection' && (() => {
+          const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
+          const connectionName = activeConnection ? activeConnection.name : 'cmi-dev';
+          const connectionUser = activeConnection ? usernameFromUri(activeConnection.uri) : '';
+          return (
+            <DocumentViewer
+              key={tab.id}
+              connectionId={tab.connectionId}
+              connectionName={connectionName}
+              connectionUser={connectionUser}
+              databaseName={tab.db}
+              collectionName={tab.collection}
+              initialBuilderState={
+                tabBuilderStateCache.current.get(tab.id)
+                ?? builderStateFromQueryTab(tab.lastQuery, tab.lastAggregate)
+              }
+              onBuilderStateChange={(state) => handleBuilderStateChange(tab.id, state)}
+              onExecute={q => handleExecuteQuery(tab, q)}
+              onExecuteAggregate={pipeline => handleExecuteAggregate(tab, pipeline)}
+              onExplain={filter => handleExplainQuery(tab, filter)}
+              onExplainAggregate={pipeline => handleExplainAggregate(tab, pipeline)}
+              onOpenShell={(command) => handleOpenShell(tab.connectionId, tab.db, tab.collection, command)}
+              onOpenExport={() => handleOpenExportTab(tab)}
+              onImport={() => handleImport(tab)}
+              loading={tab.loading}
+              availableFields={fieldsFromResults(tab.results)}
+            >
+              <div className="flex min-h-0 flex-1 flex-col min-w-0 overflow-hidden">
+                {tab.error && (
+                  <div className="p-3 bg-destructive/10 border-b border-border text-destructive font-mono text-xs select-text flex items-start gap-2">
+                    <span className="flex-grow">Error loading dataset: {tab.error}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      title="Copy error message"
+                      onClick={() => { try { navigator.clipboard?.writeText(String(tab.error)); } catch { /* clipboard unavailable */ } }}
+                    >
+                      <Copy size={11} />
+                      Copy
+                    </Button>
+                  </div>
+                )}
+                {tab.loading ? (
+                  <div className="flex-grow flex items-center justify-center text-muted-foreground bg-background">
+                    <div className="flex flex-col items-center gap-2 select-none">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
+                      <span className="text-xs">Streaming documents asynchronously...</span>
+                    </div>
+                  </div>
+                ) : (
+                  <DataGrid
+                    documents={tab.results}
+                    density={density}
+                    explainResult={tab.explainResult}
+                    querySpec={buildTabQuerySpec(tab)}
+                    onInsertDocument={() => handleInsertDocument(tab)}
+                    onEditDocument={doc => handleEditDocument(tab, doc)}
+                    onDuplicateDocument={doc => handleDuplicateDocument(tab, doc)}
+                    onDeleteDocument={doc => handleDeleteDocument(tab, doc)}
+                    onAnalyzeSchema={() => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
+                    onUpdateMany={() => handleUpdateMany(tab)}
+                    onDeleteMany={() => handleDeleteMany(tab)}
+                    totalCount={tab.totalCount}
+                    estimated={tab.estimated}
+                    countLoading={tab.countLoading}
+                    skip={tab.lastQuery?.skip ?? 0}
+                    limit={tab.lastQuery?.limit ?? 50}
+                    onCreateSuggestedIndex={handleCreateSuggestedIndex}
+                    {...(!tab.lastAggregate ? {
+                      onPageChange: (newSkip: number) => handlePageChange(tab, newSkip),
+                      onPageSizeChange: (newLimit: number) => handlePageSizeChange(tab, newLimit),
+                    } : {})}
+                  />
+                )}
+              </div>
+            </DocumentViewer>
+          );
+        })()}
+        {tab.type === 'schema' && (
+          <SchemaView
+            connectionId={tab.connectionId}
+            databaseName={tab.db}
+            collectionName={tab.collection}
+          />
+        )}
+        {tab.type === 'create-view' && (
+          <CreateViewView
+            connectionId={tab.connectionId}
+            databaseName={tab.db}
+            onCreated={(viewName) => {
+              setCollectionMutationTrigger(prev => prev + 1);
+              handleSelectCollection(tab.connectionId, tab.db, viewName);
+            }}
+          />
+        )}
+        {tab.type === 'validation' && (
+          <ValidationRulesView
+            connectionId={tab.connectionId}
+            databaseName={tab.db}
+            collectionName={tab.collection}
+            onApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
+          />
+        )}
+        {tab.type === 'gridfs' && (
+          <GridFsView
+            connectionId={tab.connectionId}
+            databaseName={tab.db}
+            bucket={tab.collection}
+            onNamespaceMutated={() => setCollectionMutationTrigger((prev) => prev + 1)}
+          />
+        )}
+        {tab.type === 'monitoring' && (
+          <MonitoringView connectionId={tab.connectionId} />
+        )}
+        {tab.type === 'users' && (
+          <UserManagementView connectionId={tab.connectionId} database={tab.db || undefined} />
+        )}
+        {tab.type === 'export' && (() => {
+          const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
+          const connectionName = activeConnection ? activeConnection.name : tab.connectionId;
+          const sourceTab = deriveExportSourceTab(tab);
+          return (
+            <ExportView
+              key={`export:${tab.connectionId}:${tab.db}:${tab.collection}`}
+              connectionId={tab.connectionId}
+              connectionName={connectionName}
+              databaseName={tab.db}
+              collectionName={tab.collection}
+              currentResultCount={sourceTab?.results.length || 0}
+              availableFields={fieldsFromResults(sourceTab?.results)}
+              filtered={buildFilteredExportSeed(sourceTab)}
+              onExport={(format, scope, options, query) =>
+                handleExportForTab(sourceTab || tab, format, scope, options, query)
+              }
+              onCountFilter={(filter) =>
+                invoke<number>('count_documents', {
+                  id: tab.connectionId,
+                  database: tab.db,
+                  collection: tab.collection,
+                  filter,
+                })
+              }
+              onOpenTasks={handleOpenTasksTab}
+              onScanFields={handleScanExportFields}
+              onCopyCurrent={handleCopyCurrentExport}
+              onPreview={handlePreviewExport}
+            />
+          );
+        })()}
+        {tab.type === 'import' && (() => {
+          const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
+          const connectionName = activeConnection ? activeConnection.name : tab.connectionId;
+          return (
+            <ImportView
+              key={`import:${tab.connectionId}:${tab.db}:${tab.collection}`}
+              connectionName={connectionName}
+              databaseName={tab.db}
+              collectionName={tab.collection}
+              onOpenTasks={handleOpenTasksTab}
+              onPickFile={async () => {
+                const p = await open({
+                  multiple: false,
+                  filters: [{ name: 'Data', extensions: ['json', 'jsonl', 'ndjson', 'csv', 'bson'] }],
+                });
+                return typeof p === 'string' ? p : null;
+              }}
+              onPreview={(source, format, csvOptions) =>
+                invoke<ImportPreviewData>('preview_import', { source, format, csvOptions, limit: 20 })
+              }
+              onRunImport={async (source, format, csvOptions, mode) => {
+                try {
+                  const task = await invoke<ExportTaskInfo>('start_import_task', {
+                    id: tab.connectionId,
+                    database: tab.db,
+                    collection: tab.collection,
+                    source,
+                    format,
+                    csvOptions,
+                    mode,
+                  });
+                  pendingImportRefreshRef.current.set(task.id, {
+                    connectionId: tab.connectionId,
+                    db: tab.db,
+                    collection: tab.collection,
+                  });
+                  insertExportTasks([task]);
+                  handleOpenTasksTab();
+                  await loadExportTasks();
+                } catch (err: any) {
+                  toast(`Import failed to start: ${err?.message || err}`, 'error');
+                }
+              }}
+            />
+          );
+        })()}
+        {tab.type === 'dump' && (() => {
+          const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
+          const connectionName = activeConnection ? activeConnection.name : tab.connectionId;
+          const initialScope: DumpScopeUi = tab.collection
+            ? { kind: 'collection', db: tab.db, coll: tab.collection }
+            : tab.db
+              ? { kind: 'db', db: tab.db }
+              : { kind: 'server' };
+          return (
+            <DumpView
+              key={tab.id}
+              connectionName={connectionName}
+              databases={dumpDbTrees[tab.connectionId] ?? []}
+              initialScope={initialScope}
+              tools={mongoTools}
+              onOpenSettings={handleOpenToolsSettings}
+              onInstallTools={handleOpenToolSetup}
+              onPickFolder={async () => {
+                const p = await open({ directory: true });
+                return typeof p === 'string' ? p : null;
+              }}
+              onPickArchiveFile={async (defaultName) => {
+                const p = await save({ defaultPath: defaultName });
+                return p ?? null;
+              }}
+              onPreviewCommand={(options) =>
+                invoke<string>('preview_dump_command', {
+                  id: tab.connectionId,
+                  toolPath: mongoTools?.mongodump?.path ?? '',
+                  options,
+                })
+              }
+              onRunDump={(options) => handleRunDump(tab, options)}
+              onOpenTasks={handleOpenTasksTab}
+            />
+          );
+        })()}
+        {tab.type === 'restore' && (() => {
+          const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
+          const connectionName = activeConnection ? activeConnection.name : tab.connectionId;
+          return (
+            <RestoreView
+              key={tab.id}
+              connectionName={connectionName}
+              tools={mongoTools}
+              onOpenSettings={handleOpenToolsSettings}
+              onInstallTools={handleOpenToolSetup}
+              onPickFolder={async () => {
+                const p = await open({ directory: true });
+                return typeof p === 'string' ? p : null;
+              }}
+              onPickArchiveFile={async () => {
+                const p = await open({ multiple: false });
+                return typeof p === 'string' ? p : null;
+              }}
+              onBrowseFolder={(path) => invoke<DumpTreeUi>('browse_dump_folder', { path })}
+              onPreviewCommand={(options) =>
+                invoke<string>('preview_restore_command', {
+                  id: tab.connectionId,
+                  toolPath: mongoTools?.mongorestore?.path ?? '',
+                  options,
+                })
+              }
+              onRunRestore={(options) => handleRunRestore(tab, options)}
+              onOpenTasks={handleOpenTasksTab}
+            />
+          );
+        })()}
+        {tab.type === 'tasks' && (
+          <div className="flex h-full flex-col overflow-auto p-4" data-testid="tasks-view">
+            <header className="mb-3">
+              <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Background copy and export jobs.
+              </p>
+            </header>
+            <TaskManager
+              tasks={exportTasks}
+              onRefresh={loadExportTasks}
+              onClearFinished={handleClearFinishedTasks}
+              onCancel={handleCancelTask}
+              variant="embedded"
+            />
+          </div>
+        )}
+        {tab.type === 'shell' && (() => {
+          const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
+          const connectionName = activeConnection ? activeConnection.name : tab.connectionId;
+          return (
+            <MongoShell
+              key={`${tab.id}:${tab.initialShellCommand || ''}`}
+              connectionId={tab.connectionId}
+              connectionName={connectionName}
+              connectionUri={activeConnection?.uri || ''}
+              databaseName={tab.db}
+              collectionName={tab.collection || undefined}
+              initialCommand={tab.initialShellCommand}
+              density={density}
+              onOpenSettings={handleOpenToolsSettings}
+              onInstallTools={handleOpenToolSetup}
+              reconnectSignal={shellReconnectNonce}
+            />
+          );
+        })()}
+        {tab.type === 'settings' && (
+          <SettingsView
+            initialTab={settingsInitialTab}
+            onInstallTools={handleOpenToolSetup}
+            toolStatusRefreshNonce={toolStatusRefreshNonce}
+          />
+        )}
+        {tab.type === 'quickstart' && (
+          <QuickStart
+            onConnect={() => setIsConnectionModalOpen(true)}
+            onOpenSettings={handleOpenSettingsTab}
+            onOpenShortcuts={handleOpenShortcutsReference}
+            onQuickConnect={async (profile) => {
+              await handleQuickConnect(profile);
+            }}
+            onLoadSampleData={handleLoadSampleData}
+            activeConnections={activeConnections}
+            profilesRefreshKey={profilesRefreshKey}
+          />
+        )}
+      </>
+    );
+  };
+
+  const renderEmptyPane = () => (
+    /* Empty/Welcome Dashboard Panel */
+    <div className="flex h-full flex-col items-center justify-center gap-4 bg-background p-8 text-center">
+      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+        <img src={logoMark} alt="" className="h-10 w-10 animate-pulse" />
+      </div>
+      <h1 className="text-2xl font-semibold text-foreground">MQLens</h1>
+      <p className="max-w-md text-sm text-muted-foreground">
+        No active connection. Connect to a MongoDB cluster to browse collections and run queries.
+      </p>
+
+      <Button onClick={() => setIsConnectionModalOpen(true)}>
+        <Play size={14} className="mr-1.5" fill="currentColor" />
+        Connect to Database...
+      </Button>
+    </div>
   );
 
   return (
@@ -2086,7 +2437,7 @@ function Workspace() {
             connectionId={indexModalTarget?.connectionId}
             databaseName={indexModalTarget?.db}
             collectionName={indexModalTarget?.collection}
-            availableFields={availableFields}
+            availableFields={fieldsFromResults(activeTab?.results)}
             initialData={indexModalTarget?.initialData}
             prefill={indexModalTarget?.prefill}
           />
@@ -2170,373 +2521,7 @@ function Workspace() {
         </>
       }
     >
-      {tabs.length > 0 ? (
-        <>
-              {activeTab && activeTab.type === 'index' && (
-                <IndexViewer
-                  connectionId={activeTab.connectionId}
-                  databaseName={activeTab.db}
-                  collectionName={activeTab.collection}
-                  indexName={activeTab.indexName || ''}
-                  onEditIndex={(indexName, keys, unique, sparse) => 
-                    handleOpenIndexModalForEdit(
-                      activeTab.connectionId,
-                      activeTab.db,
-                      activeTab.collection,
-                      indexName,
-                      keys,
-                      unique,
-                      sparse
-                    )
-                  }
-                  onDeleteIndex={(indexName) => 
-                    handleDeleteIndex(
-                      activeTab.connectionId,
-                      activeTab.db,
-                      activeTab.collection,
-                      indexName
-                    )
-                  }
-                />
-              )}
-              {activeTab && activeTab.type === 'collection' && (() => {
-                const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
-                const connectionName = activeConnection ? activeConnection.name : 'cmi-dev';
-                const connectionUser = activeConnection ? usernameFromUri(activeConnection.uri) : '';
-                return (
-                  <DocumentViewer
-                    key={activeTab.id}
-                    connectionId={activeTab.connectionId}
-                    connectionName={connectionName}
-                    connectionUser={connectionUser}
-                    databaseName={activeTab.db}
-                    collectionName={activeTab.collection}
-                    initialBuilderState={
-                      tabBuilderStateCache.current.get(activeTab.id)
-                      ?? builderStateFromQueryTab(activeTab.lastQuery, activeTab.lastAggregate)
-                    }
-                    onBuilderStateChange={(state) => handleBuilderStateChange(activeTab.id, state)}
-                    onExecute={handleExecuteQuery}
-                    onExecuteAggregate={handleExecuteAggregate}
-                    onExplain={handleExplainQuery}
-                    onExplainAggregate={handleExplainAggregate}
-                    onOpenShell={(command) => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection, command)}
-                    onOpenExport={() => handleOpenExportTab(activeTab)}
-                    onImport={handleImport}
-                    loading={activeTab.loading}
-                    availableFields={availableFields}
-                  >
-                    <div className="flex min-h-0 flex-1 flex-col min-w-0 overflow-hidden">
-                      {activeTab.error && (
-                        <div className="p-3 bg-destructive/10 border-b border-border text-destructive font-mono text-xs select-text flex items-start gap-2">
-                          <span className="flex-grow">Error loading dataset: {activeTab.error}</span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="shrink-0"
-                            title="Copy error message"
-                            onClick={() => { try { navigator.clipboard?.writeText(String(activeTab.error)); } catch { /* clipboard unavailable */ } }}
-                          >
-                            <Copy size={11} />
-                            Copy
-                          </Button>
-                        </div>
-                      )}
-                      {activeTab.loading ? (
-                        <div className="flex-grow flex items-center justify-center text-muted-foreground bg-background">
-                          <div className="flex flex-col items-center gap-2 select-none">
-                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
-                            <span className="text-xs">Streaming documents asynchronously...</span>
-                          </div>
-                        </div>
-                      ) : (
-                        <DataGrid
-                          documents={activeTab.results}
-                          density={density}
-                          explainResult={activeTab.explainResult}
-                          querySpec={buildTabQuerySpec(activeTab)}
-                          onInsertDocument={handleInsertDocument}
-                          onEditDocument={handleEditDocument}
-                          onDuplicateDocument={handleDuplicateDocument}
-                          onDeleteDocument={handleDeleteDocument}
-                          onAnalyzeSchema={() => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection)}
-                          onUpdateMany={handleUpdateMany}
-                          onDeleteMany={handleDeleteMany}
-                          totalCount={activeTab.totalCount}
-                          estimated={activeTab.estimated}
-                          countLoading={activeTab.countLoading}
-                          skip={activeTab.lastQuery?.skip ?? 0}
-                          limit={activeTab.lastQuery?.limit ?? 50}
-                          onCreateSuggestedIndex={handleCreateSuggestedIndex}
-                          {...(!activeTab.lastAggregate ? {
-                            onPageChange: handlePageChange,
-                            onPageSizeChange: handlePageSizeChange,
-                          } : {})}
-                        />
-                      )}
-                    </div>
-                  </DocumentViewer>
-                );
-              })()}
-              {activeTab && activeTab.type === 'schema' && (
-                <SchemaView
-                  connectionId={activeTab.connectionId}
-                  databaseName={activeTab.db}
-                  collectionName={activeTab.collection}
-                />
-              )}
-              {activeTab && activeTab.type === 'create-view' && (
-                <CreateViewView
-                  connectionId={activeTab.connectionId}
-                  databaseName={activeTab.db}
-                  onCreated={(viewName) => {
-                    setCollectionMutationTrigger(prev => prev + 1);
-                    handleSelectCollection(activeTab.connectionId, activeTab.db, viewName);
-                  }}
-                />
-              )}
-              {activeTab && activeTab.type === 'validation' && (
-                <ValidationRulesView
-                  connectionId={activeTab.connectionId}
-                  databaseName={activeTab.db}
-                  collectionName={activeTab.collection}
-                  onApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
-                />
-              )}
-              {activeTab && activeTab.type === 'gridfs' && (
-                <GridFsView
-                  connectionId={activeTab.connectionId}
-                  databaseName={activeTab.db}
-                  bucket={activeTab.collection}
-                  onNamespaceMutated={() => setCollectionMutationTrigger((prev) => prev + 1)}
-                />
-              )}
-              {activeTab && activeTab.type === 'monitoring' && (
-                <MonitoringView connectionId={activeTab.connectionId} />
-              )}
-              {activeTab && activeTab.type === 'users' && (
-                <UserManagementView connectionId={activeTab.connectionId} database={activeTab.db || undefined} />
-              )}
-              {activeTab && activeTab.type === 'export' && (() => {
-                const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
-                const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
-                const sourceTab = exportSourceTab;
-                return (
-                  <ExportView
-                    key={`export:${activeTab.connectionId}:${activeTab.db}:${activeTab.collection}`}
-                    connectionId={activeTab.connectionId}
-                    connectionName={connectionName}
-                    databaseName={activeTab.db}
-                    collectionName={activeTab.collection}
-                    currentResultCount={sourceTab?.results.length || 0}
-                    availableFields={fieldsFromResults(sourceTab?.results)}
-                    filtered={buildFilteredExportSeed(sourceTab)}
-                    onExport={(format, scope, options, query) =>
-                      handleExportForTab(sourceTab || activeTab, format, scope, options, query)
-                    }
-                    onCountFilter={(filter) =>
-                      invoke<number>('count_documents', {
-                        id: activeTab.connectionId,
-                        database: activeTab.db,
-                        collection: activeTab.collection,
-                        filter,
-                      })
-                    }
-                    onOpenTasks={handleOpenTasksTab}
-                    onScanFields={handleScanExportFields}
-                    onCopyCurrent={handleCopyCurrentExport}
-                    onPreview={handlePreviewExport}
-                  />
-                );
-              })()}
-              {activeTab && activeTab.type === 'import' && (() => {
-                const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
-                const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
-                return (
-                  <ImportView
-                    key={`import:${activeTab.connectionId}:${activeTab.db}:${activeTab.collection}`}
-                    connectionName={connectionName}
-                    databaseName={activeTab.db}
-                    collectionName={activeTab.collection}
-                    onOpenTasks={handleOpenTasksTab}
-                    onPickFile={async () => {
-                      const p = await open({
-                        multiple: false,
-                        filters: [{ name: 'Data', extensions: ['json', 'jsonl', 'ndjson', 'csv', 'bson'] }],
-                      });
-                      return typeof p === 'string' ? p : null;
-                    }}
-                    onPreview={(source, format, csvOptions) =>
-                      invoke<ImportPreviewData>('preview_import', { source, format, csvOptions, limit: 20 })
-                    }
-                    onRunImport={async (source, format, csvOptions, mode) => {
-                      try {
-                        const task = await invoke<ExportTaskInfo>('start_import_task', {
-                          id: activeTab.connectionId,
-                          database: activeTab.db,
-                          collection: activeTab.collection,
-                          source,
-                          format,
-                          csvOptions,
-                          mode,
-                        });
-                        pendingImportRefreshRef.current.set(task.id, {
-                          connectionId: activeTab.connectionId,
-                          db: activeTab.db,
-                          collection: activeTab.collection,
-                        });
-                        insertExportTasks([task]);
-                        handleOpenTasksTab();
-                        await loadExportTasks();
-                      } catch (err: any) {
-                        toast(`Import failed to start: ${err?.message || err}`, 'error');
-                      }
-                    }}
-                  />
-                );
-              })()}
-              {activeTab && activeTab.type === 'dump' && (() => {
-                const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
-                const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
-                const initialScope: DumpScopeUi = activeTab.collection
-                  ? { kind: 'collection', db: activeTab.db, coll: activeTab.collection }
-                  : activeTab.db
-                    ? { kind: 'db', db: activeTab.db }
-                    : { kind: 'server' };
-                return (
-                  <DumpView
-                    key={activeTab.id}
-                    connectionName={connectionName}
-                    databases={dumpDbTrees[activeTab.connectionId] ?? []}
-                    initialScope={initialScope}
-                    tools={mongoTools}
-                    onOpenSettings={handleOpenToolsSettings}
-                    onInstallTools={handleOpenToolSetup}
-                    onPickFolder={async () => {
-                      const p = await open({ directory: true });
-                      return typeof p === 'string' ? p : null;
-                    }}
-                    onPickArchiveFile={async (defaultName) => {
-                      const p = await save({ defaultPath: defaultName });
-                      return p ?? null;
-                    }}
-                    onPreviewCommand={(options) =>
-                      invoke<string>('preview_dump_command', {
-                        id: activeTab.connectionId,
-                        toolPath: mongoTools?.mongodump?.path ?? '',
-                        options,
-                      })
-                    }
-                    onRunDump={(options) => handleRunDump(activeTab, options)}
-                    onOpenTasks={handleOpenTasksTab}
-                  />
-                );
-              })()}
-              {activeTab && activeTab.type === 'restore' && (() => {
-                const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
-                const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
-                return (
-                  <RestoreView
-                    key={activeTab.id}
-                    connectionName={connectionName}
-                    tools={mongoTools}
-                    onOpenSettings={handleOpenToolsSettings}
-                    onInstallTools={handleOpenToolSetup}
-                    onPickFolder={async () => {
-                      const p = await open({ directory: true });
-                      return typeof p === 'string' ? p : null;
-                    }}
-                    onPickArchiveFile={async () => {
-                      const p = await open({ multiple: false });
-                      return typeof p === 'string' ? p : null;
-                    }}
-                    onBrowseFolder={(path) => invoke<DumpTreeUi>('browse_dump_folder', { path })}
-                    onPreviewCommand={(options) =>
-                      invoke<string>('preview_restore_command', {
-                        id: activeTab.connectionId,
-                        toolPath: mongoTools?.mongorestore?.path ?? '',
-                        options,
-                      })
-                    }
-                    onRunRestore={(options) => handleRunRestore(activeTab, options)}
-                    onOpenTasks={handleOpenTasksTab}
-                  />
-                );
-              })()}
-              {activeTab && activeTab.type === 'tasks' && (
-                <div className="flex h-full flex-col overflow-auto p-4" data-testid="tasks-view">
-                  <header className="mb-3">
-                    <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      Background copy and export jobs.
-                    </p>
-                  </header>
-                  <TaskManager
-                    tasks={exportTasks}
-                    onRefresh={loadExportTasks}
-                    onClearFinished={handleClearFinishedTasks}
-                    onCancel={handleCancelTask}
-                    variant="embedded"
-                  />
-                </div>
-              )}
-              {activeTab && activeTab.type === 'shell' && (() => {
-                const activeConnection = activeConnections.find(c => c.id === activeTab.connectionId);
-                const connectionName = activeConnection ? activeConnection.name : activeTab.connectionId;
-                return (
-                  <MongoShell
-                    key={`${activeTab.id}:${activeTab.initialShellCommand || ''}`}
-                    connectionId={activeTab.connectionId}
-                    connectionName={connectionName}
-                    connectionUri={activeConnection?.uri || ''}
-                    databaseName={activeTab.db}
-                    collectionName={activeTab.collection || undefined}
-                    initialCommand={activeTab.initialShellCommand}
-                    density={density}
-                    onOpenSettings={handleOpenToolsSettings}
-                    onInstallTools={handleOpenToolSetup}
-                    reconnectSignal={shellReconnectNonce}
-                  />
-                );
-              })()}
-              {activeTab && activeTab.type === 'settings' && (
-                <SettingsView
-                  initialTab={settingsInitialTab}
-                  onInstallTools={handleOpenToolSetup}
-                  toolStatusRefreshNonce={toolStatusRefreshNonce}
-                />
-              )}
-              {activeTab && activeTab.type === 'quickstart' && (
-                <QuickStart
-                  onConnect={() => setIsConnectionModalOpen(true)}
-                  onOpenSettings={handleOpenSettingsTab}
-                  onOpenShortcuts={handleOpenShortcutsReference}
-                  onQuickConnect={async (profile) => {
-                    await handleQuickConnect(profile);
-                  }}
-                  onLoadSampleData={handleLoadSampleData}
-                  activeConnections={activeConnections}
-                  profilesRefreshKey={profilesRefreshKey}
-                />
-              )}
-        </>
-      ) : (
-        /* Empty/Welcome Dashboard Panel */
-        <div className="flex h-full flex-col items-center justify-center gap-4 bg-background p-8 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-            <img src={logoMark} alt="" className="h-10 w-10 animate-pulse" />
-          </div>
-          <h1 className="text-2xl font-semibold text-foreground">MQLens</h1>
-          <p className="max-w-md text-sm text-muted-foreground">
-            No active connection. Connect to a MongoDB cluster to browse collections and run queries.
-          </p>
-
-          <Button onClick={() => setIsConnectionModalOpen(true)}>
-            <Play size={14} className="mr-1.5" fill="currentColor" />
-            Connect to Database...
-          </Button>
-        </div>
-      )}
+      {activeTabId ? renderTabContent(activeTabId) : renderEmptyPane()}
     </AppShell>
   );
 }
