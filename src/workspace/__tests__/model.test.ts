@@ -118,6 +118,13 @@ describe('close_tab', () => {
     expect(allPanes(l.root)).toHaveLength(2);
     expect(findPane(l.root, emptyPaneId)).not.toBeNull();
   });
+  it('closing a middle active tab activates its right-hand neighbor', () => {
+    let l = layoutWith('a', 'b', 'c');
+    l = workspaceReducer(l, { type: 'set_active', paneId: l.root.id, tabId: 'b' });
+    l = workspaceReducer(l, { type: 'close_tab', tabId: 'b' });
+    expect((l.root as PaneNode).tabIds).toEqual(['a', 'c']);
+    expect((l.root as PaneNode).activeTabId).toBe('c');
+  });
 });
 
 describe('close_many', () => {
