@@ -61,13 +61,16 @@ jobs:
           LAST_TAG=$(git tag --list 'mqlens-v*' | grep -E '^mqlens-v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
           RANGE=""
           [ -n "$LAST_TAG" ] && RANGE="${LAST_TAG}..HEAD"
+          # Squash-merged PRs collapse their commits into one body whose subjects
+          # survive as "* feat: …" bullets — accept the optional "* " prefix so a
+          # squash merge of dev still produces a release.
           SUBJECTS=$(git log --no-merges --pretty=%B ${RANGE})
           if echo "$SUBJECTS" | grep -qiE '(^|[[:space:]])BREAKING[ -]CHANGE' \
-             || echo "$SUBJECTS" | grep -qE '^[a-z]+(\([^)]*\))?!:'; then
+             || echo "$SUBJECTS" | grep -qE '^(\* )?[a-z]+(\([^)]*\))?!:'; then
             BUMP=major
-          elif echo "$SUBJECTS" | grep -qE '^feat(\([^)]*\))?:'; then
+          elif echo "$SUBJECTS" | grep -qE '^(\* )?feat(\([^)]*\))?:'; then
             BUMP=minor
-          elif echo "$SUBJECTS" | grep -qE '^(fix|perf)(\([^)]*\))?:'; then
+          elif echo "$SUBJECTS" | grep -qE '^(\* )?(fix|perf)(\([^)]*\))?:'; then
             BUMP=patch
           else
             BUMP=none
@@ -91,9 +94,9 @@ jobs:
           ' "$NEW"
           # Grouped changelog → release body AND latest.json notes (so the in-app
           # update dialog shows real notes, not a placeholder).
-          strip='s/^[a-z]+(\([^)]*\))?!?:[[:space:]]*//'
-          FEATS=$(git log --no-merges --pretty=%s ${RANGE} | grep -E '^feat' | sed -E "$strip" | sed 's/^/- /' || true)
-          FIXES=$(git log --no-merges --pretty=%s ${RANGE} | grep -E '^(fix|perf)' | sed -E "$strip" | sed 's/^/- /' || true)
+          strip='s/^\* //; s/^[a-z]+(\([^)]*\))?!?:[[:space:]]*//'
+          FEATS=$(git log --no-merges --pretty=%B ${RANGE} | grep -E '^(\* )?feat(\([^)]*\))?:' | sed -E "$strip" | sed 's/^/- /' || true)
+          FIXES=$(git log --no-merges --pretty=%B ${RANGE} | grep -E '^(\* )?(fix|perf)(\([^)]*\))?:' | sed -E "$strip" | sed 's/^/- /' || true)
           {
             echo "notes<<__NOTES_EOF__"
             [ -n "$FEATS" ] && printf '### Features\n%s\n\n' "$FEATS"
