@@ -77,6 +77,13 @@ jobs:
           fi
           echo "Detected bump since ${LAST_TAG:-<start>}: $BUMP"
           if [ "$BUMP" = "none" ]; then
+            # A "release: vX.Y" merge that yields no bump means detection failed
+            # (an unrecognized merge style, not an empty release) — fail loudly
+            # instead of skipping the release silently, as happened with v0.12.
+            if git log -1 --pretty=%s | grep -qiE '^release[:(]'; then
+              echo "::error::HEAD is a release merge but no releasable commits were detected since ${LAST_TAG:-<start>} — bump detection likely doesn't understand this merge style."
+              exit 1
+            fi
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "No releasable (feat/fix/perf/breaking) commits — skipping release."
             exit 0
