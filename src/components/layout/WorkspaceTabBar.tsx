@@ -39,9 +39,10 @@ export function WorkspaceTabBar({
   return (
     <TooltipProvider delayDuration={400}>
       <div
+        data-testid="workspace-tab-strip"
         className="flex h-9 shrink-0 items-end gap-0 border-b border-border bg-sidebar/60 mql-chrome"
-        onDragOver={(e) => { if (onTabStripDrop) e.preventDefault(); }}
-        onDrop={onTabStripDrop}
+        onDragOver={(e) => { if (onTabStripDrop) { e.preventDefault(); e.stopPropagation(); } }}
+        onDrop={(e) => { if (onTabStripDrop) { e.stopPropagation(); onTabStripDrop(e); } }}
       >
         <ScrollArea className="w-full">
           <div className="flex h-9 items-end px-1">

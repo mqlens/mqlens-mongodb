@@ -80,7 +80,11 @@ export function PaneView({
           onTabDragStart={(id, e) => { e.dataTransfer.setData(TAB_DRAG_MIME, id); e.dataTransfer.effectAllowed = 'move'; }}
           onTabStripDrop={e => {
             const tabId = e.dataTransfer.getData(TAB_DRAG_MIME);
-            if (tabId) { e.preventDefault(); dispatch({ type: 'move_tab', tabId, targetPaneId: pane.id }); }
+            if (tabId) {
+              e.preventDefault();
+              e.stopPropagation();
+              dispatch({ type: 'move_tab', tabId, targetPaneId: pane.id });
+            }
           }}
         />
       )}

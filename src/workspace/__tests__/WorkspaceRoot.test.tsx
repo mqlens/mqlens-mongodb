@@ -101,4 +101,28 @@ describe('WorkspaceRoot', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'move_tab', tabId: 'b', targetPaneId: paneA.id });
     void paneB;
   });
+
+  it('dispatches move_tab exactly once when a tab is dropped on the tab strip, without the drop bubbling into a pane split zone', () => {
+    const l = createInitialLayout(['a', 'b'], 'a');
+    const dispatch = renderLayout(l);
+    const pane = screen.getByTestId(`pane-${l.root.id}`);
+    const strip = screen.getByTestId('workspace-tab-strip');
+    const data: Record<string, string> = { [TAB_DRAG_MIME]: 'b' };
+    const dt = {
+      getData: (k: string) => data[k] ?? '',
+      setData: (k: string, v: string) => { data[k] = v; },
+      types: [TAB_DRAG_MIME],
+    };
+    // The strip sits in the top ~36px of the pane, which is within the pane's
+    // top 20% edge zone at this stubbed size — if the drop were to bubble up
+    // to the pane's own onDrop, zoneFor would compute 'top' and dispatch a
+    // split_pane in addition to (or instead of) the strip's move_tab.
+    Object.defineProperty(pane, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1000, height: 500, right: 1000, bottom: 500 }),
+    });
+    fireEvent.dragOver(strip, { dataTransfer: dt, clientX: 500, clientY: 10 });
+    fireEvent.drop(strip, { dataTransfer: dt, clientX: 500, clientY: 10 });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({ type: 'move_tab', tabId: 'b', targetPaneId: l.root.id });
+  });
 });
