@@ -98,11 +98,14 @@ describe('close_tab', () => {
     let l = layoutWith('a', 'b', 'c');
     l = workspaceReducer(l, { type: 'split_pane', paneId: l.root.id, dir: 'row', side: 'end', moveTabId: 'b' });
     const paneB = paneOfTab(l.root, 'b')!;
+    // 'c' must belong to paneB before it can be split off from it.
+    l = workspaceReducer(l, { type: 'move_tab', tabId: 'c', targetPaneId: paneB.id });
     l = workspaceReducer(l, { type: 'split_pane', paneId: paneB.id, dir: 'col', side: 'end', moveTabId: 'c' });
     expect(allPanes(l.root)).toHaveLength(3);
-    l = workspaceReducer(l, { type: 'close_tab', tabId: 'c' });
-    expect(allPanes(l.root)).toHaveLength(3);
+    l = workspaceReducer(l, { type: 'close_tab', tabId: 'c' }); // pane empties → depth-2 fold
+    expect(allPanes(l.root)).toHaveLength(2);
     expect(paneOfTab(l.root, 'b')).not.toBeNull();
+    expect(paneOfTab(l.root, 'a')).not.toBeNull();
   });
   it('empty panes created by split_pane persist across unrelated tab closes', () => {
     // Create empty pane via split without moveTabId
