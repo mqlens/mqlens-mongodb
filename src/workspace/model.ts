@@ -113,25 +113,6 @@ function withFocusRepaired(layout: WorkspaceLayout): WorkspaceLayout {
   return { ...layout, focusedPaneId: allPanes(layout.root)[0].id };
 }
 
-/** Collapse splits where one child is an empty pane and the other is not. */
-function collapseEmptySplits(node: LayoutNode): LayoutNode {
-  if (node.kind === 'pane') return node;
-  const [a, b] = node.children;
-  const aRecursed = collapseEmptySplits(a);
-  const bRecursed = collapseEmptySplits(b);
-
-  // Check if one child is an empty pane and the other isn't
-  const aIsEmptyPane = aRecursed.kind === 'pane' && aRecursed.tabIds.length === 0;
-  const bIsEmptyPane = bRecursed.kind === 'pane' && bRecursed.tabIds.length === 0;
-
-  if (aIsEmptyPane && !bIsEmptyPane) return bRecursed;
-  if (bIsEmptyPane && !aIsEmptyPane) return aRecursed;
-
-  // Neither or both are empty, return the split with recursively processed children
-  if (aRecursed === a && bRecursed === b) return node;
-  return { ...node, children: [aRecursed, bRecursed] };
-}
-
 function removeTabFromPane(pane: PaneNode, tabId: string): PaneNode | null {
   const idx = pane.tabIds.indexOf(tabId);
   if (idx === -1) return pane;
@@ -150,8 +131,6 @@ function closeTab(layout: WorkspaceLayout, tabId: string): WorkspaceLayout {
     // Root pane emptied: keep the pane, clear it.
     root = { ...pane, tabIds: [], activeTabId: null };
   }
-  // Collapse splits with one empty pane
-  root = collapseEmptySplits(root);
   return withFocusRepaired({ ...layout, root });
 }
 

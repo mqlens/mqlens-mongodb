@@ -101,8 +101,19 @@ describe('close_tab', () => {
     l = workspaceReducer(l, { type: 'split_pane', paneId: paneB.id, dir: 'col', side: 'end', moveTabId: 'c' });
     expect(allPanes(l.root)).toHaveLength(3);
     l = workspaceReducer(l, { type: 'close_tab', tabId: 'c' });
-    expect(allPanes(l.root)).toHaveLength(2);
+    expect(allPanes(l.root)).toHaveLength(3);
     expect(paneOfTab(l.root, 'b')).not.toBeNull();
+  });
+  it('empty panes created by split_pane persist across unrelated tab closes', () => {
+    // Create empty pane via split without moveTabId
+    let l = layoutWith('a', 'b');
+    l = workspaceReducer(l, { type: 'split_pane', paneId: l.root.id, dir: 'row', side: 'end' });
+    expect(allPanes(l.root)).toHaveLength(2);
+    const emptyPaneId = allPanes(l.root).find(p => p.tabIds.length === 0)!.id;
+    // Close a tab in the other pane — empty pane should still exist
+    l = workspaceReducer(l, { type: 'close_tab', tabId: 'b' });
+    expect(allPanes(l.root)).toHaveLength(2);
+    expect(findPane(l.root, emptyPaneId)).not.toBeNull();
   });
 });
 
