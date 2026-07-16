@@ -20,6 +20,11 @@ interface WorkspaceTabBarProps {
   activeTabId: string | null;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
+  /** Marks tabs draggable and sets TAB_DRAG_MIME data on drag start. */
+  draggable?: boolean;
+  onTabDragStart?: (id: string, e: React.DragEvent) => void;
+  /** Drop on the tab strip itself = move-to-end of this pane. */
+  onTabStripDrop?: (e: React.DragEvent) => void;
 }
 
 export function WorkspaceTabBar({
@@ -27,10 +32,17 @@ export function WorkspaceTabBar({
   activeTabId,
   onSelectTab,
   onCloseTab,
+  draggable,
+  onTabDragStart,
+  onTabStripDrop,
 }: WorkspaceTabBarProps) {
   return (
     <TooltipProvider delayDuration={400}>
-      <div className="flex h-9 shrink-0 items-end gap-0 border-b border-border bg-sidebar/60 mql-chrome">
+      <div
+        className="flex h-9 shrink-0 items-end gap-0 border-b border-border bg-sidebar/60 mql-chrome"
+        onDragOver={(e) => { if (onTabStripDrop) e.preventDefault(); }}
+        onDrop={onTabStripDrop}
+      >
         <ScrollArea className="w-full">
           <div className="flex h-9 items-end px-1">
             {tabs.map((tab) => {
@@ -45,6 +57,8 @@ export function WorkspaceTabBar({
                       : "border-transparent bg-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                   onClick={() => onSelectTab(tab.id)}
+                  draggable={draggable}
+                  onDragStart={(e) => onTabDragStart?.(tab.id, e)}
                 >
                   <span className="shrink-0">{tab.icon}</span>
                   <span className="truncate font-medium">{tab.label}</span>
