@@ -19,7 +19,6 @@ The big additive platform features, plus production-safety wins — landing a fu
 | [#98](https://github.com/mqlens/mqlens-mongodb/issues/98) | MCP server (expose MQLens as AI tools) |
 | [#91](https://github.com/mqlens/mqlens-mongodb/issues/91) | Data generation (Faker) |
 | [#188](https://github.com/mqlens/mqlens-mongodb/issues/188) | Read-only / production-safeguard connection mode |
-| [#189](https://github.com/mqlens/mqlens-mongodb/issues/189) | Export query to driver code |
 
 ## v0.14.0 — i18n, live data & query power
 
