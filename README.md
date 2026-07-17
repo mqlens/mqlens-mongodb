@@ -64,6 +64,8 @@ queries actually do — from a single cross-platform desktop app.
 - **Encrypted credentials** — a master password gates the app; connection
   profiles and settings are encrypted at rest with AES-256-GCM (Argon2id key
   derivation).
+- **Split panes** — drag a tab to any pane edge to split the workspace; compare
+  collections side by side, keep a shell under your results.
 
 ## Install
 

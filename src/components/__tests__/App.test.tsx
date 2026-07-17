@@ -1448,6 +1448,63 @@ describe('App Component', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('name\nA\n'));
   });
 
+  it('routes a pane-scoped export handler to the rendered pane\'s tab, not the focused pane (#97 review Fix 1)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'sample_export_fields') {
+        return Promise.resolve(['_id', 'name']);
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    // Pane A: open "customers", then its Export tab (becomes the active tab).
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+
+    // Split the active "Export: customers" tab into a new pane B. split_pane
+    // focuses the fresh pane, and leaves pane A re-activated on "customers".
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Split Right' } });
+    fireEvent.click(await screen.findByText('Split Right'));
+
+    // Refocus pane A (mousedown on an unfocused pane dispatches focus_pane).
+    // PaneView's own testid is `pane-${pane.id}` (e.g. "pane-pane-1"); react-resizable-panels
+    // also auto-sets `data-testid={id}` (e.g. "pane-1") on its wrapping Panel, so the
+    // "pane-pane-" prefix is needed to select only PaneView's own element.
+    const panes = screen.getAllByTestId(/^pane-pane-/);
+    expect(panes).toHaveLength(2);
+    fireEvent.mouseDown(panes[0]);
+
+    // With pane A focused, open a DIFFERENT collection there. Pre-fix, the export
+    // handlers read `activeTab`/the focused pane's state, so this is exactly the
+    // (wrong) state they would have leaked into pane B's still-visible export tab.
+    fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    // Trigger pane B's (unfocused) ExportView. It must act on ITS OWN rendered
+    // tab ("customers"), not the focused pane's active tab ("orders").
+    fireEvent.click(screen.getByTestId('export-scan-fields-btn'));
+
+    await waitFor(() => {
+      const scan = calls.find((c) => c.cmd === 'sample_export_fields');
+      expect(scan).toBeTruthy();
+      expect(scan.args).toMatchObject({ database: 'sales_db', collection: 'customers' });
+    });
+  });
+
   it('does not load profiles until the vault is unlocked', async () => {
     const vault = await import('../../lib/vault');
     (vault.getVaultStatus as any).mockResolvedValueOnce('locked');
