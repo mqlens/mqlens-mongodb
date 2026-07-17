@@ -3,12 +3,30 @@
 //! the reducer (`apply`) and Tauri commands land in later tasks.
 
 use crate::state::{AppState, LockExt};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// The "double Option" pattern: distinguishes a field that was absent from
+/// the JSON payload (outer `None` — leave untouched) from one that was
+/// present with an explicit `null` (outer `Some`, inner `None` — clear it)
+/// from one present with a value (outer `Some`, inner `Some(v)` — set it).
+/// Plain `#[serde(default)]` on `Option<Option<T>>` can't express this on its
+/// own: serde's stock `Option<T>` deserializer collapses a JSON `null`
+/// straight into the outer `None`, the same as a missing key. Wrapping the
+/// inner deserialize in an extra `Some(..)` here is what keeps `null`
+/// distinguishable from "absent" once combined with `#[serde(default)]` on
+/// the field (which only supplies the fallback for a truly missing key).
+fn deserialize_some<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Deserialize::deserialize(deserializer).map(Some)
+}
 
 /// One open query tab. `profile_id` identifies a saved connection profile,
 /// NEVER a live session connectionId — tabs must survive reconnects.
@@ -126,12 +144,14 @@ pub enum WorkspaceOp {
     },
     UpdateTabState {
         tab_id: String,
-        #[serde(default)]
-        last_query: Option<serde_json::Value>,
-        #[serde(default)]
-        last_aggregate: Option<serde_json::Value>,
-        #[serde(default)]
-        builder_state: Option<serde_json::Value>,
+        // `Option<Option<Value>>`: outer `None` = key absent (untouched),
+        // `Some(None)` = explicit `null` (clear), `Some(Some(v))` = set.
+        #[serde(default, deserialize_with = "deserialize_some")]
+        last_query: Option<Option<serde_json::Value>>,
+        #[serde(default, deserialize_with = "deserialize_some")]
+        last_aggregate: Option<Option<serde_json::Value>>,
+        #[serde(default, deserialize_with = "deserialize_some")]
+        builder_state: Option<Option<serde_json::Value>>,
     },
 }
 
@@ -638,21 +658,24 @@ pub fn apply(ws: &mut Workspace, op: WorkspaceOp) {
         }
         WorkspaceOp::UpdateTabState { tab_id, last_query, last_aggregate, builder_state } => {
             if let Some(t) = ws.tabs.iter_mut().find(|t| &t.id == tab_id) {
-                if let Some(v) = last_query {
-                    if t.last_query.as_ref() != Some(v) {
-                        t.last_query = Some(v.clone());
+                // `patch` is `&Option<Value>` here: present-but-null (`Some(None)`
+                // on the op) clears the field; present-with-value sets it.
+                // Outer `None` (key absent) leaves the field untouched entirely.
+                if let Some(patch) = last_query {
+                    if &t.last_query != patch {
+                        t.last_query = patch.clone();
                         changed = true;
                     }
                 }
-                if let Some(v) = last_aggregate {
-                    if t.last_aggregate.as_ref() != Some(v) {
-                        t.last_aggregate = Some(v.clone());
+                if let Some(patch) = last_aggregate {
+                    if &t.last_aggregate != patch {
+                        t.last_aggregate = patch.clone();
                         changed = true;
                     }
                 }
-                if let Some(v) = builder_state {
-                    if t.builder_state.as_ref() != Some(v) {
-                        t.builder_state = Some(v.clone());
+                if let Some(patch) = builder_state {
+                    if &t.builder_state != patch {
+                        t.builder_state = patch.clone();
                         changed = true;
                     }
                 }
@@ -1197,13 +1220,13 @@ mod tests {
             &mut ws,
             WorkspaceOp::UpdateTabState {
                 tab_id: "t1".into(),
-                last_query: None,
-                last_aggregate: Some(serde_json::json!([{"$match": {}}])),
+                last_query: None, // absent from the patch: untouched
+                last_aggregate: Some(Some(serde_json::json!([{"$match": {}}]))), // present: set
                 builder_state: None,
             },
         );
         let t = &ws.tabs[0];
-        assert_eq!(t.last_query, Some(serde_json::json!({"filter": "{}"}))); // untouched (None in the patch)
+        assert_eq!(t.last_query, Some(serde_json::json!({"filter": "{}"}))); // untouched (absent from the patch)
         assert_eq!(t.last_aggregate, Some(serde_json::json!([{"$match": {}}]))); // patched
         assert_eq!(t.builder_state, None);
         assert_eq!(ws.revision, 1);
@@ -1216,11 +1239,72 @@ mod tests {
             WorkspaceOp::UpdateTabState {
                 tab_id: "t1".into(),
                 last_query: None,
-                last_aggregate: Some(serde_json::json!([{"$match": {}}])),
+                last_aggregate: Some(Some(serde_json::json!([{"$match": {}}]))),
                 builder_state: None,
             },
         );
         assert_eq!(ws.revision, rev_before);
+    }
+
+    #[test]
+    fn update_tab_state_explicit_null_clears_a_previously_set_field() {
+        // Reviewer-flagged CRITICAL: absent and explicit-null both used to
+        // decode to `None` (single Option), so there was no way to clear a
+        // field once set. The double-Option `Some(None)` patch must clear it.
+        let mut ws = ws_with(&["t1"]);
+        let mut tab = sample_tab("t1");
+        tab.last_aggregate = Some(serde_json::json!([{"$match": {}}]));
+        ws.tabs.push(tab);
+
+        apply(
+            &mut ws,
+            WorkspaceOp::UpdateTabState {
+                tab_id: "t1".into(),
+                last_query: None,
+                last_aggregate: Some(None), // explicit null: clear
+                builder_state: None,
+            },
+        );
+        assert_eq!(ws.tabs[0].last_aggregate, None);
+        assert_eq!(ws.revision, 1);
+    }
+
+    #[test]
+    fn update_tab_state_absent_field_leaves_it_untouched() {
+        let mut ws = ws_with(&["t1"]);
+        let mut tab = sample_tab("t1");
+        tab.last_query = Some(serde_json::json!({"filter": "{}"}));
+        ws.tabs.push(tab);
+
+        apply(
+            &mut ws,
+            WorkspaceOp::UpdateTabState {
+                tab_id: "t1".into(),
+                last_query: None, // absent: untouched, NOT cleared
+                last_aggregate: None,
+                builder_state: None,
+            },
+        );
+        assert_eq!(ws.tabs[0].last_query, Some(serde_json::json!({"filter": "{}"})));
+        assert_eq!(ws.revision, 0);
+    }
+
+    #[test]
+    fn update_tab_state_clearing_an_already_none_field_does_not_bump_revision() {
+        let mut ws = ws_with(&["t1"]);
+        ws.tabs.push(sample_tab("t1")); // last_aggregate already None
+
+        apply(
+            &mut ws,
+            WorkspaceOp::UpdateTabState {
+                tab_id: "t1".into(),
+                last_query: None,
+                last_aggregate: Some(None), // explicit null on an already-None field: no-op
+                builder_state: None,
+            },
+        );
+        assert_eq!(ws.tabs[0].last_aggregate, None);
+        assert_eq!(ws.revision, 0);
     }
 
     #[test]

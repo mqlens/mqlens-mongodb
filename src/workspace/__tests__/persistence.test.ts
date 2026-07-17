@@ -231,14 +231,23 @@ describe('actionToOp', () => {
   });
 
   it('move_tab with an explicit index', () => {
-    const expected = opsByType.get('move_tab'); // { type: 'move_tab', tab_id, target_pane_id, index }
+    // `opsByType.get('move_tab')` would grab the FIRST move_tab op across all
+    // vectors — that's `split_then_close_folds_depth2`'s, which has no
+    // `index` key at all and would silently duplicate the "no index" test
+    // below. Target the vector whose op actually carries an index instead.
+    const vector = goldenFixture.vectors.find((v) => v.name === 'move_tab_reorders_within_same_pane_using_index')!;
+    const expected = vector.ops[0] as Record<string, unknown>; // { type: 'move_tab', tab_id: 'c', target_pane_id: 'pane-1', index: 0 }
+    expect(expected.index).toBeDefined();
     const action: WorkspaceAction = {
       type: 'move_tab',
-      tabId: expected!.tab_id as string,
-      targetPaneId: expected!.target_pane_id as string,
-      index: expected!.index as number,
+      tabId: expected.tab_id as string,
+      targetPaneId: expected.target_pane_id as string,
+      index: expected.index as number,
     };
-    expect(actionToOp(action)).toEqual(expected);
+    const op = actionToOp(action);
+    expect(op).toEqual(expected);
+    expect('index' in op).toBe(true);
+    expect(op.index).toBe(expected.index);
   });
 
   it('move_tab without an index omits the key rather than sending undefined', () => {
