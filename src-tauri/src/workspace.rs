@@ -1400,6 +1400,158 @@ mod tests {
         std::fs::write(&p, "not json").unwrap();
         assert!(load_from_file(&p).is_none());
     }
+
+    /// End-to-end regression for the id-space bug fixed in caa117c: the
+    /// frontend mirror now translates EVERY id-bearing op field into
+    /// `profile:<profileId>` space before it ever reaches `workspace_apply`
+    /// (persistence.ts's Global Constraint), so a realistic session stream
+    /// never contains a live connectionId anywhere in the tree. This test
+    /// replays such a stream — 3 tabs across 2 profiles, a split, a
+    /// `set_active`, a `update_tab_state` patch, and a `close_tab` — through
+    /// `apply`, round-trips the result through disk via `save_to_file` /
+    /// `load_from_file`, and checks the coherence invariant that bug broke:
+    /// every tab id the layout tree references must actually exist in
+    /// `tabs[]`.
+    #[test]
+    fn realistic_session_stream_round_trips_through_disk() {
+        fn tab(id: &str, profile_id: &str, profile_name: &str, db: &str, collection: &str) -> TabModel {
+            TabModel {
+                id: id.into(),
+                tab_type: "collection".into(),
+                profile_id: profile_id.into(),
+                profile_name: profile_name.into(),
+                db: db.into(),
+                collection: collection.into(),
+                index_name: None,
+                last_query: Some(serde_json::json!({ "filter": {} })),
+                last_aggregate: None,
+                builder_state: None,
+            }
+        }
+
+        fn collect_tab_ids(node: &LayoutNode, out: &mut Vec<String>) {
+            match node {
+                LayoutNode::Pane { tab_ids, .. } => out.extend(tab_ids.iter().cloned()),
+                LayoutNode::Split { children, .. } => {
+                    for c in children {
+                        collect_tab_ids(c, out);
+                    }
+                }
+            }
+        }
+
+        let tab1_id = "profile:p1.mydb.customers".to_string();
+        let tab2_id = "profile:p1.mydb.orders".to_string();
+        let tab3_id = "profile:p2.otherdb.items".to_string();
+
+        let mut ws = Workspace::default();
+
+        // 3 open_tab ops across 2 profiles — mirrors the frontend opening
+        // tabs against two different saved connections.
+        apply(
+            &mut ws,
+            WorkspaceOp::OpenTab {
+                tab_id: tab1_id.clone(),
+                pane_id: None,
+                tab: Some(tab(&tab1_id, "p1", "Prod Cluster", "mydb", "customers")),
+            },
+        );
+        apply(
+            &mut ws,
+            WorkspaceOp::OpenTab {
+                tab_id: tab2_id.clone(),
+                pane_id: None,
+                tab: Some(tab(&tab2_id, "p1", "Prod Cluster", "mydb", "orders")),
+            },
+        );
+        apply(
+            &mut ws,
+            WorkspaceOp::OpenTab {
+                tab_id: tab3_id.clone(),
+                pane_id: None,
+                tab: Some(tab(&tab3_id, "p2", "Analytics", "otherdb", "items")),
+            },
+        );
+
+        // split_pane, moving the p2 tab into its own pane.
+        let root_id = node_id(root(&ws)).to_string();
+        apply(
+            &mut ws,
+            WorkspaceOp::SplitPane {
+                pane_id: root_id,
+                dir: "row".into(),
+                side: "end".into(),
+                move_tab_id: Some(tab3_id.clone()),
+            },
+        );
+
+        // set_active on the pane that still holds tab1/tab2.
+        let left_pane_id = node_id(pane_of_tab(root(&ws), &tab1_id).unwrap()).to_string();
+        apply(&mut ws, WorkspaceOp::SetActive { pane_id: left_pane_id, tab_id: tab2_id.clone() });
+
+        // update_tab_state patches tab1's lastQuery.
+        let patched_query = serde_json::json!({ "filter": { "active": true } });
+        apply(
+            &mut ws,
+            WorkspaceOp::UpdateTabState {
+                tab_id: tab1_id.clone(),
+                last_query: Some(Some(patched_query.clone())),
+                last_aggregate: None,
+                builder_state: None,
+            },
+        );
+
+        // close_tab drops tab2.
+        apply(&mut ws, WorkspaceOp::CloseTab { tab_id: tab2_id.clone() });
+
+        // Save to a temp-dir file and load it back.
+        let dir = std::env::temp_dir().join("mqlens-ws-realistic-roundtrip-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("workspace.json");
+        let _ = std::fs::remove_file(&path);
+        save_to_file(&path, &ws).unwrap();
+        let loaded = load_from_file(&path).expect("a freshly-saved workspace file must load back");
+
+        assert_eq!(loaded, ws, "round trip through disk must be lossless");
+
+        // Coherence invariant the id-space bug broke: every tab id the
+        // layout tree references must exist in tabs[].
+        let known_tab_ids: std::collections::HashSet<&str> =
+            loaded.tabs.iter().map(|t| t.id.as_str()).collect();
+        let mut tree_tab_ids = Vec::new();
+        collect_tab_ids(&loaded.windows[0].split_tree, &mut tree_tab_ids);
+        assert!(!tree_tab_ids.is_empty(), "sanity: the tree must reference at least one tab");
+        for id in &tree_tab_ids {
+            assert!(known_tab_ids.contains(id.as_str()), "layout references unknown tab id `{id}`");
+        }
+
+        // tab2 was closed: 2 tabs remain, and tab1's patched lastQuery
+        // survived the save/load round trip.
+        assert_eq!(loaded.tabs.len(), 2);
+        let restored_tab1 = loaded.tabs.iter().find(|t| t.id == tab1_id).expect("tab1 must survive the close");
+        assert_eq!(restored_tab1.last_query, Some(patched_query));
+        assert!(loaded.tabs.iter().any(|t| t.id == tab3_id), "tab3 must survive the close");
+        assert!(!loaded.tabs.iter().any(|t| t.id == tab2_id), "tab2 was closed and must not survive");
+
+        // Id-space invariant: every id anywhere in the tree is either
+        // profile-space (a tab id) or connectionless (a structural
+        // pane/split id, minted deterministically by the reducer — see
+        // persistence.ts: "Pane/split ids are NOT part of this constraint").
+        // A live connectionId (e.g. a bare Mongo connection UUID) must never
+        // appear — that's precisely what caa117c fixed.
+        let mut structural_ids = Vec::new();
+        collect_ids(&loaded.windows[0].split_tree, &mut structural_ids);
+        let mut all_ids = structural_ids;
+        all_ids.extend(tree_tab_ids.iter().cloned());
+        for id in &all_ids {
+            let is_profile_space = id.starts_with("profile:");
+            let is_connectionless = id.starts_with("pane-") || id.starts_with("split-");
+            assert!(
+                is_profile_space || is_connectionless,
+                "id `{id}` is neither profile-space nor a connectionless structural id"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

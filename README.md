@@ -66,6 +66,8 @@ queries actually do — from a single cross-platform desktop app.
   derivation).
 - **Split panes** — drag a tab to any pane edge to split the workspace; compare
   collections side by side, keep a shell under your results.
+- **Session restore** — your splits and tabs come back after a restart;
+  reconnect per connection with one click.
 
 ## Install
 
