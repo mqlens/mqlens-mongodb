@@ -125,4 +125,18 @@ describe('WorkspaceRoot', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledWith({ type: 'move_tab', tabId: 'b', targetPaneId: l.root.id });
   });
+
+  it('ignores foreign (OS file) drags on the tab strip: no preventDefault on dragOver, no dispatch on drop', () => {
+    const l = createInitialLayout(['a', 'b'], 'a');
+    const dispatch = renderLayout(l);
+    const strip = screen.getByTestId('workspace-tab-strip');
+    // A real OS file drag: no TAB_DRAG_MIME entry in dataTransfer.types.
+    const dt = { getData: () => '', setData: () => {}, types: ['Files'] };
+    // dispatchEvent (which fireEvent returns) is true only when the cancelable
+    // event was NOT preventDefault()'d — i.e. the strip let this foreign drag pass.
+    const notPrevented = fireEvent.dragOver(strip, { dataTransfer: dt, clientX: 500, clientY: 10 });
+    expect(notPrevented).toBe(true);
+    fireEvent.drop(strip, { dataTransfer: dt, clientX: 500, clientY: 10 });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
 });

@@ -8,6 +8,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+/** Custom MIME used to mark drags originating from a workspace tab (as opposed to
+ *  OS file/text drags). Owned here; re-exported from workspace/PaneView.tsx. */
+export const TAB_DRAG_MIME = 'application/x-mqlens-tab';
+
 export interface WorkspaceTab {
   id: string;
   label: string;
@@ -41,8 +45,18 @@ export function WorkspaceTabBar({
       <div
         data-testid="workspace-tab-strip"
         className="flex h-9 shrink-0 items-end gap-0 border-b border-border bg-sidebar/60 mql-chrome"
-        onDragOver={(e) => { if (onTabStripDrop) { e.preventDefault(); e.stopPropagation(); } }}
-        onDrop={(e) => { if (onTabStripDrop) { e.stopPropagation(); onTabStripDrop(e); } }}
+        onDragOver={(e) => {
+          if (onTabStripDrop && e.dataTransfer.types.includes(TAB_DRAG_MIME)) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+        onDrop={(e) => {
+          if (onTabStripDrop && e.dataTransfer.types.includes(TAB_DRAG_MIME)) {
+            e.stopPropagation();
+            onTabStripDrop(e);
+          }
+        }}
       >
         <ScrollArea className="w-full">
           <div className="flex h-9 items-end px-1">

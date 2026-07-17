@@ -277,8 +277,14 @@ function Workspace() {
   const activeTabId = focusedPane?.activeTabId ?? null;
   if (import.meta.env.DEV) {
     const known = new Set(tabs.map(t => t.id));
-    for (const id of allTabIds(layout)) {
+    const layoutIds = allTabIds(layout);
+    for (const id of layoutIds) {
       if (!known.has(id)) console.error(`workspace layout references unknown tab: ${id}`);
+    }
+    const inLayout = new Set(layoutIds);
+    const orphans = tabs.map(t => t.id).filter(id => !inLayout.has(id));
+    if (orphans.length > 0) {
+      console.error(`tabs[] contains ids missing from workspace layout: ${orphans.join(', ')}`);
     }
   }
   const tabBuilderStateCache = useRef(new Map<string, BuilderState>());
@@ -542,7 +548,6 @@ function Workspace() {
         t.collection === exportTab.collection
     ) ||
     null;
-  const exportSourceTab = activeTab && activeTab.type === 'export' ? deriveExportSourceTab(activeTab) : null;
 
   // MongoDB server version of the active connection, for the status bar.
   const activeConnId = activeTab && activeConnections.some(c => c.id === activeTab.connectionId) ? activeTab.connectionId : null;
@@ -1449,7 +1454,7 @@ function Workspace() {
       { id: 'analyze-schema', title: 'Analyze Schema', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'fields types', run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
     ] : []),
     ...(activeTabId ? [{ id: 'close-tab', title: 'Close Tab', keywords: 'tab', run: () => closeTabById(activeTabId) }] : []),
-    ...(tabs.length > 1 ? [
+    ...(focusedPane && focusedPane.tabIds.length > 1 ? [
       { id: 'next-tab', title: 'Next Tab', keywords: 'tab switch', run: () => cycleTab(1) },
       { id: 'prev-tab', title: 'Previous Tab', keywords: 'tab switch', run: () => cycleTab(-1) },
     ] : []),
@@ -1692,50 +1697,57 @@ function Workspace() {
     }
   };
 
+  // All three take the rendered export `tab` (not activeTab / focused-pane state) so
+  // that every per-pane ExportView instance acts on its own pane's collection, even
+  // when a different pane is focused (see renderTabContent's export branch).
   const handleCopyCurrentExport = async (
+    tab: QueryTab,
     format: 'json' | 'ndjson' | 'csv',
     options: ExportOptions
   ) => {
-    if (!exportSourceTab?.results?.length) return;
+    const sourceTab = deriveExportSourceTab(tab);
+    if (!sourceTab?.results?.length) return;
     try {
       const text = await invoke<string | null>('format_current_docs', {
-        docs: exportSourceTab.results,
+        docs: sourceTab.results,
         format,
         options,
         path: null,
       });
       if (text) await navigator.clipboard.writeText(text);
-      toast(`Copied ${exportSourceTab.results.length} document(s) as ${format.toUpperCase()}`, 'success');
+      toast(`Copied ${sourceTab.results.length} document(s) as ${format.toUpperCase()}`, 'success');
     } catch (err: any) {
       toast(`Copy failed: ${err?.message || err}`, 'error');
     }
   };
 
-  const handleScanExportFields = (query?: FilteredExportQuery) =>
+  const handleScanExportFields = (tab: QueryTab, query?: FilteredExportQuery) =>
     invoke<string[]>('sample_export_fields', {
-      id: activeTab?.connectionId,
-      database: activeTab?.db,
-      collection: activeTab?.collection,
+      id: tab.connectionId,
+      database: tab.db,
+      collection: tab.collection,
       filter: query?.kind === 'find' ? query.filter : '{}',
       pipeline: query?.kind === 'aggregate' ? query.pipeline : '',
     });
 
   const handlePreviewExport = async (
+    tab: QueryTab,
     format: ExportFormat,
     scope: 'current' | 'full' | 'filtered',
     options: ExportOptions,
     query?: FilteredExportQuery
   ): Promise<string> => {
     if (scope === 'current') {
-      const docs = (exportSourceTab?.results ?? []).slice(0, 5);
+      const sourceTab = deriveExportSourceTab(tab);
+      const docs = (sourceTab?.results ?? []).slice(0, 5);
       return (
         (await invoke<string | null>('format_current_docs', { docs, format, options, path: null })) ?? ''
       );
     }
     return invoke<string>('preview_export', {
-      id: activeTab?.connectionId,
-      database: activeTab?.db,
-      collection: activeTab?.collection,
+      id: tab.connectionId,
+      database: tab.db,
+      collection: tab.collection,
       format,
       filter: query?.kind === 'find' ? query.filter : '{}',
       sort: query?.kind === 'find' ? query.sort : '{}',
@@ -2152,9 +2164,9 @@ function Workspace() {
                 })
               }
               onOpenTasks={handleOpenTasksTab}
-              onScanFields={handleScanExportFields}
-              onCopyCurrent={handleCopyCurrentExport}
-              onPreview={handlePreviewExport}
+              onScanFields={(query) => handleScanExportFields(tab, query)}
+              onCopyCurrent={(format, options) => handleCopyCurrentExport(tab, format, options)}
+              onPreview={(format, scope, options, query) => handlePreviewExport(tab, format, scope, options, query)}
             />
           );
         })()}

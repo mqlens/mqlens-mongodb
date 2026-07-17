@@ -51,6 +51,12 @@ export function resetLayoutIds(): void {
   splitCounter = 0;
 }
 
+// newPaneId/newSplitId mutate module-level counters even though workspaceReducer is
+// otherwise a pure reducer. This is safe: generated ids are only ever referenced
+// within the same returned layout object, so React StrictMode's double-invoke of the
+// reducer just skips a number (e.g. pane-3 then pane-5) rather than colliding or
+// leaking across renders. Phase 2's backend port (workspace_apply, see the design doc
+// referenced above) will generate ids server-side and remove these counters.
 function newPaneId(): string {
   return `pane-${++paneCounter}`;
 }

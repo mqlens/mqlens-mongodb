@@ -1,8 +1,10 @@
 import React, { useState, useCallback } from 'react';
-import { WorkspaceTabBar, type WorkspaceTab } from '../components/layout/WorkspaceTabBar';
+import { WorkspaceTabBar, TAB_DRAG_MIME, type WorkspaceTab } from '../components/layout/WorkspaceTabBar';
 import type { PaneNode, WorkspaceAction, SplitDir, SplitSide } from './model';
 
-export const TAB_DRAG_MIME = 'application/x-mqlens-tab';
+// Re-exported so existing `import { TAB_DRAG_MIME } from '../PaneView'` call sites
+// (e.g. tests) keep working. Owned by WorkspaceTabBar.tsx — see that file.
+export { TAB_DRAG_MIME };
 
 type DropZone = 'center' | 'left' | 'right' | 'top' | 'bottom';
 
