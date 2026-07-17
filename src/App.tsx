@@ -37,8 +37,11 @@ import {
 } from './components/RestoreView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
-import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, type WorkspaceAction } from './workspace/model';
+import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, snapshotLayoutIds, restoreLayoutIds, type WorkspaceAction } from './workspace/model';
 import { WorkspaceRoot } from './workspace/WorkspaceRoot';
+import { workspaceApply, updateTabState, actionToOp, workspaceGet } from './workspace/workspaceStore';
+import { toPersistedTab, toDisconnectedSnapshot, rebindConnection, toProfileSpaceId } from './workspace/persistence';
+import { ReconnectBanner } from './workspace/ReconnectBanner';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
 import { GridFsView } from './components/GridFsView';
@@ -273,6 +276,20 @@ function Workspace() {
     undefined,
     () => createInitialLayout([QUICK_START_TAB_ID], QUICK_START_TAB_ID),
   );
+  // `dispatchWorkspace` (below) needs to know, synchronously, whether an
+  // action it's about to mirror to the backend is one the frontend reducer
+  // itself no-opped on — but `layout` above is a render-scope closure value,
+  // stale for every dispatch after the first in a single synchronous handler
+  // (multiple `dispatchWorkspace` calls in one tick, e.g. a rename storm,
+  // all fire before React re-renders and refreshes `layout`). `layoutRef`
+  // mirrors `layout` on every render (assignment during render, not an
+  // effect — the correct value once React settles) AND is advanced
+  // optimistically inside `dispatchWorkspace` itself right after each
+  // dispatch, so a second dispatch in the same tick compares against the
+  // first dispatch's result, not the stale pre-tick value. #97 phase 2 final
+  // review Fix 3.
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   const focusedPane = findPane(layout.root, layout.focusedPaneId);
   const activeTabId = focusedPane?.activeTabId ?? null;
   if (import.meta.env.DEV) {
@@ -288,10 +305,57 @@ function Workspace() {
     }
   }
   const tabBuilderStateCache = useRef(new Map<string, BuilderState>());
+  // Workspace-store mirroring plumbing (Phase 2 Task 5). Mirroring starts
+  // DISABLED — the restore effect below is the only thing allowed to turn it
+  // on, once workspace_get has resolved (snapshot applied or none found).
+  // Starting it true would let the initial-render quickstart state (or
+  // anything the user clicks before the restore settles) mirror to the
+  // backend store as "new" ops, potentially clobbering a legitimate snapshot
+  // a previous session already wrote before this GET resolves.
+  const mirroringEnabledRef = useRef(false);
+  // Tab ids whose open_tab was never mirrored (toPersistedTab returned null
+  // — export/import tabs) or that were themselves rebound out of mirroring.
+  // close_tab/close_many/move_tab/rename_tab consult this so they never
+  // reference a tab id the backend has no record of.
+  const unmirroredTabIdsRef = useRef(new Set<string>());
+  const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
+  // `handleBuilderStateChange` below is a `useCallback` with an empty deps
+  // array (a stable identity for DocumentViewer), so it can never see a
+  // fresh `activeConnections` STATE value from its closure — it would stay
+  // pinned at mount's `[]` forever. A ref mirrors the state on every change
+  // so the callback can read the current connections via `.current` instead.
+  const activeConnectionsRef = useRef<ActiveConnection[]>(activeConnections);
+  useEffect(() => {
+    activeConnectionsRef.current = activeConnections;
+  }, [activeConnections]);
+  // Shared by every `update_tab_state` emission site (handleBuilderStateChange
+  // here, plus handleExecuteQuery/handleExecuteAggregate below): skips
+  // unmirrored tabs and translates the live id to profile-space before
+  // handing off to `updateTabState`, exactly like `dispatchWorkspace`'s
+  // `actionToOp(..., activeConnections)` calls do for layout ops — see
+  // persistence.ts's "Global Constraint" note. `connections` is threaded in
+  // by each call site rather than closed over here so the memoized
+  // `handleBuilderStateChange` below can supply the always-fresh
+  // `activeConnectionsRef.current` instead of a potentially-stale closure.
+  const mirrorUpdateTabState = (
+    tabId: string,
+    connections: ActiveConnection[],
+    patch: Parameters<typeof updateTabState>[1]
+  ) => {
+    // Mirroring gate (#97 phase 2 final review Fix 5): airtight against the
+    // same restore-race `dispatchWorkspace` guards against below — before
+    // the session-restore effect flips `mirroringEnabledRef` on, an
+    // `update_tab_state` mirror (builder-state edits, query/aggregate
+    // refreshes) must be dropped too, not just layout ops.
+    if (!mirroringEnabledRef.current) return;
+    if (unmirroredTabIdsRef.current.has(tabId)) return;
+    updateTabState(toProfileSpaceId(tabId, connections), patch);
+  };
   const handleBuilderStateChange = useCallback((tabId: string, state: BuilderState) => {
     tabBuilderStateCache.current.set(tabId, state);
+    mirrorUpdateTabState(tabId, activeConnectionsRef.current, { builderState: state });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
@@ -310,6 +374,163 @@ function Workspace() {
     );
   };
 
+  // Shared by every path that can hand a profile its first live connection
+  // id in a session — `handleReconnectProfile`, `handleQuickConnect`, and the
+  // ConnectionManager `onConnect` handler (#97 phase 2 final review Fix 1 /
+  // Fix 2). Any restored-but-disconnected tab for `profileId` still carries
+  // a `profile:<profileId>` id/connectionId (see persistence.ts's Global
+  // Constraint note) and renders a ReconnectBanner (App.tsx's
+  // `renderTabContent` keys the banner purely off that prefix) until it's
+  // rebound onto `liveId`. Calling this from all three connect paths — not
+  // just the banner's own onReconnect — means a normal quick-connect/
+  // ConnectionManager connect clears those banners immediately instead of
+  // leaving them stale until clicked; a stale banner click would otherwise
+  // call `connect_db` a SECOND time for a profile that's already connected
+  // (`addActiveConnection` dedupes by profileId, so that second id would
+  // never land in `activeConnections` — every tab rebound to it becomes
+  // unreachable, and every later mirror for those tabs ships a live id the
+  // backend can't translate back to profile-space).
+  const rebindProfileTabs = (
+    profileId: string,
+    liveId: string
+  ): { pairs: Array<{ oldId: string; newId: string }>; idMap: Map<string, string> } => {
+    const oldPrefix = `profile:${profileId}`;
+    const pairs = rebindConnection(oldPrefix, liveId, allTabIds(layout));
+    if (pairs.length === 0) return { pairs, idMap: new Map() };
+
+    const idMap = new Map(pairs.map((p) => [p.oldId, p.newId]));
+    setTabs((prev) =>
+      prev.map((t) => {
+        const renamedId = idMap.get(t.id);
+        return renamedId ? { ...t, id: renamedId, connectionId: liveId } : t;
+      })
+    );
+
+    // Re-key any cached builder state (Fix 2): the session-restore effect
+    // seeds `tabBuilderStateCache` under profile-space tab ids. Without
+    // re-keying here, a rebind silently drops as-typed query-builder state
+    // for the rebound tab — a cache MISS under the new id, and a leaked
+    // entry under the now-dead old one — in the only flow that could ever
+    // surface it (a restored tab that still has unsaved builder state).
+    for (const { oldId, newId } of pairs) {
+      const bs = tabBuilderStateCache.current.get(oldId);
+      if (bs) {
+        tabBuilderStateCache.current.set(newId, bs);
+        tabBuilderStateCache.current.delete(oldId);
+      }
+    }
+
+    // Dispatched straight to the layout reducer via `dispatchLayout`,
+    // bypassing `dispatchWorkspace`'s mirror entirely — not a "skip mirror"
+    // option, a raw dispatch. The backend store must stay in
+    // `profile:<id>` id space (persistence.ts's Global Constraint note):
+    // that's what the NEXT restart needs to restore from. Mirroring these
+    // renames would leave the backend holding this session's live
+    // connection id, which is worthless the moment the app closes.
+    pairs.forEach(({ oldId, newId }) => dispatchLayout({ type: 'rename_tab', oldId, newId }));
+
+    return { pairs, idMap };
+  };
+
+  // profileId -> profileName for every restored-but-not-yet-reconnected tab,
+  // captured from the persisted snapshot at restore time. RestoredTab (what
+  // toDisconnectedSnapshot hands back) deliberately drops profileName — it's
+  // a structural subset of QueryTab, which has no such field — so this is the
+  // only place ReconnectBanner's label can come from until the tab reconnects.
+  const [restoredProfileNames, setRestoredProfileNames] = useState<Map<string, string>>(new Map());
+  // Per-profile Reconnect busy/error state, keyed by profileId. Shared across
+  // every ReconnectBanner instance for that profile (a profile's tabs can be
+  // spread across multiple panes), so one click's busy/error state is visible
+  // on all of them, and a second click while busy is a no-op (guarded below).
+  const [reconnectState, setReconnectState] = useState<Map<string, { busy: boolean; error: string | null }>>(
+    new Map()
+  );
+  // `reconnectState` is a render-captured snapshot — two ReconnectBanners for
+  // the same profile (or a fast double-click on one) can both read `busy:
+  // false` before either's `setReconnectState({busy:true})` has committed and
+  // re-rendered, so the `reconnectState.get(profileId)?.busy` check alone
+  // lets both calls through and fires `connect_db` twice (a leaked
+  // connection). This ref is checked-and-set synchronously at the top of
+  // `handleReconnectProfile`, before any `await`, so the second caller in the
+  // same microtask/click burst sees it immediately — `reconnectState` stays
+  // as the UI-facing (render-driven) busy/error source of truth.
+  const reconnectBusyRef = useRef(new Set<string>());
+  const patchReconnectState = (profileId: string, patch: Partial<{ busy: boolean; error: string | null }>) => {
+    setReconnectState((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(profileId) ?? { busy: false, error: null };
+      next.set(profileId, { ...cur, ...patch });
+      return next;
+    });
+  };
+
+  // Session restore (Phase 2 Task 6). Runs once on mount: pulls whatever
+  // workspace.json snapshot the backend has and, if it holds at least one
+  // persisted tab, swaps the default Quick Start state for it — every
+  // restored tab renders disconnected (ReconnectBanner) until its profile
+  // reconnects. `restoredRef` guards against React 18 StrictMode's double-
+  // invoke of effects in dev: the ref is set synchronously before the first
+  // await, so a second invocation of this same effect (same component
+  // instance, refs persist across it) returns immediately instead of firing
+  // a second workspace_get / hydrate / mirroring-enable.
+  //
+  // Chosen behavior for a "slow disk" race (snapshot resolves AFTER the user
+  // has already clicked around while mirroring was still suppressed): hydrate
+  // wins and clobbers whatever the user did. workspace_get is a local file
+  // read the backend caches after the first call, so the realistic window is
+  // milliseconds at app boot, and merging "whatever the user did in that
+  // window" with a persisted snapshot is a lot of complexity for an edge case
+  // this narrow — losing a few clicks from before the very first paint has
+  // settled is an acceptable trade for a wholesale, easy-to-reason-about
+  // restore.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    (async () => {
+      try {
+        const ws = await workspaceGet();
+        if (ws && Array.isArray(ws.tabs) && ws.tabs.length > 0) {
+          const snapshot = toDisconnectedSnapshot(ws);
+          setTabs(snapshot.tabs as QueryTab[]);
+          // Clear first: `hydrate` wholesale-replaces `tabs` (see the
+          // "hydrate wins" note above), but the builder-state cache is a
+          // ref keyed by tab id — if the user opened a builder on any
+          // pre-restore tab (e.g. the default Quick Start render) before
+          // this settled, that stale entry would otherwise survive under an
+          // id that may now belong to a completely different restored tab.
+          tabBuilderStateCache.current.clear();
+          for (const [tabId, state] of snapshot.builderStates) {
+            tabBuilderStateCache.current.set(tabId, state as BuilderState);
+          }
+          const profileNames = new Map<string, string>();
+          for (const t of ws.tabs) {
+            if (t.profileId) profileNames.set(t.profileId, t.profileName || t.profileId);
+          }
+          setRestoredProfileNames(profileNames);
+          // `hydrate` is a frontend-only reducer action — there is no backend
+          // op for "replace my whole layout". Dispatched via raw
+          // `dispatchLayout`, bypassing `dispatchWorkspace`'s mirror-to-
+          // backend choke point entirely, so this restore is never echoed
+          // back to workspace_apply as a stream of synthetic ops (mirroring
+          // is still disabled here regardless — see mirroringEnabledRef's
+          // init above — but the direct dispatch documents the exception
+          // even once mirroring flips on below).
+          dispatchLayout({ type: 'hydrate', layout: snapshot.layout });
+        }
+        // No snapshot (or an empty one): the default Quick Start state from
+        // this component's initializers stands as-is.
+      } catch {
+        // workspace_get failing (corrupt file, IO error) is not fatal —
+        // fall back to the default Quick Start state exactly as if there
+        // were no snapshot at all.
+      } finally {
+        mirroringEnabledRef.current = true;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleQuickConnect = async (profile: ConnectionProfile): Promise<string | null> => {
     const existing = activeConnections.find(
       (c) => c.profileId === profile.id || c.name === profile.name,
@@ -318,6 +539,9 @@ function Workspace() {
     try {
       const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
       addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
+      // Clear any ReconnectBanner this profile still has showing (#97 phase
+      // 2 final review Fix 1) — see `rebindProfileTabs`'s doc comment.
+      rebindProfileTabs(profile.id, id);
       return id;
     } catch (e) {
       toast(`Could not connect to ${profile.name}: ${(e as any)?.message || String(e)}`, 'error');
@@ -569,8 +793,9 @@ function Workspace() {
   // Never sit on a blank canvas — if every tab is closed, bring back Quick Start.
   useEffect(() => {
     if (tabs.length === 0) {
-      setTabs([createQuickStartTab()]);
-      dispatchLayout({ type: 'open_tab', tabId: QUICK_START_TAB_ID });
+      const qs = createQuickStartTab();
+      setTabs([qs]);
+      dispatchWorkspace({ type: 'open_tab', tabId: QUICK_START_TAB_ID }, { tab: qs });
     }
   }, [tabs.length]);
 
@@ -583,8 +808,9 @@ function Workspace() {
     const tabExists = tabs.some(t => t.id === tabId);
 
     if (!tabExists || savedQuery) {
+      let newTab: QueryTab | undefined;
       if (!tabExists) {
-        const newTab: QueryTab = {
+        newTab = {
           id: tabId,
           type: 'collection',
           connectionId,
@@ -596,11 +822,11 @@ function Workspace() {
           explainResult: null,
           lastQuery: DEFAULT_QUERY,
         };
-        setTabs(prev => [...prev, newTab]);
+        setTabs(prev => [...prev, newTab as QueryTab]);
       } else {
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, loading: true, error: null } : t));
       }
-      dispatchLayout({ type: 'open_tab', tabId });
+      dispatchWorkspace({ type: 'open_tab', tabId }, newTab ? { tab: newTab } : undefined);
 
       try {
         // A saved query (palette) wins; otherwise a pinned default query loads
@@ -674,7 +900,7 @@ function Workspace() {
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, error: String(err), loading: false } : t));
       }
     } else {
-      dispatchLayout({ type: 'open_tab', tabId });
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
   };
 
@@ -698,9 +924,9 @@ function Workspace() {
         explainResult: null
       };
       setTabs(prev => [...prev, newTab]);
-      dispatchLayout({ type: 'open_tab', tabId });
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
     } else {
-      dispatchLayout({ type: 'open_tab', tabId });
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
   };
 
@@ -724,18 +950,21 @@ function Workspace() {
         explainResult: null
       };
       setTabs(prev => [...prev, newTab]);
-    } else if (initialCommand) {
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
+    }
+    if (initialCommand) {
       setTabs(prev => prev.map(t => t.id === tabId ? { ...t, initialShellCommand: initialCommand } : t));
     }
-
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const openSettingsTab = (section: SettingsTabId = 'appearance') => {
     const tabId = 'settings';
     const tabExists = tabs.some(t => t.id === tabId);
+    setSettingsInitialTab(section);
     if (!tabExists) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'settings',
         connectionId: '',
@@ -745,10 +974,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    setSettingsInitialTab(section);
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const handleOpenSettingsTab = () => openSettingsTab('appearance');
@@ -759,9 +990,12 @@ function Workspace() {
 
   const handleOpenTasksTab = () => {
     if (!tabs.some(t => t.id === TASKS_TAB_ID)) {
-      setTabs(prev => [...prev, createTasksTab()]);
+      const tasksTab = createTasksTab();
+      setTabs(prev => [...prev, tasksTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId: TASKS_TAB_ID }, { tab: tasksTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId: TASKS_TAB_ID });
+    dispatchWorkspace({ type: 'open_tab', tabId: TASKS_TAB_ID });
   };
 
   const handleOpenExportTab = (sourceTab: QueryTab) => {
@@ -769,7 +1003,7 @@ function Workspace() {
     const tabId = `export.${sourceTab.connectionId}.${sourceTab.db}.${sourceTab.collection}`;
     const tabExists = tabs.some(t => t.id === tabId);
     if (!tabExists) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'export',
         connectionId: sourceTab.connectionId,
@@ -780,9 +1014,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    } else {
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
-    dispatchLayout({ type: 'open_tab', tabId });
     loadExportTasks();
   };
 
@@ -791,7 +1028,7 @@ function Workspace() {
     const tabId = `import.${sourceTab.connectionId}.${sourceTab.db}.${sourceTab.collection}`;
     const tabExists = tabs.some(t => t.id === tabId);
     if (!tabExists) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'import',
         connectionId: sourceTab.connectionId,
@@ -801,9 +1038,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    } else {
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
-    dispatchLayout({ type: 'open_tab', tabId });
     loadExportTasks();
   };
 
@@ -940,7 +1180,7 @@ function Workspace() {
     const idParts = ['dump', connectionId, db, coll].filter((p): p is string => !!p);
     const tabId = idParts.join('.');
     if (!tabs.some(t => t.id === tabId)) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'dump',
         connectionId,
@@ -950,9 +1190,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    } else {
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
-    dispatchLayout({ type: 'open_tab', tabId });
     void loadMongoTools();
     void loadDumpDbTree(connectionId);
   };
@@ -960,7 +1203,7 @@ function Workspace() {
   const handleOpenRestoreTab = (connectionId: string) => {
     const tabId = `restore.${connectionId}`;
     if (!tabs.some(t => t.id === tabId)) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'restore',
         connectionId,
@@ -970,9 +1213,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    } else {
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
-    dispatchLayout({ type: 'open_tab', tabId });
     void loadMongoTools();
   };
 
@@ -1014,7 +1260,7 @@ function Workspace() {
   const handleOpenCreateViewTab = (connectionId: string, db: string) => {
     const tabId = `create-view.${connectionId}.${db}`;
     if (!tabs.some(t => t.id === tabId)) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'create-view',
         connectionId,
@@ -1024,16 +1270,19 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   // #93: open a Validation Rules tab for a collection.
   const handleOpenValidationTab = (connectionId: string, db: string, collection: string) => {
     const tabId = `validation.${connectionId}.${db}.${collection}`;
     if (!tabs.some(t => t.id === tabId)) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'validation',
         connectionId,
@@ -1043,16 +1292,19 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   // M7: open a GridFS browser tab for a bucket (bucket stored in `collection`).
   const handleOpenGridfsTab = (connectionId: string, db: string, bucket: string) => {
     const tabId = `gridfs.${connectionId}.${db}.${bucket}`;
     if (!tabs.some(t => t.id === tabId)) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'gridfs',
         connectionId,
@@ -1062,9 +1314,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   // M6: open a schema-analysis tab for a collection.
@@ -1072,7 +1327,7 @@ function Workspace() {
     const tabId = `schema.${connectionId}.${db}.${collection}`;
     const tabExists = tabs.some(t => t.id === tabId);
     if (!tabExists) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'schema',
         connectionId,
@@ -1082,15 +1337,18 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const handleOpenMonitoringTab = (connectionId: string) => {
     const tabId = `monitoring.${connectionId}`;
     if (!tabs.some((t) => t.id === tabId)) {
-      setTabs((prev) => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'monitoring',
         connectionId,
@@ -1100,15 +1358,18 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs((prev) => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const handleOpenUsersTab = (connectionId: string, db?: string) => {
     const tabId = `users.${connectionId}`;
     if (!tabs.some((t) => t.id === tabId)) {
-      setTabs((prev) => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'users',
         connectionId,
@@ -1118,12 +1379,16 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
-    } else if (db) {
+      };
+      setTabs((prev) => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
+    }
+    if (db) {
       // Re-opened scoped to a database (sidebar db menu): refocus the scope.
       setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, db } : t)));
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const handleCollectionRenamed = (
@@ -1152,7 +1417,7 @@ function Workspace() {
       .map(t => ({ oldId: t.id, newId: renameTab(t).id }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId }) => dispatchLayout({ type: 'rename_tab', oldId, newId }));
+    renamedPairs.forEach(({ oldId, newId }) => dispatchWorkspace({ type: 'rename_tab', oldId, newId }));
     invalidatePaletteNamespaceIndex(connectionId);
   };
 
@@ -1162,7 +1427,7 @@ function Workspace() {
       .filter(t => t.connectionId === connectionId && t.db === dbName)
       .map(t => t.id);
     setTabs(prev => prev.filter(t => t.connectionId !== connectionId || t.db !== dbName));
-    dispatchLayout({ type: 'close_many', tabIds: removed });
+    dispatchWorkspace({ type: 'close_many', tabIds: removed });
   };
 
   const handleDatabaseRenamed = (connectionId: string, oldName: string, newName: string) => {
@@ -1202,7 +1467,7 @@ function Workspace() {
       .map(t => ({ oldId: t.id, newId: renameTab(t).id }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId }) => dispatchLayout({ type: 'rename_tab', oldId, newId }));
+    renamedPairs.forEach(({ oldId, newId }) => dispatchWorkspace({ type: 'rename_tab', oldId, newId }));
     invalidatePaletteNamespaceIndex(connectionId);
   };
 
@@ -1273,8 +1538,7 @@ function Workspace() {
 
         // Close/rename tab
         const oldTabId = `${connectionId}.${db}.${collection}.${initialData.name}`;
-        setTabs(prev => prev.filter(t => t.id !== oldTabId));
-        dispatchLayout({ type: 'close_tab', tabId: oldTabId });
+        closeTabById(oldTabId);
       }
 
       // Create new index
@@ -1312,8 +1576,7 @@ function Workspace() {
 
       // Close the deleted index tab
       const tabId = `${connectionId}.${dbName}.${collName}.${indexName}`;
-      setTabs(prev => prev.filter(t => t.id !== tabId));
-      dispatchLayout({ type: 'close_tab', tabId });
+      closeTabById(tabId);
 
       // Trigger sidebar refresh
       setIndexMutationTrigger(prev => prev + 1);
@@ -1323,22 +1586,145 @@ function Workspace() {
   };
 
   const closeTabById = (tabId: string) => {
-    tabBuilderStateCache.current.delete(tabId);
-    const updatedTabs = tabs.filter(t => t.id !== tabId);
-    setTabs(updatedTabs);
-    dispatchLayout({ type: 'close_tab', tabId });
+    dispatchWorkspace({ type: 'close_tab', tabId });
   };
 
-  // Passed to WorkspaceRoot/PaneView as their `dispatch`. Panes close their own
-  // tabs by dispatching `close_tab` directly (drag/drop and split ops only need
-  // the layout reducer), so we intercept that one action to also keep `tabs`
-  // state and the builder-state cache in sync — mirroring closeTabById.
-  const dispatchWorkspace = (action: WorkspaceAction) => {
+  // Passed to WorkspaceRoot/PaneView as their `dispatch`, and the single
+  // choke point every other workspace action flows through — the ONLY place
+  // `dispatchLayout` is called. Two responsibilities beyond forwarding to the
+  // layout reducer:
+  //  1. `close_tab` also needs `tabs` state and the builder-state cache kept
+  //     in sync (panes close their own tabs by dispatching `close_tab`
+  //     directly — drag/drop and split ops only touch the layout reducer;
+  //     `closeTabById` above is just a thin wrapper for other call sites).
+  //  2. Every action is mirrored to the backend store via `workspaceApply`
+  //     (fire-and-forget), unless mirroring is globally suppressed
+  //     (`mirroringEnabledRef` — Task 6 flips this off until the
+  //     restore-on-boot snapshot settles) OR the frontend reducer itself
+  //     no-opped the action (#97 phase 2 final review Fix 3 — see the
+  //     no-op check below; there is no longer an `options.mirror` escape
+  //     hatch, nothing ever used one — hydrate/reconnect renames bypass
+  //     this function entirely via a raw `dispatchLayout`, same as
+  //     `open_tab`'s persisted-payload enrichment below). `open_tab` is
+  //     enriched with the persisted tab payload when `options.tab` is
+  //     supplied (i.e. this call just created a brand-new frontend tab);
+  //     reopening/refocusing an already-open tab omits it — the backend
+  //     already has that tab's model. `toPersistedTab` returning null
+  //     (export/import) means this tab id must never exist in the backend
+  //     store at all — its open_tab is dropped entirely (sending it without
+  //     a tab payload would create a dangling backend layout entry) and the
+  //     id is tracked in `unmirroredTabIdsRef` so its later close/move/
+  //     rename mirrors are skipped consistently too. A move_tab of an
+  //     unmirrored tab is also skipped entirely — it only relocates that
+  //     one id, so skipping keeps the backend tree valid at the cost of
+  //     losing that tab's pane placement on restore, which is acceptable
+  //     since the tab itself was never going to be restored anyway.
+  const dispatchWorkspace = (
+    action: WorkspaceAction,
+    options?: { tab?: QueryTab }
+  ) => {
     if (action.type === 'close_tab') {
-      closeTabById(action.tabId);
-      return;
+      tabBuilderStateCache.current.delete(action.tabId);
+      setTabs(prev => prev.filter(t => t.id !== action.tabId));
     }
     dispatchLayout(action);
+
+    // Skip mirroring an action the frontend reducer itself no-opped on —
+    // e.g. `split_pane` moving a pane's only tab (reachable via unmirrored
+    // export/import tabs, which never get a backend-side pane to move out
+    // of). The reducer is pure and returns the SAME layout object reference
+    // for a no-op, so identity comparison is exact, no deep-equal needed.
+    // React still sees the dispatch above (a harmless no-op there too) —
+    // only the backend mirror is skipped: backend only sees ops the
+    // frontend actually applied. `layoutRef.current` (not the `layout`
+    // render-scope closure) because multiple `dispatchWorkspace` calls can
+    // land in one synchronous handler (rename storms) — see layoutRef's
+    // declaration above for why the closure value would be stale for the
+    // second and later calls in that case.
+    // The trial reducer call below must not itself mint pane/split ids that
+    // never actually get used (amended after a closing-review regression):
+    // `workspaceReducer` mints them via `newPaneId`/`newSplitId`'s
+    // module-level counters (model.ts), and this trial's return value is
+    // discarded except for reference-identity comparison. Left unchecked, a
+    // real `split_pane` mints TWICE per dispatch — once here, once more when
+    // React actually applies the action during render — so the id React
+    // commits ends up one generation ahead of what the mirrored op causes
+    // the backend to mint from its own, separately-counted id space,
+    // silently desyncing every later op that addresses that pane/split by
+    // id. `snapshotLayoutIds`/`restoreLayoutIds` bracket the trial so it's
+    // side-effect-free; the one real, render-time reducer application is the
+    // only one that actually advances the counters, and it starts from the
+    // exact same (restored) counter state the trial did — so it mints the
+    // SAME ids the trial minted and discarded. `nextLayout` below is a
+    // different object than what React eventually commits, but its
+    // pane/split ids are identical, so using it for the optimistic
+    // `layoutRef.current` advance (compared against by later same-tick
+    // dispatches) stays accurate.
+    const currentLayout = layoutRef.current;
+    const idSnapshot = snapshotLayoutIds();
+    const nextLayout = workspaceReducer(currentLayout, action);
+    restoreLayoutIds(idSnapshot);
+    layoutRef.current = nextLayout;
+    const isNoOp = nextLayout === currentLayout;
+
+    if (isNoOp || !mirroringEnabledRef.current) {
+      if (action.type === 'close_tab') unmirroredTabIdsRef.current.delete(action.tabId);
+      return;
+    }
+
+    // Every `actionToOp` call below passes `activeConnections` so live
+    // connection-id fields translate to `profile:<profileId>` form before
+    // reaching `workspace_apply` — see persistence.ts's "Global Constraint"
+    // note. `unmirroredTabIdsRef` bookkeeping below always compares against
+    // the RAW action id (pre-translation, i.e. the frontend's own id space),
+    // since that's the space the ref is populated and queried in throughout.
+    switch (action.type) {
+      case 'open_tab': {
+        if (options?.tab) {
+          const conn = activeConnections.find(c => c.id === options.tab!.connectionId);
+          const builderState = tabBuilderStateCache.current.get(options.tab.id);
+          const persisted = toPersistedTab(options.tab, conn, builderState);
+          if (persisted === null) {
+            unmirroredTabIdsRef.current.add(action.tabId);
+            return;
+          }
+          unmirroredTabIdsRef.current.delete(action.tabId);
+          workspaceApply(actionToOp(action, persisted, activeConnections));
+          return;
+        }
+        if (unmirroredTabIdsRef.current.has(action.tabId)) return;
+        workspaceApply(actionToOp(action, undefined, activeConnections));
+        return;
+      }
+      case 'close_tab':
+        if (unmirroredTabIdsRef.current.has(action.tabId)) {
+          unmirroredTabIdsRef.current.delete(action.tabId);
+          return;
+        }
+        workspaceApply(actionToOp(action, undefined, activeConnections));
+        return;
+      case 'close_many': {
+        const tabIds = action.tabIds.filter(id => !unmirroredTabIdsRef.current.has(id));
+        action.tabIds.forEach(id => unmirroredTabIdsRef.current.delete(id));
+        if (tabIds.length === 0) return;
+        workspaceApply(actionToOp({ ...action, tabIds }, undefined, activeConnections));
+        return;
+      }
+      case 'move_tab':
+        if (unmirroredTabIdsRef.current.has(action.tabId)) return;
+        workspaceApply(actionToOp(action, undefined, activeConnections));
+        return;
+      case 'rename_tab':
+        if (unmirroredTabIdsRef.current.has(action.oldId)) {
+          unmirroredTabIdsRef.current.delete(action.oldId);
+          unmirroredTabIdsRef.current.add(action.newId);
+          return;
+        }
+        workspaceApply(actionToOp(action, undefined, activeConnections));
+        return;
+      default:
+        workspaceApply(actionToOp(action, undefined, activeConnections));
+    }
   };
 
   const cycleTab = (dir: 1 | -1) => {
@@ -1346,12 +1732,18 @@ function Workspace() {
     if (!p || p.tabIds.length < 2) return;
     const i = p.tabIds.indexOf(p.activeTabId ?? '');
     const next = p.tabIds[(i + dir + p.tabIds.length) % p.tabIds.length];
-    dispatchLayout({ type: 'set_active', paneId: p.id, tabId: next });
+    dispatchWorkspace({ type: 'set_active', paneId: p.id, tabId: next });
   };
 
   const openQuickStartTab = () => {
-    setTabs(prev => prev.some(t => t.id === QUICK_START_TAB_ID) ? prev : [...prev, createQuickStartTab()]);
-    dispatchLayout({ type: 'open_tab', tabId: QUICK_START_TAB_ID });
+    const alreadyOpen = tabs.some(t => t.id === QUICK_START_TAB_ID);
+    if (!alreadyOpen) {
+      const qs = createQuickStartTab();
+      setTabs(prev => prev.some(t => t.id === QUICK_START_TAB_ID) ? prev : [...prev, qs]);
+      dispatchWorkspace({ type: 'open_tab', tabId: QUICK_START_TAB_ID }, { tab: qs });
+      return;
+    }
+    dispatchWorkspace({ type: 'open_tab', tabId: QUICK_START_TAB_ID });
   };
 
   // Command palette: Cmd/Ctrl+K from anywhere in the workspace.
@@ -1459,14 +1851,14 @@ function Workspace() {
       { id: 'prev-tab', title: 'Previous Tab', keywords: 'tab switch', run: () => cycleTab(-1) },
     ] : []),
     ...(activeTabId && focusedPane && focusedPane.tabIds.length > 1 ? [
-      { id: 'workspace.split-right', title: 'Split Right', keywords: 'workspace pane layout', run: () => dispatchLayout({ type: 'split_pane', paneId: focusedPane.id, dir: 'row', side: 'end', moveTabId: activeTabId }) },
-      { id: 'workspace.split-down', title: 'Split Down', keywords: 'workspace pane layout', run: () => dispatchLayout({ type: 'split_pane', paneId: focusedPane.id, dir: 'col', side: 'end', moveTabId: activeTabId }) },
+      { id: 'workspace.split-right', title: 'Split Right', keywords: 'workspace pane layout', run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'row', side: 'end', moveTabId: activeTabId }) },
+      { id: 'workspace.split-down', title: 'Split Down', keywords: 'workspace pane layout', run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'col', side: 'end', moveTabId: activeTabId }) },
     ] : []),
     ...(allPanes(layout.root).length > 1 ? [
       { id: 'workspace.focus-next-pane', title: 'Focus Next Pane', keywords: 'workspace pane layout switch', run: () => {
         const panes = allPanes(layout.root);
         const i = panes.findIndex(p => p.id === layout.focusedPaneId);
-        dispatchLayout({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
+        dispatchWorkspace({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
       } },
     ] : []),
     ...activeConnections.map(c => ({
@@ -1503,6 +1895,10 @@ function Workspace() {
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastQuery: query, lastAggregate: undefined } : t));
+      // `lastAggregate: null` (not omitted) explicitly clears any
+      // previously-mirrored aggregate on the backend tab, matching the
+      // local `lastAggregate: undefined` above.
+      mirrorUpdateTabState(tab.id, activeConnections, { lastQuery: query, lastAggregate: null });
       // History is best-effort: never surface an error after a successful run.
       recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'find',
@@ -1555,6 +1951,7 @@ function Workspace() {
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
+      mirrorUpdateTabState(tab.id, activeConnections, { lastAggregate: pipeline });
       recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'aggregate',
         pipeline,
@@ -1594,6 +1991,79 @@ function Workspace() {
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults } : t));
     } catch (err: any) {
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, error: String(err) } : t));
+    }
+  };
+
+  // Reconnect flow for a ReconnectBanner (Phase 2 Task 6). One click revives
+  // EVERY restored tab for this profile — not just the tab whose banner was
+  // clicked — since they share the same `profile:<profileId>` prefix and the
+  // same underlying connection.
+  const handleReconnectProfile = async (profileId: string, profileName: string) => {
+    // Synchronous check-and-set on a ref, not `reconnectState` (React state
+    // reads/writes are render-batched — two banners for the same profile, or
+    // a fast double-click, can both observe `busy: false` before either's
+    // `setReconnectState` commits). This is the actual guard; `reconnectState`
+    // stays purely for the UI's busy/error display.
+    if (reconnectBusyRef.current.has(profileId)) return;
+    reconnectBusyRef.current.add(profileId);
+    patchReconnectState(profileId, { busy: true, error: null });
+    try {
+      // Already connected — via quick-connect or the ConnectionManager,
+      // whose banners now clear themselves on a normal connect (Fix 1
+      // above), but a banner click racing that rebind, or a session from
+      // before this fix, can still land here with a live connection already
+      // in `activeConnections`. Reuse it instead of minting a duplicate:
+      // `addActiveConnection` dedupes by profileId, so a second `connect_db`
+      // here would produce an id that never lands in `activeConnections` —
+      // every tab rebound to it would be unreachable, and no profile lookup
+      // (`load_connection_profiles`) is needed to reuse it either.
+      const existing = activeConnections.find((c) => c.profileId === profileId);
+      let newId: string;
+      if (existing) {
+        newId = existing.id;
+      } else {
+        const profiles = await invoke<ConnectionProfile[]>('load_connection_profiles');
+        const profile = profiles.find((p) => p.id === profileId);
+        if (!profile) {
+          patchReconnectState(profileId, { busy: false, error: 'Connection profile no longer exists' });
+          return;
+        }
+
+        newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
+        addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined);
+      }
+
+      // Captured before any state updates below — `tabs`/`layout` in this
+      // closure still reflect the profile: id space this reconnect started
+      // from, which is exactly what `rebindProfileTabs`/oldTabsSnapshot need.
+      const oldTabsSnapshot = tabs;
+      const activeOldIds = new Set(
+        allPanes(layout.root)
+          .map((p) => p.activeTabId)
+          .filter((id): id is string => !!id)
+      );
+
+      const { idMap } = rebindProfileTabs(profileId, newId);
+
+      patchReconnectState(profileId, { busy: false, error: null });
+
+      // Eagerly reload every revived collection tab's last query/aggregate so
+      // the grid isn't left empty post-reconnect (index/shell/etc. tabs have
+      // no query to re-run). Sequential, not Promise.all — a burst of
+      // concurrent queries against a connection that just finished dialing is
+      // unfriendly; whichever tab was visible (its pane's active tab) before
+      // the reconnect goes first, since that's what the user is looking at.
+      const revived = oldTabsSnapshot
+        .filter((t) => idMap.has(t.id) && t.type === 'collection')
+        .map((t) => ({ oldId: t.id, tab: { ...t, id: idMap.get(t.id)!, connectionId: newId } }));
+      revived.sort((a, b) => Number(activeOldIds.has(b.oldId)) - Number(activeOldIds.has(a.oldId)));
+      for (const { tab } of revived) {
+        await refreshTabResults(tab);
+      }
+    } catch (err: any) {
+      patchReconnectState(profileId, { busy: false, error: err?.message || String(err) });
+    } finally {
+      reconnectBusyRef.current.delete(profileId);
     }
   };
 
@@ -1991,6 +2461,26 @@ function Workspace() {
   const renderTabContent = (tabId: string): React.ReactNode => {
     const tab = tabs.find(t => t.id === tabId);
     if (!tab) return null;
+    // A restored-but-not-yet-reconnected tab (see the session-restore effect
+    // above) still carries its `profile:<profileId>` connectionId — render
+    // the Reconnect banner INSTEAD of the tab's normal content, for every
+    // tab type (collection, index, shell, ...), checked before the type
+    // switch below so no branch there ever sees a `profile:` connectionId.
+    if (tab.connectionId.startsWith('profile:')) {
+      const profileId = tab.connectionId.slice('profile:'.length);
+      const profileName = restoredProfileNames.get(profileId) || profileId;
+      const namespace = [tab.db, tab.collection, tab.indexName].filter(Boolean).join('.');
+      const state = reconnectState.get(profileId);
+      return (
+        <ReconnectBanner
+          profileName={profileName}
+          namespace={namespace}
+          busy={!!state?.busy}
+          error={state?.error ?? null}
+          onReconnect={() => handleReconnectProfile(profileId, profileName)}
+        />
+      );
+    }
     return (
       <>
         {tab.type === 'index' && (
@@ -2398,7 +2888,7 @@ function Workspace() {
             setActiveConnections(prev => prev.filter(c => c.id !== connId));
             const removed = tabs.filter(t => t.connectionId === connId).map(t => t.id);
             setTabs(prev => prev.filter(t => t.connectionId !== connId));
-            dispatchLayout({ type: 'close_many', tabIds: removed });
+            dispatchWorkspace({ type: 'close_many', tabIds: removed });
           }}
           onOpenSettings={handleOpenSettingsTab}
           onCopyCollections={handleCopyCollections}
@@ -2443,6 +2933,10 @@ function Workspace() {
             onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
             onConnect={(id, name, uri, profileId, colorTag) => {
               addActiveConnection(id, name, uri, profileId, colorTag ?? undefined);
+              // Clear any ReconnectBanner this profile still has showing
+              // (#97 phase 2 final review Fix 1) — see `rebindProfileTabs`'s
+              // doc comment.
+              rebindProfileTabs(profileId, id);
               setIsConnectionModalOpen(false);
               setProfilesRefreshKey((k) => k + 1);
             }}

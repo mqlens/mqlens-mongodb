@@ -59,13 +59,19 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onDatabaseRenamed }: any) => (
     <div data-testid="mock-sidebar">
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
       </button>
       <button data-testid="select-orders-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'orders')}>
         Select Orders
+      </button>
+      <button
+        data-testid="rename-db-btn"
+        onClick={() => onDatabaseRenamed && onDatabaseRenamed('conn-1', 'sales_db', 'sales_db2')}
+      >
+        Rename sales_db
       </button>
       <button data-testid="select-index-btn" onClick={() => onSelectIndex('conn-1', 'sales_db', 'customers', 'email_1')}>
         Select Index
@@ -1644,5 +1650,490 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('toggle-query-builder'));
     const ordersFilterAgain = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
     expect(ordersFilterAgain.value).toContain('"shipped"');
+  });
+
+  describe('session restore + Reconnect banner (#97 phase 2 Task 6)', () => {
+    // Two collection tabs, both on profile p1, split into a row of two panes —
+    // matches persistence.ts's toDisconnectedSnapshot wire shape (camelCase,
+    // `profile:<profileId>` connection ids already baked into the tab ids).
+    const workspaceSnapshot = {
+      revision: 1,
+      windows: [
+        {
+          id: 'main',
+          focusedPaneId: 'pane-1',
+          splitTree: {
+            kind: 'split',
+            id: 'split-1',
+            dir: 'row',
+            ratio: 0.5,
+            children: [
+              {
+                kind: 'pane',
+                id: 'pane-1',
+                tabIds: ['profile:p1.sales_db.customers'],
+                activeTabId: 'profile:p1.sales_db.customers',
+              },
+              {
+                kind: 'pane',
+                id: 'pane-2',
+                tabIds: ['profile:p1.sales_db.orders'],
+                activeTabId: 'profile:p1.sales_db.orders',
+              },
+            ],
+          },
+        },
+      ],
+      tabs: [
+        {
+          id: 'profile:p1.sales_db.customers',
+          type: 'collection',
+          profileId: 'p1',
+          profileName: 'Prod Cluster',
+          db: 'sales_db',
+          collection: 'customers',
+        },
+        {
+          id: 'profile:p1.sales_db.orders',
+          type: 'collection',
+          profileId: 'p1',
+          profileName: 'Prod Cluster',
+          db: 'sales_db',
+          collection: 'orders',
+        },
+      ],
+    };
+
+    it('(a) restores a disconnected snapshot as ReconnectBanners, with no query invokes', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        return Promise.resolve([]);
+      });
+
+      renderWithProviders(<App />);
+
+      const banners = await screen.findAllByTestId('reconnect-banner');
+      expect(banners).toHaveLength(2);
+      expect(screen.getAllByRole('button', { name: /Reconnect Prod Cluster/ })).toHaveLength(2);
+
+      expect(mockInvoke).not.toHaveBeenCalledWith('execute_mql_query', expect.anything());
+      expect(mockInvoke).not.toHaveBeenCalledWith('execute_aggregate', expect.anything());
+    });
+
+    it('(b) clicking Reconnect resolves profiles + connect_db, revives all of the profile\'s tabs, and eagerly re-runs their queries', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const banners = await screen.findAllByTestId('reconnect-banner');
+      expect(banners).toHaveLength(2);
+
+      const [firstBtn] = screen.getAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      // One click on either pane's banner revives ALL tabs of that profile —
+      // both panes' banners disappear and both mount real content.
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0);
+      });
+      expect(await screen.findAllByText(/"Ada"/)).toHaveLength(2);
+
+      await waitFor(() => {
+        const execCalls = calls.filter((c) => c.cmd === 'execute_mql_query');
+        expect(execCalls).toHaveLength(2);
+        expect(execCalls.every((c) => c.args?.id === 'new-conn-1')).toBe(true);
+      });
+
+      const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
+      expect(connectCalls).toHaveLength(1); // one connect_db for the whole profile, not per-tab
+    });
+
+    it('(b1) clicking two banners for the same profile back-to-back only connects once — IMPORTANT fix regression guard', async () => {
+      // Both panes' banners share profileId p1. A synchronous double-click
+      // (or two banners firing before either's setReconnectState commits) used
+      // to both pass the busy check — reconnectState is render-captured, so
+      // neither call could see the other's in-flight state yet — and each
+      // called connect_db, leaking a connection. reconnectBusyRef is checked
+      // and set synchronously at the top of handleReconnectProfile, before
+      // any state update or await, so the second call must bail out.
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const banners = await screen.findAllByTestId('reconnect-banner');
+      expect(banners).toHaveLength(2);
+      const buttons = screen.getAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      expect(buttons).toHaveLength(2);
+
+      // Both clicks inside ONE `act()` so React defers re-rendering (and
+      // therefore re-committing `reconnectState`) until after BOTH
+      // synchronous handler prefixes have already run — reproducing the
+      // real race: two banner clicks that each observe the SAME
+      // pre-click `reconnectState` snapshot. Two separate `fireEvent.click`
+      // calls (each with its own implicit act()) would let the first
+      // click's state update flush and re-render before the second
+      // fires, masking the race this test exists to catch.
+      act(() => {
+        fireEvent.click(buttons[0]);
+        fireEvent.click(buttons[1]);
+      });
+
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0);
+      });
+
+      const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
+      expect(connectCalls).toHaveLength(1); // NOT 2 — the second click must have been dropped
+    });
+
+    it('(b2) a missing profile surfaces "no longer exists" as the banner error, without connecting', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') return Promise.resolve([]); // p1 is gone
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      // Both panes share the same profileId's error state — the error surfaces
+      // on every banner for that profile, not just the one that was clicked.
+      expect(await screen.findAllByText('Connection profile no longer exists')).toHaveLength(2);
+      expect(mockInvoke).not.toHaveBeenCalledWith('connect_db', expect.anything());
+      // Still disconnected — both banners remain.
+      expect(screen.getAllByTestId('reconnect-banner')).toHaveLength(2);
+    });
+
+    it('(c) a null snapshot keeps the default Quick Start tab', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(null);
+        return Promise.resolve([]);
+      });
+
+      renderWithProviders(<App />);
+      expect(await screen.findByTestId('quickstart-tab')).toBeInTheDocument();
+      expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument();
+    });
+
+    it('(d) banner click while the profile is already connected reuses the live connection — quick-connecting a profile that still has a ReconnectBanner clears it without a second connect_db (#97 phase 2 final review Fix 1)', async () => {
+      // One window, two panes: pane-1 shows the Quick Start tab (so its
+      // ConnectionCard is available to drive a quick-connect), pane-2 shows a
+      // restored-but-disconnected tab for the same profile p1.
+      const quickConnectSnapshot = {
+        revision: 1,
+        windows: [
+          {
+            id: 'main',
+            focusedPaneId: 'pane-1',
+            splitTree: {
+              kind: 'split',
+              id: 'split-1',
+              dir: 'row',
+              ratio: 0.5,
+              children: [
+                { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' },
+                {
+                  kind: 'pane',
+                  id: 'pane-2',
+                  tabIds: ['profile:p1.sales_db.customers'],
+                  activeTabId: 'profile:p1.sales_db.customers',
+                },
+              ],
+            },
+          },
+        ],
+        tabs: [
+          { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+          {
+            id: 'profile:p1.sales_db.customers',
+            type: 'collection',
+            profileId: 'p1',
+            profileName: 'Prod Cluster',
+            db: 'sales_db',
+            collection: 'customers',
+          },
+        ],
+      };
+
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(quickConnectSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      expect(await screen.findByTestId('reconnect-banner')).toBeInTheDocument();
+
+      // Quick-connect the SAME profile from the Quick Start pane, not the
+      // banner itself — this is the path that used to leave the banner
+      // showing (it only rebound tabs on an explicit banner click), so a
+      // later banner click would mint a duplicate `connect_db` for a
+      // profile that's already connected.
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+
+      // The rebind fires as part of the quick-connect itself — the banner
+      // must be gone WITHOUT ever needing a click on it.
+      await waitFor(() => {
+        expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument();
+      });
+
+      const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
+      expect(connectCalls).toHaveLength(1); // NOT 2 — no duplicate backend connection for p1
+    });
+
+    it('(e) builder state seeded under the profile-space tab id survives reconnect (#97 phase 2 final review Fix 2)', async () => {
+      const seededBuilderState = {
+        queryMode: 'find',
+        filterQuery: '{"seeded":true}',
+        sortQuery: '{}',
+        projectionQuery: '{}',
+        limit: '50',
+        skip: '0',
+        stages: [{ id: 'stage-1', operator: '$match', content: '{\n  \n}' }],
+      };
+      const snapshotWithBuilderState = {
+        revision: 1,
+        windows: [
+          {
+            id: 'main',
+            focusedPaneId: 'pane-1',
+            splitTree: {
+              kind: 'pane',
+              id: 'pane-1',
+              tabIds: ['profile:p1.sales_db.customers'],
+              activeTabId: 'profile:p1.sales_db.customers',
+            },
+          },
+        ],
+        tabs: [
+          {
+            id: 'profile:p1.sales_db.customers',
+            type: 'collection',
+            profileId: 'p1',
+            profileName: 'Prod Cluster',
+            db: 'sales_db',
+            collection: 'customers',
+            builderState: seededBuilderState,
+          },
+        ],
+      };
+
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(snapshotWithBuilderState);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0);
+      });
+
+      // The tab's id (and the builder-state cache entry seeded under its old
+      // profile-space id) must both have been rebound onto the live
+      // connection id — DocumentViewer's `initialBuilderState` reads the
+      // cache under the tab's CURRENT id, so a filter of "{}" here would
+      // mean the seeded state was dropped (leaked under the dead old id)
+      // instead of re-keyed.
+      const filterInput = await screen.findByTestId('query-filter-input');
+      expect((filterInput as HTMLInputElement).value).toBe('{"seeded":true}');
+    });
+  });
+
+  describe('dispatchWorkspace no-op mirror gate (#97 phase 2 final review Fix 3)', () => {
+    it('does not mirror split_pane when it moves a pane\'s only tab (a frontend reducer no-op)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      const { TAB_DRAG_MIME } = await import('../../workspace/PaneView');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // Open one collection tab, then close Quick Start — pane-1 now holds
+      // exactly one tab ("customers"), which is also its active tab. (The
+      // command palette's own "Split Right"/"Split Down" entries only ever
+      // appear when a pane has MORE than one tab, so this exact reproduction
+      // — a self-drop drag of a pane's only tab onto its own edge — is the
+      // one the UI actually lets through to `dispatchWorkspace`.)
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await screen.findByTestId('mock-sidebar');
+      fireEvent.click(screen.getByRole('button', { name: 'Close Quick Start' }));
+      await waitFor(() => {
+        expect(screen.queryByTestId('quickstart-tab')).not.toBeInTheDocument();
+      });
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+
+      calls.length = 0; // only care about ops mirrored from the drop below
+
+      // Drag the pane's own (only) tab and drop it on the pane's own right
+      // edge — model.ts's split_pane case returns the SAME layout reference
+      // for this ("would empty the source pane — pointless split"), so
+      // dispatchWorkspace must skip the mirror.
+      const pane = screen.getByTestId(/^pane-pane-/);
+      const data: Record<string, string> = { [TAB_DRAG_MIME]: 'conn-1.sales_db.customers' };
+      const dt = { getData: (k: string) => data[k] ?? '', setData: () => {}, types: [TAB_DRAG_MIME] };
+      Object.defineProperty(pane, 'getBoundingClientRect', {
+        value: () => ({ left: 0, top: 0, width: 1000, height: 500, right: 1000, bottom: 500 }),
+      });
+      fireEvent.dragOver(pane, { dataTransfer: dt, clientX: 950, clientY: 250 });
+      fireEvent.drop(pane, { dataTransfer: dt, clientX: 950, clientY: 250 });
+
+      // No second pane ever appears (the frontend reducer itself no-opped).
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+      const splitCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'split_pane');
+      expect(splitCalls).toHaveLength(0);
+    });
+
+    it('does mirror a normal split_pane (pane has more than one tab)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // pane-1 now holds two tabs: Quick Start and "customers" (active).
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Split Right' } });
+      fireEvent.click(await screen.findByText('Split Right'));
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(2);
+      });
+      const splitCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'split_pane');
+      expect(splitCalls).toHaveLength(1);
+    });
+
+    it('mirrors both rename_tab dispatches from a single-tick rename storm', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // Two collection tabs under the same connection+db — renaming the
+      // database renames BOTH tabs, dispatched back-to-back in one
+      // synchronous `forEach` (App.tsx's `handleDatabaseRenamed`).
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+      fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+
+      calls.length = 0; // only care about ops mirrored from the rename storm below
+
+      fireEvent.click(screen.getByTestId('rename-db-btn'));
+
+      const renameCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'rename_tab');
+      expect(renameCalls).toHaveLength(2);
+      const newIds = renameCalls.map((c) => (c.args.op as any).new_id).sort();
+      expect(newIds).toEqual(['conn-1.sales_db2.customers', 'conn-1.sales_db2.orders']);
+    });
+  });
+
+  describe('dispatchWorkspace trial-run id-counter parity (closing review amendment)', () => {
+    it('a real split_pane commits pane-pane-2, not pane-pane-3 — the no-op mirror gate\'s trial reducer call must not itself consume a pane id', async () => {
+      // The gate's trial run (see the previous describe block) calls
+      // `workspaceReducer` purely for reference-identity comparison and
+      // discards its result — but `workspaceReducer` mints pane/split ids
+      // via model.ts's module-level counters as a SIDE EFFECT. Reset here so
+      // this test's own split is the first mint since module load,
+      // regardless of what earlier tests in this file minted.
+      const { resetLayoutIds } = await import('../../workspace/model');
+      resetLayoutIds();
+
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // pane-1 (root) now holds two tabs: Quick Start and "customers" (active).
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Split Right' } });
+      fireEvent.click(await screen.findByText('Split Right'));
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(2);
+      });
+
+      // Pre-fix: the discarded trial minted pane-2/split-1 for nothing, and
+      // the real (render-time) application then minted pane-3/split-2 —
+      // THAT is what got committed, one generation ahead of what the
+      // mirrored op causes the backend to mint from its own, separately-
+      // counted id space. Post-fix, the trial's mint is undone before the
+      // real application runs, so the real one mints pane-2 — the same id a
+      // single reducer application (matching the backend) would produce.
+      expect(screen.getByTestId('pane-pane-2')).toBeInTheDocument();
+      expect(screen.queryByTestId('pane-pane-3')).not.toBeInTheDocument();
+    });
   });
 });

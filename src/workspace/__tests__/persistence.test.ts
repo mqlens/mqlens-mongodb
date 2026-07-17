@@ -1,0 +1,417 @@
+import { describe, it, expect } from 'vitest';
+import {
+  toPersistedTab,
+  toDisconnectedSnapshot,
+  rebindConnection,
+  toProfileSpaceId,
+  type PersistableTab,
+  type PersistableConnection,
+  type PersistedTab,
+  type PersistedWorkspace,
+} from '../persistence';
+import { actionToOp } from '../workspaceStore';
+import { createInitialLayout, workspaceReducer, allTabIds, type WorkspaceAction, type WorkspaceLayout } from '../model';
+import goldenFixture from '../../../fixtures/workspace-golden.json';
+
+const conn: PersistableConnection = { id: 'conn-uuid', profileId: 'p1', name: 'Profile 1' };
+
+const collectionTab: PersistableTab = {
+  id: 'conn-uuid.mydb.mycoll',
+  type: 'collection',
+  connectionId: 'conn-uuid',
+  db: 'mydb',
+  collection: 'mycoll',
+};
+
+describe('toPersistedTab', () => {
+  it('returns null for export tabs — in-flight task state does not survive a restart', () => {
+    const tab: PersistableTab = { ...collectionTab, id: 'export.conn-uuid.mydb.mycoll', type: 'export' };
+    expect(toPersistedTab(tab, conn, undefined)).toBeNull();
+  });
+
+  it('returns null for import tabs', () => {
+    const tab: PersistableTab = { ...collectionTab, id: 'import.conn-uuid.mydb.mycoll', type: 'import' };
+    expect(toPersistedTab(tab, conn, undefined)).toBeNull();
+  });
+
+  it('substitutes the leading connectionId segment with profile:<profileId> at save time', () => {
+    const persisted = toPersistedTab(collectionTab, conn, undefined);
+    expect(persisted?.id).toBe('profile:p1.mydb.mycoll');
+    expect(persisted?.profileId).toBe('p1');
+    expect(persisted?.profileName).toBe('Profile 1');
+  });
+
+  it('substitutes the connection segment inside a type-prefixed id (shell)', () => {
+    const tab: PersistableTab = {
+      id: 'shell.conn-uuid.mydb.x',
+      type: 'shell',
+      connectionId: 'conn-uuid',
+      db: 'mydb',
+      collection: 'x',
+    };
+    const persisted = toPersistedTab(tab, conn, undefined);
+    expect(persisted?.id).toBe('shell.profile:p1.mydb.x');
+  });
+
+  it('passes settings/quickstart/tasks tabs through unchanged with empty profile fields', () => {
+    for (const type of ['settings', 'quickstart', 'tasks'] as const) {
+      const tab: PersistableTab = { id: type, type, connectionId: '', db: '', collection: '' };
+      const persisted = toPersistedTab(tab, undefined, undefined);
+      expect(persisted).toEqual({
+        id: type,
+        type,
+        profileId: '',
+        profileName: '',
+        db: '',
+        collection: '',
+        indexName: undefined,
+        lastQuery: undefined,
+        lastAggregate: undefined,
+        builderState: undefined,
+      });
+    }
+  });
+
+  it('carries builderState and lastQuery/lastAggregate through untouched', () => {
+    const tab: PersistableTab = { ...collectionTab, lastQuery: { filter: '{}' } };
+    const persisted = toPersistedTab(tab, conn, { queryMode: 'find' });
+    expect(persisted?.lastQuery).toEqual({ filter: '{}' });
+    expect(persisted?.builderState).toEqual({ queryMode: 'find' });
+  });
+});
+
+describe('toDisconnectedSnapshot', () => {
+  const ws: PersistedWorkspace = {
+    revision: 3,
+    windows: [
+      {
+        id: 'main',
+        focusedPaneId: 'pane-1',
+        splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.mydb.mycoll'], activeTabId: 'profile:p1.mydb.mycoll' },
+      },
+    ],
+    tabs: [
+      {
+        id: 'profile:p1.mydb.mycoll',
+        type: 'collection',
+        profileId: 'p1',
+        profileName: 'Profile 1',
+        db: 'mydb',
+        collection: 'mycoll',
+        lastQuery: { filter: '{}' },
+        builderState: { queryMode: 'find' },
+      },
+    ],
+  };
+
+  it('produces empty-results tabs with profile: connectionIds', () => {
+    const snapshot = toDisconnectedSnapshot(ws);
+    expect(snapshot.tabs).toHaveLength(1);
+    const tab = snapshot.tabs[0];
+    expect(tab.id).toBe('profile:p1.mydb.mycoll'); // no id surgery — already in profile: form
+    expect(tab.connectionId).toBe('profile:p1');
+    expect(tab.results).toEqual([]);
+    expect(tab.loading).toBe(false);
+    expect(tab.error).toBeNull();
+    expect(tab.explainResult).toBeNull();
+  });
+
+  it('seeds builderStates from persisted tabs that have one', () => {
+    const snapshot = toDisconnectedSnapshot(ws);
+    expect(snapshot.builderStates.get('profile:p1.mydb.mycoll')).toEqual({ queryMode: 'find' });
+    expect(snapshot.builderStates.size).toBe(1);
+  });
+
+  it('reconstructs the layout tree as-is when every layout tab id has a matching persisted tab', () => {
+    const snapshot = toDisconnectedSnapshot(ws);
+    expect(snapshot.layout).toEqual({
+      root: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.mydb.mycoll'], activeTabId: 'profile:p1.mydb.mycoll' },
+      focusedPaneId: 'pane-1',
+    });
+  });
+
+  it('drops a layout tab id (and folds the layout) that has no matching persisted tab', () => {
+    // Simulates legacy/corrupt data: the layout references an id absent from
+    // tabs[] (the case a never-mirrored export/import tab would be in, were
+    // it ever to end up in the tree). The reducer's close_tab must fold the
+    // pane exactly like a normal close would.
+    const dangling: PersistedWorkspace = {
+      revision: 1,
+      windows: [
+        {
+          id: 'main',
+          focusedPaneId: 'pane-1',
+          splitTree: {
+            kind: 'split',
+            id: 'split-1',
+            dir: 'row',
+            ratio: 0.5,
+            children: [
+              { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.mydb.mycoll'], activeTabId: 'profile:p1.mydb.mycoll' },
+              { kind: 'pane', id: 'pane-2', tabIds: ['export.conn-uuid.mydb.mycoll'], activeTabId: 'export.conn-uuid.mydb.mycoll' },
+            ],
+          },
+        },
+      ],
+      tabs: ws.tabs,
+    };
+    const snapshot = toDisconnectedSnapshot(dangling);
+    expect(snapshot.tabs.map((t) => t.id)).toEqual(['profile:p1.mydb.mycoll']);
+    // pane-2 held only the dangling id, so it folds away entirely.
+    expect(snapshot.layout).toEqual({
+      root: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.mydb.mycoll'], activeTabId: 'profile:p1.mydb.mycoll' },
+      focusedPaneId: 'pane-1',
+    });
+  });
+
+  it('falls back to a fresh empty pane when there are no windows', () => {
+    const empty: PersistedWorkspace = { revision: 0, windows: [], tabs: [] };
+    const snapshot = toDisconnectedSnapshot(empty);
+    expect(snapshot.tabs).toEqual([]);
+    expect(snapshot.layout.root).toEqual({ kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null });
+  });
+});
+
+describe('toProfileSpaceId', () => {
+  const connections: PersistableConnection[] = [
+    { id: 'live-conn-1', profileId: 'p1', name: 'Profile 1' },
+    { id: 'live-conn-2', profileId: 'p2', name: 'Profile 2' },
+  ];
+
+  it('rewrites the live connection segment to profile:<profileId>', () => {
+    expect(toProfileSpaceId('live-conn-1.mydb.mycoll', connections)).toBe('profile:p1.mydb.mycoll');
+  });
+
+  it('finds the right connection out of several (a close_many-style batch)', () => {
+    expect(toProfileSpaceId('shell.live-conn-2.mydb.x', connections)).toBe('shell.profile:p2.mydb.x');
+  });
+
+  it('passes through an id with no matching live connection unchanged', () => {
+    expect(toProfileSpaceId('live-conn-9.mydb.mycoll', connections)).toBe('live-conn-9.mydb.mycoll');
+  });
+
+  it('passes through an id already in profile: form unchanged (no live id matches it)', () => {
+    expect(toProfileSpaceId('profile:p1.mydb.mycoll', connections)).toBe('profile:p1.mydb.mycoll');
+  });
+
+  it('passes through connectionless/pane ids unchanged', () => {
+    expect(toProfileSpaceId('settings', connections)).toBe('settings');
+    expect(toProfileSpaceId('pane-1', connections)).toBe('pane-1');
+  });
+
+  it('an empty connections list is a no-op passthrough', () => {
+    expect(toProfileSpaceId('live-conn-1.mydb.mycoll', [])).toBe('live-conn-1.mydb.mycoll');
+  });
+});
+
+// CRITICAL regression coverage: before this fix, `dispatchWorkspace`'s
+// mirror sent op ids VERBATIM (live-connection space) while `toPersistedTab`
+// rewrote the nested `open_tab.tab` payload into profile-space — splitting
+// the backend's layout tree and its `tabs[]` into two id spaces that never
+// resolved to each other again. On a real restart, `toDisconnectedSnapshot`'s
+// defensive "drop layout ids absent from tabs[]" fold would silently empty
+// the restored layout; post-reconnect, further mirrors (update_tab_state,
+// close_tab, ...) would carry live ids matching no backend tab, so state
+// stopped persisting and closed tabs would resurrect on the next boot.
+describe('mirror translation round-trip (CRITICAL fix regression guard)', () => {
+  it('a translated op stream keeps the backend layout and tabs[] in the same id space, so toDisconnectedSnapshot restores a non-empty layout', () => {
+    const liveConn: PersistableConnection = { id: 'live-conn-1', profileId: 'p1', name: 'Profile 1' };
+    const connections = [liveConn];
+
+    // 1. The user opens a brand-new collection tab against the live connection.
+    const liveTabId = 'live-conn-1.mydb.mycoll';
+    const liveTab: PersistableTab = {
+      id: liveTabId,
+      type: 'collection',
+      connectionId: 'live-conn-1',
+      db: 'mydb',
+      collection: 'mycoll',
+    };
+    const persisted = toPersistedTab(liveTab, liveConn, undefined)!;
+    expect(persisted.id).toBe('profile:p1.mydb.mycoll');
+
+    // 2. dispatchWorkspace's mirror step builds the wire op — this is the
+    //    exact call site that used to leak the live id.
+    const openOp = actionToOp({ type: 'open_tab', tabId: liveTabId }, persisted, connections);
+    expect(openOp.tab_id).toBe('profile:p1.mydb.mycoll');
+    // The bug, precisely: the op's own top-level tab_id and its nested tab
+    // payload's id must be the SAME id (same tab, same id space) — before
+    // the fix, `openOp.tab_id` would have been the live id while
+    // `(openOp.tab as PersistedTab).id` was already profile-space.
+    expect(openOp.tab_id).toBe((openOp.tab as PersistedTab).id);
+
+    // 3. Apply the *translated* op to a scratch backend-shaped layout tree —
+    //    workspaceReducer is the TS port of the Rust reducer; the real
+    //    backend receives `tab_id: 'profile:p1.mydb.mycoll'` on the wire and
+    //    mutates its tree with that id, never the live one.
+    let layout: WorkspaceLayout = createInitialLayout([], null);
+    layout = workspaceReducer(layout, { type: 'open_tab', tabId: openOp.tab_id as string });
+    const backendTabs: PersistedTab[] = [persisted];
+
+    // 4. Round-trip exactly like a real restart: workspace_get -> toDisconnectedSnapshot.
+    const ws: PersistedWorkspace = {
+      revision: 1,
+      windows: [{ id: 'main', splitTree: layout.root, focusedPaneId: layout.focusedPaneId }],
+      tabs: backendTabs,
+    };
+    const snapshot = toDisconnectedSnapshot(ws);
+
+    // Before the fix this would be `[]` — the defensive fold in
+    // toDisconnectedSnapshot strips any layout id absent from tabs[], and a
+    // live id would never match the profile-space id in tabs[].
+    expect(allTabIds(snapshot.layout)).toEqual(['profile:p1.mydb.mycoll']);
+    expect(snapshot.tabs.map((t) => t.id)).toEqual(['profile:p1.mydb.mycoll']);
+  });
+
+  it('update_tab_state after a simulated reconnect rebind translates back to the SAME profile-space tab_id the store already has', () => {
+    const profileId = 'p1';
+    const oldPrefix = `profile:${profileId}`;
+    // Before reconnect: a restored, disconnected tab — already profile-space.
+    const restoredTabId = `${oldPrefix}.mydb.mycoll`;
+
+    // Reconnect mints a fresh live connection id and rebinds every restored
+    // tab id under this profile to it (App.tsx's handleReconnectProfile).
+    const newLiveConnId = 'fresh-conn-uuid';
+    const pairs = rebindConnection(oldPrefix, newLiveConnId, [restoredTabId]);
+    expect(pairs).toEqual([{ oldId: restoredTabId, newId: `${newLiveConnId}.mydb.mycoll` }]);
+    const reboundTabId = pairs[0].newId;
+
+    // Post-reconnect, a query runs against the tab under its NEW live id;
+    // the mirror choke point must translate it back before it reaches the
+    // wire — landing on the EXACT id the backend's ws.tabs already has.
+    const newConn: PersistableConnection = { id: newLiveConnId, profileId, name: 'Profile 1' };
+    const translatedBack = toProfileSpaceId(reboundTabId, [newConn]);
+    expect(translatedBack).toBe(restoredTabId);
+  });
+});
+
+describe('rebindConnection', () => {
+  it('maps every id containing the old profile prefix to the new connection id', () => {
+    const pairs = rebindConnection('profile:p1', 'new-uuid', [
+      'profile:p1.mydb.mycoll',
+      'shell.profile:p1.mydb.x',
+      'settings',
+    ]);
+    expect(pairs).toEqual([
+      { oldId: 'profile:p1.mydb.mycoll', newId: 'new-uuid.mydb.mycoll' },
+      { oldId: 'shell.profile:p1.mydb.x', newId: 'shell.new-uuid.mydb.x' },
+    ]);
+  });
+
+  it('leaves ids without the prefix out of the result entirely', () => {
+    const pairs = rebindConnection('profile:p1', 'new-uuid', ['profile:p2.mydb.mycoll', 'tasks']);
+    expect(pairs).toEqual([]);
+  });
+});
+
+describe('actionToOp', () => {
+  // Ground truth: reuse a handful of ops from the golden parity fixture
+  // (fixtures/workspace-golden.json) that the Rust backend's WorkspaceOp
+  // deserializer was built and tested against.
+  const opsByType = new Map<string, Record<string, unknown>>();
+  for (const vector of goldenFixture.vectors) {
+    for (const op of vector.ops) {
+      if (!opsByType.has(op.type)) opsByType.set(op.type, op as Record<string, unknown>);
+    }
+  }
+
+  it('open_tab without a pane_id or tab payload', () => {
+    const expected = opsByType.get('open_tab'); // { type: 'open_tab', tab_id: 'b' }
+    const action: WorkspaceAction = { type: 'open_tab', tabId: 'b' };
+    expect(actionToOp(action)).toEqual(expected);
+  });
+
+  it('open_tab with an explicit pane_id', () => {
+    const action: WorkspaceAction = { type: 'open_tab', tabId: 'c', paneId: 'pane-2' };
+    expect(actionToOp(action)).toEqual({ type: 'open_tab', tab_id: 'c', pane_id: 'pane-2' });
+  });
+
+  it('open_tab enriched with a persisted tab payload keeps TabModel camelCase fields', () => {
+    const vector = goldenFixture.vectors.find((v) => v.name === 'open_tab_with_tab_payload_upserts_tabs_array')!;
+    const expected = vector.ops[0] as Record<string, unknown>; // { type: 'open_tab', tab_id: 'b', tab: {...camelCase...} }
+    const persisted = expected.tab as Record<string, unknown>;
+    const action: WorkspaceAction = { type: 'open_tab', tabId: expected.tab_id as string };
+    expect(actionToOp(action, persisted as any)).toEqual(expected);
+  });
+
+  it('close_tab', () => {
+    const action: WorkspaceAction = { type: 'close_tab', tabId: 'nope' };
+    expect(actionToOp(action)).toEqual({ type: 'close_tab', tab_id: 'nope' });
+  });
+
+  it('close_many', () => {
+    const expected = opsByType.get('close_many'); // { type: 'close_many', tab_ids: [...] }
+    const action: WorkspaceAction = { type: 'close_many', tabIds: expected!.tab_ids as string[] };
+    expect(actionToOp(action)).toEqual(expected);
+  });
+
+  it('move_tab with an explicit index', () => {
+    // `opsByType.get('move_tab')` would grab the FIRST move_tab op across all
+    // vectors — that's `split_then_close_folds_depth2`'s, which has no
+    // `index` key at all and would silently duplicate the "no index" test
+    // below. Target the vector whose op actually carries an index instead.
+    const vector = goldenFixture.vectors.find((v) => v.name === 'move_tab_reorders_within_same_pane_using_index')!;
+    const expected = vector.ops[0] as Record<string, unknown>; // { type: 'move_tab', tab_id: 'c', target_pane_id: 'pane-1', index: 0 }
+    expect(expected.index).toBeDefined();
+    const action: WorkspaceAction = {
+      type: 'move_tab',
+      tabId: expected.tab_id as string,
+      targetPaneId: expected.target_pane_id as string,
+      index: expected.index as number,
+    };
+    const op = actionToOp(action);
+    expect(op).toEqual(expected);
+    expect('index' in op).toBe(true);
+    expect(op.index).toBe(expected.index);
+  });
+
+  it('move_tab without an index omits the key rather than sending undefined', () => {
+    const action: WorkspaceAction = { type: 'move_tab', tabId: 'a', targetPaneId: 'nope' };
+    const op = actionToOp(action);
+    expect(op).toEqual({ type: 'move_tab', tab_id: 'a', target_pane_id: 'nope' });
+    expect('index' in op).toBe(false);
+  });
+
+  it('split_pane with a move_tab_id', () => {
+    const expected = opsByType.get('split_pane'); // { type, pane_id, dir, side, move_tab_id }
+    const action: WorkspaceAction = {
+      type: 'split_pane',
+      paneId: expected!.pane_id as string,
+      dir: expected!.dir as 'row' | 'col',
+      side: expected!.side as 'start' | 'end',
+      moveTabId: expected!.move_tab_id as string,
+    };
+    expect(actionToOp(action)).toEqual(expected);
+  });
+
+  it('split_pane without a move_tab_id', () => {
+    const action: WorkspaceAction = { type: 'split_pane', paneId: 'pane-1', dir: 'row', side: 'end' };
+    const op = actionToOp(action);
+    expect(op).toEqual({ type: 'split_pane', pane_id: 'pane-1', dir: 'row', side: 'end' });
+    expect('move_tab_id' in op).toBe(false);
+  });
+
+  it('resize_split', () => {
+    const expected = opsByType.get('resize_split'); // { type, split_id, ratio }
+    const action: WorkspaceAction = { type: 'resize_split', splitId: expected!.split_id as string, ratio: expected!.ratio as number };
+    expect(actionToOp(action)).toEqual(expected);
+  });
+
+  it('set_active', () => {
+    const expected = opsByType.get('set_active'); // { type, pane_id, tab_id }
+    const action: WorkspaceAction = { type: 'set_active', paneId: expected!.pane_id as string, tabId: expected!.tab_id as string };
+    expect(actionToOp(action)).toEqual(expected);
+  });
+
+  it('focus_pane', () => {
+    const expected = opsByType.get('focus_pane'); // { type, pane_id }
+    const action: WorkspaceAction = { type: 'focus_pane', paneId: expected!.pane_id as string };
+    expect(actionToOp(action)).toEqual(expected);
+  });
+
+  it('rename_tab', () => {
+    const expected = opsByType.get('rename_tab'); // { type, old_id, new_id }
+    const action: WorkspaceAction = { type: 'rename_tab', oldId: expected!.old_id as string, newId: expected!.new_id as string };
+    expect(actionToOp(action)).toEqual(expected);
+  });
+});

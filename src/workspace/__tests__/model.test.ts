@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createInitialLayout, workspaceReducer, findPane, paneOfTab, allPanes,
-  allTabIds, resetLayoutIds, type WorkspaceLayout, type SplitNode, type PaneNode,
+  allTabIds, resetLayoutIds, seedLayoutIds, snapshotLayoutIds, restoreLayoutIds,
+  type WorkspaceLayout, type SplitNode, type PaneNode,
 } from '../model';
 
 const layoutWith = (...tabIds: string[]): WorkspaceLayout =>
@@ -182,6 +183,84 @@ describe('rename_tab', () => {
     l = workspaceReducer(l, { type: 'rename_tab', oldId: 'conn.db.old', newId: 'conn.db.new' });
     expect((l.root as PaneNode).tabIds).toEqual(['conn.db.new']);
     expect((l.root as PaneNode).activeTabId).toBe('conn.db.new');
+  });
+});
+
+describe('seedLayoutIds', () => {
+  it('seeds counters past the max numeric suffix already present in the tree', () => {
+    // A tree "loaded" from a fixture already containing pane-7 / split-2.
+    const layout: WorkspaceLayout = {
+      focusedPaneId: 'pane-3',
+      root: {
+        kind: 'split',
+        id: 'split-2',
+        dir: 'row',
+        ratio: 0.5,
+        children: [
+          { kind: 'pane', id: 'pane-3', tabIds: ['a', 'x'], activeTabId: 'a' },
+          { kind: 'pane', id: 'pane-7', tabIds: ['b'], activeTabId: 'b' },
+        ],
+      },
+    };
+    seedLayoutIds(layout);
+    const l = workspaceReducer(layout, {
+      type: 'split_pane', paneId: 'pane-3', dir: 'row', side: 'end', moveTabId: 'x',
+    });
+    const paneIds = allPanes(l.root).map(p => p.id);
+    expect(paneIds).toContain('pane-8'); // past existing pane-7, not colliding with pane-1
+    const nestedSplit = (l.root as SplitNode).children[0] as SplitNode;
+    expect(nestedSplit.id).toBe('split-3'); // past existing split-2
+  });
+});
+
+describe('snapshotLayoutIds / restoreLayoutIds', () => {
+  it('a restored snapshot makes the next mint reuse the same id as a discarded trial run', () => {
+    // Simulates App.tsx's dispatchWorkspace no-op mirror gate: a "trial"
+    // reducer call whose minted ids must never actually be consumed.
+    const layout = layoutWith('a', 'b');
+    const snap = snapshotLayoutIds();
+
+    // Trial run: mints pane-2/split-1 for the new pane, then is discarded.
+    const trial = workspaceReducer(layout, {
+      type: 'split_pane', paneId: layout.root.id, dir: 'row', side: 'end', moveTabId: 'b',
+    });
+    const trialPaneIds = allPanes(trial.root).map(p => p.id);
+    expect(trialPaneIds).toContain('pane-2');
+
+    restoreLayoutIds(snap);
+
+    // The real (render-time) application starts from the restored counters
+    // and must mint the EXACT SAME ids the trial did, not the next ones up.
+    const real = workspaceReducer(layout, {
+      type: 'split_pane', paneId: layout.root.id, dir: 'row', side: 'end', moveTabId: 'b',
+    });
+    const realPaneIds = allPanes(real.root).map(p => p.id);
+    expect(realPaneIds).toEqual(trialPaneIds);
+    expect(realPaneIds).toContain('pane-2');
+    expect(realPaneIds).not.toContain('pane-3');
+  });
+});
+
+describe('hydrate', () => {
+  it('replaces the layout wholesale', () => {
+    const incoming: WorkspaceLayout = {
+      focusedPaneId: 'pane-7',
+      root: { kind: 'pane', id: 'pane-7', tabIds: ['a', 'b'], activeTabId: 'a' },
+    };
+    const l = workspaceReducer(layoutWith('placeholder'), { type: 'hydrate', layout: incoming });
+    expect(l).toEqual(incoming);
+  });
+
+  it('seeds id counters from the incoming layout so a later split does not collide', () => {
+    const incoming: WorkspaceLayout = {
+      focusedPaneId: 'pane-7',
+      root: { kind: 'pane', id: 'pane-7', tabIds: ['a', 'b'], activeTabId: 'a' },
+    };
+    let l = workspaceReducer(layoutWith('placeholder'), { type: 'hydrate', layout: incoming });
+    l = workspaceReducer(l, { type: 'split_pane', paneId: 'pane-7', dir: 'row', side: 'end', moveTabId: 'b' });
+    const paneIds = allPanes(l.root).map(p => p.id);
+    expect(paneIds).toContain('pane-8'); // seeded past the incoming pane-7
+    expect(paneIds).not.toContain('pane-1'); // would collide with the pre-hydrate counter state
   });
 });
 

@@ -23,6 +23,7 @@ pub mod toolsetup;
 pub mod updater;
 mod vault;
 mod window;
+mod workspace;
 pub mod biometric;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
 pub use db::ddl::{
@@ -1950,6 +1951,8 @@ pub fn run() {
             queries::record_history,
             queries::set_default_query,
             queries::list_all_saved_queries,
+            workspace::workspace_get,
+            workspace::workspace_apply,
             server_status,
             current_ops,
             repl_set_status,
