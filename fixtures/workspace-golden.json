@@ -226,6 +226,70 @@
       ],
       "expected": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
         "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } } ], "tabs": [] }
+    },
+    {
+      "name": "set_active_tab_not_in_pane_is_noop",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] },
+      "ops": [
+        { "type": "set_active", "pane_id": "pane-1", "tab_id": "b" }
+      ],
+      "expected": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] }
+    },
+    {
+      "name": "move_tab_clamps_out_of_range_index",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b", "c"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["d"], "activeTabId": "d" } ] } } ], "tabs": [] },
+      "ops": [
+        { "type": "move_tab", "tab_id": "a", "target_pane_id": "pane-1", "index": 99 },
+        { "type": "move_tab", "tab_id": "b", "target_pane_id": "pane-2", "index": 99 }
+      ],
+      "expected": { "revision": 2, "windows": [ { "id": "main", "focusedPaneId": "pane-2",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["c", "a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["d", "b"], "activeTabId": "b" } ] } } ], "tabs": [] }
+    },
+    {
+      "name": "open_tab_missing_explicit_pane_falls_back_to_focused",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-2",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] },
+      "ops": [
+        { "type": "open_tab", "tab_id": "c", "pane_id": "nope", "tab": {
+          "id": "c", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null } }
+      ],
+      "expected": { "revision": 1, "windows": [ { "id": "main", "focusedPaneId": "pane-2",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b", "c"], "activeTabId": "c" } ] } } ], "tabs": [
+        { "id": "c", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null } ] }
+    },
+    {
+      "name": "resize_split_exact_bounds_inclusive",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] },
+      "ops": [
+        { "type": "resize_split", "split_id": "split-1", "ratio": 0.15 },
+        { "type": "resize_split", "split_id": "split-1", "ratio": 0.85 }
+      ],
+      "expected": { "revision": 2, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.85, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] }
     }
   ]
 }
