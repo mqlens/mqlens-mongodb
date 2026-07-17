@@ -2092,4 +2092,48 @@ describe('App Component', () => {
       expect(newIds).toEqual(['conn-1.sales_db2.customers', 'conn-1.sales_db2.orders']);
     });
   });
+
+  describe('dispatchWorkspace trial-run id-counter parity (closing review amendment)', () => {
+    it('a real split_pane commits pane-pane-2, not pane-pane-3 — the no-op mirror gate\'s trial reducer call must not itself consume a pane id', async () => {
+      // The gate's trial run (see the previous describe block) calls
+      // `workspaceReducer` purely for reference-identity comparison and
+      // discards its result — but `workspaceReducer` mints pane/split ids
+      // via model.ts's module-level counters as a SIDE EFFECT. Reset here so
+      // this test's own split is the first mint since module load,
+      // regardless of what earlier tests in this file minted.
+      const { resetLayoutIds } = await import('../../workspace/model');
+      resetLayoutIds();
+
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // pane-1 (root) now holds two tabs: Quick Start and "customers" (active).
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Split Right' } });
+      fireEvent.click(await screen.findByText('Split Right'));
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(2);
+      });
+
+      // Pre-fix: the discarded trial minted pane-2/split-1 for nothing, and
+      // the real (render-time) application then minted pane-3/split-2 —
+      // THAT is what got committed, one generation ahead of what the
+      // mirrored op causes the backend to mint from its own, separately-
+      // counted id space. Post-fix, the trial's mint is undone before the
+      // real application runs, so the real one mints pane-2 — the same id a
+      // single reducer application (matching the backend) would produce.
+      expect(screen.getByTestId('pane-pane-2')).toBeInTheDocument();
+      expect(screen.queryByTestId('pane-pane-3')).not.toBeInTheDocument();
+    });
+  });
 });

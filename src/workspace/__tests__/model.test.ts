@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createInitialLayout, workspaceReducer, findPane, paneOfTab, allPanes,
-  allTabIds, resetLayoutIds, seedLayoutIds, type WorkspaceLayout, type SplitNode, type PaneNode,
+  allTabIds, resetLayoutIds, seedLayoutIds, snapshotLayoutIds, restoreLayoutIds,
+  type WorkspaceLayout, type SplitNode, type PaneNode,
 } from '../model';
 
 const layoutWith = (...tabIds: string[]): WorkspaceLayout =>
@@ -209,6 +210,34 @@ describe('seedLayoutIds', () => {
     expect(paneIds).toContain('pane-8'); // past existing pane-7, not colliding with pane-1
     const nestedSplit = (l.root as SplitNode).children[0] as SplitNode;
     expect(nestedSplit.id).toBe('split-3'); // past existing split-2
+  });
+});
+
+describe('snapshotLayoutIds / restoreLayoutIds', () => {
+  it('a restored snapshot makes the next mint reuse the same id as a discarded trial run', () => {
+    // Simulates App.tsx's dispatchWorkspace no-op mirror gate: a "trial"
+    // reducer call whose minted ids must never actually be consumed.
+    const layout = layoutWith('a', 'b');
+    const snap = snapshotLayoutIds();
+
+    // Trial run: mints pane-2/split-1 for the new pane, then is discarded.
+    const trial = workspaceReducer(layout, {
+      type: 'split_pane', paneId: layout.root.id, dir: 'row', side: 'end', moveTabId: 'b',
+    });
+    const trialPaneIds = allPanes(trial.root).map(p => p.id);
+    expect(trialPaneIds).toContain('pane-2');
+
+    restoreLayoutIds(snap);
+
+    // The real (render-time) application starts from the restored counters
+    // and must mint the EXACT SAME ids the trial did, not the next ones up.
+    const real = workspaceReducer(layout, {
+      type: 'split_pane', paneId: layout.root.id, dir: 'row', side: 'end', moveTabId: 'b',
+    });
+    const realPaneIds = allPanes(real.root).map(p => p.id);
+    expect(realPaneIds).toEqual(trialPaneIds);
+    expect(realPaneIds).toContain('pane-2');
+    expect(realPaneIds).not.toContain('pane-3');
   });
 });
 

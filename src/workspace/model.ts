@@ -56,6 +56,38 @@ export function resetLayoutIds(): void {
   splitCounter = 0;
 }
 
+/**
+ * Snapshot the two id counters — for App.tsx's `dispatchWorkspace` no-op
+ * mirror gate (#97 phase 2 final review Fix 3, amended). That gate runs
+ * `workspaceReducer` once as a side-channel "trial" to check whether an
+ * action is a no-op, purely for identity comparison — its RETURN VALUE
+ * (including any freshly-minted pane/split id) is discarded, but
+ * `newPaneId`/`newSplitId` still mutate the module counters as a side
+ * effect of that trial call. Left unchecked, every real `split_pane`
+ * mints twice — once in the trial, once more when React actually applies
+ * the action during render — so the id that ends up committed to state is
+ * ONE GENERATION AHEAD of what a single reducer application would have
+ * produced. That mismatches the backend, which mints its own pane/split id
+ * from the mirrored op exactly once: the frontend's committed id and the
+ * backend's stored id diverge, and every later op addressing that pane/
+ * split by id (`resize_split`, `set_active`, `focus_pane`, `move_tab`)
+ * silently no-ops on the backend side forever after.
+ *
+ * `snapshotLayoutIds`/`restoreLayoutIds` bracket that trial call so it's
+ * side-effect-free: whatever the trial minted and discarded, the counters
+ * end up exactly where they'd have been if the trial had never run, and
+ * the one real, render-time reducer application is the only one that ever
+ * actually advances them — matching the backend's single mint per op.
+ */
+export function snapshotLayoutIds(): { pane: number; split: number } {
+  return { pane: paneCounter, split: splitCounter };
+}
+
+export function restoreLayoutIds(snap: { pane: number; split: number }): void {
+  paneCounter = snap.pane;
+  splitCounter = snap.split;
+}
+
 /** Test-only: seed the id counters past the max numeric suffix already present
  *  in `layout` (e.g. after loading a fixture containing `pane-7`/`split-3`),
  *  so newly minted ids never collide with ones already in the tree. Mirrors
@@ -77,11 +109,15 @@ export function seedLayoutIds(layout: WorkspaceLayout): void {
 }
 
 // newPaneId/newSplitId mutate module-level counters even though workspaceReducer is
-// otherwise a pure reducer. This is safe: generated ids are only ever referenced
-// within the same returned layout object, so React StrictMode's double-invoke of the
-// reducer just skips a number (e.g. pane-3 then pane-5) rather than colliding or
-// leaking across renders. Phase 2's backend port (workspace_apply, see the design doc
-// referenced above) will generate ids server-side and remove these counters.
+// otherwise a pure reducer. This is safe for React StrictMode's OWN double-invoke of
+// the reducer: generated ids are only ever referenced within the same returned layout
+// object, so that just skips a number (e.g. pane-3 then pane-5) rather than colliding
+// or leaking across renders. It is NOT safe for a caller that runs the reducer as a
+// side-channel trial and discards the result while React separately, later, applies
+// the same action for real — see snapshotLayoutIds/restoreLayoutIds above, which exist
+// precisely to make such a trial call side-effect-free. Phase 2's backend port
+// (workspace_apply, see the design doc referenced above) will generate ids server-side
+// and remove these counters.
 function newPaneId(): string {
   return `pane-${++paneCounter}`;
 }
