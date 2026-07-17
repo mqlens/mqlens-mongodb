@@ -39,6 +39,8 @@ import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, type WorkspaceAction } from './workspace/model';
 import { WorkspaceRoot } from './workspace/WorkspaceRoot';
+import { workspaceApply, updateTabState, actionToOp } from './workspace/workspaceStore';
+import { toPersistedTab } from './workspace/persistence';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
 import { GridFsView } from './components/GridFsView';
@@ -288,8 +290,21 @@ function Workspace() {
     }
   }
   const tabBuilderStateCache = useRef(new Map<string, BuilderState>());
+  // Workspace-store mirroring plumbing (Phase 2 Task 5). Mirroring starts
+  // enabled; Task 6's restore-on-boot effect flips this off until the
+  // restored snapshot settles, so the initial hydration doesn't bounce
+  // straight back to the backend as a stream of "new" ops.
+  const mirroringEnabledRef = useRef(true);
+  // Tab ids whose open_tab was never mirrored (toPersistedTab returned null
+  // — export/import tabs) or that were themselves rebound out of mirroring.
+  // close_tab/close_many/move_tab/rename_tab consult this so they never
+  // reference a tab id the backend has no record of.
+  const unmirroredTabIdsRef = useRef(new Set<string>());
   const handleBuilderStateChange = useCallback((tabId: string, state: BuilderState) => {
     tabBuilderStateCache.current.set(tabId, state);
+    if (!unmirroredTabIdsRef.current.has(tabId)) {
+      updateTabState(tabId, { builderState: state });
+    }
   }, []);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
@@ -569,8 +584,9 @@ function Workspace() {
   // Never sit on a blank canvas — if every tab is closed, bring back Quick Start.
   useEffect(() => {
     if (tabs.length === 0) {
-      setTabs([createQuickStartTab()]);
-      dispatchLayout({ type: 'open_tab', tabId: QUICK_START_TAB_ID });
+      const qs = createQuickStartTab();
+      setTabs([qs]);
+      dispatchWorkspace({ type: 'open_tab', tabId: QUICK_START_TAB_ID }, { tab: qs });
     }
   }, [tabs.length]);
 
@@ -583,8 +599,9 @@ function Workspace() {
     const tabExists = tabs.some(t => t.id === tabId);
 
     if (!tabExists || savedQuery) {
+      let newTab: QueryTab | undefined;
       if (!tabExists) {
-        const newTab: QueryTab = {
+        newTab = {
           id: tabId,
           type: 'collection',
           connectionId,
@@ -596,11 +613,11 @@ function Workspace() {
           explainResult: null,
           lastQuery: DEFAULT_QUERY,
         };
-        setTabs(prev => [...prev, newTab]);
+        setTabs(prev => [...prev, newTab as QueryTab]);
       } else {
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, loading: true, error: null } : t));
       }
-      dispatchLayout({ type: 'open_tab', tabId });
+      dispatchWorkspace({ type: 'open_tab', tabId }, newTab ? { tab: newTab } : undefined);
 
       try {
         // A saved query (palette) wins; otherwise a pinned default query loads
@@ -674,7 +691,7 @@ function Workspace() {
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, error: String(err), loading: false } : t));
       }
     } else {
-      dispatchLayout({ type: 'open_tab', tabId });
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
   };
 
@@ -698,9 +715,9 @@ function Workspace() {
         explainResult: null
       };
       setTabs(prev => [...prev, newTab]);
-      dispatchLayout({ type: 'open_tab', tabId });
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
     } else {
-      dispatchLayout({ type: 'open_tab', tabId });
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
   };
 
@@ -724,18 +741,21 @@ function Workspace() {
         explainResult: null
       };
       setTabs(prev => [...prev, newTab]);
-    } else if (initialCommand) {
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
+    }
+    if (initialCommand) {
       setTabs(prev => prev.map(t => t.id === tabId ? { ...t, initialShellCommand: initialCommand } : t));
     }
-
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const openSettingsTab = (section: SettingsTabId = 'appearance') => {
     const tabId = 'settings';
     const tabExists = tabs.some(t => t.id === tabId);
+    setSettingsInitialTab(section);
     if (!tabExists) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'settings',
         connectionId: '',
@@ -745,10 +765,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    setSettingsInitialTab(section);
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const handleOpenSettingsTab = () => openSettingsTab('appearance');
@@ -759,9 +781,12 @@ function Workspace() {
 
   const handleOpenTasksTab = () => {
     if (!tabs.some(t => t.id === TASKS_TAB_ID)) {
-      setTabs(prev => [...prev, createTasksTab()]);
+      const tasksTab = createTasksTab();
+      setTabs(prev => [...prev, tasksTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId: TASKS_TAB_ID }, { tab: tasksTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId: TASKS_TAB_ID });
+    dispatchWorkspace({ type: 'open_tab', tabId: TASKS_TAB_ID });
   };
 
   const handleOpenExportTab = (sourceTab: QueryTab) => {
@@ -769,7 +794,7 @@ function Workspace() {
     const tabId = `export.${sourceTab.connectionId}.${sourceTab.db}.${sourceTab.collection}`;
     const tabExists = tabs.some(t => t.id === tabId);
     if (!tabExists) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'export',
         connectionId: sourceTab.connectionId,
@@ -780,9 +805,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    } else {
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
-    dispatchLayout({ type: 'open_tab', tabId });
     loadExportTasks();
   };
 
@@ -791,7 +819,7 @@ function Workspace() {
     const tabId = `import.${sourceTab.connectionId}.${sourceTab.db}.${sourceTab.collection}`;
     const tabExists = tabs.some(t => t.id === tabId);
     if (!tabExists) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'import',
         connectionId: sourceTab.connectionId,
@@ -801,9 +829,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    } else {
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
-    dispatchLayout({ type: 'open_tab', tabId });
     loadExportTasks();
   };
 
@@ -940,7 +971,7 @@ function Workspace() {
     const idParts = ['dump', connectionId, db, coll].filter((p): p is string => !!p);
     const tabId = idParts.join('.');
     if (!tabs.some(t => t.id === tabId)) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'dump',
         connectionId,
@@ -950,9 +981,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    } else {
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
-    dispatchLayout({ type: 'open_tab', tabId });
     void loadMongoTools();
     void loadDumpDbTree(connectionId);
   };
@@ -960,7 +994,7 @@ function Workspace() {
   const handleOpenRestoreTab = (connectionId: string) => {
     const tabId = `restore.${connectionId}`;
     if (!tabs.some(t => t.id === tabId)) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'restore',
         connectionId,
@@ -970,9 +1004,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    } else {
+      dispatchWorkspace({ type: 'open_tab', tabId });
     }
-    dispatchLayout({ type: 'open_tab', tabId });
     void loadMongoTools();
   };
 
@@ -1014,7 +1051,7 @@ function Workspace() {
   const handleOpenCreateViewTab = (connectionId: string, db: string) => {
     const tabId = `create-view.${connectionId}.${db}`;
     if (!tabs.some(t => t.id === tabId)) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'create-view',
         connectionId,
@@ -1024,16 +1061,19 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   // #93: open a Validation Rules tab for a collection.
   const handleOpenValidationTab = (connectionId: string, db: string, collection: string) => {
     const tabId = `validation.${connectionId}.${db}.${collection}`;
     if (!tabs.some(t => t.id === tabId)) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'validation',
         connectionId,
@@ -1043,16 +1083,19 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   // M7: open a GridFS browser tab for a bucket (bucket stored in `collection`).
   const handleOpenGridfsTab = (connectionId: string, db: string, bucket: string) => {
     const tabId = `gridfs.${connectionId}.${db}.${bucket}`;
     if (!tabs.some(t => t.id === tabId)) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'gridfs',
         connectionId,
@@ -1062,9 +1105,12 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   // M6: open a schema-analysis tab for a collection.
@@ -1072,7 +1118,7 @@ function Workspace() {
     const tabId = `schema.${connectionId}.${db}.${collection}`;
     const tabExists = tabs.some(t => t.id === tabId);
     if (!tabExists) {
-      setTabs(prev => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'schema',
         connectionId,
@@ -1082,15 +1128,18 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const handleOpenMonitoringTab = (connectionId: string) => {
     const tabId = `monitoring.${connectionId}`;
     if (!tabs.some((t) => t.id === tabId)) {
-      setTabs((prev) => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'monitoring',
         connectionId,
@@ -1100,15 +1149,18 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
+      };
+      setTabs((prev) => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const handleOpenUsersTab = (connectionId: string, db?: string) => {
     const tabId = `users.${connectionId}`;
     if (!tabs.some((t) => t.id === tabId)) {
-      setTabs((prev) => [...prev, {
+      const newTab: QueryTab = {
         id: tabId,
         type: 'users',
         connectionId,
@@ -1118,12 +1170,16 @@ function Workspace() {
         loading: false,
         error: null,
         explainResult: null,
-      }]);
-    } else if (db) {
+      };
+      setTabs((prev) => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
+    }
+    if (db) {
       // Re-opened scoped to a database (sidebar db menu): refocus the scope.
       setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, db } : t)));
     }
-    dispatchLayout({ type: 'open_tab', tabId });
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const handleCollectionRenamed = (
@@ -1152,7 +1208,7 @@ function Workspace() {
       .map(t => ({ oldId: t.id, newId: renameTab(t).id }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId }) => dispatchLayout({ type: 'rename_tab', oldId, newId }));
+    renamedPairs.forEach(({ oldId, newId }) => dispatchWorkspace({ type: 'rename_tab', oldId, newId }));
     invalidatePaletteNamespaceIndex(connectionId);
   };
 
@@ -1162,7 +1218,7 @@ function Workspace() {
       .filter(t => t.connectionId === connectionId && t.db === dbName)
       .map(t => t.id);
     setTabs(prev => prev.filter(t => t.connectionId !== connectionId || t.db !== dbName));
-    dispatchLayout({ type: 'close_many', tabIds: removed });
+    dispatchWorkspace({ type: 'close_many', tabIds: removed });
   };
 
   const handleDatabaseRenamed = (connectionId: string, oldName: string, newName: string) => {
@@ -1202,7 +1258,7 @@ function Workspace() {
       .map(t => ({ oldId: t.id, newId: renameTab(t).id }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId }) => dispatchLayout({ type: 'rename_tab', oldId, newId }));
+    renamedPairs.forEach(({ oldId, newId }) => dispatchWorkspace({ type: 'rename_tab', oldId, newId }));
     invalidatePaletteNamespaceIndex(connectionId);
   };
 
@@ -1273,8 +1329,7 @@ function Workspace() {
 
         // Close/rename tab
         const oldTabId = `${connectionId}.${db}.${collection}.${initialData.name}`;
-        setTabs(prev => prev.filter(t => t.id !== oldTabId));
-        dispatchLayout({ type: 'close_tab', tabId: oldTabId });
+        closeTabById(oldTabId);
       }
 
       // Create new index
@@ -1312,8 +1367,7 @@ function Workspace() {
 
       // Close the deleted index tab
       const tabId = `${connectionId}.${dbName}.${collName}.${indexName}`;
-      setTabs(prev => prev.filter(t => t.id !== tabId));
-      dispatchLayout({ type: 'close_tab', tabId });
+      closeTabById(tabId);
 
       // Trigger sidebar refresh
       setIndexMutationTrigger(prev => prev + 1);
@@ -1323,22 +1377,96 @@ function Workspace() {
   };
 
   const closeTabById = (tabId: string) => {
-    tabBuilderStateCache.current.delete(tabId);
-    const updatedTabs = tabs.filter(t => t.id !== tabId);
-    setTabs(updatedTabs);
-    dispatchLayout({ type: 'close_tab', tabId });
+    dispatchWorkspace({ type: 'close_tab', tabId });
   };
 
-  // Passed to WorkspaceRoot/PaneView as their `dispatch`. Panes close their own
-  // tabs by dispatching `close_tab` directly (drag/drop and split ops only need
-  // the layout reducer), so we intercept that one action to also keep `tabs`
-  // state and the builder-state cache in sync — mirroring closeTabById.
-  const dispatchWorkspace = (action: WorkspaceAction) => {
+  // Passed to WorkspaceRoot/PaneView as their `dispatch`, and the single
+  // choke point every other workspace action flows through — the ONLY place
+  // `dispatchLayout` is called. Two responsibilities beyond forwarding to the
+  // layout reducer:
+  //  1. `close_tab` also needs `tabs` state and the builder-state cache kept
+  //     in sync (panes close their own tabs by dispatching `close_tab`
+  //     directly — drag/drop and split ops only touch the layout reducer;
+  //     `closeTabById` above is just a thin wrapper for other call sites).
+  //  2. Every action is mirrored to the backend store via `workspaceApply`
+  //     (fire-and-forget), unless `options.mirror` is false or mirroring is
+  //     globally suppressed (`mirroringEnabledRef` — Task 6 flips this off
+  //     until the restore-on-boot snapshot settles). `open_tab` is enriched
+  //     with the persisted tab payload when `options.tab` is supplied (i.e.
+  //     this call just created a brand-new frontend tab); reopening/
+  //     refocusing an already-open tab omits it — the backend already has
+  //     that tab's model. `toPersistedTab` returning null (export/import)
+  //     means this tab id must never exist in the backend store at all — its
+  //     open_tab is dropped entirely (sending it without a tab payload would
+  //     create a dangling backend layout entry) and the id is tracked in
+  //     `unmirroredTabIdsRef` so its later close/move/rename mirrors are
+  //     skipped consistently too. A move_tab of an unmirrored tab is also
+  //     skipped entirely — it only relocates that one id, so skipping keeps
+  //     the backend tree valid at the cost of losing that tab's pane
+  //     placement on restore, which is acceptable since the tab itself was
+  //     never going to be restored anyway.
+  const dispatchWorkspace = (
+    action: WorkspaceAction,
+    options?: { tab?: QueryTab; mirror?: boolean }
+  ) => {
     if (action.type === 'close_tab') {
-      closeTabById(action.tabId);
-      return;
+      tabBuilderStateCache.current.delete(action.tabId);
+      setTabs(prev => prev.filter(t => t.id !== action.tabId));
     }
     dispatchLayout(action);
+
+    if (options?.mirror === false || !mirroringEnabledRef.current) {
+      if (action.type === 'close_tab') unmirroredTabIdsRef.current.delete(action.tabId);
+      return;
+    }
+
+    switch (action.type) {
+      case 'open_tab': {
+        if (options?.tab) {
+          const conn = activeConnections.find(c => c.id === options.tab!.connectionId);
+          const builderState = tabBuilderStateCache.current.get(options.tab.id);
+          const persisted = toPersistedTab(options.tab, conn, builderState);
+          if (persisted === null) {
+            unmirroredTabIdsRef.current.add(action.tabId);
+            return;
+          }
+          unmirroredTabIdsRef.current.delete(action.tabId);
+          workspaceApply(actionToOp(action, persisted));
+          return;
+        }
+        if (unmirroredTabIdsRef.current.has(action.tabId)) return;
+        workspaceApply(actionToOp(action));
+        return;
+      }
+      case 'close_tab':
+        if (unmirroredTabIdsRef.current.has(action.tabId)) {
+          unmirroredTabIdsRef.current.delete(action.tabId);
+          return;
+        }
+        workspaceApply(actionToOp(action));
+        return;
+      case 'close_many': {
+        const tabIds = action.tabIds.filter(id => !unmirroredTabIdsRef.current.has(id));
+        action.tabIds.forEach(id => unmirroredTabIdsRef.current.delete(id));
+        if (tabIds.length === 0) return;
+        workspaceApply(actionToOp({ ...action, tabIds }));
+        return;
+      }
+      case 'move_tab':
+        if (unmirroredTabIdsRef.current.has(action.tabId)) return;
+        workspaceApply(actionToOp(action));
+        return;
+      case 'rename_tab':
+        if (unmirroredTabIdsRef.current.has(action.oldId)) {
+          unmirroredTabIdsRef.current.delete(action.oldId);
+          unmirroredTabIdsRef.current.add(action.newId);
+          return;
+        }
+        workspaceApply(actionToOp(action));
+        return;
+      default:
+        workspaceApply(actionToOp(action));
+    }
   };
 
   const cycleTab = (dir: 1 | -1) => {
@@ -1346,12 +1474,18 @@ function Workspace() {
     if (!p || p.tabIds.length < 2) return;
     const i = p.tabIds.indexOf(p.activeTabId ?? '');
     const next = p.tabIds[(i + dir + p.tabIds.length) % p.tabIds.length];
-    dispatchLayout({ type: 'set_active', paneId: p.id, tabId: next });
+    dispatchWorkspace({ type: 'set_active', paneId: p.id, tabId: next });
   };
 
   const openQuickStartTab = () => {
-    setTabs(prev => prev.some(t => t.id === QUICK_START_TAB_ID) ? prev : [...prev, createQuickStartTab()]);
-    dispatchLayout({ type: 'open_tab', tabId: QUICK_START_TAB_ID });
+    const alreadyOpen = tabs.some(t => t.id === QUICK_START_TAB_ID);
+    if (!alreadyOpen) {
+      const qs = createQuickStartTab();
+      setTabs(prev => prev.some(t => t.id === QUICK_START_TAB_ID) ? prev : [...prev, qs]);
+      dispatchWorkspace({ type: 'open_tab', tabId: QUICK_START_TAB_ID }, { tab: qs });
+      return;
+    }
+    dispatchWorkspace({ type: 'open_tab', tabId: QUICK_START_TAB_ID });
   };
 
   // Command palette: Cmd/Ctrl+K from anywhere in the workspace.
@@ -1459,14 +1593,14 @@ function Workspace() {
       { id: 'prev-tab', title: 'Previous Tab', keywords: 'tab switch', run: () => cycleTab(-1) },
     ] : []),
     ...(activeTabId && focusedPane && focusedPane.tabIds.length > 1 ? [
-      { id: 'workspace.split-right', title: 'Split Right', keywords: 'workspace pane layout', run: () => dispatchLayout({ type: 'split_pane', paneId: focusedPane.id, dir: 'row', side: 'end', moveTabId: activeTabId }) },
-      { id: 'workspace.split-down', title: 'Split Down', keywords: 'workspace pane layout', run: () => dispatchLayout({ type: 'split_pane', paneId: focusedPane.id, dir: 'col', side: 'end', moveTabId: activeTabId }) },
+      { id: 'workspace.split-right', title: 'Split Right', keywords: 'workspace pane layout', run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'row', side: 'end', moveTabId: activeTabId }) },
+      { id: 'workspace.split-down', title: 'Split Down', keywords: 'workspace pane layout', run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'col', side: 'end', moveTabId: activeTabId }) },
     ] : []),
     ...(allPanes(layout.root).length > 1 ? [
       { id: 'workspace.focus-next-pane', title: 'Focus Next Pane', keywords: 'workspace pane layout switch', run: () => {
         const panes = allPanes(layout.root);
         const i = panes.findIndex(p => p.id === layout.focusedPaneId);
-        dispatchLayout({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
+        dispatchWorkspace({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
       } },
     ] : []),
     ...activeConnections.map(c => ({
@@ -1503,6 +1637,12 @@ function Workspace() {
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastQuery: query, lastAggregate: undefined } : t));
+      if (!unmirroredTabIdsRef.current.has(tab.id)) {
+        // `lastAggregate: null` (not omitted) explicitly clears any
+        // previously-mirrored aggregate on the backend tab, matching the
+        // local `lastAggregate: undefined` above.
+        updateTabState(tab.id, { lastQuery: query, lastAggregate: null });
+      }
       // History is best-effort: never surface an error after a successful run.
       recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'find',
@@ -1555,6 +1695,9 @@ function Workspace() {
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
+      if (!unmirroredTabIdsRef.current.has(tab.id)) {
+        updateTabState(tab.id, { lastAggregate: pipeline });
+      }
       recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'aggregate',
         pipeline,
@@ -2398,7 +2541,7 @@ function Workspace() {
             setActiveConnections(prev => prev.filter(c => c.id !== connId));
             const removed = tabs.filter(t => t.connectionId === connId).map(t => t.id);
             setTabs(prev => prev.filter(t => t.connectionId !== connId));
-            dispatchLayout({ type: 'close_many', tabIds: removed });
+            dispatchWorkspace({ type: 'close_many', tabIds: removed });
           }}
           onOpenSettings={handleOpenSettingsTab}
           onCopyCollections={handleCopyCollections}

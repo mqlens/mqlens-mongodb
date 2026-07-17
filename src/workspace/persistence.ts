@@ -1,0 +1,218 @@
+// Pure helpers that translate between the live App.tsx tab/layout state and
+// the persisted (backend) workspace document shape. No `invoke` calls here —
+// see workspaceStore.ts for the IO side. Keeping this pure makes it trivial
+// to unit test the profile-prefix id substitution and snapshot shaping
+// without mocking Tauri or React.
+
+import {
+  workspaceReducer,
+  allTabIds,
+  type LayoutNode,
+  type WorkspaceLayout,
+} from './model';
+
+// Mirrors src-tauri's `TabModel` wire shape (camelCase field names — see
+// workspace.rs). `type` covers all 16 QueryTab kinds from App.tsx.
+export type QueryTabType =
+  | 'collection'
+  | 'index'
+  | 'shell'
+  | 'settings'
+  | 'quickstart'
+  | 'export'
+  | 'import'
+  | 'tasks'
+  | 'schema'
+  | 'create-view'
+  | 'gridfs'
+  | 'monitoring'
+  | 'users'
+  | 'dump'
+  | 'restore'
+  | 'validation';
+
+export interface PersistedTab {
+  id: string;
+  type: QueryTabType;
+  profileId: string;
+  profileName: string;
+  db: string;
+  collection: string;
+  indexName?: string;
+  lastQuery?: unknown;
+  lastAggregate?: unknown;
+  builderState?: unknown;
+}
+
+export interface PersistedWindow {
+  id: string;
+  splitTree: LayoutNode;
+  focusedPaneId: string;
+}
+
+export interface PersistedWorkspace {
+  revision: number;
+  windows: PersistedWindow[];
+  tabs: PersistedTab[];
+}
+
+// Structural subsets of App.tsx's private `QueryTab`/`ActiveConnection` types
+// — keeping persistence.ts free of an import from App.tsx (which itself
+// imports this module). Any object satisfying these shapes (App's real
+// QueryTab/ActiveConnection included) can be passed in directly.
+export interface PersistableTab {
+  id: string;
+  type: QueryTabType;
+  connectionId: string;
+  db: string;
+  collection: string;
+  indexName?: string;
+  lastQuery?: unknown;
+  lastAggregate?: unknown;
+}
+
+export interface PersistableConnection {
+  id: string;
+  profileId: string;
+  name: string;
+}
+
+// The shape App.tsx's `tabs` state needs after a restore — a structural
+// subset of App's `QueryTab` (extra optional QueryTab fields are simply
+// absent, which is fine for assignment into `QueryTab[]`).
+export interface RestoredTab {
+  id: string;
+  type: QueryTabType;
+  connectionId: string;
+  db: string;
+  collection: string;
+  indexName?: string;
+  results: unknown[];
+  loading: boolean;
+  error: string | null;
+  explainResult: string | null;
+  lastQuery?: unknown;
+  lastAggregate?: unknown;
+}
+
+// export/import tabs reference in-flight task state that no longer exists
+// after a restart — they must never be persisted.
+const NON_PERSISTED_TYPES = new Set<QueryTabType>(['export', 'import']);
+// These tab kinds carry no connection at all; pass their id through as-is.
+const CONNECTIONLESS_TYPES = new Set<QueryTabType>(['settings', 'quickstart', 'tasks']);
+
+/**
+ * Build the persisted (wire) form of a live tab, or `null` if this tab kind
+ * never survives a restart (export/import). Connection-scoped tab ids are
+ * rewritten at save time: the live id's leading `<connectionId>` segment
+ * (a session-scoped id from `connect_db`) is replaced by the stable
+ * `profile:<profileId>` prefix, so a saved tab id never depends on a live
+ * connection session that won't exist after restart.
+ */
+export function toPersistedTab(
+  tab: PersistableTab,
+  conn: PersistableConnection | undefined,
+  builderState: unknown
+): PersistedTab | null {
+  if (NON_PERSISTED_TYPES.has(tab.type)) return null;
+
+  if (CONNECTIONLESS_TYPES.has(tab.type)) {
+    return {
+      id: tab.id,
+      type: tab.type,
+      profileId: '',
+      profileName: '',
+      db: tab.db,
+      collection: tab.collection,
+      indexName: tab.indexName,
+      lastQuery: tab.lastQuery,
+      lastAggregate: tab.lastAggregate,
+      builderState,
+    };
+  }
+
+  const profileId = conn?.profileId ?? '';
+  const profileName = conn?.name ?? '';
+  const id = conn ? tab.id.replace(conn.id, `profile:${profileId}`) : tab.id;
+  return {
+    id,
+    type: tab.type,
+    profileId,
+    profileName,
+    db: tab.db,
+    collection: tab.collection,
+    indexName: tab.indexName,
+    lastQuery: tab.lastQuery,
+    lastAggregate: tab.lastAggregate,
+    builderState,
+  };
+}
+
+/**
+ * Rehydrate a persisted workspace document into the shape App.tsx needs
+ * before any profile has reconnected: empty-results tabs (so the UI shows a
+ * "reconnect to load" state rather than stale data), plus the layout tree
+ * and any cached builder states. Tab ids are used exactly as stored —
+ * `toPersistedTab` already rewrote them into `profile:<profileId>` form at
+ * save time, so no further id surgery happens here.
+ */
+export function toDisconnectedSnapshot(ws: PersistedWorkspace): {
+  tabs: RestoredTab[];
+  layout: WorkspaceLayout;
+  builderStates: Map<string, unknown>;
+} {
+  const tabs: RestoredTab[] = ws.tabs.map((t) => ({
+    id: t.id,
+    type: t.type,
+    connectionId: t.profileId ? `profile:${t.profileId}` : '',
+    db: t.db,
+    collection: t.collection,
+    indexName: t.indexName,
+    results: [],
+    loading: false,
+    error: null,
+    explainResult: null,
+    lastQuery: t.lastQuery,
+    lastAggregate: t.lastAggregate,
+  }));
+
+  const builderStates = new Map<string, unknown>();
+  for (const t of ws.tabs) {
+    if (t.builderState != null) builderStates.set(t.id, t.builderState);
+  }
+
+  const win = ws.windows[0];
+  let layout: WorkspaceLayout = win
+    ? { root: win.splitTree, focusedPaneId: win.focusedPaneId }
+    : { root: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null }, focusedPaneId: 'pane-1' };
+
+  // Defensive: fold out any layout tab id with no matching persisted tab
+  // (e.g. legacy/corrupt workspace.json) using the same reducer close_tab
+  // uses live, so pane folding/focus-repair stays consistent with a normal
+  // tab close rather than a naive tabIds filter.
+  const knownIds = new Set(ws.tabs.map((t) => t.id));
+  for (const tabId of allTabIds(layout)) {
+    if (!knownIds.has(tabId)) {
+      layout = workspaceReducer(layout, { type: 'close_tab', tabId });
+    }
+  }
+
+  return { tabs, layout, builderStates };
+}
+
+/**
+ * Map every id in `tabIds` that contains `oldPrefix` (a `profile:<id>`
+ * connection prefix) to its rebound form under `newConnectionId` — the pairs
+ * the App applies exactly like `handleDatabaseRenamed`: a `tabs` rewrite plus
+ * one `rename_tab` dispatch per pair. Ids without the prefix are left out of
+ * the result entirely (nothing to rebind).
+ */
+export function rebindConnection(
+  oldPrefix: string,
+  newConnectionId: string,
+  tabIds: string[]
+): Array<{ oldId: string; newId: string }> {
+  return tabIds
+    .filter((id) => id.includes(oldPrefix))
+    .map((oldId) => ({ oldId, newId: oldId.replace(oldPrefix, newConnectionId) }));
+}
