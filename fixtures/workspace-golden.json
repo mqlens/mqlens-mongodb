@@ -1,0 +1,231 @@
+{
+  "vectors": [
+    {
+      "name": "open_tab_appends_and_activates",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "open_tab", "tab_id": "b" }
+      ],
+      "expected": { "revision": 1, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b"], "activeTabId": "b" } } ], "tabs": [] }
+    },
+    {
+      "name": "open_tab_dedupe_focuses_existing_no_duplicate",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] },
+      "ops": [
+        { "type": "open_tab", "tab_id": "b" }
+      ],
+      "expected": { "revision": 1, "windows": [ { "id": "main", "focusedPaneId": "pane-2",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] }
+    },
+    {
+      "name": "open_tab_into_explicit_pane_id",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] },
+      "ops": [
+        { "type": "open_tab", "tab_id": "c", "pane_id": "pane-2" }
+      ],
+      "expected": { "revision": 1, "windows": [ { "id": "main", "focusedPaneId": "pane-2",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b", "c"], "activeTabId": "c" } ] } } ], "tabs": [] }
+    },
+    {
+      "name": "open_tab_with_tab_payload_upserts_tabs_array",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "open_tab", "tab_id": "b", "tab": {
+          "id": "b", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null } }
+      ],
+      "expected": { "revision": 1, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b"], "activeTabId": "b" } } ], "tabs": [
+        { "id": "b", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null } ] }
+    },
+    {
+      "name": "split_pane_start_side_puts_new_pane_first",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "split_pane", "pane_id": "pane-1", "dir": "col", "side": "start", "move_tab_id": "b" }
+      ],
+      "expected": { "revision": 1, "windows": [ { "id": "main", "focusedPaneId": "pane-2",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "col", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" },
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } ] } } ], "tabs": [] }
+    },
+    {
+      "name": "split_then_close_folds_depth2",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b", "c"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "split_pane", "pane_id": "pane-1", "dir": "row", "side": "end", "move_tab_id": "b" },
+        { "type": "move_tab", "tab_id": "c", "target_pane_id": "pane-2" },
+        { "type": "split_pane", "pane_id": "pane-2", "dir": "col", "side": "end", "move_tab_id": "c" },
+        { "type": "close_tab", "tab_id": "c" }
+      ],
+      "expected": { "revision": 4, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] }
+    },
+    {
+      "name": "split_pane_noop_when_moving_only_tab",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "split_pane", "pane_id": "pane-1", "dir": "row", "side": "end", "move_tab_id": "a" }
+      ],
+      "expected": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } } ], "tabs": [] }
+    },
+    {
+      "name": "split_without_move_persists_empty_pane_across_unrelated_close",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "split_pane", "pane_id": "pane-1", "dir": "row", "side": "end" },
+        { "type": "close_tab", "tab_id": "b" }
+      ],
+      "expected": { "revision": 2, "windows": [ { "id": "main", "focusedPaneId": "pane-2",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": [], "activeTabId": null } ] } } ], "tabs": [] }
+    },
+    {
+      "name": "close_tab_activates_right_hand_neighbor",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b", "c"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "set_active", "pane_id": "pane-1", "tab_id": "b" },
+        { "type": "close_tab", "tab_id": "b" }
+      ],
+      "expected": { "revision": 2, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "c"], "activeTabId": "c" } } ], "tabs": [] }
+    },
+    {
+      "name": "close_many_folds_emptied_panes",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b", "c"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "split_pane", "pane_id": "pane-1", "dir": "row", "side": "end", "move_tab_id": "c" },
+        { "type": "close_many", "tab_ids": ["b", "c"] }
+      ],
+      "expected": { "revision": 2, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } } ], "tabs": [] }
+    },
+    {
+      "name": "move_tab_reorders_within_same_pane_using_index",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b", "c"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "move_tab", "tab_id": "c", "target_pane_id": "pane-1", "index": 0 }
+      ],
+      "expected": { "revision": 1, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["c", "a", "b"], "activeTabId": "a" } } ], "tabs": [] }
+    },
+    {
+      "name": "move_tab_folds_source_pane_when_emptied",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "split_pane", "pane_id": "pane-1", "dir": "row", "side": "end", "move_tab_id": "b" },
+        { "type": "move_tab", "tab_id": "b", "target_pane_id": "pane-1" }
+      ],
+      "expected": { "revision": 2, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b"], "activeTabId": "b" } } ], "tabs": [] }
+    },
+    {
+      "name": "resize_split_clamps_both_bounds",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b", "c"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "split_pane", "pane_id": "pane-1", "dir": "row", "side": "end", "move_tab_id": "c" },
+        { "type": "split_pane", "pane_id": "pane-1", "dir": "col", "side": "end", "move_tab_id": "b" },
+        { "type": "resize_split", "split_id": "split-2", "ratio": 0.01 },
+        { "type": "resize_split", "split_id": "split-1", "ratio": 0.99 }
+      ],
+      "expected": { "revision": 4, "windows": [ { "id": "main", "focusedPaneId": "pane-3",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.85, "children": [
+          { "kind": "split", "id": "split-2", "dir": "col", "ratio": 0.15, "children": [
+            { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+            { "kind": "pane", "id": "pane-3", "tabIds": ["b"], "activeTabId": "b" } ] },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["c"], "activeTabId": "c" } ] } } ], "tabs": [] }
+    },
+    {
+      "name": "focus_repair_after_fold",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b", "c"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "split_pane", "pane_id": "pane-1", "dir": "row", "side": "end", "move_tab_id": "c" },
+        { "type": "split_pane", "pane_id": "pane-1", "dir": "col", "side": "end", "move_tab_id": "b" },
+        { "type": "focus_pane", "pane_id": "pane-2" },
+        { "type": "close_tab", "tab_id": "c" }
+      ],
+      "expected": { "revision": 4, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "split", "id": "split-2", "dir": "col", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-3", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] }
+    },
+    {
+      "name": "rename_tab_rewrites_tree_and_tabs",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["conn.db.old"], "activeTabId": "conn.db.old" } } ], "tabs": [
+        { "id": "conn.db.old", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null } ] },
+      "ops": [
+        { "type": "rename_tab", "old_id": "conn.db.old", "new_id": "conn.db.new" }
+      ],
+      "expected": { "revision": 1, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["conn.db.new"], "activeTabId": "conn.db.new" } } ], "tabs": [
+        { "id": "conn.db.new", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null } ] }
+    },
+    {
+      "name": "update_tab_state_patches_and_identical_patch_no_bump",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["t1"], "activeTabId": "t1" } } ], "tabs": [
+        { "id": "t1", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null } ] },
+      "ops": [
+        { "type": "update_tab_state", "tab_id": "t1", "last_query": { "filter": "{}" } },
+        { "type": "update_tab_state", "tab_id": "t1", "last_query": { "filter": "{}" } }
+      ],
+      "expected": { "revision": 1, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["t1"], "activeTabId": "t1" } } ], "tabs": [
+        { "id": "t1", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": { "filter": "{}" }, "lastAggregate": null, "builderState": null } ] }
+    },
+    {
+      "name": "unknown_id_ops_are_noops_without_revision_bump",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } } ], "tabs": [] },
+      "ops": [
+        { "type": "close_tab", "tab_id": "nope" },
+        { "type": "set_active", "pane_id": "nope", "tab_id": "a" },
+        { "type": "move_tab", "tab_id": "a", "target_pane_id": "nope" },
+        { "type": "resize_split", "split_id": "nope", "ratio": 0.5 },
+        { "type": "focus_pane", "pane_id": "nope" },
+        { "type": "rename_tab", "old_id": "nope", "new_id": "x" }
+      ],
+      "expected": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-1",
+        "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } } ], "tabs": [] }
+    }
+  ]
+}

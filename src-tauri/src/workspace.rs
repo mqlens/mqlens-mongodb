@@ -1218,3 +1218,50 @@ mod tests {
         assert!(load_from_file(&p).is_none());
     }
 }
+
+// ---------------------------------------------------------------------------
+// Golden parity vectors — shared with src/workspace/__tests__/golden.test.ts
+// via fixtures/workspace-golden.json. That TS runner asserts the layout half
+// only (splitTree/focusedPaneId); this runner applies the exact same ops
+// through `apply` and asserts full `Workspace` equality, including
+// `revision` and `tabs[]` (Rust-only bookkeeping the TS side has no
+// equivalent for). If a vector fails here but passes in TS, the TS reducer
+// is the spec — investigate this port, don't adjust the vector to paper over
+// the divergence.
+//
+// A sibling of `mod tests` (not nested in it) so `cargo test workspace::golden`
+// matches this module's path directly.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod golden {
+    use super::*;
+
+    #[derive(Deserialize)]
+    struct GoldenVector {
+        name: String,
+        initial: Workspace,
+        ops: Vec<WorkspaceOp>,
+        expected: Workspace,
+    }
+
+    #[derive(Deserialize)]
+    struct GoldenFixture {
+        vectors: Vec<GoldenVector>,
+    }
+
+    #[test]
+    fn golden_vectors_match_fixture() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/workspace-golden.json");
+        let data = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("failed to read golden fixture at {path}: {e}"));
+        let fixture: GoldenFixture = serde_json::from_str(&data)
+            .unwrap_or_else(|e| panic!("failed to parse golden fixture: {e}"));
+        for vector in fixture.vectors {
+            let mut ws = vector.initial.clone();
+            for op in vector.ops {
+                apply(&mut ws, op);
+            }
+            assert_eq!(ws, vector.expected, "golden vector `{}` diverged", vector.name);
+        }
+    }
+}

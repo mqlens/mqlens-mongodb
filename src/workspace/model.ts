@@ -51,6 +51,26 @@ export function resetLayoutIds(): void {
   splitCounter = 0;
 }
 
+/** Test-only: seed the id counters past the max numeric suffix already present
+ *  in `layout` (e.g. after loading a fixture containing `pane-7`/`split-3`),
+ *  so newly minted ids never collide with ones already in the tree. Mirrors
+ *  the Rust store's stateless per-call tree scan (see `next_pane_id`/
+ *  `next_split_id` in workspace.rs) — TS instead seeds once, up front, since
+ *  its counters are already module-level mutable state. */
+export function seedLayoutIds(layout: WorkspaceLayout): void {
+  const visit = (node: LayoutNode): void => {
+    if (node.kind === 'pane') {
+      const m = /^pane-(\d+)$/.exec(node.id);
+      if (m) paneCounter = Math.max(paneCounter, Number(m[1]));
+      return;
+    }
+    const m = /^split-(\d+)$/.exec(node.id);
+    if (m) splitCounter = Math.max(splitCounter, Number(m[1]));
+    node.children.forEach(visit);
+  };
+  visit(layout.root);
+}
+
 // newPaneId/newSplitId mutate module-level counters even though workspaceReducer is
 // otherwise a pure reducer. This is safe: generated ids are only ever referenced
 // within the same returned layout object, so React StrictMode's double-invoke of the

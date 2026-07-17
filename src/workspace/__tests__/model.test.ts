@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createInitialLayout, workspaceReducer, findPane, paneOfTab, allPanes,
-  allTabIds, resetLayoutIds, type WorkspaceLayout, type SplitNode, type PaneNode,
+  allTabIds, resetLayoutIds, seedLayoutIds, type WorkspaceLayout, type SplitNode, type PaneNode,
 } from '../model';
 
 const layoutWith = (...tabIds: string[]): WorkspaceLayout =>
@@ -182,6 +182,33 @@ describe('rename_tab', () => {
     l = workspaceReducer(l, { type: 'rename_tab', oldId: 'conn.db.old', newId: 'conn.db.new' });
     expect((l.root as PaneNode).tabIds).toEqual(['conn.db.new']);
     expect((l.root as PaneNode).activeTabId).toBe('conn.db.new');
+  });
+});
+
+describe('seedLayoutIds', () => {
+  it('seeds counters past the max numeric suffix already present in the tree', () => {
+    // A tree "loaded" from a fixture already containing pane-7 / split-2.
+    const layout: WorkspaceLayout = {
+      focusedPaneId: 'pane-3',
+      root: {
+        kind: 'split',
+        id: 'split-2',
+        dir: 'row',
+        ratio: 0.5,
+        children: [
+          { kind: 'pane', id: 'pane-3', tabIds: ['a', 'x'], activeTabId: 'a' },
+          { kind: 'pane', id: 'pane-7', tabIds: ['b'], activeTabId: 'b' },
+        ],
+      },
+    };
+    seedLayoutIds(layout);
+    const l = workspaceReducer(layout, {
+      type: 'split_pane', paneId: 'pane-3', dir: 'row', side: 'end', moveTabId: 'x',
+    });
+    const paneIds = allPanes(l.root).map(p => p.id);
+    expect(paneIds).toContain('pane-8'); // past existing pane-7, not colliding with pane-1
+    const nestedSplit = (l.root as SplitNode).children[0] as SplitNode;
+    expect(nestedSplit.id).toBe('split-3'); // past existing split-2
   });
 });
 
