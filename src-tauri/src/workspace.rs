@@ -99,7 +99,6 @@ pub struct Workspace {
 /// `split_pane`, `update_tab_state`).
 #[derive(Deserialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 pub enum WorkspaceOp {
     OpenTab {
         tab_id: String,
@@ -164,15 +163,12 @@ pub enum WorkspaceOp {
 // boundary.
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 const MIN_RATIO: f64 = 0.15;
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 const MAX_RATIO: f64 = 0.85;
 
 /// The id of any layout node, pane or split (TS accesses `.id` directly on
 /// the `LayoutNode` union; Rust needs a match since the two variants don't
 /// share a common field).
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn node_id(node: &LayoutNode) -> &str {
     match node {
         LayoutNode::Pane { id, .. } => id,
@@ -181,7 +177,6 @@ fn node_id(node: &LayoutNode) -> &str {
 }
 
 /// Port of TS `allPanes`.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn all_panes<'a>(node: &'a LayoutNode, out: &mut Vec<&'a LayoutNode>) {
     match node {
         LayoutNode::Pane { .. } => out.push(node),
@@ -194,7 +189,6 @@ fn all_panes<'a>(node: &'a LayoutNode, out: &mut Vec<&'a LayoutNode>) {
 }
 
 /// Port of TS `findPane`.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn find_pane<'a>(node: &'a LayoutNode, pane_id: &str) -> Option<&'a LayoutNode> {
     match node {
         LayoutNode::Pane { id, .. } => {
@@ -209,7 +203,6 @@ fn find_pane<'a>(node: &'a LayoutNode, pane_id: &str) -> Option<&'a LayoutNode> 
 }
 
 /// Port of TS `paneOfTab`.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn pane_of_tab<'a>(node: &'a LayoutNode, tab_id: &str) -> Option<&'a LayoutNode> {
     match node {
         LayoutNode::Pane { tab_ids, .. } => {
@@ -232,7 +225,6 @@ fn pane_of_tab<'a>(node: &'a LayoutNode, tab_id: &str) -> Option<&'a LayoutNode>
 /// function with a Split node (the branch that would recurse into a
 /// directly-matching pane instead folds inline), so nested folds always
 /// take effect; only the true top-level call can hit the "ignore" path.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn map_pane(
     node: &LayoutNode,
     pane_id: &str,
@@ -295,7 +287,6 @@ fn map_pane(
 }
 
 /// Port of TS `withFocusRepaired`.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn with_focus_repaired(root: &LayoutNode, focused_pane_id: &str) -> String {
     if find_pane(root, focused_pane_id).is_some() {
         return focused_pane_id.to_string();
@@ -308,7 +299,6 @@ fn with_focus_repaired(root: &LayoutNode, focused_pane_id: &str) -> String {
 /// Port of TS `removeTabFromPane`. `None` signals "fold" (the pane became
 /// empty); the pane is returned unchanged (`Some`) if `tab_id` wasn't
 /// present, matching TS's `if (idx === -1) return pane;`.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn remove_tab_from_pane(pane: &LayoutNode, tab_id: &str) -> Option<LayoutNode> {
     let LayoutNode::Pane { id, tab_ids, active_tab_id } = pane else {
         unreachable!("remove_tab_from_pane is only ever called with a pane node");
@@ -329,7 +319,6 @@ fn remove_tab_from_pane(pane: &LayoutNode, tab_id: &str) -> Option<LayoutNode> {
 }
 
 /// Port of TS `closeTab`.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn close_tab(root: &LayoutNode, focused_pane_id: &str, tab_id: &str) -> (LayoutNode, String) {
     let Some(pane) = pane_of_tab(root, tab_id) else {
         return (root.clone(), focused_pane_id.to_string());
@@ -358,7 +347,6 @@ fn close_tab(root: &LayoutNode, focused_pane_id: &str, tab_id: &str) -> (LayoutN
 /// focusedPaneId) pair that TS calls `WorkspaceLayout`. Layout-only: the
 /// Rust-only `tabs[]` bookkeeping (OpenTab's tab model, CloseTab/CloseMany/
 /// RenameTab mirroring, UpdateTabState) is applied separately by `apply`.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn workspace_reducer(root: &LayoutNode, focused_pane_id: &str, op: &WorkspaceOp) -> (LayoutNode, String) {
     match op {
         WorkspaceOp::OpenTab { tab_id, pane_id, .. } => {
@@ -555,7 +543,6 @@ fn workspace_reducer(root: &LayoutNode, focused_pane_id: &str, op: &WorkspaceOp)
 /// Scans the tree for the highest numeric suffix among ids sharing `prefix`
 /// (e.g. `"pane-"` or `"split-"`), regardless of node kind — ids of the
 /// other kind never share a prefix so they simply don't match.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn max_numeric_suffix(node: &LayoutNode, prefix: &str) -> u64 {
     let mut best = node_id(node).strip_prefix(prefix).and_then(|r| r.parse::<u64>().ok()).unwrap_or(0);
     if let LayoutNode::Split { children, .. } = node {
@@ -579,18 +566,15 @@ fn max_numeric_suffix(node: &LayoutNode, prefix: &str) -> u64 {
 /// already in the restored tree. Scanning the tree at mint time is
 /// stateless (nothing to seed on load, nothing to serialize, nothing to get
 /// out of sync with the actual tree) and cheap at these tree sizes.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn next_pane_id(root: &LayoutNode) -> String {
     format!("pane-{}", max_numeric_suffix(root, "pane-") + 1)
 }
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn next_split_id(root: &LayoutNode) -> String {
     format!("split-{}", max_numeric_suffix(root, "split-") + 1)
 }
 
 /// The single main window's initial state: one root pane, no tabs. Mirrors
 /// TS `createInitialLayout([], null)` plus the window wrapper Phase 2 adds.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn default_window() -> WindowModel {
     WindowModel {
         id: "main".into(),
@@ -608,7 +592,6 @@ fn default_window() -> WindowModel {
 /// identity. See the Task 2 report for the semantic-choice writeup of edge
 /// cases (e.g. `open_tab` re-activating an already-active+focused tab) where
 /// this differs from "TS would have returned a new object".
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 pub fn apply(ws: &mut Workspace, op: WorkspaceOp) {
     if ws.windows.is_empty() {
         ws.windows.push(default_window());
@@ -689,20 +672,113 @@ pub fn apply(ws: &mut Workspace, op: WorkspaceOp) {
     }
 }
 
-/// Load the workspace document. A missing or corrupt file yields `None` —
-/// persistence must never block startup — mirroring queries.rs:83-84.
+/// Port of TS's tab-id collection helpers (`allTabIds`), used only by
+/// `validate` below — flattens every `tabIds` entry across an entire
+/// `LayoutNode` tree, panes and splits alike.
+fn collect_tab_ids(node: &LayoutNode, out: &mut Vec<String>) {
+    match node {
+        LayoutNode::Pane { tab_ids, .. } => out.extend(tab_ids.iter().cloned()),
+        LayoutNode::Split { children, .. } => {
+            for c in children {
+                collect_tab_ids(c, out);
+            }
+        }
+    }
+}
+
+/// True if `ws` is structurally sound enough to hydrate the frontend
+/// without crashing render, or panicking `map_pane`/`workspace_reducer`
+/// deep inside the reducer the moment any op touches a malformed node —
+/// which, since every mutation runs inside `AppState.workspace`'s held
+/// mutex, would poison it and kill persistence for the rest of the
+/// session. None of this is reachable through this app's own reducers
+/// (every `Split` they ever mint has exactly 2 children, every `ratio`
+/// they ever write is clamped to `[MIN_RATIO, MAX_RATIO]`) — only a
+/// hand-edited file or a future format regression can produce it. Checked
+/// once at load time so a broken file degrades to "start fresh" instead of
+/// "crash on next click".
+///
+/// Checks, per window: every `Split` node has exactly 2 children; every
+/// `ratio` is finite and strictly between 0 and 1; the tree resolves to at
+/// least one pane; `focused_pane_id` names a pane that actually exists in
+/// that same tree; and, across ALL windows combined, no tab id appears
+/// twice (a reducer op can never produce that — `open_tab` on an
+/// already-placed id just re-focuses it — so a duplicate can only mean a
+/// corrupt file).
+///
+/// A dangling `focused_pane_id` is treated as invalid here rather than
+/// silently repaired to the tree's first pane: `validate` takes `&Workspace`
+/// and only ever reports a yes/no, so "repair" would mean a second, mutable
+/// pass threaded through `load_from_file` for a case a hand-edited/corrupt
+/// file already put in serious doubt — simpler, and consistent with every
+/// other check here, to just reject and start fresh.
+fn validate(ws: &Workspace) -> bool {
+    fn shape(node: &LayoutNode) -> Option<usize> {
+        match node {
+            LayoutNode::Pane { .. } => Some(1),
+            LayoutNode::Split { ratio, children, .. } => {
+                if !ratio.is_finite() || *ratio <= 0.0 || *ratio >= 1.0 || children.len() != 2 {
+                    return None;
+                }
+                Some(shape(&children[0])? + shape(&children[1])?)
+            }
+        }
+    }
+
+    let mut seen_tab_ids = std::collections::HashSet::new();
+    for win in &ws.windows {
+        match shape(&win.split_tree) {
+            Some(n) if n >= 1 => {}
+            _ => return false,
+        }
+        if find_pane(&win.split_tree, &win.focused_pane_id).is_none() {
+            return false;
+        }
+        let mut ids = Vec::new();
+        collect_tab_ids(&win.split_tree, &mut ids);
+        for id in ids {
+            if !seen_tab_ids.insert(id) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Load the workspace document. A missing file, one that fails to parse as
+/// JSON, or one that parses but fails `validate` (valid JSON, broken
+/// document — see `validate`'s doc comment) all yield `None` — persistence
+/// must never block startup, and fresh boot beats crashed boot — mirroring
+/// queries.rs:83-84.
 pub fn load_from_file(path: &Path) -> Option<Workspace> {
-    fs::read_to_string(path)
+    let ws: Workspace = fs::read_to_string(path)
         .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())?;
+    if !validate(&ws) {
+        return None;
+    }
+    Some(ws)
 }
 
 /// Save the workspace document, pretty-printed. Errors are stringified so
 /// callers (Tauri commands) can surface them without leaking IO types.
+///
+/// Written to `<path>.tmp` first, then renamed into place (Fix 5, #97 phase
+/// 2 final review): `rename` within the same directory is atomic on every
+/// platform this app ships for, so a crash or power loss mid-write can never
+/// leave a truncated/corrupt `workspace.json` on disk — the file is always
+/// either the fully-old or the fully-new content. Before this, a crash
+/// mid-`fs::write` left a corrupt file that `load_from_file` would then fail
+/// to parse (or fail `validate`) on every future boot, until the user
+/// deleted it by hand.
 pub fn save_to_file(path: &Path, ws: &Workspace) -> Result<(), String> {
     let content = serde_json::to_string_pretty(ws)
         .map_err(|e| format!("Failed to serialize workspace: {}", e))?;
-    fs::write(path, content).map_err(|e| format!("Failed to write workspace file: {}", e))
+    let mut tmp_os = path.as_os_str().to_os_string();
+    tmp_os.push(".tmp");
+    let tmp_path = PathBuf::from(tmp_os);
+    fs::write(&tmp_path, content).map_err(|e| format!("Failed to write workspace file: {}", e))?;
+    fs::rename(&tmp_path, path).map_err(|e| format!("Failed to finalize workspace file: {}", e))
 }
 
 /// Where workspace.json lives, mirroring `queries::get_queries_path`
@@ -1401,6 +1477,153 @@ mod tests {
         assert!(load_from_file(&p).is_none());
     }
 
+    // -----------------------------------------------------------------
+    // `validate`/`load_from_file` malformed-document tests (#97 phase 2
+    // final review Fix 4). Each fixture is valid JSON but a document no
+    // reducer op could ever have produced — hand-edited or from a future
+    // format regression — and must degrade to "start fresh" (`None`)
+    // rather than surviving to crash the frontend's render or panic the
+    // reducer later, inside the store's held mutex.
+    // -----------------------------------------------------------------
+
+    fn validate_fixture_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("mqlens-ws-validate-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(name)
+    }
+
+    #[test]
+    fn load_rejects_split_with_wrong_child_count() {
+        let p = validate_fixture_path("bad-split-arity.json");
+        let json = r#"{
+            "revision": 1,
+            "windows": [{
+                "id": "main",
+                "focusedPaneId": "pane-1",
+                "splitTree": {
+                    "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5,
+                    "children": [
+                        { "kind": "pane", "id": "pane-1", "tabIds": [], "activeTabId": null }
+                    ]
+                }
+            }],
+            "tabs": []
+        }"#;
+        std::fs::write(&p, json).unwrap();
+        assert!(load_from_file(&p).is_none(), "a split with != 2 children must not load");
+    }
+
+    #[test]
+    fn load_rejects_non_finite_ratio() {
+        let p = validate_fixture_path("nonfinite-ratio.json");
+        // `1e400` is syntactically a valid JSON number that overflows f64 to
+        // infinity on parse — the only way to get serde_json to actually
+        // deserialize a non-finite float. It can't parse a bare `NaN` token
+        // (not valid JSON), and serde_json's own serializer writes `null`
+        // for a Rust-side NaN/Infinity value, so this fixture can't be
+        // produced by round-tripping a `Workspace` — it has to be authored
+        // as raw JSON text.
+        let json = r#"{
+            "revision": 1,
+            "windows": [{
+                "id": "main",
+                "focusedPaneId": "pane-1",
+                "splitTree": {
+                    "kind": "split", "id": "split-1", "dir": "row", "ratio": 1e400,
+                    "children": [
+                        { "kind": "pane", "id": "pane-1", "tabIds": [], "activeTabId": null },
+                        { "kind": "pane", "id": "pane-2", "tabIds": [], "activeTabId": null }
+                    ]
+                }
+            }],
+            "tabs": []
+        }"#;
+        std::fs::write(&p, json).unwrap();
+        assert!(load_from_file(&p).is_none(), "a non-finite ratio must not load");
+    }
+
+    #[test]
+    fn load_rejects_out_of_range_ratio() {
+        let p = validate_fixture_path("out-of-range-ratio.json");
+        let json = r#"{
+            "revision": 1,
+            "windows": [{
+                "id": "main",
+                "focusedPaneId": "pane-1",
+                "splitTree": {
+                    "kind": "split", "id": "split-1", "dir": "row", "ratio": 1.5,
+                    "children": [
+                        { "kind": "pane", "id": "pane-1", "tabIds": [], "activeTabId": null },
+                        { "kind": "pane", "id": "pane-2", "tabIds": [], "activeTabId": null }
+                    ]
+                }
+            }],
+            "tabs": []
+        }"#;
+        std::fs::write(&p, json).unwrap();
+        assert!(load_from_file(&p).is_none(), "a ratio outside (0, 1) must not load");
+    }
+
+    #[test]
+    fn load_rejects_dangling_focused_pane_id() {
+        let p = validate_fixture_path("dangling-focus.json");
+        let json = r#"{
+            "revision": 1,
+            "windows": [{
+                "id": "main",
+                "focusedPaneId": "pane-missing",
+                "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": [], "activeTabId": null }
+            }],
+            "tabs": []
+        }"#;
+        std::fs::write(&p, json).unwrap();
+        assert!(load_from_file(&p).is_none(), "a dangling focusedPaneId must not load");
+    }
+
+    #[test]
+    fn load_rejects_duplicate_tab_id_across_panes() {
+        let p = validate_fixture_path("duplicate-tab-id.json");
+        let json = r#"{
+            "revision": 1,
+            "windows": [{
+                "id": "main",
+                "focusedPaneId": "pane-1",
+                "splitTree": {
+                    "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5,
+                    "children": [
+                        { "kind": "pane", "id": "pane-1", "tabIds": ["dup"], "activeTabId": "dup" },
+                        { "kind": "pane", "id": "pane-2", "tabIds": ["dup"], "activeTabId": "dup" }
+                    ]
+                }
+            }],
+            "tabs": []
+        }"#;
+        std::fs::write(&p, json).unwrap();
+        assert!(load_from_file(&p).is_none(), "a tab id duplicated across panes must not load");
+    }
+
+    #[test]
+    fn load_accepts_a_well_formed_document() {
+        let p = validate_fixture_path("well-formed.json");
+        let json = r#"{
+            "revision": 3,
+            "windows": [{
+                "id": "main",
+                "focusedPaneId": "pane-1",
+                "splitTree": {
+                    "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5,
+                    "children": [
+                        { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+                        { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" }
+                    ]
+                }
+            }],
+            "tabs": []
+        }"#;
+        std::fs::write(&p, json).unwrap();
+        assert!(load_from_file(&p).is_some(), "a structurally valid document must load");
+    }
+
     /// End-to-end regression for the id-space bug fixed in caa117c: the
     /// frontend mirror now translates EVERY id-bearing op field into
     /// `profile:<profileId>` space before it ever reaches `workspace_apply`
@@ -1658,6 +1881,26 @@ mod store {
             second, first,
             "second call must return the cached in-memory copy, not re-read the mutated file"
         );
+    }
+
+    #[test]
+    fn save_to_file_writes_atomically_via_tmp_rename() {
+        // Fix 5 (#97 phase 2 final review): `save_to_file` must land the
+        // final content directly at `path` with no stray `<path>.tmp` left
+        // behind — the tmp file is an implementation detail of the
+        // write-then-rename, never a durable artifact.
+        let path = tmp_path("atomic-save.json");
+        let mut tmp_os = path.as_os_str().to_os_string();
+        tmp_os.push(".tmp");
+        let tmp_path_for_this_save = PathBuf::from(tmp_os);
+        let _ = fs::remove_file(&tmp_path_for_this_save);
+
+        let ws = sample_ws();
+        save_to_file(&path, &ws).unwrap();
+
+        assert!(path.exists(), "the real path must exist after save");
+        assert!(!tmp_path_for_this_save.exists(), "the .tmp file must not survive a successful save");
+        assert_eq!(load_from_file(&path), Some(ws));
     }
 
     #[test]

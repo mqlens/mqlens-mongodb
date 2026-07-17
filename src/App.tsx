@@ -276,6 +276,20 @@ function Workspace() {
     undefined,
     () => createInitialLayout([QUICK_START_TAB_ID], QUICK_START_TAB_ID),
   );
+  // `dispatchWorkspace` (below) needs to know, synchronously, whether an
+  // action it's about to mirror to the backend is one the frontend reducer
+  // itself no-opped on — but `layout` above is a render-scope closure value,
+  // stale for every dispatch after the first in a single synchronous handler
+  // (multiple `dispatchWorkspace` calls in one tick, e.g. a rename storm,
+  // all fire before React re-renders and refreshes `layout`). `layoutRef`
+  // mirrors `layout` on every render (assignment during render, not an
+  // effect — the correct value once React settles) AND is advanced
+  // optimistically inside `dispatchWorkspace` itself right after each
+  // dispatch, so a second dispatch in the same tick compares against the
+  // first dispatch's result, not the stale pre-tick value. #97 phase 2 final
+  // review Fix 3.
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   const focusedPane = findPane(layout.root, layout.focusedPaneId);
   const activeTabId = focusedPane?.activeTabId ?? null;
   if (import.meta.env.DEV) {
@@ -328,6 +342,12 @@ function Workspace() {
     connections: ActiveConnection[],
     patch: Parameters<typeof updateTabState>[1]
   ) => {
+    // Mirroring gate (#97 phase 2 final review Fix 5): airtight against the
+    // same restore-race `dispatchWorkspace` guards against below — before
+    // the session-restore effect flips `mirroringEnabledRef` on, an
+    // `update_tab_state` mirror (builder-state edits, query/aggregate
+    // refreshes) must be dropped too, not just layout ops.
+    if (!mirroringEnabledRef.current) return;
     if (unmirroredTabIdsRef.current.has(tabId)) return;
     updateTabState(toProfileSpaceId(tabId, connections), patch);
   };
@@ -352,6 +372,64 @@ function Workspace() {
         ? prev
         : [...prev, { id, profileId, name, uri, color_tag }]
     );
+  };
+
+  // Shared by every path that can hand a profile its first live connection
+  // id in a session — `handleReconnectProfile`, `handleQuickConnect`, and the
+  // ConnectionManager `onConnect` handler (#97 phase 2 final review Fix 1 /
+  // Fix 2). Any restored-but-disconnected tab for `profileId` still carries
+  // a `profile:<profileId>` id/connectionId (see persistence.ts's Global
+  // Constraint note) and renders a ReconnectBanner (App.tsx's
+  // `renderTabContent` keys the banner purely off that prefix) until it's
+  // rebound onto `liveId`. Calling this from all three connect paths — not
+  // just the banner's own onReconnect — means a normal quick-connect/
+  // ConnectionManager connect clears those banners immediately instead of
+  // leaving them stale until clicked; a stale banner click would otherwise
+  // call `connect_db` a SECOND time for a profile that's already connected
+  // (`addActiveConnection` dedupes by profileId, so that second id would
+  // never land in `activeConnections` — every tab rebound to it becomes
+  // unreachable, and every later mirror for those tabs ships a live id the
+  // backend can't translate back to profile-space).
+  const rebindProfileTabs = (
+    profileId: string,
+    liveId: string
+  ): { pairs: Array<{ oldId: string; newId: string }>; idMap: Map<string, string> } => {
+    const oldPrefix = `profile:${profileId}`;
+    const pairs = rebindConnection(oldPrefix, liveId, allTabIds(layout));
+    if (pairs.length === 0) return { pairs, idMap: new Map() };
+
+    const idMap = new Map(pairs.map((p) => [p.oldId, p.newId]));
+    setTabs((prev) =>
+      prev.map((t) => {
+        const renamedId = idMap.get(t.id);
+        return renamedId ? { ...t, id: renamedId, connectionId: liveId } : t;
+      })
+    );
+
+    // Re-key any cached builder state (Fix 2): the session-restore effect
+    // seeds `tabBuilderStateCache` under profile-space tab ids. Without
+    // re-keying here, a rebind silently drops as-typed query-builder state
+    // for the rebound tab — a cache MISS under the new id, and a leaked
+    // entry under the now-dead old one — in the only flow that could ever
+    // surface it (a restored tab that still has unsaved builder state).
+    for (const { oldId, newId } of pairs) {
+      const bs = tabBuilderStateCache.current.get(oldId);
+      if (bs) {
+        tabBuilderStateCache.current.set(newId, bs);
+        tabBuilderStateCache.current.delete(oldId);
+      }
+    }
+
+    // Dispatched straight to the layout reducer via `dispatchLayout`,
+    // bypassing `dispatchWorkspace`'s mirror entirely — not a "skip mirror"
+    // option, a raw dispatch. The backend store must stay in
+    // `profile:<id>` id space (persistence.ts's Global Constraint note):
+    // that's what the NEXT restart needs to restore from. Mirroring these
+    // renames would leave the backend holding this session's live
+    // connection id, which is worthless the moment the app closes.
+    pairs.forEach(({ oldId, newId }) => dispatchLayout({ type: 'rename_tab', oldId, newId }));
+
+    return { pairs, idMap };
   };
 
   // profileId -> profileName for every restored-but-not-yet-reconnected tab,
@@ -461,6 +539,9 @@ function Workspace() {
     try {
       const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
       addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
+      // Clear any ReconnectBanner this profile still has showing (#97 phase
+      // 2 final review Fix 1) — see `rebindProfileTabs`'s doc comment.
+      rebindProfileTabs(profile.id, id);
       return id;
     } catch (e) {
       toast(`Could not connect to ${profile.name}: ${(e as any)?.message || String(e)}`, 'error');
@@ -1517,25 +1598,30 @@ function Workspace() {
   //     directly — drag/drop and split ops only touch the layout reducer;
   //     `closeTabById` above is just a thin wrapper for other call sites).
   //  2. Every action is mirrored to the backend store via `workspaceApply`
-  //     (fire-and-forget), unless `options.mirror` is false or mirroring is
-  //     globally suppressed (`mirroringEnabledRef` — Task 6 flips this off
-  //     until the restore-on-boot snapshot settles). `open_tab` is enriched
-  //     with the persisted tab payload when `options.tab` is supplied (i.e.
-  //     this call just created a brand-new frontend tab); reopening/
-  //     refocusing an already-open tab omits it — the backend already has
-  //     that tab's model. `toPersistedTab` returning null (export/import)
-  //     means this tab id must never exist in the backend store at all — its
-  //     open_tab is dropped entirely (sending it without a tab payload would
-  //     create a dangling backend layout entry) and the id is tracked in
-  //     `unmirroredTabIdsRef` so its later close/move/rename mirrors are
-  //     skipped consistently too. A move_tab of an unmirrored tab is also
-  //     skipped entirely — it only relocates that one id, so skipping keeps
-  //     the backend tree valid at the cost of losing that tab's pane
-  //     placement on restore, which is acceptable since the tab itself was
-  //     never going to be restored anyway.
+  //     (fire-and-forget), unless mirroring is globally suppressed
+  //     (`mirroringEnabledRef` — Task 6 flips this off until the
+  //     restore-on-boot snapshot settles) OR the frontend reducer itself
+  //     no-opped the action (#97 phase 2 final review Fix 3 — see the
+  //     no-op check below; there is no longer an `options.mirror` escape
+  //     hatch, nothing ever used one — hydrate/reconnect renames bypass
+  //     this function entirely via a raw `dispatchLayout`, same as
+  //     `open_tab`'s persisted-payload enrichment below). `open_tab` is
+  //     enriched with the persisted tab payload when `options.tab` is
+  //     supplied (i.e. this call just created a brand-new frontend tab);
+  //     reopening/refocusing an already-open tab omits it — the backend
+  //     already has that tab's model. `toPersistedTab` returning null
+  //     (export/import) means this tab id must never exist in the backend
+  //     store at all — its open_tab is dropped entirely (sending it without
+  //     a tab payload would create a dangling backend layout entry) and the
+  //     id is tracked in `unmirroredTabIdsRef` so its later close/move/
+  //     rename mirrors are skipped consistently too. A move_tab of an
+  //     unmirrored tab is also skipped entirely — it only relocates that
+  //     one id, so skipping keeps the backend tree valid at the cost of
+  //     losing that tab's pane placement on restore, which is acceptable
+  //     since the tab itself was never going to be restored anyway.
   const dispatchWorkspace = (
     action: WorkspaceAction,
-    options?: { tab?: QueryTab; mirror?: boolean }
+    options?: { tab?: QueryTab }
   ) => {
     if (action.type === 'close_tab') {
       tabBuilderStateCache.current.delete(action.tabId);
@@ -1543,7 +1629,24 @@ function Workspace() {
     }
     dispatchLayout(action);
 
-    if (options?.mirror === false || !mirroringEnabledRef.current) {
+    // Skip mirroring an action the frontend reducer itself no-opped on —
+    // e.g. `split_pane` moving a pane's only tab (reachable via unmirrored
+    // export/import tabs, which never get a backend-side pane to move out
+    // of). The reducer is pure and returns the SAME layout object reference
+    // for a no-op, so identity comparison is exact, no deep-equal needed.
+    // React still sees the dispatch above (a harmless no-op there too) —
+    // only the backend mirror is skipped: backend only sees ops the
+    // frontend actually applied. `layoutRef.current` (not the `layout`
+    // render-scope closure) because multiple `dispatchWorkspace` calls can
+    // land in one synchronous handler (rename storms) — see layoutRef's
+    // declaration above for why the closure value would be stale for the
+    // second and later calls in that case.
+    const currentLayout = layoutRef.current;
+    const nextLayout = workspaceReducer(currentLayout, action);
+    layoutRef.current = nextLayout;
+    const isNoOp = nextLayout === currentLayout;
+
+    if (isNoOp || !mirroringEnabledRef.current) {
       if (action.type === 'close_tab') unmirroredTabIdsRef.current.delete(action.tabId);
       return;
     }
@@ -1884,22 +1987,34 @@ function Workspace() {
     reconnectBusyRef.current.add(profileId);
     patchReconnectState(profileId, { busy: true, error: null });
     try {
-      const profiles = await invoke<ConnectionProfile[]>('load_connection_profiles');
-      const profile = profiles.find((p) => p.id === profileId);
-      if (!profile) {
-        patchReconnectState(profileId, { busy: false, error: 'Connection profile no longer exists' });
-        return;
-      }
+      // Already connected — via quick-connect or the ConnectionManager,
+      // whose banners now clear themselves on a normal connect (Fix 1
+      // above), but a banner click racing that rebind, or a session from
+      // before this fix, can still land here with a live connection already
+      // in `activeConnections`. Reuse it instead of minting a duplicate:
+      // `addActiveConnection` dedupes by profileId, so a second `connect_db`
+      // here would produce an id that never lands in `activeConnections` —
+      // every tab rebound to it would be unreachable, and no profile lookup
+      // (`load_connection_profiles`) is needed to reuse it either.
+      const existing = activeConnections.find((c) => c.profileId === profileId);
+      let newId: string;
+      if (existing) {
+        newId = existing.id;
+      } else {
+        const profiles = await invoke<ConnectionProfile[]>('load_connection_profiles');
+        const profile = profiles.find((p) => p.id === profileId);
+        if (!profile) {
+          patchReconnectState(profileId, { busy: false, error: 'Connection profile no longer exists' });
+          return;
+        }
 
-      const newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-      addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined);
+        newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
+        addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined);
+      }
 
       // Captured before any state updates below — `tabs`/`layout` in this
       // closure still reflect the profile: id space this reconnect started
-      // from, which is exactly what rebindConnection/oldTabsSnapshot need.
-      const oldPrefix = `profile:${profileId}`;
-      const pairs = rebindConnection(oldPrefix, newId, allTabIds(layout));
-      const idMap = new Map(pairs.map((p) => [p.oldId, p.newId]));
+      // from, which is exactly what `rebindProfileTabs`/oldTabsSnapshot need.
       const oldTabsSnapshot = tabs;
       const activeOldIds = new Set(
         allPanes(layout.root)
@@ -1907,25 +2022,7 @@ function Workspace() {
           .filter((id): id is string => !!id)
       );
 
-      if (pairs.length > 0) {
-        setTabs((prev) =>
-          prev.map((t) => {
-            const renamedId = idMap.get(t.id);
-            return renamedId ? { ...t, id: renamedId, connectionId: newId } : t;
-          })
-        );
-        // Dispatched straight to the layout reducer via `dispatchLayout`,
-        // bypassing `dispatchWorkspace`'s mirror entirely — NOT a `mirror:
-        // false` option on dispatchWorkspace, a raw dispatch, same exception
-        // as hydrate above. The backend store must stay in `profile:<id>` id
-        // space (see persistence.ts's Global Constraint note): that's what
-        // the NEXT restart needs to restore from. Mirroring these renames
-        // would leave the backend holding this session's live connection id,
-        // which is worthless the moment the app closes.
-        pairs.forEach(({ oldId, newId: renamedId }) =>
-          dispatchLayout({ type: 'rename_tab', oldId, newId: renamedId })
-        );
-      }
+      const { idMap } = rebindProfileTabs(profileId, newId);
 
       patchReconnectState(profileId, { busy: false, error: null });
 
@@ -2815,6 +2912,10 @@ function Workspace() {
             onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
             onConnect={(id, name, uri, profileId, colorTag) => {
               addActiveConnection(id, name, uri, profileId, colorTag ?? undefined);
+              // Clear any ReconnectBanner this profile still has showing
+              // (#97 phase 2 final review Fix 1) — see `rebindProfileTabs`'s
+              // doc comment.
+              rebindProfileTabs(profileId, id);
               setIsConnectionModalOpen(false);
               setProfilesRefreshKey((k) => k + 1);
             }}
