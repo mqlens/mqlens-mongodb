@@ -1,14 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   createInitialLayout, workspaceReducer, findPane, paneOfTab, allPanes,
-  allTabIds, resetLayoutIds, seedLayoutIds, snapshotLayoutIds, restoreLayoutIds,
+  allTabIds,
   type WorkspaceLayout, type SplitNode, type PaneNode,
 } from '../model';
 
 const layoutWith = (...tabIds: string[]): WorkspaceLayout =>
   createInitialLayout(tabIds, tabIds[0] ?? null);
-
-beforeEach(() => resetLayoutIds());
 
 describe('createInitialLayout', () => {
   it('creates a single root pane holding the tabs', () => {
@@ -186,9 +184,12 @@ describe('rename_tab', () => {
   });
 });
 
-describe('seedLayoutIds', () => {
-  it('seeds counters past the max numeric suffix already present in the tree', () => {
+describe('stateless id minting (#197)', () => {
+  it('mints ids by scanning the tree, not filling gaps: closing pane-3 in a tree that still has pane-7 mints pane-8', () => {
     // A tree "loaded" from a fixture already containing pane-7 / split-2.
+    // pane-3 (a leaf under split-2) gets closed down to nothing and folds
+    // away, leaving a gap at 3 — the next mint must still skip past the
+    // highest surviving suffix (7), not reuse the gap.
     const layout: WorkspaceLayout = {
       focusedPaneId: 'pane-3',
       root: {
@@ -197,47 +198,53 @@ describe('seedLayoutIds', () => {
         dir: 'row',
         ratio: 0.5,
         children: [
-          { kind: 'pane', id: 'pane-3', tabIds: ['a', 'x'], activeTabId: 'a' },
-          { kind: 'pane', id: 'pane-7', tabIds: ['b'], activeTabId: 'b' },
+          { kind: 'pane', id: 'pane-3', tabIds: ['x'], activeTabId: 'x' },
+          { kind: 'pane', id: 'pane-7', tabIds: ['a', 'b'], activeTabId: 'b' },
         ],
       },
     };
-    seedLayoutIds(layout);
-    const l = workspaceReducer(layout, {
-      type: 'split_pane', paneId: 'pane-3', dir: 'row', side: 'end', moveTabId: 'x',
+    const closed = workspaceReducer(layout, { type: 'close_tab', tabId: 'x' });
+    // pane-3 emptied and folded into its sibling: only pane-7 remains.
+    expect(closed.root).toEqual({ kind: 'pane', id: 'pane-7', tabIds: ['a', 'b'], activeTabId: 'b' });
+    const l = workspaceReducer(closed, {
+      type: 'split_pane', paneId: 'pane-7', dir: 'row', side: 'end', moveTabId: 'b',
     });
     const paneIds = allPanes(l.root).map(p => p.id);
-    expect(paneIds).toContain('pane-8'); // past existing pane-7, not colliding with pane-1
-    const nestedSplit = (l.root as SplitNode).children[0] as SplitNode;
-    expect(nestedSplit.id).toBe('split-3'); // past existing split-2
+    expect(paneIds).toContain('pane-8'); // max-scan past pane-7, NOT a reused pane-3/pane-4 gap
+    // split-2 folded away along with pane-3 — the tree holds no split node at
+    // all once pane-3 empties, so this new split starts a fresh sequence.
+    expect((l.root as SplitNode).id).toBe('split-1');
   });
-});
 
-describe('snapshotLayoutIds / restoreLayoutIds', () => {
-  it('a restored snapshot makes the next mint reuse the same id as a discarded trial run', () => {
-    // Simulates App.tsx's dispatchWorkspace no-op mirror gate: a "trial"
-    // reducer call whose minted ids must never actually be consumed.
+  it('a single split on a fresh tree mints pane-2 AND split-1 from one scan, without the two mints colliding', () => {
+    // Edge case: split_pane mints a pane id AND a split id within the same
+    // reducer call. Both must be computed from the SAME pristine tree — if
+    // the split-id scan ran against a tree that already contained the
+    // freshly-minted pane, or ignored the id-kind prefix, it could
+    // misfire (e.g. minting split-2/split-3 instead of split-1).
+    const layout = layoutWith('a', 'b'); // root is pane-1
+    const l = workspaceReducer(layout, {
+      type: 'split_pane', paneId: layout.root.id, dir: 'row', side: 'end', moveTabId: 'b',
+    });
+    const root = l.root as SplitNode;
+    expect(root.id).toBe('split-1');
+    const paneIds = allPanes(root).map(p => p.id);
+    expect(paneIds).toEqual(['pane-1', 'pane-2']);
+  });
+
+  it('reducing the same (layout, action) twice from the same input yields deep-equal results, including minted ids', () => {
+    // Shape of React 18 StrictMode's double-invoke of a reducer, and of
+    // App.tsx's dispatchWorkspace no-op mirror gate running a discardable
+    // "trial" reducer call ahead of the real render-time one — both call
+    // the reducer more than once against the identical starting layout and
+    // must get back identical results each time, ids included.
     const layout = layoutWith('a', 'b');
-    const snap = snapshotLayoutIds();
-
-    // Trial run: mints pane-2/split-1 for the new pane, then is discarded.
-    const trial = workspaceReducer(layout, {
-      type: 'split_pane', paneId: layout.root.id, dir: 'row', side: 'end', moveTabId: 'b',
-    });
-    const trialPaneIds = allPanes(trial.root).map(p => p.id);
-    expect(trialPaneIds).toContain('pane-2');
-
-    restoreLayoutIds(snap);
-
-    // The real (render-time) application starts from the restored counters
-    // and must mint the EXACT SAME ids the trial did, not the next ones up.
-    const real = workspaceReducer(layout, {
-      type: 'split_pane', paneId: layout.root.id, dir: 'row', side: 'end', moveTabId: 'b',
-    });
-    const realPaneIds = allPanes(real.root).map(p => p.id);
-    expect(realPaneIds).toEqual(trialPaneIds);
-    expect(realPaneIds).toContain('pane-2');
-    expect(realPaneIds).not.toContain('pane-3');
+    const action = {
+      type: 'split_pane' as const, paneId: layout.root.id, dir: 'row' as const, side: 'end' as const, moveTabId: 'b',
+    };
+    const first = workspaceReducer(layout, action);
+    const second = workspaceReducer(layout, action);
+    expect(second).toEqual(first);
   });
 });
 
@@ -251,7 +258,7 @@ describe('hydrate', () => {
     expect(l).toEqual(incoming);
   });
 
-  it('seeds id counters from the incoming layout so a later split does not collide', () => {
+  it('a later split after hydrate mints past the incoming layout, never colliding with it', () => {
     const incoming: WorkspaceLayout = {
       focusedPaneId: 'pane-7',
       root: { kind: 'pane', id: 'pane-7', tabIds: ['a', 'b'], activeTabId: 'a' },
@@ -259,8 +266,8 @@ describe('hydrate', () => {
     let l = workspaceReducer(layoutWith('placeholder'), { type: 'hydrate', layout: incoming });
     l = workspaceReducer(l, { type: 'split_pane', paneId: 'pane-7', dir: 'row', side: 'end', moveTabId: 'b' });
     const paneIds = allPanes(l.root).map(p => p.id);
-    expect(paneIds).toContain('pane-8'); // seeded past the incoming pane-7
-    expect(paneIds).not.toContain('pane-1'); // would collide with the pre-hydrate counter state
+    expect(paneIds).toContain('pane-8'); // scanned past the incoming pane-7
+    expect(paneIds).not.toContain('pane-1'); // would collide if minting had reset to a fresh counter
   });
 });
 

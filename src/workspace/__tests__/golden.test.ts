@@ -2,8 +2,6 @@ import { describe, it, expect } from 'vitest';
 import goldenFixture from '../../../fixtures/workspace-golden.json';
 import {
   workspaceReducer,
-  resetLayoutIds,
-  seedLayoutIds,
   type WorkspaceLayout,
   type WorkspaceAction,
   type LayoutNode,
@@ -101,9 +99,7 @@ describe('workspace golden parity vectors (layout half)', () => {
 
   for (const vector of vectors) {
     it(vector.name, () => {
-      resetLayoutIds();
       let layout = layoutOf(vector.initial);
-      seedLayoutIds(layout);
       for (const op of vector.ops) {
         const action = opToAction(op);
         if (action) layout = workspaceReducer(layout, action);

@@ -556,16 +556,15 @@ fn max_numeric_suffix(node: &LayoutNode, prefix: &str) -> u64 {
 /// Mints `pane-N` / `split-N` ids by scanning the live tree for the current
 /// max suffix at call time, rather than keeping a counter on `Workspace`.
 ///
-/// Deliberate divergence from TS: `model.ts` keeps module-level
-/// `paneCounter`/`splitCounter` mutable statics (reset per-test via
-/// `resetLayoutIds`) with no file-load case — a fresh page load starts both
-/// counters at 0 because the in-memory layout is always freshly built from
-/// `tabIds`. The Rust store, by contrast, *restores* a tree from
-/// `workspace.json` that may already contain `pane-7`/`split-3`; a
-/// process-local counter seeded at 0 would immediately collide with ids
-/// already in the restored tree. Scanning the tree at mint time is
-/// stateless (nothing to seed on load, nothing to serialize, nothing to get
-/// out of sync with the actual tree) and cheap at these tree sizes.
+/// `model.ts`'s `nextPaneId`/`nextSplitId` (TS #197 fix) mirror this exactly
+/// — both sides mint by scanning the tree being reduced rather than a
+/// standalone counter. That statelessness matters most here: the Rust store
+/// *restores* a tree from `workspace.json` that may already contain
+/// `pane-7`/`split-3`, so a process-local counter seeded at 0 would
+/// immediately collide with ids already in the restored tree. Scanning the
+/// tree at mint time needs nothing to seed on load, nothing to serialize,
+/// and nothing that can get out of sync with the actual tree — and is cheap
+/// at these tree sizes.
 fn next_pane_id(root: &LayoutNode) -> String {
     format!("pane-{}", max_numeric_suffix(root, "pane-") + 1)
 }

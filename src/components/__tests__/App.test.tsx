@@ -2097,13 +2097,12 @@ describe('App Component', () => {
     it('a real split_pane commits pane-pane-2, not pane-pane-3 — the no-op mirror gate\'s trial reducer call must not itself consume a pane id', async () => {
       // The gate's trial run (see the previous describe block) calls
       // `workspaceReducer` purely for reference-identity comparison and
-      // discards its result — but `workspaceReducer` mints pane/split ids
-      // via model.ts's module-level counters as a SIDE EFFECT. Reset here so
-      // this test's own split is the first mint since module load,
-      // regardless of what earlier tests in this file minted.
-      const { resetLayoutIds } = await import('../../workspace/model');
-      resetLayoutIds();
-
+      // discards its result. Minting is a stateless scan of the layout being
+      // reduced (model.ts's `nextPaneId`/`nextSplitId`, #197), so this test
+      // needs no reset between runs: every App render starts from the same
+      // fresh `pane-1` root regardless of what earlier tests in this file
+      // minted, and the trial call above cannot leave any residue behind for
+      // this test to inherit.
       mockInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
         return Promise.resolve([]);

@@ -47,87 +47,54 @@ export type WorkspaceAction =
 const MIN_RATIO = 0.15;
 const MAX_RATIO = 0.85;
 
-let paneCounter = 0;
-let splitCounter = 0;
-
-/** Test-only: make generated ids deterministic per test. */
-export function resetLayoutIds(): void {
-  paneCounter = 0;
-  splitCounter = 0;
+/** Port of Rust's `max_numeric_suffix` (workspace.rs): the highest numeric
+ *  suffix among ids sharing `prefix` (e.g. `"pane-"` or `"split-"`) anywhere
+ *  in the tree, regardless of node kind — ids of the other kind never share
+ *  a prefix so they simply don't match. */
+function maxNumericSuffix(node: LayoutNode, prefix: string): number {
+  const suffix = node.id.startsWith(prefix) ? node.id.slice(prefix.length) : '';
+  const parsed = /^\d+$/.test(suffix) ? Number(suffix) : NaN;
+  let best = Number.isNaN(parsed) ? 0 : parsed;
+  if (node.kind === 'split') {
+    for (const child of node.children) best = Math.max(best, maxNumericSuffix(child, prefix));
+  }
+  return best;
 }
 
 /**
- * Snapshot the two id counters — for App.tsx's `dispatchWorkspace` no-op
- * mirror gate (#97 phase 2 final review Fix 3, amended). That gate runs
- * `workspaceReducer` once as a side-channel "trial" to check whether an
- * action is a no-op, purely for identity comparison — its RETURN VALUE
- * (including any freshly-minted pane/split id) is discarded, but
- * `newPaneId`/`newSplitId` still mutate the module counters as a side
- * effect of that trial call. Left unchecked, every real `split_pane`
- * mints twice — once in the trial, once more when React actually applies
- * the action during render — so the id that ends up committed to state is
- * ONE GENERATION AHEAD of what a single reducer application would have
- * produced. That mismatches the backend, which mints its own pane/split id
- * from the mirrored op exactly once: the frontend's committed id and the
- * backend's stored id diverge, and every later op addressing that pane/
- * split by id (`resize_split`, `set_active`, `focus_pane`, `move_tab`)
- * silently no-ops on the backend side forever after.
+ * Mint `pane-N` / `split-N` ids by scanning the live tree for the current max
+ * suffix at call time, rather than keeping module-level counters. Port of
+ * Rust's `next_pane_id`/`next_split_id` (workspace.rs) — deliberately
+ * stateless, by construction identical to the backend (#197).
  *
- * `snapshotLayoutIds`/`restoreLayoutIds` bracket that trial call so it's
- * side-effect-free: whatever the trial minted and discarded, the counters
- * end up exactly where they'd have been if the trial had never run, and
- * the one real, render-time reducer application is the only one that ever
- * actually advances them — matching the backend's single mint per op.
+ * WHY stateless: a mutable counter mints a *new* id on every call, so
+ * calling the reducer twice with the same input (React 18 StrictMode's
+ * double-invoke of reducers/effects in dev, or App.tsx's `dispatchWorkspace`
+ * no-op mirror gate running a discardable "trial" reducer call before the
+ * real render-time one) used to mint two different ids from one logical
+ * action — the trial's mint got thrown away, but the counter didn't know
+ * that, so the real application minted one generation ahead of what a
+ * single reducer call would have produced, desyncing from the backend's own
+ * single mint per op. Scanning the tree instead makes minting a pure
+ * function of the input layout: the same (layout, action) pair always mints
+ * the same id, no matter how many times or in what order it's evaluated, so
+ * double-invokes and trial runs are naturally idempotent with no bracketing
+ * needed. Nothing to seed on load or reset between tests either, since
+ * there's no state to seed or reset.
  */
-export function snapshotLayoutIds(): { pane: number; split: number } {
-  return { pane: paneCounter, split: splitCounter };
+function nextPaneId(root: LayoutNode): string {
+  return `pane-${maxNumericSuffix(root, 'pane-') + 1}`;
 }
 
-export function restoreLayoutIds(snap: { pane: number; split: number }): void {
-  paneCounter = snap.pane;
-  splitCounter = snap.split;
-}
-
-/** Test-only: seed the id counters past the max numeric suffix already present
- *  in `layout` (e.g. after loading a fixture containing `pane-7`/`split-3`),
- *  so newly minted ids never collide with ones already in the tree. Mirrors
- *  the Rust store's stateless per-call tree scan (see `next_pane_id`/
- *  `next_split_id` in workspace.rs) — TS instead seeds once, up front, since
- *  its counters are already module-level mutable state. */
-export function seedLayoutIds(layout: WorkspaceLayout): void {
-  const visit = (node: LayoutNode): void => {
-    if (node.kind === 'pane') {
-      const m = /^pane-(\d+)$/.exec(node.id);
-      if (m) paneCounter = Math.max(paneCounter, Number(m[1]));
-      return;
-    }
-    const m = /^split-(\d+)$/.exec(node.id);
-    if (m) splitCounter = Math.max(splitCounter, Number(m[1]));
-    node.children.forEach(visit);
-  };
-  visit(layout.root);
-}
-
-// newPaneId/newSplitId mutate module-level counters even though workspaceReducer is
-// otherwise a pure reducer. This is safe for React StrictMode's OWN double-invoke of
-// the reducer: generated ids are only ever referenced within the same returned layout
-// object, so that just skips a number (e.g. pane-3 then pane-5) rather than colliding
-// or leaking across renders. It is NOT safe for a caller that runs the reducer as a
-// side-channel trial and discards the result while React separately, later, applies
-// the same action for real — see snapshotLayoutIds/restoreLayoutIds above, which exist
-// precisely to make such a trial call side-effect-free. Phase 2's backend port
-// (workspace_apply, see the design doc referenced above) will generate ids server-side
-// and remove these counters.
-function newPaneId(): string {
-  return `pane-${++paneCounter}`;
-}
-
-function newSplitId(): string {
-  return `split-${++splitCounter}`;
+function nextSplitId(root: LayoutNode): string {
+  return `split-${maxNumericSuffix(root, 'split-') + 1}`;
 }
 
 export function createInitialLayout(tabIds: string[], activeTabId: string | null): WorkspaceLayout {
-  const pane: PaneNode = { kind: 'pane', id: newPaneId(), tabIds: [...tabIds], activeTabId };
+  // No tree to scan yet — this call builds the very first node. Hardcoded
+  // like Rust's `default_window()`, which likewise hardcodes `"pane-1"`
+  // rather than scanning an empty tree.
+  const pane: PaneNode = { kind: 'pane', id: 'pane-1', tabIds: [...tabIds], activeTabId };
   return { root: pane, focusedPaneId: pane.id };
 }
 
@@ -258,9 +225,20 @@ export function workspaceReducer(layout: WorkspaceLayout, action: WorkspaceActio
         return layout; // would empty the source pane — pointless split
       }
       const moving = action.moveTabId && pane.tabIds.includes(action.moveTabId) ? action.moveTabId : undefined;
+      // Both ids are minted up front from the pristine, pre-split `layout.root`
+      // — not lazily inside the `mapPane` callback below — so the split-id
+      // scan can never observe the pane just minted a line above (or vice
+      // versa). Matches Rust's `apply` (workspace.rs), which computes
+      // `next_pane_id(root)` then `next_split_id(root)` the same way, both
+      // before `map_pane` runs. The two ids can never collide with each
+      // other regardless of order since they scan disjoint prefixes
+      // (`pane-` vs `split-`), but minting from the same untouched tree
+      // keeps this obviously correct rather than incidentally correct.
+      const freshId = nextPaneId(layout.root);
+      const splitId = nextSplitId(layout.root);
       const fresh: PaneNode = {
         kind: 'pane',
-        id: newPaneId(),
+        id: freshId,
         tabIds: moving ? [moving] : [],
         activeTabId: moving ?? null,
       };
@@ -269,7 +247,7 @@ export function workspaceReducer(layout: WorkspaceLayout, action: WorkspaceActio
         const children: [LayoutNode, LayoutNode] =
           action.side === 'start' ? [fresh, remaining] : [remaining, fresh];
         // mapPane expects a PaneNode return; widen through a split wrapper:
-        return { kind: 'split', id: newSplitId(), dir: action.dir, ratio: 0.5, children } as unknown as PaneNode;
+        return { kind: 'split', id: splitId, dir: action.dir, ratio: 0.5, children } as unknown as PaneNode;
       });
       return { root, focusedPaneId: fresh.id };
     }
@@ -311,13 +289,10 @@ export function workspaceReducer(layout: WorkspaceLayout, action: WorkspaceActio
     }
 
     case 'hydrate':
-      // Seed the id counters past whatever the incoming layout already
-      // contains, same as loading a fixture — otherwise the next split_pane/
-      // open_tab after a restore could mint a `pane-1`/`split-1` that
-      // collides with an id already in the restored tree. Safe to call every
-      // time hydrate fires (including a StrictMode double-invoke): the
-      // module counters only ever move forward via Math.max.
-      seedLayoutIds(action.layout);
+      // Nothing to seed: minting scans the live tree at call time (see
+      // nextPaneId/nextSplitId above), so a later split_pane/open_tab after
+      // this restore mints past whatever the incoming layout already
+      // contains with no setup step required here.
       return action.layout;
   }
 }

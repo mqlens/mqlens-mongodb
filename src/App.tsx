@@ -37,7 +37,7 @@ import {
 } from './components/RestoreView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
-import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, snapshotLayoutIds, restoreLayoutIds, type WorkspaceAction } from './workspace/model';
+import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, type WorkspaceAction } from './workspace/model';
 import { WorkspaceRoot } from './workspace/WorkspaceRoot';
 import { workspaceApply, updateTabState, actionToOp, workspaceGet } from './workspace/workspaceStore';
 import { toPersistedTab, toDisconnectedSnapshot, rebindConnection, toProfileSpaceId } from './workspace/persistence';
@@ -1641,29 +1641,25 @@ function Workspace() {
     // land in one synchronous handler (rename storms) — see layoutRef's
     // declaration above for why the closure value would be stale for the
     // second and later calls in that case.
-    // The trial reducer call below must not itself mint pane/split ids that
-    // never actually get used (amended after a closing-review regression):
-    // `workspaceReducer` mints them via `newPaneId`/`newSplitId`'s
-    // module-level counters (model.ts), and this trial's return value is
-    // discarded except for reference-identity comparison. Left unchecked, a
-    // real `split_pane` mints TWICE per dispatch — once here, once more when
-    // React actually applies the action during render — so the id React
-    // commits ends up one generation ahead of what the mirrored op causes
-    // the backend to mint from its own, separately-counted id space,
-    // silently desyncing every later op that addresses that pane/split by
-    // id. `snapshotLayoutIds`/`restoreLayoutIds` bracket the trial so it's
-    // side-effect-free; the one real, render-time reducer application is the
-    // only one that actually advances the counters, and it starts from the
-    // exact same (restored) counter state the trial did — so it mints the
-    // SAME ids the trial minted and discarded. `nextLayout` below is a
-    // different object than what React eventually commits, but its
-    // pane/split ids are identical, so using it for the optimistic
-    // `layoutRef.current` advance (compared against by later same-tick
-    // dispatches) stays accurate.
+    // This trial reducer call used to need a snapshot/restore bracket
+    // (`snapshotLayoutIds`/`restoreLayoutIds`) around it: `workspaceReducer`
+    // minted fresh pane/split ids via module-level counters, and this
+    // trial's return value is discarded except for reference-identity
+    // comparison — left unchecked, a real `split_pane` minted TWICE per
+    // dispatch (once here, once more when React actually applies the action
+    // during render), so the id React committed ended up one generation
+    // ahead of what the mirrored op caused the backend to mint from its own,
+    // separately-counted id space. Minting is now a stateless scan of the
+    // layout being reduced (model.ts's `nextPaneId`/`nextSplitId`, #197) —
+    // the same (layout, action) pair always mints the same id no matter how
+    // many times it's evaluated, so this trial call and the later real
+    // render-time application naturally mint identical ids with no
+    // bracketing required. `nextLayout` below is a different object than
+    // what React eventually commits, but its pane/split ids are identical,
+    // so using it for the optimistic `layoutRef.current` advance (compared
+    // against by later same-tick dispatches) stays accurate.
     const currentLayout = layoutRef.current;
-    const idSnapshot = snapshotLayoutIds();
     const nextLayout = workspaceReducer(currentLayout, action);
-    restoreLayoutIds(idSnapshot);
     layoutRef.current = nextLayout;
     const isNoOp = nextLayout === currentLayout;
 

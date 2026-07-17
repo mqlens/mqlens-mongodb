@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { WorkspaceRoot } from '../WorkspaceRoot';
 import { TAB_DRAG_MIME } from '../PaneView';
 import {
-  createInitialLayout, workspaceReducer, resetLayoutIds,
+  createInitialLayout, workspaceReducer,
   type WorkspaceLayout, type PaneNode,
 } from '../model';
 
@@ -22,8 +22,6 @@ function renderLayout(layout: WorkspaceLayout, dispatch = vi.fn()) {
   );
   return dispatch;
 }
-
-beforeEach(() => resetLayoutIds());
 
 describe('WorkspaceRoot', () => {
   it('renders a single pane with its active tab content', () => {
