@@ -40,7 +40,7 @@ import { SchemaView } from './components/SchemaView';
 import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, type WorkspaceAction } from './workspace/model';
 import { WorkspaceRoot } from './workspace/WorkspaceRoot';
 import { workspaceApply, updateTabState, actionToOp, workspaceGet } from './workspace/workspaceStore';
-import { toPersistedTab, toDisconnectedSnapshot, rebindConnection } from './workspace/persistence';
+import { toPersistedTab, toDisconnectedSnapshot, rebindConnection, toProfileSpaceId } from './workspace/persistence';
 import { ReconnectBanner } from './workspace/ReconnectBanner';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
@@ -304,13 +304,38 @@ function Workspace() {
   // close_tab/close_many/move_tab/rename_tab consult this so they never
   // reference a tab id the backend has no record of.
   const unmirroredTabIdsRef = useRef(new Set<string>());
+  const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
+  // `handleBuilderStateChange` below is a `useCallback` with an empty deps
+  // array (a stable identity for DocumentViewer), so it can never see a
+  // fresh `activeConnections` STATE value from its closure — it would stay
+  // pinned at mount's `[]` forever. A ref mirrors the state on every change
+  // so the callback can read the current connections via `.current` instead.
+  const activeConnectionsRef = useRef<ActiveConnection[]>(activeConnections);
+  useEffect(() => {
+    activeConnectionsRef.current = activeConnections;
+  }, [activeConnections]);
+  // Shared by every `update_tab_state` emission site (handleBuilderStateChange
+  // here, plus handleExecuteQuery/handleExecuteAggregate below): skips
+  // unmirrored tabs and translates the live id to profile-space before
+  // handing off to `updateTabState`, exactly like `dispatchWorkspace`'s
+  // `actionToOp(..., activeConnections)` calls do for layout ops — see
+  // persistence.ts's "Global Constraint" note. `connections` is threaded in
+  // by each call site rather than closed over here so the memoized
+  // `handleBuilderStateChange` below can supply the always-fresh
+  // `activeConnectionsRef.current` instead of a potentially-stale closure.
+  const mirrorUpdateTabState = (
+    tabId: string,
+    connections: ActiveConnection[],
+    patch: Parameters<typeof updateTabState>[1]
+  ) => {
+    if (unmirroredTabIdsRef.current.has(tabId)) return;
+    updateTabState(toProfileSpaceId(tabId, connections), patch);
+  };
   const handleBuilderStateChange = useCallback((tabId: string, state: BuilderState) => {
     tabBuilderStateCache.current.set(tabId, state);
-    if (!unmirroredTabIdsRef.current.has(tabId)) {
-      updateTabState(tabId, { builderState: state });
-    }
+    mirrorUpdateTabState(tabId, activeConnectionsRef.current, { builderState: state });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
@@ -342,6 +367,16 @@ function Workspace() {
   const [reconnectState, setReconnectState] = useState<Map<string, { busy: boolean; error: string | null }>>(
     new Map()
   );
+  // `reconnectState` is a render-captured snapshot — two ReconnectBanners for
+  // the same profile (or a fast double-click on one) can both read `busy:
+  // false` before either's `setReconnectState({busy:true})` has committed and
+  // re-rendered, so the `reconnectState.get(profileId)?.busy` check alone
+  // lets both calls through and fires `connect_db` twice (a leaked
+  // connection). This ref is checked-and-set synchronously at the top of
+  // `handleReconnectProfile`, before any `await`, so the second caller in the
+  // same microtask/click burst sees it immediately — `reconnectState` stays
+  // as the UI-facing (render-driven) busy/error source of truth.
+  const reconnectBusyRef = useRef(new Set<string>());
   const patchReconnectState = (profileId: string, patch: Partial<{ busy: boolean; error: string | null }>) => {
     setReconnectState((prev) => {
       const next = new Map(prev);
@@ -380,6 +415,13 @@ function Workspace() {
         if (ws && Array.isArray(ws.tabs) && ws.tabs.length > 0) {
           const snapshot = toDisconnectedSnapshot(ws);
           setTabs(snapshot.tabs as QueryTab[]);
+          // Clear first: `hydrate` wholesale-replaces `tabs` (see the
+          // "hydrate wins" note above), but the builder-state cache is a
+          // ref keyed by tab id — if the user opened a builder on any
+          // pre-restore tab (e.g. the default Quick Start render) before
+          // this settled, that stale entry would otherwise survive under an
+          // id that may now belong to a completely different restored tab.
+          tabBuilderStateCache.current.clear();
           for (const [tabId, state] of snapshot.builderStates) {
             tabBuilderStateCache.current.set(tabId, state as BuilderState);
           }
@@ -1506,6 +1548,12 @@ function Workspace() {
       return;
     }
 
+    // Every `actionToOp` call below passes `activeConnections` so live
+    // connection-id fields translate to `profile:<profileId>` form before
+    // reaching `workspace_apply` — see persistence.ts's "Global Constraint"
+    // note. `unmirroredTabIdsRef` bookkeeping below always compares against
+    // the RAW action id (pre-translation, i.e. the frontend's own id space),
+    // since that's the space the ref is populated and queried in throughout.
     switch (action.type) {
       case 'open_tab': {
         if (options?.tab) {
@@ -1517,11 +1565,11 @@ function Workspace() {
             return;
           }
           unmirroredTabIdsRef.current.delete(action.tabId);
-          workspaceApply(actionToOp(action, persisted));
+          workspaceApply(actionToOp(action, persisted, activeConnections));
           return;
         }
         if (unmirroredTabIdsRef.current.has(action.tabId)) return;
-        workspaceApply(actionToOp(action));
+        workspaceApply(actionToOp(action, undefined, activeConnections));
         return;
       }
       case 'close_tab':
@@ -1529,18 +1577,18 @@ function Workspace() {
           unmirroredTabIdsRef.current.delete(action.tabId);
           return;
         }
-        workspaceApply(actionToOp(action));
+        workspaceApply(actionToOp(action, undefined, activeConnections));
         return;
       case 'close_many': {
         const tabIds = action.tabIds.filter(id => !unmirroredTabIdsRef.current.has(id));
         action.tabIds.forEach(id => unmirroredTabIdsRef.current.delete(id));
         if (tabIds.length === 0) return;
-        workspaceApply(actionToOp({ ...action, tabIds }));
+        workspaceApply(actionToOp({ ...action, tabIds }, undefined, activeConnections));
         return;
       }
       case 'move_tab':
         if (unmirroredTabIdsRef.current.has(action.tabId)) return;
-        workspaceApply(actionToOp(action));
+        workspaceApply(actionToOp(action, undefined, activeConnections));
         return;
       case 'rename_tab':
         if (unmirroredTabIdsRef.current.has(action.oldId)) {
@@ -1548,10 +1596,10 @@ function Workspace() {
           unmirroredTabIdsRef.current.add(action.newId);
           return;
         }
-        workspaceApply(actionToOp(action));
+        workspaceApply(actionToOp(action, undefined, activeConnections));
         return;
       default:
-        workspaceApply(actionToOp(action));
+        workspaceApply(actionToOp(action, undefined, activeConnections));
     }
   };
 
@@ -1723,12 +1771,10 @@ function Workspace() {
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastQuery: query, lastAggregate: undefined } : t));
-      if (!unmirroredTabIdsRef.current.has(tab.id)) {
-        // `lastAggregate: null` (not omitted) explicitly clears any
-        // previously-mirrored aggregate on the backend tab, matching the
-        // local `lastAggregate: undefined` above.
-        updateTabState(tab.id, { lastQuery: query, lastAggregate: null });
-      }
+      // `lastAggregate: null` (not omitted) explicitly clears any
+      // previously-mirrored aggregate on the backend tab, matching the
+      // local `lastAggregate: undefined` above.
+      mirrorUpdateTabState(tab.id, activeConnections, { lastQuery: query, lastAggregate: null });
       // History is best-effort: never surface an error after a successful run.
       recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'find',
@@ -1781,9 +1827,7 @@ function Workspace() {
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
-      if (!unmirroredTabIdsRef.current.has(tab.id)) {
-        updateTabState(tab.id, { lastAggregate: pipeline });
-      }
+      mirrorUpdateTabState(tab.id, activeConnections, { lastAggregate: pipeline });
       recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'aggregate',
         pipeline,
@@ -1831,7 +1875,13 @@ function Workspace() {
   // clicked — since they share the same `profile:<profileId>` prefix and the
   // same underlying connection.
   const handleReconnectProfile = async (profileId: string, profileName: string) => {
-    if (reconnectState.get(profileId)?.busy) return; // a reconnect for this profile is already in flight
+    // Synchronous check-and-set on a ref, not `reconnectState` (React state
+    // reads/writes are render-batched — two banners for the same profile, or
+    // a fast double-click, can both observe `busy: false` before either's
+    // `setReconnectState` commits). This is the actual guard; `reconnectState`
+    // stays purely for the UI's busy/error display.
+    if (reconnectBusyRef.current.has(profileId)) return;
+    reconnectBusyRef.current.add(profileId);
     patchReconnectState(profileId, { busy: true, error: null });
     try {
       const profiles = await invoke<ConnectionProfile[]>('load_connection_profiles');
@@ -1894,6 +1944,8 @@ function Workspace() {
       }
     } catch (err: any) {
       patchReconnectState(profileId, { busy: false, error: err?.message || String(err) });
+    } finally {
+      reconnectBusyRef.current.delete(profileId);
     }
   };
 

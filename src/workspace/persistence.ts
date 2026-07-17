@@ -3,6 +3,26 @@
 // see workspaceStore.ts for the IO side. Keeping this pure makes it trivial
 // to unit test the profile-prefix id substitution and snapshot shaping
 // without mocking Tauri or React.
+//
+// Global Constraint: the backend workspace store (ws.tabs + every window's
+// splitTree) must live ENTIRELY in `profile:<profileId>` id space, never in
+// live `connectionId` space. Live connection ids are minted per `connect_db`
+// call and are worthless after a restart; `profile:<profileId>` ids are
+// stable across reconnects and restarts. Two things follow:
+//  1. `toPersistedTab` rewrites a tab's id at save time (this file).
+//  2. Every OTHER id-bearing field that reaches `workspace_apply` — not just
+//     `open_tab`'s nested tab payload, but every op's own top-level tab-id
+//     field(s) (`tab_id`, `tab_ids[]`, `old_id`/`new_id`, `move_tab_id`,
+//     etc.) — must be translated too, at the single mirror choke point
+//     (`dispatchWorkspace` in App.tsx, via `actionToOp`'s `connections`
+//     param in workspaceStore.ts). Missing (2) is exactly the bug this
+//     comment exists to prevent recurring: a live id can slip into the
+//     backend's layout tree while `ws.tabs` holds the profile-space id for
+//     the same tab, splitting the tree and the tab list into two id spaces
+//     that never resolve to each other again.
+// Pane/split ids are NOT part of this constraint — both the TS and Rust
+// reducers mint them deterministically from the same op stream, so they're
+// already identical across the two sides without any translation.
 
 import {
   workspaceReducer,
@@ -102,6 +122,24 @@ const NON_PERSISTED_TYPES = new Set<QueryTabType>(['export', 'import']);
 const CONNECTIONLESS_TYPES = new Set<QueryTabType>(['settings', 'quickstart', 'tasks']);
 
 /**
+ * Rewrite `id`'s live `<connectionId>` segment (if any) to
+ * `profile:<profileId>`, by scanning `connections` for one whose `id`
+ * appears in `id` as a substring — the same substitution `toPersistedTab`
+ * needs for a single already-known tab, generalized to scan a whole list so
+ * the App-level mirror choke point can translate ANY id-bearing op field
+ * (which may reference any of several live connections, e.g. a `close_many`
+ * batch) without knowing in advance which connection it belongs to. Ids with
+ * no matching live-connection segment pass through unchanged — this
+ * correctly no-ops for ids already in `profile:` form (nothing in
+ * `connections` has a live id that looks like `profile:...`) and for
+ * connectionless ids (`settings`/`quickstart`/`tasks`, or a pane/split id).
+ */
+export function toProfileSpaceId(id: string, connections: PersistableConnection[]): string {
+  const conn = connections.find((c) => id.includes(c.id));
+  return conn ? id.replace(conn.id, `profile:${conn.profileId}`) : id;
+}
+
+/**
  * Build the persisted (wire) form of a live tab, or `null` if this tab kind
  * never survives a restart (export/import). Connection-scoped tab ids are
  * rewritten at save time: the live id's leading `<connectionId>` segment
@@ -133,7 +171,7 @@ export function toPersistedTab(
 
   const profileId = conn?.profileId ?? '';
   const profileName = conn?.name ?? '';
-  const id = conn ? tab.id.replace(conn.id, `profile:${profileId}`) : tab.id;
+  const id = conn ? toProfileSpaceId(tab.id, [conn]) : tab.id;
   return {
     id,
     type: tab.type,

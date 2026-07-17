@@ -3,12 +3,14 @@ import {
   toPersistedTab,
   toDisconnectedSnapshot,
   rebindConnection,
+  toProfileSpaceId,
   type PersistableTab,
   type PersistableConnection,
+  type PersistedTab,
   type PersistedWorkspace,
 } from '../persistence';
 import { actionToOp } from '../workspaceStore';
-import type { WorkspaceAction } from '../model';
+import { createInitialLayout, workspaceReducer, allTabIds, type WorkspaceAction, type WorkspaceLayout } from '../model';
 import goldenFixture from '../../../fixtures/workspace-golden.json';
 
 const conn: PersistableConnection = { id: 'conn-uuid', profileId: 'p1', name: 'Profile 1' };
@@ -167,6 +169,119 @@ describe('toDisconnectedSnapshot', () => {
     const snapshot = toDisconnectedSnapshot(empty);
     expect(snapshot.tabs).toEqual([]);
     expect(snapshot.layout.root).toEqual({ kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null });
+  });
+});
+
+describe('toProfileSpaceId', () => {
+  const connections: PersistableConnection[] = [
+    { id: 'live-conn-1', profileId: 'p1', name: 'Profile 1' },
+    { id: 'live-conn-2', profileId: 'p2', name: 'Profile 2' },
+  ];
+
+  it('rewrites the live connection segment to profile:<profileId>', () => {
+    expect(toProfileSpaceId('live-conn-1.mydb.mycoll', connections)).toBe('profile:p1.mydb.mycoll');
+  });
+
+  it('finds the right connection out of several (a close_many-style batch)', () => {
+    expect(toProfileSpaceId('shell.live-conn-2.mydb.x', connections)).toBe('shell.profile:p2.mydb.x');
+  });
+
+  it('passes through an id with no matching live connection unchanged', () => {
+    expect(toProfileSpaceId('live-conn-9.mydb.mycoll', connections)).toBe('live-conn-9.mydb.mycoll');
+  });
+
+  it('passes through an id already in profile: form unchanged (no live id matches it)', () => {
+    expect(toProfileSpaceId('profile:p1.mydb.mycoll', connections)).toBe('profile:p1.mydb.mycoll');
+  });
+
+  it('passes through connectionless/pane ids unchanged', () => {
+    expect(toProfileSpaceId('settings', connections)).toBe('settings');
+    expect(toProfileSpaceId('pane-1', connections)).toBe('pane-1');
+  });
+
+  it('an empty connections list is a no-op passthrough', () => {
+    expect(toProfileSpaceId('live-conn-1.mydb.mycoll', [])).toBe('live-conn-1.mydb.mycoll');
+  });
+});
+
+// CRITICAL regression coverage: before this fix, `dispatchWorkspace`'s
+// mirror sent op ids VERBATIM (live-connection space) while `toPersistedTab`
+// rewrote the nested `open_tab.tab` payload into profile-space — splitting
+// the backend's layout tree and its `tabs[]` into two id spaces that never
+// resolved to each other again. On a real restart, `toDisconnectedSnapshot`'s
+// defensive "drop layout ids absent from tabs[]" fold would silently empty
+// the restored layout; post-reconnect, further mirrors (update_tab_state,
+// close_tab, ...) would carry live ids matching no backend tab, so state
+// stopped persisting and closed tabs would resurrect on the next boot.
+describe('mirror translation round-trip (CRITICAL fix regression guard)', () => {
+  it('a translated op stream keeps the backend layout and tabs[] in the same id space, so toDisconnectedSnapshot restores a non-empty layout', () => {
+    const liveConn: PersistableConnection = { id: 'live-conn-1', profileId: 'p1', name: 'Profile 1' };
+    const connections = [liveConn];
+
+    // 1. The user opens a brand-new collection tab against the live connection.
+    const liveTabId = 'live-conn-1.mydb.mycoll';
+    const liveTab: PersistableTab = {
+      id: liveTabId,
+      type: 'collection',
+      connectionId: 'live-conn-1',
+      db: 'mydb',
+      collection: 'mycoll',
+    };
+    const persisted = toPersistedTab(liveTab, liveConn, undefined)!;
+    expect(persisted.id).toBe('profile:p1.mydb.mycoll');
+
+    // 2. dispatchWorkspace's mirror step builds the wire op — this is the
+    //    exact call site that used to leak the live id.
+    const openOp = actionToOp({ type: 'open_tab', tabId: liveTabId }, persisted, connections);
+    expect(openOp.tab_id).toBe('profile:p1.mydb.mycoll');
+    // The bug, precisely: the op's own top-level tab_id and its nested tab
+    // payload's id must be the SAME id (same tab, same id space) — before
+    // the fix, `openOp.tab_id` would have been the live id while
+    // `(openOp.tab as PersistedTab).id` was already profile-space.
+    expect(openOp.tab_id).toBe((openOp.tab as PersistedTab).id);
+
+    // 3. Apply the *translated* op to a scratch backend-shaped layout tree —
+    //    workspaceReducer is the TS port of the Rust reducer; the real
+    //    backend receives `tab_id: 'profile:p1.mydb.mycoll'` on the wire and
+    //    mutates its tree with that id, never the live one.
+    let layout: WorkspaceLayout = createInitialLayout([], null);
+    layout = workspaceReducer(layout, { type: 'open_tab', tabId: openOp.tab_id as string });
+    const backendTabs: PersistedTab[] = [persisted];
+
+    // 4. Round-trip exactly like a real restart: workspace_get -> toDisconnectedSnapshot.
+    const ws: PersistedWorkspace = {
+      revision: 1,
+      windows: [{ id: 'main', splitTree: layout.root, focusedPaneId: layout.focusedPaneId }],
+      tabs: backendTabs,
+    };
+    const snapshot = toDisconnectedSnapshot(ws);
+
+    // Before the fix this would be `[]` — the defensive fold in
+    // toDisconnectedSnapshot strips any layout id absent from tabs[], and a
+    // live id would never match the profile-space id in tabs[].
+    expect(allTabIds(snapshot.layout)).toEqual(['profile:p1.mydb.mycoll']);
+    expect(snapshot.tabs.map((t) => t.id)).toEqual(['profile:p1.mydb.mycoll']);
+  });
+
+  it('update_tab_state after a simulated reconnect rebind translates back to the SAME profile-space tab_id the store already has', () => {
+    const profileId = 'p1';
+    const oldPrefix = `profile:${profileId}`;
+    // Before reconnect: a restored, disconnected tab — already profile-space.
+    const restoredTabId = `${oldPrefix}.mydb.mycoll`;
+
+    // Reconnect mints a fresh live connection id and rebinds every restored
+    // tab id under this profile to it (App.tsx's handleReconnectProfile).
+    const newLiveConnId = 'fresh-conn-uuid';
+    const pairs = rebindConnection(oldPrefix, newLiveConnId, [restoredTabId]);
+    expect(pairs).toEqual([{ oldId: restoredTabId, newId: `${newLiveConnId}.mydb.mycoll` }]);
+    const reboundTabId = pairs[0].newId;
+
+    // Post-reconnect, a query runs against the tab under its NEW live id;
+    // the mirror choke point must translate it back before it reaches the
+    // wire — landing on the EXACT id the backend's ws.tabs already has.
+    const newConn: PersistableConnection = { id: newLiveConnId, profileId, name: 'Profile 1' };
+    const translatedBack = toProfileSpaceId(reboundTabId, [newConn]);
+    expect(translatedBack).toBe(restoredTabId);
   });
 });
 

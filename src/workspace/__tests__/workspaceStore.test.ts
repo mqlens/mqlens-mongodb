@@ -3,7 +3,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { updateTabState, resetUpdateTabStateDebounce, workspaceApply, workspaceGet } from '../workspaceStore';
+import { updateTabState, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
+import { toPersistedTab, toProfileSpaceId, type PersistableConnection } from '../persistence';
+import type { WorkspaceAction } from '../model';
 
 describe('workspaceStore', () => {
   beforeEach(() => {
@@ -97,5 +99,103 @@ describe('workspaceStore', () => {
     expect(invokeMock).toHaveBeenLastCalledWith('workspace_apply', {
       op: { type: 'update_tab_state', tab_id: 't2', last_query: { b: 2 } },
     });
+  });
+
+  it('update_tab_state after a simulated reconnect rebind lands on the ORIGINAL profile-space tab_id — CRITICAL fix, wired end-to-end', () => {
+    // Mirrors persistence.test.ts's pure version of this check, but through
+    // the actual `updateTabState` -> `invoke` path, so the assertion is on
+    // what would really cross the Tauri IPC boundary.
+    const restoredTabId = 'profile:p1.mydb.mycoll';
+    const newLiveConnId = 'fresh-conn-uuid';
+    const reboundTabId = `${newLiveConnId}.mydb.mycoll`; // what rebindConnection would have produced
+    const newConn: PersistableConnection = { id: newLiveConnId, profileId: 'p1', name: 'Profile 1' };
+
+    updateTabState(toProfileSpaceId(reboundTabId, [newConn]), { lastQuery: { filter: '{}' } });
+    vi.advanceTimersByTime(500);
+
+    expect(invokeMock).toHaveBeenCalledWith('workspace_apply', {
+      op: { type: 'update_tab_state', tab_id: restoredTabId, last_query: { filter: '{}' } },
+    });
+  });
+});
+
+// CRITICAL regression coverage (see persistence.test.ts for the pure/
+// round-trip version): `dispatchWorkspace`'s mirror choke point now passes
+// `activeConnections` into `actionToOp` so every tab-id-bearing op field
+// translates to profile-space before it reaches `workspace_apply`. This
+// block asserts, for every op type, that none of them ever carry the raw
+// live connection id — a captured-op-stream / regex sweep, exactly the kind
+// of check that would have caught the original bug (the old code passed
+// `action.tabId` etc. straight through unchanged).
+describe('actionToOp id translation (CRITICAL fix)', () => {
+  const LIVE_UUID = '5f1c9b3a-aaaa-4fff-8888-abcdefabcdef';
+  const conn: PersistableConnection = { id: LIVE_UUID, profileId: 'p1', name: 'Profile 1' };
+  const connections = [conn];
+  const liveUuidPattern = new RegExp(LIVE_UUID);
+
+  it('translates every tab-id-bearing field across every op type — no op ever contains the live connection id', () => {
+    const actions: WorkspaceAction[] = [
+      { type: 'open_tab', tabId: `${LIVE_UUID}.db.coll` },
+      { type: 'open_tab', tabId: `${LIVE_UUID}.db.coll`, paneId: 'pane-1' },
+      { type: 'close_tab', tabId: `${LIVE_UUID}.db.coll` },
+      { type: 'close_many', tabIds: [`${LIVE_UUID}.db.a`, `${LIVE_UUID}.db.b`] },
+      { type: 'move_tab', tabId: `${LIVE_UUID}.db.coll`, targetPaneId: 'pane-2' },
+      { type: 'move_tab', tabId: `${LIVE_UUID}.db.coll`, targetPaneId: 'pane-2', index: 1 },
+      { type: 'split_pane', paneId: 'pane-1', dir: 'row', side: 'end', moveTabId: `${LIVE_UUID}.db.coll` },
+      { type: 'split_pane', paneId: 'pane-1', dir: 'row', side: 'end' },
+      { type: 'resize_split', splitId: 'split-1', ratio: 0.5 },
+      { type: 'set_active', paneId: 'pane-1', tabId: `${LIVE_UUID}.db.coll` },
+      { type: 'focus_pane', paneId: 'pane-1' },
+      { type: 'rename_tab', oldId: `${LIVE_UUID}.db.old`, newId: `${LIVE_UUID}.db.new` },
+    ];
+
+    // captured-op-stream: every op the mirror would actually send, in order.
+    const capturedOps = actions.map((action) => actionToOp(action, undefined, connections));
+
+    for (const op of capturedOps) {
+      const wire = JSON.stringify(op);
+      expect(wire).not.toMatch(liveUuidPattern);
+    }
+  });
+
+  it('open_tab: the op-level tab_id and the nested tab payload id agree, both profile-space', () => {
+    const tabId = `${LIVE_UUID}.mydb.mycoll`;
+    const persisted = toPersistedTab(
+      { id: tabId, type: 'collection', connectionId: LIVE_UUID, db: 'mydb', collection: 'mycoll' },
+      conn,
+      undefined
+    )!;
+    const op = actionToOp({ type: 'open_tab', tabId }, persisted, connections);
+    expect(op.tab_id).toBe('profile:p1.mydb.mycoll');
+    expect(op.tab_id).toBe((op.tab as { id: string }).id);
+  });
+
+  it('pane/split ids are left untranslated even when they contain a live connection id', () => {
+    const paneId = `${LIVE_UUID}-pane`; // contrived, but proves pane_id is never scanned
+    const op = actionToOp({ type: 'focus_pane', paneId }, undefined, connections);
+    expect(op.pane_id).toBe(paneId);
+  });
+
+  it('close_many translates every id in the array', () => {
+    const op = actionToOp(
+      { type: 'close_many', tabIds: [`${LIVE_UUID}.db.a`, `${LIVE_UUID}.db.b`, 'settings'] },
+      undefined,
+      connections
+    );
+    expect(op.tab_ids).toEqual(['profile:p1.db.a', 'profile:p1.db.b', 'settings']);
+  });
+
+  it('rename_tab translates both old_id and new_id', () => {
+    const op = actionToOp(
+      { type: 'rename_tab', oldId: `${LIVE_UUID}.db.old`, newId: `${LIVE_UUID}.db.new` },
+      undefined,
+      connections
+    );
+    expect(op).toEqual({ type: 'rename_tab', old_id: 'profile:p1.db.old', new_id: 'profile:p1.db.new' });
+  });
+
+  it('omitting connections is a passthrough — the raw (untranslated) op shape', () => {
+    const op = actionToOp({ type: 'close_tab', tabId: `${LIVE_UUID}.db.coll` });
+    expect(op.tab_id).toBe(`${LIVE_UUID}.db.coll`);
   });
 });

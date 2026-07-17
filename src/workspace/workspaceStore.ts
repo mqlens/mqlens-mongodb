@@ -6,7 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { WorkspaceAction } from './model';
-import type { PersistedTab, PersistedWorkspace } from './persistence';
+import { toProfileSpaceId, type PersistableConnection, type PersistedTab, type PersistedWorkspace } from './persistence';
 
 /** `GET workspace.json` (backend-cached after first call). */
 export async function workspaceGet(): Promise<PersistedWorkspace | null> {
@@ -31,27 +31,41 @@ export function workspaceApply(op: Record<string, unknown>): void {
  * only meaningful for `open_tab` — pass the already-persisted form (or
  * `null`/omit to move/focus an existing backend tab without touching its
  * stored model).
+ *
+ * `connections`, when supplied, translates every TAB-id-bearing field
+ * (`tab_id`, `tab_ids[]`, `old_id`/`new_id`, `move_tab_id`) from the live
+ * `<connectionId>` space the frontend action was built in into the
+ * `profile:<profileId>` space the backend store must stay in — see
+ * persistence.ts's "Global Constraint" note. PANE/split ids (`pane_id`,
+ * `target_pane_id`, `split_id`) are deliberately left untouched: both the TS
+ * and Rust reducers mint those deterministically from the same op stream, so
+ * they already agree without translation. Omitting `connections` (or passing
+ * an empty list) is a no-op passthrough — used by tests that want the raw,
+ * untranslated op shape.
  */
 export function actionToOp(
   action: WorkspaceAction,
-  tab?: PersistedTab | null
+  tab?: PersistedTab | null,
+  connections: PersistableConnection[] = []
 ): Record<string, unknown> {
+  const id = (raw: string): string => toProfileSpaceId(raw, connections);
+
   switch (action.type) {
     case 'open_tab': {
-      const op: Record<string, unknown> = { type: 'open_tab', tab_id: action.tabId };
+      const op: Record<string, unknown> = { type: 'open_tab', tab_id: id(action.tabId) };
       if (action.paneId !== undefined) op.pane_id = action.paneId;
       if (tab) op.tab = tab;
       return op;
     }
     case 'close_tab':
-      return { type: 'close_tab', tab_id: action.tabId };
+      return { type: 'close_tab', tab_id: id(action.tabId) };
     case 'close_many':
-      return { type: 'close_many', tab_ids: action.tabIds };
+      return { type: 'close_many', tab_ids: action.tabIds.map(id) };
     case 'move_tab': {
       const op: Record<string, unknown> = {
         type: 'move_tab',
-        tab_id: action.tabId,
-        target_pane_id: action.targetPaneId,
+        tab_id: id(action.tabId),
+        target_pane_id: action.targetPaneId, // pane id — not translated
       };
       if (action.index !== undefined) op.index = action.index;
       return op;
@@ -59,21 +73,24 @@ export function actionToOp(
     case 'split_pane': {
       const op: Record<string, unknown> = {
         type: 'split_pane',
-        pane_id: action.paneId,
+        pane_id: action.paneId, // pane id — not translated
         dir: action.dir,
         side: action.side,
       };
-      if (action.moveTabId !== undefined) op.move_tab_id = action.moveTabId;
+      // moveTabId is a TAB id (the tab being carried into the new pane) —
+      // same translation requirement as move_tab.tabId, even though it
+      // isn't itself a top-level op field.
+      if (action.moveTabId !== undefined) op.move_tab_id = id(action.moveTabId);
       return op;
     }
     case 'resize_split':
-      return { type: 'resize_split', split_id: action.splitId, ratio: action.ratio };
+      return { type: 'resize_split', split_id: action.splitId, ratio: action.ratio }; // split id — not translated
     case 'set_active':
-      return { type: 'set_active', pane_id: action.paneId, tab_id: action.tabId };
+      return { type: 'set_active', pane_id: action.paneId, tab_id: id(action.tabId) }; // pane_id not translated
     case 'focus_pane':
-      return { type: 'focus_pane', pane_id: action.paneId };
+      return { type: 'focus_pane', pane_id: action.paneId }; // pane id — not translated
     case 'rename_tab':
-      return { type: 'rename_tab', old_id: action.oldId, new_id: action.newId };
+      return { type: 'rename_tab', old_id: id(action.oldId), new_id: id(action.newId) };
     case 'hydrate':
       // Frontend-only (Phase 2 Task 6 restore-on-boot) — App.tsx dispatches
       // it via raw `dispatchLayout`, never through the mirrored

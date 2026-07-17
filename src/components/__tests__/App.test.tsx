@@ -1755,6 +1755,57 @@ describe('App Component', () => {
       expect(connectCalls).toHaveLength(1); // one connect_db for the whole profile, not per-tab
     });
 
+    it('(b1) clicking two banners for the same profile back-to-back only connects once — IMPORTANT fix regression guard', async () => {
+      // Both panes' banners share profileId p1. A synchronous double-click
+      // (or two banners firing before either's setReconnectState commits) used
+      // to both pass the busy check — reconnectState is render-captured, so
+      // neither call could see the other's in-flight state yet — and each
+      // called connect_db, leaking a connection. reconnectBusyRef is checked
+      // and set synchronously at the top of handleReconnectProfile, before
+      // any state update or await, so the second call must bail out.
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const banners = await screen.findAllByTestId('reconnect-banner');
+      expect(banners).toHaveLength(2);
+      const buttons = screen.getAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      expect(buttons).toHaveLength(2);
+
+      // Both clicks inside ONE `act()` so React defers re-rendering (and
+      // therefore re-committing `reconnectState`) until after BOTH
+      // synchronous handler prefixes have already run — reproducing the
+      // real race: two banner clicks that each observe the SAME
+      // pre-click `reconnectState` snapshot. Two separate `fireEvent.click`
+      // calls (each with its own implicit act()) would let the first
+      // click's state update flush and re-render before the second
+      // fires, masking the race this test exists to catch.
+      act(() => {
+        fireEvent.click(buttons[0]);
+        fireEvent.click(buttons[1]);
+      });
+
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0);
+      });
+
+      const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
+      expect(connectCalls).toHaveLength(1); // NOT 2 — the second click must have been dropped
+    });
+
     it('(b2) a missing profile surfaces "no longer exists" as the banner error, without connecting', async () => {
       mockInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
