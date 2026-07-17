@@ -1645,4 +1645,146 @@ describe('App Component', () => {
     const ordersFilterAgain = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
     expect(ordersFilterAgain.value).toContain('"shipped"');
   });
+
+  describe('session restore + Reconnect banner (#97 phase 2 Task 6)', () => {
+    // Two collection tabs, both on profile p1, split into a row of two panes —
+    // matches persistence.ts's toDisconnectedSnapshot wire shape (camelCase,
+    // `profile:<profileId>` connection ids already baked into the tab ids).
+    const workspaceSnapshot = {
+      revision: 1,
+      windows: [
+        {
+          id: 'main',
+          focusedPaneId: 'pane-1',
+          splitTree: {
+            kind: 'split',
+            id: 'split-1',
+            dir: 'row',
+            ratio: 0.5,
+            children: [
+              {
+                kind: 'pane',
+                id: 'pane-1',
+                tabIds: ['profile:p1.sales_db.customers'],
+                activeTabId: 'profile:p1.sales_db.customers',
+              },
+              {
+                kind: 'pane',
+                id: 'pane-2',
+                tabIds: ['profile:p1.sales_db.orders'],
+                activeTabId: 'profile:p1.sales_db.orders',
+              },
+            ],
+          },
+        },
+      ],
+      tabs: [
+        {
+          id: 'profile:p1.sales_db.customers',
+          type: 'collection',
+          profileId: 'p1',
+          profileName: 'Prod Cluster',
+          db: 'sales_db',
+          collection: 'customers',
+        },
+        {
+          id: 'profile:p1.sales_db.orders',
+          type: 'collection',
+          profileId: 'p1',
+          profileName: 'Prod Cluster',
+          db: 'sales_db',
+          collection: 'orders',
+        },
+      ],
+    };
+
+    it('(a) restores a disconnected snapshot as ReconnectBanners, with no query invokes', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        return Promise.resolve([]);
+      });
+
+      renderWithProviders(<App />);
+
+      const banners = await screen.findAllByTestId('reconnect-banner');
+      expect(banners).toHaveLength(2);
+      expect(screen.getAllByRole('button', { name: /Reconnect Prod Cluster/ })).toHaveLength(2);
+
+      expect(mockInvoke).not.toHaveBeenCalledWith('execute_mql_query', expect.anything());
+      expect(mockInvoke).not.toHaveBeenCalledWith('execute_aggregate', expect.anything());
+    });
+
+    it('(b) clicking Reconnect resolves profiles + connect_db, revives all of the profile\'s tabs, and eagerly re-runs their queries', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const banners = await screen.findAllByTestId('reconnect-banner');
+      expect(banners).toHaveLength(2);
+
+      const [firstBtn] = screen.getAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      // One click on either pane's banner revives ALL tabs of that profile —
+      // both panes' banners disappear and both mount real content.
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0);
+      });
+      expect(await screen.findAllByText(/"Ada"/)).toHaveLength(2);
+
+      await waitFor(() => {
+        const execCalls = calls.filter((c) => c.cmd === 'execute_mql_query');
+        expect(execCalls).toHaveLength(2);
+        expect(execCalls.every((c) => c.args?.id === 'new-conn-1')).toBe(true);
+      });
+
+      const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
+      expect(connectCalls).toHaveLength(1); // one connect_db for the whole profile, not per-tab
+    });
+
+    it('(b2) a missing profile surfaces "no longer exists" as the banner error, without connecting', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') return Promise.resolve([]); // p1 is gone
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      // Both panes share the same profileId's error state — the error surfaces
+      // on every banner for that profile, not just the one that was clicked.
+      expect(await screen.findAllByText('Connection profile no longer exists')).toHaveLength(2);
+      expect(mockInvoke).not.toHaveBeenCalledWith('connect_db', expect.anything());
+      // Still disconnected — both banners remain.
+      expect(screen.getAllByTestId('reconnect-banner')).toHaveLength(2);
+    });
+
+    it('(c) a null snapshot keeps the default Quick Start tab', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(null);
+        return Promise.resolve([]);
+      });
+
+      renderWithProviders(<App />);
+      expect(await screen.findByTestId('quickstart-tab')).toBeInTheDocument();
+      expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument();
+    });
+  });
 });

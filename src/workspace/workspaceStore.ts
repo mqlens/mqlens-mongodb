@@ -74,6 +74,11 @@ export function actionToOp(
       return { type: 'focus_pane', pane_id: action.paneId };
     case 'rename_tab':
       return { type: 'rename_tab', old_id: action.oldId, new_id: action.newId };
+    case 'hydrate':
+      // Frontend-only (Phase 2 Task 6 restore-on-boot) — App.tsx dispatches
+      // it via raw `dispatchLayout`, never through the mirrored
+      // `dispatchWorkspace` path, so this must never actually be reached.
+      throw new Error('hydrate is frontend-only and must never be mirrored to workspace_apply');
   }
 }
 

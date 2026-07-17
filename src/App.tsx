@@ -39,8 +39,9 @@ import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
 import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, type WorkspaceAction } from './workspace/model';
 import { WorkspaceRoot } from './workspace/WorkspaceRoot';
-import { workspaceApply, updateTabState, actionToOp } from './workspace/workspaceStore';
-import { toPersistedTab } from './workspace/persistence';
+import { workspaceApply, updateTabState, actionToOp, workspaceGet } from './workspace/workspaceStore';
+import { toPersistedTab, toDisconnectedSnapshot, rebindConnection } from './workspace/persistence';
+import { ReconnectBanner } from './workspace/ReconnectBanner';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
 import { GridFsView } from './components/GridFsView';
@@ -291,10 +292,13 @@ function Workspace() {
   }
   const tabBuilderStateCache = useRef(new Map<string, BuilderState>());
   // Workspace-store mirroring plumbing (Phase 2 Task 5). Mirroring starts
-  // enabled; Task 6's restore-on-boot effect flips this off until the
-  // restored snapshot settles, so the initial hydration doesn't bounce
-  // straight back to the backend as a stream of "new" ops.
-  const mirroringEnabledRef = useRef(true);
+  // DISABLED — the restore effect below is the only thing allowed to turn it
+  // on, once workspace_get has resolved (snapshot applied or none found).
+  // Starting it true would let the initial-render quickstart state (or
+  // anything the user clicks before the restore settles) mirror to the
+  // backend store as "new" ops, potentially clobbering a legitimate snapshot
+  // a previous session already wrote before this GET resolves.
+  const mirroringEnabledRef = useRef(false);
   // Tab ids whose open_tab was never mirrored (toPersistedTab returned null
   // — export/import tabs) or that were themselves rebound out of mirroring.
   // close_tab/close_many/move_tab/rename_tab consult this so they never
@@ -324,6 +328,88 @@ function Workspace() {
         : [...prev, { id, profileId, name, uri, color_tag }]
     );
   };
+
+  // profileId -> profileName for every restored-but-not-yet-reconnected tab,
+  // captured from the persisted snapshot at restore time. RestoredTab (what
+  // toDisconnectedSnapshot hands back) deliberately drops profileName — it's
+  // a structural subset of QueryTab, which has no such field — so this is the
+  // only place ReconnectBanner's label can come from until the tab reconnects.
+  const [restoredProfileNames, setRestoredProfileNames] = useState<Map<string, string>>(new Map());
+  // Per-profile Reconnect busy/error state, keyed by profileId. Shared across
+  // every ReconnectBanner instance for that profile (a profile's tabs can be
+  // spread across multiple panes), so one click's busy/error state is visible
+  // on all of them, and a second click while busy is a no-op (guarded below).
+  const [reconnectState, setReconnectState] = useState<Map<string, { busy: boolean; error: string | null }>>(
+    new Map()
+  );
+  const patchReconnectState = (profileId: string, patch: Partial<{ busy: boolean; error: string | null }>) => {
+    setReconnectState((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(profileId) ?? { busy: false, error: null };
+      next.set(profileId, { ...cur, ...patch });
+      return next;
+    });
+  };
+
+  // Session restore (Phase 2 Task 6). Runs once on mount: pulls whatever
+  // workspace.json snapshot the backend has and, if it holds at least one
+  // persisted tab, swaps the default Quick Start state for it — every
+  // restored tab renders disconnected (ReconnectBanner) until its profile
+  // reconnects. `restoredRef` guards against React 18 StrictMode's double-
+  // invoke of effects in dev: the ref is set synchronously before the first
+  // await, so a second invocation of this same effect (same component
+  // instance, refs persist across it) returns immediately instead of firing
+  // a second workspace_get / hydrate / mirroring-enable.
+  //
+  // Chosen behavior for a "slow disk" race (snapshot resolves AFTER the user
+  // has already clicked around while mirroring was still suppressed): hydrate
+  // wins and clobbers whatever the user did. workspace_get is a local file
+  // read the backend caches after the first call, so the realistic window is
+  // milliseconds at app boot, and merging "whatever the user did in that
+  // window" with a persisted snapshot is a lot of complexity for an edge case
+  // this narrow — losing a few clicks from before the very first paint has
+  // settled is an acceptable trade for a wholesale, easy-to-reason-about
+  // restore.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    (async () => {
+      try {
+        const ws = await workspaceGet();
+        if (ws && Array.isArray(ws.tabs) && ws.tabs.length > 0) {
+          const snapshot = toDisconnectedSnapshot(ws);
+          setTabs(snapshot.tabs as QueryTab[]);
+          for (const [tabId, state] of snapshot.builderStates) {
+            tabBuilderStateCache.current.set(tabId, state as BuilderState);
+          }
+          const profileNames = new Map<string, string>();
+          for (const t of ws.tabs) {
+            if (t.profileId) profileNames.set(t.profileId, t.profileName || t.profileId);
+          }
+          setRestoredProfileNames(profileNames);
+          // `hydrate` is a frontend-only reducer action — there is no backend
+          // op for "replace my whole layout". Dispatched via raw
+          // `dispatchLayout`, bypassing `dispatchWorkspace`'s mirror-to-
+          // backend choke point entirely, so this restore is never echoed
+          // back to workspace_apply as a stream of synthetic ops (mirroring
+          // is still disabled here regardless — see mirroringEnabledRef's
+          // init above — but the direct dispatch documents the exception
+          // even once mirroring flips on below).
+          dispatchLayout({ type: 'hydrate', layout: snapshot.layout });
+        }
+        // No snapshot (or an empty one): the default Quick Start state from
+        // this component's initializers stands as-is.
+      } catch {
+        // workspace_get failing (corrupt file, IO error) is not fatal —
+        // fall back to the default Quick Start state exactly as if there
+        // were no snapshot at all.
+      } finally {
+        mirroringEnabledRef.current = true;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleQuickConnect = async (profile: ConnectionProfile): Promise<string | null> => {
     const existing = activeConnections.find(
@@ -1740,6 +1826,77 @@ function Workspace() {
     }
   };
 
+  // Reconnect flow for a ReconnectBanner (Phase 2 Task 6). One click revives
+  // EVERY restored tab for this profile — not just the tab whose banner was
+  // clicked — since they share the same `profile:<profileId>` prefix and the
+  // same underlying connection.
+  const handleReconnectProfile = async (profileId: string, profileName: string) => {
+    if (reconnectState.get(profileId)?.busy) return; // a reconnect for this profile is already in flight
+    patchReconnectState(profileId, { busy: true, error: null });
+    try {
+      const profiles = await invoke<ConnectionProfile[]>('load_connection_profiles');
+      const profile = profiles.find((p) => p.id === profileId);
+      if (!profile) {
+        patchReconnectState(profileId, { busy: false, error: 'Connection profile no longer exists' });
+        return;
+      }
+
+      const newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
+      addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined);
+
+      // Captured before any state updates below — `tabs`/`layout` in this
+      // closure still reflect the profile: id space this reconnect started
+      // from, which is exactly what rebindConnection/oldTabsSnapshot need.
+      const oldPrefix = `profile:${profileId}`;
+      const pairs = rebindConnection(oldPrefix, newId, allTabIds(layout));
+      const idMap = new Map(pairs.map((p) => [p.oldId, p.newId]));
+      const oldTabsSnapshot = tabs;
+      const activeOldIds = new Set(
+        allPanes(layout.root)
+          .map((p) => p.activeTabId)
+          .filter((id): id is string => !!id)
+      );
+
+      if (pairs.length > 0) {
+        setTabs((prev) =>
+          prev.map((t) => {
+            const renamedId = idMap.get(t.id);
+            return renamedId ? { ...t, id: renamedId, connectionId: newId } : t;
+          })
+        );
+        // Dispatched straight to the layout reducer via `dispatchLayout`,
+        // bypassing `dispatchWorkspace`'s mirror entirely — NOT a `mirror:
+        // false` option on dispatchWorkspace, a raw dispatch, same exception
+        // as hydrate above. The backend store must stay in `profile:<id>` id
+        // space (see persistence.ts's Global Constraint note): that's what
+        // the NEXT restart needs to restore from. Mirroring these renames
+        // would leave the backend holding this session's live connection id,
+        // which is worthless the moment the app closes.
+        pairs.forEach(({ oldId, newId: renamedId }) =>
+          dispatchLayout({ type: 'rename_tab', oldId, newId: renamedId })
+        );
+      }
+
+      patchReconnectState(profileId, { busy: false, error: null });
+
+      // Eagerly reload every revived collection tab's last query/aggregate so
+      // the grid isn't left empty post-reconnect (index/shell/etc. tabs have
+      // no query to re-run). Sequential, not Promise.all — a burst of
+      // concurrent queries against a connection that just finished dialing is
+      // unfriendly; whichever tab was visible (its pane's active tab) before
+      // the reconnect goes first, since that's what the user is looking at.
+      const revived = oldTabsSnapshot
+        .filter((t) => idMap.has(t.id) && t.type === 'collection')
+        .map((t) => ({ oldId: t.id, tab: { ...t, id: idMap.get(t.id)!, connectionId: newId } }));
+      revived.sort((a, b) => Number(activeOldIds.has(b.oldId)) - Number(activeOldIds.has(a.oldId)));
+      for (const { tab } of revived) {
+        await refreshTabResults(tab);
+      }
+    } catch (err: any) {
+      patchReconnectState(profileId, { busy: false, error: err?.message || String(err) });
+    }
+  };
+
   // When a tracked import task (started from the Import tab) is observed
   // completed by the task poll, refresh the matching open collection tab so
   // newly-imported documents show up without a manual re-run.
@@ -2134,6 +2291,26 @@ function Workspace() {
   const renderTabContent = (tabId: string): React.ReactNode => {
     const tab = tabs.find(t => t.id === tabId);
     if (!tab) return null;
+    // A restored-but-not-yet-reconnected tab (see the session-restore effect
+    // above) still carries its `profile:<profileId>` connectionId — render
+    // the Reconnect banner INSTEAD of the tab's normal content, for every
+    // tab type (collection, index, shell, ...), checked before the type
+    // switch below so no branch there ever sees a `profile:` connectionId.
+    if (tab.connectionId.startsWith('profile:')) {
+      const profileId = tab.connectionId.slice('profile:'.length);
+      const profileName = restoredProfileNames.get(profileId) || profileId;
+      const namespace = [tab.db, tab.collection, tab.indexName].filter(Boolean).join('.');
+      const state = reconnectState.get(profileId);
+      return (
+        <ReconnectBanner
+          profileName={profileName}
+          namespace={namespace}
+          busy={!!state?.busy}
+          error={state?.error ?? null}
+          onReconnect={() => handleReconnectProfile(profileId, profileName)}
+        />
+      );
+    }
     return (
       <>
         {tab.type === 'index' && (

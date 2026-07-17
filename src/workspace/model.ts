@@ -37,7 +37,12 @@ export type WorkspaceAction =
   | { type: 'resize_split'; splitId: string; ratio: number }
   | { type: 'set_active'; paneId: string; tabId: string }
   | { type: 'focus_pane'; paneId: string }
-  | { type: 'rename_tab'; oldId: string; newId: string };
+  | { type: 'rename_tab'; oldId: string; newId: string }
+  // Frontend-only: replaces the whole layout wholesale (Phase 2 Task 6 restore-
+  // on-boot). There is no backend `workspace_apply` op for this — App.tsx MUST
+  // dispatch it via raw `dispatchLayout`, never through the mirrored
+  // `dispatchWorkspace` choke point (see App.tsx's restore effect for why).
+  | { type: 'hydrate'; layout: WorkspaceLayout };
 
 const MIN_RATIO = 0.15;
 const MAX_RATIO = 0.85;
@@ -268,5 +273,15 @@ export function workspaceReducer(layout: WorkspaceLayout, action: WorkspaceActio
       }));
       return { ...layout, root };
     }
+
+    case 'hydrate':
+      // Seed the id counters past whatever the incoming layout already
+      // contains, same as loading a fixture — otherwise the next split_pane/
+      // open_tab after a restore could mint a `pane-1`/`split-1` that
+      // collides with an id already in the restored tree. Safe to call every
+      // time hydrate fires (including a StrictMode double-invoke): the
+      // module counters only ever move forward via Math.max.
+      seedLayoutIds(action.layout);
+      return action.layout;
   }
 }

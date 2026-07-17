@@ -212,6 +212,29 @@ describe('seedLayoutIds', () => {
   });
 });
 
+describe('hydrate', () => {
+  it('replaces the layout wholesale', () => {
+    const incoming: WorkspaceLayout = {
+      focusedPaneId: 'pane-7',
+      root: { kind: 'pane', id: 'pane-7', tabIds: ['a', 'b'], activeTabId: 'a' },
+    };
+    const l = workspaceReducer(layoutWith('placeholder'), { type: 'hydrate', layout: incoming });
+    expect(l).toEqual(incoming);
+  });
+
+  it('seeds id counters from the incoming layout so a later split does not collide', () => {
+    const incoming: WorkspaceLayout = {
+      focusedPaneId: 'pane-7',
+      root: { kind: 'pane', id: 'pane-7', tabIds: ['a', 'b'], activeTabId: 'a' },
+    };
+    let l = workspaceReducer(layoutWith('placeholder'), { type: 'hydrate', layout: incoming });
+    l = workspaceReducer(l, { type: 'split_pane', paneId: 'pane-7', dir: 'row', side: 'end', moveTabId: 'b' });
+    const paneIds = allPanes(l.root).map(p => p.id);
+    expect(paneIds).toContain('pane-8'); // seeded past the incoming pane-7
+    expect(paneIds).not.toContain('pane-1'); // would collide with the pre-hydrate counter state
+  });
+});
+
 describe('robustness', () => {
   it('unknown ids are no-ops returning the same reference', () => {
     const l = layoutWith('a');
