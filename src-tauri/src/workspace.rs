@@ -2,9 +2,13 @@
 //! document. This module owns the data model and best-effort file IO only —
 //! the reducer (`apply`) and Tauri commands land in later tasks.
 
+use crate::state::{AppState, LockExt};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::Duration;
 
 /// One open query tab. `profile_id` identifies a saved connection profile,
 /// NEVER a live session connectionId — tabs must survive reconnects.
@@ -664,7 +668,6 @@ pub fn apply(ws: &mut Workspace, op: WorkspaceOp) {
 
 /// Load the workspace document. A missing or corrupt file yields `None` —
 /// persistence must never block startup — mirroring queries.rs:83-84.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 pub fn load_from_file(path: &Path) -> Option<Workspace> {
     fs::read_to_string(path)
         .ok()
@@ -673,7 +676,6 @@ pub fn load_from_file(path: &Path) -> Option<Workspace> {
 
 /// Save the workspace document, pretty-printed. Errors are stringified so
 /// callers (Tauri commands) can surface them without leaking IO types.
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 pub fn save_to_file(path: &Path, ws: &Workspace) -> Result<(), String> {
     let content = serde_json::to_string_pretty(ws)
         .map_err(|e| format!("Failed to serialize workspace: {}", e))?;
@@ -682,7 +684,6 @@ pub fn save_to_file(path: &Path, ws: &Workspace) -> Result<(), String> {
 
 /// Where workspace.json lives, mirroring `queries::get_queries_path`
 /// (queries.rs:72-81).
-#[allow(dead_code)] // wired up by Task 4's Tauri commands
 fn workspace_path(app_handle: &tauri::AppHandle) -> PathBuf {
     use tauri::Manager;
     match app_handle.path().app_config_dir() {
@@ -693,6 +694,104 @@ fn workspace_path(app_handle: &tauri::AppHandle) -> PathBuf {
         }
         Err(_) => PathBuf::from("workspace.json"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Store commands — in-memory cache of the workspace document plus a
+// debounced, single-flight save. `get_impl`/`apply_impl` take `&AppState`
+// and a plain `&Path` (rather than an `AppHandle`) so they're testable with
+// temp-dir paths and no live Tauri app; `workspace_get`/`workspace_apply`
+// are thin `#[tauri::command]` wrappers that resolve the real
+// `workspace_path()` and delegate, mirroring the connect_db/connect_db_impl
+// idiom in lib.rs.
+// ---------------------------------------------------------------------------
+
+/// Return the in-memory workspace, populating it from `path` on first call.
+/// "First-get-loads-file-once": once `state.workspace` holds a value (even
+/// `None` was never stored — only `Some` counts as populated), later calls
+/// return the cached copy and never re-read the file, so an external edit to
+/// the file after the first call has no effect on subsequent gets.
+pub fn get_impl(state: &AppState, path: &Path) -> Result<Option<Workspace>, String> {
+    let mut guard = state.workspace.lock_safe()?;
+    if guard.is_none() {
+        *guard = load_from_file(path);
+    }
+    Ok(guard.clone())
+}
+
+/// True if `own_gen` is still the most recently minted write generation —
+/// i.e. no later `apply_impl` call has superseded this debounced save since
+/// it was scheduled. Pulled out as a pure function so the single-flight
+/// decision is unit-testable without spinning up a tokio runtime.
+fn should_write(current_gen: u64, own_gen: u64) -> bool {
+    current_gen == own_gen
+}
+
+/// Apply one op to the in-memory workspace — initializing it (and its
+/// default `main` window) on first use — and, if anything actually changed,
+/// schedule a debounced save.
+///
+/// Single-flight, last-writer-wins: every real change mints a new
+/// generation via `state.workspace_write_gen.fetch_add`, *inside* the same
+/// critical section that mutated the workspace, so generation order matches
+/// mutation order even under concurrent callers. The spawned task sleeps
+/// 500ms then only writes if its captured generation still equals the
+/// current one; a burst of N changes therefore mints N generations but at
+/// most one of the N spawned tasks ever finds its generation still current,
+/// so at most one write hits disk. That surviving task writes a snapshot
+/// cloned synchronously right after its own mutation (while the lock was
+/// still held) rather than re-locking after the sleep — the two are
+/// provably equivalent here: if its generation still compares equal after
+/// the sleep, no later `apply_impl` call has run (that would have minted a
+/// higher generation), so the workspace cannot have changed since the
+/// snapshot was taken.
+///
+/// The `std::sync::MutexGuard` above is dropped before this function ever
+/// spawns or awaits anything — required for correctness, since a std guard
+/// is `!Send` and cannot cross an `.await` point.
+pub fn apply_impl(state: &AppState, path: &Path, op: WorkspaceOp) -> Result<(), String> {
+    let scheduled: Option<(Workspace, u64)> = {
+        let mut guard = state.workspace.lock_safe()?;
+        let ws = guard.get_or_insert_with(Workspace::default);
+        let before_revision = ws.revision;
+        apply(ws, op);
+        if ws.revision != before_revision {
+            let gen = state.workspace_write_gen.fetch_add(1, Ordering::SeqCst) + 1;
+            Some((ws.clone(), gen))
+        } else {
+            None
+        }
+    }; // guard dropped here, before any spawn/await.
+
+    if let Some((snapshot, gen)) = scheduled {
+        let gen_counter = Arc::clone(&state.workspace_write_gen);
+        let path_owned = path.to_path_buf();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if should_write(gen_counter.load(Ordering::SeqCst), gen) {
+                let _ = save_to_file(&path_owned, &snapshot);
+            }
+        });
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn workspace_get(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<Workspace>, String> {
+    get_impl(&state, &workspace_path(&app_handle))
+}
+
+#[tauri::command]
+pub async fn workspace_apply(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    op: WorkspaceOp,
+) -> Result<(), String> {
+    apply_impl(&state, &workspace_path(&app_handle), op)
 }
 
 #[cfg(test)]
@@ -1263,5 +1362,152 @@ mod golden {
             }
             assert_eq!(ws, vector.expected, "golden vector `{}` diverged", vector.name);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Store command tests — impl-level (bypass the Tauri command wrappers, no
+// `AppHandle`), per the Task 4 brief. A sibling of `mod tests`/`mod golden`
+// so `cargo test workspace::store` targets this module directly.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod store {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    /// A fresh, unique-per-test path under the OS temp dir. Removes any
+    /// leftover file from a prior run so each test starts from a clean disk
+    /// state; distinct filenames keep parallel test threads from colliding.
+    fn tmp_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("mqlens-ws-store-tests");
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        let _ = fs::remove_file(&p);
+        p
+    }
+
+    fn sample_ws() -> Workspace {
+        Workspace {
+            revision: 5,
+            windows: vec![WindowModel {
+                id: "main".into(),
+                focused_pane_id: "pane-1".into(),
+                split_tree: LayoutNode::Pane {
+                    id: "pane-1".into(),
+                    tab_ids: vec!["a".into()],
+                    active_tab_id: Some("a".into()),
+                },
+            }],
+            tabs: vec![],
+        }
+    }
+
+    #[test]
+    fn workspace_get_loads_file_once() {
+        let path = tmp_path("get-loads-once.json");
+        let on_disk = sample_ws();
+        save_to_file(&path, &on_disk).unwrap();
+
+        let state = AppState::new();
+        let first = get_impl(&state, &path).unwrap();
+        assert_eq!(first, Some(on_disk.clone()));
+
+        // Mutate the file on disk after the first load.
+        let mut mutated = on_disk.clone();
+        mutated.revision = 999;
+        save_to_file(&path, &mutated).unwrap();
+
+        let second = get_impl(&state, &path).unwrap();
+        assert_eq!(
+            second, first,
+            "second call must return the cached in-memory copy, not re-read the mutated file"
+        );
+    }
+
+    #[test]
+    fn apply_initializes_default_main_window() {
+        let state = AppState::new();
+        let path = tmp_path("apply-init.json");
+        assert!(state.workspace.lock_safe().unwrap().is_none(), "precondition: no workspace loaded yet");
+
+        apply_impl(&state, &path, WorkspaceOp::FocusPane { pane_id: "pane-1".into() }).unwrap();
+
+        let ws = state.workspace.lock_safe().unwrap().clone().unwrap();
+        assert_eq!(ws.windows.len(), 1);
+        let win = &ws.windows[0];
+        assert_eq!(win.id, "main");
+        assert_eq!(win.focused_pane_id, "pane-1");
+        assert_eq!(
+            win.split_tree,
+            LayoutNode::Pane { id: "pane-1".into(), tab_ids: vec![], active_tab_id: None }
+        );
+    }
+
+    #[test]
+    fn apply_noop_does_not_schedule_write() {
+        let state = AppState::new();
+        let path = tmp_path("apply-noop.json");
+
+        // Unknown tab id on a freshly-initialized (empty) window: the
+        // reducer returns the same layout and the tabs[] retain is a no-op,
+        // so `apply`'s revision never bumps (see
+        // `unknown_ids_are_noops_without_revision_bump` in `mod tests`).
+        apply_impl(&state, &path, WorkspaceOp::CloseTab { tab_id: "nope".into() }).unwrap();
+
+        assert_eq!(
+            state.workspace_write_gen.load(Ordering::SeqCst),
+            0,
+            "a true no-op must not mint a write generation or schedule a save"
+        );
+    }
+
+    #[test]
+    fn should_write_only_when_generation_is_still_current() {
+        assert!(should_write(1, 1));
+        assert!(should_write(0, 0));
+        assert!(!should_write(2, 1), "an earlier generation was superseded by a later apply");
+        assert!(!should_write(1, 2), "a not-yet-minted generation can never be current");
+    }
+
+    // Exercises the real spawn/sleep path. `tauri::async_runtime::spawn`
+    // lazily starts its own dedicated background Tokio runtime the first
+    // time it's called (tauri-2.11.2's `async_runtime::default_runtime`),
+    // independent of whatever runtime is driving this test — so it works
+    // the same whether called from a plain `#[test]` or, as here, from a
+    // `#[tokio::test]` (used only so this test can `.await` its own sleep
+    // while polling for the debounced write to land). Existing precedent
+    // for `#[tokio::test]` + `tokio::time::sleep` polling a background
+    // mutation: `toolsetup.rs`'s `wait_for_task_done`, `tests.rs`.
+    #[tokio::test]
+    async fn apply_debounces_a_burst_into_a_single_final_write() {
+        let state = AppState::new();
+        let path = tmp_path("debounce-burst.json");
+
+        for i in 0..10 {
+            apply_impl(&state, &path, WorkspaceOp::OpenTab { tab_id: format!("t{i}"), pane_id: None, tab: None })
+                .unwrap();
+        }
+
+        // 10 distinct real changes mint 10 generations; only the last
+        // scheduled task can ever find its generation still current, so at
+        // most 1 of the 10 debounced writes actually lands (see
+        // `should_write_only_when_generation_is_still_current` for the
+        // pure-function proof of that invalidation). None of them have
+        // fired yet — they all sleep 500ms before checking.
+        assert_eq!(state.workspace_write_gen.load(Ordering::SeqCst), 10);
+        assert!(!path.exists(), "must not write before the debounce window elapses");
+
+        tokio::time::sleep(Duration::from_millis(700)).await;
+
+        let saved = load_from_file(&path).expect("the last-scheduled write must have landed by now");
+        let in_memory = state.workspace.lock_safe().unwrap().clone().unwrap();
+        assert_eq!(
+            saved, in_memory,
+            "the surviving write must reflect the fully-applied burst, not a stale intermediate snapshot"
+        );
+        let LayoutNode::Pane { tab_ids, .. } = &saved.windows[0].split_tree else {
+            panic!("expected a pane, got a split");
+        };
+        assert_eq!(tab_ids.len(), 10);
     }
 }

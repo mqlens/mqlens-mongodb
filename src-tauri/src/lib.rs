@@ -1951,6 +1951,8 @@ pub fn run() {
             queries::record_history,
             queries::set_default_query,
             queries::list_all_saved_queries,
+            workspace::workspace_get,
+            workspace::workspace_apply,
             server_status,
             current_ops,
             repl_set_status,

@@ -1,9 +1,9 @@
 //! Shared application state and a poison-safe mutex helper.
 
-use crate::{ssh_tunnel, IndexInfo, MongoshSession, TaskInfo};
+use crate::{ssh_tunnel, workspace, IndexInfo, MongoshSession, TaskInfo};
 use mongodb::Client;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -38,6 +38,15 @@ pub struct AppState {
     /// connection id, for tools that need to hand a URI to an external
     /// process (mongodump/mongorestore). Never populated for mock connections.
     pub conn_uris: Mutex<HashMap<String, String>>,
+    /// In-memory cache of the workspace.json document. `None` until the
+    /// first `workspace_get`/`workspace_apply` call populates it (see
+    /// `workspace::get_impl`/`workspace::apply_impl`).
+    pub workspace: Mutex<Option<workspace::Workspace>>,
+    /// Monotonic generation counter for debounced workspace saves —
+    /// `workspace::apply_impl` mints a new generation per real change; a
+    /// spawned save only writes if its captured generation is still current,
+    /// collapsing bursts of changes into a single-flight write.
+    pub workspace_write_gen: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -55,6 +64,8 @@ impl AppState {
             resource_tree_at: Mutex::new(Instant::now()),
             vault_key: Mutex::new(None),
             conn_uris: Mutex::new(HashMap::new()),
+            workspace: Mutex::new(None),
+            workspace_write_gen: Arc::new(AtomicU64::new(0)),
         }
     }
 
