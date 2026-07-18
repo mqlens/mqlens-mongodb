@@ -117,6 +117,31 @@ fn default_window_id() -> String {
     "main".to_string()
 }
 
+/// The `workspace-changed` broadcast payload — emitted to every window
+/// (Phase 3 Task 3) whenever `workspace_apply` actually changes state.
+/// `origin` is the calling window's label (so a window can ignore its own
+/// echo); `cross_window` flags the three ops whose effect spans more than
+/// one window (`MoveTabToWindow`, `DetachTab`, `WindowClosed`) so a listener
+/// can decide whether a narrower, single-window repaint suffices.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceChangedPayload {
+    pub revision: u64,
+    pub origin: String,
+    pub cross_window: bool,
+    pub workspace: Workspace,
+}
+
+/// True for the three window-lifecycle ops (see the module DESIGN RULE and
+/// `apply`'s doc comment) — the only ops whose effect can be visible in more
+/// than one window's layout tree at once.
+fn op_is_cross_window(op: &WorkspaceOp) -> bool {
+    matches!(
+        op,
+        WorkspaceOp::MoveTabToWindow { .. } | WorkspaceOp::DetachTab { .. } | WorkspaceOp::WindowClosed { .. }
+    )
+}
+
 /// A single workspace mutation. The `type` discriminator is snake_case to
 /// match the frontend reducer's action `type` strings exactly (e.g.
 /// `split_pane`, `update_tab_state`).
@@ -1179,9 +1204,26 @@ fn should_write(current_gen: u64, own_gen: u64) -> bool {
     current_gen == own_gen
 }
 
+/// Apply one op to `ws` and describe the result — `Some(payload)` iff the op
+/// actually changed state, `None` for a no-op. Pure (no `AppState`, no
+/// `AppHandle`, no IO): this is what makes the `workspace-changed` emit
+/// decision unit-testable on its own, independent of the store's
+/// lock/debounced-save plumbing in `apply_impl` and the `AppHandle`-only
+/// `.emit()` call in the `workspace_apply` command wrapper.
+fn apply_and_describe(ws: &mut Workspace, op: WorkspaceOp, origin: String) -> Option<WorkspaceChangedPayload> {
+    let cross_window = op_is_cross_window(&op);
+    let before_revision = ws.revision;
+    apply(ws, op);
+    if ws.revision == before_revision {
+        return None;
+    }
+    Some(WorkspaceChangedPayload { revision: ws.revision, origin, cross_window, workspace: ws.clone() })
+}
+
 /// Apply one op to the in-memory workspace — initializing it (and its
 /// default `main` window) on first use — and, if anything actually changed,
-/// schedule a debounced save.
+/// schedule a debounced save and return a `workspace-changed` payload for
+/// the caller (the `workspace_apply` command) to broadcast.
 ///
 /// Single-flight, last-writer-wins: every real change mints a new
 /// generation via `state.workspace_write_gen.fetch_add`, *inside* the same
@@ -1201,18 +1243,21 @@ fn should_write(current_gen: u64, own_gen: u64) -> bool {
 /// The `std::sync::MutexGuard` above is dropped before this function ever
 /// spawns or awaits anything — required for correctness, since a std guard
 /// is `!Send` and cannot cross an `.await` point.
-pub fn apply_impl(state: &AppState, path: &Path, op: WorkspaceOp) -> Result<(), String> {
-    let scheduled: Option<(Workspace, u64)> = {
+pub fn apply_impl(
+    state: &AppState,
+    path: &Path,
+    op: WorkspaceOp,
+    origin: String,
+) -> Result<Option<WorkspaceChangedPayload>, String> {
+    let (payload, scheduled): (Option<WorkspaceChangedPayload>, Option<(Workspace, u64)>) = {
         let mut guard = state.workspace.lock_safe()?;
         let ws = guard.get_or_insert_with(Workspace::default);
-        let before_revision = ws.revision;
-        apply(ws, op);
-        if ws.revision != before_revision {
+        let payload = apply_and_describe(ws, op, origin);
+        let scheduled = payload.as_ref().map(|p| {
             let gen = state.workspace_write_gen.fetch_add(1, Ordering::SeqCst) + 1;
-            Some((ws.clone(), gen))
-        } else {
-            None
-        }
+            (p.workspace.clone(), gen)
+        });
+        (payload, scheduled)
     }; // guard dropped here, before any spawn/await.
 
     if let Some((snapshot, gen)) = scheduled {
@@ -1226,7 +1271,7 @@ pub fn apply_impl(state: &AppState, path: &Path, op: WorkspaceOp) -> Result<(), 
         });
     }
 
-    Ok(())
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -1237,13 +1282,36 @@ pub async fn workspace_get(
     get_impl(&state, &workspace_path(&app_handle))
 }
 
+/// Origin defaults to `"main"` when the frontend caller omits it. `origin`
+/// can't be a plain `String` command parameter with a `#[serde(default)]`
+/// fallback the way `WorkspaceOp`'s struct fields are — Tauri's `CommandArg`
+/// deserializer errors on a genuinely missing key unless the parameter type
+/// is `Option<T>` (a missing key deserializes to `None`; see
+/// `tauri::ipc::command::CommandItem::deserialize_option`). So the wire
+/// parameter is `Option<String>`, defaulted here — existing callers that
+/// don't yet send `origin` (Task 4 wires the frontend) keep working exactly
+/// as `#[serde(default = "default_window_id")]` does for `WorkspaceOp`.
+fn default_origin() -> String {
+    "main".to_string()
+}
+
 #[tauri::command]
 pub async fn workspace_apply(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     op: WorkspaceOp,
+    origin: Option<String>,
 ) -> Result<(), String> {
-    apply_impl(&state, &workspace_path(&app_handle), op)
+    use tauri::Emitter;
+    let origin = origin.unwrap_or_else(default_origin);
+    let payload = apply_impl(&state, &workspace_path(&app_handle), op, origin)?;
+    if let Some(payload) = payload {
+        // Broadcast is best-effort: a window that misses this event
+        // re-syncs its workspace via `workspace_get` on its next boot, so a
+        // dropped emit (e.g. no windows currently listening) is never fatal.
+        let _ = app_handle.emit("workspace-changed", payload);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2737,7 +2805,7 @@ mod store {
         let path = tmp_path("apply-init.json");
         assert!(state.workspace.lock_safe().unwrap().is_none(), "precondition: no workspace loaded yet");
 
-        apply_impl(&state, &path, WorkspaceOp::FocusPane { pane_id: "pane-1".into(), window_id: "main".into() }).unwrap();
+        apply_impl(&state, &path, WorkspaceOp::FocusPane { pane_id: "pane-1".into(), window_id: "main".into() }, "main".into()).unwrap();
 
         let ws = state.workspace.lock_safe().unwrap().clone().unwrap();
         assert_eq!(ws.windows.len(), 1);
@@ -2759,7 +2827,7 @@ mod store {
         // reducer returns the same layout and the tabs[] retain is a no-op,
         // so `apply`'s revision never bumps (see
         // `unknown_ids_are_noops_without_revision_bump` in `mod tests`).
-        apply_impl(&state, &path, WorkspaceOp::CloseTab { tab_id: "nope".into(), window_id: "main".into() }).unwrap();
+        apply_impl(&state, &path, WorkspaceOp::CloseTab { tab_id: "nope".into(), window_id: "main".into() }, "main".into()).unwrap();
 
         assert_eq!(
             state.workspace_write_gen.load(Ordering::SeqCst),
@@ -2795,6 +2863,7 @@ mod store {
                 &state,
                 &path,
                 WorkspaceOp::OpenTab { tab_id: format!("t{i}"), pane_id: None, tab: None, window_id: "main".into() },
+                "main".into(),
             )
             .unwrap();
         }
@@ -2820,5 +2889,155 @@ mod store {
             panic!("expected a pane, got a split");
         };
         assert_eq!(tab_ids.len(), 10);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `workspace-changed` broadcast tests (Phase 3 Task 3) — pure, no AppState
+// and no AppHandle: `apply_and_describe` is exercised directly, matching the
+// module's precedent (`mod golden`, `mod store`) of a sibling module per
+// concern so `cargo test workspace::broadcast` targets just these.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod broadcast {
+    use super::*;
+
+    fn single_window_ws(tab_ids: &[&str]) -> Workspace {
+        let ids: Vec<String> = tab_ids.iter().map(|s| s.to_string()).collect();
+        let active = ids.first().cloned();
+        Workspace {
+            revision: 0,
+            windows: vec![WindowModel {
+                id: "main".into(),
+                focused_pane_id: "pane-1".into(),
+                split_tree: LayoutNode::Pane { id: "pane-1".into(), tab_ids: ids, active_tab_id: active },
+            }],
+            tabs: vec![],
+        }
+    }
+
+    /// A `"main"` window holding tab `"a"` plus a secondary `"win-1"`
+    /// window holding tab `"b"` — the minimal shape every cross-window op
+    /// test below needs a source and target window for.
+    fn two_window_ws() -> Workspace {
+        Workspace {
+            revision: 0,
+            windows: vec![
+                WindowModel {
+                    id: "main".into(),
+                    focused_pane_id: "pane-1".into(),
+                    split_tree: LayoutNode::Pane { id: "pane-1".into(), tab_ids: vec!["a".into()], active_tab_id: Some("a".into()) },
+                },
+                WindowModel {
+                    id: "win-1".into(),
+                    focused_pane_id: "pane-1".into(),
+                    split_tree: LayoutNode::Pane { id: "pane-1".into(), tab_ids: vec!["b".into()], active_tab_id: Some("b".into()) },
+                },
+            ],
+            tabs: vec![],
+        }
+    }
+
+    #[test]
+    fn changing_op_returns_some_with_correct_revision_and_origin() {
+        let mut ws = single_window_ws(&["a"]);
+        let payload = apply_and_describe(
+            &mut ws,
+            WorkspaceOp::OpenTab { tab_id: "b".into(), pane_id: None, tab: None, window_id: "main".into() },
+            "win-2".into(),
+        )
+        .expect("opening a new tab changes state");
+
+        assert_eq!(payload.revision, 1);
+        assert_eq!(payload.revision, ws.revision, "payload revision must match the mutated workspace");
+        assert_eq!(payload.origin, "win-2");
+        assert!(!payload.cross_window, "OpenTab is not a window-lifecycle op");
+        assert_eq!(payload.workspace, ws, "payload must carry the fully-applied workspace, not a stale snapshot");
+    }
+
+    #[test]
+    fn noop_returns_none() {
+        let mut ws = single_window_ws(&["a"]);
+        let before = ws.clone();
+        let payload = apply_and_describe(
+            &mut ws,
+            WorkspaceOp::CloseTab { tab_id: "does-not-exist".into(), window_id: "main".into() },
+            "main".into(),
+        );
+        assert_eq!(payload, None);
+        assert_eq!(ws, before, "a no-op must never mutate the workspace");
+    }
+
+    #[test]
+    fn cross_window_is_true_for_move_tab_to_window() {
+        let mut ws = two_window_ws();
+        let payload = apply_and_describe(
+            &mut ws,
+            WorkspaceOp::MoveTabToWindow { tab_id: "a".into(), target_window_id: "win-1".into(), target_pane_id: None },
+            "main".into(),
+        )
+        .expect("moving an existing tab into another window changes state");
+        assert!(payload.cross_window);
+    }
+
+    #[test]
+    fn cross_window_is_true_for_detach_tab() {
+        let mut ws = two_window_ws();
+        let payload = apply_and_describe(&mut ws, WorkspaceOp::DetachTab { tab_id: "a".into() }, "main".into())
+            .expect("detaching a tab out of a multi-tab window changes state");
+        assert!(payload.cross_window);
+    }
+
+    #[test]
+    fn cross_window_is_true_for_window_closed() {
+        let mut ws = two_window_ws();
+        let payload = apply_and_describe(&mut ws, WorkspaceOp::WindowClosed { window_id: "win-1".into() }, "main".into())
+            .expect("closing a known non-main window changes state");
+        assert!(payload.cross_window);
+    }
+
+    #[test]
+    fn cross_window_is_false_for_every_non_lifecycle_op() {
+        // A representative spread of the non-cross-window `WorkspaceOp`
+        // shapes (layout ops and the tabs-only `UpdateTabState`), each set
+        // up to actually change state so `apply_and_describe` returns
+        // `Some` — every one of them must come back `cross_window: false`.
+        let cases: Vec<(&str, WorkspaceOp)> = vec![
+            ("open_tab", WorkspaceOp::OpenTab { tab_id: "b".into(), pane_id: None, tab: None, window_id: "main".into() }),
+            ("close_tab", WorkspaceOp::CloseTab { tab_id: "a".into(), window_id: "main".into() }),
+            ("close_many", WorkspaceOp::CloseMany { tab_ids: vec!["a".into()], window_id: "main".into() }),
+            (
+                "split_pane",
+                WorkspaceOp::SplitPane { pane_id: "pane-1".into(), dir: "row".into(), side: "end".into(), move_tab_id: None, window_id: "main".into() },
+            ),
+            ("rename_tab", WorkspaceOp::RenameTab { old_id: "a".into(), new_id: "z".into(), window_id: "main".into() }),
+            (
+                "update_tab_state",
+                WorkspaceOp::UpdateTabState {
+                    tab_id: "a".into(),
+                    last_query: Some(Some(serde_json::json!({"x": 1}))),
+                    last_aggregate: None,
+                    builder_state: None,
+                },
+            ),
+        ];
+        for (name, op) in cases {
+            let mut ws = single_window_ws(&["a"]);
+            ws.tabs.push(TabModel {
+                id: "a".into(),
+                tab_type: "collection".into(),
+                profile_id: "p1".into(),
+                profile_name: "p1".into(),
+                db: "db".into(),
+                collection: "coll".into(),
+                index_name: None,
+                last_query: None,
+                last_aggregate: None,
+                builder_state: None,
+            });
+            let payload = apply_and_describe(&mut ws, op, "main".into());
+            let payload = payload.unwrap_or_else(|| panic!("`{name}` was expected to change state"));
+            assert!(!payload.cross_window, "`{name}` must not be flagged cross-window");
+        }
     }
 }
