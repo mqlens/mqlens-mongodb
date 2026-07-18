@@ -29,6 +29,10 @@ interface WorkspaceTabBarProps {
   onTabDragStart?: (id: string, e: React.DragEvent) => void;
   /** Drop on the tab strip itself = move-to-end of this pane. */
   onTabStripDrop?: (e: React.DragEvent) => void;
+  /** Right-click on a tab (Phase 3 Task 5's detach/move context menu).
+   *  Additive/optional — omitting it leaves right-click as a no-op, same as
+   *  before this prop existed. */
+  onTabContextMenu?: (id: string, e: React.MouseEvent) => void;
 }
 
 export function WorkspaceTabBar({
@@ -39,6 +43,7 @@ export function WorkspaceTabBar({
   draggable,
   onTabDragStart,
   onTabStripDrop,
+  onTabContextMenu,
 }: WorkspaceTabBarProps) {
   return (
     <TooltipProvider delayDuration={400}>
@@ -74,6 +79,11 @@ export function WorkspaceTabBar({
                   onClick={() => onSelectTab(tab.id)}
                   draggable={draggable}
                   onDragStart={(e) => onTabDragStart?.(tab.id, e)}
+                  onContextMenu={(e) => {
+                    if (!onTabContextMenu) return;
+                    e.preventDefault();
+                    onTabContextMenu(tab.id, e);
+                  }}
                 >
                   <span className="shrink-0">{tab.icon}</span>
                   <span className="truncate font-medium">{tab.label}</span>

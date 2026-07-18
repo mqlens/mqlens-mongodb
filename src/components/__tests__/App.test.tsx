@@ -2692,4 +2692,159 @@ describe('App Component', () => {
       expect(calls.some((c) => c.cmd === 'connect_db')).toBe(false);
     });
   });
+
+  describe('tab context menu — detach/move (Phase 3 Task 5)', () => {
+    // Seeds lastWorkspaceRef with a second open window (win-1, active tab
+    // "orders") via a workspace-changed event — the same seeding technique
+    // Task 4's reconciliation tests use. `crossWindow: false` is deliberate:
+    // per the bystander fix, a non-crossWindow event still updates
+    // lastWorkspaceRef (only the hydrate/diff is skipped), and updating the
+    // ref is all this describe block's context-menu items read from.
+    async function seedForeignWindow() {
+      const { act } = await import('@testing-library/react');
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'win-1',
+          crossWindow: false,
+          workspace: {
+            revision: 1,
+            windows: [
+              { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' } },
+              { id: 'win-1', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['conn-1.sales_db.orders'], activeTabId: 'conn-1.sales_db.orders' } },
+            ],
+            tabs: [
+              { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+              { id: 'conn-1.sales_db.orders', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'orders' },
+            ],
+          },
+        });
+      });
+    }
+
+    it('shows "Detach to New Window" and "Move to <window>" for a tab once this window has more than one tab open', async () => {
+      const { fireEvent, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      await seedForeignWindow();
+
+      // pane-1 now holds two tabs: Quick Start + customers.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const customersTab = await within(tabStrip).findByText('customers');
+
+      fireEvent.contextMenu(customersTab.closest('div')!);
+
+      expect(await screen.findByTestId('context-menu')).toBeInTheDocument();
+      expect(screen.getByText('Detach to New Window')).toBeInTheDocument();
+      expect(screen.getByText('Move to win-1 (orders)')).toBeInTheDocument();
+    });
+
+    it('hides "Detach to New Window" when this window holds only one tab, but still offers "Move to <window>"', async () => {
+      const { fireEvent, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      await seedForeignWindow();
+
+      // Only the default Quick Start tab is open in this window.
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const quickstartTab = await within(tabStrip).findByText('Quick Start');
+      fireEvent.contextMenu(quickstartTab.closest('div')!);
+
+      expect(await screen.findByTestId('context-menu')).toBeInTheDocument();
+      expect(screen.queryByText('Detach to New Window')).not.toBeInTheDocument();
+      expect(screen.getByText('Move to win-1 (orders)')).toBeInTheDocument();
+    });
+
+    it('detaching calls workspace_detach_tab with this tab\'s id', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        return Promise.resolve([]);
+      });
+      const { fireEvent, within, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const customersTab = await within(tabStrip).findByText('customers');
+      calls.length = 0; // drop the open_tab mirror from selecting the collection above
+      fireEvent.contextMenu(customersTab.closest('div')!);
+
+      fireEvent.click(await screen.findByText('Detach to New Window'));
+
+      await waitFor(() => {
+        const detachCalls = calls.filter((c) => c.cmd === 'workspace_detach_tab');
+        expect(detachCalls).toHaveLength(1);
+        expect(detachCalls[0].args).toEqual({ tabId: 'conn-1.sales_db.customers', origin: 'main' });
+      });
+      // Never applied through the local layout reducer/dispatchWorkspace —
+      // this window's own tree is untouched by the detach click itself,
+      // only the crossWindow echo (not fired in this test) ever would be.
+      expect(calls.some((c) => c.cmd === 'workspace_apply')).toBe(false);
+    });
+
+    it('moving to another window calls workspace_apply with move_tab_to_window and never touches this window\'s local layout', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        return Promise.resolve([]);
+      });
+      const { fireEvent, within, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      await seedForeignWindow();
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const customersTab = await within(tabStrip).findByText('customers');
+      calls.length = 0;
+      fireEvent.contextMenu(customersTab.closest('div')!);
+
+      fireEvent.click(await screen.findByText('Move to win-1 (orders)'));
+
+      await waitFor(() => {
+        const moveCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'move_tab_to_window');
+        expect(moveCalls).toHaveLength(1);
+        expect(moveCalls[0].args).toEqual({
+          op: { type: 'move_tab_to_window', tab_id: 'conn-1.sales_db.customers', target_window_id: 'win-1' },
+          origin: 'main',
+        });
+      });
+      // CRITICAL: this window's own tab strip/pane is untouched by the
+      // click itself — dispatchLayout was never called for this op, only
+      // the crossWindow echo (not fired in this test) would ever remove it.
+      expect(within(tabStrip).getByText('customers')).toBeInTheDocument();
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+    });
+
+    it('hides both cross-window items for an unmirrored (export/import) tab, showing a disabled explanatory entry instead', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+      const { fireEvent, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      await seedForeignWindow();
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Export Collection' } });
+      fireEvent.click(await screen.findByText('Export Collection…'));
+
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const exportTab = await within(tabStrip).findByText('Export: customers');
+      fireEvent.contextMenu(exportTab.closest('div')!);
+
+      expect(await screen.findByTestId('context-menu')).toBeInTheDocument();
+      expect(screen.queryByText('Detach to New Window')).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Move to /)).not.toBeInTheDocument();
+      const placeholder = screen.getByText('Export/import tabs stay in their window');
+      expect(placeholder.closest('button')).toBeDisabled();
+      expect(placeholder.closest('button')).toHaveAttribute('title', 'Export/import tabs stay in their window');
+    });
+  });
 });

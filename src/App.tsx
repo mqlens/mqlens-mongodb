@@ -47,6 +47,9 @@ import {
   windowLabel,
   subscribeWorkspaceChanged,
   subscribeConnectionsChanged,
+  detachTabToNewWindow,
+  closeWorkspaceWindow,
+  moveTabToWindow,
   type WorkspaceChangedPayload,
   type ConnectionsChangedPayload,
 } from './workspace/workspaceStore';
@@ -58,8 +61,11 @@ import {
   toLiveSpaceId,
   materializeArrivingTab,
   type PersistedWorkspace,
+  type PersistedWindow,
+  type PersistedTab,
 } from './workspace/persistence';
 import { ReconnectBanner } from './workspace/ReconnectBanner';
+import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
 import { GridFsView } from './components/GridFsView';
@@ -81,7 +87,7 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck } from 'lucide-react';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
@@ -283,6 +289,25 @@ const tabLabelFor = (
   }
 };
 
+/**
+ * A short human hint for a FOREIGN window's tab-context-menu entry (Phase 3
+ * Task 5's "Move to Window" list) — the collection/kind of that window's
+ * currently active tab, resolved from the same `PersistedWorkspace` snapshot
+ * `lastWorkspaceRef` already carries (no extra IPC round trip). `null` when
+ * unresolvable (window has no focused pane's active tab, or that tab id
+ * isn't in the flat `tabs[]` list — e.g. a not-yet-mirrored write race);
+ * callers fall back to the bare window id in that case.
+ */
+function activeTabHintFor(win: PersistedWindow, allTabs: PersistedTab[]): string | null {
+  const pane = findPane(win.splitTree, win.focusedPaneId);
+  const activeId = pane?.activeTabId;
+  if (!activeId) return null;
+  const tab = allTabs.find((t) => t.id === activeId);
+  if (!tab) return null;
+  if (tab.type === 'quickstart') return 'Quick Start';
+  return tab.collection || tab.type;
+}
+
 function Workspace() {
   const { toast, confirm, prompt } = useDialogs();
   const { config, resolvedMode, setMode, setSpacingDensity, resetZoom } = useTheme();
@@ -350,6 +375,14 @@ function Workspace() {
   // close_tab/close_many/move_tab/rename_tab consult this so they never
   // reference a tab id the backend has no record of.
   const unmirroredTabIdsRef = useRef(new Set<string>());
+  // Guards `closeWorkspaceWindow()` (Phase 3 Task 5) against firing twice
+  // for the same close: the remote-close reconciliation branch's own
+  // `setTabs([])` flips `tabs.length` to 0, which would otherwise
+  // independently re-trigger the tabs-empty effect's `closeWorkspaceWindow()`
+  // call too. The backend command is idempotent either way (a second
+  // `WindowClosed` apply for an already-removed window no-ops), but there is
+  // no reason to fire the IPC call twice for one logical close.
+  const windowClosingRef = useRef(false);
   // The most recent full backend `Workspace` document (Phase 3 Task 4) —
   // seeded from `workspace_get` at boot, kept current by every accepted
   // `workspace-changed` event thereafter (self-origin or not; see the
@@ -613,17 +646,13 @@ function Workspace() {
       } finally {
         mirroringEnabledRef.current = true;
         if (isMainWindow) {
-          // Task 5 registers `spawn_saved_windows` (spawns a real OS window
-          // per `windows[1..]` the snapshot above just proved exist). It
-          // doesn't exist yet — `invoke` is an `async function`, so calling
-          // an unregistered command REJECTS the returned promise rather
-          // than throwing synchronously (verified against
-          // @tauri-apps/api/core's `invoke`, itself declared `async`, plus
-          // Tauri's IPC dispatch, which reports "command not found" as an
-          // error reply, never a sync panic) — `.catch` alone is sufficient
-          // here, exactly like every other fire-and-forget invoke in this
-          // file.
-          invoke('spawn_saved_windows').catch(() => {});
+          // Recreates a real OS window per `windows[1..]` the snapshot above
+          // just proved exist (main-window-only — a secondary window has no
+          // business recreating siblings). Fire-and-forget: this window has
+          // nothing further to do once the spawn requests are sent, and a
+          // failure here (e.g. a window that can't be created) is not fatal
+          // to this window's own boot.
+          invoke('spawn_saved_windows').catch(console.warn);
         }
       }
     })();
@@ -892,11 +921,11 @@ function Workspace() {
   // Never sit on a blank canvas — if every tab is closed, bring back Quick
   // Start. Main-window-only (Phase 3 Task 4): a secondary window has no
   // quickstart concept — the spec says an emptied secondary window closes
-  // itself instead. It dispatches `window_closed` (a raw op — there is no
-  // frontend layout action for it, same as `move_tab_to_window`/`detach_tab`)
-  // so every other window's next `workspace-changed` sees this window is
-  // gone, then falls through to a TODO Task 5 will fill in: actually closing
-  // the OS window (today it just sits empty).
+  // itself instead. `closeWorkspaceWindow()` (Phase 3 Task 5) applies
+  // `WindowClosed` for THIS window's own label itself (broadcasting
+  // `workspace-changed` so every other window sees it's gone) and then
+  // destroys the real OS window — no separate `workspaceApply` call needed
+  // here, and there is nothing else useful to render once it fires.
   useEffect(() => {
     if (tabs.length !== 0) return;
     if (isMainWindow) {
@@ -905,9 +934,9 @@ function Workspace() {
       dispatchWorkspace({ type: 'open_tab', tabId: QUICK_START_TAB_ID }, { tab: qs });
       return;
     }
-    workspaceApply({ type: 'window_closed', window_id: windowLabel() });
-    // TODO(Task 5): close this OS window (a `close_window`-style command);
-    // there is nothing else useful to render here once it dispatches.
+    if (windowClosingRef.current) return; // already closing via the remote-close path below
+    windowClosingRef.current = true;
+    closeWorkspaceWindow();
   }, [tabs.length, isMainWindow]);
 
   // savedQuery (palette "jump to saved query") runs instead of the pinned
@@ -1747,9 +1776,11 @@ function Workspace() {
     // `setTabs`/local-state update BEFORE calling `dispatchWorkspace` (it
     // has no way to know about a foreign duplicate ahead of time) — the
     // filter below undoes that speculative insert so the tab never lingers
-    // in `tabs[]` unreferenced by any pane. `focus_window` is a Task 5
-    // command that doesn't exist yet; same fire-and-forget/`.catch`
-    // reasoning as `spawn_saved_windows` above.
+    // in `tabs[]` unreferenced by any pane. `focus_window` (Phase 3 Task 5)
+    // brings that foreign window to the front; fire-and-forget, same as
+    // `spawn_saved_windows` above — losing this race (the window closed in
+    // the meantime) is a no-op on the backend side, never an error worth
+    // surfacing.
     if (action.type === 'open_tab') {
       const profileSpaceId = toProfileSpaceId(action.tabId, activeConnections);
       const foreignWindow = lastWorkspaceRef.current?.windows.find(
@@ -1759,7 +1790,7 @@ function Workspace() {
       );
       if (foreignWindow) {
         setTabs((prev) => prev.filter((t) => t.id !== action.tabId));
-        invoke('focus_window', { label: foreignWindow.id }).catch(() => {});
+        invoke('focus_window', { label: foreignWindow.id }).catch(console.warn);
         return;
       }
     }
@@ -1861,6 +1892,73 @@ function Workspace() {
       default:
         workspaceApply(actionToOp(action, undefined, activeConnections));
     }
+  };
+
+  // Tab strip right-click menu (Phase 3 Task 5): detach the tab into a new
+  // window, or move it straight into an already-open one. Both cross-window
+  // ops are backend-authoritative (see `moveTabToWindow`'s doc comment in
+  // workspaceStore.ts) — neither handler below touches `dispatchLayout`
+  // directly; the eventual `workspace-changed` broadcast reconciles this
+  // window (and the target window) via the existing crossWindow echo path.
+  const [tabContextMenu, setTabContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
+
+  const handleTabContextMenu = (tabId: string, e: React.MouseEvent) => {
+    setTabContextMenu({ tabId, x: e.clientX, y: e.clientY });
+  };
+
+  const handleDetachTab = (tabId: string) => {
+    detachTabToNewWindow(toProfileSpaceId(tabId, activeConnections));
+  };
+
+  const handleMoveTab = (tabId: string, targetWindowId: string) => {
+    moveTabToWindow(toProfileSpaceId(tabId, activeConnections), targetWindowId);
+  };
+
+  // Simplest correct rule (documented, per the task brief): "Detach to New
+  // Window" is hidden unless THIS window currently holds more than one tab
+  // across ALL its panes (`allTabIds(layout).length > 1`) — the same single
+  // condition covers both cases the spec calls out: detaching the sole tab
+  // of a secondary window is a backend no-op (`apply_detach_tab`'s
+  // "already alone" guard), and detaching a main window's only tab is
+  // pointless churn (destroy-and-recreate an equivalent window). "Move to
+  // Window" has no such restriction — moving a window's sole tab elsewhere
+  // is meaningful (it empties this window, which then closes itself via the
+  // tabs-empty effect above) — it's gated only on other windows existing.
+  // Unmirrored (export/import) tabs can't participate in either — the
+  // backend has no record of them — so both are hidden for them, replaced
+  // by a single disabled, explanatory entry.
+  const buildTabContextMenuItems = (tabId: string): ContextMenuItem[] => {
+    if (unmirroredTabIdsRef.current.has(tabId)) {
+      const explanation = 'Export/import tabs stay in their window';
+      return [{ label: explanation, onClick: () => {}, disabled: true, title: explanation }];
+    }
+
+    const items: ContextMenuItem[] = [];
+    if (allTabIds(layout).length > 1) {
+      items.push({
+        label: 'Detach to New Window',
+        icon: <ExternalLink />,
+        onClick: () => handleDetachTab(tabId),
+      });
+    }
+
+    const otherWindows = (lastWorkspaceRef.current?.windows ?? []).filter((w) => w.id !== windowLabel());
+    const allTabs = lastWorkspaceRef.current?.tabs ?? [];
+    // Separator only when there's something above to separate from (i.e. a
+    // "Detach to New Window" item was actually pushed) — otherwise the
+    // first "Move to" entry would render an orphan divider line at the very
+    // top of the menu.
+    otherWindows.forEach((w, i) => {
+      const hint = activeTabHintFor(w, allTabs);
+      items.push({
+        label: `Move to ${hint ? `${w.id} (${hint})` : w.id}`,
+        icon: <MoveRight />,
+        separatorBefore: i === 0 && items.length > 0,
+        onClick: () => handleMoveTab(tabId, w.id),
+      });
+    });
+
+    return items;
   };
 
   const cycleTab = (dir: 1 | -1) => {
@@ -2204,9 +2302,18 @@ function Workspace() {
         if (!winEntry) {
           // Another window's op (a fold-on-close, a detach, a
           // move-to-window) removed THIS window from the document — there
-          // is no tree left to reconcile against. Render empty rather than
-          // leave a stale, now-orphaned layout on screen.
-          // TODO(Task 5): invoke the close-self command once it exists.
+          // is no tree left to reconcile against. Render empty and destroy
+          // the real OS window (Phase 3 Task 5): `closeWorkspaceWindow()`'s
+          // `WindowClosed` apply no-ops here (the backend already removed
+          // this window from the store — that's WHY `winEntry` is missing),
+          // but it still destroys the OS window, which is otherwise never
+          // told to close in this "closed by someone else" path.
+          // `windowClosingRef` guard: `setTabs([])` right below will also
+          // flip `tabs.length` to 0, which would otherwise independently
+          // re-trigger the tabs-empty effect's own `closeWorkspaceWindow()`
+          // call for this same close (see that effect's comment).
+          windowClosingRef.current = true;
+          closeWorkspaceWindow();
           setTabs([]);
           tabBuilderStateCache.current.clear();
           dispatchLayout({ type: 'hydrate', layout: createInitialLayout([], null) });
@@ -3418,7 +3525,16 @@ function Workspace() {
         }
         renderTabContent={renderTabContent}
         renderEmptyPane={renderEmptyPane}
+        onTabContextMenu={handleTabContextMenu}
       />
+      {tabContextMenu && (
+        <ContextMenu
+          x={tabContextMenu.x}
+          y={tabContextMenu.y}
+          items={buildTabContextMenuItems(tabContextMenu.tabId)}
+          onClose={() => setTabContextMenu(null)}
+        />
+      )}
     </AppShell>
   );
 }

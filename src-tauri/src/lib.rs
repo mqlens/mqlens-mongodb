@@ -23,6 +23,7 @@ pub mod toolsetup;
 pub mod updater;
 mod vault;
 mod window;
+mod windows;
 mod workspace;
 pub mod biometric;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
@@ -2018,6 +2019,10 @@ pub fn run() {
             queries::list_all_saved_queries,
             workspace::workspace_get,
             workspace::workspace_apply,
+            windows::workspace_detach_tab,
+            windows::spawn_saved_windows,
+            windows::focus_window,
+            windows::close_workspace_window,
             server_status,
             current_ops,
             repl_set_status,

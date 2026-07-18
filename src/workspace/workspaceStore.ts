@@ -49,6 +49,54 @@ export function workspaceApply(op: Record<string, unknown>): void {
   });
 }
 
+/**
+ * Fire-and-forget: detach `tabId` (already profile-space — callers translate
+ * via `toProfileSpaceId` before calling, same as every other cross-window op)
+ * into a brand-new window via the backend `workspace_detach_tab` command
+ * (Phase 3 Task 5). That command applies `DetachTab`, broadcasts
+ * `workspace-changed` itself, and spawns the new OS window — nothing further
+ * to do here; this window's own tree updates (if it was the source) via the
+ * crossWindow echo, same as `moveTabToWindow` below.
+ */
+export function detachTabToNewWindow(tabId: string): void {
+  invoke('workspace_detach_tab', { tabId, origin: windowLabel() }).catch((err) => {
+    console.warn('workspace_detach_tab failed', err);
+  });
+}
+
+/**
+ * Fire-and-forget: close the OS window labeled `label` (default: this
+ * window). Backs two `App.tsx` call sites (Phase 3 Task 5): a secondary
+ * window proactively closing itself once its last tab closes/moves away, and
+ * a window reacting to discovering its own entry vanished from a
+ * `crossWindow` broadcast it didn't cause. The backend `close_workspace_window`
+ * command applies `WindowClosed` (a no-op if already gone from the store)
+ * and then destroys the real OS window if one is still open.
+ */
+export function closeWorkspaceWindow(label: string = windowLabel()): void {
+  invoke('close_workspace_window', { label, origin: windowLabel() }).catch((err) => {
+    console.warn('close_workspace_window failed', err);
+  });
+}
+
+/**
+ * Fire-and-forget: mirrors a `MoveTabToWindow` op straight to the backend
+ * store (Phase 3 Task 5's "Move to Window" context menu entry). `tabId` must
+ * already be profile-space (callers translate via `toProfileSpaceId` first,
+ * same as `detachTabToNewWindow`). Deliberately a THIN wrapper around
+ * `workspaceApply`, not a `dispatchWorkspace` action: this op is
+ * backend-authoritative and cross-window by nature (it can empty THIS
+ * window's tree, or fill another window's), so it must never be applied
+ * locally via `dispatchLayout` — the eventual `workspace-changed` broadcast
+ * (`crossWindow: true`) is what reconciles every affected window, including
+ * this one if it was the source.
+ */
+export function moveTabToWindow(tabId: string, targetWindowId: string, targetPaneId?: string): void {
+  const op: Record<string, unknown> = { type: 'move_tab_to_window', tab_id: tabId, target_window_id: targetWindowId };
+  if (targetPaneId !== undefined) op.target_pane_id = targetPaneId;
+  workspaceApply(op);
+}
+
 /** Wire shape of the `workspace-changed` broadcast (src-tauri/src/workspace.rs's `WorkspaceChangedPayload`). */
 export interface WorkspaceChangedPayload {
   revision: number;

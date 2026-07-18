@@ -137,4 +137,28 @@ describe('WorkspaceRoot', () => {
     fireEvent.drop(strip, { dataTransfer: dt, clientX: 500, clientY: 10 });
     expect(dispatch).not.toHaveBeenCalled();
   });
+
+  it('forwards onTabContextMenu through PaneView/WorkspaceTabBar on right-click, preventing the native menu (Phase 3 Task 5)', () => {
+    const l = createInitialLayout(['a', 'b'], 'a');
+    const onTabContextMenu = vi.fn();
+    render(
+      <WorkspaceRoot
+        layout={l}
+        dispatch={vi.fn()}
+        tabsFor={tabsFor}
+        renderTabContent={tabId => <div data-testid={`content-${tabId}`} />}
+        renderEmptyPane={() => <div data-testid="empty-pane" />}
+        onTabContextMenu={onTabContextMenu}
+      />,
+    );
+    const notPrevented = fireEvent.contextMenu(screen.getByText('B'));
+    expect(onTabContextMenu).toHaveBeenCalledWith('b', expect.anything());
+    expect(notPrevented).toBe(false); // preventDefault() called — the native browser menu never shows
+  });
+
+  it('omitting onTabContextMenu leaves right-click a no-op (additive/optional prop, backward compatible)', () => {
+    renderLayout(createInitialLayout(['a'], 'a'));
+    const notPrevented = fireEvent.contextMenu(screen.getByText('A'));
+    expect(notPrevented).toBe(true); // never prevented — nothing wired up to handle it
+  });
 });

@@ -1029,6 +1029,23 @@ fn apply_window_closed(ws: &mut Workspace, window_id: &str) {
     ws.revision += 1; // removing a found, non-main window always changes something
 }
 
+/// The id of the window whose layout tree currently references `tab_id`, or
+/// `None` if it isn't open anywhere. Pure and `pub(crate)` (Phase 3 Task 5):
+/// `windows.rs`'s `workspace_detach_tab` command calls `apply_impl` with a
+/// `DetachTab` op (which always mints a brand-new `win-N` for the detached
+/// tab — see `apply_detach_tab`), then needs to learn that fresh window's id
+/// from the post-apply `Workspace` snapshot the payload carries in order to
+/// spawn its OS window. Scanning for the window that now contains `tab_id` is
+/// simpler and more robust than re-deriving `next_window_id`'s numbering a
+/// second time on the Rust-command side (which would silently desync if
+/// `apply_detach_tab`'s minting logic ever changed).
+pub(crate) fn window_containing_tab<'a>(ws: &'a Workspace, tab_id: &str) -> Option<&'a str> {
+    ws.windows
+        .iter()
+        .find(|w| pane_of_tab(&w.split_tree, tab_id).is_some())
+        .map(|w| w.id.as_str())
+}
+
 /// Port of TS's tab-id collection helpers (`allTabIds`), used only by
 /// `validate` below — flattens every `tabIds` entry across an entire
 /// `LayoutNode` tree, panes and splits alike.
@@ -1160,8 +1177,12 @@ pub fn save_to_file(path: &Path, ws: &Workspace) -> Result<(), String> {
 }
 
 /// Where workspace.json lives, mirroring `queries::get_queries_path`
-/// (queries.rs:72-81).
-fn workspace_path(app_handle: &tauri::AppHandle) -> PathBuf {
+/// (queries.rs:72-81). `pub(crate)` (Phase 3 Task 5): `windows.rs`'s
+/// `workspace_detach_tab`/`spawn_saved_windows`/`close_workspace_window`
+/// commands, and the `CloseRequested` handler `spawn_workspace_window`
+/// attaches to every `win-*` window, all need to resolve the same path this
+/// module's own `workspace_get`/`workspace_apply` commands use.
+pub(crate) fn workspace_path(app_handle: &tauri::AppHandle) -> PathBuf {
     use tauri::Manager;
     match app_handle.path().app_config_dir() {
         Ok(mut path) => {
@@ -1291,7 +1312,10 @@ pub async fn workspace_get(
 /// parameter is `Option<String>`, defaulted here — existing callers that
 /// don't yet send `origin` (Task 4 wires the frontend) keep working exactly
 /// as `#[serde(default = "default_window_id")]` does for `WorkspaceOp`.
-fn default_origin() -> String {
+/// `pub(crate)` (Phase 3 Task 5): `windows.rs`'s `workspace_detach_tab` /
+/// `close_workspace_window` commands take the exact same `Option<String>`
+/// `origin` parameter and need the same fallback.
+pub(crate) fn default_origin() -> String {
     "main".to_string()
 }
 
@@ -2492,6 +2516,24 @@ mod tests {
         apply(&mut ws, WorkspaceOp::DetachTab { tab_id: "b".into() });
         let ids: Vec<&str> = ws.windows.iter().map(|w| w.id.as_str()).collect();
         assert!(ids.contains(&"win-4"), "expected win-4 past existing win-3, got {ids:?}");
+    }
+
+    #[test]
+    fn window_containing_tab_finds_the_freshly_detached_window() {
+        // Phase 3 Task 5: `workspace_detach_tab`'s exact use case — after
+        // `DetachTab` runs, the command needs to learn which `win-N` the
+        // reducer just minted for the detached tab so it can spawn that OS
+        // window.
+        let mut ws = ws_with(&["a", "b"]);
+        apply(&mut ws, WorkspaceOp::DetachTab { tab_id: "b".into() });
+        assert_eq!(window_containing_tab(&ws, "b"), Some("win-1"));
+        assert_eq!(window_containing_tab(&ws, "a"), Some("main"));
+    }
+
+    #[test]
+    fn window_containing_tab_is_none_for_an_unknown_tab() {
+        let ws = ws_with(&["a"]);
+        assert_eq!(window_containing_tab(&ws, "nope"), None);
     }
 
     #[test]
