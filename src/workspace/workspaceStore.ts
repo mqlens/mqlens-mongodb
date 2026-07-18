@@ -5,8 +5,31 @@
 // persistence.ts; this module is the only one that touches `invoke`.
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { WorkspaceAction } from './model';
 import { toProfileSpaceId, type PersistableConnection, type PersistedTab, type PersistedWorkspace } from './persistence';
+
+/**
+ * This window's Tauri label (`"main"` or `"win-N"`), memoized after the
+ * first successful read — a webview's label never changes for its
+ * lifetime. `getCurrentWebviewWindow().label` reaches into
+ * `window.__TAURI_INTERNALS__.metadata`, which doesn't exist under jsdom
+ * (vitest has no real Tauri runtime), so it throws synchronously there;
+ * the catch falls back to `"main"`, matching every existing test's implicit
+ * assumption that it's running as the primary window.
+ */
+let cachedWindowLabel: string | undefined;
+export function windowLabel(): string {
+  if (cachedWindowLabel === undefined) {
+    try {
+      cachedWindowLabel = getCurrentWebviewWindow().label;
+    } catch {
+      cachedWindowLabel = 'main';
+    }
+  }
+  return cachedWindowLabel;
+}
 
 /** `GET workspace.json` (backend-cached after first call). */
 export async function workspaceGet(): Promise<PersistedWorkspace | null> {
@@ -16,12 +39,53 @@ export async function workspaceGet(): Promise<PersistedWorkspace | null> {
 /**
  * Fire-and-forget apply of one op to the backend store. Never throws — the
  * mirror must never block or fail the UI action it shadows; failures are
- * logged and dropped.
+ * logged and dropped. `origin` (this window's label) lets every window's
+ * `workspace-changed` listener recognize and ignore its own echo — see
+ * App.tsx's foreign-event reconciliation effect.
  */
 export function workspaceApply(op: Record<string, unknown>): void {
-  invoke('workspace_apply', { op }).catch((err) => {
+  invoke('workspace_apply', { op, origin: windowLabel() }).catch((err) => {
     console.warn('workspace_apply failed', err);
   });
+}
+
+/** Wire shape of the `workspace-changed` broadcast (src-tauri/src/workspace.rs's `WorkspaceChangedPayload`). */
+export interface WorkspaceChangedPayload {
+  revision: number;
+  origin: string;
+  crossWindow: boolean;
+  workspace: PersistedWorkspace;
+}
+
+/**
+ * Subscribe to the backend's `workspace-changed` broadcast (Phase 3 Task 3),
+ * fired after every state-changing `workspace_apply`. Thin wrapper around
+ * `listen` (pattern precedent: UpdatePrompt.tsx's `update://progress`
+ * listener) — returns the same `Promise<UnlistenFn>` `listen` does; the
+ * caller owns StrictMode-safe subscribe-once/cleanup, same as any other
+ * effect-scoped listener.
+ */
+export function subscribeWorkspaceChanged(
+  listener: (payload: WorkspaceChangedPayload) => void
+): Promise<UnlistenFn> {
+  return listen<WorkspaceChangedPayload>('workspace-changed', (event) => listener(event.payload));
+}
+
+/** Wire shape of the `connections-changed` broadcast (src-tauri/src/state.rs's `ConnectionsChangedPayload`). */
+export interface ConnectionEntry {
+  id: string;
+  profileId: string;
+  name: string;
+}
+export interface ConnectionsChangedPayload {
+  connections: ConnectionEntry[];
+}
+
+/** Subscribe to the backend's `connections-changed` broadcast (Phase 3 Task 3). Same shape/contract as `subscribeWorkspaceChanged`. */
+export function subscribeConnectionsChanged(
+  listener: (payload: ConnectionsChangedPayload) => void
+): Promise<UnlistenFn> {
+  return listen<ConnectionsChangedPayload>('connections-changed', (event) => listener(event.payload));
 }
 
 /**
@@ -49,23 +113,31 @@ export function actionToOp(
   connections: PersistableConnection[] = []
 ): Record<string, unknown> {
   const id = (raw: string): string => toProfileSpaceId(raw, connections);
+  // Every pane-referencing WorkspaceOp variant carries `window_id` (Phase 3
+  // Task 2) so the backend resolves this op against THIS window's tree —
+  // `default_window_id` on the Rust side only covers callers that predate
+  // multi-window, not this one. `update_tab_state`/`hydrate` are the two
+  // exceptions (see their own cases below): the former never touches a
+  // layout tree, the latter is never mirrored at all.
+  const window_id = windowLabel();
 
   switch (action.type) {
     case 'open_tab': {
-      const op: Record<string, unknown> = { type: 'open_tab', tab_id: id(action.tabId) };
+      const op: Record<string, unknown> = { type: 'open_tab', tab_id: id(action.tabId), window_id };
       if (action.paneId !== undefined) op.pane_id = action.paneId;
       if (tab) op.tab = tab;
       return op;
     }
     case 'close_tab':
-      return { type: 'close_tab', tab_id: id(action.tabId) };
+      return { type: 'close_tab', tab_id: id(action.tabId), window_id };
     case 'close_many':
-      return { type: 'close_many', tab_ids: action.tabIds.map(id) };
+      return { type: 'close_many', tab_ids: action.tabIds.map(id), window_id };
     case 'move_tab': {
       const op: Record<string, unknown> = {
         type: 'move_tab',
         tab_id: id(action.tabId),
         target_pane_id: action.targetPaneId, // pane id — not translated
+        window_id,
       };
       if (action.index !== undefined) op.index = action.index;
       return op;
@@ -76,6 +148,7 @@ export function actionToOp(
         pane_id: action.paneId, // pane id — not translated
         dir: action.dir,
         side: action.side,
+        window_id,
       };
       // moveTabId is a TAB id (the tab being carried into the new pane) —
       // same translation requirement as move_tab.tabId, even though it
@@ -84,13 +157,13 @@ export function actionToOp(
       return op;
     }
     case 'resize_split':
-      return { type: 'resize_split', split_id: action.splitId, ratio: action.ratio }; // split id — not translated
+      return { type: 'resize_split', split_id: action.splitId, ratio: action.ratio, window_id }; // split id — not translated
     case 'set_active':
-      return { type: 'set_active', pane_id: action.paneId, tab_id: id(action.tabId) }; // pane_id not translated
+      return { type: 'set_active', pane_id: action.paneId, tab_id: id(action.tabId), window_id }; // pane_id not translated
     case 'focus_pane':
-      return { type: 'focus_pane', pane_id: action.paneId }; // pane id — not translated
+      return { type: 'focus_pane', pane_id: action.paneId, window_id }; // pane id — not translated
     case 'rename_tab':
-      return { type: 'rename_tab', old_id: id(action.oldId), new_id: id(action.newId) };
+      return { type: 'rename_tab', old_id: id(action.oldId), new_id: id(action.newId), window_id };
     case 'hydrate':
       // Frontend-only (Phase 2 Task 6 restore-on-boot) — App.tsx dispatches
       // it via raw `dispatchLayout`, never through the mirrored

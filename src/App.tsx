@@ -37,10 +37,28 @@ import {
 } from './components/RestoreView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
-import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, type WorkspaceAction } from './workspace/model';
+import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, mapLayoutTabIds, type WorkspaceAction, type WorkspaceLayout } from './workspace/model';
 import { WorkspaceRoot } from './workspace/WorkspaceRoot';
-import { workspaceApply, updateTabState, actionToOp, workspaceGet } from './workspace/workspaceStore';
-import { toPersistedTab, toDisconnectedSnapshot, rebindConnection, toProfileSpaceId } from './workspace/persistence';
+import {
+  workspaceApply,
+  updateTabState,
+  actionToOp,
+  workspaceGet,
+  windowLabel,
+  subscribeWorkspaceChanged,
+  subscribeConnectionsChanged,
+  type WorkspaceChangedPayload,
+  type ConnectionsChangedPayload,
+} from './workspace/workspaceStore';
+import {
+  toPersistedTab,
+  toDisconnectedSnapshot,
+  rebindConnection,
+  toProfileSpaceId,
+  toLiveSpaceId,
+  materializeArrivingTab,
+  type PersistedWorkspace,
+} from './workspace/persistence';
 import { ReconnectBanner } from './workspace/ReconnectBanner';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
@@ -269,8 +287,22 @@ function Workspace() {
   const { toast, confirm, prompt } = useDialogs();
   const { config, resolvedMode, setMode, setSpacingDensity, resetZoom } = useTheme();
   const density = config.spacingDensity;
+  // Phase 3 Task 4: every window runs this same component — `isMainWindow`
+  // gates the behaviors that only make sense for the primary window
+  // (quickstart resurrection, restore-driven secondary-window spawning).
+  // `windowLabel()` is memoized process-wide (see workspaceStore.ts), so
+  // this is stable for the component's whole lifetime.
+  const isMainWindow = windowLabel() === 'main';
   // Open the Quick Start tab by default so the app never starts on a blank canvas.
   const [tabs, setTabs] = useState<QueryTab[]>([createQuickStartTab()]);
+  // Foreign-event reconciliation (below) runs inside a `listen` callback
+  // captured once at mount — it can never see a fresh `tabs` STATE value
+  // from that closure, same staleness problem `activeConnectionsRef` exists
+  // to solve for `handleBuilderStateChange`. Mirrors `tabs` on every change.
+  const tabsRef = useRef<QueryTab[]>(tabs);
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
   const [layout, dispatchLayout] = useReducer(
     workspaceReducer,
     undefined,
@@ -318,6 +350,17 @@ function Workspace() {
   // close_tab/close_many/move_tab/rename_tab consult this so they never
   // reference a tab id the backend has no record of.
   const unmirroredTabIdsRef = useRef(new Set<string>());
+  // The most recent full backend `Workspace` document (Phase 3 Task 4) —
+  // seeded from `workspace_get` at boot, kept current by every accepted
+  // `workspace-changed` event thereafter (self-origin or not; see the
+  // reconciliation effect below). Two consumers: the foreign-event
+  // reconciliation itself, and `dispatchWorkspace`'s cross-window open
+  // dedupe (a tab already open in ANOTHER window's tree must not be opened
+  // here too — see its own comment). `lastSeenRevisionRef` guards against
+  // applying an out-of-order/replayed event (revision <= what's already
+  // been applied is dropped).
+  const lastWorkspaceRef = useRef<PersistedWorkspace | null>(null);
+  const lastSeenRevisionRef = useRef(-1);
   const [activeConnections, setActiveConnections] = useState<ActiveConnection[]>([]);
   // `handleBuilderStateChange` below is a `useCallback` with an empty deps
   // array (a stable identity for DocumentViewer), so it can never see a
@@ -390,12 +433,21 @@ function Workspace() {
   // never land in `activeConnections` — every tab rebound to it becomes
   // unreachable, and every later mirror for those tabs ships a live id the
   // backend can't translate back to profile-space).
+  //
+  // Reads `layoutRef.current`, not the `layout` render-scope closure
+  // (Phase 3 Task 4): the `connections-changed` reconciliation effect below
+  // calls this from a `listen` callback captured once at mount, where
+  // `layout` would be frozen at its mount-time value forever. `layoutRef`
+  // is the same mutable ref object across every render, so reading
+  // `.current` always sees whatever the component most recently committed,
+  // regardless of which render's closure is doing the reading — identical
+  // behavior to before for every existing (render-fresh) call site.
   const rebindProfileTabs = (
     profileId: string,
     liveId: string
   ): { pairs: Array<{ oldId: string; newId: string }>; idMap: Map<string, string> } => {
     const oldPrefix = `profile:${profileId}`;
-    const pairs = rebindConnection(oldPrefix, liveId, allTabIds(layout));
+    const pairs = rebindConnection(oldPrefix, liveId, allTabIds(layoutRef.current));
     if (pairs.length === 0) return { pairs, idMap: new Map() };
 
     const idMap = new Map(pairs.map((p) => [p.oldId, p.newId]));
@@ -483,6 +535,12 @@ function Workspace() {
   // this narrow — losing a few clicks from before the very first paint has
   // settled is an acceptable trade for a wholesale, easy-to-reason-about
   // restore.
+  // Phase 3 Task 4: every window boots from the SAME `workspace_get` call
+  // but hydrates only ITS OWN slice — `toDisconnectedSnapshot(ws,
+  // windowLabel())` selects the window entry matching this label (default
+  // `"main"`) instead of always reading `windows[0]`, and filters
+  // `ws.tabs` (a flat list shared across every window) down to the ids
+  // this window's tree actually references.
   const restoredRef = useRef(false);
   useEffect(() => {
     if (restoredRef.current) return;
@@ -490,42 +548,83 @@ function Workspace() {
     (async () => {
       try {
         const ws = await workspaceGet();
-        if (ws && Array.isArray(ws.tabs) && ws.tabs.length > 0) {
-          const snapshot = toDisconnectedSnapshot(ws);
-          setTabs(snapshot.tabs as QueryTab[]);
-          // Clear first: `hydrate` wholesale-replaces `tabs` (see the
-          // "hydrate wins" note above), but the builder-state cache is a
-          // ref keyed by tab id — if the user opened a builder on any
-          // pre-restore tab (e.g. the default Quick Start render) before
-          // this settled, that stale entry would otherwise survive under an
-          // id that may now belong to a completely different restored tab.
-          tabBuilderStateCache.current.clear();
-          for (const [tabId, state] of snapshot.builderStates) {
-            tabBuilderStateCache.current.set(tabId, state as BuilderState);
-          }
-          const profileNames = new Map<string, string>();
-          for (const t of ws.tabs) {
-            if (t.profileId) profileNames.set(t.profileId, t.profileName || t.profileId);
-          }
-          setRestoredProfileNames(profileNames);
-          // `hydrate` is a frontend-only reducer action — there is no backend
-          // op for "replace my whole layout". Dispatched via raw
-          // `dispatchLayout`, bypassing `dispatchWorkspace`'s mirror-to-
-          // backend choke point entirely, so this restore is never echoed
-          // back to workspace_apply as a stream of synthetic ops (mirroring
-          // is still disabled here regardless — see mirroringEnabledRef's
-          // init above — but the direct dispatch documents the exception
-          // even once mirroring flips on below).
-          dispatchLayout({ type: 'hydrate', layout: snapshot.layout });
+        // Guards against more than a bare `null`/absent snapshot — a
+        // malformed or unexpectedly-shaped response (e.g. a test harness's
+        // untyped default mock) must not seed `lastWorkspaceRef` with
+        // something whose `.windows` isn't actually an array, which the
+        // dedupe check and reconciliation effect both assume.
+        const wsValid = !!ws && Array.isArray(ws.tabs) && Array.isArray(ws.windows);
+        if (wsValid) {
+          // Seed the cross-window view (dedupe's `lastWorkspaceRef`,
+          // reconciliation's `lastSeenRevisionRef`) from the FULL document,
+          // regardless of whether THIS window ends up with any tabs of its
+          // own — both need to see every window, not just this one.
+          lastWorkspaceRef.current = ws;
+          lastSeenRevisionRef.current = typeof ws.revision === 'number' ? ws.revision : -1;
         }
-        // No snapshot (or an empty one): the default Quick Start state from
-        // this component's initializers stands as-is.
+        if (wsValid) {
+          const snapshot = toDisconnectedSnapshot(ws, windowLabel());
+          if (snapshot.tabs.length > 0) {
+            setTabs(snapshot.tabs as QueryTab[]);
+            // Clear first: `hydrate` wholesale-replaces `tabs` (see the
+            // "hydrate wins" note above), but the builder-state cache is a
+            // ref keyed by tab id — if the user opened a builder on any
+            // pre-restore tab (e.g. the default Quick Start render) before
+            // this settled, that stale entry would otherwise survive under an
+            // id that may now belong to a completely different restored tab.
+            tabBuilderStateCache.current.clear();
+            for (const [tabId, state] of snapshot.builderStates) {
+              tabBuilderStateCache.current.set(tabId, state as BuilderState);
+            }
+            const windowTabIds = new Set(snapshot.tabs.map((t) => t.id));
+            const profileNames = new Map<string, string>();
+            for (const t of ws.tabs) {
+              if (windowTabIds.has(t.id) && t.profileId) profileNames.set(t.profileId, t.profileName || t.profileId);
+            }
+            setRestoredProfileNames(profileNames);
+            // `hydrate` is a frontend-only reducer action — there is no backend
+            // op for "replace my whole layout". Dispatched via raw
+            // `dispatchLayout`, bypassing `dispatchWorkspace`'s mirror-to-
+            // backend choke point entirely, so this restore is never echoed
+            // back to workspace_apply as a stream of synthetic ops (mirroring
+            // is still disabled here regardless — see mirroringEnabledRef's
+            // init above — but the direct dispatch documents the exception
+            // even once mirroring flips on below).
+            dispatchLayout({ type: 'hydrate', layout: snapshot.layout });
+          } else if (!isMainWindow) {
+            // No tabs for THIS window and it's a secondary one: the
+            // component's initializers default to a Quick Start tab
+            // regardless of window kind (shared across `Workspace()`
+            // instances), which would otherwise sit there forever — a
+            // secondary window never resurrects Quick Start, so nothing
+            // would ever make `tabs.length` actually hit 0 to trigger the
+            // tabs-empty effect's `window_closed` dispatch below. Clear it
+            // explicitly so that effect fires.
+            setTabs([]);
+            dispatchLayout({ type: 'hydrate', layout: createInitialLayout([], null) });
+          }
+          // Main window with nothing of its own: the default Quick Start
+          // state from this component's initializers stands as-is.
+        }
       } catch {
         // workspace_get failing (corrupt file, IO error) is not fatal —
         // fall back to the default Quick Start state exactly as if there
         // were no snapshot at all.
       } finally {
         mirroringEnabledRef.current = true;
+        if (isMainWindow) {
+          // Task 5 registers `spawn_saved_windows` (spawns a real OS window
+          // per `windows[1..]` the snapshot above just proved exist). It
+          // doesn't exist yet — `invoke` is an `async function`, so calling
+          // an unregistered command REJECTS the returned promise rather
+          // than throwing synchronously (verified against
+          // @tauri-apps/api/core's `invoke`, itself declared `async`, plus
+          // Tauri's IPC dispatch, which reports "command not found" as an
+          // error reply, never a sync panic) — `.catch` alone is sufficient
+          // here, exactly like every other fire-and-forget invoke in this
+          // file.
+          invoke('spawn_saved_windows').catch(() => {});
+        }
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -790,14 +889,26 @@ function Workspace() {
   const connectionNameFor = (connectionId: string): string =>
     activeConnections.find((c) => c.id === connectionId)?.name || connectionId;
 
-  // Never sit on a blank canvas — if every tab is closed, bring back Quick Start.
+  // Never sit on a blank canvas — if every tab is closed, bring back Quick
+  // Start. Main-window-only (Phase 3 Task 4): a secondary window has no
+  // quickstart concept — the spec says an emptied secondary window closes
+  // itself instead. It dispatches `window_closed` (a raw op — there is no
+  // frontend layout action for it, same as `move_tab_to_window`/`detach_tab`)
+  // so every other window's next `workspace-changed` sees this window is
+  // gone, then falls through to a TODO Task 5 will fill in: actually closing
+  // the OS window (today it just sits empty).
   useEffect(() => {
-    if (tabs.length === 0) {
+    if (tabs.length !== 0) return;
+    if (isMainWindow) {
       const qs = createQuickStartTab();
       setTabs([qs]);
       dispatchWorkspace({ type: 'open_tab', tabId: QUICK_START_TAB_ID }, { tab: qs });
+      return;
     }
-  }, [tabs.length]);
+    workspaceApply({ type: 'window_closed', window_id: windowLabel() });
+    // TODO(Task 5): close this OS window (a `close_window`-style command);
+    // there is nothing else useful to render here once it dispatches.
+  }, [tabs.length, isMainWindow]);
 
   // savedQuery (palette "jump to saved query") runs instead of the pinned
   // default — for existing tabs it re-runs in place.
@@ -1623,6 +1734,35 @@ function Workspace() {
     action: WorkspaceAction,
     options?: { tab?: QueryTab }
   ) => {
+    // Cross-window open dedupe (Phase 3 Task 4 — MANDATE from Task 2
+    // review): the backend's own OpenTab dedupe only applies WITHIN one
+    // window's tree, so it would happily accept a tab id that's already
+    // open in a DIFFERENT window — the next `workspace_get`/`validate()`
+    // would then choke on the same tab id living in two trees at once.
+    // `lastWorkspaceRef` (seeded at boot, kept current by every accepted
+    // `workspace-changed` event) is the full cross-window view; compare in
+    // PROFILE-space (the backend's own space) since a live id is only
+    // meaningful within the window that minted/owns the connection.
+    // Every `open_tab` caller in this file does its own optimistic
+    // `setTabs`/local-state update BEFORE calling `dispatchWorkspace` (it
+    // has no way to know about a foreign duplicate ahead of time) — the
+    // filter below undoes that speculative insert so the tab never lingers
+    // in `tabs[]` unreferenced by any pane. `focus_window` is a Task 5
+    // command that doesn't exist yet; same fire-and-forget/`.catch`
+    // reasoning as `spawn_saved_windows` above.
+    if (action.type === 'open_tab') {
+      const profileSpaceId = toProfileSpaceId(action.tabId, activeConnections);
+      const foreignWindow = lastWorkspaceRef.current?.windows.find(
+        (w) =>
+          w.id !== windowLabel() &&
+          allTabIds({ root: w.splitTree, focusedPaneId: w.focusedPaneId }).includes(profileSpaceId)
+      );
+      if (foreignWindow) {
+        setTabs((prev) => prev.filter((t) => t.id !== action.tabId));
+        invoke('focus_window', { label: foreignWindow.id }).catch(() => {});
+        return;
+      }
+    }
     if (action.type === 'close_tab') {
       tabBuilderStateCache.current.delete(action.tabId);
       setTabs(prev => prev.filter(t => t.id !== action.tabId));
@@ -1989,6 +2129,177 @@ function Workspace() {
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, error: String(err) } : t));
     }
   };
+
+  // Foreign-event reconciliation (Phase 3 Task 4). Two independent
+  // subscriptions, set up once — `reconciliationSubscribedRef` guards
+  // against React 18 StrictMode's double-invoke of effects in dev exactly
+  // like `restoredRef` above, so a second invocation of this same effect
+  // never attaches a second pair of listeners (which would double-apply
+  // every foreign hydrate/reconcile). Both listener callbacks are captured
+  // ONCE at mount and never refreshed on later renders, so — like
+  // `handleBuilderStateChange` above — they must read live component state
+  // exclusively through refs (`activeConnectionsRef`, `tabsRef`,
+  // `lastWorkspaceRef`) or through a setter's functional-update form
+  // (`setTabs(prev => ...)`), never through a state variable captured
+  // directly in the closure.
+  const reconciliationSubscribedRef = useRef(false);
+  useEffect(() => {
+    if (reconciliationSubscribedRef.current) return;
+    reconciliationSubscribedRef.current = true;
+
+    const unlistenPromises: Promise<() => void>[] = [];
+
+    unlistenPromises.push(
+      subscribeWorkspaceChanged((payload: WorkspaceChangedPayload) => {
+        // Drop a replayed/out-of-order event — revisions only ever
+        // increase, so anything at or below what's already applied adds
+        // nothing (and applying it would risk clobbering newer local state
+        // with older backend state).
+        if (payload.revision <= lastSeenRevisionRef.current) return;
+        lastSeenRevisionRef.current = payload.revision;
+        lastWorkspaceRef.current = payload.workspace;
+
+        // Self-origin, single-window ops are our own optimistic dispatch
+        // echoing back — already applied locally by `dispatchWorkspace`,
+        // nothing to reconcile. Cross-window ops
+        // (move_tab_to_window/detach_tab/window_closed) are the one
+        // exception: they never go through the local layout reducer at all
+        // (there is no frontend action for them — Task 5 fires them
+        // straight at `workspace_apply`), so even the origin window
+        // depends entirely on this event to update its own tree.
+        if (payload.origin === windowLabel() && !payload.crossWindow) return;
+
+        const connections = activeConnectionsRef.current;
+        const winEntry = payload.workspace.windows.find((w) => w.id === windowLabel());
+        if (!winEntry) {
+          // Another window's op (a fold-on-close, a detach, a
+          // move-to-window) removed THIS window from the document — there
+          // is no tree left to reconcile against. Render empty rather than
+          // leave a stale, now-orphaned layout on screen.
+          // TODO(Task 5): invoke the close-self command once it exists.
+          setTabs([]);
+          tabBuilderStateCache.current.clear();
+          dispatchLayout({ type: 'hydrate', layout: createInitialLayout([], null) });
+          return;
+        }
+
+        // The backend stays in profile-space always (persistence.ts's
+        // Global Constraint); translate every id in the incoming tree to
+        // THIS window's live space wherever it already has that
+        // connection, so a foreign tab whose profile is already connected
+        // here renders live immediately instead of as a `profile:` banner.
+        const foreignLayout: WorkspaceLayout = { root: winEntry.splitTree, focusedPaneId: winEntry.focusedPaneId };
+        const liveLayout = mapLayoutTabIds(foreignLayout, (id) => toLiveSpaceId(id, connections));
+        // `{mirror:false}`-equivalent: a raw hydrate, exactly like the
+        // restore effect's own dispatch — never mirrored back to the
+        // backend, which is where this tree just came from.
+        dispatchLayout({ type: 'hydrate', layout: liveLayout });
+
+        const foreignProfileIds = allTabIds(foreignLayout);
+        const foreignLiveIds = new Set(foreignProfileIds.map((id) => toLiveSpaceId(id, connections)));
+        const localIds = new Set(tabsRef.current.map((t) => t.id));
+
+        // Leaving: local tabs this window's foreign tree no longer
+        // references (moved/detached elsewhere). `hydrate` above already
+        // replaced the whole tree, so there's nothing left to fold in the
+        // layout — just drop the now-orphaned entries from `tabs[]` and the
+        // builder cache. Never mirrored: this window didn't cause the
+        // change, the window that DID already mirrored it.
+        const leaving = tabsRef.current.filter((t) => !foreignLiveIds.has(t.id));
+        if (leaving.length > 0) {
+          const leavingIds = new Set(leaving.map((t) => t.id));
+          leavingIds.forEach((id) => {
+            tabBuilderStateCache.current.delete(id);
+            unmirroredTabIdsRef.current.delete(id);
+          });
+          setTabs((prev) => prev.filter((t) => !leavingIds.has(t.id)));
+        }
+
+        // Arriving: tabs newly referenced by this window's foreign tree.
+        // Looked up in `payload.workspace.tabs` (the flat, profile-space
+        // backend tab list) by the RAW (pre-translation) id, since that's
+        // the space wire `TabModel`s are keyed in.
+        const toRefresh: QueryTab[] = [];
+        for (const profileId of foreignProfileIds) {
+          const liveId = toLiveSpaceId(profileId, connections);
+          if (localIds.has(liveId)) continue; // already open here
+          const tabModel = payload.workspace.tabs.find((t) => t.id === profileId);
+          if (!tabModel) continue; // defensive: tree referenced an unknown tab
+          const { tab: arrivingTab, isLive } = materializeArrivingTab(tabModel, connections);
+          setTabs((prev) => (prev.some((t) => t.id === arrivingTab.id) ? prev : [...prev, arrivingTab as QueryTab]));
+          if (tabModel.builderState != null) {
+            tabBuilderStateCache.current.set(arrivingTab.id, tabModel.builderState as BuilderState);
+          }
+          if (tabModel.profileId) {
+            const label = tabModel.profileName || tabModel.profileId;
+            setRestoredProfileNames((prev) =>
+              prev.get(tabModel.profileId) === label ? prev : new Map(prev).set(tabModel.profileId, label)
+            );
+          }
+          if (isLive && arrivingTab.type === 'collection') toRefresh.push(arrivingTab as QueryTab);
+        }
+        // Sequential — reuses `refreshTabResults`, the same revive path
+        // `handleReconnectProfile` uses below, and for the same reason:
+        // don't burst concurrent queries at a connection that may just
+        // have finished dialing.
+        (async () => {
+          for (const tab of toRefresh) {
+            await refreshTabResults(tab);
+          }
+        })();
+      })
+    );
+
+    unlistenPromises.push(
+      subscribeConnectionsChanged((payload: ConnectionsChangedPayload) => {
+        const liveProfileIds = new Set(payload.connections.map((c) => c.profileId));
+        const localByProfile = new Map(activeConnectionsRef.current.map((c) => [c.profileId, c]));
+
+        // Additions: a profile now has a live id we didn't know about —
+        // another window connected it. `addActiveConnection`/
+        // `rebindProfileTabs` are the same two calls
+        // `handleQuickConnect`/`handleReconnectProfile` make after their
+        // own `connect_db`; the payload carries no `uri` by design (Task 3
+        // — connection strings never ride an event), so any UI reading
+        // `activeConnections[].uri` (the status bar's username display)
+        // degrades to '' for a connection registered this way rather than
+        // crash.
+        for (const entry of payload.connections) {
+          if (localByProfile.has(entry.profileId)) continue;
+          addActiveConnection(entry.id, entry.name, '', entry.profileId);
+          rebindProfileTabs(entry.profileId, entry.id);
+        }
+
+        // Removals: a profile we thought was live is gone from the
+        // broadcast — another window disconnected it. Mirrors Sidebar's
+        // `onDisconnect` teardown (activeConnections + tabs[] + layout)
+        // MINUS the two things that window already did: calling
+        // `disconnect_db` itself, and mirroring the `close_many` (mirroring
+        // it again here would double-apply the same close backend-side —
+        // see the who-mirrors-what note in the task report).
+        for (const local of activeConnectionsRef.current) {
+          if (liveProfileIds.has(local.profileId)) continue;
+          setActiveConnections((prev) => prev.filter((c) => c.id !== local.id));
+          const removed = tabsRef.current.filter((t) => t.connectionId === local.id).map((t) => t.id);
+          if (removed.length === 0) continue;
+          const removedIds = new Set(removed);
+          removedIds.forEach((id) => {
+            tabBuilderStateCache.current.delete(id);
+            unmirroredTabIdsRef.current.delete(id);
+          });
+          setTabs((prev) => prev.filter((t) => !removedIds.has(t.id)));
+          dispatchLayout({ type: 'close_many', tabIds: removed });
+        }
+      })
+    );
+
+    return () => {
+      unlistenPromises.forEach((p) => {
+        p.then((unlisten) => unlisten()).catch(() => {});
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Reconnect flow for a ReconnectBanner (Phase 2 Task 6). One click revives
   // EVERY restored tab for this profile — not just the tab whose banner was

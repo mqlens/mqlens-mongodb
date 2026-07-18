@@ -114,6 +114,29 @@ export function allTabIds(layout: WorkspaceLayout): string[] {
   return allPanes(layout.root).flatMap(p => p.tabIds);
 }
 
+function mapNodeTabIds(node: LayoutNode, fn: (id: string) => string): LayoutNode {
+  if (node.kind === 'pane') {
+    return {
+      ...node,
+      tabIds: node.tabIds.map(fn),
+      activeTabId: node.activeTabId ? fn(node.activeTabId) : null,
+    };
+  }
+  return { ...node, children: [mapNodeTabIds(node.children[0], fn), mapNodeTabIds(node.children[1], fn)] };
+}
+
+/**
+ * Rewrite every tab id in `layout` (every pane's `tabIds`/`activeTabId`)
+ * through `fn`, leaving pane/split ids and `focusedPaneId` untouched (Phase
+ * 3 Task 4 — used to translate a FOREIGN window's tree, always received in
+ * profile-space over `workspace-changed`, into this window's live id space
+ * via `persistence.ts`'s `toLiveSpaceId` before hydrating it locally). Pure;
+ * returns a new tree, same shape.
+ */
+export function mapLayoutTabIds(layout: WorkspaceLayout, fn: (id: string) => string): WorkspaceLayout {
+  return { root: mapNodeTabIds(layout.root, fn), focusedPaneId: layout.focusedPaneId };
+}
+
 /** Replace the pane with the given id via fn; fn returning null folds the pane
  *  (its parent split collapses into the sibling). Root panes never fold. */
 function mapPane(node: LayoutNode, paneId: string, fn: (p: PaneNode) => PaneNode | null): LayoutNode {

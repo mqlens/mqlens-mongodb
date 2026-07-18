@@ -4,6 +4,8 @@ import {
   toDisconnectedSnapshot,
   rebindConnection,
   toProfileSpaceId,
+  toLiveSpaceId,
+  materializeArrivingTab,
   type PersistableTab,
   type PersistableConnection,
   type PersistedTab,
@@ -170,6 +172,51 @@ describe('toDisconnectedSnapshot', () => {
     expect(snapshot.tabs).toEqual([]);
     expect(snapshot.layout.root).toEqual({ kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null });
   });
+
+  it('defaults to "main" when windowId is omitted', () => {
+    const snapshot = toDisconnectedSnapshot(ws);
+    expect(snapshot.tabs.map((t) => t.id)).toEqual(['profile:p1.mydb.mycoll']);
+  });
+
+  // Phase 3 Task 4: ws.tabs is now a FLAT list shared by every window's
+  // splitTree, not one window's own list — a boot must materialize ONLY the
+  // requested window's tabs, never another window's, even though they all
+  // live in the same ws.tabs array.
+  it('windowId selects which window to hydrate, filtering ws.tabs down to ONLY that window\'s tabs', () => {
+    const multiWindow: PersistedWorkspace = {
+      revision: 5,
+      windows: [
+        {
+          id: 'main',
+          focusedPaneId: 'pane-1',
+          splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.mydb.a'], activeTabId: 'profile:p1.mydb.a' },
+        },
+        {
+          id: 'win-1',
+          focusedPaneId: 'pane-1',
+          splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.mydb.b'], activeTabId: 'profile:p1.mydb.b' },
+        },
+      ],
+      tabs: [
+        { id: 'profile:p1.mydb.a', type: 'collection', profileId: 'p1', profileName: 'Profile 1', db: 'mydb', collection: 'a' },
+        { id: 'profile:p1.mydb.b', type: 'collection', profileId: 'p1', profileName: 'Profile 1', db: 'mydb', collection: 'b' },
+      ],
+    };
+
+    const mainSnapshot = toDisconnectedSnapshot(multiWindow, 'main');
+    expect(mainSnapshot.tabs.map((t) => t.id)).toEqual(['profile:p1.mydb.a']);
+    expect(mainSnapshot.layout.root).toEqual({ kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.mydb.a'], activeTabId: 'profile:p1.mydb.a' });
+
+    const win1Snapshot = toDisconnectedSnapshot(multiWindow, 'win-1');
+    expect(win1Snapshot.tabs.map((t) => t.id)).toEqual(['profile:p1.mydb.b']);
+    expect(win1Snapshot.layout.root).toEqual({ kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.mydb.b'], activeTabId: 'profile:p1.mydb.b' });
+  });
+
+  it('an unknown windowId produces the same empty fallback as no windows at all — never another window\'s tree', () => {
+    const snapshot = toDisconnectedSnapshot(ws, 'win-does-not-exist');
+    expect(snapshot.tabs).toEqual([]);
+    expect(snapshot.layout.root).toEqual({ kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null });
+  });
 });
 
 describe('toProfileSpaceId', () => {
@@ -201,6 +248,86 @@ describe('toProfileSpaceId', () => {
 
   it('an empty connections list is a no-op passthrough', () => {
     expect(toProfileSpaceId('live-conn-1.mydb.mycoll', [])).toBe('live-conn-1.mydb.mycoll');
+  });
+});
+
+// Phase 3 Task 4: the exact inverse of toProfileSpaceId, used to translate a
+// FOREIGN window's tree (always profile-space over the wire) into this
+// window's live id space wherever it already has that connection.
+describe('toLiveSpaceId', () => {
+  const connections: PersistableConnection[] = [
+    { id: 'live-conn-1', profileId: 'p1', name: 'Profile 1' },
+    { id: 'live-conn-2', profileId: 'p2', name: 'Profile 2' },
+  ];
+
+  it('rewrites profile:<profileId> to the matching live connection id', () => {
+    expect(toLiveSpaceId('profile:p1.mydb.mycoll', connections)).toBe('live-conn-1.mydb.mycoll');
+  });
+
+  it('finds the right connection out of several', () => {
+    expect(toLiveSpaceId('shell.profile:p2.mydb.x', connections)).toBe('shell.live-conn-2.mydb.x');
+  });
+
+  it('passes through a profile prefix with no matching live connection unchanged (still disconnected)', () => {
+    expect(toLiveSpaceId('profile:p9.mydb.mycoll', connections)).toBe('profile:p9.mydb.mycoll');
+  });
+
+  it('passes through an id already in live-space unchanged (no profile: prefix to match)', () => {
+    expect(toLiveSpaceId('live-conn-1.mydb.mycoll', connections)).toBe('live-conn-1.mydb.mycoll');
+  });
+
+  it('passes through connectionless/pane ids unchanged', () => {
+    expect(toLiveSpaceId('settings', connections)).toBe('settings');
+    expect(toLiveSpaceId('pane-1', connections)).toBe('pane-1');
+  });
+
+  it('an empty connections list is a no-op passthrough', () => {
+    expect(toLiveSpaceId('profile:p1.mydb.mycoll', [])).toBe('profile:p1.mydb.mycoll');
+  });
+
+  it('round-trips with toProfileSpaceId', () => {
+    const live = 'live-conn-1.mydb.mycoll';
+    const profileSpace = toProfileSpaceId(live, connections);
+    expect(toLiveSpaceId(profileSpace, connections)).toBe(live);
+  });
+});
+
+describe('materializeArrivingTab', () => {
+  const connections: PersistableConnection[] = [{ id: 'live-conn-1', profileId: 'p1', name: 'Profile 1' }];
+
+  const wireTab: PersistedTab = {
+    id: 'profile:p1.mydb.mycoll',
+    type: 'collection',
+    profileId: 'p1',
+    profileName: 'Profile 1',
+    db: 'mydb',
+    collection: 'mycoll',
+    lastQuery: { filter: '{}' },
+  };
+
+  it('rebinds onto the live connection id and reports isLive when the profile is already connected here', () => {
+    const { tab, isLive } = materializeArrivingTab(wireTab, connections);
+    expect(isLive).toBe(true);
+    expect(tab.id).toBe('live-conn-1.mydb.mycoll');
+    expect(tab.connectionId).toBe('live-conn-1');
+    expect(tab.results).toEqual([]);
+    expect(tab.loading).toBe(false);
+    expect(tab.lastQuery).toEqual({ filter: '{}' });
+  });
+
+  it('leaves the tab in profile-space and reports isLive: false when the profile has no live connection', () => {
+    const { tab, isLive } = materializeArrivingTab(wireTab, []);
+    expect(isLive).toBe(false);
+    expect(tab.id).toBe('profile:p1.mydb.mycoll');
+    expect(tab.connectionId).toBe('profile:p1');
+  });
+
+  it('passes a connectionless tab (settings/quickstart/tasks) through unchanged', () => {
+    const connectionless: PersistedTab = { id: 'tasks', type: 'tasks', profileId: '', profileName: '', db: '', collection: '' };
+    const { tab, isLive } = materializeArrivingTab(connectionless, connections);
+    expect(isLive).toBe(false);
+    expect(tab.id).toBe('tasks');
+    expect(tab.connectionId).toBe('');
   });
 });
 
@@ -307,7 +434,12 @@ describe('rebindConnection', () => {
 describe('actionToOp', () => {
   // Ground truth: reuse a handful of ops from the golden parity fixture
   // (fixtures/workspace-golden.json) that the Rust backend's WorkspaceOp
-  // deserializer was built and tested against.
+  // deserializer was built and tested against. The fixture predates Phase 3
+  // Task 2's `window_id` field (which the Rust side defaults to `"main"`
+  // when absent), so every comparison below adds it explicitly — `actionToOp`
+  // now always stamps `window_id: windowLabel()`, which resolves to `"main"`
+  // under jsdom (no real Tauri runtime — see workspaceStore.ts's
+  // `windowLabel` doc comment).
   const opsByType = new Map<string, Record<string, unknown>>();
   for (const vector of goldenFixture.vectors) {
     for (const op of vector.ops) {
@@ -318,12 +450,12 @@ describe('actionToOp', () => {
   it('open_tab without a pane_id or tab payload', () => {
     const expected = opsByType.get('open_tab'); // { type: 'open_tab', tab_id: 'b' }
     const action: WorkspaceAction = { type: 'open_tab', tabId: 'b' };
-    expect(actionToOp(action)).toEqual(expected);
+    expect(actionToOp(action)).toEqual({ ...expected, window_id: 'main' });
   });
 
   it('open_tab with an explicit pane_id', () => {
     const action: WorkspaceAction = { type: 'open_tab', tabId: 'c', paneId: 'pane-2' };
-    expect(actionToOp(action)).toEqual({ type: 'open_tab', tab_id: 'c', pane_id: 'pane-2' });
+    expect(actionToOp(action)).toEqual({ type: 'open_tab', tab_id: 'c', pane_id: 'pane-2', window_id: 'main' });
   });
 
   it('open_tab enriched with a persisted tab payload keeps TabModel camelCase fields', () => {
@@ -331,18 +463,18 @@ describe('actionToOp', () => {
     const expected = vector.ops[0] as Record<string, unknown>; // { type: 'open_tab', tab_id: 'b', tab: {...camelCase...} }
     const persisted = expected.tab as Record<string, unknown>;
     const action: WorkspaceAction = { type: 'open_tab', tabId: expected.tab_id as string };
-    expect(actionToOp(action, persisted as any)).toEqual(expected);
+    expect(actionToOp(action, persisted as any)).toEqual({ ...expected, window_id: 'main' });
   });
 
   it('close_tab', () => {
     const action: WorkspaceAction = { type: 'close_tab', tabId: 'nope' };
-    expect(actionToOp(action)).toEqual({ type: 'close_tab', tab_id: 'nope' });
+    expect(actionToOp(action)).toEqual({ type: 'close_tab', tab_id: 'nope', window_id: 'main' });
   });
 
   it('close_many', () => {
     const expected = opsByType.get('close_many'); // { type: 'close_many', tab_ids: [...] }
     const action: WorkspaceAction = { type: 'close_many', tabIds: expected!.tab_ids as string[] };
-    expect(actionToOp(action)).toEqual(expected);
+    expect(actionToOp(action)).toEqual({ ...expected, window_id: 'main' });
   });
 
   it('move_tab with an explicit index', () => {
@@ -360,7 +492,7 @@ describe('actionToOp', () => {
       index: expected.index as number,
     };
     const op = actionToOp(action);
-    expect(op).toEqual(expected);
+    expect(op).toEqual({ ...expected, window_id: 'main' });
     expect('index' in op).toBe(true);
     expect(op.index).toBe(expected.index);
   });
@@ -368,7 +500,7 @@ describe('actionToOp', () => {
   it('move_tab without an index omits the key rather than sending undefined', () => {
     const action: WorkspaceAction = { type: 'move_tab', tabId: 'a', targetPaneId: 'nope' };
     const op = actionToOp(action);
-    expect(op).toEqual({ type: 'move_tab', tab_id: 'a', target_pane_id: 'nope' });
+    expect(op).toEqual({ type: 'move_tab', tab_id: 'a', target_pane_id: 'nope', window_id: 'main' });
     expect('index' in op).toBe(false);
   });
 
@@ -381,37 +513,37 @@ describe('actionToOp', () => {
       side: expected!.side as 'start' | 'end',
       moveTabId: expected!.move_tab_id as string,
     };
-    expect(actionToOp(action)).toEqual(expected);
+    expect(actionToOp(action)).toEqual({ ...expected, window_id: 'main' });
   });
 
   it('split_pane without a move_tab_id', () => {
     const action: WorkspaceAction = { type: 'split_pane', paneId: 'pane-1', dir: 'row', side: 'end' };
     const op = actionToOp(action);
-    expect(op).toEqual({ type: 'split_pane', pane_id: 'pane-1', dir: 'row', side: 'end' });
+    expect(op).toEqual({ type: 'split_pane', pane_id: 'pane-1', dir: 'row', side: 'end', window_id: 'main' });
     expect('move_tab_id' in op).toBe(false);
   });
 
   it('resize_split', () => {
     const expected = opsByType.get('resize_split'); // { type, split_id, ratio }
     const action: WorkspaceAction = { type: 'resize_split', splitId: expected!.split_id as string, ratio: expected!.ratio as number };
-    expect(actionToOp(action)).toEqual(expected);
+    expect(actionToOp(action)).toEqual({ ...expected, window_id: 'main' });
   });
 
   it('set_active', () => {
     const expected = opsByType.get('set_active'); // { type, pane_id, tab_id }
     const action: WorkspaceAction = { type: 'set_active', paneId: expected!.pane_id as string, tabId: expected!.tab_id as string };
-    expect(actionToOp(action)).toEqual(expected);
+    expect(actionToOp(action)).toEqual({ ...expected, window_id: 'main' });
   });
 
   it('focus_pane', () => {
     const expected = opsByType.get('focus_pane'); // { type, pane_id }
     const action: WorkspaceAction = { type: 'focus_pane', paneId: expected!.pane_id as string };
-    expect(actionToOp(action)).toEqual(expected);
+    expect(actionToOp(action)).toEqual({ ...expected, window_id: 'main' });
   });
 
   it('rename_tab', () => {
     const expected = opsByType.get('rename_tab'); // { type, old_id, new_id }
     const action: WorkspaceAction = { type: 'rename_tab', oldId: expected!.old_id as string, newId: expected!.new_id as string };
-    expect(actionToOp(action)).toEqual(expected);
+    expect(actionToOp(action)).toEqual({ ...expected, window_id: 'main' });
   });
 });

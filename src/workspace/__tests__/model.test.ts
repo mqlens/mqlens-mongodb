@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   createInitialLayout, workspaceReducer, findPane, paneOfTab, allPanes,
-  allTabIds,
+  allTabIds, mapLayoutTabIds,
   type WorkspaceLayout, type SplitNode, type PaneNode,
 } from '../model';
 
@@ -278,5 +278,47 @@ describe('robustness', () => {
     expect(workspaceReducer(l, { type: 'set_active', paneId: 'nope', tabId: 'a' })).toBe(l);
     expect(workspaceReducer(l, { type: 'move_tab', tabId: 'a', targetPaneId: 'nope' })).toBe(l);
     expect(workspaceReducer(l, { type: 'resize_split', splitId: 'nope', ratio: 0.5 })).toBe(l);
+  });
+});
+
+// Phase 3 Task 4: used to translate a FOREIGN window's tree (received
+// profile-space over `workspace-changed`) into this window's live id space
+// before hydrating it locally.
+describe('mapLayoutTabIds', () => {
+  const upper = (id: string) => id.toUpperCase();
+
+  it('rewrites every tab id in a single pane, leaving the pane id untouched', () => {
+    const l = layoutWith('a', 'b');
+    const mapped = mapLayoutTabIds(l, upper);
+    expect((mapped.root as PaneNode).tabIds).toEqual(['A', 'B']);
+    expect((mapped.root as PaneNode).activeTabId).toBe('A');
+    expect(mapped.root.id).toBe(l.root.id); // pane id untouched
+    expect(mapped.focusedPaneId).toBe(l.focusedPaneId);
+  });
+
+  it('rewrites tab ids in both children of a split, leaving split/pane ids and structure untouched', () => {
+    let l = layoutWith('a', 'b');
+    l = workspaceReducer(l, { type: 'split_pane', paneId: l.root.id, dir: 'row', side: 'end', moveTabId: 'b' });
+    const mapped = mapLayoutTabIds(l, upper);
+    const [left, right] = (mapped.root as SplitNode).children as [PaneNode, PaneNode];
+    expect(left.tabIds).toEqual(['A']);
+    expect(right.tabIds).toEqual(['B']);
+    expect(right.activeTabId).toBe('B');
+    expect(mapped.root.id).toBe(l.root.id);
+    expect((left as PaneNode).id).toBe(((l.root as SplitNode).children[0] as PaneNode).id);
+  });
+
+  it('a null activeTabId (empty pane) stays null, never passed through fn', () => {
+    const empty: WorkspaceLayout = { root: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null }, focusedPaneId: 'pane-1' };
+    const mapped = mapLayoutTabIds(empty, upper);
+    expect((mapped.root as PaneNode).activeTabId).toBeNull();
+    expect((mapped.root as PaneNode).tabIds).toEqual([]);
+  });
+
+  it('an identity fn produces a structurally-equal (but not reference-equal) layout', () => {
+    const l = layoutWith('a', 'b');
+    const mapped = mapLayoutTabIds(l, (id) => id);
+    expect(mapped).toEqual(l);
+    expect(mapped).not.toBe(l);
   });
 });
