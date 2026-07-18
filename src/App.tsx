@@ -37,7 +37,7 @@ import {
 } from './components/RestoreView';
 import { CopyToDialog } from './components/CopyToDialog';
 import { SchemaView } from './components/SchemaView';
-import { workspaceReducer, createInitialLayout, findPane, allPanes, allTabIds, mapLayoutTabIds, type WorkspaceAction, type WorkspaceLayout } from './workspace/model';
+import { workspaceReducer, createInitialLayout, findPane, paneOfTab, allPanes, allTabIds, mapLayoutTabIds, type WorkspaceAction, type WorkspaceLayout } from './workspace/model';
 import { WorkspaceRoot } from './workspace/WorkspaceRoot';
 import {
   workspaceApply,
@@ -2131,25 +2131,38 @@ function Workspace() {
   };
 
   // Foreign-event reconciliation (Phase 3 Task 4). Two independent
-  // subscriptions, set up once — `reconciliationSubscribedRef` guards
-  // against React 18 StrictMode's double-invoke of effects in dev exactly
-  // like `restoredRef` above, so a second invocation of this same effect
-  // never attaches a second pair of listeners (which would double-apply
-  // every foreign hydrate/reconcile). Both listener callbacks are captured
-  // ONCE at mount and never refreshed on later renders, so — like
-  // `handleBuilderStateChange` above — they must read live component state
-  // exclusively through refs (`activeConnectionsRef`, `tabsRef`,
-  // `lastWorkspaceRef`) or through a setter's functional-update form
-  // (`setTabs(prev => ...)`), never through a state variable captured
-  // directly in the closure.
-  const reconciliationSubscribedRef = useRef(false);
+  // subscriptions, symmetric setup/cleanup on every mount (the
+  // `resUsage`-poll `let active = true` pattern above) — NOT a persist-
+  // across-remount ref guard: React 18 StrictMode's dev double-invoke runs
+  // setup→cleanup→setup, and a ref guard set permanently `true` by the
+  // FIRST setup makes the SECOND setup's early-return skip subscribing
+  // entirely, leaving this component with zero listeners for the rest of
+  // its life (a real bug caught in review — the ref-guard idiom is only
+  // safe for effects that must run their body's side effect at most once
+  // ever, like `restoredRef`'s single `workspace_get`; it actively breaks
+  // effects, like this one, whose job is to stay subscribed for the
+  // component's lifetime). `listen`'s subscribe call is itself async
+  // (`Promise<UnlistenFn>`) — `cancelled` covers the case where cleanup
+  // runs before that promise resolves (StrictMode's rapid setup/cleanup),
+  // unlistening immediately once it does rather than leaking a listener
+  // registered after this instance was already torn down. Both listener
+  // callbacks are captured ONCE per mount and never refreshed on later
+  // renders of that same mount, so — like `handleBuilderStateChange`
+  // above — they must read live component state exclusively through refs
+  // (`activeConnectionsRef`, `tabsRef`, `layoutRef`, `lastWorkspaceRef`) or
+  // through a setter's functional-update form (`setTabs(prev => ...)`),
+  // never through a state variable captured directly in the closure.
   useEffect(() => {
-    if (reconciliationSubscribedRef.current) return;
-    reconciliationSubscribedRef.current = true;
+    let cancelled = false;
+    const unlistenFns: Array<() => void> = [];
+    const own = (p: Promise<() => void>) => {
+      p.then((unlisten) => {
+        if (cancelled) unlisten();
+        else unlistenFns.push(unlisten);
+      }).catch(() => {});
+    };
 
-    const unlistenPromises: Promise<() => void>[] = [];
-
-    unlistenPromises.push(
+    own(
       subscribeWorkspaceChanged((payload: WorkspaceChangedPayload) => {
         // Drop a replayed/out-of-order event — revisions only ever
         // increase, so anything at or below what's already applied adds
@@ -2159,15 +2172,32 @@ function Workspace() {
         lastSeenRevisionRef.current = payload.revision;
         lastWorkspaceRef.current = payload.workspace;
 
-        // Self-origin, single-window ops are our own optimistic dispatch
-        // echoing back — already applied locally by `dispatchWorkspace`,
-        // nothing to reconcile. Cross-window ops
-        // (move_tab_to_window/detach_tab/window_closed) are the one
-        // exception: they never go through the local layout reducer at all
-        // (there is no frontend action for them — Task 5 fires them
-        // straight at `workspace_apply`), so even the origin window
-        // depends entirely on this event to update its own tree.
-        if (payload.origin === windowLabel() && !payload.crossWindow) return;
+        // Bystander semantics (CRITICAL fix, review round 1): the backend
+        // guarantees `crossWindow: false` for an op iff it changed ONLY
+        // the origin window's own tree (see workspace.rs's
+        // `op_is_cross_window`). That means, for every non-crossWindow
+        // event regardless of origin:
+        //  - if origin IS this window: it's our own optimistic dispatch
+        //    echoing back — already applied locally, nothing to do.
+        //  - if origin is ANOTHER window: that op provably did not touch
+        //    THIS window's tree, so this window's entry in `payload` is
+        //    just whatever it already was — reconciling against it is a
+        //    no-op AT BEST. At worst it's actively wrong: if this window
+        //    has a local optimistic change in flight whose mirror hasn't
+        //    landed yet, the payload's snapshot of "this window" predates
+        //    that change, and hydrating from it would silently roll the
+        //    local change back — with no way to recover, since the
+        //    self-origin echo that will eventually confirm the mirror is
+        //    exactly the kind of event this same branch would (correctly)
+        //    ignore too.
+        // Only cross-window ops (move_tab_to_window/detach_tab/
+        // window_closed) can touch more than one window's tree, including
+        // this one's, and are the only ones ever worth reconciling against
+        // — regardless of origin, since none of them ever run through this
+        // window's own layout reducer even when THIS window caused them
+        // (there is no frontend action for them; Task 5 fires them
+        // straight at `workspace_apply`).
+        if (!payload.crossWindow) return;
 
         const connections = activeConnectionsRef.current;
         const winEntry = payload.workspace.windows.find((w) => w.id === windowLabel());
@@ -2183,6 +2213,18 @@ function Workspace() {
           return;
         }
 
+        // IMPORTANT fix (review round 1): unmirrored tabs (export/import —
+        // `toPersistedTab` returns null for them, so they're NEVER sent to
+        // the backend and can never appear in ANY snapshot) must survive a
+        // hydrate. Captured from `layoutRef.current` (the last-committed
+        // local layout — refs stay fresh across this frozen listener,
+        // renders keep it current) BEFORE hydrating, so each can be grafted
+        // back into the pane it occupied.
+        const unmirroredPlacements = tabsRef.current
+          .filter((t) => unmirroredTabIdsRef.current.has(t.id))
+          .map((t) => ({ tabId: t.id, paneId: paneOfTab(layoutRef.current.root, t.id)?.id }))
+          .filter((p): p is { tabId: string; paneId: string } => !!p.paneId);
+
         // The backend stays in profile-space always (persistence.ts's
         // Global Constraint); translate every id in the incoming tree to
         // THIS window's live space wherever it already has that
@@ -2195,17 +2237,39 @@ function Workspace() {
         // backend, which is where this tree just came from.
         dispatchLayout({ type: 'hydrate', layout: liveLayout });
 
+        // Graft local unmirrored tabs back in: the pane they occupied
+        // before, if it still exists in the just-hydrated tree (checked
+        // against the plain `liveLayout` value, not React state — a
+        // second `dispatchLayout` in this same synchronous callback is
+        // applied by the reducer strictly AFTER the hydrate above, same as
+        // any other same-tick multi-dispatch burst in this file), else the
+        // window's newly-focused pane. Raw `open_tab` (never mirrored —
+        // these tabs were never mirrored to begin with); `existing` inside
+        // the reducer is guaranteed null since the hydrated tree can never
+        // reference an id that was never sent to the backend.
+        for (const { tabId, paneId } of unmirroredPlacements) {
+          const targetPaneId = findPane(liveLayout.root, paneId) ? paneId : liveLayout.focusedPaneId;
+          dispatchLayout({ type: 'open_tab', tabId, paneId: targetPaneId });
+        }
+
         const foreignProfileIds = allTabIds(foreignLayout);
         const foreignLiveIds = new Set(foreignProfileIds.map((id) => toLiveSpaceId(id, connections)));
         const localIds = new Set(tabsRef.current.map((t) => t.id));
 
         // Leaving: local tabs this window's foreign tree no longer
-        // references (moved/detached elsewhere). `hydrate` above already
-        // replaced the whole tree, so there's nothing left to fold in the
-        // layout — just drop the now-orphaned entries from `tabs[]` and the
-        // builder cache. Never mirrored: this window didn't cause the
-        // change, the window that DID already mirrored it.
-        const leaving = tabsRef.current.filter((t) => !foreignLiveIds.has(t.id));
+        // references (moved/detached elsewhere) — EXCLUDING unmirrored
+        // tabs (IMPORTANT fix above: they never appear in ANY snapshot, so
+        // without this exclusion every export/import tab would look
+        // "leaving" on every single crossWindow event). `hydrate` above
+        // already replaced the whole tree (grafting unmirrored tabs back
+        // in), so there's nothing left to fold in the layout for the
+        // REST of this set — just drop their now-orphaned entries from
+        // `tabs[]` and the builder cache. Never mirrored: this window
+        // didn't cause the change, the window that DID already mirrored
+        // it.
+        const leaving = tabsRef.current.filter(
+          (t) => !foreignLiveIds.has(t.id) && !unmirroredTabIdsRef.current.has(t.id)
+        );
         if (leaving.length > 0) {
           const leavingIds = new Set(leaving.map((t) => t.id));
           leavingIds.forEach((id) => {
@@ -2250,7 +2314,7 @@ function Workspace() {
       })
     );
 
-    unlistenPromises.push(
+    own(
       subscribeConnectionsChanged((payload: ConnectionsChangedPayload) => {
         const liveProfileIds = new Set(payload.connections.map((c) => c.profileId));
         const localByProfile = new Map(activeConnectionsRef.current.map((c) => [c.profileId, c]));
@@ -2294,9 +2358,8 @@ function Workspace() {
     );
 
     return () => {
-      unlistenPromises.forEach((p) => {
-        p.then((unlisten) => unlisten()).catch(() => {});
-      });
+      cancelled = true;
+      unlistenFns.forEach((unlisten) => unlisten());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

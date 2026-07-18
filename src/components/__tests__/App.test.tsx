@@ -2161,7 +2161,7 @@ describe('App Component', () => {
   });
 
   describe('foreign-event reconciliation (Phase 3 Task 4)', () => {
-    it('(a) a foreign workspace-changed event re-hydrates this window\'s layout', async () => {
+    it('(a) a foreign NON-crossWindow event is bystander-only: lastWorkspaceRef updates, layout/tabs untouched', async () => {
       const { fireEvent, waitFor, act, within } = await import('@testing-library/react');
       renderWithProviders(<App />);
       await screen.findByTestId('mock-sidebar');
@@ -2171,14 +2171,96 @@ describe('App Component', () => {
       await within(screen.getByTestId('workspace-tab-strip')).findByText('customers');
       expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
 
-      // A DIFFERENT window (win-1) split main's tree in two — the broadcast
-      // carries the FULL workspace, main's entry now shows a split with the
-      // two tabs this window already knows about (no arriving/leaving).
+      // A DIFFERENT window's (win-1) LOCAL, non-crossWindow op — per the
+      // backend's own guarantee (op_is_cross_window), this could only have
+      // touched win-1's own tree, never main's. main's entry below is
+      // deliberately a DIFFERENT shape (a 2-pane split) than what's
+      // actually committed here, standing in for a stale/pre-mirror
+      // snapshot — reconciling against it would be wrong, so it must be
+      // ignored outright (CRITICAL fix, review round 1). win-1's own entry
+      // claims 'conn-1.sales_db.orders' — reachable via the mock sidebar's
+      // "select orders" button, used below to prove the ref DID update.
       await act(async () => {
         fireMockEvent('workspace-changed', {
           revision: 1,
           origin: 'win-1',
           crossWindow: false,
+          workspace: {
+            revision: 1,
+            windows: [
+              {
+                id: 'main',
+                focusedPaneId: 'pane-1',
+                splitTree: {
+                  kind: 'split',
+                  id: 'split-1',
+                  dir: 'row',
+                  ratio: 0.5,
+                  children: [
+                    { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' },
+                    { kind: 'pane', id: 'pane-2', tabIds: [], activeTabId: null },
+                  ],
+                },
+              },
+              {
+                id: 'win-1',
+                focusedPaneId: 'pane-1',
+                splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['conn-1.sales_db.orders'], activeTabId: 'conn-1.sales_db.orders' },
+              },
+            ],
+            tabs: [
+              { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+              { id: 'conn-1.sales_db.orders', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'orders' },
+            ],
+          },
+        });
+      });
+
+      // Layout/tabs untouched — still exactly one pane, still "customers".
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+      });
+      expect(within(screen.getByTestId('workspace-tab-strip')).getByText('customers')).toBeInTheDocument();
+
+      // lastWorkspaceRef DID update, though (proven indirectly via the
+      // cross-window open dedupe, the other consumer of that ref): opening
+      // the tab this event said win-1 holds must be deduped/focus-routed,
+      // not added locally — which is only possible if the bystander path
+      // still updated lastWorkspaceRef even though it skipped hydrate/diff.
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        return Promise.resolve([]);
+      });
+      fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+      await waitFor(() => {
+        const focusCalls = calls.filter((c) => c.cmd === 'focus_window');
+        expect(focusCalls).toHaveLength(1);
+        expect(focusCalls[0].args).toEqual({ label: 'win-1' });
+      });
+      expect(within(screen.getByTestId('workspace-tab-strip')).queryByText('orders')).not.toBeInTheDocument();
+    });
+
+    it('(a2) a crossWindow event re-hydrates this window\'s layout', async () => {
+      const { fireEvent, waitFor, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // pane-1 now holds two already-known tabs: Quick Start + customers.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await within(screen.getByTestId('workspace-tab-strip')).findByText('customers');
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+
+      // A crossWindow op (move_tab_to_window/detach_tab/window_closed) —
+      // the one class of event that CAN touch this window's tree even when
+      // it didn't originate here. The broadcast carries the FULL workspace;
+      // main's entry now shows a split with the two tabs this window
+      // already knows about (no arriving/leaving).
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'win-1',
+          crossWindow: true,
           workspace: {
             revision: 1,
             windows: [
@@ -2216,6 +2298,114 @@ describe('App Component', () => {
       });
     });
 
+    it('(i) an unmirrored (export/import) tab survives a crossWindow reconcile — never in any snapshot, must not be dropped', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const { fireEvent, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Export Collection' } });
+      fireEvent.click(await screen.findByText('Export Collection…'));
+
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      await within(tabStrip).findByText('Export: customers');
+
+      calls.length = 0;
+
+      // A crossWindow event affecting THIS window — main's backend tree
+      // only ever lists quickstart + the collection tab (export tabs are
+      // NEVER mirrored, toPersistedTab returns null for them), regardless
+      // of what unrelated activity elsewhere triggered this event.
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'win-1',
+          crossWindow: true,
+          workspace: {
+            revision: 1,
+            windows: [
+              {
+                id: 'main',
+                focusedPaneId: 'pane-1',
+                splitTree: {
+                  kind: 'pane',
+                  id: 'pane-1',
+                  tabIds: ['quickstart', 'conn-1.sales_db.customers'],
+                  activeTabId: 'conn-1.sales_db.customers',
+                },
+              },
+            ],
+            tabs: [
+              { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+              { id: 'conn-1.sales_db.customers', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'customers' },
+            ],
+          },
+        });
+      });
+
+      // Still there — never treated as "leaving" (IMPORTANT fix, review
+      // round 1: the leaving-set now excludes unmirroredTabIdsRef ids).
+      expect(within(tabStrip).getByText('Export: customers')).toBeInTheDocument();
+      // Grafted back into the LAYOUT tree too, not just left dangling in
+      // tabs[] — no dev-mode layout/tabs[] desync warning.
+      const desyncWarnings = consoleErrorSpy.mock.calls.filter(
+        (c) =>
+          typeof c[0] === 'string' &&
+          (c[0].includes('workspace layout references unknown tab') || c[0].includes('tabs[] contains ids missing'))
+      );
+      expect(desyncWarnings).toHaveLength(0);
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('(ii) an optimistic local open survives a foreign non-crossWindow event carrying an older (pre-mirror) snapshot', async () => {
+      const { fireEvent, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // Local optimistic open — in a real app its mirror (workspace_apply)
+      // is still in flight; nothing here waits for it.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      await within(tabStrip).findByText('customers');
+
+      // A foreign, non-crossWindow event from another window's UNRELATED
+      // activity — its snapshot of main's tree predates this window's
+      // local open (the backend hasn't processed that mirror yet), so it
+      // still shows only Quick Start. Pre-fix, this would have hydrated
+      // and wiped the just-opened tab (CRITICAL — review round 1). Post-fix:
+      // bystander semantics mean this window is untouched by definition —
+      // the race is trivially safe.
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'win-1',
+          crossWindow: false,
+          workspace: {
+            revision: 1,
+            windows: [
+              { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' } },
+              { id: 'win-1', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null } },
+            ],
+            tabs: [{ id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' }],
+          },
+        });
+      });
+
+      // Survives — this window was never touched by that event.
+      expect(within(tabStrip).getByText('customers')).toBeInTheDocument();
+    });
+
     it('(b) an arriving tab materializes and refreshes when its connection is already live locally', async () => {
       const workspaceSnapshot = {
         revision: 1,
@@ -2251,13 +2441,16 @@ describe('App Component', () => {
 
       calls.length = 0; // only care about what the arriving event triggers below
 
-      // A foreign event: main's tree now ALSO holds an `orders` tab for the
-      // same profile p1 — arriving, and live (p1 is already connected here).
+      // A crossWindow event: main's tree now ALSO holds an `orders` tab for
+      // the same profile p1 — arriving, and live (p1 is already connected
+      // here). Reconciliation only ever runs for crossWindow events now
+      // (bystander fix, review round 1) — a non-crossWindow event wouldn't
+      // reach this diff at all.
       await act(async () => {
         fireMockEvent('workspace-changed', {
           revision: 2,
           origin: 'win-1',
-          crossWindow: false,
+          crossWindow: true,
           workspace: {
             revision: 2,
             windows: [
@@ -2381,10 +2574,13 @@ describe('App Component', () => {
       renderWithProviders(<App />);
       await screen.findByTestId('mock-sidebar');
 
+      // crossWindow: true throughout — reconciliation (and therefore this
+      // revision-replay guard) is only ever reached for crossWindow events
+      // now (bystander fix, review round 1).
       const eventAt = (revision: number) => ({
         revision,
         origin: 'win-1',
-        crossWindow: false,
+        crossWindow: true,
         workspace: {
           revision,
           windows: [
@@ -2403,11 +2599,12 @@ describe('App Component', () => {
       expect(await screen.findByText('customers')).toBeInTheDocument();
 
       // A STALE revision 1 replay tries to wipe main's tree back to empty —
-      // it must be dropped entirely, leaving revision 2's state intact.
+      // it must be dropped entirely (by the revision check, before the
+      // crossWindow gate is even reached), leaving revision 2's state intact.
       const staleEmpty = {
         revision: 1,
         origin: 'win-1',
-        crossWindow: false,
+        crossWindow: true,
         workspace: {
           revision: 1,
           windows: [{ id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null } }],
