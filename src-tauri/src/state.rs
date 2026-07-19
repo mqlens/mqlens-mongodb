@@ -94,7 +94,14 @@ pub struct AppState {
     /// enable/disable state machine and `mcp::stop_if_running` for the
     /// `vault_lock`/`vault_reset` teardown hook that guarantees a locked
     /// vault never leaves the server listening.
-    pub mcp: Mutex<mcp::McpControl>,
+    ///
+    /// `Arc`-wrapped (unlike this struct's other `Mutex` fields) so the
+    /// spawned server task (#98 Task 2) can hold its own clone of the exact
+    /// same lock `AppState` uses — reading the live bearer token at request
+    /// time straight out of the one source of truth, rather than needing a
+    /// full `Arc<AppState>` or a second copy of the token that could drift
+    /// out of sync with a `mcp_regenerate_token` call.
+    pub mcp: Arc<Mutex<mcp::McpControl>>,
 }
 
 impl AppState {
@@ -115,7 +122,7 @@ impl AppState {
             workspace: Mutex::new(None),
             workspace_write_gen: Arc::new(AtomicU64::new(0)),
             connection_meta: Mutex::new(HashMap::new()),
-            mcp: Mutex::new(mcp::McpControl::new()),
+            mcp: Arc::new(Mutex::new(mcp::McpControl::new())),
         }
     }
 

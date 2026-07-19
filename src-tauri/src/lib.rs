@@ -1920,11 +1920,12 @@ async fn mcp_get_status(state: tauri::State<'_, AppState>) -> Result<mcp::McpSta
 
 #[tauri::command]
 async fn mcp_set_enabled(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     enabled: bool,
     port: Option<u16>,
 ) -> Result<mcp::McpStatusUi, String> {
-    mcp::set_enabled_impl(&state, enabled, port).await
+    mcp::set_enabled_impl(&state, enabled, port, Some(app_handle)).await
 }
 
 #[tauri::command]

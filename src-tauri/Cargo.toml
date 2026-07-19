@@ -49,6 +49,15 @@ sha2 = "0.11.0"
 zip = "8.6.0"
 tar = "0.4.46"
 flate2 = "1.1.9"
+rmcp = { version = "=2.2.0", features = ["server", "transport-streamable-http-server"] }
+# Serves rmcp's `StreamableHttpService` (a plain `tower_service::Service`) on our
+# already-bound `TcpListener`. Minimal, no-default-features build: "http1" (we only
+# need HTTP/1.1 for a loopback MCP endpoint, no h2) + "tokio" (required to enable
+# `axum::serve`/graceful shutdown at all — see axum's own feature table). This is
+# the exact feature set rmcp's own test suite uses to drive its streamable-HTTP
+# server transport (rmcp-2.2.0/Cargo.toml `[dev-dependencies.axum]`), so it's a
+# proven-compatible pairing rather than a guess.
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
 
 [dev-dependencies]
 tiny_http = "0.12.0"
