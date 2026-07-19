@@ -409,19 +409,35 @@ function Workspace() {
   useEffect(() => {
     activeConnectionsRef.current = activeConnections;
   }, [activeConnections]);
-  // Every profileId this window has ever learned about from a
+  // Every CONNECTION id this window has ever learned about from a
   // `connections-changed` broadcast OR the boot-time `connection_list` seed
-  // (final whole-branch review, Fix 3) — NOT from this window's own local
-  // connects, which never touch it. Gates the removal branch of the
-  // `connections-changed` listener below: a profile absent from a broadcast
-  // is only ever torn down if it was previously SEEN live in some earlier
-  // broadcast. Without this, a profile THIS window just connected itself
-  // (added to `activeConnections` synchronously, but whose `set_connection_meta`
-  // hasn't landed backend-side yet) looks identical to a genuinely-removed
-  // one the moment an unrelated broadcast arrives — e.g. some other window
+  // (final whole-branch review, Fix 3; keyed by connection id, not
+  // profileId, per the closing review's residual fix) — NOT from this
+  // window's own local connects, which never touch it. Gates the removal
+  // branch of the `connections-changed` listener below: a LOCAL connection
+  // absent from a broadcast is only ever torn down if its own id was
+  // previously SEEN live in some earlier broadcast. Without this, a
+  // connection THIS window just opened itself (added to `activeConnections`
+  // synchronously, but whose `set_connection_meta` hasn't landed
+  // backend-side yet) looks identical to a genuinely-removed one the moment
+  // an unrelated broadcast arrives — e.g. some other window
   // connecting/disconnecting something else — and would otherwise have its
   // tabs killed by a broadcast that has nothing to do with it.
-  const seenProfilesRef = useRef<Set<string>>(new Set());
+  //
+  // Keyed by connection id rather than profileId (closing review): a
+  // profileId-keyed gate has a race once two rows can exist for the same
+  // profile (final fix wave, agent-connection visibility) — a window opens
+  // `connect_db` for profile P (local row added optimistically, id not yet
+  // announced backend-side) and, before its own `set_connection_meta`
+  // lands, a broadcast arrives carrying a DIFFERENT row for P (an agent
+  // `connect`, or a second window). A profileId-keyed gate would mark P
+  // "seen" off that unrelated row, and the removal loop below — seeing the
+  // local id absent from that same broadcast — would tear down the user's
+  // just-opened, still-live connection and close its tabs. Keying by
+  // connection id means that broadcast never marks the local (still
+  // unannounced) id as seen, so it falls through to the self-heal branch
+  // (re-announce via `setConnectionMeta`) instead.
+  const seenConnectionIdsRef = useRef<Set<string>>(new Set());
   // Shared by every `update_tab_state` emission site (handleBuilderStateChange
   // here, plus handleExecuteQuery/handleExecuteAggregate below): skips
   // unmirrored tabs and translates the live id to profile-space before
@@ -552,12 +568,16 @@ function Workspace() {
   // broadcast add/rebind identically: `addActiveConnection` (dedupes by
   // profileId) plus `rebindProfileTabs` (rebinds any restored `profile:<id>`
   // tab onto the live id, same as `handleQuickConnect`/`handleReconnectProfile`
-  // do after their own `connect_db`). Also updates `seenProfilesRef` (Fix 3)
-  // for every entry, regardless of whether it was new — a boot seed or
-  // broadcast that mentions a profile is evidence that profile is being
-  // actively tracked, whether or not this window happens to already have it.
+  // do after their own `connect_db`). Also updates `seenConnectionIdsRef`
+  // (Fix 3; connection-id-keyed per the closing review) for every entry's
+  // own id, regardless of whether it was new — a boot seed or broadcast
+  // that mentions a connection is evidence that SPECIFIC connection is
+  // being actively tracked, whether or not this window happens to already
+  // have it locally. Deliberately NOT `entry.profileId` — see
+  // `seenConnectionIdsRef`'s own doc comment for the teardown race that
+  // profileId-keying opened up.
   const applyConnectionsAdditions = (connections: ConnectionEntry[]) => {
-    for (const entry of connections) seenProfilesRef.current.add(entry.profileId);
+    for (const entry of connections) seenConnectionIdsRef.current.add(entry.id);
     const localById = new Map(activeConnectionsRef.current.map((c) => [c.id, c]));
     const localByProfile = new Map(activeConnectionsRef.current.map((c) => [c.profileId, c]));
     for (const entry of connections) {
@@ -718,8 +738,8 @@ function Workspace() {
         // spawned later (or re-launched into an already-running session)
         // needs this to avoid a spurious ReconnectBanner + duplicate
         // connect_db for a profile another window already connected.
-        // `applyConnectionsAdditions` (Fix 3) also seeds `seenProfilesRef`
-        // for every entry here, exactly like a `connections-changed`
+        // `applyConnectionsAdditions` (Fix 3) also seeds `seenConnectionIdsRef`
+        // for every entry's own id here, exactly like a `connections-changed`
         // broadcast would.
         try {
           const connections = await connectionList();
@@ -2541,8 +2561,9 @@ function Workspace() {
         // another window connected it. `applyConnectionsAdditions`
         // (`addActiveConnection`/`rebindProfileTabs`, same two calls
         // `handleQuickConnect`/`handleReconnectProfile` make after their
-        // own `connect_db`) also marks every entry here as SEEN
-        // (`seenProfilesRef` — Fix 3, read by the removal loop below); the
+        // own `connect_db`) also marks every entry's OWN id here as SEEN
+        // (`seenConnectionIdsRef` — Fix 3, connection-id-keyed per the
+        // closing review; read by the removal loop below); the
         // payload carries no `uri` by design (Task 3 — connection strings
         // never ride an event), so any UI reading `activeConnections[].uri`
         // (the status bar's username display) degrades to '' for a
@@ -2590,23 +2611,30 @@ function Workspace() {
         // it again here would double-apply the same close backend-side —
         // see the who-mirrors-what note in the task report).
         //
-        // Final whole-branch review, Fix 3: gated on `seenProfilesRef` —
-        // absence from THIS broadcast alone is not enough to tear down. A
-        // profile THIS window just connected can legitimately be missing
+        // Final whole-branch review, Fix 3: gated on `seenConnectionIdsRef`
+        // — absence from THIS broadcast alone is not enough to tear down. A
+        // connection THIS window just opened can legitimately be missing
         // from an UNRELATED broadcast that races ahead of its own
         // `set_connection_meta` landing backend-side (e.g. some other
-        // window connecting/disconnecting something else in between); that
-        // shape is indistinguishable from a real removal by `liveProfileIds`
-        // alone. Only tear down a profile that was previously SEEN live in
-        // some earlier broadcast (or the boot `connection_list` seed) and
-        // is NOW absent — see `seenProfilesRef`'s own doc comment. A local
-        // connection that was NEVER seen is instead self-healed by
-        // re-announcing it via `setConnectionMeta`, so the backend's
-        // `connection_meta` map (and hence the next broadcast) catches up
-        // instead of this window silently killing its own live tabs.
+        // window connecting/disconnecting something else — OR, per the
+        // closing review, an agent/second window connecting a DIFFERENT
+        // connection for the SAME profile — in between); that shape is
+        // indistinguishable from a real removal by `liveConnectionIds`
+        // alone. Only tear down a connection whose own id was previously
+        // SEEN live in some earlier broadcast (or the boot `connection_list`
+        // seed) and is NOW absent — see `seenConnectionIdsRef`'s own doc
+        // comment. A local connection whose id was NEVER seen is instead
+        // self-healed by re-announcing it via `setConnectionMeta`, so the
+        // backend's `connection_meta` map (and hence the next broadcast)
+        // catches up instead of this window silently killing its own live
+        // tabs. Keyed by connection id, NOT profileId (the pre-closing-review
+        // shape): a profileId-keyed gate would have this exact local
+        // connection's OWN profile marked "seen" by the unrelated broadcast
+        // row that raced it, and tear it down anyway — the residual bug this
+        // fix closes.
         for (const local of activeConnectionsRef.current) {
           if (liveConnectionIds.has(local.id)) continue;
-          if (!seenProfilesRef.current.has(local.profileId)) {
+          if (!seenConnectionIdsRef.current.has(local.id)) {
             setConnectionMeta(local.id, local.profileId, local.name);
             continue;
           }

@@ -3040,8 +3040,9 @@ describe('App Component', () => {
       // An unrelated broadcast lands — this window's own `set_connection_meta`
       // for p1 hasn't registered backend-side yet (a race), so the very
       // first connections-changed payload it ever sees doesn't mention p1
-      // at all. p1 was never SEEN in any prior broadcast (seenProfilesRef is
-      // empty for it), so this must NOT be treated as a removal.
+      // at all. p1's own connection id ('live-1') was never SEEN in any
+      // prior broadcast (seenConnectionIdsRef is empty for it), so this
+      // must NOT be treated as a removal.
       await act(async () => {
         fireMockEvent('connections-changed', {
           connections: [{ id: 'live-other', profileId: 'p-other', name: 'Other Cluster' }],
@@ -3055,6 +3056,63 @@ describe('App Component', () => {
       // Self-healing re-registration: re-announces this window's own live
       // connection so the backend's connection_meta map (and hence the next
       // broadcast) catches up.
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) => c.cmd === 'set_connection_meta' && c.args?.id === 'live-1' && c.args?.profileId === 'p1',
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it('(g) a broadcast carrying a DIFFERENT connection for the SAME profile does not tear down this window\'s own not-yet-announced connection (closing review residual fix)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      // This window connects p1 itself (a human connect_db) — 'live-1' is
+      // added to activeConnections synchronously, but this window's own
+      // `set_connection_meta` for it hasn't registered backend-side yet.
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      await waitFor(() => expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument());
+
+      calls.length = 0; // only the broadcast handler's own reaction matters below
+
+      // A broadcast lands carrying a DIFFERENT connection id for the SAME
+      // profile (an MCP agent's own `connect`, or a second window racing
+      // this one) — NOT the local 'live-1' id, which this window's own
+      // `set_connection_meta` hasn't announced backend-side yet. A
+      // profileId-keyed seen-gate would mark p1 "seen" off this row alone
+      // and tear down 'live-1' as if it had been genuinely removed; the
+      // connection-id-keyed gate must not, since 'live-1' itself was never
+      // mentioned in any broadcast.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'mcp-live-2', profileId: 'p1', name: 'Prod Cluster', viaMcp: true }],
+        });
+      });
+
+      // This window's own connection (and its tabs) survive — not torn
+      // down by a same-profile broadcast that isn't actually about it.
+      expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument();
+      expect(calls.some((c) => c.cmd === 'disconnect_db')).toBe(false);
+      expect(calls.some((c) => c.cmd === 'workspace_apply' && c.args?.op?.type === 'close_many')).toBe(false);
+      // The agent's own row still renders (Fix 2's two-rows behavior is
+      // unaffected by this fix).
+      expect(await screen.findByTestId('sidebar-conn-mcp-live-2')).toBeInTheDocument();
+      // Self-healing re-registration, not teardown: re-announces this
+      // window's own live connection so the backend's connection_meta map
+      // (and hence the next broadcast) catches up.
       await waitFor(() => {
         expect(
           calls.some(
