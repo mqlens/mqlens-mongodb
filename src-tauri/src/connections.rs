@@ -17,6 +17,10 @@ pub struct ConnectionProfile {
     // connections.json files readable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh: Option<crate::ssh_tunnel::SshConfig>,
+    /// Expose this profile to MCP agents (Settings → MCP / #98). Old files
+    /// without the field deserialize as false — never opted in by surprise.
+    #[serde(default)]
+    pub mcp_enabled: bool,
 }
 
 fn default_anthropic_model() -> String {

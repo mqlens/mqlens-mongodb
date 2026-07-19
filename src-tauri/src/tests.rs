@@ -2232,6 +2232,7 @@ mod tests {
             uri: "mongodb://mock".to_string(),
             color_tag: None,
             ssh: None,
+            mcp_enabled: false,
         };
 
         // Save profile
@@ -2261,6 +2262,7 @@ mod tests {
                     passphrase: None,
                 },
             }),
+            mcp_enabled: true,
         };
         profiles.push(profile2.clone());
         crate::connections::save_profiles_to_file(&test_file_path, &profiles)
@@ -2287,6 +2289,37 @@ mod tests {
 
         // Clean up temp file
         let _ = std::fs::remove_file(&test_file_path);
+    }
+
+    // #98: mcp_enabled round-trips through plaintext (de)serialization, and old
+    // connections.json files written before the field existed must never opt a
+    // profile into MCP exposure by surprise — they must deserialize as false.
+    #[test]
+    fn test_connection_profile_mcp_enabled_roundtrip_and_legacy_default() {
+        use crate::connections::ConnectionProfile;
+
+        let profile = ConnectionProfile {
+            id: "p1".to_string(),
+            name: "Prod".to_string(),
+            uri: "mongodb://localhost:27017".to_string(),
+            color_tag: None,
+            ssh: None,
+            mcp_enabled: true,
+        };
+        let json = serde_json::to_string(&profile).expect("serialize");
+        let round_tripped: ConnectionProfile = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(round_tripped, profile);
+        assert!(round_tripped.mcp_enabled);
+
+        // A JSON literal predating the field (no "mcp_enabled" key at all).
+        let legacy_json = r#"{
+            "id": "legacy-1",
+            "name": "Legacy DB",
+            "uri": "mongodb://legacy:27017"
+        }"#;
+        let legacy: ConnectionProfile = serde_json::from_str(legacy_json)
+            .expect("old connections.json without mcp_enabled must still deserialize");
+        assert_eq!(legacy.mcp_enabled, false, "legacy profiles must never be opted in by surprise");
     }
 
     #[tokio::test]
@@ -2713,6 +2746,7 @@ mod tests {
             uri: "mongodb://user:secret@host:27017".into(),
             color_tag: None,
             ssh: None,
+            mcp_enabled: false,
         }];
         save_profiles_encrypted(&prof_path, &key, &profiles).unwrap();
         // On-disk bytes must not contain the plaintext password.
@@ -2760,6 +2794,7 @@ mod tests {
             uri: "mongodb://localhost".into(),
             color_tag: None,
             ssh: None,
+            mcp_enabled: false,
         }];
         save_profiles_to_file(&pt_profiles, &profiles).unwrap();
         assert!(pt_profiles.exists());
@@ -2989,6 +3024,7 @@ mod tests {
             uri: "mongodb://localhost".into(),
             color_tag: None,
             ssh: None,
+            mcp_enabled: false,
         }];
         save_profiles_encrypted(&enc_profiles, &old_key, &profiles).unwrap();
 

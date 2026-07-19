@@ -7,6 +7,8 @@ export interface ConnectionProfile {
   uri: string;
   color_tag?: string | null;
   ssh?: SshConfig | null;
+  /** Expose this profile to MCP agents. Mirrors backend `ConnectionProfile::mcp_enabled`. */
+  mcp_enabled?: boolean;
 }
 
 /** Options for exporting a connection URI for sharing. */
