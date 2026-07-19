@@ -1150,6 +1150,37 @@ mod tests {
         assert_eq!(names.len(), 16, "unexpected tool count — update this list (and the golden fixture) alongside any registry change");
     }
 
+    /// Drift lock for `docs/mcp-tools.md`: every tool name in the golden
+    /// fixture (the same source of truth `tools_list_matches_golden_fixture`
+    /// checks the live registry against) must appear in the hand-authored
+    /// docs page as a `### `name`` heading. This doesn't catch every kind of
+    /// doc staleness (a changed description/schema won't fail this), but it
+    /// guarantees the doc can never silently drop or forget to add a tool
+    /// when the fixture changes — regenerate the golden fixture, add the
+    /// tool's section to the doc, this test goes green again.
+    #[test]
+    fn mcp_tools_doc_lists_every_tool_from_the_golden_fixture() {
+        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mcp-tools-golden.json");
+        let fixture = std::fs::read_to_string(fixture_path)
+            .unwrap_or_else(|e| panic!("failed to read golden fixture at {fixture_path}: {e}"));
+        let tools: Vec<Value> = serde_json::from_str(&fixture).expect("golden fixture must be valid JSON");
+
+        let doc_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/mcp-tools.md");
+        let doc = std::fs::read_to_string(doc_path)
+            .unwrap_or_else(|e| panic!("failed to read {doc_path}: {e}"));
+
+        for tool in &tools {
+            let name = tool["name"].as_str().expect("fixture tool must have a string name");
+            let heading = format!("### `{name}`");
+            assert!(
+                doc.contains(&heading),
+                "docs/mcp-tools.md is missing a `{heading}` section for tool `{name}` — \
+                 the tool registry (fixtures/mcp-tools-golden.json) has drifted from the doc; \
+                 add/update its section in docs/mcp-tools.md"
+            );
+        }
+    }
+
     // ---- Task 5: write-tool round trip ------------------------------------
 
     /// One end-to-end pass over the real HTTP transport proving a Task 5
