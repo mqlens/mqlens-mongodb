@@ -201,7 +201,12 @@ pub fn get_status_impl(state: &AppState) -> Result<McpStatusUi, String> {
 /// existing server: if the bind fails (e.g. the port is already in use),
 /// this returns `Err` and leaves whatever was running (or not running)
 /// completely untouched, rather than tearing down a working server to make
-/// room for one that never came up.
+/// room for one that never came up. `port: Some(0)` asks the OS for any
+/// free ephemeral port; the actual bound port (read back from the
+/// listener) is what ends up in `McpControl::port`/the returned status,
+/// not the literal `0` — real callers never pass `0`, but tests use it to
+/// get a genuinely race-free port instead of probing for a "likely free"
+/// one ahead of time.
 ///
 /// Disabling (and successfully re-enabling on a new port) stops any
 /// previously running task via `stop_if_running`, which signals and then
@@ -233,6 +238,15 @@ pub async fn set_enabled_impl(
     let listener = TcpListener::bind(("127.0.0.1", port))
         .await
         .map_err(|e| format!("failed to bind MCP server to port {port}: {e}"))?;
+    // Read the actual bound port back from the listener rather than trusting
+    // the requested `port` verbatim: identical to `port` for any real,
+    // explicit port (the only thing production callers ever pass), but also
+    // makes `port: Some(0)` — "let the OS assign any free ephemeral port" —
+    // correctly reported instead of silently stored as `0`. Tests lean on
+    // this to get a real, race-free port straight from the OS instead of
+    // probing for a "likely free" one and hoping nothing else grabs it
+    // before the real bind.
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let mcp_shared = Arc::clone(&state.mcp);
@@ -679,10 +693,60 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
 
-    /// Binds an ephemeral OS-assigned port and returns it, for tests that
-    /// need a real free port without risking collisions between test runs.
-    fn free_port() -> u16 {
-        std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    /// Binds a *real, currently-occupied* ephemeral port and returns both
+    /// the listener (keep it alive — dropping it frees the port) and its
+    /// number, for tests that need an "already occupied" fixture to hand to
+    /// `set_enabled_impl` and observe the bind failure.
+    ///
+    /// Deliberately never does a probe-then-release-then-reuse dance (bind
+    /// port 0, read the number, drop the listener, bind that number again
+    /// later): that pattern has a TOCTOU gap between the drop and the
+    /// second bind that a concurrently-running test can slip into and grab
+    /// the same number first. Returning the still-held listener instead
+    /// closes the gap entirely — the port is never observably free between
+    /// "we asked the OS for one" and "we're holding it". Tests that don't
+    /// need to pre-occupy a specific number should ask `set_enabled_impl`
+    /// for `Some(0)` directly instead (see the `unlock` call sites above)
+    /// and read the real port back from the returned status, for the same
+    /// reason. An earlier version of this helper *did* do the
+    /// probe/release/reuse dance for every test's port, including ones
+    /// that then `.await`ed other work before the real bind — under
+    /// default-parallel `cargo test`, with many `mcp` tests binding
+    /// servers concurrently, that gap was routinely wide enough for two
+    /// tests to be handed the same "free" port and collide, flaking
+    /// whichever one bound second.
+    fn occupy_a_free_port() -> (std::net::TcpListener, u16) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        (listener, port)
+    }
+
+    /// Asserts `port` becomes bindable again, retrying briefly instead of
+    /// checking once. `stop_if_running`/graceful-shutdown already awaits
+    /// the server task to completion before returning, so the port is
+    /// genuinely free at the OS level immediately after — the retry isn't
+    /// covering for our own server lingering. It's covering for the same
+    /// structural gap as above, just unavoidable this time: the *check*
+    /// itself is a fresh bind on a specific, already-known number, and
+    /// nothing stops some unrelated concurrently-running test's own
+    /// `Some(0)`/`occupy_a_free_port` bind from being handed that exact
+    /// number an instant earlier. That's a real, if rare, race — confirmed
+    /// by reproducing it under heavy parallel load — but it's about
+    /// unrelated system-wide port traffic, not about whether *this* test's
+    /// graceful-drain freed its own port, so a few short retries resolve
+    /// it without masking an actual regression: a real drain bug leaves
+    /// the port held for the full `GRACEFUL_SHUTDOWN_TIMEOUT`, far longer
+    /// than this retries for.
+    fn assert_port_becomes_free(port: u16, context: &str) {
+        for attempt in 0..10 {
+            if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+                return;
+            }
+            if attempt < 9 {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        panic!("{context}: port {port} did not become free after retrying");
     }
 
     fn unlock(state: &AppState) {
@@ -790,7 +854,7 @@ mod tests {
     #[tokio::test]
     async fn enable_while_vault_locked_fails() {
         let state = AppState::new();
-        let err = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap_err();
+        let err = set_enabled_impl(&state, true, Some(0), None).await.unwrap_err();
         assert!(err.contains("vault is locked"), "unexpected error: {err}");
 
         let status = get_status_impl(&state).unwrap();
@@ -801,16 +865,20 @@ mod tests {
     async fn enable_binds_the_port_and_status_reflects_it() {
         let state = AppState::new();
         unlock(&state);
-        let port = free_port();
 
-        let status = set_enabled_impl(&state, true, Some(port), None).await.unwrap();
+        // `Some(0)` — let the OS assign a free ephemeral port through the
+        // one real bind `set_enabled_impl` performs, rather than probing
+        // for a "likely free" port ahead of time and racing every other
+        // parallel test doing the same probe (see `occupy_a_free_port`'s
+        // doc comment).
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
         assert!(status.enabled);
-        assert_eq!(status.port, port);
+        assert_ne!(status.port, 0, "the real bound port must be reported back, not the `0` wildcard");
         assert!(!status.token.is_empty());
 
         // The server holds the listener open — a second bind on the same
         // port must fail while the server is "enabled".
-        let second_bind = std::net::TcpListener::bind(("127.0.0.1", port));
+        let second_bind = std::net::TcpListener::bind(("127.0.0.1", status.port));
         assert!(second_bind.is_err(), "port must be occupied while the MCP server is enabled");
 
         stop_if_running(&state).await.unwrap();
@@ -820,25 +888,26 @@ mod tests {
     async fn disable_frees_the_port_and_status_reflects_it() {
         let state = AppState::new();
         unlock(&state);
-        let port = free_port();
 
-        set_enabled_impl(&state, true, Some(port), None).await.unwrap();
+        let enabled = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
         let status = set_enabled_impl(&state, false, None, None).await.unwrap();
         assert!(!status.enabled);
 
-        // stop_if_running awaits the task's completion, so the port must be
-        // bindable again immediately — no retry/sleep needed.
-        let rebound = std::net::TcpListener::bind(("127.0.0.1", port));
-        assert!(rebound.is_ok(), "port must be free again once disabled");
+        // stop_if_running awaits the task's completion, so our own server's
+        // hold on the port is gone immediately — no retry needed to prove
+        // *that*. `assert_port_becomes_free` still retries briefly, but only
+        // to absorb an unrelated concurrently-running test being handed
+        // this exact just-freed number for an instant (see its doc
+        // comment), not to paper over a slow drain.
+        assert_port_becomes_free(enabled.port, "port must be free again once disabled");
     }
 
     #[tokio::test]
     async fn vault_lock_hook_stops_the_server() {
         let state = AppState::new();
         unlock(&state);
-        let port = free_port();
 
-        set_enabled_impl(&state, true, Some(port), None).await.unwrap();
+        let enabled = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
 
         // Mirrors the `vault_lock` command: clear the key, then stop.
         *state.vault_key.lock().unwrap() = None;
@@ -846,15 +915,14 @@ mod tests {
 
         let status = get_status_impl(&state).unwrap();
         assert!(!status.enabled);
-        let rebound = std::net::TcpListener::bind(("127.0.0.1", port));
-        assert!(rebound.is_ok(), "the vault-lock hook must free the port");
+        assert_port_becomes_free(enabled.port, "the vault-lock hook must free the port");
     }
 
     #[tokio::test]
     async fn regenerate_token_changes_the_token() {
         let state = AppState::new();
         unlock(&state);
-        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
         let original = status.token;
 
         let regenerated = regenerate_token_impl(&state).unwrap();
@@ -881,9 +949,9 @@ mod tests {
     async fn enable_on_occupied_port_fails_and_leaves_state_disabled() {
         let state = AppState::new();
         unlock(&state);
-        let port = free_port();
-        // Occupy the port ourselves first so the bind inside set_enabled_impl fails.
-        let _occupier = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        // Occupy a real port ourselves first so the bind inside
+        // set_enabled_impl fails.
+        let (_occupier, port) = occupy_a_free_port();
 
         let err = set_enabled_impl(&state, true, Some(port), None).await.unwrap_err();
         assert!(err.contains(&port.to_string()), "error should mention the port: {err}");
@@ -897,19 +965,19 @@ mod tests {
     async fn enable_on_occupied_port_leaves_a_previously_running_server_untouched() {
         let state = AppState::new();
         unlock(&state);
-        let good_port = free_port();
-        set_enabled_impl(&state, true, Some(good_port), None).await.unwrap();
+        let good = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
 
-        let occupied_port = free_port();
-        let _occupier = std::net::TcpListener::bind(("127.0.0.1", occupied_port)).unwrap();
+        // This one *does* need a real, currently-occupied port to hand to
+        // `set_enabled_impl` and observe the bind failure.
+        let (_occupier, occupied_port) = occupy_a_free_port();
         let err = set_enabled_impl(&state, true, Some(occupied_port), None).await.unwrap_err();
         assert!(err.contains(&occupied_port.to_string()));
 
-        // The original server on good_port must still be running.
+        // The original server on good.port must still be running.
         let status = get_status_impl(&state).unwrap();
         assert!(status.enabled);
-        assert_eq!(status.port, good_port);
-        let rebind_good = std::net::TcpListener::bind(("127.0.0.1", good_port));
+        assert_eq!(status.port, good.port);
+        let rebind_good = std::net::TcpListener::bind(("127.0.0.1", good.port));
         assert!(rebind_good.is_err(), "the previously-running server must still hold its port");
 
         stop_if_running(&state).await.unwrap();
@@ -940,7 +1008,7 @@ mod tests {
     async fn initialize_handshake_succeeds_with_token() {
         let state = AppState::new();
         unlock(&state);
-        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
 
         let mut client = TestClient::new(status.port, &status.token);
         let init = client.initialize().await;
@@ -960,7 +1028,7 @@ mod tests {
     async fn tools_list_contains_ping() {
         let state = AppState::new();
         unlock(&state);
-        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
 
         let mut client = TestClient::new(status.port, &status.token);
         client.initialize().await;
@@ -981,7 +1049,7 @@ mod tests {
     async fn ping_call_returns_pong_and_version() {
         let state = AppState::new();
         unlock(&state);
-        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
 
         let mut client = TestClient::new(status.port, &status.token);
         client.initialize().await;
@@ -996,7 +1064,7 @@ mod tests {
     async fn request_without_token_is_401() {
         let state = AppState::new();
         unlock(&state);
-        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
 
         let client = reqwest::Client::new();
         let response = client
@@ -1018,7 +1086,7 @@ mod tests {
     async fn request_with_wrong_token_is_401() {
         let state = AppState::new();
         unlock(&state);
-        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
 
         let client = TestClient::new(status.port, "not-the-real-token");
         let response = client
@@ -1033,7 +1101,7 @@ mod tests {
     async fn regenerating_the_token_401s_the_old_token_on_the_next_request() {
         let state = AppState::new();
         unlock(&state);
-        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
         let old_token = status.token.clone();
 
         let mut client = TestClient::new(status.port, &old_token);
@@ -1059,8 +1127,7 @@ mod tests {
     async fn graceful_stop_lets_an_in_flight_request_finish_and_still_frees_the_port() {
         let state = AppState::new();
         unlock(&state);
-        let port = free_port();
-        let status = set_enabled_impl(&state, true, Some(port), None).await.unwrap();
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
 
         let mut client = TestClient::new(status.port, &status.token);
         client.initialize().await;
@@ -1082,8 +1149,7 @@ mod tests {
         assert_eq!(text, format!("pong {}", env!("CARGO_PKG_VERSION")));
 
         // And per Task 1's original assertion: the port must be free again.
-        let rebound = std::net::TcpListener::bind(("127.0.0.1", port));
-        assert!(rebound.is_ok(), "port must be free again once the graceful stop completes");
+        assert_port_becomes_free(status.port, "port must be free again once the graceful stop completes");
     }
 
     // ---- Task 4: read-tool registry ------------------------------------
@@ -1198,7 +1264,7 @@ mod tests {
     async fn delete_many_tool_round_trips_over_http() {
         let state = AppState::new();
         unlock(&state);
-        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
 
         let mut client = TestClient::new(status.port, &status.token);
         client.initialize().await;
@@ -1240,7 +1306,7 @@ mod tests {
     async fn find_tool_round_trips_over_http_against_a_mock_connection() {
         let state = AppState::new();
         unlock(&state);
-        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+        let status = set_enabled_impl(&state, true, Some(0), None).await.unwrap();
 
         let mut client = TestClient::new(status.port, &status.token);
         client.initialize().await;
