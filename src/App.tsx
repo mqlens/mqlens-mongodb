@@ -1907,6 +1907,10 @@ function Workspace() {
   const [tabContextMenu, setTabContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
 
   const handleTabContextMenu = (tabId: string, e: React.MouseEvent) => {
+    // Sole tab in this window, no other windows to move to: buildTabContextMenuItems
+    // returns [] and an empty ContextMenu would render as an empty floating box.
+    // Skip opening the menu entirely in that case.
+    if (buildTabContextMenuItems(tabId).length === 0) return;
     setTabContextMenu({ tabId, x: e.clientX, y: e.clientY });
   };
 

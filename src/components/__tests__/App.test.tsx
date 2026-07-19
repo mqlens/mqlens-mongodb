@@ -3088,5 +3088,20 @@ describe('App Component', () => {
       expect(placeholder.closest('button')).toBeDisabled();
       expect(placeholder.closest('button')).toHaveAttribute('title', 'Export/import tabs stay in their window');
     });
+
+    it('does not open an empty context menu for the sole tab when no other windows exist', async () => {
+      const { fireEvent, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // Only Quick Start is open, and no other windows were seeded — both
+      // "Detach to New Window" and any "Move to" entries are absent, so
+      // buildTabContextMenuItems returns [] and the menu must not open.
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const quickstartTab = await within(tabStrip).findByText('Quick Start');
+      fireEvent.contextMenu(quickstartTab.closest('div')!);
+
+      expect(screen.queryByTestId('context-menu')).not.toBeInTheDocument();
+    });
   });
 });
