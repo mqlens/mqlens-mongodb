@@ -533,6 +533,71 @@ impl McpServer {
         let result = crate::mcp_tools::list_indexes_tool_impl(&state, &path, &args.connection_id, &args.database, &args.collection).await;
         finish_json(&state, "list_indexes", Some(args.connection_id.clone()), &summary, result)
     }
+
+    // ---- Task 5: write tools, gated on _confirm ------------------------
+
+    #[tool(
+        description = "Insert one document. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be inserted (the namespace and a summary of the document) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have."
+    )]
+    async fn insert_one(&self, Parameters(args): Parameters<crate::mcp_tools::InsertOneArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let connection_id = args.connection_id.clone();
+        let summary =
+            crate::mcp_tools::truncate_summary(&crate::mcp_tools::insert_one_summary(&args.database, &args.collection, &args.document, args._confirm), 200);
+        let result = crate::mcp_tools::insert_one_impl(&state, &path, args).await;
+        finish_json(&state, "insert_one", Some(connection_id), &summary, result)
+    }
+
+    #[tool(
+        description = "Update every document matching `filter` using operators (e.g. {\"$set\": {...}}) — bare replacement documents are rejected. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be modified (the namespace, the filter, and the update) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have."
+    )]
+    async fn update_many(&self, Parameters(args): Parameters<crate::mcp_tools::UpdateManyArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let connection_id = args.connection_id.clone();
+        let summary = crate::mcp_tools::truncate_summary(
+            &crate::mcp_tools::update_many_summary(&args.database, &args.collection, &args.filter, &args.update, args._confirm),
+            200,
+        );
+        let result = crate::mcp_tools::update_many_tool_impl(&state, &path, args).await;
+        finish_json(&state, "update_many", Some(connection_id), &summary, result)
+    }
+
+    #[tool(
+        description = "Delete every document matching `filter`. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be deleted (the namespace and the filter) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have."
+    )]
+    async fn delete_many(&self, Parameters(args): Parameters<crate::mcp_tools::DeleteManyArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let connection_id = args.connection_id.clone();
+        let summary = crate::mcp_tools::truncate_summary(&crate::mcp_tools::delete_many_summary(&args.database, &args.collection, &args.filter, args._confirm), 200);
+        let result = crate::mcp_tools::delete_many_tool_impl(&state, &path, args).await;
+        finish_json(&state, "delete_many", Some(connection_id), &summary, result)
+    }
+
+    #[tool(
+        description = "Create an index. `name` defaults to MongoDB's own naming convention (each key's field_direction joined by `_`, e.g. `email_1`) when omitted. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be created (the namespace and the key spec) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have."
+    )]
+    async fn create_index(&self, Parameters(args): Parameters<crate::mcp_tools::CreateIndexArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let connection_id = args.connection_id.clone();
+        let summary = crate::mcp_tools::truncate_summary(
+            &crate::mcp_tools::create_index_summary(
+                &args.database,
+                &args.collection,
+                &args.keys,
+                args.name.as_deref(),
+                args.unique.unwrap_or(false),
+                args.sparse.unwrap_or(false),
+                args._confirm,
+            ),
+            200,
+        );
+        let result = crate::mcp_tools::create_index_tool_impl(&state, &path, args).await;
+        finish_json(&state, "create_index", Some(connection_id), &summary, result)
+    }
 }
 
 #[tool_handler]
@@ -1060,7 +1125,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_router_exposes_all_twelve_tools() {
+    fn tool_router_exposes_all_sixteen_tools() {
         let names: std::collections::HashSet<String> = McpServer::tool_router().list_all().into_iter().map(|t| t.name.to_string()).collect();
         for expected in [
             "ping",
@@ -1075,10 +1140,62 @@ mod tests {
             "explain",
             "schema_analysis",
             "list_indexes",
+            "insert_one",
+            "update_many",
+            "delete_many",
+            "create_index",
         ] {
             assert!(names.contains(expected), "tool_router is missing `{expected}`; got {names:?}");
         }
-        assert_eq!(names.len(), 12, "unexpected tool count — update this list (and the golden fixture) alongside any registry change");
+        assert_eq!(names.len(), 16, "unexpected tool count — update this list (and the golden fixture) alongside any registry change");
+    }
+
+    // ---- Task 5: write-tool round trip ------------------------------------
+
+    /// One end-to-end pass over the real HTTP transport proving a Task 5
+    /// write tool round-trips through the whole stack — auth, JSON-RPC,
+    /// `Parameters<T>` deserialization of a `_confirm: bool` field alongside
+    /// a `filter` JSON-object field, and back — mirroring
+    /// `find_tool_round_trips_over_http_against_a_mock_connection` above.
+    /// This `McpServer` has no `AppHandle` (same as that test), so every
+    /// tool call fails the same clean "no application handle" way rather
+    /// than panicking the server task — this is what actually gets proven
+    /// here; the exhaustive `_confirm`-gate ordering and per-tool mock-path
+    /// coverage lives in `mcp_tools.rs`'s own tests, which call the `_impl`
+    /// functions directly with a real `AppState`.
+    #[tokio::test]
+    async fn delete_many_tool_round_trips_over_http() {
+        let state = AppState::new();
+        unlock(&state);
+        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+
+        let mut client = TestClient::new(status.port, &status.token);
+        client.initialize().await;
+
+        let result = client
+            .call(
+                2,
+                "tools/call",
+                json!({
+                    "name": "delete_many",
+                    "arguments": {
+                        "connection_id": "whatever",
+                        "database": "d",
+                        "collection": "c",
+                        "filter": {},
+                        "_confirm": false
+                    }
+                }),
+            )
+            .await;
+        let content = &result["result"]["content"][0]["text"];
+        assert!(
+            content.as_str().unwrap_or_default().contains("no application handle"),
+            "expected the AppHandle-less error, got: {result:?}"
+        );
+        assert_eq!(result["result"]["isError"], true);
+
+        stop_if_running(&state).await.unwrap();
     }
 
     /// One end-to-end pass over the real HTTP transport (mirrors

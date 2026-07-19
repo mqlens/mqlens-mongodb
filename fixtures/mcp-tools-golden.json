@@ -47,6 +47,94 @@
     }
   },
   {
+    "name": "create_index",
+    "description": "Create an index. `name` defaults to MongoDB's own naming convention (each key's field_direction joined by `_`, e.g. `email_1`) when omitted. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be created (the namespace and the key spec) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection",
+        "keys",
+        "_confirm"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "keys": {
+          "description": "Index key spec as a JSON object, e.g. `{\"email\": 1}` or\n`{\"a\": 1, \"b\": -1}`."
+        },
+        "name": {
+          "description": "Index name. Defaults to MongoDB's own naming convention (each key's\n`field_direction` joined by `_`, e.g. `email_1`) when omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "unique": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "sparse": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "_confirm": {
+          "description": "Must be `true`; see `insert_one`'s `_confirm` doc.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "delete_many",
+    "description": "Delete every document matching `filter`. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be deleted (the namespace and the filter) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection",
+        "filter",
+        "_confirm"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "filter": {
+          "description": "MQL filter selecting documents to delete, as a JSON object."
+        },
+        "_confirm": {
+          "description": "Must be `true`; see `insert_one`'s `_confirm` doc.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
     "name": "disconnect",
     "description": "Close a connection previously opened by this MCP session's `connect` call. Cannot disconnect a connection a human opened via the app UI, even if its profile is opted in.",
     "inputSchema": {
@@ -180,6 +268,40 @@
     }
   },
   {
+    "name": "insert_one",
+    "description": "Insert one document. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be inserted (the namespace and a summary of the document) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection",
+        "document",
+        "_confirm"
+      ],
+      "properties": {
+        "connection_id": {
+          "description": "Id returned by `connect` or `list_connections`.",
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "document": {
+          "description": "The document to insert, as a JSON object."
+        },
+        "_confirm": {
+          "description": "Must be `true`. Before setting this, restate to the user exactly\nwhat will be inserted (the namespace and a summary of the document)\nand get their go-ahead — the call is rejected until then.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
     "name": "list_collections",
     "description": "List collections (and their type: collection/view/timeseries) in a database.",
     "inputSchema": {
@@ -292,6 +414,43 @@
           ],
           "format": "int64",
           "default": null
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "update_many",
+    "description": "Update every document matching `filter` using operators (e.g. {\"$set\": {...}}) — bare replacement documents are rejected. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be modified (the namespace, the filter, and the update) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection",
+        "filter",
+        "update",
+        "_confirm"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "filter": {
+          "description": "MQL filter selecting documents to update, as a JSON object."
+        },
+        "update": {
+          "description": "Update document using operators (e.g. `{\"$set\": {\"field\": \"value\"}}`).\nBare replacement documents are rejected."
+        },
+        "_confirm": {
+          "description": "Must be `true`; see `insert_one`'s `_confirm` doc.",
+          "type": "boolean"
         }
       },
       "type": "object"

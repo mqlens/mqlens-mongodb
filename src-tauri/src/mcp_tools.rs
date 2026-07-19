@@ -518,6 +518,246 @@ pub async fn schema_analysis_impl(state: &AppState, profiles_path: &Path, args: 
 }
 
 // ---------------------------------------------------------------------------
+// Write tools (#98 Task 5) — insert_one / update_many / delete_many / create_index
+// ---------------------------------------------------------------------------
+
+/// The `_confirm` gate's exact rejection message, identical across every
+/// destructive tool (`insert_one`, `update_many`, `delete_many`,
+/// `create_index`) — an agent can pattern-match on it once rather than per
+/// tool.
+const CONFIRM_REQUIRED: &str = "Destructive operation blocked: call again with _confirm: true after restating exactly what will be modified.";
+
+/// Shared `_confirm` gate for every destructive tool. Every write-tool impl
+/// below calls this *after* `require_mcp_connection` — authorization (does
+/// this connection/profile exist and remain opted in?) must be resolved
+/// before confirmation, so a non-opted connection id always gets the
+/// uniform `CONNECTION_NOT_FOUND` even when `_confirm` is false, never a
+/// hint that the operation would otherwise have proceeded.
+///
+/// `op_desc` names the calling tool for readers of this function and is
+/// asserted non-empty in debug builds; it is deliberately NOT interpolated
+/// into the returned message — every rejection must be byte-for-byte the
+/// same string regardless of which tool or operation triggered it.
+fn require_confirm(confirm: bool, op_desc: &str) -> Result<(), String> {
+    debug_assert!(!op_desc.trim().is_empty(), "op_desc should name the calling tool/operation");
+    if confirm {
+        Ok(())
+    } else {
+        Err(CONFIRM_REQUIRED.to_string())
+    }
+}
+
+/// Byte length of `value` once serialized to JSON — the building block for
+/// call-log summaries that mention *size* without ever including
+/// document/filter contents (spec: "NEVER document/filter contents beyond
+/// the 200-char truncation").
+fn json_byte_len(value: &serde_json::Value) -> usize {
+    serde_json::to_string(value).map(|s| s.len()).unwrap_or(0)
+}
+
+/// Best-effort: embed `s` as parsed JSON if it happens to already be valid
+/// JSON text (every real-connection id string from `insert_document_impl`
+/// is — it's built via `Bson::into_relaxed_extjson().to_string()`), else
+/// fall back to embedding it as a JSON string literal (the mock path's
+/// literal `"mock-inserted-id"` is not itself valid JSON text — it has no
+/// surrounding quotes). Keeps `insert_one`'s result valid JSON either way
+/// without re-implementing `insert_document_impl`'s id-rendering.
+fn embed_json_or_string(s: String) -> serde_json::Value {
+    serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s))
+}
+
+/// `insert_one` args.
+#[derive(Deserialize, JsonSchema, Debug, Clone)]
+pub struct InsertOneArgs {
+    /// Id returned by `connect` or `list_connections`.
+    pub connection_id: String,
+    pub database: String,
+    pub collection: String,
+    /// The document to insert, as a JSON object.
+    pub document: serde_json::Value,
+    /// Must be `true`. Before setting this, restate to the user exactly
+    /// what will be inserted (the namespace and a summary of the document)
+    /// and get their go-ahead — the call is rejected until then.
+    pub _confirm: bool,
+}
+
+/// `insert_one` result envelope.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct InsertOneResult {
+    pub inserted_id: serde_json::Value,
+}
+
+/// Call-log summary for `insert_one` — namespace + document size, never the
+/// document's actual contents.
+pub fn insert_one_summary(database: &str, collection: &str, document: &serde_json::Value, confirmed: bool) -> String {
+    format!("{database}.{collection} insert_one document_bytes={} confirmed={confirmed}", json_byte_len(document))
+}
+
+pub async fn insert_one_impl(state: &AppState, profiles_path: &Path, args: InsertOneArgs) -> Result<InsertOneResult, String> {
+    require_mcp_connection(state, profiles_path, &args.connection_id)?;
+    require_confirm(args._confirm, "insert_one")?;
+    let document_json = serde_json::to_string(&args.document).map_err(|e| format!("serialize document: {e}"))?;
+    let inserted_id = crate::insert_document_impl(state, &args.connection_id, &args.database, &args.collection, &document_json).await?;
+    Ok(InsertOneResult { inserted_id: embed_json_or_string(inserted_id) })
+}
+
+/// `update_many` args.
+#[derive(Deserialize, JsonSchema, Debug, Clone)]
+pub struct UpdateManyArgs {
+    pub connection_id: String,
+    pub database: String,
+    pub collection: String,
+    /// MQL filter selecting documents to update, as a JSON object.
+    pub filter: serde_json::Value,
+    /// Update document using operators (e.g. `{"$set": {"field": "value"}}`).
+    /// Bare replacement documents are rejected.
+    pub update: serde_json::Value,
+    /// Must be `true`; see `insert_one`'s `_confirm` doc.
+    pub _confirm: bool,
+}
+
+/// `update_many` result envelope. `matched_count` isn't available: the
+/// underlying `update_many_impl` seam (`db/documents.rs`) only returns
+/// `modified_count` — this tool consumes that seam verbatim rather than
+/// duplicating the driver call to recover the matched count too.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateManyResult {
+    pub modified_count: u64,
+}
+
+pub fn update_many_summary(database: &str, collection: &str, filter: &serde_json::Value, update: &serde_json::Value, confirmed: bool) -> String {
+    format!(
+        "{database}.{collection} update_many filter_bytes={} update_bytes={} confirmed={confirmed}",
+        json_byte_len(filter),
+        json_byte_len(update)
+    )
+}
+
+pub async fn update_many_tool_impl(state: &AppState, profiles_path: &Path, args: UpdateManyArgs) -> Result<UpdateManyResult, String> {
+    require_mcp_connection(state, profiles_path, &args.connection_id)?;
+    require_confirm(args._confirm, "update_many")?;
+    let filter_json = serde_json::to_string(&args.filter).map_err(|e| format!("serialize filter: {e}"))?;
+    let update_json = serde_json::to_string(&args.update).map_err(|e| format!("serialize update: {e}"))?;
+    let modified_count = crate::update_many_impl(state, &args.connection_id, &args.database, &args.collection, &filter_json, &update_json).await?;
+    Ok(UpdateManyResult { modified_count })
+}
+
+/// `delete_many` args.
+#[derive(Deserialize, JsonSchema, Debug, Clone)]
+pub struct DeleteManyArgs {
+    pub connection_id: String,
+    pub database: String,
+    pub collection: String,
+    /// MQL filter selecting documents to delete, as a JSON object.
+    pub filter: serde_json::Value,
+    /// Must be `true`; see `insert_one`'s `_confirm` doc.
+    pub _confirm: bool,
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteManyResult {
+    pub deleted_count: u64,
+}
+
+pub fn delete_many_summary(database: &str, collection: &str, filter: &serde_json::Value, confirmed: bool) -> String {
+    format!("{database}.{collection} delete_many filter_bytes={} confirmed={confirmed}", json_byte_len(filter))
+}
+
+pub async fn delete_many_tool_impl(state: &AppState, profiles_path: &Path, args: DeleteManyArgs) -> Result<DeleteManyResult, String> {
+    require_mcp_connection(state, profiles_path, &args.connection_id)?;
+    require_confirm(args._confirm, "delete_many")?;
+    let filter_json = serde_json::to_string(&args.filter).map_err(|e| format!("serialize filter: {e}"))?;
+    let deleted_count = crate::delete_many_impl(state, &args.connection_id, &args.database, &args.collection, &filter_json).await?;
+    Ok(DeleteManyResult { deleted_count })
+}
+
+/// `create_index` args.
+#[derive(Deserialize, JsonSchema, Debug, Clone)]
+pub struct CreateIndexArgs {
+    pub connection_id: String,
+    pub database: String,
+    pub collection: String,
+    /// Index key spec as a JSON object, e.g. `{"email": 1}` or
+    /// `{"a": 1, "b": -1}`.
+    pub keys: serde_json::Value,
+    /// Index name. Defaults to MongoDB's own naming convention (each key's
+    /// `field_direction` joined by `_`, e.g. `email_1`) when omitted.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub unique: Option<bool>,
+    #[serde(default)]
+    pub sparse: Option<bool>,
+    /// Must be `true`; see `insert_one`'s `_confirm` doc.
+    pub _confirm: bool,
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateIndexResult {
+    pub name: String,
+}
+
+pub fn create_index_summary(
+    database: &str,
+    collection: &str,
+    keys: &serde_json::Value,
+    name: Option<&str>,
+    unique: bool,
+    sparse: bool,
+    confirmed: bool,
+) -> String {
+    format!(
+        "{database}.{collection} create_index keys_bytes={} name={} unique={unique} sparse={sparse} confirmed={confirmed}",
+        json_byte_len(keys),
+        name.unwrap_or("<default>")
+    )
+}
+
+/// One key's `dir` rendered the way it'd appear in a MongoDB-style default
+/// index name: numbers print bare (`1`, `-1`), strings print unquoted
+/// (`text`, `2dsphere`), anything else falls back to its JSON rendering.
+fn index_dir_token(dir: &serde_json::Value) -> String {
+    match dir {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// MongoDB's own default index-name convention: each key's `field_dir`
+/// joined by `_` (e.g. `{"a":1,"b":-1}` -> `"a_1_b_-1"`) — mirrors the
+/// frontend's `defaultIndexName` (`IndexModal.tsx`) closely enough for an
+/// agent-facing default. `keys` must already be a non-empty JSON object;
+/// `create_index_impl` itself would reject anything else once it tries to
+/// convert `keys` to a BSON document, so failing the same way here (before
+/// even reaching the impl) just fails a little earlier when there's no name
+/// to fall back to.
+fn default_index_name(keys: &serde_json::Value) -> Result<String, String> {
+    let obj = keys.as_object().ok_or_else(|| "`keys` must be a JSON object, e.g. {\"field\": 1}".to_string())?;
+    if obj.is_empty() {
+        return Err("`keys` must have at least one field".to_string());
+    }
+    Ok(obj.iter().map(|(field, dir)| format!("{field}_{}", index_dir_token(dir))).collect::<Vec<_>>().join("_"))
+}
+
+pub async fn create_index_tool_impl(state: &AppState, profiles_path: &Path, args: CreateIndexArgs) -> Result<CreateIndexResult, String> {
+    require_mcp_connection(state, profiles_path, &args.connection_id)?;
+    require_confirm(args._confirm, "create_index")?;
+    let name = match args.name {
+        Some(n) if !n.trim().is_empty() => n,
+        _ => default_index_name(&args.keys)?,
+    };
+    let keys_json = serde_json::to_string(&args.keys).map_err(|e| format!("serialize keys: {e}"))?;
+    crate::create_index_impl(state, &args.connection_id, &args.database, &args.collection, &name, &keys_json, args.unique.unwrap_or(false), args.sparse.unwrap_or(false))
+        .await?;
+    Ok(CreateIndexResult { name })
+}
+
+// ---------------------------------------------------------------------------
 // Call-log summaries
 // ---------------------------------------------------------------------------
 
@@ -992,5 +1232,360 @@ mod tests {
         .unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert!(v.get("sampled").is_some());
+    }
+
+    // ---- Task 5: write tools + _confirm gate -----------------------------
+
+    #[test]
+    fn require_confirm_rejects_with_the_exact_message() {
+        let err = require_confirm(false, "insert_one").unwrap_err();
+        assert_eq!(err, "Destructive operation blocked: call again with _confirm: true after restating exactly what will be modified.");
+        assert!(require_confirm(true, "insert_one").is_ok());
+    }
+
+    #[test]
+    fn default_index_name_matches_mongo_convention() {
+        assert_eq!(default_index_name(&serde_json::json!({"email": 1})).unwrap(), "email_1");
+        assert_eq!(default_index_name(&serde_json::json!({"a": 1, "b": -1})).unwrap(), "a_1_b_-1");
+        assert_eq!(default_index_name(&serde_json::json!({"loc": "2dsphere"})).unwrap(), "loc_2dsphere");
+        assert!(default_index_name(&serde_json::json!([1, 2])).is_err());
+        assert!(default_index_name(&serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn write_tool_summaries_never_embed_document_or_filter_contents() {
+        let secret_doc = serde_json::json!({"ssn": "123-45-6789", "salary": 999999});
+        let s = insert_one_summary("db", "coll", &secret_doc, true);
+        assert!(!s.contains("123-45-6789") && !s.contains("999999"), "summary leaked document contents: {s}");
+        assert_eq!(s, "db.coll insert_one document_bytes=37 confirmed=true");
+
+        let filter = serde_json::json!({"password": "hunter2"});
+        let update = serde_json::json!({"$set": {"password": "new-secret"}});
+        let s = update_many_summary("db", "coll", &filter, &update, false);
+        assert!(!s.contains("hunter2") && !s.contains("new-secret"));
+        assert!(s.starts_with("db.coll update_many filter_bytes=") && s.contains("confirmed=false"));
+
+        let s = delete_many_summary("db", "coll", &filter, true);
+        assert!(!s.contains("hunter2"));
+        assert!(s.starts_with("db.coll delete_many filter_bytes=") && s.contains("confirmed=true"));
+
+        let keys = serde_json::json!({"email": 1});
+        let s = create_index_summary("db", "coll", &keys, Some("email_1"), true, false, true);
+        assert_eq!(s, "db.coll create_index keys_bytes=11 name=email_1 unique=true sparse=false confirmed=true");
+        let s_default = create_index_summary("db", "coll", &keys, None, false, false, false);
+        assert!(s_default.contains("name=<default>"));
+    }
+
+    // ---- insert_one --------------------------------------------------
+
+    #[tokio::test]
+    async fn insert_one_without_confirm_is_rejected_and_does_not_call_the_impl() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("insert-one-no-confirm.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        let err = insert_one_impl(
+            &state,
+            &path,
+            InsertOneArgs { connection_id: id, database: "sales_db".into(), collection: "customers".into(), document: serde_json::json!({"name": "Eve"}), _confirm: false },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, CONFIRM_REQUIRED);
+        // No signal the impl ran beyond the error itself is observable on a
+        // mock connection (mock inserts don't persist either way) — the gate
+        // returning before `insert_document_impl` is called is what this
+        // test actually proves via the exact error text above.
+    }
+
+    #[tokio::test]
+    async fn insert_one_with_confirm_succeeds_on_mock_connection() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("insert-one-confirm.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        let result = insert_one_impl(
+            &state,
+            &path,
+            InsertOneArgs { connection_id: id, database: "sales_db".into(), collection: "customers".into(), document: serde_json::json!({"name": "Eve"}), _confirm: true },
+        )
+        .await
+        .unwrap();
+        // Mock path returns `insert_document_impl`'s literal mock id.
+        assert_eq!(result.inserted_id, serde_json::Value::String("mock-inserted-id".to_string()));
+    }
+
+    #[tokio::test]
+    async fn insert_one_rejects_a_non_opted_connection_before_the_confirm_gate() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("insert-one-guard.enc");
+        write_profiles(&path, &[]);
+        // _confirm: false too — authorization must win regardless, never a
+        // hint that the op would proceed if only _confirm were true.
+        let err = insert_one_impl(
+            &state,
+            &path,
+            InsertOneArgs { connection_id: "nope".into(), database: "d".into(), collection: "c".into(), document: serde_json::json!({}), _confirm: false },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, CONNECTION_NOT_FOUND, "authorization must be checked before the confirm gate");
+    }
+
+    // ---- update_many ---------------------------------------------------
+
+    #[tokio::test]
+    async fn update_many_without_confirm_is_rejected() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("update-many-no-confirm.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        let err = update_many_tool_impl(
+            &state,
+            &path,
+            UpdateManyArgs {
+                connection_id: id,
+                database: "sales_db".into(),
+                collection: "customers".into(),
+                filter: serde_json::json!({"tier": "gold"}),
+                update: serde_json::json!({"$set": {"tier": "platinum"}}),
+                _confirm: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, CONFIRM_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn update_many_with_confirm_no_ops_cleanly_on_mock_connection() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("update-many-confirm.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        let result = update_many_tool_impl(
+            &state,
+            &path,
+            UpdateManyArgs {
+                connection_id: id,
+                database: "sales_db".into(),
+                collection: "customers".into(),
+                filter: serde_json::json!({"tier": "gold"}),
+                update: serde_json::json!({"$set": {"tier": "platinum"}}),
+                _confirm: true,
+            },
+        )
+        .await
+        .unwrap();
+        // `update_many_impl`'s documented mock behavior: no-op, modified_count 0.
+        assert_eq!(result.modified_count, 0);
+    }
+
+    #[tokio::test]
+    async fn update_many_rejects_a_non_opted_connection_with_confirm_false() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("update-many-guard.enc");
+        write_profiles(&path, &[]);
+        let err = update_many_tool_impl(
+            &state,
+            &path,
+            UpdateManyArgs {
+                connection_id: "nope".into(),
+                database: "d".into(),
+                collection: "c".into(),
+                filter: serde_json::json!({}),
+                update: serde_json::json!({"$set": {"a": 1}}),
+                _confirm: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, CONNECTION_NOT_FOUND);
+    }
+
+    // ---- delete_many ---------------------------------------------------
+
+    #[tokio::test]
+    async fn delete_many_without_confirm_is_rejected() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("delete-many-no-confirm.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        let err = delete_many_tool_impl(
+            &state,
+            &path,
+            DeleteManyArgs { connection_id: id, database: "sales_db".into(), collection: "customers".into(), filter: serde_json::json!({"tier": "X"}), _confirm: false },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, CONFIRM_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn delete_many_with_confirm_no_ops_cleanly_on_mock_connection() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("delete-many-confirm.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        let result = delete_many_tool_impl(
+            &state,
+            &path,
+            DeleteManyArgs { connection_id: id, database: "sales_db".into(), collection: "customers".into(), filter: serde_json::json!({"tier": "X"}), _confirm: true },
+        )
+        .await
+        .unwrap();
+        // `delete_many_impl`'s documented mock behavior: no-op, deleted_count 0.
+        assert_eq!(result.deleted_count, 0);
+    }
+
+    #[tokio::test]
+    async fn delete_many_rejects_a_non_opted_connection_with_confirm_false() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("delete-many-guard.enc");
+        write_profiles(&path, &[]);
+        let err = delete_many_tool_impl(
+            &state,
+            &path,
+            DeleteManyArgs { connection_id: "nope".into(), database: "d".into(), collection: "c".into(), filter: serde_json::json!({}), _confirm: false },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, CONNECTION_NOT_FOUND);
+    }
+
+    // ---- create_index ----------------------------------------------------
+
+    #[tokio::test]
+    async fn create_index_without_confirm_is_rejected() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("create-index-no-confirm.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        let err = create_index_tool_impl(
+            &state,
+            &path,
+            CreateIndexArgs {
+                connection_id: id,
+                database: "sales_db".into(),
+                collection: "customers".into(),
+                keys: serde_json::json!({"email": 1}),
+                name: None,
+                unique: None,
+                sparse: None,
+                _confirm: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, CONFIRM_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn create_index_with_confirm_succeeds_on_mock_connection_and_defaults_the_name() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("create-index-confirm.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        // `sales_db.customers`'s mock demo data already ships default
+        // indexes named `_id_`/`email_1`/`tier_1` (see `mock_db::get_mock_indexes`);
+        // `create_index_impl`'s mock branch is a by-name no-op, so this test
+        // uses a field with no pre-existing default index to actually
+        // exercise the create path (not silently no-op against a same-named
+        // default).
+        let result = create_index_tool_impl(
+            &state,
+            &path,
+            CreateIndexArgs {
+                connection_id: id.clone(),
+                database: "sales_db".into(),
+                collection: "customers".into(),
+                keys: serde_json::json!({"loyaltyPoints": 1}),
+                name: None,
+                unique: Some(true),
+                sparse: None,
+                _confirm: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.name, "loyaltyPoints_1");
+
+        // The mock path's `create_index_impl` actually records the index —
+        // verify it shows up via the read-side seam already covered by
+        // Task 4's tests, proving this tool really called through rather
+        // than short-circuiting.
+        let indexes = list_indexes_tool_impl(&state, &path, &id, "sales_db", "customers").await.unwrap();
+        assert!(indexes.iter().any(|i| i.name == "loyaltyPoints_1" && i.unique), "expected the newly created index to appear: {indexes:?}");
+    }
+
+    #[tokio::test]
+    async fn create_index_honors_an_explicit_name() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("create-index-explicit-name.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        let result = create_index_tool_impl(
+            &state,
+            &path,
+            CreateIndexArgs {
+                connection_id: id,
+                database: "sales_db".into(),
+                collection: "customers".into(),
+                keys: serde_json::json!({"email": 1}),
+                name: Some("by_email".into()),
+                unique: None,
+                sparse: None,
+                _confirm: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.name, "by_email");
+    }
+
+    #[tokio::test]
+    async fn create_index_rejects_a_non_opted_connection_with_confirm_false() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("create-index-guard.enc");
+        write_profiles(&path, &[]);
+        let err = create_index_tool_impl(
+            &state,
+            &path,
+            CreateIndexArgs {
+                connection_id: "nope".into(),
+                database: "d".into(),
+                collection: "c".into(),
+                keys: serde_json::json!({"a": 1}),
+                name: None,
+                unique: None,
+                sparse: None,
+                _confirm: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, CONNECTION_NOT_FOUND);
     }
 }
