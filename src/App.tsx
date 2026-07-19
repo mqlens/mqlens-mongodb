@@ -173,6 +173,8 @@ interface ActiveConnection {
   name: string;
   uri: string;
   color_tag?: string;
+  /** True iff opened by the embedded MCP server's `connect` tool rather than a human (#98 Task 4). */
+  viaMcp?: boolean;
 }
 
 /** Extract the auth username from a MongoDB connection URI; '' when there are no credentials. */
@@ -457,12 +459,13 @@ function Workspace() {
     name: string,
     uri: string,
     profileId: string,
-    color_tag?: string
+    color_tag?: string,
+    viaMcp?: boolean
   ) => {
     setActiveConnections((prev) =>
       prev.some((c) => c.profileId === profileId)
         ? prev
-        : [...prev, { id, profileId, name, uri, color_tag }]
+        : [...prev, { id, profileId, name, uri, color_tag, viaMcp }]
     );
   };
 
@@ -549,7 +552,7 @@ function Workspace() {
     const localByProfile = new Map(activeConnectionsRef.current.map((c) => [c.profileId, c]));
     for (const entry of connections) {
       if (localByProfile.has(entry.profileId)) continue;
-      addActiveConnection(entry.id, entry.name, '', entry.profileId);
+      addActiveConnection(entry.id, entry.name, '', entry.profileId, undefined, entry.viaMcp);
       rebindProfileTabs(entry.profileId, entry.id);
     }
   };

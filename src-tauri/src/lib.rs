@@ -14,6 +14,7 @@ pub mod ai;
 pub mod connections;
 mod db;
 pub mod mcp;
+pub mod mcp_tools;
 pub(crate) mod mock_db;
 pub mod monitoring;
 pub mod path_env;
@@ -552,9 +553,10 @@ pub fn set_connection_meta_impl(
     id: &str,
     profile_id: &str,
     name: &str,
+    via_mcp: bool,
 ) -> Result<(), String> {
     let mut meta = state.connection_meta.lock_safe()?;
-    meta.insert(id.to_string(), ConnectionMeta { profile_id: profile_id.to_string(), name: name.to_string() });
+    meta.insert(id.to_string(), ConnectionMeta { profile_id: profile_id.to_string(), name: name.to_string(), via_mcp });
     Ok(())
 }
 
@@ -566,7 +568,7 @@ pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, St
     let meta = state.connection_meta.lock_safe()?;
     let mut list: Vec<ConnectionEntry> = meta
         .iter()
-        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone() })
+        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp })
         .collect();
     list.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(list)
@@ -976,7 +978,10 @@ async fn set_connection_meta(
     name: String,
 ) -> Result<(), String> {
     use tauri::Emitter;
-    set_connection_meta_impl(&state, &id, &profile_id, &name)?;
+    // Frontend-initiated (sidebar/Connection Manager/quick-connect) -- never
+    // an MCP agent connection, which flows through `mcp_tools::connect_impl`
+    // instead and passes `via_mcp: true` directly.
+    set_connection_meta_impl(&state, &id, &profile_id, &name, false)?;
     let connections = connection_list_impl(&state)?;
     // Broadcast is best-effort: a window that misses this event picks up
     // current connection metadata the next time it connects or calls

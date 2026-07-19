@@ -124,6 +124,8 @@ export interface ConnectionEntry {
   id: string;
   profileId: string;
   name: string;
+  /** True iff this connection was opened by the embedded MCP server's `connect` tool rather than a human (#98 Task 4). */
+  viaMcp: boolean;
 }
 export interface ConnectionsChangedPayload {
   connections: ConnectionEntry[];

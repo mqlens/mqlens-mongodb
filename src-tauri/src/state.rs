@@ -18,6 +18,14 @@ use std::time::Instant;
 pub struct ConnectionMeta {
     pub profile_id: String,
     pub name: String,
+    /// True iff this connection was opened by the embedded MCP server's
+    /// `connect` tool (#98 Task 4) rather than a human via the sidebar/
+    /// Connection Manager. `#[serde(default)]` keeps this readable against
+    /// nothing on-disk -- `ConnectionMeta` is in-memory only (never
+    /// persisted), but the default matters for any caller that constructs
+    /// one from a partial literal (`..Default::default()`-style).
+    #[serde(default)]
+    pub via_mcp: bool,
 }
 
 /// One entry of the `connections-changed` payload's `connections` list —
@@ -30,6 +38,9 @@ pub struct ConnectionEntry {
     pub id: String,
     pub profile_id: String,
     pub name: String,
+    /// Mirrors `ConnectionMeta::via_mcp` -- surfaced to the frontend so the
+    /// sidebar can badge agent-initiated connections (#98 Task 4).
+    pub via_mcp: bool,
 }
 
 /// The `connections-changed` broadcast payload: the full current connection

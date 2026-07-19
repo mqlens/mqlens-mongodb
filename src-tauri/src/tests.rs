@@ -3733,7 +3733,7 @@ mod tests {
     #[test]
     fn set_connection_meta_inserts_and_overwrites() {
         let state = AppState::new();
-        set_connection_meta_impl(&state, "conn-1", "profile-a", "Prod Cluster").unwrap();
+        set_connection_meta_impl(&state, "conn-1", "profile-a", "Prod Cluster", false).unwrap();
         {
             let meta = state.connection_meta.lock().unwrap();
             let m = meta.get("conn-1").expect("meta inserted");
@@ -3743,7 +3743,7 @@ mod tests {
 
         // Re-registering the same id (e.g. a reconnect) overwrites in place
         // rather than accumulating a second entry.
-        set_connection_meta_impl(&state, "conn-1", "profile-b", "Renamed").unwrap();
+        set_connection_meta_impl(&state, "conn-1", "profile-b", "Renamed", false).unwrap();
         let meta = state.connection_meta.lock().unwrap();
         assert_eq!(meta.len(), 1, "same id must overwrite, not duplicate");
         let m = meta.get("conn-1").unwrap();
@@ -3758,17 +3758,17 @@ mod tests {
         // only ever expose `profileId`/`name` — this test would fail to
         // compile (not just fail at runtime) the moment a `uri` field is
         // added, since the struct literal below is exhaustive.
-        let meta = crate::ConnectionMeta { profile_id: "p".into(), name: "n".into() };
-        let entry = crate::ConnectionEntry { id: "c".into(), profile_id: meta.profile_id.clone(), name: meta.name.clone() };
+        let meta = crate::ConnectionMeta { profile_id: "p".into(), name: "n".into(), via_mcp: false };
+        let entry = crate::ConnectionEntry { id: "c".into(), profile_id: meta.profile_id.clone(), name: meta.name.clone(), via_mcp: meta.via_mcp };
         assert_eq!(entry.id, "c");
     }
 
     #[test]
     fn connection_list_is_sorted_by_id_regardless_of_insertion_order() {
         let state = AppState::new();
-        set_connection_meta_impl(&state, "conn-c", "p3", "Third").unwrap();
-        set_connection_meta_impl(&state, "conn-a", "p1", "First").unwrap();
-        set_connection_meta_impl(&state, "conn-b", "p2", "Second").unwrap();
+        set_connection_meta_impl(&state, "conn-c", "p3", "Third", false).unwrap();
+        set_connection_meta_impl(&state, "conn-a", "p1", "First", false).unwrap();
+        set_connection_meta_impl(&state, "conn-b", "p2", "Second", false).unwrap();
 
         let list = connection_list_impl(&state).unwrap();
         let ids: Vec<&str> = list.iter().map(|e| e.id.as_str()).collect();
@@ -3792,7 +3792,7 @@ mod tests {
         let conn_id = connect_db_impl(&state, "mongodb://mock", None)
             .await
             .expect("mock connect");
-        set_connection_meta_impl(&state, &conn_id, "profile-a", "Mock Conn").unwrap();
+        set_connection_meta_impl(&state, &conn_id, "profile-a", "Mock Conn", false).unwrap();
         assert!(state.connection_meta.lock().unwrap().contains_key(&conn_id));
 
         disconnect_db_impl(&state, &conn_id)

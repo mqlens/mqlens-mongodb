@@ -176,7 +176,7 @@ interface SidebarProps {
   ) => void;
   onSelectIndex: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
   activeCollection: { connectionId: string; db: string; collection: string; indexName?: string } | null;
-  activeConnections: { id: string; name: string; uri: string; profileId?: string; color_tag?: string }[];
+  activeConnections: { id: string; name: string; uri: string; profileId?: string; color_tag?: string; viaMcp?: boolean }[];
   onOpenConnectionManager: () => void;
   onDisconnect: (connectionId: string) => void;
   width?: number;
@@ -1576,6 +1576,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       )}
                       <Server size={12} className="shrink-0 text-primary" />
                       <span className="min-w-0 truncate font-medium">{conn.name}</span>
+                      {conn.viaMcp && (
+                        <Badge
+                          variant="secondary"
+                          className="h-4 shrink-0 px-1 text-[9px] font-normal text-muted-foreground"
+                          data-testid="connection-via-mcp-badge"
+                          aria-label="Connected via MCP"
+                        >
+                          via MCP
+                        </Badge>
+                      )}
                       <span
                         className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
                         aria-label="Connected"

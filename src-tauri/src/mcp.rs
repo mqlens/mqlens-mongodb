@@ -40,6 +40,7 @@ use crate::state::{AppState, LockExt};
 use base64::Engine as _;
 use rand::Rng;
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{ServerCapabilities, ServerInfo};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
@@ -48,6 +49,7 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::Manager;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
@@ -106,6 +108,13 @@ pub struct McpControl {
     pub token: String,
     pub log: VecDeque<McpLogEntry>,
     pub server: Option<ServerHandle>,
+    /// Connection ids opened by *this* MCP server session's `connect` tool
+    /// (#98 Task 4) — cleared only by `disconnect` (never by disable/re-
+    /// enable, since a live connection outlives a settings toggle). The
+    /// `disconnect` tool only ever accepts an id in this set: an agent may
+    /// disconnect what it connected, never a connection a human opened by
+    /// hand, even if that connection's profile happens to be opted in.
+    pub session_connections: std::collections::HashSet<String>,
 }
 
 impl McpControl {
@@ -116,6 +125,7 @@ impl McpControl {
             token: String::new(),
             log: VecDeque::new(),
             server: None,
+            session_connections: std::collections::HashSet::new(),
         }
     }
 }
@@ -297,10 +307,13 @@ struct McpServer {
     /// `rmcp-2.2.0/tests/test_progress_subscriber.rs`).
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
-    /// Not read by the `ping`-only Task 2 tool surface. Carried now (see
-    /// `set_enabled_impl`'s doc comment) so Task 4's tools can start using
-    /// it without any lifecycle plumbing changes.
-    #[allow(dead_code)]
+    /// `Some` for every server actually spawned by `set_enabled_impl` (see
+    /// its doc comment); `None` only for the bare `McpServer` values the
+    /// golden-snapshot test below builds to introspect `tool_router()`
+    /// without a running server. Every Task 4 tool method resolves both the
+    /// live `AppState` and the encrypted profiles path from this via
+    /// `resolve()` — see its doc comment for the `AppHandle` -> `AppState`
+    /// pattern.
     app_handle: Option<tauri::AppHandle>,
 }
 
@@ -308,6 +321,50 @@ impl McpServer {
     fn new(app_handle: Option<tauri::AppHandle>) -> Self {
         Self { tool_router: Self::tool_router(), app_handle }
     }
+
+    /// Resolves `self.app_handle` into `(AppHandle, encrypted-profiles-path)`
+    /// for the tool methods below, or a clean error when there is none (the
+    /// golden-snapshot test's bare `McpServer`s only — every server actually
+    /// serving requests always has `Some`, since `set_enabled_impl` always
+    /// passes one through). `tauri::Manager::state` then gets the live
+    /// `AppState` back out of `app_handle` without needing a
+    /// `#[tauri::command]`'s `tauri::State` extractor — the same pattern
+    /// `windows.rs`'s `apply_window_closed_and_broadcast` uses.
+    fn resolve(&self) -> Result<(tauri::AppHandle, std::path::PathBuf), String> {
+        let app_handle = self.app_handle.clone().ok_or_else(|| "MCP server misconfigured: no application handle".to_string())?;
+        let path = crate::connections::get_profiles_enc_path(&app_handle);
+        Ok((app_handle, path))
+    }
+}
+
+/// Serialize a successful tool result to JSON text; either way, append a
+/// `log_call` entry (spec: "last 200: timestamp, tool, connection, args
+/// summary ≤200 chars, ok/error") — the shared tail of every read-only data
+/// tool below whose underlying `mcp_tools::*_impl` returns a typed value
+/// that still needs encoding to text content.
+fn finish_json<T: Serialize>(state: &AppState, tool: &str, connection_id: Option<String>, summary: &str, result: Result<T, String>) -> Result<String, String> {
+    let logged_summary = crate::mcp_tools::truncate_summary(summary, 200);
+    match result {
+        Ok(value) => {
+            let json = serde_json::to_string(&value).map_err(|e| format!("serialize result: {e}"))?;
+            let _ = log_call(state, tool, connection_id, logged_summary, true);
+            Ok(json)
+        }
+        Err(e) => {
+            let _ = log_call(state, tool, connection_id, logged_summary, false);
+            Err(e)
+        }
+    }
+}
+
+/// Same as `finish_json`, for the handful of tools whose underlying
+/// `mcp_tools::*_impl` already returns a JSON *string* (`explain`,
+/// `schema_analysis`) — passed straight through as tool text rather than
+/// re-encoded (re-serializing an already-JSON string would double-quote it).
+fn finish_text(state: &AppState, tool: &str, connection_id: Option<String>, summary: &str, result: Result<String, String>) -> Result<String, String> {
+    let logged_summary = crate::mcp_tools::truncate_summary(summary, 200);
+    let _ = log_call(state, tool, connection_id, logged_summary, result.is_ok());
+    result
 }
 
 #[tool_router]
@@ -319,6 +376,162 @@ impl McpServer {
     )]
     async fn ping(&self) -> String {
         format!("pong {}", env!("CARGO_PKG_VERSION"))
+    }
+
+    // ---- Task 4: read tools -------------------------------------------
+
+    #[tool(
+        description = "List MongoDB connection profiles opted in to MCP access (Settings → Connection Manager → \"Expose to MCP agents\"). Returns id/name/colorTag only — never a connection string. Call this before `connect`."
+    )]
+    async fn list_profiles(&self) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let result = crate::mcp_tools::list_profiles_impl(&state, &path);
+        finish_json(&state, "list_profiles", None, "", result)
+    }
+
+    #[tool(
+        description = "List currently live MongoDB connections whose profile is opted in to MCP access. Use a returned id with `find`/`aggregate`/etc, or `connect` a not-yet-connected opted-in profile first."
+    )]
+    async fn list_connections(&self) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let result = crate::mcp_tools::list_connections_impl(&state, &path);
+        finish_json(&state, "list_connections", None, "", result)
+    }
+
+    #[tool(
+        description = "Open a live connection to an MCP-opted-in profile (by id, from `list_profiles`). Returns {\"connectionId\": \"...\"} for use with every other data tool. Every window's sidebar shows this connection with a \"via MCP\" badge."
+    )]
+    async fn connect(&self, Parameters(args): Parameters<crate::mcp_tools::ConnectArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let summary = crate::mcp_tools::truncate_summary(&format!("profileId={}", args.profile_id), 200);
+        match crate::mcp_tools::connect_impl(&state, &path, &args.profile_id).await {
+            Ok(connection_id) => {
+                // Broadcast the new connection to every window's sidebar —
+                // same `connections-changed` payload the `disconnect_db`/
+                // `set_connection_meta` command wrappers build (lib.rs).
+                if let Ok(connections) = crate::connection_list_impl(&state) {
+                    use tauri::Emitter;
+                    let _ = app_handle.emit("connections-changed", crate::ConnectionsChangedPayload { connections });
+                }
+                let _ = log_call(&state, "connect", Some(connection_id.clone()), summary, true);
+                serde_json::to_string(&serde_json::json!({ "connectionId": connection_id })).map_err(|e| format!("serialize result: {e}"))
+            }
+            Err(e) => {
+                let _ = log_call(&state, "connect", None, summary, false);
+                Err(e)
+            }
+        }
+    }
+
+    #[tool(
+        description = "Close a connection previously opened by this MCP session's `connect` call. Cannot disconnect a connection a human opened via the app UI, even if its profile is opted in."
+    )]
+    async fn disconnect(&self, Parameters(args): Parameters<crate::mcp_tools::ConnectionIdArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let _ = &path; // disconnect needs no profile lookup; kept for a uniform `resolve()` call site.
+        let state = app_handle.state::<AppState>();
+        let summary = crate::mcp_tools::truncate_summary(&format!("connectionId={}", args.connection_id), 200);
+        match crate::mcp_tools::disconnect_impl(&state, &args.connection_id).await {
+            Ok(()) => {
+                if let Ok(connections) = crate::connection_list_impl(&state) {
+                    use tauri::Emitter;
+                    let _ = app_handle.emit("connections-changed", crate::ConnectionsChangedPayload { connections });
+                }
+                let _ = log_call(&state, "disconnect", Some(args.connection_id.clone()), summary, true);
+                Ok(serde_json::json!({ "disconnected": args.connection_id }).to_string())
+            }
+            Err(e) => {
+                let _ = log_call(&state, "disconnect", Some(args.connection_id.clone()), summary, false);
+                Err(e)
+            }
+        }
+    }
+
+    #[tool(description = "List database names visible on a connection.")]
+    async fn list_databases(&self, Parameters(args): Parameters<crate::mcp_tools::ConnectionIdArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let summary = crate::mcp_tools::truncate_summary(&format!("connectionId={}", args.connection_id), 200);
+        let result = crate::mcp_tools::list_databases_tool_impl(&state, &path, &args.connection_id).await;
+        finish_json(&state, "list_databases", Some(args.connection_id), &summary, result)
+    }
+
+    #[tool(description = "List collections (and their type: collection/view/timeseries) in a database.")]
+    async fn list_collections(&self, Parameters(args): Parameters<crate::mcp_tools::DatabaseArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let summary = crate::mcp_tools::truncate_summary(&format!("connectionId={} database={}", args.connection_id, args.database), 200);
+        let result = crate::mcp_tools::list_collections_tool_impl(&state, &path, &args.connection_id, &args.database).await;
+        finish_json(&state, "list_collections", Some(args.connection_id), &summary, result)
+    }
+
+    #[tool(
+        description = "Run a MongoDB find query. Returns {\"documents\": [...relaxed EJSON...], \"count\"?, \"truncated\"?}. Results are capped (default 50 docs / 1MB; `limit` also caps at 200) — a non-null `truncated` means narrow the filter or lower `limit`."
+    )]
+    async fn find(&self, Parameters(args): Parameters<crate::mcp_tools::FindArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let connection_id = args.connection_id.clone();
+        let summary = crate::mcp_tools::truncate_summary(
+            &format!("connectionId={connection_id} {}.{} filter={}", args.database, args.collection, args.filter.as_deref().unwrap_or("{}")),
+            200,
+        );
+        let result = crate::mcp_tools::find_impl(&state, &path, args).await;
+        finish_json(&state, "find", Some(connection_id), &summary, result)
+    }
+
+    #[tool(
+        description = "Run a MongoDB aggregation pipeline. Returns {\"documents\": [...relaxed EJSON...], \"truncated\"?}. Real connections only (not the demo/mock data). Stages whose sole key is $out or $merge are rejected — MCP is read-only for aggregation."
+    )]
+    async fn aggregate(&self, Parameters(args): Parameters<crate::mcp_tools::AggregateArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let connection_id = args.connection_id.clone();
+        let summary = crate::mcp_tools::truncate_summary(
+            &format!("connectionId={connection_id} {}.{} stages={}", args.database, args.collection, args.pipeline.len()),
+            200,
+        );
+        let result = crate::mcp_tools::aggregate_impl(&state, &path, args).await;
+        finish_json(&state, "aggregate", Some(connection_id), &summary, result)
+    }
+
+    #[tool(
+        description = "Explain a find filter or an aggregation pipeline (executionStats verbosity). Pass `pipeline` for an aggregate-style explain (real connections only) or `findFilter` for a find-style explain."
+    )]
+    async fn explain(&self, Parameters(args): Parameters<crate::mcp_tools::ExplainArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let connection_id = args.connection_id.clone();
+        let summary = crate::mcp_tools::truncate_summary(&format!("connectionId={connection_id} {}.{}", args.database, args.collection), 200);
+        let result = crate::mcp_tools::explain_impl(&state, &path, args).await;
+        finish_text(&state, "explain", Some(connection_id), &summary, result)
+    }
+
+    #[tool(
+        description = "Infer a collection's schema by sampling documents: per-field types, presence/coverage, and low-cardinality enum values. `sampleSize` defaults to 100, hard cap 1000."
+    )]
+    async fn schema_analysis(&self, Parameters(args): Parameters<crate::mcp_tools::SchemaAnalysisArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let connection_id = args.connection_id.clone();
+        let summary = crate::mcp_tools::truncate_summary(&format!("connectionId={connection_id} {}.{}", args.database, args.collection), 200);
+        let result = crate::mcp_tools::schema_analysis_impl(&state, &path, args).await;
+        finish_text(&state, "schema_analysis", Some(connection_id), &summary, result)
+    }
+
+    #[tool(
+        description = "List a collection's indexes merged with usage stats (size, ops since last restart) where available. Mock/demo connections report indexes with no stats."
+    )]
+    async fn list_indexes(&self, Parameters(args): Parameters<crate::mcp_tools::CollectionArgs>) -> Result<String, String> {
+        let (app_handle, path) = self.resolve()?;
+        let state = app_handle.state::<AppState>();
+        let summary =
+            crate::mcp_tools::truncate_summary(&format!("connectionId={} {}.{}", args.connection_id, args.database, args.collection), 200);
+        let result = crate::mcp_tools::list_indexes_tool_impl(&state, &path, &args.connection_id, &args.database, &args.collection).await;
+        finish_json(&state, "list_indexes", Some(args.connection_id.clone()), &summary, result)
     }
 }
 
@@ -672,8 +885,14 @@ mod tests {
         stop_if_running(&state).await.unwrap();
     }
 
+    /// Task 2 originally asserted `ping` was the *only* tool served; Task 4
+    /// grew the registry to twelve (see `tool_router_exposes_all_eleven_tools`
+    /// and the golden-fixture test below for the full-surface assertions),
+    /// so this now just proves `ping` itself is still served correctly —
+    /// name, description, and a no-args schema — over the real HTTP
+    /// transport, independent of how many other tools sit alongside it.
     #[tokio::test]
-    async fn tools_list_contains_exactly_ping() {
+    async fn tools_list_contains_ping() {
         let state = AppState::new();
         unlock(&state);
         let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
@@ -682,11 +901,10 @@ mod tests {
         client.initialize().await;
         let list = client.call(2, "tools/list", json!({})).await;
         let tools = list["result"]["tools"].as_array().expect("tools/list must return an array");
-        assert_eq!(tools.len(), 1, "expected exactly one tool, got: {tools:?}");
-        assert_eq!(tools[0]["name"], "ping");
-        assert!(tools[0]["description"].as_str().unwrap_or_default().contains("pong"));
+        let ping = tools.iter().find(|t| t["name"] == "ping").unwrap_or_else(|| panic!("no `ping` tool in tools/list: {tools:?}"));
+        assert!(ping["description"].as_str().unwrap_or_default().contains("pong"));
         // No-args tool: an empty (or property-less) object input schema.
-        let schema = &tools[0]["inputSchema"];
+        let schema = &ping["inputSchema"];
         assert_eq!(schema["type"], "object");
         let no_required_props = schema.get("required").map(|r| r.as_array().map(|a| a.is_empty()).unwrap_or(true)).unwrap_or(true);
         assert!(no_required_props, "ping takes no args, schema was: {schema:?}");
@@ -801,5 +1019,98 @@ mod tests {
         // And per Task 1's original assertion: the port must be free again.
         let rebound = std::net::TcpListener::bind(("127.0.0.1", port));
         assert!(rebound.is_ok(), "port must be free again once the graceful stop completes");
+    }
+
+    // ---- Task 4: read-tool registry ------------------------------------
+
+    /// Golden snapshot of `tools/list` (name/description/inputSchema, sorted
+    /// by name) — the documented-tool-list acceptance criterion's source of
+    /// truth (Global Constraints). Derived straight from
+    /// `McpServer::tool_router()` (the same `#[tool_router]`-generated table
+    /// the running server serves — no separate hand-maintained registry to
+    /// drift from it), so this needs no live server/port at all, unlike the
+    /// protocol tests above.
+    ///
+    /// `Tool` already `#[serde(rename_all = "camelCase")]`s with
+    /// `skip_serializing_if = "Option::is_none"` on every field this
+    /// registry never sets (title/outputSchema/annotations/execution/icons/
+    /// meta), so serializing the whole `Tool` list reduces to exactly
+    /// name/description/inputSchema today — and would visibly grow the
+    /// fixture (an intentional, reviewable diff) the day a tool gains one of
+    /// those.
+    #[test]
+    fn tools_list_matches_golden_fixture() {
+        let mut tools = McpServer::tool_router().list_all();
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
+        let actual = serde_json::to_string_pretty(&tools).expect("Tool list must serialize") + "\n";
+
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mcp-tools-golden.json");
+        if std::env::var("MCP_GOLDEN_UPDATE").is_ok() {
+            std::fs::write(path, &actual).expect("failed to write golden fixture");
+            return;
+        }
+        let expected = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("failed to read golden fixture at {path}: {e} — run with MCP_GOLDEN_UPDATE=1 to create it"));
+        assert_eq!(
+            actual, expected,
+            "tools/list drifted from fixtures/mcp-tools-golden.json (names/descriptions/schemas) — \
+             if this is an intentional tool-surface change, review the diff and regenerate with: \
+             `MCP_GOLDEN_UPDATE=1 cargo test -p tauri-app --lib mcp::tests::tools_list_matches_golden_fixture -- --exact`"
+        );
+    }
+
+    #[test]
+    fn tool_router_exposes_all_twelve_tools() {
+        let names: std::collections::HashSet<String> = McpServer::tool_router().list_all().into_iter().map(|t| t.name.to_string()).collect();
+        for expected in [
+            "ping",
+            "list_profiles",
+            "list_connections",
+            "connect",
+            "disconnect",
+            "list_databases",
+            "list_collections",
+            "find",
+            "aggregate",
+            "explain",
+            "schema_analysis",
+            "list_indexes",
+        ] {
+            assert!(names.contains(expected), "tool_router is missing `{expected}`; got {names:?}");
+        }
+        assert_eq!(names.len(), 12, "unexpected tool count — update this list (and the golden fixture) alongside any registry change");
+    }
+
+    /// One end-to-end pass over the real HTTP transport (mirrors
+    /// `ping_call_returns_pong_and_version` above) proving a Task 4 tool
+    /// round-trips through the whole stack — auth, JSON-RPC, `Parameters<T>`
+    /// deserialization, and back — over a mock connection (no real MongoDB
+    /// needed; see `mcp_tools.rs`'s own tests for exhaustive per-tool
+    /// coverage at the impl layer, which is where the bulk of Task 4's
+    /// behavior is actually proven).
+    #[tokio::test]
+    async fn find_tool_round_trips_over_http_against_a_mock_connection() {
+        let state = AppState::new();
+        unlock(&state);
+        let status = set_enabled_impl(&state, true, Some(free_port()), None).await.unwrap();
+
+        let mut client = TestClient::new(status.port, &status.token);
+        client.initialize().await;
+
+        // `McpServer` has no `AppHandle` in this test (see `TestClient`'s
+        // `set_enabled_impl(..., None)` above) — every Task 4 tool needs one
+        // to resolve `AppState`/the profiles path, so every call must fail
+        // the same clean way rather than panicking the server task.
+        let result = client
+            .call(2, "tools/call", json!({"name": "list_profiles", "arguments": {}}))
+            .await;
+        let content = &result["result"]["content"][0]["text"];
+        assert!(
+            content.as_str().unwrap_or_default().contains("no application handle"),
+            "expected the AppHandle-less error, got: {result:?}"
+        );
+        assert_eq!(result["result"]["isError"], true);
+
+        stop_if_running(&state).await.unwrap();
     }
 }
