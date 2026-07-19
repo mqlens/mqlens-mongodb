@@ -10,6 +10,7 @@ import {
   Server,
   Keyboard,
   Wrench,
+  Copy,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -20,6 +21,8 @@ import {
   biometricDisable,
   type BiometricStatus,
 } from '../lib/vault';
+import { getMcpStatus, mcpSetEnabled, mcpRegenerateToken, type McpStatusUi } from '@/lib/mcpApi';
+import type { ConnectionProfile } from '@/lib/connection';
 import { CHECK_UPDATE_EVENT } from './UpdatePrompt';
 import {
   formatLastChecked,
@@ -145,6 +148,344 @@ const SETTINGS_TABS: {
     Icon: ShieldCheck,
   },
 ];
+
+/** `HH:MM:SS` (local time, zero-padded) from a call-log entry's `tsMs`. */
+function formatMcpLogTime(tsMs: number): string {
+  const d = new Date(tsMs);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/**
+ * MCP tab content, extracted out of `renderTabContent` (unlike the other
+ * tabs, which stay inline) because it owns a non-trivial amount of local
+ * state and a 2s status-poll lifecycle of its own — keeping that isolated
+ * here means it only ever mounts/unmounts (and starts/stops polling) when
+ * the MCP tab itself is selected, not on every `SettingsView` re-render.
+ */
+const McpSettingsPanel: React.FC = () => {
+  const [status, setStatus] = useState<McpStatusUi | null>(null);
+  const [portInput, setPortInput] = useState(String(8765));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tokenRevealed, setTokenRevealed] = useState(false);
+  const [regenerated, setRegenerated] = useState(false);
+  const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Initial status fetch — separate from the poll effect below so the panel
+  // renders a real state immediately instead of waiting on the 2s cadence.
+  useEffect(() => {
+    let cancelled = false;
+    getMcpStatus()
+      .then((s) => {
+        if (cancelled) return;
+        setStatus(s);
+        setPortInput(String(s.port));
+      })
+      .catch((err) => { if (!cancelled) setError(String(err)); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Opted-in profile list — read-only here; managed from the Connection
+  // Manager's own "Expose to MCP agents" checkbox (#98 Task 3).
+  useEffect(() => {
+    let cancelled = false;
+    invoke<ConnectionProfile[]>('load_connection_profiles')
+      .then((list) => {
+        if (cancelled) return;
+        setProfiles((list || []).filter((p) => p.mcp_enabled));
+      })
+      .catch(() => { if (!cancelled) setProfiles([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Poll precedent: App.tsx's resource-usage/export-task polls (App.tsx
+  // ~424-436) — `active` flag + `clearInterval` on cleanup, StrictMode-safe.
+  // Only runs while this tab is mounted AND the server is enabled, since
+  // there is nothing new to poll for while disabled.
+  useEffect(() => {
+    if (!status?.enabled) return;
+    let active = true;
+    const id = setInterval(() => {
+      getMcpStatus()
+        .then((s) => { if (active) setStatus(s); })
+        .catch(() => { /* transient poll failure — keep last known status */ });
+    }, 2000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [status?.enabled]);
+
+  const copy = (key: string, text: string) => {
+    navigator.clipboard?.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 2000);
+  };
+
+  const onToggle = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setRegenerated(false);
+    try {
+      const parsedPort = parseInt(portInput, 10);
+      const port = next && Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : undefined;
+      const s = await mcpSetEnabled(next, port);
+      setStatus(s);
+      setPortInput(String(s.port));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRegenerate = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const s = await mcpRegenerateToken();
+      setStatus(s);
+      setRegenerated(true);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const enabled = status?.enabled ?? false;
+  const port = status?.port ?? (parseInt(portInput, 10) || 8765);
+  const token = status?.token ?? '';
+  const vaultLocked = !!error && /vault is locked/i.test(error);
+
+  const claudeSnippet = `claude mcp add --transport http mqlens http://127.0.0.1:${port}/mcp --header "Authorization: Bearer ${token}"`;
+  const cursorSnippet = JSON.stringify(
+    { mcpServers: { mqlens: { url: `http://127.0.0.1:${port}/mcp`, headers: { Authorization: `Bearer ${token}` } } } },
+    null,
+    2,
+  );
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <Card className="xl:col-span-2">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Server className="h-4 w-4 text-primary" />
+            MCP server
+          </CardTitle>
+          <CardDescription>
+            Expose your connections to Claude Code, Cursor, and other agents as Model Context
+            Protocol tools. Reads and confirm-gated writes only; off by default.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Switch
+              data-testid="mcp-enable-toggle"
+              checked={enabled}
+              disabled={busy}
+              onCheckedChange={onToggle}
+            />
+            <Label className="font-normal">{enabled ? 'Enabled' : 'Disabled'}</Label>
+          </div>
+
+          <div className="max-w-[10rem] space-y-2">
+            <Label htmlFor="mcp-port">Port</Label>
+            <Input
+              id="mcp-port"
+              type="number"
+              className="font-mono"
+              value={portInput}
+              disabled={enabled}
+              onChange={(e) => setPortInput(e.target.value)}
+              data-testid="mcp-port-input"
+            />
+            <p className="text-xs text-muted-foreground">
+              Applied the next time the server is enabled.
+            </p>
+          </div>
+
+          {error && (
+            <div
+              className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              data-testid={vaultLocked ? 'mcp-vault-locked' : 'mcp-error'}
+            >
+              {error}
+            </div>
+          )}
+
+          {enabled && (
+            <div className="space-y-2 border-t border-border pt-4">
+              <Label>Bearer token</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-sm" data-testid="mcp-token-display">
+                  {tokenRevealed ? token : '••••••••••••••••'}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setTokenRevealed((v) => !v)}
+                  data-testid="mcp-token-reveal"
+                >
+                  {tokenRevealed ? 'Hide' : 'Reveal'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => copy('token', token)}
+                  data-testid="mcp-token-copy"
+                >
+                  <Copy className="h-3 w-3" />
+                  {copiedKey === 'token' ? 'Copied' : 'Copy'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onRegenerate}
+                  disabled={busy}
+                  data-testid="mcp-token-regenerate"
+                >
+                  Regenerate
+                </Button>
+              </div>
+              {regenerated && (
+                <p className="text-xs text-warning" data-testid="mcp-regenerate-note">
+                  Token regenerated — existing clients must be updated with the new token.
+                </p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {enabled && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Claude Code</CardTitle>
+              <CardDescription>Run in a terminal to register MQLens as an MCP server.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <code
+                className="block whitespace-pre-wrap break-all rounded-md bg-muted px-3 py-2 text-xs"
+                data-testid="mcp-claude-snippet"
+              >
+                {claudeSnippet}
+              </code>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => copy('claude', claudeSnippet)}
+                  data-testid="mcp-claude-copy"
+                >
+                  <Copy className="h-3 w-3" />
+                  {copiedKey === 'claude' ? 'Copied' : 'Copy'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Cursor</CardTitle>
+              <CardDescription>Add to Cursor&apos;s MCP server configuration.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <code
+                className="block whitespace-pre-wrap break-all rounded-md bg-muted px-3 py-2 text-xs"
+                data-testid="mcp-cursor-snippet"
+              >
+                {cursorSnippet}
+              </code>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => copy('cursor', cursorSnippet)}
+                  data-testid="mcp-cursor-copy"
+                >
+                  <Copy className="h-3 w-3" />
+                  {copiedKey === 'cursor' ? 'Copied' : 'Copy'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Opted-in profiles</CardTitle>
+          <CardDescription>Connections agents can see and connect to.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {profiles.length === 0 ? (
+            <p className="text-sm text-muted-foreground" data-testid="mcp-profiles-empty">
+              No profiles are exposed. Enable &quot;Expose to MCP agents&quot; in the Connection
+              Manager.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {profiles.map((p) => (
+                <li
+                  key={p.id}
+                  className="flex items-center gap-2 text-sm"
+                  data-testid={`mcp-profile-${p.id}`}
+                >
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: p.color_tag || 'var(--muted-foreground)' }}
+                  />
+                  {p.name}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-muted-foreground">Manage in Connection Manager.</p>
+        </CardContent>
+      </Card>
+
+      <Card className="xl:col-span-2">
+        <CardHeader>
+          <CardTitle className="text-base">Call log</CardTitle>
+          <CardDescription>Last 200 tool calls, newest first.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!status || status.log.length === 0 ? (
+            <p className="text-sm text-muted-foreground" data-testid="mcp-log-empty">
+              No tool calls yet.
+            </p>
+          ) : (
+            <div className="max-h-72 space-y-1 overflow-y-auto font-mono text-[11px]" data-testid="mcp-log-list">
+              {[...status.log].reverse().map((entry, i) => (
+                <div
+                  key={`${entry.tsMs}-${i}`}
+                  className="flex items-center gap-2"
+                  data-testid="mcp-log-row"
+                >
+                  <span className="text-muted-foreground">{formatMcpLogTime(entry.tsMs)}</span>
+                  <span>{entry.tool}</span>
+                  <span className="truncate text-muted-foreground">{entry.summary}</span>
+                  <span className={entry.ok ? 'text-success' : 'text-destructive'}>
+                    {entry.ok ? '' : 'ERR'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
 
 export type { SettingsTabId };
 
@@ -346,25 +687,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
         return <AppearanceSettings />;
 
       case 'mcp':
-        return (
-          <Card className="border-dashed">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Server className="h-4 w-4 text-primary" />
-                MCP Servers
-              </CardTitle>
-              <CardDescription>
-                Configure Model Context Protocol servers for AI integrations. Coming soon (#98).
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                MCP server configuration will be available in a future update. You&apos;ll be able to
-                add stdio and HTTP servers, manage credentials, and attach them to the AI assistant.
-              </p>
-            </CardContent>
-          </Card>
-        );
+        return <McpSettingsPanel />;
 
       case 'updates':
         return (
