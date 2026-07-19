@@ -565,6 +565,7 @@ describe('ConnectionManager Component', () => {
         uri: 'mongodb://staging:27017',
         ssh: null,
         color_tag: null,
+        mcp_enabled: false,
       });
       // The nested modal should be closed
       expect(screen.queryByText('New Connection')).not.toBeInTheDocument();
@@ -967,6 +968,113 @@ describe('ConnectionManager Component', () => {
         color_tag: null,
       });
     });
+  });
+});
+
+describe('MCP opt-in flag (#98)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('saving with "Expose to MCP agents" checked round-trips mcp_enabled: true', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Agent DB' } });
+    await pickSelectOption('topology-select', /full uri string only/i);
+    fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: 'mongodb://agent' } });
+
+    fireEvent.click(screen.getByLabelText(/expose to mcp agents/i));
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(savedProfile).toMatchObject({
+        name: 'Agent DB',
+        uri: 'mongodb://agent',
+        mcp_enabled: true,
+      });
+    });
+  });
+
+  it('editing a profile without mcp_enabled renders the checkbox unchecked', async () => {
+    const legacyProfile = { id: 'p-legacy', name: 'Legacy', uri: 'mongodb://legacy:27017' };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([legacyProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await waitFor(() => expect(screen.getAllByText('Legacy')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Legacy')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByLabelText(/expose to mcp agents/i)).not.toBeChecked();
+  });
+
+  it('toggling the checkbox on and saving an old profile adds mcp_enabled: true', async () => {
+    let savedProfile: any = null;
+    const legacyProfile = { id: 'p-legacy', name: 'Legacy', uri: 'mongodb://legacy:27017' };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([legacyProfile]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await waitFor(() => expect(screen.getAllByText('Legacy')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Legacy')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    const checkbox = screen.getByLabelText(/expose to mcp agents/i);
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(savedProfile).toMatchObject({
+        id: 'p-legacy',
+        mcp_enabled: true,
+      });
+    });
+  });
+
+  it('duplicating an MCP-exposed profile resets "Expose to MCP agents" to unchecked, while editing it keeps it checked (final fix wave)', async () => {
+    const mcpProfile = { id: 'p-mcp', name: 'Agent DB', uri: 'mongodb://agent:27017', mcp_enabled: true };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([mcpProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await waitFor(() => expect(screen.getAllByText('Agent DB')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Agent DB')[0]);
+
+    // Edit path: unaffected, keeps mapping the original's flag.
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    expect(screen.getByLabelText(/expose to mcp agents/i)).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    // Duplicate path: the new profile starts unexposed regardless.
+    fireEvent.click(screen.getAllByText('Agent DB')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^duplicate$/i }));
+    expect(screen.getByLabelText(/expose to mcp agents/i)).not.toBeChecked();
   });
 });
 

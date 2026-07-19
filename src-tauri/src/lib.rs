@@ -13,6 +13,8 @@ pub mod limits;
 pub mod ai;
 pub mod connections;
 mod db;
+pub mod mcp;
+pub mod mcp_tools;
 pub(crate) mod mock_db;
 pub mod monitoring;
 pub mod path_env;
@@ -536,6 +538,23 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
         let mut meta = state.connection_meta.lock_safe()?;
         meta.remove(id);
     }
+    // A human disconnecting (Sidebar's onDisconnect -> this command) an
+    // agent-opened connection must also drop it from the MCP server's own
+    // `session_connections` bookkeeping (final whole-branch review fix
+    // wave) — otherwise a stale id lingers there forever, and a later MCP
+    // `disconnect` call for that id would pass `mcp_tools::disconnect_impl`'s
+    // session-owned check and try to tear down a connection that's already
+    // gone (`crate::disconnect_db_impl` above is idempotent per-map-removal,
+    // so that itself wouldn't error, but the stale bookkeeping is exactly
+    // the kind of drift Task 4's `session_connections` doc comment says this
+    // set should never carry). `mcp_tools::disconnect_impl`'s own path
+    // already prunes this set itself, so this is only reached for a
+    // human-initiated disconnect of an id that happens to also be
+    // session-owned; harmless (and a no-op `remove`) otherwise.
+    {
+        let mut control = state.mcp.lock_safe()?;
+        control.session_connections.remove(id);
+    }
 
     Ok(())
 }
@@ -551,9 +570,10 @@ pub fn set_connection_meta_impl(
     id: &str,
     profile_id: &str,
     name: &str,
+    via_mcp: bool,
 ) -> Result<(), String> {
     let mut meta = state.connection_meta.lock_safe()?;
-    meta.insert(id.to_string(), ConnectionMeta { profile_id: profile_id.to_string(), name: name.to_string() });
+    meta.insert(id.to_string(), ConnectionMeta { profile_id: profile_id.to_string(), name: name.to_string(), via_mcp });
     Ok(())
 }
 
@@ -565,7 +585,7 @@ pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, St
     let meta = state.connection_meta.lock_safe()?;
     let mut list: Vec<ConnectionEntry> = meta
         .iter()
-        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone() })
+        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp })
         .collect();
     list.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(list)
@@ -975,7 +995,10 @@ async fn set_connection_meta(
     name: String,
 ) -> Result<(), String> {
     use tauri::Emitter;
-    set_connection_meta_impl(&state, &id, &profile_id, &name)?;
+    // Frontend-initiated (sidebar/Connection Manager/quick-connect) -- never
+    // an MCP agent connection, which flows through `mcp_tools::connect_impl`
+    // instead and passes `via_mcp: true` directly.
+    set_connection_meta_impl(&state, &id, &profile_id, &name, false)?;
     let connections = connection_list_impl(&state)?;
     // Broadcast is best-effort: a window that misses this event picks up
     // current connection metadata the next time it connects or calls
@@ -1847,6 +1870,10 @@ async fn vault_unlock(
 #[tauri::command]
 async fn vault_lock(state: tauri::State<'_, AppState>) -> Result<(), String> {
     *state.vault_key.lock_safe()? = None;
+    // A locked vault must never leave the embedded MCP server listening —
+    // it reads through `require_key`-gated seams, same precondition as
+    // enabling it in the first place.
+    mcp::stop_if_running(&state).await?;
     Ok(())
 }
 
@@ -1865,6 +1892,8 @@ async fn vault_reset(
         }
     }
     *state.vault_key.lock_safe()? = None;
+    // Same precondition as `vault_lock`: no key means no MCP server.
+    mcp::stop_if_running(&state).await?;
     // A reset invalidates the old key; forget any biometric copy too.
     let _ = biometric::remove_stored_key(&app_handle);
     Ok(())
@@ -1900,6 +1929,30 @@ async fn vault_change_password(
     // Approach A: a password change derives a new key; keep biometrics working transparently.
     biometric::restore_key_if_enrolled(&app_handle, &new_key);
     Ok(())
+}
+
+/// Thin wrappers over `mcp.rs`'s testable impl fns (the established
+/// impl/wrapper split — see `set_connection_meta_impl`'s doc comment above)
+/// so the lifecycle logic itself never touches a `tauri::State` and can be
+/// unit-tested with a plain `AppState`.
+#[tauri::command]
+async fn mcp_get_status(state: tauri::State<'_, AppState>) -> Result<mcp::McpStatusUi, String> {
+    mcp::get_status_impl(&state)
+}
+
+#[tauri::command]
+async fn mcp_set_enabled(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+    port: Option<u16>,
+) -> Result<mcp::McpStatusUi, String> {
+    mcp::set_enabled_impl(&state, enabled, port, Some(app_handle)).await
+}
+
+#[tauri::command]
+async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<mcp::McpStatusUi, String> {
+    mcp::regenerate_token_impl(&state)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2019,6 +2072,9 @@ pub fn run() {
             vault_lock,
             vault_reset,
             vault_change_password,
+            mcp_get_status,
+            mcp_set_enabled,
+            mcp_regenerate_token,
             biometric::biometric_status,
             biometric::biometric_enable,
             biometric::biometric_unlock,

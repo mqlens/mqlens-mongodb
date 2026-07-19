@@ -49,6 +49,28 @@ describe('Sidebar Component', () => {
     expect(handleOpenModal).toHaveBeenCalledTimes(1);
   });
 
+  it('badges a connection opened via MCP with "via MCP", and not a human-opened one', () => {
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-1', name: 'Agent Conn', uri: 'mongodb://mock1', viaMcp: true },
+          { id: 'conn-2', name: 'Human Conn', uri: 'mongodb://mock2', viaMcp: false },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    const badges = screen.getAllByTestId('connection-via-mcp-badge');
+    expect(badges).toHaveLength(1);
+    expect(screen.getByText('Agent Conn')).toBeInTheDocument();
+    expect(screen.getByText('Human Conn')).toBeInTheDocument();
+  });
+
   it('filters the tree by the search box (database names)', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases') {

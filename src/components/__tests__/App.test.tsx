@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '../../test/render-with-providers';
+import { resetUpdateTabStateDebounce } from '../../workspace/workspaceStore';
 import App from '../../App';
 
 vi.mock('../../lib/vault', () => ({
@@ -162,6 +163,16 @@ describe('App Component', () => {
       }
       return Promise.resolve([]);
     });
+    // `updateTabState`'s 500ms debounce (workspaceStore.ts) lives in
+    // MODULE-level state, not component state — a real `setTimeout` a
+    // previous test schedules (e.g. via a revived tab's eager query re-run)
+    // outlives that test's own render/cleanup and can fire mid-WAY through
+    // a later, unrelated test, recording a stray `workspace_apply` call
+    // into THAT test's `calls` array (final fix wave: found while adding a
+    // new test to this file shifted timing enough to expose it). Clearing
+    // it here, before every test, keeps each test's `mockInvoke` call log
+    // free of debounced fallout from whatever ran before it.
+    resetUpdateTabStateDebounce();
   });
 
   it('opens the Quick Start tab by default and shows bottom status bar with version info', async () => {
@@ -2876,6 +2887,44 @@ describe('App Component', () => {
       expect(await screen.findByTestId('sidebar-conn-live-99')).toHaveTextContent('Prod Cluster');
     });
 
+    it('(b2) a connections-changed viaMcp addition for an ALREADY-connected profileId still renders its own sidebar row, badged "via MCP" (final fix wave, agent-connection visibility)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      // This window connects p1 itself first (a human connection).
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      expect(await screen.findByTestId('sidebar-conn-live-1')).toHaveTextContent('Prod Cluster');
+
+      // An MCP agent now also connects to the SAME profile (its own
+      // `connect` tool call, backend-side, broadcast as `viaMcp: true`) —
+      // previously `addActiveConnection`'s profileId dedupe silently
+      // dropped this: a live backend connection no window ever displayed.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [
+            { id: 'live-1', profileId: 'p1', name: 'Prod Cluster', viaMcp: false },
+            { id: 'mcp-live-2', profileId: 'p1', name: 'Prod Cluster', viaMcp: true },
+          ],
+        });
+      });
+
+      // Both rows now render — the pre-existing human connection AND the
+      // agent's own, distinct row for the same profile.
+      expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument();
+      expect(await screen.findByTestId('sidebar-conn-mcp-live-2')).toHaveTextContent('Prod Cluster');
+    });
+
     it('(d) a stale connection_meta entry for a profile already live locally under a different id is left alone (no disconnect_db)', async () => {
       const calls: any[] = [];
       mockInvoke.mockImplementation((cmd: string, args: any) => {
@@ -2991,8 +3040,9 @@ describe('App Component', () => {
       // An unrelated broadcast lands — this window's own `set_connection_meta`
       // for p1 hasn't registered backend-side yet (a race), so the very
       // first connections-changed payload it ever sees doesn't mention p1
-      // at all. p1 was never SEEN in any prior broadcast (seenProfilesRef is
-      // empty for it), so this must NOT be treated as a removal.
+      // at all. p1's own connection id ('live-1') was never SEEN in any
+      // prior broadcast (seenConnectionIdsRef is empty for it), so this
+      // must NOT be treated as a removal.
       await act(async () => {
         fireMockEvent('connections-changed', {
           connections: [{ id: 'live-other', profileId: 'p-other', name: 'Other Cluster' }],
@@ -3006,6 +3056,63 @@ describe('App Component', () => {
       // Self-healing re-registration: re-announces this window's own live
       // connection so the backend's connection_meta map (and hence the next
       // broadcast) catches up.
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) => c.cmd === 'set_connection_meta' && c.args?.id === 'live-1' && c.args?.profileId === 'p1',
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it('(g) a broadcast carrying a DIFFERENT connection for the SAME profile does not tear down this window\'s own not-yet-announced connection (closing review residual fix)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      // This window connects p1 itself (a human connect_db) — 'live-1' is
+      // added to activeConnections synchronously, but this window's own
+      // `set_connection_meta` for it hasn't registered backend-side yet.
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      await waitFor(() => expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument());
+
+      calls.length = 0; // only the broadcast handler's own reaction matters below
+
+      // A broadcast lands carrying a DIFFERENT connection id for the SAME
+      // profile (an MCP agent's own `connect`, or a second window racing
+      // this one) — NOT the local 'live-1' id, which this window's own
+      // `set_connection_meta` hasn't announced backend-side yet. A
+      // profileId-keyed seen-gate would mark p1 "seen" off this row alone
+      // and tear down 'live-1' as if it had been genuinely removed; the
+      // connection-id-keyed gate must not, since 'live-1' itself was never
+      // mentioned in any broadcast.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'mcp-live-2', profileId: 'p1', name: 'Prod Cluster', viaMcp: true }],
+        });
+      });
+
+      // This window's own connection (and its tabs) survive — not torn
+      // down by a same-profile broadcast that isn't actually about it.
+      expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument();
+      expect(calls.some((c) => c.cmd === 'disconnect_db')).toBe(false);
+      expect(calls.some((c) => c.cmd === 'workspace_apply' && c.args?.op?.type === 'close_many')).toBe(false);
+      // The agent's own row still renders (Fix 2's two-rows behavior is
+      // unaffected by this fix).
+      expect(await screen.findByTestId('sidebar-conn-mcp-live-2')).toBeInTheDocument();
+      // Self-healing re-registration, not teardown: re-announces this
+      // window's own live connection so the backend's connection_meta map
+      // (and hence the next broadcast) catches up.
       await waitFor(() => {
         expect(
           calls.some(

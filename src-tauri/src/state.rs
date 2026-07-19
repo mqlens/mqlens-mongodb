@@ -1,6 +1,6 @@
 //! Shared application state and a poison-safe mutex helper.
 
-use crate::{ssh_tunnel, workspace, IndexInfo, MongoshSession, TaskInfo};
+use crate::{mcp, ssh_tunnel, workspace, IndexInfo, MongoshSession, TaskInfo};
 use mongodb::Client;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -18,6 +18,14 @@ use std::time::Instant;
 pub struct ConnectionMeta {
     pub profile_id: String,
     pub name: String,
+    /// True iff this connection was opened by the embedded MCP server's
+    /// `connect` tool (#98 Task 4) rather than a human via the sidebar/
+    /// Connection Manager. `#[serde(default)]` keeps this readable against
+    /// nothing on-disk -- `ConnectionMeta` is in-memory only (never
+    /// persisted), but the default matters for any caller that constructs
+    /// one from a partial literal (`..Default::default()`-style).
+    #[serde(default)]
+    pub via_mcp: bool,
 }
 
 /// One entry of the `connections-changed` payload's `connections` list —
@@ -30,6 +38,9 @@ pub struct ConnectionEntry {
     pub id: String,
     pub profile_id: String,
     pub name: String,
+    /// Mirrors `ConnectionMeta::via_mcp` -- surfaced to the frontend so the
+    /// sidebar can badge agent-initiated connections (#98 Task 4).
+    pub via_mcp: bool,
 }
 
 /// The `connections-changed` broadcast payload: the full current connection
@@ -88,6 +99,20 @@ pub struct AppState {
     /// `disconnect_db`). See `ConnectionMeta`'s doc comment for why this
     /// deliberately never holds a URI.
     pub connection_meta: Mutex<HashMap<String, ConnectionMeta>>,
+    /// Embedded MCP server lifecycle + settings (#98 Task 1): enablement,
+    /// bound port, bearer token, rolling call log, and the live server
+    /// task's handle (`None` when disabled). See `mcp::McpControl` for the
+    /// enable/disable state machine and `mcp::stop_if_running` for the
+    /// `vault_lock`/`vault_reset` teardown hook that guarantees a locked
+    /// vault never leaves the server listening.
+    ///
+    /// `Arc`-wrapped (unlike this struct's other `Mutex` fields) so the
+    /// spawned server task (#98 Task 2) can hold its own clone of the exact
+    /// same lock `AppState` uses — reading the live bearer token at request
+    /// time straight out of the one source of truth, rather than needing a
+    /// full `Arc<AppState>` or a second copy of the token that could drift
+    /// out of sync with a `mcp_regenerate_token` call.
+    pub mcp: Arc<Mutex<mcp::McpControl>>,
 }
 
 impl AppState {
@@ -108,6 +133,7 @@ impl AppState {
             workspace: Mutex::new(None),
             workspace_write_gen: Arc::new(AtomicU64::new(0)),
             connection_meta: Mutex::new(HashMap::new()),
+            mcp: Arc::new(Mutex::new(mcp::McpControl::new())),
         }
     }
 

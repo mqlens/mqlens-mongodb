@@ -70,6 +70,9 @@ queries actually do — from a single cross-platform desktop app.
   workspace across monitors.
 - **Session restore** — your splits and tabs come back after a restart;
   reconnect per connection with one click.
+- **MCP server** — expose your connections to Claude Code, Cursor, and other agents as
+  [Model Context Protocol tools](docs/mcp-tools.md); per-connection opt-in, writes gated behind
+  explicit confirmation, off by default.
 
 ## Install
 

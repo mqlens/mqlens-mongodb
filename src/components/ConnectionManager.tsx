@@ -67,6 +67,8 @@ interface ConnectionProfile {
   uri: string;
   color_tag?: string | null;
   ssh?: SshConfig | null;
+  /** Expose this profile to MCP agents. Mirrors backend `ConnectionProfile::mcp_enabled`. */
+  mcp_enabled?: boolean;
 }
 
 interface ConnectionManagerProps {
@@ -129,6 +131,7 @@ const BLANK_CONN = {
   name: 'New Connection',
   folder: '',
   colorTag: '',
+  mcpEnabled: false,
 };
 
 const sidebarPanelClass =
@@ -524,6 +527,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       ...parsed,
       folder: profileFolderMap[profile.id] || '',
       colorTag: profile.color_tag || '',
+      mcpEnabled: profile.mcp_enabled ?? false,
       ...sshFields,
     });
 
@@ -547,6 +551,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       hosts: [{ host: 'localhost', port: '27017' }],
       folder: profileFolderMap[profile.id] || '',
       colorTag: profile.color_tag || '',
+      // Adjudicated product call (final fix wave): a duplicated profile
+      // never inherits "Expose to MCP agents" from the profile it was
+      // copied from, even when the original has it on — the new profile is
+      // a distinct connection an agent hasn't been vetted for yet, and
+      // silently exposing it would be surprising. `handleEditClick` above
+      // is unaffected and keeps mapping `profile.mcp_enabled` as-is; this
+      // reset is specific to the duplicate-populate path.
+      mcpEnabled: false,
     });
     setError(null);
     setTestResult(null);
@@ -605,6 +617,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       color_tag: editorState.colorTag
         ? normalizeHexColor(editorState.colorTag) ?? editorState.colorTag
         : null,
+      mcp_enabled: editorState.mcpEnabled,
     };
 
     setLoading(true);
@@ -1444,6 +1457,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         />
                       </div>
                     )}
+                  </div>
+
+                  <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                    <label className="flex items-center gap-2 text-[11px]">
+                      <input
+                        id="mcp-enable"
+                        type="checkbox"
+                        checked={editorState.mcpEnabled}
+                        onChange={e => setEditorState(prev => ({ ...prev, mcpEnabled: e.target.checked }))}
+                      />
+                      <span>Expose to MCP agents</span>
+                    </label>
+                    <span className="text-[10.5px] leading-relaxed text-muted-foreground">
+                      Agents connected to the MQLens MCP server can see and connect to this profile.
+                    </span>
                   </div>
                 </div>
               )}
