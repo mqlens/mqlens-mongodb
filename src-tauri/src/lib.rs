@@ -13,6 +13,7 @@ pub mod limits;
 pub mod ai;
 pub mod connections;
 mod db;
+pub mod mcp;
 pub(crate) mod mock_db;
 pub mod monitoring;
 pub mod path_env;
@@ -1847,6 +1848,10 @@ async fn vault_unlock(
 #[tauri::command]
 async fn vault_lock(state: tauri::State<'_, AppState>) -> Result<(), String> {
     *state.vault_key.lock_safe()? = None;
+    // A locked vault must never leave the embedded MCP server listening —
+    // it reads through `require_key`-gated seams, same precondition as
+    // enabling it in the first place.
+    mcp::stop_if_running(&state).await?;
     Ok(())
 }
 
@@ -1865,6 +1870,8 @@ async fn vault_reset(
         }
     }
     *state.vault_key.lock_safe()? = None;
+    // Same precondition as `vault_lock`: no key means no MCP server.
+    mcp::stop_if_running(&state).await?;
     // A reset invalidates the old key; forget any biometric copy too.
     let _ = biometric::remove_stored_key(&app_handle);
     Ok(())
@@ -1900,6 +1907,29 @@ async fn vault_change_password(
     // Approach A: a password change derives a new key; keep biometrics working transparently.
     biometric::restore_key_if_enrolled(&app_handle, &new_key);
     Ok(())
+}
+
+/// Thin wrappers over `mcp.rs`'s testable impl fns (the established
+/// impl/wrapper split — see `set_connection_meta_impl`'s doc comment above)
+/// so the lifecycle logic itself never touches a `tauri::State` and can be
+/// unit-tested with a plain `AppState`.
+#[tauri::command]
+async fn mcp_get_status(state: tauri::State<'_, AppState>) -> Result<mcp::McpStatusUi, String> {
+    mcp::get_status_impl(&state)
+}
+
+#[tauri::command]
+async fn mcp_set_enabled(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+    port: Option<u16>,
+) -> Result<mcp::McpStatusUi, String> {
+    mcp::set_enabled_impl(&state, enabled, port).await
+}
+
+#[tauri::command]
+async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<mcp::McpStatusUi, String> {
+    mcp::regenerate_token_impl(&state)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2019,6 +2049,9 @@ pub fn run() {
             vault_lock,
             vault_reset,
             vault_change_password,
+            mcp_get_status,
+            mcp_set_enabled,
+            mcp_regenerate_token,
             biometric::biometric_status,
             biometric::biometric_enable,
             biometric::biometric_unlock,

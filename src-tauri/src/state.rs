@@ -1,6 +1,6 @@
 //! Shared application state and a poison-safe mutex helper.
 
-use crate::{ssh_tunnel, workspace, IndexInfo, MongoshSession, TaskInfo};
+use crate::{mcp, ssh_tunnel, workspace, IndexInfo, MongoshSession, TaskInfo};
 use mongodb::Client;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -88,6 +88,13 @@ pub struct AppState {
     /// `disconnect_db`). See `ConnectionMeta`'s doc comment for why this
     /// deliberately never holds a URI.
     pub connection_meta: Mutex<HashMap<String, ConnectionMeta>>,
+    /// Embedded MCP server lifecycle + settings (#98 Task 1): enablement,
+    /// bound port, bearer token, rolling call log, and the live server
+    /// task's handle (`None` when disabled). See `mcp::McpControl` for the
+    /// enable/disable state machine and `mcp::stop_if_running` for the
+    /// `vault_lock`/`vault_reset` teardown hook that guarantees a locked
+    /// vault never leaves the server listening.
+    pub mcp: Mutex<mcp::McpControl>,
 }
 
 impl AppState {
@@ -108,6 +115,7 @@ impl AppState {
             workspace: Mutex::new(None),
             workspace_write_gen: Arc::new(AtomicU64::new(0)),
             connection_meta: Mutex::new(HashMap::new()),
+            mcp: Mutex::new(mcp::McpControl::new()),
         }
     }
 
