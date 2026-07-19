@@ -2,8 +2,6 @@ import { describe, it, expect } from 'vitest';
 import goldenFixture from '../../../fixtures/workspace-golden.json';
 import {
   workspaceReducer,
-  resetLayoutIds,
-  seedLayoutIds,
   type WorkspaceLayout,
   type WorkspaceAction,
   type LayoutNode,
@@ -54,6 +52,16 @@ interface Vector {
   initial: FixtureDoc;
   ops: RawOp[];
   expected: FixtureDoc;
+  // Multi-window vectors (move_tab_to_window / detach_tab / window_closed,
+  // or an op targeting a non-"main" window_id) are backend-authoritative:
+  // the Rust reducer (src-tauri/src/workspace.rs) owns window-scoped
+  // resolution end to end, and the frontend only ever applies their effects
+  // via events pushed from the backend (Task 4), never through this
+  // single-window TS reducer. This runner only ever hydrates
+  // `doc.windows[0]`, so it structurally cannot exercise those vectors —
+  // skip them here; the Rust `golden_vectors_match_fixture` test asserts
+  // them (and everything else) in full.
+  tsSkip?: boolean;
 }
 
 const { vectors } = goldenFixture as unknown as { vectors: Vector[] };
@@ -100,10 +108,12 @@ describe('workspace golden parity vectors (layout half)', () => {
   });
 
   for (const vector of vectors) {
-    it(vector.name, () => {
-      resetLayoutIds();
+    // tsSkip vectors are multi-window — see the `tsSkip` doc comment on
+    // `Vector` above. `it.skip` still registers the test (visible, greyed
+    // out) rather than silently omitting it.
+    const test = vector.tsSkip ? it.skip : it;
+    test(vector.name, () => {
       let layout = layoutOf(vector.initial);
-      seedLayoutIds(layout);
       for (const op of vector.ops) {
         const action = opToAction(op);
         if (action) layout = workspaceReducer(layout, action);

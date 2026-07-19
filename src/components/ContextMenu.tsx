@@ -9,6 +9,9 @@ export interface ContextMenuItem {
   danger?: boolean;
   separatorBefore?: boolean;
   disabled?: boolean;
+  /** Native HTML `title` attribute (hover tooltip) — e.g. explaining why a
+   *  disabled item is disabled (Phase 3 Task 5's unmirrored-tab menu entry). */
+  title?: string;
 }
 
 interface ContextMenuProps {
@@ -79,6 +82,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
               it.danger && 'is-danger text-destructive hover:text-destructive',
             )}
             disabled={it.disabled}
+            title={it.title}
             onClick={() => {
               it.onClick();
               onClose();

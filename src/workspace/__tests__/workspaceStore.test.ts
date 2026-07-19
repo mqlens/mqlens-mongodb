@@ -26,9 +26,14 @@ describe('workspaceStore', () => {
     expect(result).toBeNull();
   });
 
-  it('workspaceApply fire-and-forgets workspace_apply with the op wrapped', () => {
+  it('workspaceApply fire-and-forgets workspace_apply with the op wrapped and this window\'s label as origin', () => {
     workspaceApply({ type: 'focus_pane', pane_id: 'pane-1' });
-    expect(invokeMock).toHaveBeenCalledWith('workspace_apply', { op: { type: 'focus_pane', pane_id: 'pane-1' } });
+    // 'main' — jsdom has no real Tauri runtime, so `windowLabel()` falls
+    // back to it (see workspaceStore.ts's doc comment).
+    expect(invokeMock).toHaveBeenCalledWith('workspace_apply', {
+      op: { type: 'focus_pane', pane_id: 'pane-1' },
+      origin: 'main',
+    });
   });
 
   it('workspaceApply swallows a rejected invoke rather than throwing', async () => {
@@ -45,6 +50,7 @@ describe('workspaceStore', () => {
     vi.advanceTimersByTime(500);
     expect(invokeMock).toHaveBeenCalledWith('workspace_apply', {
       op: { type: 'update_tab_state', tab_id: 't1', last_query: { filter: '{}' } },
+      origin: 'main',
     });
   });
 
@@ -93,11 +99,13 @@ describe('workspaceStore', () => {
     expect(invokeMock).toHaveBeenCalledTimes(1);
     expect(invokeMock).toHaveBeenCalledWith('workspace_apply', {
       op: { type: 'update_tab_state', tab_id: 't1', last_query: { a: 1 } },
+      origin: 'main',
     });
     vi.advanceTimersByTime(250);
     expect(invokeMock).toHaveBeenCalledTimes(2);
     expect(invokeMock).toHaveBeenLastCalledWith('workspace_apply', {
       op: { type: 'update_tab_state', tab_id: 't2', last_query: { b: 2 } },
+      origin: 'main',
     });
   });
 
@@ -115,6 +123,7 @@ describe('workspaceStore', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('workspace_apply', {
       op: { type: 'update_tab_state', tab_id: restoredTabId, last_query: { filter: '{}' } },
+      origin: 'main',
     });
   });
 });
@@ -191,7 +200,7 @@ describe('actionToOp id translation (CRITICAL fix)', () => {
       undefined,
       connections
     );
-    expect(op).toEqual({ type: 'rename_tab', old_id: 'profile:p1.db.old', new_id: 'profile:p1.db.new' });
+    expect(op).toEqual({ type: 'rename_tab', old_id: 'profile:p1.db.old', new_id: 'profile:p1.db.new', window_id: 'main' });
   });
 
   it('omitting connections is a passthrough — the raw (untranslated) op shape', () => {

@@ -2,10 +2,45 @@
 
 use crate::{ssh_tunnel, workspace, IndexInfo, MongoshSession, TaskInfo};
 use mongodb::Client;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// Metadata kept per live connection id for the `connections-changed`
+/// broadcast (Phase 3 Task 3) — enough for another window to label a
+/// connection in its own UI (profile it came from, display name).
+/// Deliberately excludes the connection URI: event payloads go out via
+/// `app_handle.emit`, and a connection string must never ride on that.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionMeta {
+    pub profile_id: String,
+    pub name: String,
+}
+
+/// One entry of the `connections-changed` payload's `connections` list —
+/// `ConnectionMeta` plus the id it's keyed by in `AppState.connection_meta`
+/// (the id itself isn't part of `ConnectionMeta` since it's the map key,
+/// but listeners need it to tell entries apart).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionEntry {
+    pub id: String,
+    pub profile_id: String,
+    pub name: String,
+}
+
+/// The `connections-changed` broadcast payload: the full current connection
+/// list (not a diff) — simplest for a listener to reconcile against, and
+/// matches `workspace-changed` carrying the full `Workspace` rather than a
+/// delta.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionsChangedPayload {
+    pub connections: Vec<ConnectionEntry>,
+}
 
 /// Lock a std mutex, mapping a poisoned lock to an error instead of panicking.
 pub trait LockExt<T> {
@@ -47,6 +82,12 @@ pub struct AppState {
     /// spawned save only writes if its captured generation is still current,
     /// collapsing bursts of changes into a single-flight write.
     pub workspace_write_gen: Arc<AtomicU64>,
+    /// Metadata for currently-live connections, keyed by connection id —
+    /// broadcast to every window via `connections-changed` whenever it
+    /// changes (`set_connection_meta` on connect, removed on
+    /// `disconnect_db`). See `ConnectionMeta`'s doc comment for why this
+    /// deliberately never holds a URI.
+    pub connection_meta: Mutex<HashMap<String, ConnectionMeta>>,
 }
 
 impl AppState {
@@ -66,6 +107,7 @@ impl AppState {
             conn_uris: Mutex::new(HashMap::new()),
             workspace: Mutex::new(None),
             workspace_write_gen: Arc::new(AtomicU64::new(0)),
+            connection_meta: Mutex::new(HashMap::new()),
         }
     }
 

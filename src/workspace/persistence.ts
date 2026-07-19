@@ -140,6 +140,23 @@ export function toProfileSpaceId(id: string, connections: PersistableConnection[
 }
 
 /**
+ * Inverse of `toProfileSpaceId` (Phase 3 Task 4): rewrite `id`'s
+ * `profile:<profileId>` segment (if any) to the live `<connectionId>` of a
+ * connection in `connections` matching that profile. Used when reconciling a
+ * FOREIGN window's slice of the backend workspace (always profile-space,
+ * per the Global Constraint above) into this window's local id space, where
+ * a tab whose connection this window already has live should render exactly
+ * like any other locally-reconnected tab, not stuck as a `profile:` banner.
+ * Ids with no matching profile prefix — already live-space, connectionless
+ * (`settings`/`quickstart`/`tasks`), or a pane/split id — pass through
+ * unchanged, mirroring `toProfileSpaceId`'s own no-op cases.
+ */
+export function toLiveSpaceId(id: string, connections: PersistableConnection[]): string {
+  const conn = connections.find((c) => id.includes(`profile:${c.profileId}`));
+  return conn ? id.replace(`profile:${conn.profileId}`, conn.id) : id;
+}
+
+/**
  * Build the persisted (wire) form of a live tab, or `null` if this tab kind
  * never survives a restart (export/import). Connection-scoped tab ids are
  * rewritten at save time: the live id's leading `<connectionId>` segment
@@ -193,13 +210,36 @@ export function toPersistedTab(
  * and any cached builder states. Tab ids are used exactly as stored —
  * `toPersistedTab` already rewrote them into `profile:<profileId>` form at
  * save time, so no further id surgery happens here.
+ *
+ * `windowId` (Phase 3 Task 4, default `"main"`) selects WHICH window's
+ * slice of the document to materialize — `ws.windows` may hold more than
+ * one window now, and `ws.tabs` is a FLAT list shared across all of them
+ * (each window's `splitTree` only references a subset). Every window's
+ * boot must materialize ONLY its own tabs into local state; the returned
+ * `tabs`/`builderStates` are filtered down to the ids this window's layout
+ * tree actually references. A `windowId` with no matching entry in
+ * `ws.windows` (e.g. a not-yet-registered secondary window) produces the
+ * same empty single-pane fallback as an empty/missing `ws.windows` — never
+ * a silent fallback to some OTHER window's tree, which would leak its tabs
+ * into this one.
  */
-export function toDisconnectedSnapshot(ws: PersistedWorkspace): {
+export function toDisconnectedSnapshot(
+  ws: PersistedWorkspace,
+  windowId: string = 'main'
+): {
   tabs: RestoredTab[];
   layout: WorkspaceLayout;
   builderStates: Map<string, unknown>;
 } {
-  const tabs: RestoredTab[] = ws.tabs.map((t) => ({
+  const win = ws.windows.find((w) => w.id === windowId);
+  let layout: WorkspaceLayout = win
+    ? { root: win.splitTree, focusedPaneId: win.focusedPaneId }
+    : { root: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null }, focusedPaneId: 'pane-1' };
+
+  const windowTabIds = new Set(allTabIds(layout));
+  const windowTabs = ws.tabs.filter((t) => windowTabIds.has(t.id));
+
+  const tabs: RestoredTab[] = windowTabs.map((t) => ({
     id: t.id,
     type: t.type,
     connectionId: t.profileId ? `profile:${t.profileId}` : '',
@@ -215,20 +255,15 @@ export function toDisconnectedSnapshot(ws: PersistedWorkspace): {
   }));
 
   const builderStates = new Map<string, unknown>();
-  for (const t of ws.tabs) {
+  for (const t of windowTabs) {
     if (t.builderState != null) builderStates.set(t.id, t.builderState);
   }
-
-  const win = ws.windows[0];
-  let layout: WorkspaceLayout = win
-    ? { root: win.splitTree, focusedPaneId: win.focusedPaneId }
-    : { root: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null }, focusedPaneId: 'pane-1' };
 
   // Defensive: fold out any layout tab id with no matching persisted tab
   // (e.g. legacy/corrupt workspace.json) using the same reducer close_tab
   // uses live, so pane folding/focus-repair stays consistent with a normal
   // tab close rather than a naive tabIds filter.
-  const knownIds = new Set(ws.tabs.map((t) => t.id));
+  const knownIds = new Set(windowTabs.map((t) => t.id));
   for (const tabId of allTabIds(layout)) {
     if (!knownIds.has(tabId)) {
       layout = workspaceReducer(layout, { type: 'close_tab', tabId });
@@ -236,6 +271,45 @@ export function toDisconnectedSnapshot(ws: PersistedWorkspace): {
   }
 
   return { tabs, layout, builderStates };
+}
+
+/**
+ * Materialize one tab id ARRIVING into this window's tree from a foreign
+ * `workspace-changed` event (Phase 3 Task 4) — the wire `TabModel`
+ * (`tab`, always profile-space) plus whether this window already has a live
+ * connection for its profile. Mirrors `toDisconnectedSnapshot`'s per-tab
+ * shape for the disconnected case, but additionally rebinds onto the live
+ * connection id (like a reconnect's `rebindProfileTabs`) when one exists —
+ * an arriving tab whose profile is already connected here should render
+ * live immediately, not as a stale `profile:` banner the user has to click
+ * through. `results` always starts empty regardless of `isLive`; the caller
+ * is responsible for refreshing (re-running `lastQuery`/`lastAggregate`)
+ * live arrivals afterward — this function is pure and does no IO.
+ */
+export function materializeArrivingTab(
+  tab: PersistedTab,
+  connections: PersistableConnection[]
+): { tab: RestoredTab; isLive: boolean } {
+  const conn = connections.find((c) => c.profileId === tab.profileId && tab.profileId !== '');
+  const id = conn ? toLiveSpaceId(tab.id, connections) : tab.id;
+  const connectionId = conn ? conn.id : tab.profileId ? `profile:${tab.profileId}` : '';
+  return {
+    isLive: !!conn,
+    tab: {
+      id,
+      type: tab.type,
+      connectionId,
+      db: tab.db,
+      collection: tab.collection,
+      indexName: tab.indexName,
+      results: [],
+      loading: false,
+      error: null,
+      explainResult: null,
+      lastQuery: tab.lastQuery,
+      lastAggregate: tab.lastAggregate,
+    },
+  };
 }
 
 /**

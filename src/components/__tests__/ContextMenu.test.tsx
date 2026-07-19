@@ -31,4 +31,18 @@ describe('ContextMenu', () => {
     render(<ContextMenu x={0} y={0} items={[{ label: 'Delete', onClick: () => {}, danger: true }]} onClose={() => {}} />);
     expect(screen.getByText('Delete').closest('button')).toHaveClass('is-danger');
   });
+
+  it('renders an item\'s title as the native HTML tooltip attribute (Phase 3 Task 5)', () => {
+    render(
+      <ContextMenu
+        x={0}
+        y={0}
+        items={[{ label: 'Can\'t move', onClick: () => {}, disabled: true, title: 'Explanation text' }]}
+        onClose={() => {}}
+      />,
+    );
+    const button = screen.getByText('Can\'t move').closest('button');
+    expect(button).toHaveAttribute('title', 'Explanation text');
+    expect(button).toBeDisabled();
+  });
 });

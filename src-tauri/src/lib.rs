@@ -23,6 +23,7 @@ pub mod toolsetup;
 pub mod updater;
 mod vault;
 mod window;
+mod windows;
 mod workspace;
 pub mod biometric;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
@@ -63,7 +64,7 @@ pub use db::users::{
 pub use db::version::get_mongodb_version_impl;
 pub use db::copy::{preflight_copy_impl, start_collection_copy_impl, start_database_copy_impl, CopyTargetRef};
 pub use biometric::{decode_and_verify_key, encode_key, BiometricStatus};
-pub use state::{AppState, LockExt};
+pub use state::{AppState, ConnectionEntry, ConnectionMeta, ConnectionsChangedPayload, LockExt};
 pub use window::target_window_size;
 #[cfg(test)]
 mod tests;
@@ -531,8 +532,43 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
             tunnel.close();
         }
     }
+    {
+        let mut meta = state.connection_meta.lock_safe()?;
+        meta.remove(id);
+    }
 
     Ok(())
+}
+
+/// Insert/replace `id`'s connection metadata (the profile it came from plus
+/// a display name) — called by the frontend once a connection succeeds.
+/// `AppHandle`-free like `connect_db_impl`/`disconnect_db_impl`: the
+/// `connections-changed` broadcast is the `set_connection_meta` command
+/// wrapper's job, mirroring `workspace::apply_impl`/`workspace_apply`'s
+/// pure-mutation/emit split.
+pub fn set_connection_meta_impl(
+    state: &AppState,
+    id: &str,
+    profile_id: &str,
+    name: &str,
+) -> Result<(), String> {
+    let mut meta = state.connection_meta.lock_safe()?;
+    meta.insert(id.to_string(), ConnectionMeta { profile_id: profile_id.to_string(), name: name.to_string() });
+    Ok(())
+}
+
+/// The full current connection list for a `connections-changed` broadcast,
+/// sorted by connection id — a `HashMap`'s iteration order is otherwise
+/// unspecified, which would make every emitted payload's element order
+/// nondeterministic between calls.
+pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, String> {
+    let meta = state.connection_meta.lock_safe()?;
+    let mut list: Vec<ConnectionEntry> = meta
+        .iter()
+        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone() })
+        .collect();
+    list.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(list)
 }
 
 pub async fn start_mongosh_session_impl(
@@ -903,8 +939,49 @@ async fn stop_mongosh_session(
 }
 
 #[tauri::command]
-async fn disconnect_db(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
-    disconnect_db_impl(&state, &id).await
+async fn disconnect_db(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    disconnect_db_impl(&state, &id).await?;
+    let connections = connection_list_impl(&state)?;
+    // Broadcast is best-effort: a window that misses this event picks up
+    // current connection metadata the next time it connects or calls
+    // `set_connection_meta` itself.
+    let _ = app_handle.emit("connections-changed", ConnectionsChangedPayload { connections });
+    Ok(())
+}
+
+/// `connection_list` command: thin wrapper over `connection_list_impl`
+/// (final whole-branch review, Fix 2). Unlike `disconnect_db`/
+/// `set_connection_meta`, this never broadcasts — it's a plain read, called
+/// once by App.tsx's boot effect (after `workspace_get` resolves) so a
+/// freshly spawned window sees every connection already live in the session
+/// immediately, instead of rendering a `ReconnectBanner` for a
+/// restored-but-actually-live profile and inviting a duplicate `connect_db`.
+#[tauri::command]
+async fn connection_list(state: tauri::State<'_, AppState>) -> Result<Vec<ConnectionEntry>, String> {
+    connection_list_impl(&state)
+}
+
+#[tauri::command]
+async fn set_connection_meta(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+    profile_id: String,
+    name: String,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    set_connection_meta_impl(&state, &id, &profile_id, &name)?;
+    let connections = connection_list_impl(&state)?;
+    // Broadcast is best-effort: a window that misses this event picks up
+    // current connection metadata the next time it connects or calls
+    // `set_connection_meta` itself.
+    let _ = app_handle.emit("connections-changed", ConnectionsChangedPayload { connections });
+    Ok(())
 }
 
 #[tauri::command]
@@ -1862,6 +1939,12 @@ pub fn run() {
                     }
                 }
             }
+            // Final whole-branch review, Fix 1 (CRITICAL): closing "main"
+            // must quit the app even with a secondary `win-*` window open —
+            // see `windows::wire_main_window_exit`'s doc comment for why the
+            // runtime's default `ExitRequested`-on-last-window-close
+            // behavior is no longer sufficient once multi-window exists.
+            windows::wire_main_window_exit(app.handle());
             Ok(())
         })
         .manage(AppState::new())
@@ -1884,6 +1967,8 @@ pub fn run() {
             run_mongosh_command,
             stop_mongosh_session,
             disconnect_db,
+            set_connection_meta,
+            connection_list,
             list_databases,
             list_collections,
             list_indexes,
@@ -1953,6 +2038,10 @@ pub fn run() {
             queries::list_all_saved_queries,
             workspace::workspace_get,
             workspace::workspace_apply,
+            windows::workspace_detach_tab,
+            windows::spawn_saved_windows,
+            windows::focus_window,
+            windows::close_workspace_window,
             server_status,
             current_ops,
             repl_set_status,

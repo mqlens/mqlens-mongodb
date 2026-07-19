@@ -307,6 +307,102 @@
         { "id": "t1", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
           "db": "mydb", "collection": "mycoll",
           "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null } ] }
+    },
+    {
+      "name": "move_tab_to_window_moves_and_activates_in_target",
+      "tsSkip": true,
+      "_comment": "multi-window: backend-authoritative (Task 4 wires the frontend to apply these via events, not this reducer)",
+      "initial": { "revision": 0, "windows": [
+        { "id": "main", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a", "b"], "activeTabId": "a" } },
+        { "id": "win-1", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["c"], "activeTabId": "c" } }
+      ], "tabs": [] },
+      "ops": [
+        { "type": "move_tab_to_window", "tab_id": "b", "target_window_id": "win-1" }
+      ],
+      "expected": { "revision": 1, "windows": [
+        { "id": "main", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } },
+        { "id": "win-1", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["c", "b"], "activeTabId": "b" } }
+      ], "tabs": [] }
+    },
+    {
+      "name": "detach_tab_creates_new_window_and_folds_source",
+      "tsSkip": true,
+      "_comment": "multi-window: backend-authoritative (Task 4 wires the frontend to apply these via events, not this reducer)",
+      "initial": { "revision": 0, "windows": [ { "id": "main", "focusedPaneId": "pane-2",
+        "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+          { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" },
+          { "kind": "pane", "id": "pane-2", "tabIds": ["b"], "activeTabId": "b" } ] } } ], "tabs": [] },
+      "ops": [
+        { "type": "detach_tab", "tab_id": "b" }
+      ],
+      "expected": { "revision": 1, "windows": [
+        { "id": "main", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } },
+        { "id": "win-1", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["b"], "activeTabId": "b" } }
+      ], "tabs": [] }
+    },
+    {
+      "name": "window_closed_removes_window_and_its_tabs",
+      "tsSkip": true,
+      "_comment": "multi-window: backend-authoritative (Task 4 wires the frontend to apply these via events, not this reducer)",
+      "initial": { "revision": 0, "windows": [
+        { "id": "main", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } },
+        { "id": "win-1", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["b", "c"], "activeTabId": "b" } }
+      ], "tabs": [
+        { "id": "a", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null },
+        { "id": "b", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null },
+        { "id": "c", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null } ] },
+      "ops": [
+        { "type": "window_closed", "window_id": "win-1" }
+      ],
+      "expected": { "revision": 1, "windows": [
+        { "id": "main", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "pane", "id": "pane-1", "tabIds": ["a"], "activeTabId": "a" } }
+      ], "tabs": [
+        { "id": "a", "type": "documents", "profileId": "p1", "profileName": "Profile 1",
+          "db": "mydb", "collection": "mycoll",
+          "indexName": null, "lastQuery": null, "lastAggregate": null, "builderState": null } ] }
+    },
+    {
+      "name": "window_id_targeting_is_window_local",
+      "tsSkip": true,
+      "_comment": "multi-window: proves op.window_id resolution never cross-talks into another window's same-named pane-2 (backend-authoritative, see Task 4)",
+      "initial": { "revision": 0, "windows": [
+        { "id": "main", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+            { "kind": "pane", "id": "pane-1", "tabIds": ["m1"], "activeTabId": "m1" },
+            { "kind": "pane", "id": "pane-2", "tabIds": ["m2", "m3"], "activeTabId": "m2" } ] } },
+        { "id": "win-1", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+            { "kind": "pane", "id": "pane-1", "tabIds": ["x1"], "activeTabId": "x1" },
+            { "kind": "pane", "id": "pane-2", "tabIds": ["x2", "x3"], "activeTabId": "x2" } ] } }
+      ], "tabs": [] },
+      "ops": [
+        { "type": "set_active", "window_id": "win-1", "pane_id": "pane-2", "tab_id": "x3" }
+      ],
+      "expected": { "revision": 1, "windows": [
+        { "id": "main", "focusedPaneId": "pane-1",
+          "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+            { "kind": "pane", "id": "pane-1", "tabIds": ["m1"], "activeTabId": "m1" },
+            { "kind": "pane", "id": "pane-2", "tabIds": ["m2", "m3"], "activeTabId": "m2" } ] } },
+        { "id": "win-1", "focusedPaneId": "pane-2",
+          "splitTree": { "kind": "split", "id": "split-1", "dir": "row", "ratio": 0.5, "children": [
+            { "kind": "pane", "id": "pane-1", "tabIds": ["x1"], "activeTabId": "x1" },
+            { "kind": "pane", "id": "pane-2", "tabIds": ["x2", "x3"], "activeTabId": "x3" } ] } }
+      ], "tabs": [] }
     }
   ]
 }

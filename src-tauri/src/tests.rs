@@ -3,7 +3,8 @@ mod tests {
     use crate::db::documents::CsvImportOptions;
     use crate::AppState;
     use crate::{
-        connect_db_impl, count_documents_impl, create_collection_impl, create_index_impl,
+        connect_db_impl, connection_list_impl, count_documents_impl, create_collection_impl,
+        create_index_impl,
         delete_document_impl, delete_gridfs_file_impl, disconnect_db_impl,
         download_gridfs_file_impl, drop_collection_impl,
         drop_database_impl, execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
@@ -12,6 +13,7 @@ mod tests {
         json_to_bson_document, list_collections_impl, list_databases_impl, list_gridfs_files_impl,
         list_indexes_impl, parse_json_array_docs,
         preview_export_impl, rename_collection_impl, rename_database_impl, sample_export_fields_impl,
+        set_connection_meta_impl,
         start_collection_export_impl, start_filtered_export_impl, update_document_impl,
         upload_gridfs_file_impl, get_collection_options_impl, set_validator_impl,
     };
@@ -3682,5 +3684,104 @@ mod tests {
         assert!(state.cancels.lock().unwrap().get(&task2.id).is_none(), "cancel flag cleaned up");
 
         let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 3 Task 3: connection-meta registry — CRUD, list determinism,
+    // and removal on disconnect. Impl-level (no `AppHandle`), matching
+    // `workspace::apply_impl`'s testing precedent: the `connections-changed`
+    // emit itself lives only in the `set_connection_meta`/`disconnect_db`
+    // command wrappers, which need a real Tauri app to exercise.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn set_connection_meta_inserts_and_overwrites() {
+        let state = AppState::new();
+        set_connection_meta_impl(&state, "conn-1", "profile-a", "Prod Cluster").unwrap();
+        {
+            let meta = state.connection_meta.lock().unwrap();
+            let m = meta.get("conn-1").expect("meta inserted");
+            assert_eq!(m.profile_id, "profile-a");
+            assert_eq!(m.name, "Prod Cluster");
+        }
+
+        // Re-registering the same id (e.g. a reconnect) overwrites in place
+        // rather than accumulating a second entry.
+        set_connection_meta_impl(&state, "conn-1", "profile-b", "Renamed").unwrap();
+        let meta = state.connection_meta.lock().unwrap();
+        assert_eq!(meta.len(), 1, "same id must overwrite, not duplicate");
+        let m = meta.get("conn-1").unwrap();
+        assert_eq!(m.profile_id, "profile-b");
+        assert_eq!(m.name, "Renamed");
+    }
+
+    #[test]
+    fn connection_meta_never_carries_a_uri() {
+        // Regression guard for the explicit constraint: event payloads must
+        // never carry a connection string. `ConnectionMeta`/`ConnectionEntry`
+        // only ever expose `profileId`/`name` — this test would fail to
+        // compile (not just fail at runtime) the moment a `uri` field is
+        // added, since the struct literal below is exhaustive.
+        let meta = crate::ConnectionMeta { profile_id: "p".into(), name: "n".into() };
+        let entry = crate::ConnectionEntry { id: "c".into(), profile_id: meta.profile_id.clone(), name: meta.name.clone() };
+        assert_eq!(entry.id, "c");
+    }
+
+    #[test]
+    fn connection_list_is_sorted_by_id_regardless_of_insertion_order() {
+        let state = AppState::new();
+        set_connection_meta_impl(&state, "conn-c", "p3", "Third").unwrap();
+        set_connection_meta_impl(&state, "conn-a", "p1", "First").unwrap();
+        set_connection_meta_impl(&state, "conn-b", "p2", "Second").unwrap();
+
+        let list = connection_list_impl(&state).unwrap();
+        let ids: Vec<&str> = list.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["conn-a", "conn-b", "conn-c"], "list must be sorted by id, not insertion order");
+
+        // Same map contents, re-listed: must produce the exact same order
+        // every time (determinism, not just "happens to sort now").
+        let list2 = connection_list_impl(&state).unwrap();
+        assert_eq!(list, list2);
+    }
+
+    #[test]
+    fn connection_list_is_empty_when_no_meta_registered() {
+        let state = AppState::new();
+        assert!(connection_list_impl(&state).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn disconnect_removes_connection_meta() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+        set_connection_meta_impl(&state, &conn_id, "profile-a", "Mock Conn").unwrap();
+        assert!(state.connection_meta.lock().unwrap().contains_key(&conn_id));
+
+        disconnect_db_impl(&state, &conn_id)
+            .await
+            .expect("disconnect should succeed");
+
+        assert!(
+            !state.connection_meta.lock().unwrap().contains_key(&conn_id),
+            "disconnect_db_impl must remove the connection's meta entry"
+        );
+        assert!(connection_list_impl(&state).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn disconnect_of_unregistered_meta_is_a_noop() {
+        // A connection that was never announced via `set_connection_meta`
+        // (e.g. one connected before this feature existed, or a mock in a
+        // test) must disconnect cleanly rather than erroring on a missing
+        // meta entry.
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+        disconnect_db_impl(&state, &conn_id)
+            .await
+            .expect("disconnect must succeed even with no registered meta");
     }
 }

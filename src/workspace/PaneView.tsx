@@ -36,10 +36,13 @@ export interface PaneViewProps {
   dispatch: (action: WorkspaceAction) => void;
   renderTabContent: (tabId: string) => React.ReactNode;
   renderEmptyPane: () => React.ReactNode;
+  /** Right-click on a tab (Phase 3 Task 5) — forwarded straight to
+   *  WorkspaceTabBar. Additive/optional, same as there. */
+  onTabContextMenu?: (tabId: string, e: React.MouseEvent) => void;
 }
 
 export function PaneView({
-  pane, focused, multiPane, tabs, dispatch, renderTabContent, renderEmptyPane,
+  pane, focused, multiPane, tabs, dispatch, renderTabContent, renderEmptyPane, onTabContextMenu,
 }: PaneViewProps) {
   const [zone, setZone] = useState<DropZone | null>(null);
 
@@ -80,6 +83,7 @@ export function PaneView({
           onCloseTab={id => dispatch({ type: 'close_tab', tabId: id })}
           draggable
           onTabDragStart={(id, e) => { e.dataTransfer.setData(TAB_DRAG_MIME, id); e.dataTransfer.effectAllowed = 'move'; }}
+          onTabContextMenu={onTabContextMenu}
           onTabStripDrop={e => {
             const tabId = e.dataTransfer.getData(TAB_DRAG_MIME);
             if (tabId) {

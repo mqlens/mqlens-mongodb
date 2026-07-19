@@ -15,6 +15,8 @@ export interface PinnedItem {
 }
 
 const STORAGE_KEY = 'mqlens_pinned_collections';
+/** Exported so cross-window `storage` listeners (Sidebar.tsx) can filter events by key. */
+export const PINNED_STORAGE_KEY = STORAGE_KEY;
 export const PINNED_CHANGED_EVENT = 'mqlens-pinned-changed';
 
 function normalizeItem(raw: unknown): PinnedItem | null {

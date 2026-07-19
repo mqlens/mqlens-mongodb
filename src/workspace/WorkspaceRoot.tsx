@@ -11,10 +11,13 @@ export interface WorkspaceRootProps {
   tabsFor: (pane: PaneNode) => WorkspaceTab[];
   renderTabContent: (tabId: string) => React.ReactNode;
   renderEmptyPane: () => React.ReactNode;
+  /** Right-click on a tab (Phase 3 Task 5) — forwarded straight to
+   *  PaneView/WorkspaceTabBar. Additive/optional, same as there. */
+  onTabContextMenu?: (tabId: string, e: React.MouseEvent) => void;
 }
 
 function NodeView({ node, props }: { node: LayoutNode; props: WorkspaceRootProps }) {
-  const { layout, dispatch, tabsFor, renderTabContent, renderEmptyPane } = props;
+  const { layout, dispatch, tabsFor, renderTabContent, renderEmptyPane, onTabContextMenu } = props;
   if (node.kind === 'pane') {
     return (
       <PaneView
@@ -25,6 +28,7 @@ function NodeView({ node, props }: { node: LayoutNode; props: WorkspaceRootProps
         dispatch={dispatch}
         renderTabContent={renderTabContent}
         renderEmptyPane={renderEmptyPane}
+        onTabContextMenu={onTabContextMenu}
       />
     );
   }
