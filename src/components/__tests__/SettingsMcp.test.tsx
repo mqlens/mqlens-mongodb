@@ -87,6 +87,18 @@ describe('SettingsView MCP panel', () => {
     });
   });
 
+  it('rejects an out-of-range port with a friendly message and never calls mcp_set_enabled (final fix wave)', async () => {
+    setupInvoke({ status: disabledStatus() });
+    render(<SettingsView />);
+    await openMcpTab();
+
+    fireEvent.change(screen.getByTestId('mcp-port-input'), { target: { value: '80' } });
+    fireEvent.click(screen.getByTestId('mcp-enable-toggle'));
+
+    expect(await screen.findByTestId('mcp-error')).toHaveTextContent('Port must be between 1024 and 65535.');
+    expect(mockInvoke).not.toHaveBeenCalledWith('mcp_set_enabled', expect.anything());
+  });
+
   it('renders the vault-locked error inline when enabling fails', async () => {
     // mcp_set_enabled rejects (Tauri's Result<T, String> Err path) — set up
     // manually since setupInvoke's helper always resolves.

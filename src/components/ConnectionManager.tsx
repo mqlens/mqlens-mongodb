@@ -551,7 +551,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       hosts: [{ host: 'localhost', port: '27017' }],
       folder: profileFolderMap[profile.id] || '',
       colorTag: profile.color_tag || '',
-      mcpEnabled: profile.mcp_enabled ?? false,
+      // Adjudicated product call (final fix wave): a duplicated profile
+      // never inherits "Expose to MCP agents" from the profile it was
+      // copied from, even when the original has it on — the new profile is
+      // a distinct connection an agent hasn't been vetted for yet, and
+      // silently exposing it would be surprising. `handleEditClick` above
+      // is unaffected and keeps mapping `profile.mcp_enabled` as-is; this
+      // reset is specific to the duplicate-populate path.
+      mcpEnabled: false,
     });
     setError(null);
     setTestResult(null);

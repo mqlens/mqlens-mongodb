@@ -454,6 +454,15 @@ function Workspace() {
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
 
+  // (final fix wave, agent-connection visibility) `viaMcp` entries dedupe by
+  // CONNECTION id only, never by `profileId`: an MCP agent's `connect` to a
+  // profile that already has a live human connection must still get its own
+  // sidebar row (badged "via MCP") rather than being silently dropped —
+  // previously the profileId dedupe below meant a second connection to an
+  // already-connected profile was a live backend connection NO window ever
+  // displayed, since it never made it into `activeConnections` at all. A
+  // non-MCP entry keeps the original profileId dedupe (a human never opens
+  // two simultaneous connections to the same profile from one path).
   const addActiveConnection = (
     id: string,
     name: string,
@@ -462,11 +471,11 @@ function Workspace() {
     color_tag?: string,
     viaMcp?: boolean
   ) => {
-    setActiveConnections((prev) =>
-      prev.some((c) => c.profileId === profileId)
-        ? prev
-        : [...prev, { id, profileId, name, uri, color_tag, viaMcp }]
-    );
+    setActiveConnections((prev) => {
+      if (prev.some((c) => c.id === id)) return prev;
+      if (!viaMcp && prev.some((c) => c.profileId === profileId)) return prev;
+      return [...prev, { id, profileId, name, uri, color_tag, viaMcp }];
+    });
   };
 
   // Shared by every path that can hand a profile its first live connection
@@ -549,9 +558,17 @@ function Workspace() {
   // actively tracked, whether or not this window happens to already have it.
   const applyConnectionsAdditions = (connections: ConnectionEntry[]) => {
     for (const entry of connections) seenProfilesRef.current.add(entry.profileId);
+    const localById = new Map(activeConnectionsRef.current.map((c) => [c.id, c]));
     const localByProfile = new Map(activeConnectionsRef.current.map((c) => [c.profileId, c]));
     for (const entry of connections) {
-      if (localByProfile.has(entry.profileId)) continue;
+      if (localById.has(entry.id)) continue; // already have exactly this connection row
+      // A non-viaMcp entry still dedupes by profileId (unchanged): the
+      // backend never hands out two ids for the same human-facing profile
+      // connection. A viaMcp entry does NOT — see `addActiveConnection`'s
+      // doc comment (final fix wave, agent-connection visibility) — so it
+      // always reaches `addActiveConnection` below, which is itself the
+      // authority on whether this exact row already exists.
+      if (!entry.viaMcp && localByProfile.has(entry.profileId)) continue;
       addActiveConnection(entry.id, entry.name, '', entry.profileId, undefined, entry.viaMcp);
       rebindProfileTabs(entry.profileId, entry.id);
     }
@@ -2509,7 +2526,16 @@ function Workspace() {
 
     own(
       subscribeConnectionsChanged((payload: ConnectionsChangedPayload) => {
-        const liveProfileIds = new Set(payload.connections.map((c) => c.profileId));
+        // Connection-id keyed, NOT profileId keyed (final fix wave,
+        // agent-connection visibility): a profile can now legitimately have
+        // TWO live rows locally — a human connection plus a `viaMcp` one
+        // (see `addActiveConnection`'s doc comment) — so "is this profile
+        // still live" is no longer the same question as "is this SPECIFIC
+        // local connection still live". Keying removal off profileId alone
+        // would mean the agent's row (or the human's) could never be torn
+        // down by a broadcast as long as the OTHER row for the same profile
+        // remained live.
+        const liveConnectionIds = new Set(payload.connections.map((c) => c.id));
 
         // Additions: a profile now has a live id we didn't know about —
         // another window connected it. `applyConnectionsAdditions`
@@ -2579,7 +2605,7 @@ function Workspace() {
         // `connection_meta` map (and hence the next broadcast) catches up
         // instead of this window silently killing its own live tabs.
         for (const local of activeConnectionsRef.current) {
-          if (liveProfileIds.has(local.profileId)) continue;
+          if (liveConnectionIds.has(local.id)) continue;
           if (!seenProfilesRef.current.has(local.profileId)) {
             setConnectionMeta(local.id, local.profileId, local.name);
             continue;

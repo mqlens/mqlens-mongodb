@@ -50,7 +50,10 @@ driving a connection.
 Locking the vault or toggling the server off immediately stops it — in-flight requests are
 allowed to finish (a short drain window) but new ones are refused, and connected clients see a
 clean connection error rather than a hang. Regenerating the bearer token invalidates the old one
-immediately; existing client configs using it must be updated.
+immediately; existing client configs using it must be updated. Disabling (or the vault locking)
+only stops the MCP server itself — any database connection an agent already opened via `connect`
+stays live afterward, exactly as it does for any other window; it's still visible in the sidebar
+with its "via MCP" badge, and you disconnect it from there like any other connection.
 
 ## The `_confirm` rule
 
@@ -134,7 +137,7 @@ Close a connection previously opened by this MCP session's `connect` call. Canno
 
 ### `explain`
 
-Explain a find filter or an aggregation pipeline (executionStats verbosity). Pass `pipeline` for an aggregate-style explain (real connections only) or `findFilter` for a find-style explain.
+Explain a find filter or an aggregation pipeline (executionStats verbosity). Pass `pipeline` for an aggregate-style explain (real connections only) or `find_filter` for a find-style explain.
 
 | Arg | Type | Required | Description |
 |---|---|---|---|

@@ -378,6 +378,19 @@ fn non_empty_or_empty_object(s: Option<String>) -> String {
     s.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "{}".to_string())
 }
 
+/// Call-log summary for `find` — namespace + filter size, never the filter's
+/// actual contents (same policy `insert_one_summary`/`update_many_summary`/
+/// `delete_many_summary`/`create_index_summary` already follow below; `find`
+/// previously built its summary inline in `mcp.rs` by interpolating the raw
+/// filter JSON text straight into the log, which is exactly the leak those
+/// other summaries are careful to avoid). `filter` is already a JSON object
+/// *string* (or absent, meaning "match all") — unlike the write tools' typed
+/// `serde_json::Value` args, so this measures its byte length directly
+/// rather than via `json_byte_len`.
+pub fn find_summary(database: &str, collection: &str, filter: Option<&str>) -> String {
+    format!("{database}.{collection} find filter_bytes={}", filter.unwrap_or("{}").len())
+}
+
 pub async fn find_impl(state: &AppState, profiles_path: &Path, args: FindArgs) -> Result<FindResult, String> {
     require_mcp_connection(state, profiles_path, &args.connection_id)?;
     let filter = non_empty_or_empty_object(args.filter);
@@ -487,6 +500,17 @@ pub async fn explain_impl(state: &AppState, profiles_path: &Path, args: ExplainA
     require_mcp_connection(state, profiles_path, &args.connection_id)?;
     match args.pipeline {
         Some(pipeline) => {
+            // Same write-gate `aggregate_impl` applies, and for the same
+            // reason: `explain` at `executionStats` verbosity actually
+            // EXECUTES the pipeline against the server rather than just
+            // planning it, so a `$merge`/`$out` stage reaching
+            // `explain_aggregate_query_impl` would write data despite this
+            // being nominally a read tool. Checked before the impl is ever
+            // called — same exact error string as `aggregate`, same
+            // ahead-of-mock-check ordering rationale.
+            if pipeline.iter().any(stage_is_disallowed) {
+                return Err("aggregation stages $out/$merge are not allowed via MCP".to_string());
+            }
             let pipeline_json = serde_json::to_string(&pipeline).map_err(|e| format!("serialize pipeline: {e}"))?;
             crate::explain_aggregate_query_impl(state, &args.connection_id, &args.database, &args.collection, &pipeline_json).await
         }
@@ -973,6 +997,32 @@ mod tests {
         assert_eq!(err2, CONNECTION_NOT_FOUND);
     }
 
+    /// A HUMAN disconnecting (Sidebar's `onDisconnect` -> the `disconnect_db`
+    /// command -> `crate::disconnect_db_impl` directly, never going through
+    /// this MCP session's own `disconnect_impl`) an agent-opened connection
+    /// must not leave a stale entry in `McpControl.session_connections`
+    /// (final whole-branch review fix wave) — otherwise that id sits there
+    /// forever even though the connection itself is long gone.
+    #[tokio::test]
+    async fn human_disconnect_of_an_agent_connection_prunes_session_connections() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("disconnect-human-prunes.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let mcp_id = connect_impl(&state, &path, "p1").await.unwrap();
+        assert!(state.mcp.lock().unwrap().session_connections.contains(&mcp_id));
+
+        // The human path: `crate::disconnect_db_impl` directly, exactly what
+        // the `disconnect_db` Tauri command wraps — never `disconnect_impl`
+        // (which requires session ownership) itself.
+        crate::disconnect_db_impl(&state, &mcp_id).await.unwrap();
+
+        assert!(
+            !state.mcp.lock().unwrap().session_connections.contains(&mcp_id),
+            "a human disconnect must prune the id from session_connections, not just tear down the connection"
+        );
+    }
+
     // ---- require_mcp_connection -----------------------------------------
 
     #[tokio::test]
@@ -1215,6 +1265,39 @@ mod tests {
         assert!(err.contains("mock"));
     }
 
+    /// Write-gate hole (final whole-branch review fix wave): `explain` at
+    /// `executionStats` verbosity EXECUTES an aggregate-style pipeline
+    /// against the server rather than merely planning it, so a `$merge`
+    /// pipeline reaching `explain_aggregate_query_impl` would write data
+    /// despite `explain` being nominally a read tool. Proves the same
+    /// denylist `aggregate_impl` uses is applied here too, with the exact
+    /// same error string, and — since this is a *mock* connection, whose
+    /// `explain_aggregate_query_impl` path would otherwise return a "mock"
+    /// error, not the denylist one — that the impl is never reached at all.
+    #[tokio::test]
+    async fn explain_rejects_out_and_merge_stages_before_touching_the_connection() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("explain-reject.enc");
+        write_profiles(&path, &[profile("p1", "In", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap(); // mock
+
+        let err = explain_impl(
+            &state,
+            &path,
+            ExplainArgs {
+                connection_id: id,
+                database: "sales_db".into(),
+                collection: "transactions".into(),
+                find_filter: None,
+                pipeline: Some(vec![serde_json::json!({"$merge": {"into": "backup"}})]),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "aggregation stages $out/$merge are not allowed via MCP");
+    }
+
     #[tokio::test]
     async fn schema_analysis_over_a_mock_connection() {
         let state = AppState::new();
@@ -1274,6 +1357,16 @@ mod tests {
         assert_eq!(s, "db.coll create_index keys_bytes=11 name=email_1 unique=true sparse=false confirmed=true");
         let s_default = create_index_summary("db", "coll", &keys, None, false, false, false);
         assert!(s_default.contains("name=<default>"));
+
+        // `find` isn't a write/destructive tool, but its call-log summary is
+        // built the same way (`mcp.rs`'s `find` wrapper) and must follow the
+        // same no-content-leak policy — it previously interpolated the raw
+        // filter JSON text directly (final whole-branch review fix wave).
+        let s = find_summary("db", "coll", Some(r#"{"password":"hunter2"}"#));
+        assert!(!s.contains("hunter2"), "find summary leaked filter contents: {s}");
+        assert_eq!(s, "db.coll find filter_bytes=22");
+        let s_none = find_summary("db", "coll", None);
+        assert_eq!(s_none, "db.coll find filter_bytes=2");
     }
 
     // ---- insert_one --------------------------------------------------

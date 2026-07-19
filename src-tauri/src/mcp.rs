@@ -46,6 +46,7 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -248,20 +249,39 @@ pub async fn set_enabled_impl(
     // before the real bind.
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
 
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let mcp_shared = Arc::clone(&state.mcp);
-    let join = tauri::async_runtime::spawn(run_server(listener, mcp_shared, app_handle, shutdown_rx));
-
     // Bind succeeded — now it's safe to replace any previously running
     // server (a port-change re-enable, or a stale task from a prior call).
+    // Stopped BEFORE the new token is minted/stored and BEFORE the new
+    // server task is spawned: `stop_if_running` also clears `control.token`
+    // (see its doc comment), so there's no window where a request could
+    // still authenticate with a token belonging to a server generation that
+    // no longer exists.
     stop_if_running(state).await?;
 
+    // Mint and store the fresh token BEFORE spawning the server task (final
+    // whole-branch review fix wave) — previously this happened AFTER
+    // `tauri::async_runtime::spawn`, which starts running (and can start
+    // accepting/authenticating requests) as soon as the async runtime
+    // schedules it, not when this function gets around to storing the
+    // token. That left a real, if narrow, window where a request could
+    // arrive at the newly-bound listener while `control.token` still held
+    // the previous generation's (just-cleared-to-empty, or — pre this fix —
+    // stale) value. Storing the token first means the very first request
+    // the new task can possibly serve already sees the right one.
     let token = new_token();
     {
         let mut control = state.mcp.lock_safe()?;
         control.enabled = true;
         control.port = port;
         control.token = token;
+    }
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let mcp_shared = Arc::clone(&state.mcp);
+    let join = tauri::async_runtime::spawn(run_server(listener, mcp_shared, app_handle, shutdown_rx));
+
+    {
+        let mut control = state.mcp.lock_safe()?;
         control.server = Some(ServerHandle { join, shutdown: shutdown_tx });
     }
 
@@ -283,6 +303,19 @@ pub async fn stop_if_running(state: &AppState) -> Result<(), String> {
     let server = {
         let mut control = state.mcp.lock_safe()?;
         control.enabled = false;
+        // Clear the token whenever the server stops, not just leave it
+        // sitting around (final whole-branch review fix wave) — closes the
+        // stale-token re-enable window: without this, a disabled server's
+        // `McpControl.token` field kept holding its last-minted value, so
+        // anything that briefly observed it (or a re-enable that raced
+        // `set_enabled_impl`'s own token mint) could momentarily line up
+        // with a token that no longer corresponds to any running server. A
+        // disabled server should never have ANY value in this field that
+        // could ever successfully authenticate (`bearer_token_matches`
+        // already fails closed on an empty token either way, so this is
+        // defense in depth, not the only thing preventing a stale-token
+        // auth bypass).
+        control.token = String::new();
         control.server.take()
     }; // guard dropped here, before the await below.
 
@@ -489,8 +522,17 @@ impl McpServer {
         let (app_handle, path) = self.resolve()?;
         let state = app_handle.state::<AppState>();
         let connection_id = args.connection_id.clone();
+        // `find_summary` (byte size only, no filter contents — see its doc
+        // comment) rather than interpolating `args.filter` directly: the
+        // call log is visible in the Settings MCP panel, and a raw filter
+        // can carry the same kind of sensitive values the write tools'
+        // summaries are careful never to log (final whole-branch review fix
+        // wave).
         let summary = crate::mcp_tools::truncate_summary(
-            &format!("connectionId={connection_id} {}.{} filter={}", args.database, args.collection, args.filter.as_deref().unwrap_or("{}")),
+            &format!(
+                "connectionId={connection_id} {}",
+                crate::mcp_tools::find_summary(&args.database, &args.collection, args.filter.as_deref())
+            ),
             200,
         );
         let result = crate::mcp_tools::find_impl(&state, &path, args).await;
@@ -513,7 +555,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Explain a find filter or an aggregation pipeline (executionStats verbosity). Pass `pipeline` for an aggregate-style explain (real connections only) or `findFilter` for a find-style explain."
+        description = "Explain a find filter or an aggregation pipeline (executionStats verbosity). Pass `pipeline` for an aggregate-style explain (real connections only) or `find_filter` for a find-style explain."
     )]
     async fn explain(&self, Parameters(args): Parameters<crate::mcp_tools::ExplainArgs>) -> Result<String, String> {
         let (app_handle, path) = self.resolve()?;
@@ -622,10 +664,37 @@ impl ServerHandler for McpServer {
     }
 }
 
+/// `true` iff `a` and `b` are equal, in time depending only on their length
+/// — every byte pair is compared regardless of earlier mismatches, unlike
+/// `PartialEq` on slices/`str` (which is free to — and in practice does —
+/// return as soon as it finds a differing byte). Used to compare SHA-256
+/// digests of the presented vs. expected bearer token so a network timing
+/// side-channel can't help an attacker recover the token byte-by-byte.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// `true` iff `headers` carries `Authorization: Bearer <token>` matching the
 /// *current* token in `control` — read fresh on every call (never captured
 /// at server-start time), so a `mcp_regenerate_token` call invalidates the
 /// old token starting with the very next request.
+///
+/// Compares SHA-256 digests of both sides via `constant_time_eq` rather than
+/// the presented/expected token strings directly (final whole-branch review
+/// fix wave) — a bearer token is a bare-metal capability (Global
+/// Constraints: "possession IS authorization"), so a naive `==` comparison
+/// leaks how many leading bytes an attacker's guess got right through
+/// response-timing variance. Hashing first also means the compared buffers
+/// are always the same fixed length (32 bytes), so `constant_time_eq`'s own
+/// length check never itself becomes a side channel on the real token's
+/// length.
 fn bearer_token_matches(control: &StdMutex<McpControl>, headers: &axum::http::HeaderMap) -> bool {
     let Some(header_value) = headers.get(axum::http::header::AUTHORIZATION) else {
         return false;
@@ -639,7 +708,22 @@ fn bearer_token_matches(control: &StdMutex<McpControl>, headers: &axum::http::He
     let Ok(guard) = control.lock() else {
         return false;
     };
-    !guard.token.is_empty() && presented == guard.token
+    // Fail-closed: an empty stored token (server never enabled, or between
+    // `stop_if_running` clearing it and a future re-enable minting a fresh
+    // one) must never match anything, no matter what's presented.
+    if guard.token.is_empty() {
+        return false;
+    }
+
+    let mut presented_hasher = Sha256::new();
+    presented_hasher.update(presented.as_bytes());
+    let presented_digest = presented_hasher.finalize();
+
+    let mut expected_hasher = Sha256::new();
+    expected_hasher.update(guard.token.as_bytes());
+    let expected_digest = expected_hasher.finalize();
+
+    constant_time_eq(&presented_digest, &expected_digest)
 }
 
 /// 401 response with a small JSON error body (spec: "401 with a JSON error

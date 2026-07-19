@@ -538,6 +538,23 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
         let mut meta = state.connection_meta.lock_safe()?;
         meta.remove(id);
     }
+    // A human disconnecting (Sidebar's onDisconnect -> this command) an
+    // agent-opened connection must also drop it from the MCP server's own
+    // `session_connections` bookkeeping (final whole-branch review fix
+    // wave) — otherwise a stale id lingers there forever, and a later MCP
+    // `disconnect` call for that id would pass `mcp_tools::disconnect_impl`'s
+    // session-owned check and try to tear down a connection that's already
+    // gone (`crate::disconnect_db_impl` above is idempotent per-map-removal,
+    // so that itself wouldn't error, but the stale bookkeeping is exactly
+    // the kind of drift Task 4's `session_connections` doc comment says this
+    // set should never carry). `mcp_tools::disconnect_impl`'s own path
+    // already prunes this set itself, so this is only reached for a
+    // human-initiated disconnect of an id that happens to also be
+    // session-owned; harmless (and a no-op `remove`) otherwise.
+    {
+        let mut control = state.mcp.lock_safe()?;
+        control.session_connections.remove(id);
+    }
 
     Ok(())
 }

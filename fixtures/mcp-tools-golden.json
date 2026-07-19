@@ -153,7 +153,7 @@
   },
   {
     "name": "explain",
-    "description": "Explain a find filter or an aggregation pipeline (executionStats verbosity). Pass `pipeline` for an aggregate-style explain (real connections only) or `findFilter` for a find-style explain.",
+    "description": "Explain a find filter or an aggregation pipeline (executionStats verbosity). Pass `pipeline` for an aggregate-style explain (real connections only) or `find_filter` for a find-style explain.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "required": [

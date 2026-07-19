@@ -149,6 +149,13 @@ const SETTINGS_TABS: {
   },
 ];
 
+// Lowest/highest port the MCP port field accepts (final fix wave): below
+// 1024 is the OS's reserved/privileged range (binding usually fails or needs
+// elevated permissions anyway — not worth letting a user configure it only
+// to hit a confusing bind error), 65535 is the highest a `u16` port can be.
+const MCP_MIN_PORT = 1024;
+const MCP_MAX_PORT = 65535;
+
 /** `HH:MM:SS` (local time, zero-padded) from a call-log entry's `tsMs`. */
 function formatMcpLogTime(tsMs: number): string {
   const d = new Date(tsMs);
@@ -230,7 +237,15 @@ const McpSettingsPanel: React.FC = () => {
     setRegenerated(false);
     try {
       const parsedPort = parseInt(portInput, 10);
-      const port = next && Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : undefined;
+      // Friendly range validation before ever calling `invoke` (final fix
+      // wave) — an out-of-range port used to sail straight through to the
+      // backend bind attempt, surfacing as an opaque OS-level bind error
+      // instead of a clear "pick a different port" message.
+      if (next && (!Number.isFinite(parsedPort) || parsedPort < MCP_MIN_PORT || parsedPort > MCP_MAX_PORT)) {
+        setError(`Port must be between ${MCP_MIN_PORT} and ${MCP_MAX_PORT}.`);
+        return;
+      }
+      const port = next ? parsedPort : undefined;
       const s = await mcpSetEnabled(next, port);
       setStatus(s);
       setPortInput(String(s.port));
@@ -296,6 +311,8 @@ const McpSettingsPanel: React.FC = () => {
             <Input
               id="mcp-port"
               type="number"
+              min={MCP_MIN_PORT}
+              max={MCP_MAX_PORT}
               className="font-mono"
               value={portInput}
               disabled={enabled}
@@ -303,7 +320,7 @@ const McpSettingsPanel: React.FC = () => {
               data-testid="mcp-port-input"
             />
             <p className="text-xs text-muted-foreground">
-              Applied the next time the server is enabled.
+              Applied the next time the server is enabled. Must be {MCP_MIN_PORT}–{MCP_MAX_PORT}.
             </p>
           </div>
 

@@ -1053,6 +1053,29 @@ describe('MCP opt-in flag (#98)', () => {
       });
     });
   });
+
+  it('duplicating an MCP-exposed profile resets "Expose to MCP agents" to unchecked, while editing it keeps it checked (final fix wave)', async () => {
+    const mcpProfile = { id: 'p-mcp', name: 'Agent DB', uri: 'mongodb://agent:27017', mcp_enabled: true };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([mcpProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await waitFor(() => expect(screen.getAllByText('Agent DB')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Agent DB')[0]);
+
+    // Edit path: unaffected, keeps mapping the original's flag.
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    expect(screen.getByLabelText(/expose to mcp agents/i)).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    // Duplicate path: the new profile starts unexposed regardless.
+    fireEvent.click(screen.getAllByText('Agent DB')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^duplicate$/i }));
+    expect(screen.getByLabelText(/expose to mcp agents/i)).not.toBeChecked();
+  });
 });
 
 describe('URI import and export', () => {
