@@ -47,6 +47,7 @@ import {
   windowLabel,
   subscribeWorkspaceChanged,
   subscribeConnectionsChanged,
+  setConnectionMeta,
   detachTabToNewWindow,
   closeWorkspaceWindow,
   moveTabToWindow,
@@ -667,6 +668,9 @@ function Workspace() {
     try {
       const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
       addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
+      // Announce this fresh id to every other window (Phase 3 Task 6) — see
+      // `setConnectionMeta`'s doc comment for why every connect path calls it.
+      setConnectionMeta(id, profile.id, profile.name);
       // Clear any ReconnectBanner this profile still has showing (#97 phase
       // 2 final review Fix 1) — see `rebindProfileTabs`'s doc comment.
       rebindProfileTabs(profile.id, id);
@@ -2441,6 +2445,39 @@ function Workspace() {
           rebindProfileTabs(entry.profileId, entry.id);
         }
 
+        // Phase 3 Task 6 (LEDGER MANDATE) considered — and deliberately does
+        // NOT implement — a self-healing cleanup for "stale" backend
+        // `connection_meta` entries: an id present in `payload.connections`
+        // that is NOT this window's local id for that profile, while THIS
+        // window already has a DIFFERENT, live id for the same profileId
+        // (`localByProfile.has(entry.profileId) && localByProfile.get(entry.profileId)!.id !== entry.id`).
+        // The backend never prunes `connection_meta` on anything but an
+        // explicit `disconnect_db` (see `set_connection_meta_impl`/
+        // `connection_list_impl`), so a truly-orphaned id (this window's own
+        // past reconnect that never disconnected its predecessor) really
+        // would sit there forever without one.
+        //
+        // The blocker: that same shape is indistinguishable from a genuine
+        // race where ANOTHER window is fresh-connecting the same profile
+        // concurrently. `handleReconnectProfile`'s fresh-connect branch runs
+        // whenever a window's OWN `activeConnections` lacks the profile —
+        // nothing stops two windows from independently reconnecting the same
+        // profile before either's `connections-changed` broadcast reaches
+        // the other (the addition loop above only reconciles a profile ONCE
+        // a window has learned about it; until then, both windows call
+        // `connect_db` and mint their own id). If that race lands here, BOTH
+        // windows would see "an id for my profile that isn't mine" and BOTH
+        // would call `disconnect_db` on what is, from the other window's
+        // point of view, its own live connection — tearing down a
+        // still-in-use connection instead of an orphan. There is no signal
+        // in the payload (no origin/window id) to tell the two cases apart.
+        // Per the task's own safety rule — "a lingering meta entry is
+        // cosmetic; killing a live connection is not" — this cleanup is
+        // skipped entirely. The cost is a harmless extra row in another
+        // window's `connections-changed` payload for an id nothing
+        // references anymore, invisible in the UI (no local `activeConnections`
+        // entry ever points at it) until that window reconnects/restarts.
+
         // Removals: a profile we thought was live is gone from the
         // broadcast — another window disconnected it. Mirrors Sidebar's
         // `onDisconnect` teardown (activeConnections + tabs[] + layout)
@@ -2508,6 +2545,11 @@ function Workspace() {
 
         newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
         addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined);
+        // Announce this fresh id to every other window (Phase 3 Task 6) —
+        // see `setConnectionMeta`'s doc comment. Deliberately NOT called on
+        // the `existing` (reuse) branch above: that id's meta was already
+        // set the first time it connected.
+        setConnectionMeta(newId, profile.id, profileName);
       }
 
       // Captured before any state updates below — `tabs`/`layout` in this
@@ -3410,6 +3452,9 @@ function Workspace() {
             onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
             onConnect={(id, name, uri, profileId, colorTag) => {
               addActiveConnection(id, name, uri, profileId, colorTag ?? undefined);
+              // Announce this fresh id to every other window (Phase 3 Task 6)
+              // — see `setConnectionMeta`'s doc comment.
+              setConnectionMeta(id, profileId, name);
               // Clear any ReconnectBanner this profile still has showing
               // (#97 phase 2 final review Fix 1) — see `rebindProfileTabs`'s
               // doc comment.

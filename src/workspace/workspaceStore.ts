@@ -137,6 +137,26 @@ export function subscribeConnectionsChanged(
 }
 
 /**
+ * Fire-and-forget: announce `id`'s profile/name to the backend's
+ * `connection_meta` map (Phase 3 Task 3's `set_connection_meta` command),
+ * which triggers a `connections-changed` broadcast every other window's
+ * reconciliation listener consumes. Phase 3 Task 6: called once per
+ * newly-minted connection id, right after every `connect_db` that produces
+ * one — App.tsx's `handleQuickConnect`, the `ConnectionManager` `onConnect`
+ * handler, and `handleReconnectProfile`'s fresh-connect branch. Never called
+ * for a path that reuses an id already live in `activeConnections` — that
+ * id's meta was already set the first time it connected, and a redundant
+ * call would just re-broadcast unchanged data. Same fire-and-forget contract
+ * as `workspaceApply`: never throws, failures are logged and dropped rather
+ * than blocking the connect flow that shadows it.
+ */
+export function setConnectionMeta(id: string, profileId: string, name: string): void {
+  invoke('set_connection_meta', { id, profileId, name }).catch((err) => {
+    console.warn('set_connection_meta failed', err);
+  });
+}
+
+/**
  * Translate one frontend `WorkspaceAction` (camelCase keys) into the wire-
  * shaped op `workspace_apply` expects (snake_case keys; a nested `tab`
  * payload, when present, keeps TabModel's camelCase fields as-is). `tab` is

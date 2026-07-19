@@ -7,11 +7,14 @@ import { type CollectionSelection, emptySelection, toggleCollection, selectionSc
 import {
   type FolderNode,
   FOLDERS_CHANGED_EVENT,
+  FOLDERS_STORAGE_KEY,
+  PROFILE_FOLDERS_STORAGE_KEY,
   loadConnectionFolders,
 } from '../lib/connectionFolders';
 import {
   type PinnedItem,
   PINNED_CHANGED_EVENT,
+  PINNED_STORAGE_KEY,
   loadPinnedCollections,
   isItemPinned,
   togglePinItem,
@@ -23,6 +26,7 @@ import {
 import {
   type FavoriteItem,
   FAVORITES_CHANGED_EVENT,
+  FAVORITES_STORAGE_KEY,
   loadFavoriteItems,
   isItemFavorited,
   toggleFavoriteItem,
@@ -528,15 +532,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     reloadPinned();
     const onPinned = () => reloadPinned();
+    // Phase 3 Task 6: pins live in localStorage, shared same-origin across
+    // every Tauri window — but each window only reads it once (on mount) and
+    // otherwise relies on the in-window `PINNED_CHANGED_EVENT` above, which
+    // never crosses windows (it's a plain `window.dispatchEvent`, scoped to
+    // this window's own `window` object). The browser-native `storage` event
+    // is the cross-window signal: it fires on every OTHER window's `window`
+    // when localStorage changes (never on the window that made the change —
+    // that's what `PINNED_CHANGED_EVENT` already covers), so the two
+    // listeners together keep pins in sync everywhere. Filtered by key so an
+    // unrelated localStorage write (folders, favorites, anything else) in
+    // another window doesn't force a redundant reload here.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PINNED_STORAGE_KEY) reloadPinned();
+    };
     window.addEventListener(PINNED_CHANGED_EVENT, onPinned);
-    return () => window.removeEventListener(PINNED_CHANGED_EVENT, onPinned);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(PINNED_CHANGED_EVENT, onPinned);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   useEffect(() => {
     reloadFavoritesStorage();
     const onFavorites = () => reloadFavoritesStorage();
+    // Cross-window sync via the native `storage` event — see the pins effect
+    // above for why this is needed alongside `FAVORITES_CHANGED_EVENT`.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === FAVORITES_STORAGE_KEY) reloadFavoritesStorage();
+    };
     window.addEventListener(FAVORITES_CHANGED_EVENT, onFavorites);
-    return () => window.removeEventListener(FAVORITES_CHANGED_EVENT, onFavorites);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(FAVORITES_CHANGED_EVENT, onFavorites);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   useEffect(() => {
@@ -557,8 +588,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   useEffect(() => {
     const onFolders = () => reloadFolders();
+    // Cross-window sync via the native `storage` event — see the pins
+    // effect above. Folders persist across two keys (the node list and the
+    // profile->folder map), so either one changing triggers a reload.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === FOLDERS_STORAGE_KEY || e.key === PROFILE_FOLDERS_STORAGE_KEY) reloadFolders();
+    };
     window.addEventListener(FOLDERS_CHANGED_EVENT, onFolders);
-    return () => window.removeEventListener(FOLDERS_CHANGED_EVENT, onFolders);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(FOLDERS_CHANGED_EVENT, onFolders);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   const ensureConnectionExpanded = (connId: string) => {

@@ -82,8 +82,17 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onDatabaseRenamed }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onDatabaseRenamed, activeConnections }: any) => (
     <div data-testid="mock-sidebar">
+      {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
+          `activeConnections` prop for its "Connections" tree — lets tests
+          assert a connection landed in this window's sidebar without
+          rendering the (heavy) real component. */}
+      <ul data-testid="mock-sidebar-connections">
+        {(activeConnections ?? []).map((c: any) => (
+          <li key={c.id} data-testid={`sidebar-conn-${c.id}`}>{c.name}</li>
+        ))}
+      </ul>
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
       </button>
@@ -122,6 +131,25 @@ vi.mock('../Sidebar', () => ({
       </button>
     </div>
   ),
+}));
+
+// Mock ConnectionManager: the real component's full add/edit/test/connect
+// form is exercised by its own dedicated test suite (ConnectionManager.test.tsx).
+// Here only the `onConnect` callback's WIRING through App.tsx matters (Phase
+// 3 Task 6's set_connection_meta call) — a single button that fires it with
+// fixed args, gated on `isOpen` like the real modal.
+vi.mock('../ConnectionManager', () => ({
+  ConnectionManager: ({ isOpen, onConnect }: any) =>
+    isOpen ? (
+      <div data-testid="mock-connection-manager">
+        <button
+          data-testid="mock-cm-connect-btn"
+          onClick={() => onConnect('cm-live-1', 'Staging Cluster', 'mongodb://staging', 'p-cm', '#fff')}
+        >
+          Connect
+        </button>
+      </div>
+    ) : null,
 }));
 
 describe('App Component', () => {
@@ -2690,6 +2718,220 @@ describe('App Component', () => {
         expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument();
       });
       expect(calls.some((c) => c.cmd === 'connect_db')).toBe(false);
+    });
+  });
+
+  describe('cross-window connection + pref coherence (Phase 3 Task 6)', () => {
+    it('(a1) a quick-connect from the Quick Start pane calls set_connection_meta for the fresh id', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) =>
+              c.cmd === 'set_connection_meta' &&
+              c.args?.id === 'live-1' &&
+              c.args?.profileId === 'p1' &&
+              c.args?.name === 'Prod Cluster',
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it('(a2) connecting via the ConnectionManager dialog calls set_connection_meta for the fresh id', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('quickstart-tab');
+
+      fireEvent.click(screen.getAllByText('New connection')[0]);
+      const connectBtn = await screen.findByTestId('mock-cm-connect-btn');
+      fireEvent.click(connectBtn);
+
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) =>
+              c.cmd === 'set_connection_meta' &&
+              c.args?.id === 'cm-live-1' &&
+              c.args?.profileId === 'p-cm' &&
+              c.args?.name === 'Staging Cluster',
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it('(a3) the fresh-connect branch of a ReconnectBanner click calls set_connection_meta for the new id', async () => {
+      const workspaceSnapshot = {
+        revision: 1,
+        windows: [
+          { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.sales_db.customers'], activeTabId: 'profile:p1.sales_db.customers' } },
+        ],
+        tabs: [
+          { id: 'profile:p1.sales_db.customers', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'customers' },
+        ],
+      };
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      expect(await screen.findByTestId('reconnect-banner')).toBeInTheDocument();
+      fireEvent.click(screen.getByText(/Reconnect Prod Cluster/));
+
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) =>
+              c.cmd === 'set_connection_meta' &&
+              c.args?.id === 'live-1' &&
+              c.args?.profileId === 'p1' &&
+              c.args?.name === 'Prod Cluster',
+          ),
+        ).toBe(true);
+      });
+      // The reuse branch (an id already in `activeConnections`) never calls
+      // `connect_db`/`set_connection_meta` a second time — see App.tsx's
+      // `handleReconnectProfile` comment. Nothing else exercises that branch
+      // here, so this just confirms `set_connection_meta` fired exactly once.
+      expect(calls.filter((c) => c.cmd === 'set_connection_meta')).toHaveLength(1);
+    });
+
+    it('(b) a connections-changed addition renders in this window\'s sidebar even though it never connected anything itself', async () => {
+      const { act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      expect(screen.queryByTestId('sidebar-conn-live-99')).not.toBeInTheDocument();
+
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'live-99', profileId: 'p1', name: 'Prod Cluster' }],
+        });
+      });
+
+      expect(await screen.findByTestId('sidebar-conn-live-99')).toHaveTextContent('Prod Cluster');
+    });
+
+    it('(d) a stale connection_meta entry for a profile already live locally under a different id is left alone (no disconnect_db)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      await waitFor(() => expect(calls.some((c) => c.cmd === 'connect_db')).toBe(true));
+
+      calls.length = 0; // only the event handler's own reaction matters below
+
+      // The backend broadcast still carries an id for p1 this window did NOT
+      // mint (`live-old`) alongside the one it did (`live-1`) — the shape a
+      // genuinely-orphaned meta entry AND a same-profile race with another
+      // window are both indistinguishable in. Per App.tsx's comment, this is
+      // deliberately left alone rather than risk killing a live connection.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [
+            { id: 'live-1', profileId: 'p1', name: 'Prod Cluster' },
+            { id: 'live-old', profileId: 'p1', name: 'Prod Cluster' },
+          ],
+        });
+      });
+
+      expect(calls.some((c) => c.cmd === 'disconnect_db')).toBe(false);
+    });
+
+    it('(e) a connections-changed removal tears down local tabs without double-mirroring the close', async () => {
+      const workspaceSnapshot = {
+        revision: 1,
+        windows: [
+          { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.sales_db.customers'], activeTabId: 'profile:p1.sales_db.customers' } },
+        ],
+        tabs: [
+          { id: 'profile:p1.sales_db.customers', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'customers' },
+        ],
+      };
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { waitFor, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      expect(await screen.findByTestId('reconnect-banner')).toBeInTheDocument();
+
+      // Another window connected p1 first — rebinds this window's banner tab.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'live-99', profileId: 'p1', name: 'Prod Cluster' }],
+        });
+      });
+      await waitFor(() => expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument());
+      expect(within(screen.getByTestId('workspace-tab-strip')).getByText('customers')).toBeInTheDocument();
+
+      calls.length = 0; // only what the REMOVAL itself triggers matters below
+
+      // That connection is now gone from the broadcast — another window
+      // disconnected it (or this one would have via Sidebar's onDisconnect,
+      // which calls disconnect_db itself and is not exercised here).
+      await act(async () => {
+        fireMockEvent('connections-changed', { connections: [] });
+      });
+
+      await waitFor(() => {
+        expect(within(screen.getByTestId('workspace-tab-strip')).queryByText('customers')).not.toBeInTheDocument();
+      });
+      // The close is a raw local `dispatchLayout`, never re-mirrored to the
+      // backend workspace store — mirroring it again would double-apply the
+      // same close backend-side (see App.tsx's "Removals" comment). The
+      // tabs-empty effect firing afterward (main window resurrects Quick
+      // Start) DOES call workspace_apply for an `open_tab` — this only
+      // asserts no `close_many` op was ever mirrored.
+      const closeManyMirrors = calls.filter((c) => c.cmd === 'workspace_apply' && c.args?.op?.type === 'close_many');
+      expect(closeManyMirrors).toHaveLength(0);
+      expect(calls.some((c) => c.cmd === 'disconnect_db')).toBe(false);
     });
   });
 

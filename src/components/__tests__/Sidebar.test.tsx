@@ -1284,6 +1284,43 @@ describe('Sidebar Component', () => {
     expect(screen.getByText('sales_db')).toBeInTheDocument();
   });
 
+  it('(Phase 3 Task 6c) a storage event for the pins key refreshes pinned items from another window; an unrelated key is ignored', async () => {
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /pinned/i }));
+    expect(screen.queryByText('orders')).not.toBeInTheDocument();
+
+    // A DIFFERENT window wrote to an UNRELATED localStorage key — jsdom only
+    // fires `storage` via a manual dispatch (real browsers fire it natively
+    // on every OTHER window; never on the window that made the write, which
+    // is what the in-window PINNED_CHANGED_EVENT already covers). Must not
+    // force a reload.
+    localStorage.setItem('some_other_key', 'x');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'some_other_key', newValue: 'x' }));
+    expect(screen.queryByText('orders')).not.toBeInTheDocument();
+
+    // Another window pinned something and wrote the pins key.
+    localStorage.setItem(
+      'mqlens_pinned_collections',
+      JSON.stringify([
+        { kind: 'collection', connectionName: 'Local', db: 'sales_db', collection: 'orders' },
+      ]),
+    );
+    window.dispatchEvent(new StorageEvent('storage', { key: 'mqlens_pinned_collections' }));
+
+    expect(await screen.findByText('orders')).toBeInTheDocument();
+  });
+
   it('pins a connection from the context menu and shows a toast', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
