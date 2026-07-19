@@ -954,6 +954,18 @@ async fn disconnect_db(
     Ok(())
 }
 
+/// `connection_list` command: thin wrapper over `connection_list_impl`
+/// (final whole-branch review, Fix 2). Unlike `disconnect_db`/
+/// `set_connection_meta`, this never broadcasts — it's a plain read, called
+/// once by App.tsx's boot effect (after `workspace_get` resolves) so a
+/// freshly spawned window sees every connection already live in the session
+/// immediately, instead of rendering a `ReconnectBanner` for a
+/// restored-but-actually-live profile and inviting a duplicate `connect_db`.
+#[tauri::command]
+async fn connection_list(state: tauri::State<'_, AppState>) -> Result<Vec<ConnectionEntry>, String> {
+    connection_list_impl(&state)
+}
+
 #[tauri::command]
 async fn set_connection_meta(
     app_handle: tauri::AppHandle,
@@ -1927,6 +1939,12 @@ pub fn run() {
                     }
                 }
             }
+            // Final whole-branch review, Fix 1 (CRITICAL): closing "main"
+            // must quit the app even with a secondary `win-*` window open —
+            // see `windows::wire_main_window_exit`'s doc comment for why the
+            // runtime's default `ExitRequested`-on-last-window-close
+            // behavior is no longer sufficient once multi-window exists.
+            windows::wire_main_window_exit(app.handle());
             Ok(())
         })
         .manage(AppState::new())
@@ -1950,6 +1968,7 @@ pub fn run() {
             stop_mongosh_session,
             disconnect_db,
             set_connection_meta,
+            connection_list,
             list_databases,
             list_collections,
             list_indexes,

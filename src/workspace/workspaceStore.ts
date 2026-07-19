@@ -137,6 +137,23 @@ export function subscribeConnectionsChanged(
 }
 
 /**
+ * `GET` the full current connection list (final whole-branch review, Fix
+ * 2). Thin wrapper over the backend's `connection_list` command
+ * (`connection_list_impl`) — same element shape as
+ * `ConnectionsChangedPayload.connections`. Called once by App.tsx's boot
+ * effect, after `workspace_get` resolves: without this, a freshly spawned
+ * window (or a window that just missed the `connections-changed` broadcast
+ * for a connection another window made before this one existed) starts
+ * with no live connections at all — any restored `profile:<id>` tab it
+ * hydrates renders a `ReconnectBanner` for a profile that's actually
+ * already live, inviting a duplicate `connect_db`. Unlike
+ * `subscribeConnectionsChanged`, this never broadcasts — it's a plain read.
+ */
+export async function connectionList(): Promise<ConnectionEntry[]> {
+  return invoke<ConnectionEntry[]>('connection_list');
+}
+
+/**
  * Fire-and-forget: announce `id`'s profile/name to the backend's
  * `connection_meta` map (Phase 3 Task 3's `set_connection_meta` command),
  * which triggers a `connections-changed` broadcast every other window's

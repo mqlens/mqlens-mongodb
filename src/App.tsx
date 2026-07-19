@@ -48,11 +48,13 @@ import {
   subscribeWorkspaceChanged,
   subscribeConnectionsChanged,
   setConnectionMeta,
+  connectionList,
   detachTabToNewWindow,
   closeWorkspaceWindow,
   moveTabToWindow,
   type WorkspaceChangedPayload,
   type ConnectionsChangedPayload,
+  type ConnectionEntry,
 } from './workspace/workspaceStore';
 import {
   toPersistedTab,
@@ -405,6 +407,19 @@ function Workspace() {
   useEffect(() => {
     activeConnectionsRef.current = activeConnections;
   }, [activeConnections]);
+  // Every profileId this window has ever learned about from a
+  // `connections-changed` broadcast OR the boot-time `connection_list` seed
+  // (final whole-branch review, Fix 3) — NOT from this window's own local
+  // connects, which never touch it. Gates the removal branch of the
+  // `connections-changed` listener below: a profile absent from a broadcast
+  // is only ever torn down if it was previously SEEN live in some earlier
+  // broadcast. Without this, a profile THIS window just connected itself
+  // (added to `activeConnections` synchronously, but whose `set_connection_meta`
+  // hasn't landed backend-side yet) looks identical to a genuinely-removed
+  // one the moment an unrelated broadcast arrives — e.g. some other window
+  // connecting/disconnecting something else — and would otherwise have its
+  // tabs killed by a broadcast that has nothing to do with it.
+  const seenProfilesRef = useRef<Set<string>>(new Set());
   // Shared by every `update_tab_state` emission site (handleBuilderStateChange
   // here, plus handleExecuteQuery/handleExecuteAggregate below): skips
   // unmirrored tabs and translates the live id to profile-space before
@@ -518,6 +533,27 @@ function Workspace() {
     return { pairs, idMap };
   };
 
+  // Shared "a live connection this window doesn't have locally yet" path
+  // (final whole-branch review, Fix 2) — the connections-changed listener's
+  // addition loop below AND the boot-time `connection_list` seed both funnel
+  // through here, so a spawned window's very first paint and every later
+  // broadcast add/rebind identically: `addActiveConnection` (dedupes by
+  // profileId) plus `rebindProfileTabs` (rebinds any restored `profile:<id>`
+  // tab onto the live id, same as `handleQuickConnect`/`handleReconnectProfile`
+  // do after their own `connect_db`). Also updates `seenProfilesRef` (Fix 3)
+  // for every entry, regardless of whether it was new — a boot seed or
+  // broadcast that mentions a profile is evidence that profile is being
+  // actively tracked, whether or not this window happens to already have it.
+  const applyConnectionsAdditions = (connections: ConnectionEntry[]) => {
+    for (const entry of connections) seenProfilesRef.current.add(entry.profileId);
+    const localByProfile = new Map(activeConnectionsRef.current.map((c) => [c.profileId, c]));
+    for (const entry of connections) {
+      if (localByProfile.has(entry.profileId)) continue;
+      addActiveConnection(entry.id, entry.name, '', entry.profileId);
+      rebindProfileTabs(entry.profileId, entry.id);
+    }
+  };
+
   // profileId -> profileName for every restored-but-not-yet-reconnected tab,
   // captured from the persisted snapshot at restore time. RestoredTab (what
   // toDisconnectedSnapshot hands back) deliberately drops profileName — it's
@@ -625,6 +661,15 @@ function Workspace() {
             // init above — but the direct dispatch documents the exception
             // even once mirroring flips on below).
             dispatchLayout({ type: 'hydrate', layout: snapshot.layout });
+            // `dispatchLayout` (React's reducer dispatch) doesn't commit
+            // synchronously — `layoutRef.current` (line ~350) only catches up
+            // on the next render. The connection_list seed below (Fix 2) runs
+            // later in this SAME tick and needs `rebindProfileTabs` (which
+            // reads `layoutRef.current`, not React state) to already see this
+            // hydrated layout's restored tab ids, so advance the ref by hand
+            // here — same technique `dispatchWorkspace`'s own `nextLayout`
+            // optimistic-advance uses below, for the same reason.
+            layoutRef.current = snapshot.layout;
           } else if (!isMainWindow) {
             // No tabs for THIS window and it's a secondary one: the
             // component's initializers default to a Quick Start tab
@@ -645,6 +690,27 @@ function Workspace() {
         // fall back to the default Quick Start state exactly as if there
         // were no snapshot at all.
       } finally {
+        // Final whole-branch review, Fix 2: seed every connection already
+        // live in this session BEFORE mirroring flips on below, same
+        // "restore settles first" ordering as the hydrate above. Every
+        // window does this (not just spawned secondaries) — main boots
+        // first in the common case and simply seeds nothing, but a window
+        // spawned later (or re-launched into an already-running session)
+        // needs this to avoid a spurious ReconnectBanner + duplicate
+        // connect_db for a profile another window already connected.
+        // `applyConnectionsAdditions` (Fix 3) also seeds `seenProfilesRef`
+        // for every entry here, exactly like a `connections-changed`
+        // broadcast would.
+        try {
+          const connections = await connectionList();
+          if (Array.isArray(connections) && connections.length > 0) {
+            applyConnectionsAdditions(connections);
+          }
+        } catch {
+          // connection_list failing at boot is not fatal — this window
+          // just starts with nothing pre-seeded, same as before this fix;
+          // the next connections-changed broadcast still catches it up.
+        }
         mirroringEnabledRef.current = true;
         if (isMainWindow) {
           // Recreates a real OS window per `windows[1..]` the snapshot above
@@ -1920,6 +1986,15 @@ function Workspace() {
 
   const handleMoveTab = (tabId: string, targetWindowId: string) => {
     moveTabToWindow(toProfileSpaceId(tabId, activeConnections), targetWindowId);
+    // Final whole-branch review, Fix 4(b): the "Move to <window>" list is
+    // built from `lastWorkspaceRef` (the last-known cross-window document),
+    // which can list a window whose OS window died without a clean
+    // `WindowClosed` record — a dead move target. `focus_window`'s widened
+    // backend contract (windows.rs) spawns `targetWindowId` if the store
+    // still remembers it but no OS window is currently open, and just
+    // focuses it otherwise — fire-and-forget, same as the cross-window open
+    // dedupe's own `focus_window` call above.
+    invoke('focus_window', { label: targetWindowId }).catch(console.warn);
   };
 
   // Simplest correct rule (documented, per the task brief): "Detach to New
@@ -2432,22 +2507,18 @@ function Workspace() {
     own(
       subscribeConnectionsChanged((payload: ConnectionsChangedPayload) => {
         const liveProfileIds = new Set(payload.connections.map((c) => c.profileId));
-        const localByProfile = new Map(activeConnectionsRef.current.map((c) => [c.profileId, c]));
 
         // Additions: a profile now has a live id we didn't know about —
-        // another window connected it. `addActiveConnection`/
-        // `rebindProfileTabs` are the same two calls
+        // another window connected it. `applyConnectionsAdditions`
+        // (`addActiveConnection`/`rebindProfileTabs`, same two calls
         // `handleQuickConnect`/`handleReconnectProfile` make after their
-        // own `connect_db`; the payload carries no `uri` by design (Task 3
-        // — connection strings never ride an event), so any UI reading
-        // `activeConnections[].uri` (the status bar's username display)
-        // degrades to '' for a connection registered this way rather than
-        // crash.
-        for (const entry of payload.connections) {
-          if (localByProfile.has(entry.profileId)) continue;
-          addActiveConnection(entry.id, entry.name, '', entry.profileId);
-          rebindProfileTabs(entry.profileId, entry.id);
-        }
+        // own `connect_db`) also marks every entry here as SEEN
+        // (`seenProfilesRef` — Fix 3, read by the removal loop below); the
+        // payload carries no `uri` by design (Task 3 — connection strings
+        // never ride an event), so any UI reading `activeConnections[].uri`
+        // (the status bar's username display) degrades to '' for a
+        // connection registered this way rather than crash.
+        applyConnectionsAdditions(payload.connections);
 
         // Phase 3 Task 6 (LEDGER MANDATE) considered — and deliberately does
         // NOT implement — a self-healing cleanup for "stale" backend
@@ -2489,8 +2560,27 @@ function Workspace() {
         // `disconnect_db` itself, and mirroring the `close_many` (mirroring
         // it again here would double-apply the same close backend-side —
         // see the who-mirrors-what note in the task report).
+        //
+        // Final whole-branch review, Fix 3: gated on `seenProfilesRef` —
+        // absence from THIS broadcast alone is not enough to tear down. A
+        // profile THIS window just connected can legitimately be missing
+        // from an UNRELATED broadcast that races ahead of its own
+        // `set_connection_meta` landing backend-side (e.g. some other
+        // window connecting/disconnecting something else in between); that
+        // shape is indistinguishable from a real removal by `liveProfileIds`
+        // alone. Only tear down a profile that was previously SEEN live in
+        // some earlier broadcast (or the boot `connection_list` seed) and
+        // is NOW absent — see `seenProfilesRef`'s own doc comment. A local
+        // connection that was NEVER seen is instead self-healed by
+        // re-announcing it via `setConnectionMeta`, so the backend's
+        // `connection_meta` map (and hence the next broadcast) catches up
+        // instead of this window silently killing its own live tabs.
         for (const local of activeConnectionsRef.current) {
           if (liveProfileIds.has(local.profileId)) continue;
+          if (!seenProfilesRef.current.has(local.profileId)) {
+            setConnectionMeta(local.id, local.profileId, local.name);
+            continue;
+          }
           setActiveConnections((prev) => prev.filter((c) => c.id !== local.id));
           const removed = tabsRef.current.filter((t) => t.connectionId === local.id).map((t) => t.id);
           if (removed.length === 0) continue;

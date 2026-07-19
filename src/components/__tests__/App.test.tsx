@@ -2719,6 +2719,40 @@ describe('App Component', () => {
       });
       expect(calls.some((c) => c.cmd === 'connect_db')).toBe(false);
     });
+
+    it('(h) the boot-time connection_list seed rebinds a restored profile\'s banner tab without any connect_db call (final whole-branch review Fix 2)', async () => {
+      const workspaceSnapshot = {
+        revision: 1,
+        windows: [
+          { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.sales_db.customers'], activeTabId: 'profile:p1.sales_db.customers' } },
+        ],
+        tabs: [
+          { id: 'profile:p1.sales_db.customers', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'customers' },
+        ],
+      };
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        // Simulates a window spawned into an already-live session — another
+        // window connected p1 before this one ever booted.
+        if (cmd === 'connection_list') {
+          return Promise.resolve([{ id: 'live-99', profileId: 'p1', name: 'Prod Cluster' }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      // Never even flashes a ReconnectBanner — the seed lands before the
+      // hydrated tab renders as "disconnected".
+      await waitFor(() => {
+        expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument();
+      });
+      expect(await screen.findByTestId('sidebar-conn-live-99')).toHaveTextContent('Prod Cluster');
+      expect(calls.some((c) => c.cmd === 'connect_db')).toBe(false);
+    });
   });
 
   describe('cross-window connection + pref coherence (Phase 3 Task 6)', () => {
@@ -2933,6 +2967,53 @@ describe('App Component', () => {
       expect(closeManyMirrors).toHaveLength(0);
       expect(calls.some((c) => c.cmd === 'disconnect_db')).toBe(false);
     });
+
+    it('(f) a fresh local connect survives an unrelated connections-changed broadcast that never mentions it, and re-fires set_connection_meta (final whole-branch review Fix 3)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      await waitFor(() => expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument());
+
+      calls.length = 0; // only the broadcast handler's own reaction matters below
+
+      // An unrelated broadcast lands — this window's own `set_connection_meta`
+      // for p1 hasn't registered backend-side yet (a race), so the very
+      // first connections-changed payload it ever sees doesn't mention p1
+      // at all. p1 was never SEEN in any prior broadcast (seenProfilesRef is
+      // empty for it), so this must NOT be treated as a removal.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'live-other', profileId: 'p-other', name: 'Other Cluster' }],
+        });
+      });
+
+      // Still there — not torn down by a broadcast that has nothing to do
+      // with it.
+      expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument();
+      expect(calls.some((c) => c.cmd === 'disconnect_db')).toBe(false);
+      // Self-healing re-registration: re-announces this window's own live
+      // connection so the backend's connection_meta map (and hence the next
+      // broadcast) catches up.
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) => c.cmd === 'set_connection_meta' && c.args?.id === 'live-1' && c.args?.profileId === 'p1',
+          ),
+        ).toBe(true);
+      });
+    });
   });
 
   describe('tab context menu — detach/move (Phase 3 Task 5)', () => {
@@ -3053,6 +3134,15 @@ describe('App Component', () => {
           op: { type: 'move_tab_to_window', tab_id: 'conn-1.sales_db.customers', target_window_id: 'win-1' },
           origin: 'main',
         });
+      });
+      // Final whole-branch review, Fix 4(b): also fires `focus_window` for
+      // the target — the backend widens its contract to spawn `win-1` if
+      // the store still lists it but no OS window is currently open (a
+      // dead move target), so this self-heals instead of stranding the tab.
+      await waitFor(() => {
+        const focusCalls = calls.filter((c) => c.cmd === 'focus_window');
+        expect(focusCalls).toHaveLength(1);
+        expect(focusCalls[0].args).toEqual({ label: 'win-1' });
       });
       // CRITICAL: this window's own tab strip/pane is untouched by the
       // click itself — dispatchLayout was never called for this op, only
