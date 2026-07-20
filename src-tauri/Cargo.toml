@@ -42,6 +42,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 argon2 = "0.5"
 aes-gcm = "0.10"
 rand = "0.8"
+# Pinned to the last release on the rand-0.8 line (fake 3.2.0+ moved to rand 0.9,
+# fake 5.x to rand 0.10) — our StdRng is rand 0.8 (see `rand = "0.8"` above) and
+# determinism requires driving fake's generators with OUR seeded rng via
+# `Fake::fake_with_rng`, which only type-checks against a matching rand major.
+fake = "=3.1.0"
 base64 = "0.22"
 rust_xlsxwriter = "0.96.0"
 tempfile = "3.27.0"

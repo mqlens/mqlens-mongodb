@@ -366,6 +366,37 @@ async fn finalize_import(
     write_imported_docs(&coll, bson_docs, mode).await
 }
 
+/// Insert already-converted BSON documents in `IMPORT_BATCH_SIZE` chunks, no
+/// upsert/dedup bookkeeping. Hoisted out of `write_imported_docs` (Task 3,
+/// data generation) as the narrower reuse for pure-insert callers:
+/// `write_imported_docs`'s "skip"/"abort" modes both run an `existing_ids`
+/// `$in` lookup per batch to detect duplicate `_id`s before inserting, which
+/// is wasted work for a caller — like the generate task — that only ever
+/// inserts freshly generated documents and has no upsert/duplicate semantics
+/// to honor. `pub(crate)` so `db::generate` can call it directly.
+///
+/// `op_label` names the operation in the error message on failure (e.g.
+/// `"import"` for the import callers below, `"generate"` for
+/// `start_generate_task_impl`) — callers share this one insert loop but
+/// surface its failure directly as their task's error message, so a single
+/// hardcoded "Failed to import: …" would misdescribe a generate-task failure
+/// as an import failure.
+pub(crate) async fn insert_many_batched(
+    coll: &mongodb::Collection<Document>,
+    docs: Vec<Document>,
+    op_label: &str,
+) -> Result<(), String> {
+    for chunk in docs.chunks(IMPORT_BATCH_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+        coll.insert_many(chunk.to_vec())
+            .await
+            .map_err(|e| format!("Failed to {}: {}", op_label, e))?;
+    }
+    Ok(())
+}
+
 /// Write already-converted BSON documents to a live collection under the
 /// duplicate-handling mode. Shared by the JSON-value and file import paths.
 pub(crate) async fn write_imported_docs(
@@ -401,21 +432,6 @@ pub(crate) async fn write_imported_docs(
             }
         }
         Ok(found)
-    }
-
-    async fn insert_many_batched(
-        coll: &mongodb::Collection<mongodb::bson::Document>,
-        docs: Vec<mongodb::bson::Document>,
-    ) -> Result<(), String> {
-        for chunk in docs.chunks(IMPORT_BATCH_SIZE) {
-            if chunk.is_empty() {
-                continue;
-            }
-            coll.insert_many(chunk.to_vec())
-                .await
-                .map_err(|e| format!("Failed to import: {}", e))?;
-        }
-        Ok(())
     }
 
     match mode {
@@ -460,7 +476,7 @@ pub(crate) async fn write_imported_docs(
                 ));
             }
             let total = bson_docs.len() as u64;
-            insert_many_batched(coll, bson_docs).await?;
+            insert_many_batched(coll, bson_docs, "import").await?;
             Ok(ImportResult {
                 inserted: total,
                 updated: 0,
@@ -481,7 +497,7 @@ pub(crate) async fn write_imported_docs(
                 .collect();
             let inserted = to_insert.len() as u64;
             if !to_insert.is_empty() {
-                insert_many_batched(coll, to_insert).await?;
+                insert_many_batched(coll, to_insert, "import").await?;
             }
             Ok(ImportResult {
                 inserted,

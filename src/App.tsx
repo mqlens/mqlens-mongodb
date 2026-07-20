@@ -71,6 +71,7 @@ import { ReconnectBanner } from './workspace/ReconnectBanner';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
+import { GenerateView } from './components/GenerateView';
 import { GridFsView } from './components/GridFsView';
 import { MonitoringView } from './components/MonitoringView';
 import { UserManagementView } from './components/UserManagementView';
@@ -90,12 +91,12 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight } from 'lucide-react';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2 } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate';
   connectionId: string;
   db: string;
   collection: string;
@@ -249,6 +250,8 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
       return <DatabaseZap size={size} className={className} />;
     case 'validation':
       return <ShieldCheck size={size} className={className} />;
+    case 'generate':
+      return <Wand2 size={size} className={className} />;
     default:
       return <FolderCode size={size} className={className} />;
   }
@@ -289,6 +292,8 @@ const tabLabelFor = (
       return `Restore: ${connectionName(tab.connectionId)}`;
     case 'validation':
       return `Validation: ${tab.collection}`;
+    case 'generate':
+      return `Generate: ${tab.collection || tab.db}`;
     default:
       return tab.collection;
   }
@@ -863,6 +868,28 @@ function Workspace() {
   const pendingImportRefreshRef = React.useRef(
     new Map<string, { connectionId: string; db: string; collection: string }>()
   );
+  // #91: the generate task id running for a given `generate` tab, so the
+  // rendered GenerateView instance can find its own `task` in `exportTasks`
+  // (TaskInfo carries no tab/connection/db/collection fields to match on —
+  // same reasoning as pendingImportRefreshRef above). Entries are evicted
+  // ONLY on tab close — `close_tab` AND `close_many`, both in
+  // `dispatchWorkspace` below — not on task completion. A completion-
+  // triggered eviction was tried and reverted: the SAME watcher effect that
+  // would evict it also calls `refreshTabResults` for the matching
+  // collection tab (both keyed off the same completed task id, since
+  // `handleRunGenerate` sets both refs together), and that refresh's state
+  // update re-renders this tab reading the just-cleared ref BEFORE the user
+  // ever sees the "Inserted N documents" message — the completed banner
+  // silently never appears, regressing "Completed/failed states render
+  // their message." Evicting only on close avoids that: a still-open tab
+  // keeps showing its finished task's status (as it must). Close-based
+  // eviction covers every REACHABLE staleness path for this ref
+  // (`close_tab` for a single tab; `close_many` for
+  // `handleDatabaseDropped`'s drop-and-later-recreate-the-same-db case,
+  // which reuses the connection's connectionId and so can reuse this ref's
+  // deterministic tab id too) — see `close_many`'s branch below for why its
+  // other two call sites need no such fix.
+  const generateTaskIdsRef = React.useRef(new Map<string, string>());
   // Bumped on every optimistic task insert below. A list_export_tasks response
   // requested BEFORE a start_*_task registered could otherwise resolve AFTER the
   // optimistic insert and clobber it for a whole poll cycle — so a load only
@@ -1450,6 +1477,32 @@ function Workspace() {
     void loadDumpDbTree(connectionId);
   };
 
+  // #91: open a Generate Data tab — schema-seeded when opened on a specific
+  // collection, a starter template when opened on a database (Sidebar's
+  // database-row entry; GenerateView lets the user type a target collection
+  // in that case — Task 5).
+  const handleOpenGenerateTab = (connectionId: string, db: string, collection?: string) => {
+    const idParts = ['generate', connectionId, db, collection].filter((p): p is string => !!p);
+    const tabId = idParts.join('.');
+    if (!tabs.some(t => t.id === tabId)) {
+      const newTab: QueryTab = {
+        id: tabId,
+        type: 'generate',
+        connectionId,
+        db,
+        collection: collection ?? '',
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    } else {
+      dispatchWorkspace({ type: 'open_tab', tabId });
+    }
+  };
+
   const handleOpenRestoreTab = (connectionId: string) => {
     const tabId = `restore.${connectionId}`;
     if (!tabs.some(t => t.id === tabId)) {
@@ -1503,6 +1556,48 @@ function Workspace() {
       await loadExportTasks();
     } catch (err: any) {
       toast(`Restore failed to start: ${err?.message || err}`, 'error');
+    }
+  };
+
+  // #91: start a background generate run (mirrors handleRunDump). `collection`
+  // is GenerateView's resolved target — for a collection-scoped tab this is
+  // just `tab.collection` handed back; for a database-scoped tab (opened
+  // with no collection) it's the name the user typed into GenerateView's own
+  // "Target collection" field, since `tab.collection` is empty in that case.
+  const handleRunGenerate = async (
+    tab: QueryTab,
+    template: string,
+    count: number,
+    seed: number | undefined,
+    collection: string
+  ) => {
+    try {
+      const task = await invoke<ExportTaskInfo>('start_generate_task', {
+        id: tab.connectionId,
+        database: tab.db,
+        collection,
+        template,
+        count,
+        seed: seed ?? null,
+      });
+      generateTaskIdsRef.current.set(tab.id, task.id);
+      pendingImportRefreshRef.current.set(task.id, {
+        connectionId: tab.connectionId,
+        db: tab.db,
+        collection,
+      });
+      insertExportTasks([task]);
+      // Unlike `handleRunDump`/`handleRunRestore` (which have no in-tab
+      // progress UI, so switching to the Tasks tab is the only way to see
+      // anything happening), GenerateView renders its own inline
+      // `TaskProgress` for this tab's task — stealing focus to the Tasks
+      // tab here would yank the user away right as that inline progress
+      // appears. "View in Tasks" on that inline progress panel already
+      // covers discoverability, so this run intentionally does not call
+      // `handleOpenTasksTab()`.
+      await loadExportTasks();
+    } catch (err: any) {
+      toast(`Generate failed to start: ${err?.message || err}`, 'error');
     }
   };
 
@@ -1906,7 +2001,29 @@ function Workspace() {
     }
     if (action.type === 'close_tab') {
       tabBuilderStateCache.current.delete(action.tabId);
+      // #91: forget this tab's generate-task tracking on close (running or
+      // finished) — otherwise reopening "Generate Data…" on the same
+      // namespace reuses the same deterministic tab id and the fresh view
+      // would immediately render the OLD task's progress bar. `close_many`
+      // (below) gets the identical treatment for the multi-tab-close path.
+      generateTaskIdsRef.current.delete(action.tabId);
       setTabs(prev => prev.filter(t => t.id !== action.tabId));
+    }
+    if (action.type === 'close_many') {
+      // Same eviction as close_tab, just over `action.tabIds`. Of this
+      // action's three call sites, only `handleDatabaseDropped` (dropping a
+      // database) is exploitable for `generateTaskIdsRef`: it reuses the
+      // connection's existing connectionId, so a later-recreated db.coll
+      // can resolve the SAME deterministic `generate.<connId>.<db>.<coll>`
+      // tab id a stale entry was keyed under. The other two `close_many`
+      // sites tear down an entire connection instead (Sidebar's
+      // `onDisconnect`, and the cross-window connection-removal listener —
+      // which calls `dispatchLayout` directly and never reaches this
+      // function at all): `connect_db` mints a fresh connectionId on every
+      // connect, so any stale entries either of those leaves behind
+      // permanently fall outside the tab-id space any future tab could
+      // ever resolve — harmless, not reachable again. No fix needed there.
+      action.tabIds.forEach((id) => generateTaskIdsRef.current.delete(id));
     }
     dispatchLayout(action);
 
@@ -2737,14 +2854,15 @@ function Workspace() {
     }
   };
 
-  // When a tracked import task (started from the Import tab) is observed
-  // completed by the task poll, refresh the matching open collection tab so
-  // newly-imported documents show up without a manual re-run.
+  // When a tracked import OR generate task (started from the Import tab, or
+  // #91's Generate tab) is observed completed by the task poll, refresh the
+  // matching open collection tab so newly-written documents show up without
+  // a manual re-run.
   useEffect(() => {
     const pending = pendingImportRefreshRef.current;
     if (pending.size === 0) return;
     for (const task of exportTasks) {
-      if (task.kind !== 'import' || task.status !== 'completed') continue;
+      if ((task.kind !== 'import' && task.kind !== 'generate') || task.status !== 'completed') continue;
       const info = pending.get(task.id);
       if (!info) continue;
       pending.delete(task.id);
@@ -3284,6 +3402,21 @@ function Workspace() {
             onApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
           />
         )}
+        {tab.type === 'generate' && (
+          <GenerateView
+            key={tab.id}
+            connectionId={tab.connectionId}
+            database={tab.db}
+            collection={tab.collection || undefined}
+            task={(() => {
+              const taskId = generateTaskIdsRef.current.get(tab.id);
+              return taskId ? exportTasks.find((t) => t.id === taskId) : undefined;
+            })()}
+            onRun={(template, count, seed, collection) => handleRunGenerate(tab, template, count, seed, collection)}
+            onOpenTasks={handleOpenTasksTab}
+            onCancel={handleCancelTask}
+          />
+        )}
         {tab.type === 'gridfs' && (
           <GridFsView
             connectionId={tab.connectionId}
@@ -3539,6 +3672,7 @@ function Workspace() {
           onOpenGridfs={handleOpenGridfsTab}
           onOpenDump={handleOpenDumpTab}
           onOpenRestore={handleOpenRestoreTab}
+          onOpenGenerate={handleOpenGenerateTab}
           collectionMutationTrigger={collectionMutationTrigger}
           onCollectionRenamed={handleCollectionRenamed}
           onDatabaseDropped={handleDatabaseDropped}

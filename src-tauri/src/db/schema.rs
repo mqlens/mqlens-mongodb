@@ -3,16 +3,22 @@
 use crate::limits::normalize_schema_sample;
 use crate::state::LockExt;
 use crate::{mock_db, require_real_client, AppState};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Serialize)]
+// `Deserialize` is derived (in addition to `Serialize`) so `generate.rs`'s
+// `infer_generate_template_impl` can round-trip the JSON string
+// `analyze_schema_impl` returns back into a `SchemaReport` for
+// `infer_template_from_schema` — the schema report crosses the Tauri IPC
+// boundary as a string today, so this is the cheapest way to reuse it
+// in-process without a second, parallel "give me the struct" entry point.
+#[derive(Serialize, Deserialize)]
 pub struct TypeCount {
     #[serde(rename = "type")]
     pub type_name: String,
     pub count: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct FieldStat {
     pub path: String,
     pub types: Vec<TypeCount>,
@@ -22,7 +28,7 @@ pub struct FieldStat {
     pub enum_values: Option<Vec<String>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SchemaReport {
     pub sampled: usize,
     pub fields: Vec<FieldStat>,

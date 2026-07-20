@@ -57,6 +57,9 @@ queries actually do — from a single cross-platform desktop app.
 - **GridFS** — browse files in a bucket and download them to disk.
 - **Import / export** — JSON and CSV, including full-collection background
   exports.
+- **Data generation** — seed collections with realistic fake documents:
+  schema-aware templates, nested objects and arrays, preview before you
+  insert, background tasks for big counts.
 - **mongosh shell** — an embedded shell backed by a real `mongosh` binary.
 - **AI query assistant** — natural-language → MQL generation, with multiple
   providers (Anthropic / OpenAI / Gemini and local agent CLIs); the API key

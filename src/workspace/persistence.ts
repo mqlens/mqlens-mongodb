@@ -32,7 +32,7 @@ import {
 } from './model';
 
 // Mirrors src-tauri's `TabModel` wire shape (camelCase field names — see
-// workspace.rs). `type` covers all 16 QueryTab kinds from App.tsx.
+// workspace.rs). `type` covers all 17 QueryTab kinds from App.tsx.
 export type QueryTabType =
   | 'collection'
   | 'index'
@@ -49,7 +49,8 @@ export type QueryTabType =
   | 'users'
   | 'dump'
   | 'restore'
-  | 'validation';
+  | 'validation'
+  | 'generate';
 
 export interface PersistedTab {
   id: string;
@@ -116,8 +117,12 @@ export interface RestoredTab {
 }
 
 // export/import tabs reference in-flight task state that no longer exists
-// after a restart — they must never be persisted.
-const NON_PERSISTED_TYPES = new Set<QueryTabType>(['export', 'import']);
+// after a restart — they must never be persisted. `generate` joins them for
+// the same reason (an in-progress/just-built template + its background task
+// don't survive either) — this also makes it MCP-unmirrored automatically:
+// `toPersistedTab` returning null for it is what App.tsx's `dispatchWorkspace`
+// reads to populate `unmirroredTabIdsRef`, so no separate change is needed.
+const NON_PERSISTED_TYPES = new Set<QueryTabType>(['export', 'import', 'generate']);
 // These tab kinds carry no connection at all; pass their id through as-is.
 const CONNECTIONLESS_TYPES = new Set<QueryTabType>(['settings', 'quickstart', 'tasks']);
 

@@ -1004,6 +1004,90 @@ describe('Sidebar Component', () => {
     expect(handleOpenDump).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
   });
 
+  it('opens Generate Data from the database and collection context menus (#91)', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') {
+        return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    const handleOpenGenerate = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Prod DB Server', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenGenerate={handleOpenGenerate}
+      />
+    );
+
+    // Database-level: starter-template generate.
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.contextMenu(dbNode);
+    fireEvent.click(screen.getByTestId('ctx-generate-db-conn-1-sales_db'));
+    expect(handleOpenGenerate).toHaveBeenCalledWith('conn-1', 'sales_db');
+
+    // Collection-level: schema-seeded generate.
+    fireEvent.click(dbNode);
+    const collectionsFolder = await screen.findByText('Collections');
+    fireEvent.click(collectionsFolder);
+    const collectionNode = await screen.findByText('customers');
+    fireEvent.contextMenu(collectionNode);
+    fireEvent.click(screen.getByTestId('ctx-generate-coll-conn-1-sales_db-customers'));
+    expect(handleOpenGenerate).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
+  });
+
+  it('still shows Generate Data (unlike Dump) for a mock connection\'s collection entry (#91)', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') {
+        return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Sample (mqlens_demo)', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenDump={vi.fn()}
+        onOpenGenerate={vi.fn()}
+      />
+    );
+
+    const dbNode = await screen.findByText('sales_db');
+    // Database-level: Generate Data still offered where Dump is not.
+    fireEvent.contextMenu(dbNode);
+    expect(screen.queryByTestId('ctx-dump-db-conn-1-sales_db')).not.toBeInTheDocument();
+    expect(screen.getByTestId('ctx-generate-db-conn-1-sales_db')).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    // Collection-level: same story.
+    fireEvent.click(dbNode);
+    const collectionsFolder = await screen.findByText('Collections');
+    fireEvent.click(collectionsFolder);
+    const collectionNode = await screen.findByText('customers');
+    fireEvent.contextMenu(collectionNode);
+    expect(screen.queryByTestId('ctx-dump-coll-conn-1-sales_db-customers')).not.toBeInTheDocument();
+    expect(screen.getByTestId('ctx-generate-coll-conn-1-sales_db-customers')).toBeInTheDocument();
+  });
+
   it('opens Validation Rules from the collection context menu', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases' && args.id === 'conn-1') {

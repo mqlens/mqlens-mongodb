@@ -83,7 +83,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onDatabaseRenamed, activeConnections }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, activeConnections }: any) => (
     <div data-testid="mock-sidebar">
       {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
           `activeConnections` prop for its "Connections" tree — lets tests
@@ -105,6 +105,12 @@ vi.mock('../Sidebar', () => ({
         onClick={() => onDatabaseRenamed && onDatabaseRenamed('conn-1', 'sales_db', 'sales_db2')}
       >
         Rename sales_db
+      </button>
+      <button
+        data-testid="drop-db-btn"
+        onClick={() => onDatabaseDropped && onDatabaseDropped('conn-1', 'sales_db')}
+      >
+        Drop sales_db
       </button>
       <button data-testid="select-index-btn" onClick={() => onSelectIndex('conn-1', 'sales_db', 'customers', 'email_1')}>
         Select Index
@@ -129,6 +135,18 @@ vi.mock('../Sidebar', () => ({
         onClick={() => onEditValidation && onEditValidation('conn-1', 'sales_db', 'customers')}
       >
         Validation Rules
+      </button>
+      <button
+        data-testid="open-generate-coll-btn"
+        onClick={() => onOpenGenerate && onOpenGenerate('conn-1', 'sales_db', 'customers')}
+      >
+        Generate Data (collection)
+      </button>
+      <button
+        data-testid="open-generate-db-btn"
+        onClick={() => onOpenGenerate && onOpenGenerate('conn-1', 'sales_db')}
+      >
+        Generate Data (database)
       </button>
     </div>
   ),
@@ -967,6 +985,428 @@ describe('App Component', () => {
       expect(opts).toBeTruthy();
       expect(opts.args).toMatchObject({ id: 'conn-1', database: 'sales_db', collection: 'customers' });
     });
+  });
+
+  it('opens the Generate Data tab from a collection context menu and infers the template (#91)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'infer_generate_template') {
+        return Promise.resolve('{\n  "name": "$name"\n}');
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+    // Tab-bar label (tabLabelFor) and the view's own header — both derived
+    // from the same tab, different text.
+    expect(screen.getByText('Generate: customers')).toBeInTheDocument();
+    expect(screen.getByText('Generate Data: sales_db.customers')).toBeInTheDocument();
+    await waitFor(() => {
+      const infer = calls.find((c) => c.cmd === 'infer_generate_template');
+      expect(infer).toBeTruthy();
+      expect(infer.args).toMatchObject({ id: 'conn-1', database: 'sales_db', collection: 'customers' });
+    });
+    // Switch to the raw editor to confirm the inferred template content
+    // (rather than the builder-decoded rows) made it into the view.
+    fireEvent.click(screen.getByTestId('generate-mode-raw'));
+    expect(await screen.findByTestId('generate-raw-editor')).toHaveValue('{\n  "name": "$name"\n}');
+  });
+
+  it('opens the Generate Data tab from a database context menu with a starter template, no inference call (#91)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-db-btn'));
+
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+    // No collection segment — both the tab label and the view header fall
+    // back to the bare database name.
+    expect(screen.getByText('Generate: sales_db')).toBeInTheDocument();
+    expect(screen.getByText('Generate Data: sales_db')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('generate-mode-raw'));
+    const editor = await screen.findByTestId('generate-raw-editor');
+    expect((editor as HTMLTextAreaElement).value).toContain('$name');
+    expect(calls.some((c) => c.cmd === 'infer_generate_template')).toBe(false);
+  });
+
+  it('dedupes the Generate Data tab (collection) on a second open — same tab focused, not duplicated (#91)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'infer_generate_template') return Promise.resolve('{}');
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, within } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+
+    const tabStrip = screen.getByTestId('workspace-tab-strip');
+    expect(within(tabStrip).getAllByText('Generate: customers')).toHaveLength(1);
+  });
+
+  // Fix 4 regression: `handleRunGenerate` used to call `handleOpenTasksTab()`
+  // right after starting the run — copied one call too literally from
+  // `handleRunDump`/`handleRunRestore`, which have no in-tab progress UI of
+  // their own. GenerateView DOES render inline progress, so that focus
+  // switch used to yank the user to the Tasks tab exactly when the inline
+  // progress they were expecting to see would have appeared.
+  it('does not switch away from the generate tab when starting a run (#91)', async () => {
+    const runningTask = {
+      id: 'task-generate-focus',
+      kind: 'generate',
+      label: 'Generate → sales_db.customers',
+      status: 'running',
+      processed: 0,
+      total: 100,
+      message: 'Queued',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'infer_generate_template') return Promise.resolve('{"name": "$name"}');
+      if (cmd === 'preview_generated_documents') return Promise.resolve([]);
+      if (cmd === 'count_documents') return Promise.resolve(0);
+      if (cmd === 'start_generate_task') return Promise.resolve(runningTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([runningTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('generate-run-btn'));
+    await screen.findByTestId('dialog-confirm');
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await screen.findByTestId('generate-progress'); // the run's inline progress landed
+    // The Tasks tab was never focused — its content never mounted.
+    expect(screen.queryByTestId('task-manager')).not.toBeInTheDocument();
+    // The generate tab itself is still the one showing.
+    expect(screen.getByTestId('generate-view')).toBeInTheDocument();
+  });
+
+  it('refreshes the source collection tab once its generate task completes (#91)', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-generate-refresh',
+        kind: 'generate',
+        label: 'Generate → sales_db.customers',
+        status: 'running',
+        processed: 0,
+        total: 100,
+        message: 'Queued',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      let taskStatus = 'running';
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'infer_generate_template') {
+          return Promise.resolve('{"name": "$name"}');
+        }
+        if (cmd === 'preview_generated_documents') {
+          return Promise.resolve([]);
+        }
+        if (cmd === 'count_documents') {
+          return Promise.resolve(0);
+        }
+        if (cmd === 'start_generate_task') {
+          return Promise.resolve(runningTask);
+        }
+        if (cmd === 'list_export_tasks') {
+          return Promise.resolve([{ ...runningTask, status: taskStatus }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500); // let the inferred template + first preview settle
+
+      fireEvent.click(screen.getByTestId('generate-run-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
+
+      const execCallsBefore = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+
+      // The task completes; the next poll tick should notice and re-run the
+      // source collection tab's query — same watcher as the import case,
+      // generalized to `task.kind === 'generate'`.
+      taskStatus = 'completed';
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await vi.waitFor(() => {
+        const execCallsAfter = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+        expect(execCallsAfter).toBeGreaterThan(execCallsBefore);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps showing a completed generate task\'s message while its tab stays open, across multiple poll ticks (#91)', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-generate-stale',
+        kind: 'generate',
+        label: 'Generate → sales_db.customers',
+        status: 'running',
+        processed: 0,
+        total: 100,
+        message: 'Queued',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      let taskStatus = 'running';
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'infer_generate_template') {
+          return Promise.resolve('{"name": "$name"}');
+        }
+        if (cmd === 'preview_generated_documents') return Promise.resolve([]);
+        if (cmd === 'count_documents') return Promise.resolve(0);
+        if (cmd === 'start_generate_task') return Promise.resolve(runningTask);
+        if (cmd === 'list_export_tasks')
+          return Promise.resolve([{ ...runningTask, status: taskStatus, message: `msg:${taskStatus}` }]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+
+      fireEvent.click(screen.getByTestId('generate-run-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
+      // Unlike dump/restore/import, starting a generate does NOT steal focus
+      // to the Tasks tab — GenerateView renders its own inline progress, so
+      // the generate tab (and this section) is already showing.
+
+      taskStatus = 'completed';
+      await vi.advanceTimersByTimeAsync(1000);
+      // The completed message must actually become visible — this is the
+      // regression a completion-triggered ref eviction introduced (the same
+      // watcher effect that would evict it also refreshes the source
+      // collection tab, and THAT re-render reads the ref before the user
+      // ever sees this banner). Tracking is evicted on tab close only (the
+      // `close_tab` branch in `dispatchWorkspace`), not here.
+      await vi.waitFor(() => expect(screen.getByTestId('generate-task-message')).toHaveTextContent('msg:completed'));
+
+      // Stays visible across further poll ticks too, as long as the tab is open.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByTestId('generate-progress')).toBeInTheDocument();
+      expect(screen.getByTestId('generate-task-message')).toHaveTextContent('msg:completed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears generate-task tracking when the tab is closed mid-run, so reopening it does not show the old task (#91)', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-generate-close',
+        kind: 'generate',
+        label: 'Generate → sales_db.customers',
+        status: 'running',
+        processed: 10,
+        total: 100,
+        message: 'Generating (10 written)',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'infer_generate_template') return Promise.resolve('{"name": "$name"}');
+        if (cmd === 'preview_generated_documents') return Promise.resolve([]);
+        if (cmd === 'count_documents') return Promise.resolve(0);
+        if (cmd === 'start_generate_task') return Promise.resolve(runningTask);
+        // The task stays "running" for the task's own lifetime in this test —
+        // closing the tab must not depend on it ever completing.
+        if (cmd === 'list_export_tasks') return Promise.resolve([runningTask]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+
+      fireEvent.click(screen.getByTestId('generate-run-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
+      // Unlike dump/restore/import, starting a generate does not switch away
+      // from the generate tab — its own inline progress is already visible.
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() => expect(screen.getByTestId('generate-progress')).toBeInTheDocument());
+
+      // Close the tab mid-run (`close_tab`'s reducer branch is the choke
+      // point that evicts `generateTaskIdsRef`'s entry for it).
+      fireEvent.click(screen.getByRole('button', { name: 'Close Generate: customers' }));
+      await vi.waitFor(() => expect(screen.queryByTestId('generate-view')).not.toBeInTheDocument());
+
+      // Reopen the SAME deterministic tab id — a fresh view, and it must not
+      // resolve the old (still-running, per this test's mock) task, or it
+      // would render that stale task's progress bar immediately on mount.
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+      expect(screen.queryByTestId('generate-progress')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears generate-task tracking when its database is dropped (close_many), so reopening it does not show the old task (#91)', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-generate-dropdb',
+        kind: 'generate',
+        label: 'Generate → sales_db.customers',
+        status: 'running',
+        processed: 10,
+        total: 100,
+        message: 'Generating (10 written)',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'infer_generate_template') return Promise.resolve('{"name": "$name"}');
+        if (cmd === 'preview_generated_documents') return Promise.resolve([]);
+        if (cmd === 'count_documents') return Promise.resolve(0);
+        if (cmd === 'start_generate_task') return Promise.resolve(runningTask);
+        // The task stays "running" throughout — dropping the database must
+        // not depend on it ever completing (this is the close_many path,
+        // handleDatabaseDropped, not the completion watcher).
+        if (cmd === 'list_export_tasks') return Promise.resolve([runningTask]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+
+      fireEvent.click(screen.getByTestId('generate-run-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
+      fireEvent.click(screen.getByText('Generate: customers'));
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() => expect(screen.getByTestId('generate-progress')).toBeInTheDocument());
+
+      // Drop the database — handleDatabaseDropped closes every tab on
+      // sales_db via `dispatchWorkspace({ type: 'close_many', tabIds })`,
+      // the live repro this fix targets: same connectionId survives (unlike
+      // Sidebar's `onDisconnect` or the cross-window connection-removal
+      // listener), so a recreated db.coll can resolve the same
+      // deterministic generate tab id.
+      fireEvent.click(screen.getByTestId('drop-db-btn'));
+      await vi.waitFor(() => expect(screen.queryByTestId('generate-view')).not.toBeInTheDocument());
+
+      // Recreate the namespace and reopen "Generate Data…" on it — the SAME
+      // deterministic tab id must not resolve the dropped run's task.
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+      expect(screen.queryByTestId('generate-progress')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   const managedStatusesFixture = [

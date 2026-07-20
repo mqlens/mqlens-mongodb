@@ -36,6 +36,11 @@ describe('toPersistedTab', () => {
     expect(toPersistedTab(tab, conn, undefined)).toBeNull();
   });
 
+  it('returns null for generate tabs (#91) — an in-progress template/task does not survive a restart', () => {
+    const tab: PersistableTab = { ...collectionTab, id: 'generate.conn-uuid.mydb.mycoll', type: 'generate' };
+    expect(toPersistedTab(tab, conn, undefined)).toBeNull();
+  });
+
   it('substitutes the leading connectionId segment with profile:<profileId> at save time', () => {
     const persisted = toPersistedTab(collectionTab, conn, undefined);
     expect(persisted?.id).toBe('profile:p1.mydb.mycoll');
