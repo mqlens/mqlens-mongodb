@@ -141,6 +141,39 @@ describe('GenerateView', () => {
       fireEvent.change(raw, { target: { value: '{not json' } });
       expect(await screen.findByTestId('generate-custom-notice')).toBeInTheDocument();
     });
+
+    // Fix 1 regression: a valid-but-unrepresentable raw edit used to leave
+    // the OLD builder rows in `rows` (only `customTemplate` flipped), so a
+    // stale empty-`$pick` row from before the edit kept gating Generate and
+    // the preview even though the now-active (raw-only) template has no
+    // empty pick at all.
+    it('does not gate Generate on a stale empty-pick row after a raw edit becomes unrepresentable', async () => {
+      const { container } = await renderReady();
+
+      // Add a pick row and empty it via the builder — `rows` now holds a
+      // row `findEmptyPickRow` will flag.
+      fireEvent.click(screen.getByTestId('generate-add-field-root'));
+      const kindTriggers = container.querySelectorAll('[data-testid^="generate-row-kind-"]');
+      fireEvent.click(kindTriggers[kindTriggers.length - 1]);
+      fireEvent.click(screen.getByRole('option', { name: /Pick from list/ }));
+      fireEvent.click(screen.getByRole('button', { name: /Remove pick value 1/ }));
+      expect(await screen.findByTestId('generate-footer-empty-pick')).toBeInTheDocument();
+      expect(screen.getByTestId('generate-run-btn')).toBeDisabled();
+
+      // Now make a raw edit that's valid JSON but unrepresentable by the
+      // builder (a `$pick` with a non-scalar choice) — this has no empty
+      // pick of its own.
+      fireEvent.click(screen.getByTestId('generate-mode-raw'));
+      const raw = screen.getByTestId('generate-raw-editor') as HTMLTextAreaElement;
+      fireEvent.change(raw, {
+        target: { value: '{"f": {"$pick": [{"$oid": "507f1f77bcf86cd799439011"}]}}' },
+      });
+
+      expect(await screen.findByTestId('generate-custom-notice')).toBeInTheDocument();
+      // The phantom empty-pick from the stale builder rows must be gone.
+      expect(screen.queryByTestId('generate-footer-empty-pick')).not.toBeInTheDocument();
+      expect(screen.getByTestId('generate-run-btn')).not.toBeDisabled();
+    });
   });
 
   describe('preview', () => {
@@ -208,6 +241,31 @@ describe('GenerateView', () => {
       await renderReady({ collection: undefined });
       expect(screen.getByTestId('generate-run-btn')).toBeDisabled();
       fireEvent.change(screen.getByTestId('generate-target-collection-input'), { target: { value: 'newColl' } });
+      expect(screen.getByTestId('generate-run-btn')).not.toBeDisabled();
+    });
+  });
+
+  describe('seed validation', () => {
+    it('rejects a negative seed', async () => {
+      await renderReady();
+      fireEvent.change(screen.getByTestId('generate-seed-input'), { target: { value: '-1' } });
+      expect(screen.getByTestId('generate-seed-error')).toBeInTheDocument();
+      expect(screen.getByTestId('generate-run-btn')).toBeDisabled();
+    });
+
+    it('rejects a non-safe-integer seed', async () => {
+      await renderReady();
+      fireEvent.change(screen.getByTestId('generate-seed-input'), {
+        target: { value: String(Number.MAX_SAFE_INTEGER + 10) },
+      });
+      expect(screen.getByTestId('generate-seed-error')).toBeInTheDocument();
+      expect(screen.getByTestId('generate-run-btn')).toBeDisabled();
+    });
+
+    it('accepts a valid non-negative integer seed', async () => {
+      await renderReady();
+      fireEvent.change(screen.getByTestId('generate-seed-input'), { target: { value: '42' } });
+      expect(screen.queryByTestId('generate-seed-error')).not.toBeInTheDocument();
       expect(screen.getByTestId('generate-run-btn')).not.toBeDisabled();
     });
   });
@@ -398,6 +456,16 @@ describe('GenerateView', () => {
         task: { ...runningTask, status: 'failed', error: 'insert failed: duplicate key' },
       });
       expect(screen.getByTestId('generate-task-message')).toHaveTextContent('insert failed: duplicate key');
+    });
+
+    // Fix 3 regression: `canGenerate` used to ignore `task`, and `running`
+    // resets as soon as `onRun` fires (it isn't awaited) — so a second
+    // confirmed click while this tab's task is still running could start a
+    // concurrent duplicate bulk write.
+    it('disables Generate while this tab has a running task', async () => {
+      await renderReady({ task: runningTask });
+      expect(screen.getByTestId('generate-run-btn')).toBeDisabled();
+      expect(screen.getByTestId('generate-footer-run-in-progress')).toBeInTheDocument();
     });
   });
 });

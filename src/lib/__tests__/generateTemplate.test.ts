@@ -10,6 +10,75 @@ import {
   type GenRow,
 } from '../generateTemplate';
 
+// ---------------------------------------------------------------------------
+// Ported backend DSL shape-acceptance check (cross-layer invariant guard)
+// ---------------------------------------------------------------------------
+
+const STRING_GENERATOR_ALLOWLIST = new Set([
+  '$name',
+  '$firstName',
+  '$lastName',
+  '$email',
+  '$objectId',
+  '$uuid',
+  '$bool',
+]);
+const KNOWN_WRAPPER_KEYS = new Set(['$int', '$float', '$date', '$lorem', '$pick', '$array', '$literal']);
+
+function isPlainObj(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** A structural port of the Rust backend's `parse_spec`
+ * (`src-tauri/src/db/generate.rs`) — mirrors ONLY its shape-acceptance logic
+ * (bare-`$…`-string generator allowlist, zero-vs-one-vs-many `$`-key
+ * disambiguation, known wrapper-key set) — the exact class of check Fix 2's
+ * bug (a shallow `needsLiteralWrap` letting a nested `$oid` key leak
+ * unwrapped into a field position) would have failed. It does NOT replicate
+ * `parse_int`/`parse_float`/`parse_date`/etc.'s numeric-range/date-format
+ * validation — that's out of scope for the "never emits a shape the backend
+ * would structurally reject as an unknown generator" contract this guards.
+ *
+ * LIMITATION: this is a hand-ported subset run inside the frontend test
+ * harness, not a real call into `parse_template` (there is no way to invoke
+ * the Rust binary from a vitest run here) — if the two drift, this can pass
+ * a shape the real backend still rejects (or vice versa). Treat it as a
+ * first line of defense against exactly this bug class, not a full
+ * contract test. */
+function assertAcceptedByGenerateDsl(value: unknown, path = ''): void {
+  if (typeof value === 'string') {
+    if (value.startsWith('$') && !STRING_GENERATOR_ALLOWLIST.has(value)) {
+      throw new Error(`${path}: unknown generator ${value}`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    // Bare arrays are always literal passthrough in the DSL — contents are
+    // never reinterpreted as specs, so nothing further to check.
+    return;
+  }
+  if (isPlainObj(value)) {
+    const keys = Object.keys(value);
+    const dollarKeys = keys.filter((k) => k.startsWith('$'));
+    if (dollarKeys.length === 0) {
+      for (const k of keys) assertAcceptedByGenerateDsl(value[k], path ? `${path}.${k}` : k);
+      return;
+    }
+    if (keys.length === 1) {
+      const key = dollarKeys[0];
+      if (!KNOWN_WRAPPER_KEYS.has(key)) throw new Error(`${path}: unknown generator ${key}`);
+      if (key === '$array') {
+        const inner = value[key];
+        if (isPlainObj(inner) && 'of' in inner) assertAcceptedByGenerateDsl(inner.of, `${path}[0]`);
+      }
+      // $literal's payload is never re-parsed as a spec — verbatim passthrough.
+      return;
+    }
+    throw new Error(`${path}: unknown generator ${dollarKeys[0]}`);
+  }
+  // number / boolean / null — always literal.
+}
+
 describe('generateTemplate', () => {
   describe('templateToRows — representable shapes', () => {
     it('maps every bare-string generator', () => {
@@ -225,6 +294,26 @@ describe('generateTemplate', () => {
       expect(template.d).toEqual({ $literal: { $foo: 1 } });
       expect(template.e).toEqual([1, 2, 3]);
     });
+
+    // Regression for review Fix 2: `needsLiteralWrap` used to check only the
+    // literal payload's TOP-LEVEL keys for a `$`-prefix, so a `$`-key nested
+    // one or more levels deep (as opposed to right at the payload's root)
+    // re-serialized unwrapped — `{"f": {"a": {"$oid": "..."}}}` — which the
+    // backend rejects as `f.a: unknown generator $oid` even though the row
+    // faithfully represented a valid `$literal` construct. The scan is now
+    // deep (recurses through nested plain objects, not arrays — bare arrays
+    // are always literal passthrough in the DSL regardless of contents).
+    it('deep-scans a literal payload for $-keys at any nesting depth, not just the top level', () => {
+      const rows: GenRow[] = [
+        { id: '1', name: 'f', kind: 'literal', options: { value: { a: { $oid: '507f1f77bcf86cd799439011' } } } },
+        // A $-key nested inside a bare array never needs wrapping — arrays
+        // are literal passthrough at any position, contents included.
+        { id: '2', name: 'g', kind: 'literal', options: { value: { list: [{ $oid: 'x' }] } } },
+      ];
+      const template = rowsToTemplate(rows);
+      expect(template.f).toEqual({ $literal: { a: { $oid: '507f1f77bcf86cd799439011' } } });
+      expect(template.g).toEqual({ list: [{ $oid: 'x' }] });
+    });
   });
 
   describe('round-trip: templateToRows(rowsToTemplate(rows)) preserves shape', () => {
@@ -281,6 +370,10 @@ describe('generateTemplate', () => {
         label: '$literal escaping a dollar-looking string',
         rows: [{ id: '1', name: 'note', kind: 'literal', options: { value: '$notAGenerator' } }],
       },
+      {
+        label: '$literal with a $-key nested below the top level (Fix 2 regression)',
+        rows: [{ id: '1', name: 'f', kind: 'literal', options: { value: { a: { $oid: '507f1f77bcf86cd799439011' } } } }],
+      },
     ];
 
     for (const { label, rows } of cases) {
@@ -301,6 +394,22 @@ describe('generateTemplate', () => {
         expect(rowsToTemplate(roundTripped!)).toEqual(template);
       });
     }
+
+    // Cross-layer invariant (review recommendation): `rowsToTemplate` hand-
+    // mirrors the backend's DSL parser (`src-tauri/src/db/generate.rs::parse_spec`)
+    // rather than sharing code with it — the same seam that let Fix 2's bug
+    // (a shallow-only `needsLiteralWrap`) through undetected by any prior
+    // test, since every prior fixture only had `$`-keys at the payload root.
+    // This drives every round-trip fixture's emitted template through a
+    // ported structural subset of `parse_spec` (see `assertAcceptedByGenerateDsl`
+    // above) so a future regression of this shape is caught mechanically
+    // instead of relying on a reviewer to spot it by inspection again.
+    it('every round-trip fixture template is accepted by the ported backend DSL shape check', () => {
+      for (const { label, rows } of cases) {
+        const template = rowsToTemplate(rows);
+        expect(() => assertAcceptedByGenerateDsl(template), label).not.toThrow();
+      }
+    });
   });
 
   describe('row factories produce representable rows', () => {

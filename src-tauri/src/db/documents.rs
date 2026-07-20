@@ -374,9 +374,17 @@ async fn finalize_import(
 /// is wasted work for a caller — like the generate task — that only ever
 /// inserts freshly generated documents and has no upsert/duplicate semantics
 /// to honor. `pub(crate)` so `db::generate` can call it directly.
+///
+/// `op_label` names the operation in the error message on failure (e.g.
+/// `"import"` for the import callers below, `"generate"` for
+/// `start_generate_task_impl`) — callers share this one insert loop but
+/// surface its failure directly as their task's error message, so a single
+/// hardcoded "Failed to import: …" would misdescribe a generate-task failure
+/// as an import failure.
 pub(crate) async fn insert_many_batched(
     coll: &mongodb::Collection<Document>,
     docs: Vec<Document>,
+    op_label: &str,
 ) -> Result<(), String> {
     for chunk in docs.chunks(IMPORT_BATCH_SIZE) {
         if chunk.is_empty() {
@@ -384,7 +392,7 @@ pub(crate) async fn insert_many_batched(
         }
         coll.insert_many(chunk.to_vec())
             .await
-            .map_err(|e| format!("Failed to import: {}", e))?;
+            .map_err(|e| format!("Failed to {}: {}", op_label, e))?;
     }
     Ok(())
 }
@@ -468,7 +476,7 @@ pub(crate) async fn write_imported_docs(
                 ));
             }
             let total = bson_docs.len() as u64;
-            insert_many_batched(coll, bson_docs).await?;
+            insert_many_batched(coll, bson_docs, "import").await?;
             Ok(ImportResult {
                 inserted: total,
                 updated: 0,
@@ -489,7 +497,7 @@ pub(crate) async fn write_imported_docs(
                 .collect();
             let inserted = to_insert.len() as u64;
             if !to_insert.is_empty() {
-                insert_many_batched(coll, to_insert).await?;
+                insert_many_batched(coll, to_insert, "import").await?;
             }
             Ok(ImportResult {
                 inserted,

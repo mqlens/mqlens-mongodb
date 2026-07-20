@@ -614,11 +614,14 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
 
   const effectiveCollection = collection || targetCollection.trim();
 
-  // `rows` mirrors `templateText` whenever it's non-null (both handlers below
-  // keep that invariant), so this is safe to compute from whichever mode is
-  // active — an empty `$pick` is invalid backend-side (`parse_pick`), so it
-  // gates both preview and Generate instead of only surfacing as a preview
-  // error after the confirm chain has already started.
+  // `rows` is `null` whenever `customTemplate` is true (both handlers below
+  // keep that invariant — `handleRawChange` nulls `rows` out the moment the
+  // raw text becomes unrepresentable, since the builder is unreachable in
+  // customTemplate state anyway) and otherwise mirrors `templateText`, so
+  // this is safe to compute from whichever mode is active — an empty
+  // `$pick` is invalid backend-side (`parse_pick`), so it gates both preview
+  // and Generate instead of only surfacing as a preview error after the
+  // confirm chain has already started.
   const emptyPickRow = rows ? findEmptyPickRow(rows) : null;
 
   // ---- builder ⇄ raw sync -------------------------------------------------
@@ -640,7 +643,14 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
     }
     const nextRows = templateToRows(parsed);
     if (nextRows === null) {
+      // Unrepresentable — null out `rows` too, not just the customTemplate
+      // flag. Leaving the previous (stale) rows in place would let
+      // `emptyPickRow` (computed from those stale rows below) block Generate
+      // or misroute the preview error for a template that has no empty pick
+      // at all; the builder is unreachable while customTemplate is true, so
+      // there's nothing that still needs `rows` to be non-null here.
       setCustomTemplate(true);
+      setRows(null);
     } else {
       setRows(nextRows);
       setCustomTemplate(false);
@@ -664,6 +674,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
       previewGen.current += 1;
       setPreviewError(`Invalid JSON: ${e?.message || 'syntax error'}`);
       setPreviewDocs([]);
+      setPreviewLoading(false);
       return;
     }
     void parsed;
@@ -673,6 +684,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
       previewGen.current += 1;
       setPreviewError(`"${emptyPickRow.name || 'array item'}" needs at least one value for $pick.`);
       setPreviewDocs([]);
+      setPreviewLoading(false);
       return;
     }
     const gen = (previewGen.current += 1);
@@ -718,11 +730,18 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
           ? `Count must be between 1 and ${MAX_COUNT}`
           : null;
 
-  const seedError = seedText.trim() !== '' && (!Number.isFinite(Number(seedText)) || seedText.trim().includes('.'))
-    ? 'Seed must be a whole number'
-    : null;
+  const seedNumForValidation = Number(seedText);
+  const seedError =
+    seedText.trim() === ''
+      ? null
+      : !Number.isFinite(seedNumForValidation) || seedText.trim().includes('.') || !Number.isSafeInteger(seedNumForValidation)
+        ? 'Seed must be a whole number'
+        : seedNumForValidation < 0
+          ? 'Seed must not be negative'
+          : null;
 
-  const canGenerate = !countError && !seedError && !!effectiveCollection && !running && !emptyPickRow;
+  const canGenerate =
+    !countError && !seedError && !!effectiveCollection && !running && !emptyPickRow && task?.status !== 'running';
 
   const handleGenerate = async () => {
     if (!canGenerate) return;
@@ -936,6 +955,11 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
             {emptyPickRow && (
               <span className="text-[10px] text-destructive" data-testid="generate-footer-empty-pick">
                 &ldquo;{emptyPickRow.name || 'array item'}&rdquo; needs at least one value for $pick.
+              </span>
+            )}
+            {task?.status === 'running' && (
+              <span className="text-[10px] text-muted-foreground" data-testid="generate-footer-run-in-progress">
+                A generate run is already in progress for this tab.
               </span>
             )}
             <Button

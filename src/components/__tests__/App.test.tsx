@@ -1062,6 +1062,53 @@ describe('App Component', () => {
     expect(within(tabStrip).getAllByText('Generate: customers')).toHaveLength(1);
   });
 
+  // Fix 4 regression: `handleRunGenerate` used to call `handleOpenTasksTab()`
+  // right after starting the run — copied one call too literally from
+  // `handleRunDump`/`handleRunRestore`, which have no in-tab progress UI of
+  // their own. GenerateView DOES render inline progress, so that focus
+  // switch used to yank the user to the Tasks tab exactly when the inline
+  // progress they were expecting to see would have appeared.
+  it('does not switch away from the generate tab when starting a run (#91)', async () => {
+    const runningTask = {
+      id: 'task-generate-focus',
+      kind: 'generate',
+      label: 'Generate → sales_db.customers',
+      status: 'running',
+      processed: 0,
+      total: 100,
+      message: 'Queued',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'infer_generate_template') return Promise.resolve('{"name": "$name"}');
+      if (cmd === 'preview_generated_documents') return Promise.resolve([]);
+      if (cmd === 'count_documents') return Promise.resolve(0);
+      if (cmd === 'start_generate_task') return Promise.resolve(runningTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([runningTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('generate-run-btn'));
+    await screen.findByTestId('dialog-confirm');
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await screen.findByTestId('generate-progress'); // the run's inline progress landed
+    // The Tasks tab was never focused — its content never mounted.
+    expect(screen.queryByTestId('task-manager')).not.toBeInTheDocument();
+    // The generate tab itself is still the one showing.
+    expect(screen.getByTestId('generate-view')).toBeInTheDocument();
+  });
+
   it('refreshes the source collection tab once its generate task completes (#91)', async () => {
     vi.useFakeTimers();
     try {
@@ -1192,10 +1239,9 @@ describe('App Component', () => {
       await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
       fireEvent.click(screen.getByTestId('dialog-confirm'));
       await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
-      // Starting the run focuses the Tasks tab (the dump/restore/import
-      // precedent) — switch back to the generate tab to observe its own
-      // inline progress section.
-      fireEvent.click(screen.getByText('Generate: customers'));
+      // Unlike dump/restore/import, starting a generate does NOT steal focus
+      // to the Tasks tab — GenerateView renders its own inline progress, so
+      // the generate tab (and this section) is already showing.
 
       taskStatus = 'completed';
       await vi.advanceTimersByTimeAsync(1000);
@@ -1266,9 +1312,8 @@ describe('App Component', () => {
       await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
       fireEvent.click(screen.getByTestId('dialog-confirm'));
       await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
-      // Starting the run focuses the Tasks tab (the dump/restore/import
-      // precedent) — switch back to confirm this tab's own inline progress.
-      fireEvent.click(screen.getByText('Generate: customers'));
+      // Unlike dump/restore/import, starting a generate does not switch away
+      // from the generate tab — its own inline progress is already visible.
       await vi.advanceTimersByTimeAsync(1000);
       await vi.waitFor(() => expect(screen.getByTestId('generate-progress')).toBeInTheDocument());
 

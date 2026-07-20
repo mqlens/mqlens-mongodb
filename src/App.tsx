@@ -1587,7 +1587,14 @@ function Workspace() {
         collection,
       });
       insertExportTasks([task]);
-      handleOpenTasksTab();
+      // Unlike `handleRunDump`/`handleRunRestore` (which have no in-tab
+      // progress UI, so switching to the Tasks tab is the only way to see
+      // anything happening), GenerateView renders its own inline
+      // `TaskProgress` for this tab's task — stealing focus to the Tasks
+      // tab here would yank the user away right as that inline progress
+      // appears. "View in Tasks" on that inline progress panel already
+      // covers discoverability, so this run intentionally does not call
+      // `handleOpenTasksTab()`.
       await loadExportTasks();
     } catch (err: any) {
       toast(`Generate failed to start: ${err?.message || err}`, 'error');

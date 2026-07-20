@@ -249,13 +249,31 @@ function arrayRow(name: string, inner: unknown): GenRow | null {
 
 /** Whether `value`, placed directly at a template leaf position, would be
  * re-interpreted as a generator control structure instead of passed through
- * verbatim — a `"$…"` string, or a plain object with any `$`-prefixed key.
- * Those need the explicit `{"$literal": …}` escape; everything else can be
- * emitted as-is (still parses identically — a plain nested object with no
- * `$` keys is `Spec::Object`, which generates every field literally anyway). */
+ * verbatim — a `"$…"` string, or a plain object with any `$`-prefixed key
+ * *anywhere* inside it (not just at its top level). Those need the explicit
+ * `{"$literal": …}` escape; everything else can be emitted as-is (still
+ * parses identically — a plain nested object with no `$` keys anywhere is
+ * `Spec::Object` all the way down, which generates every field literally
+ * anyway).
+ *
+ * The scan is deep for plain objects but does NOT recurse into arrays: a
+ * bare array is *always* literal passthrough in the DSL (only the
+ * `{"$array": …}` wrapper form is a generator — see `valueToRow`'s bare-array
+ * case above), so whatever a bare array contains, at any depth, is never
+ * reinterpreted and never needs wrapping. A shallow (top-level-only) check
+ * would miss `{"$literal": {"a": {"$oid": "..."}}}`: unwrapped, the backend
+ * would try to parse `{"a": {"$oid": "..."}}` as a nested spec and reject
+ * `$oid` as an unknown generator, silently corrupting a valid template. Deep
+ * scanning is preferred over marking such shapes unrepresentable (returning
+ * `null` from `templateToRows`) because it keeps every `$literal` payload
+ * — however deeply nested — round-trippable through the builder instead of
+ * force-locking the user into raw-JSON editing for a shape this module can
+ * otherwise represent perfectly well. */
 function needsLiteralWrap(value: unknown): boolean {
   if (typeof value === 'string') return value.startsWith('$');
-  if (isPlainObject(value)) return Object.keys(value).some((k) => k.startsWith('$'));
+  if (isPlainObject(value)) {
+    return Object.keys(value).some((k) => k.startsWith('$')) || Object.values(value).some(needsLiteralWrap);
+  }
   return false;
 }
 

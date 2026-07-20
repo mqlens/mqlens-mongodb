@@ -1380,9 +1380,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
             {/* #91: same shape gate as Validation Rules above (not
                 view/timeseries/system./gridfs bucket) — but, unlike Dump
-                below, NOT gated on `isMockConnection`: generation writes
-                through the mock connection's own insert path same as any
-                other collection, so mock connections keep this entry. */}
+                below, NOT gated on `isMockConnection`: a mock connection's
+                generate run VALIDATES the template/count without writing
+                anything (mock_db has no insert capability at all), so mock
+                connections keep this entry — it's just a dry run there. */}
             {collType !== 'view' && collType !== 'timeseries' && !collName.startsWith('system.') && !/\.(files|chunks)$/.test(collName) && (
               <ContextMenuItem
                 className={ctxItemClass}

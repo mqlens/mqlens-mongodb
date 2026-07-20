@@ -863,7 +863,7 @@ pub async fn start_generate_task_impl(
                 let coll = client
                     .database(&database)
                     .collection::<Document>(&collection);
-                if let Err(e) = crate::db::documents::insert_many_batched(&coll, batch).await {
+                if let Err(e) = crate::db::documents::insert_many_batched(&coll, batch, "insert").await {
                     run_error = Some(e);
                     break;
                 }
