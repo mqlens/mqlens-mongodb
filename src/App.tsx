@@ -71,6 +71,7 @@ import { ReconnectBanner } from './workspace/ReconnectBanner';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
+import { GenerateView } from './components/GenerateView';
 import { GridFsView } from './components/GridFsView';
 import { MonitoringView } from './components/MonitoringView';
 import { UserManagementView } from './components/UserManagementView';
@@ -90,12 +91,12 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight } from 'lucide-react';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2 } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate';
   connectionId: string;
   db: string;
   collection: string;
@@ -249,6 +250,8 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
       return <DatabaseZap size={size} className={className} />;
     case 'validation':
       return <ShieldCheck size={size} className={className} />;
+    case 'generate':
+      return <Wand2 size={size} className={className} />;
     default:
       return <FolderCode size={size} className={className} />;
   }
@@ -289,6 +292,8 @@ const tabLabelFor = (
       return `Restore: ${connectionName(tab.connectionId)}`;
     case 'validation':
       return `Validation: ${tab.collection}`;
+    case 'generate':
+      return `Generate: ${tab.collection || tab.db}`;
     default:
       return tab.collection;
   }
@@ -1448,6 +1453,32 @@ function Workspace() {
     }
     void loadMongoTools();
     void loadDumpDbTree(connectionId);
+  };
+
+  // #91: open a Generate Data tab — schema-seeded when opened on a specific
+  // collection, a starter template when opened on a database (Sidebar's
+  // database-row entry; GenerateView lets the user type a target collection
+  // in that case — Task 5).
+  const handleOpenGenerateTab = (connectionId: string, db: string, collection?: string) => {
+    const idParts = ['generate', connectionId, db, collection].filter((p): p is string => !!p);
+    const tabId = idParts.join('.');
+    if (!tabs.some(t => t.id === tabId)) {
+      const newTab: QueryTab = {
+        id: tabId,
+        type: 'generate',
+        connectionId,
+        db,
+        collection: collection ?? '',
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      };
+      setTabs(prev => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    } else {
+      dispatchWorkspace({ type: 'open_tab', tabId });
+    }
   };
 
   const handleOpenRestoreTab = (connectionId: string) => {
@@ -3284,6 +3315,13 @@ function Workspace() {
             onApplied={() => setCollectionMutationTrigger(prev => prev + 1)}
           />
         )}
+        {tab.type === 'generate' && (
+          <GenerateView
+            connectionId={tab.connectionId}
+            database={tab.db}
+            collection={tab.collection || undefined}
+          />
+        )}
         {tab.type === 'gridfs' && (
           <GridFsView
             connectionId={tab.connectionId}
@@ -3539,6 +3577,7 @@ function Workspace() {
           onOpenGridfs={handleOpenGridfsTab}
           onOpenDump={handleOpenDumpTab}
           onOpenRestore={handleOpenRestoreTab}
+          onOpenGenerate={handleOpenGenerateTab}
           collectionMutationTrigger={collectionMutationTrigger}
           onCollectionRenamed={handleCollectionRenamed}
           onDatabaseDropped={handleDatabaseDropped}

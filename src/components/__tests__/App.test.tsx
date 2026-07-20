@@ -83,7 +83,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onDatabaseRenamed, activeConnections }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, activeConnections }: any) => (
     <div data-testid="mock-sidebar">
       {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
           `activeConnections` prop for its "Connections" tree — lets tests
@@ -129,6 +129,18 @@ vi.mock('../Sidebar', () => ({
         onClick={() => onEditValidation && onEditValidation('conn-1', 'sales_db', 'customers')}
       >
         Validation Rules
+      </button>
+      <button
+        data-testid="open-generate-coll-btn"
+        onClick={() => onOpenGenerate && onOpenGenerate('conn-1', 'sales_db', 'customers')}
+      >
+        Generate Data (collection)
+      </button>
+      <button
+        data-testid="open-generate-db-btn"
+        onClick={() => onOpenGenerate && onOpenGenerate('conn-1', 'sales_db')}
+      >
+        Generate Data (database)
       </button>
     </div>
   ),
@@ -967,6 +979,76 @@ describe('App Component', () => {
       expect(opts).toBeTruthy();
       expect(opts.args).toMatchObject({ id: 'conn-1', database: 'sales_db', collection: 'customers' });
     });
+  });
+
+  it('opens the Generate Data tab from a collection context menu and infers the template (#91)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'infer_generate_template') {
+        return Promise.resolve('{\n  "name": "$name"\n}');
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+    // Tab-bar label (tabLabelFor) and the view's own header — both derived
+    // from the same tab, different text.
+    expect(screen.getByText('Generate: customers')).toBeInTheDocument();
+    expect(screen.getByText('Generate Data: sales_db.customers')).toBeInTheDocument();
+    await waitFor(() => {
+      const infer = calls.find((c) => c.cmd === 'infer_generate_template');
+      expect(infer).toBeTruthy();
+      expect(infer.args).toMatchObject({ id: 'conn-1', database: 'sales_db', collection: 'customers' });
+    });
+    expect(await screen.findByTestId('generate-template')).toHaveTextContent('"name": "$name"');
+  });
+
+  it('opens the Generate Data tab from a database context menu with a starter template, no inference call (#91)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-db-btn'));
+
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+    // No collection segment — both the tab label and the view header fall
+    // back to the bare database name.
+    expect(screen.getByText('Generate: sales_db')).toBeInTheDocument();
+    expect(screen.getByText('Generate Data: sales_db')).toBeInTheDocument();
+    expect(await screen.findByTestId('generate-template')).toHaveTextContent('$name');
+    expect(calls.some((c) => c.cmd === 'infer_generate_template')).toBe(false);
+  });
+
+  it('dedupes the Generate Data tab (collection) on a second open — same tab focused, not duplicated (#91)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'infer_generate_template') return Promise.resolve('{}');
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, within } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+
+    const tabStrip = screen.getByTestId('workspace-tab-strip');
+    expect(within(tabStrip).getAllByText('Generate: customers')).toHaveLength(1);
   });
 
   const managedStatusesFixture = [

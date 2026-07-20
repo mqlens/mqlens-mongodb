@@ -100,6 +100,7 @@ import {
   DatabaseBackup,
   DatabaseZap,
   ShieldCheck,
+  Wand2,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
@@ -194,6 +195,8 @@ interface SidebarProps {
   onOpenDump?: (connectionId: string, dbName?: string, collName?: string) => void;
   /** Open a Restore tab for the connection. */
   onOpenRestore?: (connectionId: string) => void;
+  /** Open a Generate Data tab scoped to a database (starter template) or a single collection (schema-seeded). */
+  onOpenGenerate?: (connectionId: string, dbName: string, collName?: string) => void;
   onCollectionRenamed?: (connectionId: string, dbName: string, oldName: string, newName: string) => void;
   onDatabaseDropped?: (connectionId: string, dbName: string) => void;
   onDatabaseRenamed?: (connectionId: string, oldName: string, newName: string) => void;
@@ -314,6 +317,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenGridfs,
   onOpenDump,
   onOpenRestore,
+  onOpenGenerate,
   onCollectionRenamed,
   onDatabaseDropped,
   onDatabaseRenamed,
@@ -1374,6 +1378,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span>Validation Rules</span>
               </ContextMenuItem>
             )}
+            {/* #91: same shape gate as Validation Rules above (not
+                view/timeseries/system./gridfs bucket) — but, unlike Dump
+                below, NOT gated on `isMockConnection`: generation writes
+                through the mock connection's own insert path same as any
+                other collection, so mock connections keep this entry. */}
+            {collType !== 'view' && collType !== 'timeseries' && !collName.startsWith('system.') && !/\.(files|chunks)$/.test(collName) && (
+              <ContextMenuItem
+                className={ctxItemClass}
+                data-testid={`ctx-generate-coll-${connId}-${dbName}-${collName}`}
+                onClick={() => onOpenGenerate?.(connId, dbName, collName)}
+              >
+                <Wand2 />
+                <span>Generate Data…</span>
+              </ContextMenuItem>
+            )}
             {!isMockConnection(connId) && (
               <ContextMenuItem
                 className={ctxItemClass}
@@ -1873,6 +1892,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <span>Dump (mongodump)…</span>
                               </ContextMenuItem>
                             )}
+                            {/* #91: mocks ALLOWED (unlike Dump above) — see the
+                                collection-row entry's comment for why. */}
+                            <ContextMenuItem
+                              className={ctxItemClass}
+                              data-testid={`ctx-generate-db-${conn.id}-${dbName}`}
+                              onClick={() => onOpenGenerate?.(conn.id, dbName)}
+                            >
+                              <Wand2 />
+                              <span>Generate Data…</span>
+                            </ContextMenuItem>
                             <ContextMenuSeparator />
                             <ContextMenuItem
                               className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
