@@ -2233,6 +2233,7 @@ mod tests {
             color_tag: None,
             ssh: None,
             mcp_enabled: false,
+            connection_mode: Default::default(),
         };
 
         // Save profile
@@ -2263,6 +2264,7 @@ mod tests {
                 },
             }),
             mcp_enabled: true,
+            connection_mode: crate::connections::ConnectionMode::ReadOnly,
         };
         profiles.push(profile2.clone());
         crate::connections::save_profiles_to_file(&test_file_path, &profiles)
@@ -2305,6 +2307,7 @@ mod tests {
             color_tag: None,
             ssh: None,
             mcp_enabled: true,
+            connection_mode: Default::default(),
         };
         let json = serde_json::to_string(&profile).expect("serialize");
         let round_tripped: ConnectionProfile = serde_json::from_str(&json).expect("deserialize");
@@ -2320,6 +2323,52 @@ mod tests {
         let legacy: ConnectionProfile = serde_json::from_str(legacy_json)
             .expect("old connections.json without mcp_enabled must still deserialize");
         assert_eq!(legacy.mcp_enabled, false, "legacy profiles must never be opted in by surprise");
+    }
+
+    // #188: connection_mode round-trips through plaintext (de)serialization,
+    // and old connections.json files written before the field existed must
+    // never opt a profile into a safeguard by surprise — they must
+    // deserialize as `Normal` (full read/write), same additive contract as
+    // `mcp_enabled` above.
+    #[test]
+    fn test_connection_profile_connection_mode_roundtrip_and_legacy_default() {
+        use crate::connections::{ConnectionMode, ConnectionProfile};
+
+        for mode in [ConnectionMode::Normal, ConnectionMode::ReadOnly, ConnectionMode::ConfirmDestructive] {
+            let profile = ConnectionProfile {
+                id: "p1".to_string(),
+                name: "Prod".to_string(),
+                uri: "mongodb://localhost:27017".to_string(),
+                color_tag: None,
+                ssh: None,
+                mcp_enabled: false,
+                connection_mode: mode,
+            };
+            let json = serde_json::to_string(&profile).expect("serialize");
+            let round_tripped: ConnectionProfile = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(round_tripped, profile);
+            assert_eq!(round_tripped.connection_mode, mode);
+        }
+
+        // Wire format sanity: the enum serializes as the spec's snake_case strings.
+        let json = serde_json::to_string(&ConnectionMode::ReadOnly).unwrap();
+        assert_eq!(json, "\"read_only\"");
+        let json = serde_json::to_string(&ConnectionMode::ConfirmDestructive).unwrap();
+        assert_eq!(json, "\"confirm_destructive\"");
+
+        // A JSON literal predating the field (no "connection_mode" key at all).
+        let legacy_json = r#"{
+            "id": "legacy-1",
+            "name": "Legacy DB",
+            "uri": "mongodb://legacy:27017"
+        }"#;
+        let legacy: ConnectionProfile = serde_json::from_str(legacy_json)
+            .expect("old connections.json without connection_mode must still deserialize");
+        assert_eq!(
+            legacy.connection_mode,
+            ConnectionMode::Normal,
+            "legacy profiles must never be safeguarded by surprise"
+        );
     }
 
     #[tokio::test]
@@ -2747,6 +2796,7 @@ mod tests {
             color_tag: None,
             ssh: None,
             mcp_enabled: false,
+            connection_mode: Default::default(),
         }];
         save_profiles_encrypted(&prof_path, &key, &profiles).unwrap();
         // On-disk bytes must not contain the plaintext password.
@@ -2795,6 +2845,7 @@ mod tests {
             color_tag: None,
             ssh: None,
             mcp_enabled: false,
+            connection_mode: Default::default(),
         }];
         save_profiles_to_file(&pt_profiles, &profiles).unwrap();
         assert!(pt_profiles.exists());
@@ -3025,6 +3076,7 @@ mod tests {
             color_tag: None,
             ssh: None,
             mcp_enabled: false,
+            connection_mode: Default::default(),
         }];
         save_profiles_encrypted(&enc_profiles, &old_key, &profiles).unwrap();
 
@@ -3733,42 +3785,58 @@ mod tests {
     #[test]
     fn set_connection_meta_inserts_and_overwrites() {
         let state = AppState::new();
-        set_connection_meta_impl(&state, "conn-1", "profile-a", "Prod Cluster", false).unwrap();
+        set_connection_meta_impl(&state, "conn-1", "profile-a", "Prod Cluster", false, crate::connections::ConnectionMode::ReadOnly).unwrap();
         {
             let meta = state.connection_meta.lock().unwrap();
             let m = meta.get("conn-1").expect("meta inserted");
             assert_eq!(m.profile_id, "profile-a");
             assert_eq!(m.name, "Prod Cluster");
+            assert_eq!(m.mode, crate::connections::ConnectionMode::ReadOnly);
         }
 
         // Re-registering the same id (e.g. a reconnect) overwrites in place
-        // rather than accumulating a second entry.
-        set_connection_meta_impl(&state, "conn-1", "profile-b", "Renamed", false).unwrap();
+        // rather than accumulating a second entry — including the mode, in
+        // case the profile's safeguard setting changed between connects.
+        set_connection_meta_impl(&state, "conn-1", "profile-b", "Renamed", false, crate::connections::ConnectionMode::Normal).unwrap();
         let meta = state.connection_meta.lock().unwrap();
         assert_eq!(meta.len(), 1, "same id must overwrite, not duplicate");
         let m = meta.get("conn-1").unwrap();
         assert_eq!(m.profile_id, "profile-b");
         assert_eq!(m.name, "Renamed");
+        assert_eq!(m.mode, crate::connections::ConnectionMode::Normal);
+    }
+
+    // #188: `connection_list_impl` must surface a registered mode through to
+    // the `ConnectionEntry` the frontend reads — the banner/badge (Task 5)
+    // depend on this, not on re-deriving mode from the profile store.
+    #[test]
+    fn connection_list_impl_surfaces_the_registered_mode() {
+        let state = AppState::new();
+        set_connection_meta_impl(&state, "conn-1", "profile-a", "Prod Cluster", false, crate::connections::ConnectionMode::ConfirmDestructive).unwrap();
+
+        let list = connection_list_impl(&state).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].mode, crate::connections::ConnectionMode::ConfirmDestructive);
     }
 
     #[test]
     fn connection_meta_never_carries_a_uri() {
         // Regression guard for the explicit constraint: event payloads must
         // never carry a connection string. `ConnectionMeta`/`ConnectionEntry`
-        // only ever expose `profileId`/`name` — this test would fail to
-        // compile (not just fail at runtime) the moment a `uri` field is
+        // only ever expose `profileId`/`name`/`mode` — this test would fail
+        // to compile (not just fail at runtime) the moment a `uri` field is
         // added, since the struct literal below is exhaustive.
-        let meta = crate::ConnectionMeta { profile_id: "p".into(), name: "n".into(), via_mcp: false };
-        let entry = crate::ConnectionEntry { id: "c".into(), profile_id: meta.profile_id.clone(), name: meta.name.clone(), via_mcp: meta.via_mcp };
+        let meta = crate::ConnectionMeta { profile_id: "p".into(), name: "n".into(), via_mcp: false, mode: Default::default() };
+        let entry = crate::ConnectionEntry { id: "c".into(), profile_id: meta.profile_id.clone(), name: meta.name.clone(), via_mcp: meta.via_mcp, mode: meta.mode };
         assert_eq!(entry.id, "c");
     }
 
     #[test]
     fn connection_list_is_sorted_by_id_regardless_of_insertion_order() {
         let state = AppState::new();
-        set_connection_meta_impl(&state, "conn-c", "p3", "Third", false).unwrap();
-        set_connection_meta_impl(&state, "conn-a", "p1", "First", false).unwrap();
-        set_connection_meta_impl(&state, "conn-b", "p2", "Second", false).unwrap();
+        set_connection_meta_impl(&state, "conn-c", "p3", "Third", false, Default::default()).unwrap();
+        set_connection_meta_impl(&state, "conn-a", "p1", "First", false, Default::default()).unwrap();
+        set_connection_meta_impl(&state, "conn-b", "p2", "Second", false, Default::default()).unwrap();
 
         let list = connection_list_impl(&state).unwrap();
         let ids: Vec<&str> = list.iter().map(|e| e.id.as_str()).collect();
@@ -3792,7 +3860,7 @@ mod tests {
         let conn_id = connect_db_impl(&state, "mongodb://mock", None)
             .await
             .expect("mock connect");
-        set_connection_meta_impl(&state, &conn_id, "profile-a", "Mock Conn", false).unwrap();
+        set_connection_meta_impl(&state, &conn_id, "profile-a", "Mock Conn", false, Default::default()).unwrap();
         assert!(state.connection_meta.lock().unwrap().contains_key(&conn_id));
 
         disconnect_db_impl(&state, &conn_id)

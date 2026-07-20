@@ -26,6 +26,16 @@ pub struct ConnectionMeta {
     /// one from a partial literal (`..Default::default()`-style).
     #[serde(default)]
     pub via_mcp: bool,
+    /// Read-only / confirm-destructive production safeguard (#188),
+    /// registered at connect time from the profile's `connection_mode`. The
+    /// central write guard (`write_guard::guard_writable`) reads this to
+    /// decide whether a mutating command may proceed — never re-derives it
+    /// from the profile, so a live connection's guard behavior can't drift
+    /// out of sync with what was true when it was connected. `#[serde(default)]`
+    /// for the same reason as `via_mcp`: readable against nothing on-disk,
+    /// and matters for any caller that constructs one from a partial literal.
+    #[serde(default)]
+    pub mode: crate::connections::ConnectionMode,
 }
 
 /// One entry of the `connections-changed` payload's `connections` list —
@@ -41,6 +51,9 @@ pub struct ConnectionEntry {
     /// Mirrors `ConnectionMeta::via_mcp` -- surfaced to the frontend so the
     /// sidebar can badge agent-initiated connections (#98 Task 4).
     pub via_mcp: bool,
+    /// Mirrors `ConnectionMeta::mode` -- surfaced to the frontend for the
+    /// read-only/confirm-destructive banner and sidebar badge (#188).
+    pub mode: crate::connections::ConnectionMode,
 }
 
 /// The `connections-changed` broadcast payload: the full current connection

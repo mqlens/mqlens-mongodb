@@ -126,6 +126,8 @@ export interface ConnectionEntry {
   name: string;
   /** True iff this connection was opened by the embedded MCP server's `connect` tool rather than a human (#98 Task 4). */
   viaMcp: boolean;
+  /** Read-only / confirm-destructive production safeguard (#188), registered at connect time from the profile's `connection_mode`. */
+  mode?: 'normal' | 'read_only' | 'confirm_destructive';
 }
 export interface ConnectionsChangedPayload {
   connections: ConnectionEntry[];
@@ -168,9 +170,19 @@ export async function connectionList(): Promise<ConnectionEntry[]> {
  * call would just re-broadcast unchanged data. Same fire-and-forget contract
  * as `workspaceApply`: never throws, failures are logged and dropped rather
  * than blocking the connect flow that shadows it.
+ *
+ * `mode` (#188) is the connecting profile's `connection_mode` at the moment
+ * of connect — the backend command requires it, so every caller must supply
+ * it (defaulting to `'normal'` covers a caller that only has an id/name to
+ * re-announce, e.g. the self-heal path, and never had a profile in hand).
  */
-export function setConnectionMeta(id: string, profileId: string, name: string): void {
-  invoke('set_connection_meta', { id, profileId, name }).catch((err) => {
+export function setConnectionMeta(
+  id: string,
+  profileId: string,
+  name: string,
+  mode: 'normal' | 'read_only' | 'confirm_destructive' = 'normal'
+): void {
+  invoke('set_connection_meta', { id, profileId, name, mode }).catch((err) => {
     console.warn('set_connection_meta failed', err);
   });
 }

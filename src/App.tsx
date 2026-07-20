@@ -176,6 +176,14 @@ interface ActiveConnection {
   color_tag?: string;
   /** True iff opened by the embedded MCP server's `connect` tool rather than a human (#98 Task 4). */
   viaMcp?: boolean;
+  /**
+   * Read-only / confirm-destructive production safeguard (#188), captured
+   * at connect time. Type-only for now — populating this from
+   * `connections-changed`/`connection_list` and rendering the banner off it
+   * is Task 5; this field just needs to exist so that wiring compiles
+   * against a stable shape.
+   */
+  mode?: 'normal' | 'read_only' | 'confirm_destructive';
 }
 
 /** Extract the auth username from a MongoDB connection URI; '' when there are no credentials. */
@@ -781,7 +789,7 @@ function Workspace() {
       addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
       // Announce this fresh id to every other window (Phase 3 Task 6) — see
       // `setConnectionMeta`'s doc comment for why every connect path calls it.
-      setConnectionMeta(id, profile.id, profile.name);
+      setConnectionMeta(id, profile.id, profile.name, profile.connection_mode ?? 'normal');
       // Clear any ReconnectBanner this profile still has showing (#97 phase
       // 2 final review Fix 1) — see `rebindProfileTabs`'s doc comment.
       rebindProfileTabs(profile.id, id);
@@ -2752,7 +2760,7 @@ function Workspace() {
         for (const local of activeConnectionsRef.current) {
           if (liveConnectionIds.has(local.id)) continue;
           if (!seenConnectionIdsRef.current.has(local.id)) {
-            setConnectionMeta(local.id, local.profileId, local.name);
+            setConnectionMeta(local.id, local.profileId, local.name, local.mode ?? 'normal');
             continue;
           }
           setActiveConnections((prev) => prev.filter((c) => c.id !== local.id));
@@ -2817,7 +2825,7 @@ function Workspace() {
         // see `setConnectionMeta`'s doc comment. Deliberately NOT called on
         // the `existing` (reuse) branch above: that id's meta was already
         // set the first time it connected.
-        setConnectionMeta(newId, profile.id, profileName);
+        setConnectionMeta(newId, profile.id, profileName, profile.connection_mode ?? 'normal');
       }
 
       // Captured before any state updates below — `tabs`/`layout` in this
@@ -3735,11 +3743,11 @@ function Workspace() {
           <ConnectionManager
             isOpen={isConnectionModalOpen}
             onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
-            onConnect={(id, name, uri, profileId, colorTag) => {
+            onConnect={(id, name, uri, profileId, colorTag, connectionMode) => {
               addActiveConnection(id, name, uri, profileId, colorTag ?? undefined);
               // Announce this fresh id to every other window (Phase 3 Task 6)
               // — see `setConnectionMeta`'s doc comment.
-              setConnectionMeta(id, profileId, name);
+              setConnectionMeta(id, profileId, name, connectionMode ?? 'normal');
               // Clear any ReconnectBanner this profile still has showing
               // (#97 phase 2 final review Fix 1) — see `rebindProfileTabs`'s
               // doc comment.

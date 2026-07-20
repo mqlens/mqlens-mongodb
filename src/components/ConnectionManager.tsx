@@ -61,6 +61,9 @@ export type SshConfig = {
     | { type: 'agent' };
 };
 
+/** Mirrors backend `connections::ConnectionMode` (#188). */
+export type ConnectionMode = 'normal' | 'read_only' | 'confirm_destructive';
+
 interface ConnectionProfile {
   id: string;
   name: string;
@@ -69,12 +72,14 @@ interface ConnectionProfile {
   ssh?: SshConfig | null;
   /** Expose this profile to MCP agents. Mirrors backend `ConnectionProfile::mcp_enabled`. */
   mcp_enabled?: boolean;
+  /** Read-only / confirm-destructive production safeguard. Mirrors backend `ConnectionProfile::connection_mode`. */
+  connection_mode?: ConnectionMode;
 }
 
 interface ConnectionManagerProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnect: (id: string, name: string, uri: string, profileId: string, colorTag?: string | null) => void;
+  onConnect: (id: string, name: string, uri: string, profileId: string, colorTag?: string | null, connectionMode?: ConnectionMode) => void;
   activeConnections?: { id: string; profileId: string; name: string; uri: string }[];
 }
 
@@ -132,7 +137,15 @@ const BLANK_CONN = {
   folder: '',
   colorTag: '',
   mcpEnabled: false,
+  connectionMode: 'normal' as ConnectionMode,
 };
+
+/** Connection mode editor options (#188 Task 1) — segmented control in the server panel. */
+const CONNECTION_MODE_OPTIONS: { value: ConnectionMode; label: string; description: string }[] = [
+  { value: 'normal', label: 'Normal', description: 'Full read/write' },
+  { value: 'read_only', label: 'Read-only', description: 'Blocks all writes' },
+  { value: 'confirm_destructive', label: 'Confirm destructive', description: 'Destructive ops need typed confirmation' },
+];
 
 const sidebarPanelClass =
   'flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar/40 text-sidebar-foreground';
@@ -528,6 +541,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       folder: profileFolderMap[profile.id] || '',
       colorTag: profile.color_tag || '',
       mcpEnabled: profile.mcp_enabled ?? false,
+      connectionMode: profile.connection_mode ?? 'normal',
       ...sshFields,
     });
 
@@ -559,6 +573,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       // is unaffected and keeps mapping `profile.mcp_enabled` as-is; this
       // reset is specific to the duplicate-populate path.
       mcpEnabled: false,
+      // Opposite call from `mcpEnabled` above (#188 Task 1, adjudicated):
+      // a read-only/confirm-destructive safeguard is exactly the kind of
+      // thing that should survive duplication rather than reset — the new
+      // profile is presumably still pointed at the same sensitive
+      // environment (e.g. "prod (copy for testing a filter)"), and
+      // silently dropping the safeguard back to unguarded `normal` would
+      // be the surprising outcome here, not the safe one.
+      connectionMode: profile.connection_mode ?? 'normal',
     });
     setError(null);
     setTestResult(null);
@@ -618,6 +640,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         ? normalizeHexColor(editorState.colorTag) ?? editorState.colorTag
         : null,
       mcp_enabled: editorState.mcpEnabled,
+      connection_mode: editorState.connectionMode,
     };
 
     setLoading(true);
@@ -680,7 +703,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     try {
       const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-      onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
+      onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, profile.connection_mode ?? 'normal');
     } catch (err: any) {
       setError(String(err));
     } finally {
@@ -1457,6 +1480,28 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         />
                       </div>
                     )}
+                  </div>
+
+                  <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                    <Label className="text-ui-xs">Connection mode</Label>
+                    <div className="flex flex-col gap-1.5" role="group" aria-label="Connection mode">
+                      {CONNECTION_MODE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          data-testid={`connection-mode-${opt.value}`}
+                          aria-pressed={editorState.connectionMode === opt.value}
+                          className={cn(
+                            'flex flex-col items-start gap-0.5 rounded-md border border-border px-2.5 py-1.5 text-left transition-colors hover:border-primary/50 hover:bg-accent',
+                            editorState.connectionMode === opt.value && 'border-primary bg-accent ring-1 ring-primary',
+                          )}
+                          onClick={() => setEditorState((prev) => ({ ...prev, connectionMode: opt.value }))}
+                        >
+                          <span className="text-[11px] font-medium">{opt.label}</span>
+                          <span className="text-[10.5px] leading-relaxed text-muted-foreground">{opt.description}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-2 border-t border-border pt-2.5">

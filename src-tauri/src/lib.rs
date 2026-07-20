@@ -571,9 +571,10 @@ pub fn set_connection_meta_impl(
     profile_id: &str,
     name: &str,
     via_mcp: bool,
+    mode: connections::ConnectionMode,
 ) -> Result<(), String> {
     let mut meta = state.connection_meta.lock_safe()?;
-    meta.insert(id.to_string(), ConnectionMeta { profile_id: profile_id.to_string(), name: name.to_string(), via_mcp });
+    meta.insert(id.to_string(), ConnectionMeta { profile_id: profile_id.to_string(), name: name.to_string(), via_mcp, mode });
     Ok(())
 }
 
@@ -585,7 +586,7 @@ pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, St
     let meta = state.connection_meta.lock_safe()?;
     let mut list: Vec<ConnectionEntry> = meta
         .iter()
-        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp })
+        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp, mode: m.mode })
         .collect();
     list.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(list)
@@ -993,12 +994,16 @@ async fn set_connection_meta(
     id: String,
     profile_id: String,
     name: String,
+    mode: connections::ConnectionMode,
 ) -> Result<(), String> {
     use tauri::Emitter;
     // Frontend-initiated (sidebar/Connection Manager/quick-connect) -- never
     // an MCP agent connection, which flows through `mcp_tools::connect_impl`
-    // instead and passes `via_mcp: true` directly.
-    set_connection_meta_impl(&state, &id, &profile_id, &name, false)?;
+    // instead and passes `via_mcp: true` directly. `mode` is the profile's
+    // `connection_mode` at the moment it was connected (#188) -- the
+    // frontend has the profile it just connected with, so it supplies this
+    // rather than the backend re-reading the (encrypted) profile store.
+    set_connection_meta_impl(&state, &id, &profile_id, &name, false, mode)?;
     let connections = connection_list_impl(&state)?;
     // Broadcast is best-effort: a window that misses this event picks up
     // current connection metadata the next time it connects or calls

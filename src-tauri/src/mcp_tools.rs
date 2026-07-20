@@ -204,7 +204,7 @@ pub async fn connect_impl(state: &AppState, profiles_path: &Path, profile_id: &s
         .ok_or_else(|| PROFILE_NOT_FOUND.to_string())?;
 
     let connection_id = crate::connect_db_impl(state, &profile.uri, profile.ssh.as_ref()).await?;
-    crate::set_connection_meta_impl(state, &connection_id, &profile.id, &profile.name, true)?;
+    crate::set_connection_meta_impl(state, &connection_id, &profile.id, &profile.name, true, profile.connection_mode)?;
     state.mcp.lock_safe()?.session_connections.insert(connection_id.clone());
     Ok(connection_id)
 }
@@ -820,7 +820,15 @@ mod tests {
     }
 
     fn profile(id: &str, name: &str, mcp_enabled: bool) -> ConnectionProfile {
-        ConnectionProfile { id: id.to_string(), name: name.to_string(), uri: "mongodb://mock".to_string(), color_tag: None, ssh: None, mcp_enabled }
+        ConnectionProfile {
+            id: id.to_string(),
+            name: name.to_string(),
+            uri: "mongodb://mock".to_string(),
+            color_tag: None,
+            ssh: None,
+            mcp_enabled,
+            connection_mode: Default::default(),
+        }
     }
 
     fn write_profiles(path: &Path, profiles: &[ConnectionProfile]) {
@@ -928,8 +936,8 @@ mod tests {
         let path = tmp_profiles_path("list-connections.enc");
         write_profiles(&path, &[profile("p1", "In", true), profile("p2", "Out", false)]);
 
-        crate::set_connection_meta_impl(&state, "c1", "p1", "In Conn", true).unwrap();
-        crate::set_connection_meta_impl(&state, "c2", "p2", "Out Conn", false).unwrap();
+        crate::set_connection_meta_impl(&state, "c1", "p1", "In Conn", true, Default::default()).unwrap();
+        crate::set_connection_meta_impl(&state, "c2", "p2", "Out Conn", false, Default::default()).unwrap();
 
         let out = list_connections_impl(&state, &path).unwrap();
         assert_eq!(out.len(), 1);
@@ -969,6 +977,35 @@ mod tests {
         assert!(state.mcp.lock().unwrap().session_connections.contains(&id));
     }
 
+    // #188: `connect_impl` must carry the profile's `connection_mode` into
+    // `ConnectionMeta` verbatim, not silently drop to `Normal` -- the write
+    // guard reads it straight off the meta, so an MCP agent connecting to a
+    // read-only-tagged profile has to inherit that guard exactly like a
+    // human's `set_connection_meta` call would.
+    #[tokio::test]
+    async fn connect_impl_propagates_the_profiles_connection_mode_into_meta() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("connect-mode.enc");
+        write_profiles(
+            &path,
+            &[ConnectionProfile {
+                id: "p1".to_string(),
+                name: "Prod".to_string(),
+                uri: "mongodb://mock".to_string(),
+                color_tag: None,
+                ssh: None,
+                mcp_enabled: true,
+                connection_mode: crate::connections::ConnectionMode::ReadOnly,
+            }],
+        );
+
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        let meta = state.connection_meta.lock().unwrap().get(&id).cloned().unwrap();
+        assert_eq!(meta.mode, crate::connections::ConnectionMode::ReadOnly);
+    }
+
     #[tokio::test]
     async fn disconnect_only_allows_ids_this_mcp_session_itself_connected() {
         let state = AppState::new();
@@ -981,7 +1018,7 @@ mod tests {
         // `disconnect` must still refuse it: it never went through
         // `connect_impl`, so it's not in `session_connections`.
         let human_id = crate::connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
-        crate::set_connection_meta_impl(&state, &human_id, "p1", "Human", false).unwrap();
+        crate::set_connection_meta_impl(&state, &human_id, "p1", "Human", false, Default::default()).unwrap();
 
         let err = disconnect_impl(&state, &human_id).await.unwrap_err();
         assert_eq!(err, CONNECTION_NOT_FOUND);
@@ -1034,7 +1071,7 @@ mod tests {
 
         let id_in = connect_impl(&state, &path, "p1").await.unwrap();
         let id_out = crate::connect_db_impl(&state, "mongodb://mock", None).await.unwrap();
-        crate::set_connection_meta_impl(&state, &id_out, "p2", "Out", false).unwrap();
+        crate::set_connection_meta_impl(&state, &id_out, "p2", "Out", false, Default::default()).unwrap();
 
         assert!(require_mcp_connection(&state, &path, &id_in).is_ok());
         let err_out = require_mcp_connection(&state, &path, &id_out).unwrap_err();

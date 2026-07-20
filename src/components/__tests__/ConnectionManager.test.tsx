@@ -566,6 +566,7 @@ describe('ConnectionManager Component', () => {
         ssh: null,
         color_tag: null,
         mcp_enabled: false,
+        connection_mode: 'normal',
       });
       // The nested modal should be closed
       expect(screen.queryByText('New Connection')).not.toBeInTheDocument();
@@ -754,7 +755,7 @@ describe('ConnectionManager Component', () => {
 
     // Verify it called connect_db and passed connection ID to callback
     await waitFor(() => {
-      expect(handleConnect).toHaveBeenCalledWith('conn-abc-123', 'Mock DB 1', 'mongodb://mock', 'profile-1', undefined);
+      expect(handleConnect).toHaveBeenCalledWith('conn-abc-123', 'Mock DB 1', 'mongodb://mock', 'profile-1', undefined, 'normal');
     });
   });
 
@@ -1075,6 +1076,116 @@ describe('MCP opt-in flag (#98)', () => {
     fireEvent.click(screen.getAllByText('Agent DB')[0]);
     fireEvent.click(screen.getByRole('button', { name: /^duplicate$/i }));
     expect(screen.getByLabelText(/expose to mcp agents/i)).not.toBeChecked();
+  });
+});
+
+describe('Connection mode segmented control (#188 Task 1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('renders the three connection mode options, defaulting a new profile to Normal', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+
+    expect(screen.getByTestId('connection-mode-normal')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('connection-mode-read_only')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('connection-mode-confirm_destructive')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('selecting a mode updates the segmented control selection', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+
+    fireEvent.click(screen.getByTestId('connection-mode-read_only'));
+
+    expect(screen.getByTestId('connection-mode-read_only')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('connection-mode-normal')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('saving with "Confirm destructive" selected persists connection_mode', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Prod' } });
+    await pickSelectOption('topology-select', /full uri string only/i);
+    fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: 'mongodb://prod' } });
+
+    fireEvent.click(screen.getByTestId('connection-mode-confirm_destructive'));
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(savedProfile).toMatchObject({
+        name: 'Prod',
+        uri: 'mongodb://prod',
+        connection_mode: 'confirm_destructive',
+      });
+    });
+  });
+
+  it('editing a profile with a mode shows it selected in the segmented control', async () => {
+    const roProfile = { id: 'p-ro', name: 'Read Only DB', uri: 'mongodb://ro:27017', connection_mode: 'read_only' };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([roProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await waitFor(() => expect(screen.getAllByText('Read Only DB')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Read Only DB')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByTestId('connection-mode-read_only')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('editing a legacy profile without connection_mode defaults the segmented control to Normal', async () => {
+    const legacyProfile = { id: 'p-legacy', name: 'Legacy', uri: 'mongodb://legacy:27017' };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([legacyProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await waitFor(() => expect(screen.getAllByText('Legacy')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Legacy')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByTestId('connection-mode-normal')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('duplicating a read-only profile inherits its connection mode (opposite of mcpEnabled)', async () => {
+    const roProfile = { id: 'p-ro', name: 'Prod', uri: 'mongodb://prod:27017', connection_mode: 'read_only' };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([roProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await waitFor(() => expect(screen.getAllByText('Prod')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Prod')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^duplicate$/i }));
+
+    expect(screen.getByTestId('connection-mode-read_only')).toHaveAttribute('aria-pressed', 'true');
   });
 });
 
