@@ -1007,7 +1007,10 @@ describe('App Component', () => {
       expect(infer).toBeTruthy();
       expect(infer.args).toMatchObject({ id: 'conn-1', database: 'sales_db', collection: 'customers' });
     });
-    expect(await screen.findByTestId('generate-template')).toHaveTextContent('"name": "$name"');
+    // Switch to the raw editor to confirm the inferred template content
+    // (rather than the builder-decoded rows) made it into the view.
+    fireEvent.click(screen.getByTestId('generate-mode-raw'));
+    expect(await screen.findByTestId('generate-raw-editor')).toHaveValue('{\n  "name": "$name"\n}');
   });
 
   it('opens the Generate Data tab from a database context menu with a starter template, no inference call (#91)', async () => {
@@ -1028,7 +1031,9 @@ describe('App Component', () => {
     // back to the bare database name.
     expect(screen.getByText('Generate: sales_db')).toBeInTheDocument();
     expect(screen.getByText('Generate Data: sales_db')).toBeInTheDocument();
-    expect(await screen.findByTestId('generate-template')).toHaveTextContent('$name');
+    fireEvent.click(screen.getByTestId('generate-mode-raw'));
+    const editor = await screen.findByTestId('generate-raw-editor');
+    expect((editor as HTMLTextAreaElement).value).toContain('$name');
     expect(calls.some((c) => c.cmd === 'infer_generate_template')).toBe(false);
   });
 
@@ -1049,6 +1054,84 @@ describe('App Component', () => {
 
     const tabStrip = screen.getByTestId('workspace-tab-strip');
     expect(within(tabStrip).getAllByText('Generate: customers')).toHaveLength(1);
+  });
+
+  it('refreshes the source collection tab once its generate task completes (#91)', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-generate-refresh',
+        kind: 'generate',
+        label: 'Generate → sales_db.customers',
+        status: 'running',
+        processed: 0,
+        total: 100,
+        message: 'Queued',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      let taskStatus = 'running';
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'infer_generate_template') {
+          return Promise.resolve('{"name": "$name"}');
+        }
+        if (cmd === 'preview_generated_documents') {
+          return Promise.resolve([]);
+        }
+        if (cmd === 'count_documents') {
+          return Promise.resolve(0);
+        }
+        if (cmd === 'start_generate_task') {
+          return Promise.resolve(runningTask);
+        }
+        if (cmd === 'list_export_tasks') {
+          return Promise.resolve([{ ...runningTask, status: taskStatus }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500); // let the inferred template + first preview settle
+
+      fireEvent.click(screen.getByTestId('generate-run-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
+
+      const execCallsBefore = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+
+      // The task completes; the next poll tick should notice and re-run the
+      // source collection tab's query — same watcher as the import case,
+      // generalized to `task.kind === 'generate'`.
+      taskStatus = 'completed';
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await vi.waitFor(() => {
+        const execCallsAfter = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+        expect(execCallsAfter).toBeGreaterThan(execCallsBefore);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   const managedStatusesFixture = [

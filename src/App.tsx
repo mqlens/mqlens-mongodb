@@ -868,6 +868,11 @@ function Workspace() {
   const pendingImportRefreshRef = React.useRef(
     new Map<string, { connectionId: string; db: string; collection: string }>()
   );
+  // #91: the generate task id running for a given `generate` tab, so the
+  // rendered GenerateView instance can find its own `task` in `exportTasks`
+  // (TaskInfo carries no tab/connection/db/collection fields to match on —
+  // same reasoning as pendingImportRefreshRef above).
+  const generateTaskIdsRef = React.useRef(new Map<string, string>());
   // Bumped on every optimistic task insert below. A list_export_tasks response
   // requested BEFORE a start_*_task registered could otherwise resolve AFTER the
   // optimistic insert and clobber it for a whole poll cycle — so a load only
@@ -1534,6 +1539,41 @@ function Workspace() {
       await loadExportTasks();
     } catch (err: any) {
       toast(`Restore failed to start: ${err?.message || err}`, 'error');
+    }
+  };
+
+  // #91: start a background generate run (mirrors handleRunDump). `collection`
+  // is GenerateView's resolved target — for a collection-scoped tab this is
+  // just `tab.collection` handed back; for a database-scoped tab (opened
+  // with no collection) it's the name the user typed into GenerateView's own
+  // "Target collection" field, since `tab.collection` is empty in that case.
+  const handleRunGenerate = async (
+    tab: QueryTab,
+    template: string,
+    count: number,
+    seed: number | undefined,
+    collection: string
+  ) => {
+    try {
+      const task = await invoke<ExportTaskInfo>('start_generate_task', {
+        id: tab.connectionId,
+        database: tab.db,
+        collection,
+        template,
+        count,
+        seed: seed ?? null,
+      });
+      generateTaskIdsRef.current.set(tab.id, task.id);
+      pendingImportRefreshRef.current.set(task.id, {
+        connectionId: tab.connectionId,
+        db: tab.db,
+        collection,
+      });
+      insertExportTasks([task]);
+      handleOpenTasksTab();
+      await loadExportTasks();
+    } catch (err: any) {
+      toast(`Generate failed to start: ${err?.message || err}`, 'error');
     }
   };
 
@@ -2768,14 +2808,15 @@ function Workspace() {
     }
   };
 
-  // When a tracked import task (started from the Import tab) is observed
-  // completed by the task poll, refresh the matching open collection tab so
-  // newly-imported documents show up without a manual re-run.
+  // When a tracked import OR generate task (started from the Import tab, or
+  // #91's Generate tab) is observed completed by the task poll, refresh the
+  // matching open collection tab so newly-written documents show up without
+  // a manual re-run.
   useEffect(() => {
     const pending = pendingImportRefreshRef.current;
     if (pending.size === 0) return;
     for (const task of exportTasks) {
-      if (task.kind !== 'import' || task.status !== 'completed') continue;
+      if ((task.kind !== 'import' && task.kind !== 'generate') || task.status !== 'completed') continue;
       const info = pending.get(task.id);
       if (!info) continue;
       pending.delete(task.id);
@@ -3317,9 +3358,17 @@ function Workspace() {
         )}
         {tab.type === 'generate' && (
           <GenerateView
+            key={tab.id}
             connectionId={tab.connectionId}
             database={tab.db}
             collection={tab.collection || undefined}
+            task={(() => {
+              const taskId = generateTaskIdsRef.current.get(tab.id);
+              return taskId ? exportTasks.find((t) => t.id === taskId) : undefined;
+            })()}
+            onRun={(template, count, seed, collection) => handleRunGenerate(tab, template, count, seed, collection)}
+            onOpenTasks={handleOpenTasksTab}
+            onCancel={handleCancelTask}
           />
         )}
         {tab.type === 'gridfs' && (
