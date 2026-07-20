@@ -366,6 +366,29 @@ async fn finalize_import(
     write_imported_docs(&coll, bson_docs, mode).await
 }
 
+/// Insert already-converted BSON documents in `IMPORT_BATCH_SIZE` chunks, no
+/// upsert/dedup bookkeeping. Hoisted out of `write_imported_docs` (Task 3,
+/// data generation) as the narrower reuse for pure-insert callers:
+/// `write_imported_docs`'s "skip"/"abort" modes both run an `existing_ids`
+/// `$in` lookup per batch to detect duplicate `_id`s before inserting, which
+/// is wasted work for a caller — like the generate task — that only ever
+/// inserts freshly generated documents and has no upsert/duplicate semantics
+/// to honor. `pub(crate)` so `db::generate` can call it directly.
+pub(crate) async fn insert_many_batched(
+    coll: &mongodb::Collection<Document>,
+    docs: Vec<Document>,
+) -> Result<(), String> {
+    for chunk in docs.chunks(IMPORT_BATCH_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+        coll.insert_many(chunk.to_vec())
+            .await
+            .map_err(|e| format!("Failed to import: {}", e))?;
+    }
+    Ok(())
+}
+
 /// Write already-converted BSON documents to a live collection under the
 /// duplicate-handling mode. Shared by the JSON-value and file import paths.
 pub(crate) async fn write_imported_docs(
@@ -401,21 +424,6 @@ pub(crate) async fn write_imported_docs(
             }
         }
         Ok(found)
-    }
-
-    async fn insert_many_batched(
-        coll: &mongodb::Collection<mongodb::bson::Document>,
-        docs: Vec<mongodb::bson::Document>,
-    ) -> Result<(), String> {
-        for chunk in docs.chunks(IMPORT_BATCH_SIZE) {
-            if chunk.is_empty() {
-                continue;
-            }
-            coll.insert_many(chunk.to_vec())
-                .await
-                .map_err(|e| format!("Failed to import: {}", e))?;
-        }
-        Ok(())
     }
 
     match mode {

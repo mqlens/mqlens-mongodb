@@ -1755,6 +1755,28 @@ async fn start_import_task(
 }
 
 #[tauri::command]
+async fn start_generate_task(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    template: String,
+    count: u32,
+    seed: Option<u64>,
+) -> Result<TaskInfo, String> {
+    db::generate::start_generate_task_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        &template,
+        count,
+        seed,
+    )
+    .await
+}
+
+#[tauri::command]
 async fn update_document(
     state: tauri::State<'_, AppState>,
     id: String,
@@ -2091,6 +2113,7 @@ pub fn run() {
             analyze_schema,
             preview_generated_documents,
             infer_generate_template,
+            start_generate_task,
             vault_status,
             vault_initialize,
             vault_unlock,

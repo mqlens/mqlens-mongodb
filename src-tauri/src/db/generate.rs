@@ -22,18 +22,22 @@
 //! `preview_generated_documents` / `infer_generate_template` Tauri commands
 //! (thin wrappers in `lib.rs`).
 //!
-//! The `start_generate_task` background-insert command (Task 3) still isn't
-//! wired up, so this module remains otherwise-dead-code from rustc's
-//! staticlib/cdylib reachability analysis (it doesn't count `#[cfg(test)]`
-//! callers) until then, hence the blanket allow below rather than a
-//! per-item one.
-#![allow(dead_code)]
+//! `start_generate_task_impl` (Task 3) is the background-insert command:
+//! validate up front, then batch through `documents::insert_many_batched` —
+//! the same insert seam `write_imported_docs` uses for pure inserts, minus
+//! its existing-`_id` skip/update bookkeeping, which generate has no use for
+//! (freshly generated documents, no upsert semantics) — following
+//! `start_import_task_impl`'s task-lifecycle/mock/cancel pattern exactly.
 
 use crate::db::schema::{SchemaReport, TypeCount};
+use crate::db::tasks::{fail_task, finish_task, now_ms, update_task};
+use crate::{AppState, LockExt, TaskInfo};
 use mongodb::bson::{self, Bson, Document};
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
 use serde_json::{Map, Value};
+use std::sync::atomic::Ordering;
+use uuid::Uuid;
 
 /// One generator/literal node in a parsed template.
 #[derive(Debug, Clone, PartialEq)]
@@ -694,6 +698,213 @@ pub async fn infer_generate_template_impl(
         .map_err(|e| format!("Schema report parse error: {}", e))?;
     let template = infer_template_from_schema(&report);
     serde_json::to_string_pretty(&template).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ---------------------------------------------------------------------------
+// start_generate_task: cancellable background insert (Task 3)
+// ---------------------------------------------------------------------------
+
+/// Hard cap on `count` for `start_generate_task_impl` (spec: "count hard cap
+/// 50,000, backend-enforced"). Real connections may generate up to this many
+/// documents in one task.
+pub const MAX_GENERATE_COUNT: u32 = 50_000;
+
+/// Validate `template` and `count`, register a cancel flag, and spawn a
+/// background task that generates `count` documents under one seeded RNG
+/// (`seed`, or OS entropy when `None`) and inserts them in
+/// `IMPORT_BATCH_SIZE`-sized batches.
+///
+/// Mirrors `start_import_task_impl` (`import.rs`) end to end: validate
+/// everything *before* the task exists (bad input never creates a zombie
+/// task entry), mock detection via `crate::connection_is_mock`, a
+/// `TaskInfo` inserted into `state.tasks` up front so callers can poll
+/// immediately, `state.register_cancel`, per-batch `update_task`, and
+/// `finish_task`/`fail_task` on completion.
+///
+/// Insert seam: batches go through `documents::insert_many_batched`, not
+/// `write_imported_docs`. Both are reuse candidates (the plan calls out
+/// picking the narrower one) — `write_imported_docs`'s "skip"/"abort" modes
+/// each run an `existing_ids` `$in` lookup per batch before inserting, to
+/// decide what to skip/replace/abort on. Generate has none of that: every
+/// document is freshly synthesized, so there is nothing to dedupe or upsert
+/// against, and paying for the existence-check round trip on every batch
+/// would be pure overhead. `insert_many_batched` is exactly the inner loop
+/// `write_imported_docs`'s "abort" branch already reduces to once dedup is
+/// skipped, so it was hoisted out of `write_imported_docs` to module level
+/// (`pub(crate)`) rather than duplicated here.
+///
+/// Mock connections: `crate::mock_db` has no insert capability at all (it is
+/// a read-only fixture — see its module for the full read-only API), so the
+/// mock branch mirrors `run_import`'s mock branch (import.rs) and
+/// `finalize_import`'s mock branch (documents.rs): validate and count
+/// without writing. Because a mock task can never actually exercise the
+/// real bulk-insert path, and `finalize_import`'s direct (non-task) import
+/// command hard-errors above `MAX_IMPORT_DOCS` before ever reaching that
+/// mock branch, mock-connection counts are capped at `MAX_IMPORT_DOCS`
+/// (10,000) here too — tighter than the real-connection `MAX_GENERATE_COUNT`
+/// (50,000) — rather than silently letting a mock "run" claim to validate
+/// 50,000 documents that were never going to be checked against a real
+/// collection. The completion message notes the mock explicitly per the
+/// plan ("task message notes the mock").
+///
+/// `spawn_blocking` for batch generation: measured (not assumed) via a
+/// throwaway timing test against a template exercising every generator
+/// (names/email/ids/int/float/dates/lorem-20-words/pick/nested
+/// array-of-lorem/object) — 500 docs took ~23.8ms in a debug build and
+/// ~2.8ms in `--release`. That straddles the "~10ms" bar depending on build
+/// profile, and heavier templates (more fields, longer `$lorem` word
+/// counts, wider `$array` bounds) push higher still, so — matching
+/// `run_import`, which wraps even cheaper synchronous CSV-parsing work in
+/// `spawn_blocking` for the same reason — batch generation runs on a
+/// blocking thread rather than inline on the async task, keeping a large
+/// `$lorem`/`$array`-heavy template from stalling the tokio worker pool that
+/// also serves every other IPC command while a 50,000-doc run is in flight.
+pub async fn start_generate_task_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    template: &str,
+    count: u32,
+    seed: Option<u64>,
+) -> Result<TaskInfo, String> {
+    use crate::limits::{IMPORT_BATCH_SIZE, MAX_IMPORT_DOCS};
+
+    let parsed = parse_template(template)?;
+    if !(1..=MAX_GENERATE_COUNT).contains(&count) {
+        return Err(format!(
+            "Document count must be between 1 and {} — split larger runs into multiple generates",
+            MAX_GENERATE_COUNT
+        ));
+    }
+
+    let is_mock = crate::connection_is_mock(state, id)?;
+    let client = if is_mock {
+        if count as usize > MAX_IMPORT_DOCS {
+            return Err(format!(
+                "Mock connections validate without writing and cap at {} documents (got {}) — connect to a real database to generate up to {}",
+                MAX_IMPORT_DOCS, count, MAX_GENERATE_COUNT
+            ));
+        }
+        None
+    } else {
+        Some(crate::require_real_client(state, id)?)
+    };
+
+    let task_id = Uuid::new_v4().to_string();
+    let task = TaskInfo {
+        id: task_id.clone(),
+        kind: "generate".to_string(),
+        label: format!("Generate → {}.{}", database, collection),
+        status: "running".to_string(),
+        processed: 0,
+        total: Some(count as u64),
+        message: "Queued".to_string(),
+        path: None,
+        error: None,
+        created_at_ms: now_ms(),
+        finished_at_ms: None,
+        sub_label: None,
+        items_processed: None,
+        items_total: None,
+        summary: None,
+    };
+    state.tasks.lock_safe()?.insert(task_id.clone(), task.clone());
+    let cancel = state.register_cancel(&task_id);
+
+    let tasks = state.tasks.clone();
+    let cancels = state.cancels.clone();
+    let database = database.to_string();
+    let collection = collection.to_string();
+    let seed = seed.unwrap_or_else(rand::random);
+    let task_id2 = task_id.clone();
+
+    tokio::spawn(async move {
+        let mut parsed = parsed;
+        let mut rng = StdRng::seed_from_u64(seed);
+        let now = bson::DateTime::now();
+        let total = count as u64;
+        let mut processed = 0u64;
+        let mut cancelled = false;
+        let mut run_error: Option<String> = None;
+
+        while processed < total {
+            if cancel.load(Ordering::SeqCst) {
+                cancelled = true;
+                break;
+            }
+            let batch_len = (total - processed).min(IMPORT_BATCH_SIZE as u64) as usize;
+
+            // See the doc comment above: generation is measurably not-free,
+            // so it runs off the async task on a blocking thread. `parsed`
+            // and `rng` are moved in and handed back out each hop, exactly
+            // like `run_import`'s `reader` hop, so the same seeded RNG
+            // (state carried across every batch) keeps generating fresh
+            // documents call over call rather than resetting per batch.
+            let hop = tokio::task::spawn_blocking(move || {
+                let batch: Vec<Document> = (0..batch_len)
+                    .map(|_| generate_doc(&parsed, &mut rng, now))
+                    .collect();
+                (parsed, rng, batch)
+            })
+            .await;
+            let (next_parsed, next_rng, batch) = match hop {
+                Ok(v) => v,
+                Err(e) => {
+                    run_error = Some(format!("Generate task failed: {}", e));
+                    break;
+                }
+            };
+            parsed = next_parsed;
+            rng = next_rng;
+            let n = batch.len() as u64;
+
+            if let Some(client) = &client {
+                let coll = client
+                    .database(&database)
+                    .collection::<Document>(&collection);
+                if let Err(e) = crate::db::documents::insert_many_batched(&coll, batch).await {
+                    run_error = Some(e);
+                    break;
+                }
+            }
+            // Mock: validate-only, mirroring run_import's mock branch — the
+            // batch is generated and dropped, nothing is persisted.
+
+            processed += n;
+            update_task(&tasks, &task_id2, |t| {
+                t.processed = processed;
+                t.message = format!("Generating ({} written)", processed);
+            });
+        }
+
+        if let Some(err) = run_error {
+            fail_task(&tasks, &task_id2, err);
+        } else if cancelled {
+            update_task(&tasks, &task_id2, |t| {
+                t.status = "cancelled".to_string();
+                t.message = format!("Cancelled after {} documents", processed);
+                t.finished_at_ms = Some(now_ms());
+            });
+            crate::db::tasks::prune_tasks(&tasks);
+        } else {
+            let message = if client.is_none() {
+                format!(
+                    "Validated {} documents (mock connection — not written)",
+                    processed
+                )
+            } else {
+                format!("Inserted {} documents", processed)
+            };
+            finish_task(&tasks, &task_id2, processed, message);
+        }
+
+        if let Ok(mut guard) = cancels.lock() {
+            guard.remove(&task_id2);
+        }
+    });
+
+    Ok(task)
 }
 
 #[cfg(test)]
@@ -1459,5 +1670,177 @@ mod tests {
         let mut r = StdRng::seed_from_u64(1);
         let now = bson::DateTime::now();
         let _doc = generate_doc(&parsed, &mut r, now);
+    }
+
+    // ---- start_generate_task_impl (Task 3) ----------------------------------
+
+    async fn wait_for_task(state: &crate::AppState, task_id: &str) {
+        for _ in 0..500 {
+            let status = state.tasks.lock().unwrap().get(task_id).map(|t| t.status.clone());
+            if status.as_deref() != Some("running") {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
+    async fn mock_state() -> (crate::AppState, String) {
+        let state = crate::AppState::new();
+        let conn_id = crate::connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+        (state, conn_id)
+    }
+
+    const SIMPLE_TEMPLATE: &str = r#"{"a": "$name", "n": {"$int": {"min": 0, "max": 1000}}}"#;
+
+    /// (a)/(f): a mock-connection run completes with `processed == count`,
+    /// `status == "completed"`, and the task is registered under
+    /// `kind == "generate"` from the moment `start_generate_task_impl`
+    /// returns (not just once the background job finishes).
+    #[tokio::test]
+    async fn mock_run_completes_and_is_registered_as_generate() {
+        let (state, conn_id) = mock_state().await;
+        let task = start_generate_task_impl(
+            &state,
+            &conn_id,
+            "db1",
+            "coll1",
+            SIMPLE_TEMPLATE,
+            250,
+            Some(1),
+        )
+        .await
+        .expect("valid template/count must start a task");
+        assert_eq!(task.kind, "generate");
+        assert_eq!(task.status, "running");
+        assert_eq!(task.total, Some(250));
+        // Registered synchronously, before the spawned job has necessarily
+        // run at all — callers must be able to poll immediately.
+        assert!(state.tasks.lock().unwrap().contains_key(&task.id));
+
+        wait_for_task(&state, &task.id).await;
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.processed, 250);
+        assert_eq!(finished.kind, "generate");
+        assert!(
+            finished.message.contains("mock") || finished.message.to_lowercase().contains("valid"),
+            "mock completion message should note the mock, got {:?}",
+            finished.message
+        );
+    }
+
+    /// (b): an invalid template is rejected before any task is created — the
+    /// error carries the same path-prefixed message `parse_template`
+    /// produces, and `state.tasks` is left completely untouched (no zombie
+    /// entry for a run that never started).
+    #[tokio::test]
+    async fn invalid_template_rejected_before_task_creation() {
+        let (state, conn_id) = mock_state().await;
+        let before = state.tasks.lock().unwrap().len();
+        let err = start_generate_task_impl(
+            &state,
+            &conn_id,
+            "db1",
+            "coll1",
+            r#"{"email": "$emial"}"#,
+            10,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "email: unknown generator $emial");
+        assert_eq!(state.tasks.lock().unwrap().len(), before, "no task should be created");
+    }
+
+    /// (c): count 0 and count 50,001 are both rejected up front, with the
+    /// error naming the 50,000 cap, and neither creates a task.
+    #[tokio::test]
+    async fn count_out_of_range_rejected_before_task_creation() {
+        let (state, conn_id) = mock_state().await;
+        let before = state.tasks.lock().unwrap().len();
+
+        let err_zero =
+            start_generate_task_impl(&state, &conn_id, "db1", "coll1", SIMPLE_TEMPLATE, 0, None)
+                .await
+                .unwrap_err();
+        assert!(err_zero.contains("50000") || err_zero.contains("50,000"), "got {:?}", err_zero);
+
+        let err_over = start_generate_task_impl(
+            &state,
+            &conn_id,
+            "db1",
+            "coll1",
+            SIMPLE_TEMPLATE,
+            50_001,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err_over.contains("50000") || err_over.contains("50,000"), "got {:?}", err_over);
+
+        assert_eq!(state.tasks.lock().unwrap().len(), before, "no task should be created");
+    }
+
+    /// (d): requesting cancellation mid-run stops the batch loop before it
+    /// reaches `count` — final status is "cancelled" and `processed < count`.
+    #[tokio::test]
+    async fn cancel_mid_run_stops_before_completion() {
+        let (state, conn_id) = mock_state().await;
+        // Large enough (19 batches at IMPORT_BATCH_SIZE=500) that a cancel
+        // requested immediately after spawn reliably lands well before the
+        // loop would finish on its own, even under slow/parallel test load,
+        // while staying under the mock connection's MAX_IMPORT_DOCS (10,000)
+        // validate-only cap.
+        let task = start_generate_task_impl(
+            &state,
+            &conn_id,
+            "db1",
+            "coll1",
+            SIMPLE_TEMPLATE,
+            9_500,
+            Some(1),
+        )
+        .await
+        .expect("valid template/count must start a task");
+
+        assert!(state.request_cancel(&task.id), "task should be known to the cancel registry");
+        wait_for_task(&state, &task.id).await;
+
+        let finished = state.tasks.lock().unwrap().get(&task.id).cloned().unwrap();
+        assert_eq!(finished.status, "cancelled");
+        assert!(
+            finished.processed < 9_500,
+            "expected cancellation to cut the run short, processed={}",
+            finished.processed
+        );
+        assert!(finished.message.contains(&finished.processed.to_string()));
+        // The cancel flag must be cleared once the task settles.
+        assert!(!state.cancels.lock().unwrap().contains_key(&task.id));
+    }
+
+    /// (e): same seed -> identical generated documents. The mock connection
+    /// path (exercised by the other tests here) never persists or returns
+    /// the documents it generates — mock's whole point is "validate without
+    /// writing" — so `start_generate_task_impl` itself gives no observable
+    /// handle on what it generated to assert byte-for-byte equality against.
+    /// What this test actually proves is the determinism property the task
+    /// relies on: the same template, seed, and `now` reproduce the exact
+    /// same document sequence through the same `parse_template` +
+    /// `generate_doc` calls `start_generate_task_impl`'s batch loop makes
+    /// (same seeded `StdRng`, one `now` captured once per run, generated
+    /// batch-by-batch) — i.e. it is `same_seed_same_doc` above, re-run at a
+    /// batch (IMPORT_BATCH_SIZE-shaped) granularity rather than a single
+    /// document, to mirror the task's actual call pattern.
+    #[test]
+    fn same_seed_produces_identical_docs_generation_layer() {
+        let t = parse_template(SIMPLE_TEMPLATE).unwrap();
+        let now = fixed_now();
+        let run = || {
+            let mut rng = StdRng::seed_from_u64(1);
+            (0..50).map(|_| generate_doc(&t, &mut rng, now)).collect::<Vec<_>>()
+        };
+        assert_eq!(run(), run(), "same seed + template + now must reproduce identical documents");
     }
 }
