@@ -432,12 +432,13 @@ fn generate_value(spec: &Spec, rng: &mut StdRng, now: bson::DateTime) -> Bson {
 ///
 /// Heuristics, in order, per field:
 /// 1. `enum_values` present and non-empty → `{"$pick": [...values]}`. Wins
-///    over every name-based rule below. `enum_values` are always stored as
-///    their canonical string form (`infer_schema`'s `enum_scalar`) even for
-///    numeric/bool fields, so a `$pick`-seeded int field will read back as a
-///    string generator — a known, documented lossy step (see plan Task 2),
-///    not a bug: the alternative (re-typing each value from its original
-///    BSON type) isn't information the schema report carries per-value.
+///    over every name-based rule below. `enum_values` are stored as their
+///    canonical string form (`infer_schema`'s `enum_scalar`) even for
+///    numeric/bool fields, so `enum_pick_values` coerces them back to the
+///    field's dominant BSON type (int/long/double/decimal/bool) before
+///    building `$pick` — see its doc comment for the coercion/fallback
+///    rules. Without this, a `$pick`-seeded int field would silently
+///    regenerate string values.
 /// 2. Name-based, case-insensitive substring match on the LAST dotted path
 ///    segment (`a.b.c` → `c`): `email` → `$email`; `first`+`name` →
 ///    `$firstName`; `last`+`name` → `$lastName`; `name` → `$name`; ends with
@@ -491,7 +492,7 @@ pub fn infer_template_from_schema(report: &SchemaReport) -> Value {
             .enum_values
             .as_ref()
             .filter(|values| !values.is_empty())
-            .map(|values| serde_json::json!({ "$pick": values }))
+            .map(|values| enum_pick_values(values, dominant))
             .or_else(|| name_heuristic(&field.path, dominant))
             .or_else(|| dominant.and_then(type_fallback));
         if let Some(value) = spec {
@@ -499,6 +500,48 @@ pub fn infer_template_from_schema(report: &SchemaReport) -> Value {
         }
     }
     Value::Object(root)
+}
+
+/// Build the `{"$pick": [...]}` value for an enum-eligible field, coercing
+/// `enum_values`' canonicalized strings (`infer_schema`'s `enum_scalar`
+/// stores every scalar — including numbers and bools — as a `String`) back
+/// into the field's dominant BSON type first. Without this, an int/bool
+/// field's enum would silently regenerate as STRING values on every
+/// `$pick` draw, changing the field's type from what the sampled collection
+/// actually has — exactly backwards for a "generate more documents like
+/// this" feature.
+///
+/// `int`/`long` parse as `i64` (`Bson::try_from` narrows a JSON integer to
+/// `Int32`/`Int64` itself at generation time — see `extjson::de`);
+/// `double`/`decimal` parse as `f64`; `bool` parses `"true"`/`"false"`
+/// literally (matching `bool`'s `Display`, which is what `enum_scalar`
+/// used to produce the string in the first place). Every other dominant
+/// type (`string`, and the `None`/anything-else case) leaves values as-is.
+///
+/// If ANY value fails to parse as the target type, ALL values fall back to
+/// plain strings — a `$pick` with some coerced and some string values would
+/// still be a *valid* template, but silently mixing types inside one
+/// generator is more likely to mean "the sample was mixed/dirty" than
+/// "half-coerce and hope"; leaving the whole enum as strings is the safer,
+/// simpler behavior (and still round-trips through `parse_template` fine).
+fn enum_pick_values(values: &[String], dominant: Option<&str>) -> Value {
+    let coerced: Option<Vec<Value>> = match dominant {
+        Some("int") | Some("long") => values
+            .iter()
+            .map(|v| v.parse::<i64>().ok().map(Value::from))
+            .collect(),
+        Some("double") | Some("decimal") => values
+            .iter()
+            .map(|v| v.parse::<f64>().ok().and_then(serde_json::Number::from_f64).map(Value::Number))
+            .collect(),
+        Some("bool") => values
+            .iter()
+            .map(|v| v.parse::<bool>().ok().map(Value::Bool))
+            .collect(),
+        _ => None,
+    };
+    let items = coerced.unwrap_or_else(|| values.iter().cloned().map(Value::String).collect());
+    serde_json::json!({ "$pick": items })
 }
 
 /// The type with the highest `count`; ties keep whichever came first in
@@ -603,7 +646,7 @@ const PREVIEW_DEFAULT_DOCS: u8 = 3;
 /// `serde_json::to_string`) — not `into_relaxed_extjson()` — so previewed
 /// documents render through the same EJSON-ish viewer path the rest of the
 /// app already uses for query/document output.
-fn doc_to_json_string(doc: &Document) -> Result<String, String> {
+fn doc_to_relaxed_json_string(doc: &Document) -> Result<String, String> {
     let json_val: Value =
         serde_json::to_value(doc).map_err(|e| format!("BSON to JSON error: {}", e))?;
     serde_json::to_string(&json_val).map_err(|e| format!("Serialization error: {}", e))
@@ -624,7 +667,7 @@ pub fn preview_generated_documents_impl(
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or_else(rand::random));
     let now = bson::DateTime::now();
     (0..n)
-        .map(|_| doc_to_json_string(&generate_doc(&parsed, &mut rng, now)))
+        .map(|_| doc_to_relaxed_json_string(&generate_doc(&parsed, &mut rng, now)))
         .collect()
 }
 
@@ -1028,6 +1071,84 @@ mod tests {
         )]);
         let t = infer_template_from_schema(&r);
         assert_eq!(t["email"], serde_json::json!({"$pick": ["a@x.com", "b@x.com"]}));
+    }
+
+    #[test]
+    fn enum_pick_coerces_int_values_and_generates_int_bson() {
+        let r = schema_report(vec![field(
+            "level",
+            vec![tc("int", 10)],
+            Some(vec!["1".to_string(), "2".to_string(), "3".to_string()]),
+        )]);
+        let t = infer_template_from_schema(&r);
+        // Template holds real JSON numbers, not strings.
+        assert_eq!(t["level"], serde_json::json!({"$pick": [1, 2, 3]}));
+
+        let parsed = parse_template(&t.to_string()).expect("coerced $pick must still parse");
+        let mut rng = rng(1);
+        let now = fixed_now();
+        for _ in 0..50 {
+            let doc = generate_doc(&parsed, &mut rng, now);
+            match doc.get("level") {
+                Some(Bson::Int32(n)) => assert!((1..=3).contains(n)),
+                Some(Bson::Int64(n)) => assert!((1..=3).contains(n)),
+                other => panic!("expected Int32/Int64, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn enum_pick_coerces_bool_values_and_generates_bool_bson() {
+        let r = schema_report(vec![field(
+            "flagged",
+            vec![tc("bool", 10)],
+            Some(vec!["true".to_string(), "false".to_string()]),
+        )]);
+        let t = infer_template_from_schema(&r);
+        assert_eq!(t["flagged"], serde_json::json!({"$pick": [true, false]}));
+
+        let parsed = parse_template(&t.to_string()).expect("coerced $pick must still parse");
+        let mut rng = rng(2);
+        let now = fixed_now();
+        let doc = generate_doc(&parsed, &mut rng, now);
+        assert!(matches!(doc.get("flagged"), Some(Bson::Boolean(_))), "expected Bson::Boolean");
+    }
+
+    #[test]
+    fn enum_pick_coerces_double_values_and_generates_double_bson() {
+        let r = schema_report(vec![field(
+            "score",
+            vec![tc("double", 10)],
+            Some(vec!["1.5".to_string(), "2.5".to_string()]),
+        )]);
+        let t = infer_template_from_schema(&r);
+        assert_eq!(t["score"], serde_json::json!({"$pick": [1.5, 2.5]}));
+
+        let parsed = parse_template(&t.to_string()).expect("coerced $pick must still parse");
+        let mut rng = rng(3);
+        let now = fixed_now();
+        for _ in 0..50 {
+            let doc = generate_doc(&parsed, &mut rng, now);
+            match doc.get("score") {
+                Some(Bson::Double(n)) => assert!(*n == 1.5 || *n == 2.5),
+                other => panic!("expected Bson::Double, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn enum_pick_falls_back_to_strings_when_any_value_unparseable() {
+        // "abc" can't parse as an int — the WHOLE enum stays strings rather
+        // than coercing "1"/"3" and leaving "abc" behind (or panicking).
+        let r = schema_report(vec![field(
+            "code",
+            vec![tc("int", 10)],
+            Some(vec!["1".to_string(), "abc".to_string(), "3".to_string()]),
+        )]);
+        let t = infer_template_from_schema(&r);
+        assert_eq!(t["code"], serde_json::json!({"$pick": ["1", "abc", "3"]}));
+        // Still a valid template, no panic.
+        parse_template(&t.to_string()).expect("string fallback must still parse");
     }
 
     #[test]
