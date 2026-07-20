@@ -319,6 +319,25 @@ export function rowsToTemplate(rows: GenRow[]): Record<string, unknown> {
   return result;
 }
 
+/** First row (searched depth-first, including `$array`/object children) whose
+ * `$pick` has no values — `parse_pick` hard-rejects `{"$pick": []}`
+ * backend-side, so a builder-produced template with one of these is invalid
+ * even though every row individually looked fine. Used to gate Generate and
+ * to show an inline per-row message, rather than only surfacing this as a
+ * backend preview error after the confirm chain has already started. */
+export function findEmptyPickRow(rows: GenRow[]): GenRow | null {
+  for (const row of rows) {
+    if (row.kind === 'pick' && (!Array.isArray(row.options.values) || row.options.values.length === 0)) {
+      return row;
+    }
+    if (row.children) {
+      const found = findEmptyPickRow(row.children);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // builder row factories (used by GenerateView's add-field/add-array/
 // add-object actions so every newly-added row is already representable)
@@ -356,7 +375,11 @@ export function defaultOptionsFor(kind: GenKind): Record<string, unknown> {
     case 'lorem':
       return { words: 2 };
     case 'pick':
-      return { values: [] };
+      // `$pick` hard-rejects an empty array backend-side (`parse_pick`) — a
+      // freshly-switched row must seed at least one value so it's a valid
+      // template immediately, per this module's "never claims to represent
+      // a shape the backend would reject" invariant.
+      return { values: ['value'] };
     case 'array':
       return { min: 1, max: 3 };
     case 'literal':

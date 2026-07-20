@@ -212,6 +212,59 @@ describe('GenerateView', () => {
     });
   });
 
+  describe('$pick guardrails', () => {
+    it('a row freshly switched to Pick is immediately valid (non-empty default value)', async () => {
+      const { container } = await renderReady();
+
+      fireEvent.click(screen.getByTestId('generate-add-field-root'));
+      const kindTriggers = container.querySelectorAll('[data-testid^="generate-row-kind-"]');
+      fireEvent.click(kindTriggers[kindTriggers.length - 1]);
+      fireEvent.click(screen.getByRole('option', { name: /Pick from list/ }));
+
+      // Seeded with one placeholder value — not an empty, backend-rejected list.
+      expect(screen.getByDisplayValue('value')).toBeInTheDocument();
+      expect(screen.queryByTestId('generate-pick-empty')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('generate-footer-empty-pick')).not.toBeInTheDocument();
+      expect(screen.getByTestId('generate-run-btn')).not.toBeDisabled();
+    });
+
+    it('emptying a pick row disables Generate with an inline message, on the row and in the footer', async () => {
+      const { container } = await renderReady();
+
+      fireEvent.click(screen.getByTestId('generate-add-field-root'));
+      const kindTriggers = container.querySelectorAll('[data-testid^="generate-row-kind-"]');
+      fireEvent.click(kindTriggers[kindTriggers.length - 1]);
+      fireEvent.click(screen.getByRole('option', { name: /Pick from list/ }));
+
+      fireEvent.click(screen.getByRole('button', { name: /Remove pick value 1/ }));
+
+      expect(await screen.findByTestId('generate-pick-empty')).toBeInTheDocument();
+      expect(screen.getByTestId('generate-footer-empty-pick')).toBeInTheDocument();
+      expect(screen.getByTestId('generate-run-btn')).toBeDisabled();
+
+      // Adding a value back re-enables it.
+      fireEvent.click(screen.getByRole('button', { name: /Add value/ }));
+      await waitFor(() => expect(screen.queryByTestId('generate-pick-empty')).not.toBeInTheDocument());
+      expect(screen.getByTestId('generate-run-btn')).not.toBeDisabled();
+    });
+
+    it('skips the backend preview call and shows the same message when a pick row is empty', async () => {
+      const { container } = await renderReady();
+      mockInvoke.mockClear();
+
+      fireEvent.click(screen.getByTestId('generate-add-field-root'));
+      const kindTriggers = container.querySelectorAll('[data-testid^="generate-row-kind-"]');
+      fireEvent.click(kindTriggers[kindTriggers.length - 1]);
+      fireEvent.click(screen.getByRole('option', { name: /Pick from list/ }));
+      fireEvent.click(screen.getByRole('button', { name: /Remove pick value 1/ }));
+
+      fireEvent.click(screen.getByTestId('generate-preview-refresh-btn'));
+
+      expect(await screen.findByTestId('generate-preview-error')).toHaveTextContent(/needs at least one value/);
+      expect(mockInvoke).not.toHaveBeenCalledWith('preview_generated_documents', expect.anything());
+    });
+  });
+
   describe('confirm flow', () => {
     it('omits the existing-documents clause when count_documents errors', async () => {
       mockInvoke.mockImplementation((cmd: string) => {

@@ -5,6 +5,8 @@ import {
   newFieldRow,
   newObjectRow,
   newArrayRow,
+  defaultOptionsFor,
+  findEmptyPickRow,
   type GenRow,
 } from '../generateTemplate';
 
@@ -317,6 +319,47 @@ describe('generateTemplate', () => {
     it('row ids are unique', () => {
       const ids = new Set([newFieldRow('a').id, newFieldRow('b').id, newFieldRow('c').id]);
       expect(ids.size).toBe(3);
+    });
+  });
+
+  describe('defaultOptionsFor("pick") — never seeds an invalid $pick', () => {
+    it('seeds at least one placeholder value, not an empty array', () => {
+      const options = defaultOptionsFor('pick');
+      expect(Array.isArray(options.values)).toBe(true);
+      expect((options.values as unknown[]).length).toBeGreaterThan(0);
+    });
+
+    it('a row freshly switched to pick is immediately representable and non-empty', () => {
+      const row: GenRow = { id: '1', name: 'tier', kind: 'pick', options: defaultOptionsFor('pick') };
+      const template = rowsToTemplate([row]);
+      expect((template.tier as any).$pick.length).toBeGreaterThan(0);
+      expect(findEmptyPickRow([row])).toBeNull();
+    });
+  });
+
+  describe('findEmptyPickRow', () => {
+    it('returns null when there are no pick rows or all have values', () => {
+      expect(findEmptyPickRow([{ id: '1', name: 'a', kind: 'name', options: {} }])).toBeNull();
+      expect(
+        findEmptyPickRow([{ id: '1', name: 'tier', kind: 'pick', options: { values: ['x'] } }])
+      ).toBeNull();
+    });
+
+    it('finds a top-level empty pick row', () => {
+      const row: GenRow = { id: '1', name: 'tier', kind: 'pick', options: { values: [] } };
+      expect(findEmptyPickRow([row])).toBe(row);
+    });
+
+    it('finds an empty pick row nested inside an object', () => {
+      const nested: GenRow = { id: '2', name: 'tier', kind: 'pick', options: { values: [] } };
+      const parent: GenRow = { id: '1', name: 'address', kind: 'object', options: {}, children: [nested] };
+      expect(findEmptyPickRow([parent])).toBe(nested);
+    });
+
+    it('finds an empty pick row nested inside an array item', () => {
+      const item: GenRow = { id: '2', name: '', kind: 'pick', options: { values: [] } };
+      const arr: GenRow = { id: '1', name: 'tags', kind: 'array', options: { min: 1, max: 3 }, children: [item] };
+      expect(findEmptyPickRow([arr])).toBe(item);
     });
   });
 });

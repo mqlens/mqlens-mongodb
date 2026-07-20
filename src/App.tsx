@@ -871,7 +871,20 @@ function Workspace() {
   // #91: the generate task id running for a given `generate` tab, so the
   // rendered GenerateView instance can find its own `task` in `exportTasks`
   // (TaskInfo carries no tab/connection/db/collection fields to match on —
-  // same reasoning as pendingImportRefreshRef above).
+  // same reasoning as pendingImportRefreshRef above). Entries are evicted
+  // ONLY on tab close (`close_tab` in `dispatchWorkspace`, below) — not on
+  // task completion. A completion-triggered eviction was tried and reverted:
+  // the SAME watcher effect that would evict it also calls
+  // `refreshTabResults` for the matching collection tab (both keyed off the
+  // same completed task id, since `handleRunGenerate` sets both refs
+  // together), and that refresh's state update re-renders this tab reading
+  // the just-cleared ref BEFORE the user ever sees the "Inserted N
+  // documents" message — the completed banner silently never appears,
+  // regressing "Completed/failed states render their message." Evicting
+  // only on close avoids that: a still-open tab keeps showing its finished
+  // task's status (as it must), and the stale-reopen bug this ref is
+  // otherwise prone to is still fully covered, since close_tab unconditionally
+  // clears the mapping regardless of the task's status at close time.
   const generateTaskIdsRef = React.useRef(new Map<string, string>());
   // Bumped on every optimistic task insert below. A list_export_tasks response
   // requested BEFORE a start_*_task registered could otherwise resolve AFTER the
@@ -1977,6 +1990,11 @@ function Workspace() {
     }
     if (action.type === 'close_tab') {
       tabBuilderStateCache.current.delete(action.tabId);
+      // #91: forget this tab's generate-task tracking on close (running or
+      // finished) — otherwise reopening "Generate Data…" on the same
+      // namespace reuses the same deterministic tab id and the fresh view
+      // would immediately render the OLD task's progress bar.
+      generateTaskIdsRef.current.delete(action.tabId);
       setTabs(prev => prev.filter(t => t.id !== action.tabId));
     }
     dispatchLayout(action);

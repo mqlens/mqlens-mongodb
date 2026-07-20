@@ -18,6 +18,7 @@ import {
   newArrayRow,
   newRowId,
   defaultOptionsFor,
+  findEmptyPickRow,
   type GenRow,
   type GenKind,
 } from '@/lib/generateTemplate';
@@ -435,6 +436,11 @@ const PickValuesEditor: React.FC<{ values: unknown[]; onChange: (values: unknown
           </Button>
         </div>
       ))}
+      {values.length === 0 && (
+        <span className="text-[10px] text-destructive" data-testid="generate-pick-empty">
+          Add at least one value — $pick can&apos;t be empty.
+        </span>
+      )}
       <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => onChange([...values, ''])}>
         <Plus size={12} />
         Add value
@@ -608,6 +614,13 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
 
   const effectiveCollection = collection || targetCollection.trim();
 
+  // `rows` mirrors `templateText` whenever it's non-null (both handlers below
+  // keep that invariant), so this is safe to compute from whichever mode is
+  // active — an empty `$pick` is invalid backend-side (`parse_pick`), so it
+  // gates both preview and Generate instead of only surfacing as a preview
+  // error after the confirm chain has already started.
+  const emptyPickRow = rows ? findEmptyPickRow(rows) : null;
+
   // ---- builder ⇄ raw sync -------------------------------------------------
 
   const handleRowsChange = (nextRows: GenRow[]) => {
@@ -654,6 +667,14 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
       return;
     }
     void parsed;
+    if (emptyPickRow) {
+      // Known-invalid — don't round-trip to the backend just to get the same
+      // answer back; the row itself already shows this message too.
+      previewGen.current += 1;
+      setPreviewError(`"${emptyPickRow.name || 'array item'}" needs at least one value for $pick.`);
+      setPreviewDocs([]);
+      return;
+    }
     const gen = (previewGen.current += 1);
     setPreviewLoading(true);
     try {
@@ -701,7 +722,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
     ? 'Seed must be a whole number'
     : null;
 
-  const canGenerate = !countError && !seedError && !!effectiveCollection && !running;
+  const canGenerate = !countError && !seedError && !!effectiveCollection && !running && !emptyPickRow;
 
   const handleGenerate = async () => {
     if (!canGenerate) return;
@@ -911,6 +932,11 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
             </div>
             {!collection && !effectiveCollection && (
               <span className="text-[10px] text-destructive">Choose a target collection first.</span>
+            )}
+            {emptyPickRow && (
+              <span className="text-[10px] text-destructive" data-testid="generate-footer-empty-pick">
+                &ldquo;{emptyPickRow.name || 'array item'}&rdquo; needs at least one value for $pick.
+              </span>
             )}
             <Button
               type="button"
