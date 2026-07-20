@@ -872,19 +872,23 @@ function Workspace() {
   // rendered GenerateView instance can find its own `task` in `exportTasks`
   // (TaskInfo carries no tab/connection/db/collection fields to match on —
   // same reasoning as pendingImportRefreshRef above). Entries are evicted
-  // ONLY on tab close (`close_tab` in `dispatchWorkspace`, below) — not on
-  // task completion. A completion-triggered eviction was tried and reverted:
-  // the SAME watcher effect that would evict it also calls
-  // `refreshTabResults` for the matching collection tab (both keyed off the
-  // same completed task id, since `handleRunGenerate` sets both refs
-  // together), and that refresh's state update re-renders this tab reading
-  // the just-cleared ref BEFORE the user ever sees the "Inserted N
-  // documents" message — the completed banner silently never appears,
-  // regressing "Completed/failed states render their message." Evicting
-  // only on close avoids that: a still-open tab keeps showing its finished
-  // task's status (as it must), and the stale-reopen bug this ref is
-  // otherwise prone to is still fully covered, since close_tab unconditionally
-  // clears the mapping regardless of the task's status at close time.
+  // ONLY on tab close — `close_tab` AND `close_many`, both in
+  // `dispatchWorkspace` below — not on task completion. A completion-
+  // triggered eviction was tried and reverted: the SAME watcher effect that
+  // would evict it also calls `refreshTabResults` for the matching
+  // collection tab (both keyed off the same completed task id, since
+  // `handleRunGenerate` sets both refs together), and that refresh's state
+  // update re-renders this tab reading the just-cleared ref BEFORE the user
+  // ever sees the "Inserted N documents" message — the completed banner
+  // silently never appears, regressing "Completed/failed states render
+  // their message." Evicting only on close avoids that: a still-open tab
+  // keeps showing its finished task's status (as it must). Close-based
+  // eviction covers every REACHABLE staleness path for this ref
+  // (`close_tab` for a single tab; `close_many` for
+  // `handleDatabaseDropped`'s drop-and-later-recreate-the-same-db case,
+  // which reuses the connection's connectionId and so can reuse this ref's
+  // deterministic tab id too) — see `close_many`'s branch below for why its
+  // other two call sites need no such fix.
   const generateTaskIdsRef = React.useRef(new Map<string, string>());
   // Bumped on every optimistic task insert below. A list_export_tasks response
   // requested BEFORE a start_*_task registered could otherwise resolve AFTER the
@@ -1993,9 +1997,26 @@ function Workspace() {
       // #91: forget this tab's generate-task tracking on close (running or
       // finished) — otherwise reopening "Generate Data…" on the same
       // namespace reuses the same deterministic tab id and the fresh view
-      // would immediately render the OLD task's progress bar.
+      // would immediately render the OLD task's progress bar. `close_many`
+      // (below) gets the identical treatment for the multi-tab-close path.
       generateTaskIdsRef.current.delete(action.tabId);
       setTabs(prev => prev.filter(t => t.id !== action.tabId));
+    }
+    if (action.type === 'close_many') {
+      // Same eviction as close_tab, just over `action.tabIds`. Of this
+      // action's three call sites, only `handleDatabaseDropped` (dropping a
+      // database) is exploitable for `generateTaskIdsRef`: it reuses the
+      // connection's existing connectionId, so a later-recreated db.coll
+      // can resolve the SAME deterministic `generate.<connId>.<db>.<coll>`
+      // tab id a stale entry was keyed under. The other two `close_many`
+      // sites tear down an entire connection instead (Sidebar's
+      // `onDisconnect`, and the cross-window connection-removal listener —
+      // which calls `dispatchLayout` directly and never reaches this
+      // function at all): `connect_db` mints a fresh connectionId on every
+      // connect, so any stale entries either of those leaves behind
+      // permanently fall outside the tab-id space any future tab could
+      // ever resolve — harmless, not reachable again. No fix needed there.
+      action.tabIds.forEach((id) => generateTaskIdsRef.current.delete(id));
     }
     dispatchLayout(action);
 

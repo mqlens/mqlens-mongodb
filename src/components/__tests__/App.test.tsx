@@ -83,7 +83,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, activeConnections }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, activeConnections }: any) => (
     <div data-testid="mock-sidebar">
       {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
           `activeConnections` prop for its "Connections" tree — lets tests
@@ -105,6 +105,12 @@ vi.mock('../Sidebar', () => ({
         onClick={() => onDatabaseRenamed && onDatabaseRenamed('conn-1', 'sales_db', 'sales_db2')}
       >
         Rename sales_db
+      </button>
+      <button
+        data-testid="drop-db-btn"
+        onClick={() => onDatabaseDropped && onDatabaseDropped('conn-1', 'sales_db')}
+      >
+        Drop sales_db
       </button>
       <button data-testid="select-index-btn" onClick={() => onSelectIndex('conn-1', 'sales_db', 'customers', 'email_1')}>
         Select Index
@@ -1274,6 +1280,81 @@ describe('App Component', () => {
       // Reopen the SAME deterministic tab id — a fresh view, and it must not
       // resolve the old (still-running, per this test's mock) task, or it
       // would render that stale task's progress bar immediately on mount.
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+      expect(screen.queryByTestId('generate-progress')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears generate-task tracking when its database is dropped (close_many), so reopening it does not show the old task (#91)', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-generate-dropdb',
+        kind: 'generate',
+        label: 'Generate → sales_db.customers',
+        status: 'running',
+        processed: 10,
+        total: 100,
+        message: 'Generating (10 written)',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'infer_generate_template') return Promise.resolve('{"name": "$name"}');
+        if (cmd === 'preview_generated_documents') return Promise.resolve([]);
+        if (cmd === 'count_documents') return Promise.resolve(0);
+        if (cmd === 'start_generate_task') return Promise.resolve(runningTask);
+        // The task stays "running" throughout — dropping the database must
+        // not depend on it ever completing (this is the close_many path,
+        // handleDatabaseDropped, not the completion watcher).
+        if (cmd === 'list_export_tasks') return Promise.resolve([runningTask]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+
+      fireEvent.click(screen.getByTestId('generate-run-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
+      fireEvent.click(screen.getByText('Generate: customers'));
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() => expect(screen.getByTestId('generate-progress')).toBeInTheDocument());
+
+      // Drop the database — handleDatabaseDropped closes every tab on
+      // sales_db via `dispatchWorkspace({ type: 'close_many', tabIds })`,
+      // the live repro this fix targets: same connectionId survives (unlike
+      // Sidebar's `onDisconnect` or the cross-window connection-removal
+      // listener), so a recreated db.coll can resolve the same
+      // deterministic generate tab id.
+      fireEvent.click(screen.getByTestId('drop-db-btn'));
+      await vi.waitFor(() => expect(screen.queryByTestId('generate-view')).not.toBeInTheDocument());
+
+      // Recreate the namespace and reopen "Generate Data…" on it — the SAME
+      // deterministic tab id must not resolve the dropped run's task.
       fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
       await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
       await vi.advanceTimersByTimeAsync(500);
