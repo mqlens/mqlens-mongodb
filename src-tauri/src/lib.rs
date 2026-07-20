@@ -1539,6 +1539,29 @@ async fn analyze_schema(
     analyze_schema_impl(&state, &id, &database, &collection, sample_size).await
 }
 
+/// No `state` param: preview only exercises the pure template engine
+/// (`parse_template` + `generate_doc`), never a connection.
+#[tauri::command]
+async fn preview_generated_documents(
+    template: String,
+    count: Option<u8>,
+    seed: Option<u64>,
+) -> Result<Vec<String>, String> {
+    db::generate::preview_generated_documents_impl(&template, count, seed)
+}
+
+#[tauri::command]
+async fn infer_generate_template(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    sample_size: Option<i64>,
+) -> Result<String, String> {
+    db::generate::infer_generate_template_impl(&state, &id, &database, &collection, sample_size)
+        .await
+}
+
 #[tauri::command]
 async fn create_index(
     state: tauri::State<'_, AppState>,
@@ -2066,6 +2089,8 @@ pub fn run() {
             explain_mql_query,
             explain_aggregate_query,
             analyze_schema,
+            preview_generated_documents,
+            infer_generate_template,
             vault_status,
             vault_initialize,
             vault_unlock,
