@@ -51,7 +51,7 @@ where
 pub struct TabModel {
     pub id: String,
     #[serde(rename = "type")]
-    pub tab_type: String, // the 16 QueryTab kinds
+    pub tab_type: String, // the 17 QueryTab kinds
     pub profile_id: String, // NEVER a session connectionId
     pub profile_name: String,
     pub db: String,
