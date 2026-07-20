@@ -1,6 +1,7 @@
 //! Database metadata and index management.
 
 use crate::state::LockExt;
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{mock_db, AppState, CollectionInfo, IndexInfo};
 
 pub async fn list_databases_impl(state: &AppState, id: &str) -> Result<Vec<String>, String> {
@@ -174,6 +175,8 @@ pub async fn create_index_impl(
     unique: bool,
     sparse: bool,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::CreateIndex, false)?;
+
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;
         *mocks
@@ -245,6 +248,8 @@ pub async fn delete_index_impl(
     collection: &str,
     index_name: &str,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::DropIndex, false)?;
+
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;
         *mocks

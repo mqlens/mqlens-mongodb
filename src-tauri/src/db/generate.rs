@@ -31,6 +31,7 @@
 
 use crate::db::schema::{SchemaReport, TypeCount};
 use crate::db::tasks::{fail_task, finish_task, now_ms, update_task};
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{AppState, LockExt, TaskInfo};
 use mongodb::bson::{self, Bson, Document};
 use rand::rngs::StdRng;
@@ -768,6 +769,8 @@ pub async fn start_generate_task_impl(
     count: u32,
     seed: Option<u64>,
 ) -> Result<TaskInfo, String> {
+    guard_writable(state, id, WriteOp::Generate, false)?;
+
     use crate::limits::{IMPORT_BATCH_SIZE, MAX_IMPORT_DOCS};
 
     let parsed = parse_template(template)?;

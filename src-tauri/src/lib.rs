@@ -27,6 +27,7 @@ mod vault;
 mod window;
 mod windows;
 mod workspace;
+mod write_guard;
 pub mod biometric;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
 pub use db::ddl::{

@@ -1,5 +1,6 @@
 //! Collection, view, and database DDL operations.
 
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{connection_is_mock, require_real_client, AppState};
 
 #[derive(serde::Serialize)]
@@ -22,6 +23,8 @@ pub async fn create_collection_impl(
     database: &str,
     collection: &str,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::CreateCollection, false)?;
+
     if collection.trim().is_empty() {
         return Err("Collection name is required".to_string());
     }
@@ -44,6 +47,8 @@ pub async fn create_view_impl(
     source_collection: &str,
     pipeline: &str,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::CreateView, false)?;
+
     if view_name.trim().is_empty() {
         return Err("View name is required".to_string());
     }
@@ -186,6 +191,8 @@ pub async fn set_validator_impl(
     validation_level: &str,
     validation_action: &str,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::CollMod, false)?;
+
     if collection.trim().is_empty() {
         return Err("Collection name is required".into());
     }
@@ -245,6 +252,15 @@ pub async fn rename_database_impl(
     to: &str,
     drop_source: bool,
 ) -> Result<DatabaseRenameResult, String> {
+    // `rename_database_impl` is a mutating command outside the plan's Task
+    // 2/Task 3 coverage lists (found during Task 2 implementation — see the
+    // write_guard.rs test doc comment for detail). It's at least as
+    // destructive as `rename_collection` (renames every collection in the
+    // db, optionally drops the source), so it's guarded with
+    // `WriteOp::Rename`; it has no `confirmed` command arg yet, so
+    // `confirmed` is hardcoded `false` pending a follow-up task.
+    guard_writable(state, id, WriteOp::Rename, false)?;
+
     if from.trim().is_empty() || to.trim().is_empty() {
         return Err("Database name is required".to_string());
     }
