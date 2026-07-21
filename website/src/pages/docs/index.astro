@@ -5,6 +5,10 @@ import { SITE } from '../../consts';
 const toc = [
   { id: 'install', label: 'Install' },
   { id: 'first-connection', label: 'Your first connection' },
+  { id: 'workspace', label: 'Multi-window workspace' },
+  { id: 'data-generation', label: 'Data generation' },
+  { id: 'mcp', label: 'MCP server (AI agents)' },
+  { id: 'safeguards', label: 'Production safeguards' },
   { id: 'verifying', label: 'Verifying downloads' },
   { id: 'security', label: 'Security model' },
   { id: 'build', label: 'Build from source' },
@@ -30,7 +34,8 @@ const toc = [
         <p class="intro">
           {SITE.name} is a native desktop GUI for MongoDB. Point it at any deployment —
           local, self-hosted, or Atlas — and browse, query, aggregate, and manage your
-          data from a single cross-platform app.
+          data from a single cross-platform app: a multi-window workspace, built-in data
+          generation, an MCP server for AI agents, and read-only safeguards for production.
         </p>
 
         <h2 id="install">Install</h2>
@@ -95,6 +100,50 @@ sudo dpkg -i MQLens_*.deb</code></pre>
           </a>
           <figcaption>A connected workspace with the seeded <code>mqlens_demo</code> database, filtered documents, and the database tree visible.</figcaption>
         </figure>
+
+        <h2 id="workspace">Multi-window workspace</h2>
+        <p>
+          Every open collection, shell, or view is a tab. You can split the tab area into
+          panes and pull tabs out into separate OS windows, so a query, a shell, and cluster
+          health can sit side by side across monitors.
+        </p>
+        <ul>
+          <li><strong>Split panes</strong> — drag a tab onto the edge of a pane to split in that direction (left / right / top / bottom), or use the command palette (<code>Ctrl/Cmd&nbsp;K</code>) → <strong>Split Right</strong> / <strong>Split Down</strong>. Drag a tab onto another pane's center to move it there; drag the divider to resize.</li>
+          <li><strong>Detach to a new window</strong> — right-click a tab and choose <strong>Detach to New Window</strong>, or <strong>Move to Window&nbsp;→</strong> to send it to an already-open window. Each window is a full workspace with its own sidebar.</li>
+          <li><strong>Session restore</strong> — quit and relaunch and your windows, splits, and tabs come back exactly as you left them. Restored tabs wake <em>disconnected</em>; a banner offers a one-click <strong>Reconnect</strong> per connection (credentials come from your unlocked vault — nothing auto-connects to production on its own).</li>
+        </ul>
+
+        <h2 id="data-generation">Data generation</h2>
+        <p>Seed a collection with realistic synthetic documents for testing or demos.</p>
+        <ol>
+          <li>Right-click a <strong>collection</strong> → <strong>Generate Data…</strong> to start from a template inferred from that collection's schema ("generate more like this"), or right-click a <strong>database</strong> → <strong>Generate Data…</strong> to start from a blank template and name a target collection (it's created if it doesn't exist).</li>
+          <li>Shape the documents in the <strong>visual builder</strong> — pick a generator per field (name, email, number, date, boolean, ObjectId, UUID, lorem, pick-from-list), and add nested objects or arrays with count ranges. Toggle to <strong>raw JSON</strong> for full control; the two stay in sync.</li>
+          <li>The <strong>preview</strong> pane shows a few generated documents live. Set a document <strong>count</strong> (up to 50,000) and click <strong>Generate</strong>.</li>
+          <li>Confirm the count when prompted. Large runs execute as a <strong>background task</strong> you can watch and cancel from the Tasks panel; an open view of that collection refreshes when it finishes.</li>
+        </ol>
+
+        <h2 id="mcp">MCP server (AI agents)</h2>
+        <p>
+          {SITE.name} can act as a <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener">Model Context Protocol</a>
+          server, letting Claude Code, Cursor, or any MCP client drive MongoDB through your existing
+          connections as tools. It is <strong>off by default</strong>.
+        </p>
+        <ol>
+          <li>In the <strong>Connection Manager</strong>, edit a connection and tick <strong>Expose to MCP agents</strong>. Only opted-in connections are ever visible to an agent.</li>
+          <li>Open <strong>Settings → MCP</strong> and switch the server <strong>on</strong> (the app's vault must be unlocked). A bearer token is generated for you.</li>
+          <li>Click <strong>Copy</strong> next to the Claude Code or Cursor snippet and paste it into that client's MCP configuration. The agent connects over loopback HTTP.</li>
+          <li>The agent can now list databases and collections, run <code>find</code> and aggregations, read explain plans, analyze schema, and list indexes. <strong>Writes</strong> (insert / update / delete / create index) require an explicit confirmation argument, and any connection you've marked read-only rejects writes outright.</li>
+        </ol>
+        <p>Agent-initiated connections appear in the sidebar with a <strong>via MCP</strong> badge, and a live call log is shown in Settings → MCP. See the full <a href={`${SITE.repo}/blob/main/docs/mcp-tools.md`} target="_blank" rel="noopener">MCP tool reference</a>.</p>
+
+        <h2 id="safeguards">Production safeguards</h2>
+        <p>Mark a connection as protected so writes are blocked or gated — enforced in the backend, for the UI <em>and</em> AI agents alike, not just by hiding buttons.</p>
+        <ul>
+          <li><strong>Read-only</strong> — every write is rejected (insert, update, delete, drop, rename, index changes, imports, generation, mongosh). A red banner appears on the connection's tabs and a badge on its sidebar row; write actions are disabled in the grid.</li>
+          <li><strong>Confirm-destructive</strong> — ordinary writes work, but destructive operations (drop, delete-many, update-many, rename) require you to <strong>type the collection name</strong> to confirm. An amber banner marks the connection.</li>
+          <li><strong>Normal</strong> — full read/write (the default).</li>
+        </ul>
+        <p>Set the mode in the <strong>Connection Manager</strong> when editing a connection. The mode is applied when you connect, so if you change it on a live connection, reconnect for it to take effect.</p>
 
         <h2 id="verifying">Verifying downloads</h2>
         <p>Every release asset ships with a detached GPG signature (<code>.asc</code>), and macOS bundles are additionally Apple-notarized. To verify a download:</p>

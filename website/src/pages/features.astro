@@ -72,6 +72,51 @@ const sections = [
     img: '/screenshots/mqlens-documents.png',
     alt: 'MQLens browsing MongoDB customer documents',
   },
+  // TODO: the four cards below reuse the closest existing screenshots; swap in
+  // dedicated shots (multi-window, data generation, MCP settings, mode banner)
+  // — see docs/promotion-screenshot-plan.md.
+  {
+    id: 'workspace',
+    nav: 'Workspace',
+    title: 'A workspace that spans your monitors',
+    body: 'Split the view into panes and pull tabs into their own windows, then pick up right where you left off after a restart.',
+    bullets: [
+      'Drag a tab to a pane edge to split; keep a shell under your results',
+      'Detach a tab into its own OS window and spread work across monitors',
+      'Session restore brings back your windows, splits, and tabs',
+      'Tabs wake disconnected — reconnect per connection with one click',
+    ],
+    img: '/screenshots/mqlens-documents.png',
+    alt: 'MQLens workspace with document tabs open',
+  },
+  {
+    id: 'generate',
+    nav: 'Generate',
+    title: 'Generate realistic test data',
+    body: 'Seed a collection with synthetic documents from a template — or infer the template from an existing collection and "generate more like this."',
+    bullets: [
+      'Per-field generators: names, emails, numbers, dates, ObjectId, UUID, enums',
+      'Nested objects and arrays with count ranges',
+      'Schema-aware templates, with a live preview before you insert',
+      'Up to 50,000 documents as a cancellable background task',
+    ],
+    img: '/screenshots/mqlens-schema.png',
+    alt: 'MQLens schema analysis of a MongoDB collection',
+  },
+  {
+    id: 'safeguards',
+    nav: 'Safeguards',
+    title: 'Safe to point at production',
+    body: 'Mark a connection read-only or confirm-destructive and the guard is enforced in the backend — for the UI and AI agents alike, not just by hiding buttons.',
+    bullets: [
+      'Read-only blocks every write; a banner and badge make the mode obvious',
+      'Confirm-destructive requires typing the collection name for drops and bulk ops',
+      'Enforced at the command layer across the whole app',
+      'Set per connection in the connection manager',
+    ],
+    img: '/screenshots/mqlens-connection-manager.png',
+    alt: 'MQLens connection manager where a connection mode is configured',
+  },
   {
     id: 'gridfs',
     nav: 'GridFS',
@@ -107,6 +152,20 @@ const sections = [
       'Natural language → MQL',
       'Your choice of provider: Anthropic, OpenAI, Gemini, or local agent CLIs',
       'Bring your own key — it stays in the backend, out of the frontend',
+    ],
+    img: '/screenshots/mqlens-ai-assistant.png',
+    alt: 'MQLens AI query assistant panel beside MongoDB documents',
+  },
+  {
+    id: 'mcp',
+    nav: 'MCP',
+    title: 'Drive MongoDB from your AI agent',
+    body: 'MQLens can act as a Model Context Protocol server, so Claude Code, Cursor, or any MCP client can query your databases as tools — safely.',
+    bullets: [
+      'List, find, aggregate, explain, and analyze schema as MCP tools',
+      'Off by default; opt in per connection',
+      'Writes gated behind explicit confirmation; read-only connections stay read-only',
+      'Agent connections are badged in the sidebar with a live call log',
     ],
     img: '/screenshots/mqlens-ai-assistant.png',
     alt: 'MQLens AI query assistant panel beside MongoDB documents',
