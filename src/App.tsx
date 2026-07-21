@@ -3477,6 +3477,7 @@ function Workspace() {
                     onAnalyzeSchema={() => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
                     onUpdateMany={() => handleUpdateMany(tab)}
                     onDeleteMany={() => handleDeleteMany(tab)}
+                    connectionMode={connMode}
                     totalCount={tab.totalCount}
                     estimated={tab.estimated}
                     countLoading={tab.countLoading}

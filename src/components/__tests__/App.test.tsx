@@ -604,6 +604,34 @@ describe('App Component', () => {
       expect(banner).toHaveTextContent('Production safeguard — destructive operations require confirmation');
     });
 
+    it('threads the read_only mode into the DataGrid so write buttons are disabled (#188 Task 6, App→DataGrid)', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query')
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'count_documents') return Promise.resolve(1);
+        return Promise.resolve([]);
+      });
+      const { fireEvent, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      // Reuses the exact same connections-changed → activeConnections.mode
+      // path the banner test above relies on: DataGrid isn't rendered inside
+      // DocumentViewer itself (it's passed as DocumentViewer's children from
+      // App's renderTabContent), so this same `mode` lookup is what's handed
+      // straight to DataGrid's `connectionMode` prop.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'read_only' }],
+        });
+      });
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+      const insertBtn = await screen.findByTestId('insert-doc-btn');
+      expect(insertBtn).toBeDisabled();
+      expect(insertBtn).toHaveAttribute('title', 'Connection is read-only');
+    });
+
     it('renders no banner for a normal (or unmarked) connection', async () => {
       mockInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'execute_mql_query')
