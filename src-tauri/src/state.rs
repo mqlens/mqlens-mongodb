@@ -1,11 +1,70 @@
 //! Shared application state and a poison-safe mutex helper.
 
-use crate::{ssh_tunnel, IndexInfo, MongoshSession, TaskInfo};
+use crate::{mcp, ssh_tunnel, workspace, IndexInfo, MongoshSession, TaskInfo};
 use mongodb::Client;
+use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// Metadata kept per live connection id for the `connections-changed`
+/// broadcast (Phase 3 Task 3) — enough for another window to label a
+/// connection in its own UI (profile it came from, display name).
+/// Deliberately excludes the connection URI: event payloads go out via
+/// `app_handle.emit`, and a connection string must never ride on that.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionMeta {
+    pub profile_id: String,
+    pub name: String,
+    /// True iff this connection was opened by the embedded MCP server's
+    /// `connect` tool (#98 Task 4) rather than a human via the sidebar/
+    /// Connection Manager. `#[serde(default)]` keeps this readable against
+    /// nothing on-disk -- `ConnectionMeta` is in-memory only (never
+    /// persisted), but the default matters for any caller that constructs
+    /// one from a partial literal (`..Default::default()`-style).
+    #[serde(default)]
+    pub via_mcp: bool,
+    /// Read-only / confirm-destructive production safeguard (#188),
+    /// registered at connect time from the profile's `connection_mode`. The
+    /// central write guard (`write_guard::guard_writable`) reads this to
+    /// decide whether a mutating command may proceed — never re-derives it
+    /// from the profile, so a live connection's guard behavior can't drift
+    /// out of sync with what was true when it was connected. `#[serde(default)]`
+    /// for the same reason as `via_mcp`: readable against nothing on-disk,
+    /// and matters for any caller that constructs one from a partial literal.
+    #[serde(default)]
+    pub mode: crate::connections::ConnectionMode,
+}
+
+/// One entry of the `connections-changed` payload's `connections` list —
+/// `ConnectionMeta` plus the id it's keyed by in `AppState.connection_meta`
+/// (the id itself isn't part of `ConnectionMeta` since it's the map key,
+/// but listeners need it to tell entries apart).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionEntry {
+    pub id: String,
+    pub profile_id: String,
+    pub name: String,
+    /// Mirrors `ConnectionMeta::via_mcp` -- surfaced to the frontend so the
+    /// sidebar can badge agent-initiated connections (#98 Task 4).
+    pub via_mcp: bool,
+    /// Mirrors `ConnectionMeta::mode` -- surfaced to the frontend for the
+    /// read-only/confirm-destructive banner and sidebar badge (#188).
+    pub mode: crate::connections::ConnectionMode,
+}
+
+/// The `connections-changed` broadcast payload: the full current connection
+/// list (not a diff) — simplest for a listener to reconcile against, and
+/// matches `workspace-changed` carrying the full `Workspace` rather than a
+/// delta.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionsChangedPayload {
+    pub connections: Vec<ConnectionEntry>,
+}
 
 /// Lock a std mutex, mapping a poisoned lock to an error instead of panicking.
 pub trait LockExt<T> {
@@ -38,6 +97,35 @@ pub struct AppState {
     /// connection id, for tools that need to hand a URI to an external
     /// process (mongodump/mongorestore). Never populated for mock connections.
     pub conn_uris: Mutex<HashMap<String, String>>,
+    /// In-memory cache of the workspace.json document. `None` until the
+    /// first `workspace_get`/`workspace_apply` call populates it (see
+    /// `workspace::get_impl`/`workspace::apply_impl`).
+    pub workspace: Mutex<Option<workspace::Workspace>>,
+    /// Monotonic generation counter for debounced workspace saves —
+    /// `workspace::apply_impl` mints a new generation per real change; a
+    /// spawned save only writes if its captured generation is still current,
+    /// collapsing bursts of changes into a single-flight write.
+    pub workspace_write_gen: Arc<AtomicU64>,
+    /// Metadata for currently-live connections, keyed by connection id —
+    /// broadcast to every window via `connections-changed` whenever it
+    /// changes (`set_connection_meta` on connect, removed on
+    /// `disconnect_db`). See `ConnectionMeta`'s doc comment for why this
+    /// deliberately never holds a URI.
+    pub connection_meta: Mutex<HashMap<String, ConnectionMeta>>,
+    /// Embedded MCP server lifecycle + settings (#98 Task 1): enablement,
+    /// bound port, bearer token, rolling call log, and the live server
+    /// task's handle (`None` when disabled). See `mcp::McpControl` for the
+    /// enable/disable state machine and `mcp::stop_if_running` for the
+    /// `vault_lock`/`vault_reset` teardown hook that guarantees a locked
+    /// vault never leaves the server listening.
+    ///
+    /// `Arc`-wrapped (unlike this struct's other `Mutex` fields) so the
+    /// spawned server task (#98 Task 2) can hold its own clone of the exact
+    /// same lock `AppState` uses — reading the live bearer token at request
+    /// time straight out of the one source of truth, rather than needing a
+    /// full `Arc<AppState>` or a second copy of the token that could drift
+    /// out of sync with a `mcp_regenerate_token` call.
+    pub mcp: Arc<Mutex<mcp::McpControl>>,
 }
 
 impl AppState {
@@ -55,6 +143,10 @@ impl AppState {
             resource_tree_at: Mutex::new(Instant::now()),
             vault_key: Mutex::new(None),
             conn_uris: Mutex::new(HashMap::new()),
+            workspace: Mutex::new(None),
+            workspace_write_gen: Arc::new(AtomicU64::new(0)),
+            connection_meta: Mutex::new(HashMap::new()),
+            mcp: Arc::new(Mutex::new(mcp::McpControl::new())),
         }
     }
 

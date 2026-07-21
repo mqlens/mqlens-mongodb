@@ -11,6 +11,8 @@ export interface FavoriteItem {
 }
 
 const STORAGE_KEY = 'mqlens_favorites';
+/** Exported so cross-window `storage` listeners (Sidebar.tsx) can filter events by key. */
+export const FAVORITES_STORAGE_KEY = STORAGE_KEY;
 export const FAVORITES_CHANGED_EVENT = 'mqlens-favorites-changed';
 
 export function favoriteItemKey(item: FavoriteItem): string {

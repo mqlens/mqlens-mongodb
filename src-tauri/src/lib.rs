@@ -11,8 +11,12 @@ use uuid::Uuid;
 
 pub mod limits;
 pub mod ai;
+#[cfg(test)]
+mod command_coverage;
 pub mod connections;
 mod db;
+pub mod mcp;
+pub mod mcp_tools;
 pub(crate) mod mock_db;
 pub mod monitoring;
 pub mod path_env;
@@ -23,6 +27,9 @@ pub mod toolsetup;
 pub mod updater;
 mod vault;
 mod window;
+mod windows;
+mod workspace;
+mod write_guard;
 pub mod biometric;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
 pub use db::ddl::{
@@ -62,7 +69,7 @@ pub use db::users::{
 pub use db::version::get_mongodb_version_impl;
 pub use db::copy::{preflight_copy_impl, start_collection_copy_impl, start_database_copy_impl, CopyTargetRef};
 pub use biometric::{decode_and_verify_key, encode_key, BiometricStatus};
-pub use state::{AppState, LockExt};
+pub use state::{AppState, ConnectionEntry, ConnectionMeta, ConnectionsChangedPayload, LockExt};
 pub use window::target_window_size;
 #[cfg(test)]
 mod tests;
@@ -530,10 +537,75 @@ pub async fn disconnect_db_impl(state: &AppState, id: &str) -> Result<(), String
             tunnel.close();
         }
     }
+    {
+        let mut meta = state.connection_meta.lock_safe()?;
+        meta.remove(id);
+    }
+    // A human disconnecting (Sidebar's onDisconnect -> this command) an
+    // agent-opened connection must also drop it from the MCP server's own
+    // `session_connections` bookkeeping (final whole-branch review fix
+    // wave) — otherwise a stale id lingers there forever, and a later MCP
+    // `disconnect` call for that id would pass `mcp_tools::disconnect_impl`'s
+    // session-owned check and try to tear down a connection that's already
+    // gone (`crate::disconnect_db_impl` above is idempotent per-map-removal,
+    // so that itself wouldn't error, but the stale bookkeeping is exactly
+    // the kind of drift Task 4's `session_connections` doc comment says this
+    // set should never carry). `mcp_tools::disconnect_impl`'s own path
+    // already prunes this set itself, so this is only reached for a
+    // human-initiated disconnect of an id that happens to also be
+    // session-owned; harmless (and a no-op `remove`) otherwise.
+    {
+        let mut control = state.mcp.lock_safe()?;
+        control.session_connections.remove(id);
+    }
 
     Ok(())
 }
 
+/// Insert/replace `id`'s connection metadata (the profile it came from plus
+/// a display name) — called by the frontend once a connection succeeds.
+/// `AppHandle`-free like `connect_db_impl`/`disconnect_db_impl`: the
+/// `connections-changed` broadcast is the `set_connection_meta` command
+/// wrapper's job, mirroring `workspace::apply_impl`/`workspace_apply`'s
+/// pure-mutation/emit split.
+pub fn set_connection_meta_impl(
+    state: &AppState,
+    id: &str,
+    profile_id: &str,
+    name: &str,
+    via_mcp: bool,
+    mode: connections::ConnectionMode,
+) -> Result<(), String> {
+    let mut meta = state.connection_meta.lock_safe()?;
+    meta.insert(id.to_string(), ConnectionMeta { profile_id: profile_id.to_string(), name: name.to_string(), via_mcp, mode });
+    Ok(())
+}
+
+/// The full current connection list for a `connections-changed` broadcast,
+/// sorted by connection id — a `HashMap`'s iteration order is otherwise
+/// unspecified, which would make every emitted payload's element order
+/// nondeterministic between calls.
+pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, String> {
+    let meta = state.connection_meta.lock_safe()?;
+    let mut list: Vec<ConnectionEntry> = meta
+        .iter()
+        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp, mode: m.mode })
+        .collect();
+    list.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(list)
+}
+
+/// #188 security review Fix 2 (CRITICAL): mongosh pipes arbitrary free-form
+/// commands (`db.dropDatabase()`, `db.coll.deleteMany({})`, …) straight to
+/// the driver — there is no per-command `WriteOp` to gate like every other
+/// mutating `_impl`, so the only place a `read_only` connection can be kept
+/// safe is here, before a shell is ever spawned. `ConfirmDestructive`
+/// deliberately falls through unblocked: the shell is a deliberate
+/// free-form power-user tool (the mode banner already warns the user), and
+/// per-command typed confirmation is impossible for arbitrary shell input —
+/// this is a documented v1 limitation, not an oversight. See
+/// `write_guard::connection_mode`'s doc comment for why this reads the mode
+/// directly instead of going through `guard_writable`.
 pub async fn start_mongosh_session_impl(
     state: &AppState,
     connection_id: &str,
@@ -541,6 +613,11 @@ pub async fn start_mongosh_session_impl(
     database: &str,
     mongosh_path: &str,
 ) -> Result<MongoshSessionInfo, String> {
+    if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
+    {
+        return Err(write_guard::READ_ONLY_MSG.to_string());
+    }
+
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;
         *mocks
@@ -902,8 +979,63 @@ async fn stop_mongosh_session(
 }
 
 #[tauri::command]
-async fn disconnect_db(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
-    disconnect_db_impl(&state, &id).await
+async fn disconnect_db(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    disconnect_db_impl(&state, &id).await?;
+    let connections = connection_list_impl(&state)?;
+    // Broadcast is best-effort: a window that misses this event picks up
+    // current connection metadata the next time it connects or calls
+    // `set_connection_meta` itself.
+    let _ = app_handle.emit("connections-changed", ConnectionsChangedPayload { connections });
+    Ok(())
+}
+
+/// `connection_list` command: thin wrapper over `connection_list_impl`
+/// (final whole-branch review, Fix 2). Unlike `disconnect_db`/
+/// `set_connection_meta`, this never broadcasts — it's a plain read, called
+/// once by App.tsx's boot effect (after `workspace_get` resolves) so a
+/// freshly spawned window sees every connection already live in the session
+/// immediately, instead of rendering a `ReconnectBanner` for a
+/// restored-but-actually-live profile and inviting a duplicate `connect_db`.
+#[tauri::command]
+async fn connection_list(state: tauri::State<'_, AppState>) -> Result<Vec<ConnectionEntry>, String> {
+    connection_list_impl(&state)
+}
+
+#[tauri::command]
+async fn set_connection_meta(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+    profile_id: String,
+    name: String,
+    mode: connections::ConnectionMode,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    // Frontend-initiated (sidebar/Connection Manager/quick-connect) -- never
+    // an MCP agent connection, which flows through `mcp_tools::connect_impl`
+    // instead and passes `via_mcp: true` directly. `mode` is the profile's
+    // `connection_mode` at the moment it was connected (#188) -- the
+    // frontend has the profile it just connected with, so it supplies this
+    // rather than the backend re-reading the (encrypted) profile store.
+    // #188 security review Fix 5: this command is renderer-callable with an
+    // ARBITRARY `mode` -- a hostile/compromised renderer could call it
+    // directly and claim `Normal` for a connection it knows is production.
+    // That's a trust edge consistent with this feature's accepted model
+    // (see write_guard.rs's module doc: "an opt-in production safeguard,
+    // not a security boundary against a hostile local user"), not a gap
+    // introduced by this fix wave.
+    set_connection_meta_impl(&state, &id, &profile_id, &name, false, mode)?;
+    let connections = connection_list_impl(&state)?;
+    // Broadcast is best-effort: a window that misses this event picks up
+    // current connection metadata the next time it connects or calls
+    // `set_connection_meta` itself.
+    let _ = app_handle.emit("connections-changed", ConnectionsChangedPayload { connections });
+    Ok(())
 }
 
 #[tauri::command]
@@ -1298,8 +1430,12 @@ async fn execute_aggregate(
     database: String,
     collection: String,
     pipeline: String,
+    // `Option<bool>` (see `delete_many`'s comment): missing key -> `false`.
+    // #188 review Fix 1: only matters when `pipeline` carries a $out/$merge
+    // stage — see `execute_aggregate_impl`'s doc comment.
+    confirmed: Option<bool>,
 ) -> Result<Vec<String>, String> {
-    execute_aggregate_impl(&state, &id, &database, &collection, &pipeline).await
+    execute_aggregate_impl(&state, &id, &database, &collection, &pipeline, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1338,8 +1474,10 @@ async fn drop_collection(
     id: String,
     database: String,
     collection: String,
+    // `Option<bool>` (see `delete_many`'s comment): missing key -> `false`.
+    confirmed: Option<bool>,
 ) -> Result<(), String> {
-    drop_collection_impl(&state, &id, &database, &collection).await
+    drop_collection_impl(&state, &id, &database, &collection, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1349,8 +1487,9 @@ async fn rename_collection(
     database: String,
     from: String,
     to: String,
+    confirmed: Option<bool>,
 ) -> Result<(), String> {
-    rename_collection_impl(&state, &id, &database, &from, &to).await
+    rename_collection_impl(&state, &id, &database, &from, &to, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1390,8 +1529,9 @@ async fn drop_database(
     state: tauri::State<'_, AppState>,
     id: String,
     database: String,
+    confirmed: Option<bool>,
 ) -> Result<(), String> {
-    drop_database_impl(&state, &id, &database).await
+    drop_database_impl(&state, &id, &database, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1401,8 +1541,9 @@ async fn rename_database(
     from: String,
     to: String,
     drop_source: bool,
+    confirmed: Option<bool>,
 ) -> Result<DatabaseRenameResult, String> {
-    rename_database_impl(&state, &id, &from, &to, drop_source).await
+    rename_database_impl(&state, &id, &from, &to, drop_source, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1436,6 +1577,29 @@ async fn analyze_schema(
     sample_size: i64,
 ) -> Result<String, String> {
     analyze_schema_impl(&state, &id, &database, &collection, sample_size).await
+}
+
+/// No `state` param: preview only exercises the pure template engine
+/// (`parse_template` + `generate_doc`), never a connection.
+#[tauri::command]
+async fn preview_generated_documents(
+    template: String,
+    count: Option<u8>,
+    seed: Option<u64>,
+) -> Result<Vec<String>, String> {
+    db::generate::preview_generated_documents_impl(&template, count, seed)
+}
+
+#[tauri::command]
+async fn infer_generate_template(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    sample_size: Option<i64>,
+) -> Result<String, String> {
+    db::generate::infer_generate_template_impl(&state, &id, &database, &collection, sample_size)
+        .await
 }
 
 #[tauri::command]
@@ -1491,8 +1655,14 @@ async fn delete_many(
     database: String,
     collection: String,
     filter: String,
+    // `Option<bool>` (not a raw `#[serde(default)]` attribute — Tauri's
+    // per-parameter command args don't support serde field attributes,
+    // only `Deserialize`-derived struct fields do; see mcp_tools.rs's
+    // `_confirm` for that pattern) so an omitted key defaults to `false`
+    // rather than the IPC layer rejecting the call outright.
+    confirmed: Option<bool>,
 ) -> Result<u64, String> {
-    delete_many_impl(&state, &id, &database, &collection, &filter).await
+    delete_many_impl(&state, &id, &database, &collection, &filter, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1503,8 +1673,9 @@ async fn update_many(
     collection: String,
     filter: String,
     update: String,
+    confirmed: Option<bool>,
 ) -> Result<u64, String> {
-    update_many_impl(&state, &id, &database, &collection, &filter, &update).await
+    update_many_impl(&state, &id, &database, &collection, &filter, &update, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1626,6 +1797,28 @@ async fn start_import_task(
         &format,
         csv_options,
         &mode,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn start_generate_task(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    database: String,
+    collection: String,
+    template: String,
+    count: u32,
+    seed: Option<u64>,
+) -> Result<TaskInfo, String> {
+    db::generate::start_generate_task_impl(
+        &state,
+        &id,
+        &database,
+        &collection,
+        &template,
+        count,
+        seed,
     )
     .await
 }
@@ -1769,6 +1962,10 @@ async fn vault_unlock(
 #[tauri::command]
 async fn vault_lock(state: tauri::State<'_, AppState>) -> Result<(), String> {
     *state.vault_key.lock_safe()? = None;
+    // A locked vault must never leave the embedded MCP server listening —
+    // it reads through `require_key`-gated seams, same precondition as
+    // enabling it in the first place.
+    mcp::stop_if_running(&state).await?;
     Ok(())
 }
 
@@ -1787,6 +1984,8 @@ async fn vault_reset(
         }
     }
     *state.vault_key.lock_safe()? = None;
+    // Same precondition as `vault_lock`: no key means no MCP server.
+    mcp::stop_if_running(&state).await?;
     // A reset invalidates the old key; forget any biometric copy too.
     let _ = biometric::remove_stored_key(&app_handle);
     Ok(())
@@ -1822,6 +2021,30 @@ async fn vault_change_password(
     // Approach A: a password change derives a new key; keep biometrics working transparently.
     biometric::restore_key_if_enrolled(&app_handle, &new_key);
     Ok(())
+}
+
+/// Thin wrappers over `mcp.rs`'s testable impl fns (the established
+/// impl/wrapper split — see `set_connection_meta_impl`'s doc comment above)
+/// so the lifecycle logic itself never touches a `tauri::State` and can be
+/// unit-tested with a plain `AppState`.
+#[tauri::command]
+async fn mcp_get_status(state: tauri::State<'_, AppState>) -> Result<mcp::McpStatusUi, String> {
+    mcp::get_status_impl(&state)
+}
+
+#[tauri::command]
+async fn mcp_set_enabled(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+    port: Option<u16>,
+) -> Result<mcp::McpStatusUi, String> {
+    mcp::set_enabled_impl(&state, enabled, port, Some(app_handle)).await
+}
+
+#[tauri::command]
+async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<mcp::McpStatusUi, String> {
+    mcp::regenerate_token_impl(&state)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1861,6 +2084,12 @@ pub fn run() {
                     }
                 }
             }
+            // Final whole-branch review, Fix 1 (CRITICAL): closing "main"
+            // must quit the app even with a secondary `win-*` window open —
+            // see `windows::wire_main_window_exit`'s doc comment for why the
+            // runtime's default `ExitRequested`-on-last-window-close
+            // behavior is no longer sufficient once multi-window exists.
+            windows::wire_main_window_exit(app.handle());
             Ok(())
         })
         .manage(AppState::new())
@@ -1883,6 +2112,8 @@ pub fn run() {
             run_mongosh_command,
             stop_mongosh_session,
             disconnect_db,
+            set_connection_meta,
+            connection_list,
             list_databases,
             list_collections,
             list_indexes,
@@ -1927,12 +2158,18 @@ pub fn run() {
             explain_mql_query,
             explain_aggregate_query,
             analyze_schema,
+            preview_generated_documents,
+            infer_generate_template,
+            start_generate_task,
             vault_status,
             vault_initialize,
             vault_unlock,
             vault_lock,
             vault_reset,
             vault_change_password,
+            mcp_get_status,
+            mcp_set_enabled,
+            mcp_regenerate_token,
             biometric::biometric_status,
             biometric::biometric_enable,
             biometric::biometric_unlock,
@@ -1950,6 +2187,12 @@ pub fn run() {
             queries::record_history,
             queries::set_default_query,
             queries::list_all_saved_queries,
+            workspace::workspace_get,
+            workspace::workspace_apply,
+            windows::workspace_detach_tab,
+            windows::spawn_saved_windows,
+            windows::focus_window,
+            windows::close_workspace_window,
             server_status,
             current_ops,
             repl_set_status,

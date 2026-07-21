@@ -1,0 +1,459 @@
+[
+  {
+    "name": "aggregate",
+    "description": "Run a MongoDB aggregation pipeline. Returns {\"documents\": [...relaxed EJSON...], \"truncated\"?}. Real connections only (not the demo/mock data). Stages whose sole key is $out or $merge are rejected — MCP is read-only for aggregation.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection",
+        "pipeline"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "pipeline": {
+          "description": "Aggregation pipeline as an array of stage objects, e.g.\n`[{\"$match\": {\"status\": \"active\"}}, {\"$limit\": 10}]`. Stages whose\nsole key is `$out` or `$merge` are rejected.",
+          "type": "array",
+          "items": true
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "connect",
+    "description": "Open a live connection to an MCP-opted-in profile (by id, from `list_profiles`). Returns {\"connectionId\": \"...\"} for use with every other data tool. Every window's sidebar shows this connection with a \"via MCP\" badge.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "profile_id"
+      ],
+      "properties": {
+        "profile_id": {
+          "description": "Id of an MCP-opted-in profile, as returned by `list_profiles`.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "create_index",
+    "description": "Create an index. `name` defaults to MongoDB's own naming convention (each key's field_direction joined by `_`, e.g. `email_1`) when omitted. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be created (the namespace and the key spec) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection",
+        "keys",
+        "_confirm"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "keys": {
+          "description": "Index key spec as a JSON object, e.g. `{\"email\": 1}` or\n`{\"a\": 1, \"b\": -1}`."
+        },
+        "name": {
+          "description": "Index name. Defaults to MongoDB's own naming convention (each key's\n`field_direction` joined by `_`, e.g. `email_1`) when omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "unique": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "sparse": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "_confirm": {
+          "description": "Must be `true`; see `insert_one`'s `_confirm` doc.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "delete_many",
+    "description": "Delete every document matching `filter`. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be deleted (the namespace and the filter) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection",
+        "filter",
+        "_confirm"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "filter": {
+          "description": "MQL filter selecting documents to delete, as a JSON object."
+        },
+        "_confirm": {
+          "description": "Must be `true`; see `insert_one`'s `_confirm` doc.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "disconnect",
+    "description": "Close a connection previously opened by this MCP session's `connect` call. Cannot disconnect a connection a human opened via the app UI, even if its profile is opted in.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id"
+      ],
+      "properties": {
+        "connection_id": {
+          "description": "Id returned by `connect` or `list_connections`.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "explain",
+    "description": "Explain a find filter or an aggregation pipeline (executionStats verbosity). Pass `pipeline` for an aggregate-style explain (real connections only) or `find_filter` for a find-style explain.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "find_filter": {
+          "description": "MQL filter as a JSON object string (find-style explain). Ignored if `pipeline` is set.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "pipeline": {
+          "description": "Aggregation pipeline as an array of stage objects (aggregate-style explain).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": true,
+          "default": null
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "find",
+    "description": "Run a MongoDB find query. Returns {\"documents\": [...relaxed EJSON...], \"count\"?, \"truncated\"?}. Results are capped (default 50 docs / 1MB; `limit` also caps at 200) — a non-null `truncated` means narrow the filter or lower `limit`.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection"
+      ],
+      "properties": {
+        "connection_id": {
+          "description": "Id returned by `connect` or `list_connections`.",
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "filter": {
+          "description": "MQL filter as a JSON object string, e.g. `{\"status\":\"active\"}`. Omit for \"match all\".",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "sort": {
+          "description": "MQL sort as a JSON object string, e.g. `{\"createdAt\":-1}`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "projection": {
+          "description": "MQL projection as a JSON object string, e.g. `{\"name\":1,\"_id\":0}`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "limit": {
+          "description": "Max documents to fetch from MongoDB. Default 50, hard cap 200. The\nresponse may be truncated further by the output size cap.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "default": null
+        },
+        "skip": {
+          "description": "Documents to skip before returning results. Default 0.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "default": null
+        },
+        "include_count": {
+          "description": "Also return a total matching-document count (costs an extra query).",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "insert_one",
+    "description": "Insert one document. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be inserted (the namespace and a summary of the document) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection",
+        "document",
+        "_confirm"
+      ],
+      "properties": {
+        "connection_id": {
+          "description": "Id returned by `connect` or `list_connections`.",
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "document": {
+          "description": "The document to insert, as a JSON object."
+        },
+        "_confirm": {
+          "description": "Must be `true`. Before setting this, restate to the user exactly\nwhat will be inserted (the namespace and a summary of the document)\nand get their go-ahead — the call is rejected until then.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_collections",
+    "description": "List collections (and their type: collection/view/timeseries) in a database.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_connections",
+    "description": "List currently live MongoDB connections whose profile is opted in to MCP access. Use a returned id with `find`/`aggregate`/etc, or `connect` a not-yet-connected opted-in profile first.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "list_databases",
+    "description": "List database names visible on a connection.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id"
+      ],
+      "properties": {
+        "connection_id": {
+          "description": "Id returned by `connect` or `list_connections`.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_indexes",
+    "description": "List a collection's indexes merged with usage stats (size, ops since last restart) where available. Mock/demo connections report indexes with no stats.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_profiles",
+    "description": "List MongoDB connection profiles opted in to MCP access (Settings → Connection Manager → \"Expose to MCP agents\"). Returns id/name/colorTag only — never a connection string. Call this before `connect`.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "ping",
+    "description": "Health check for the MQLens MCP server. Returns \"pong <version>\" — call this first to confirm the server is reachable and the bearer token is valid.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "schema_analysis",
+    "description": "Infer a collection's schema by sampling documents: per-field types, presence/coverage, and low-cardinality enum values. `sampleSize` defaults to 100, hard cap 1000.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "sample_size": {
+          "description": "Documents to sample. Default 100, hard cap 1000.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "default": null
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "update_many",
+    "description": "Update every document matching `filter` using operators (e.g. {\"$set\": {...}}) — bare replacement documents are rejected. DESTRUCTIVE — requires `_confirm: true`. Before calling with `_confirm: true`, restate to the user exactly what will be modified (the namespace, the filter, and the update) and get their go-ahead. Without `_confirm: true` the call is rejected with an error telling you to do that; call again with `_confirm: true` once you have.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "connection_id",
+        "database",
+        "collection",
+        "filter",
+        "update",
+        "_confirm"
+      ],
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "filter": {
+          "description": "MQL filter selecting documents to update, as a JSON object."
+        },
+        "update": {
+          "description": "Update document using operators (e.g. `{\"$set\": {\"field\": \"value\"}}`).\nBare replacement documents are rejected."
+        },
+        "_confirm": {
+          "description": "Must be `true`; see `insert_one`'s `_confirm` doc.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  }
+]

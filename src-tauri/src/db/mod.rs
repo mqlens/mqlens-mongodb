@@ -5,6 +5,7 @@ pub mod copy;
 pub mod ddl;
 pub mod documents;
 pub mod export;
+pub mod generate;
 pub mod gridfs;
 pub mod import;
 pub mod metadata;

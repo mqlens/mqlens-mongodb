@@ -511,6 +511,40 @@ async fn probe_binary_ok_timeout(path: &Path) -> bool {
     matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok(true)))
 }
 
+/// Number of times [`install_one_tool`] probes a freshly extracted binary
+/// before giving up on it.
+const PROBE_RETRY_ATTEMPTS: u32 = 3;
+/// Delay between failed probe attempts in [`probe_binary_ok_with_retries`].
+const PROBE_RETRY_BACKOFF: Duration = Duration::from_millis(200);
+
+/// Runs [`probe_binary_ok_timeout`] up to `attempts` times, waiting
+/// [`PROBE_RETRY_BACKOFF`] between attempts, returning as soon as one
+/// succeeds.
+///
+/// Why: the post-extraction `--version` probe spawns a fresh process against
+/// a file that was just written to disk and had its exec bit just set. On a
+/// loaded machine (CI runner under an instrumented build, an AV scanner, a
+/// busy laptop) a *single* probe can trip over a transient hiccup — a spawn
+/// failure, filesystem sync lag, or scheduling starvation — that has nothing
+/// to do with the binary itself. Failing the whole install on one such blip
+/// is a false negative, so we retry a few times with a short backoff before
+/// declaring the binary unusable. A genuinely broken binary (wrong
+/// architecture, truncated/corrupt archive, missing interpreter) fails
+/// every attempt identically and this still returns `false` after
+/// `attempts` tries — no real failure is hidden, only transient ones are
+/// tolerated.
+async fn probe_binary_ok_with_retries(path: &Path, attempts: u32) -> bool {
+    for attempt in 1..=attempts {
+        if probe_binary_ok_timeout(path).await {
+            return true;
+        }
+        if attempt < attempts {
+            tokio::time::sleep(PROBE_RETRY_BACKOFF).await;
+        }
+    }
+    false
+}
+
 /// Staging directories (one per tool name + app data dir) with an install
 /// currently in flight. Guards against two concurrent installs of the same
 /// tool corrupting each other's staging dir or a just-completed install.
@@ -802,7 +836,11 @@ pub(crate) async fn install_one_tool(
     progress("checking", 0, None);
     for b in binaries {
         let bin_path = extracted_bin.join(binary_file_name(b));
-        if !probe_binary_ok_timeout(&bin_path).await {
+        // Retry a few times before failing the install: a transient
+        // exec/fs hiccup on a loaded machine shouldn't sink an otherwise
+        // valid install. See `probe_binary_ok_with_retries` for why this is
+        // safe — a genuinely bad binary still fails every attempt.
+        if !probe_binary_ok_with_retries(&bin_path, PROBE_RETRY_ATTEMPTS).await {
             return Err(cleanup(
                 &staging_dir,
                 format!("{} failed to run --version", bin_path.display()),

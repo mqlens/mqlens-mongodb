@@ -565,6 +565,8 @@ describe('ConnectionManager Component', () => {
         uri: 'mongodb://staging:27017',
         ssh: null,
         color_tag: null,
+        mcp_enabled: false,
+        connection_mode: 'normal',
       });
       // The nested modal should be closed
       expect(screen.queryByText('New Connection')).not.toBeInTheDocument();
@@ -753,7 +755,7 @@ describe('ConnectionManager Component', () => {
 
     // Verify it called connect_db and passed connection ID to callback
     await waitFor(() => {
-      expect(handleConnect).toHaveBeenCalledWith('conn-abc-123', 'Mock DB 1', 'mongodb://mock', 'profile-1', undefined);
+      expect(handleConnect).toHaveBeenCalledWith('conn-abc-123', 'Mock DB 1', 'mongodb://mock', 'profile-1', undefined, 'normal');
     });
   });
 
@@ -970,6 +972,223 @@ describe('ConnectionManager Component', () => {
   });
 });
 
+describe('MCP opt-in flag (#98)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('saving with "Expose to MCP agents" checked round-trips mcp_enabled: true', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Agent DB' } });
+    await pickSelectOption('topology-select', /full uri string only/i);
+    fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: 'mongodb://agent' } });
+
+    fireEvent.click(screen.getByLabelText(/expose to mcp agents/i));
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(savedProfile).toMatchObject({
+        name: 'Agent DB',
+        uri: 'mongodb://agent',
+        mcp_enabled: true,
+      });
+    });
+  });
+
+  it('editing a profile without mcp_enabled renders the checkbox unchecked', async () => {
+    const legacyProfile = { id: 'p-legacy', name: 'Legacy', uri: 'mongodb://legacy:27017' };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([legacyProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await waitFor(() => expect(screen.getAllByText('Legacy')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Legacy')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByLabelText(/expose to mcp agents/i)).not.toBeChecked();
+  });
+
+  it('toggling the checkbox on and saving an old profile adds mcp_enabled: true', async () => {
+    let savedProfile: any = null;
+    const legacyProfile = { id: 'p-legacy', name: 'Legacy', uri: 'mongodb://legacy:27017' };
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([legacyProfile]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await waitFor(() => expect(screen.getAllByText('Legacy')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Legacy')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    const checkbox = screen.getByLabelText(/expose to mcp agents/i);
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(savedProfile).toMatchObject({
+        id: 'p-legacy',
+        mcp_enabled: true,
+      });
+    });
+  });
+
+  it('duplicating an MCP-exposed profile resets "Expose to MCP agents" to unchecked, while editing it keeps it checked (final fix wave)', async () => {
+    const mcpProfile = { id: 'p-mcp', name: 'Agent DB', uri: 'mongodb://agent:27017', mcp_enabled: true };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([mcpProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await waitFor(() => expect(screen.getAllByText('Agent DB')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Agent DB')[0]);
+
+    // Edit path: unaffected, keeps mapping the original's flag.
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    expect(screen.getByLabelText(/expose to mcp agents/i)).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    // Duplicate path: the new profile starts unexposed regardless.
+    fireEvent.click(screen.getAllByText('Agent DB')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^duplicate$/i }));
+    expect(screen.getByLabelText(/expose to mcp agents/i)).not.toBeChecked();
+  });
+});
+
+describe('Connection mode segmented control (#188 Task 1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('renders the three connection mode options, defaulting a new profile to Normal', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+
+    expect(screen.getByTestId('connection-mode-normal')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('connection-mode-read_only')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('connection-mode-confirm_destructive')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('selecting a mode updates the segmented control selection', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+
+    fireEvent.click(screen.getByTestId('connection-mode-read_only'));
+
+    expect(screen.getByTestId('connection-mode-read_only')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('connection-mode-normal')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('saving with "Confirm destructive" selected persists connection_mode', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Prod' } });
+    await pickSelectOption('topology-select', /full uri string only/i);
+    fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: 'mongodb://prod' } });
+
+    fireEvent.click(screen.getByTestId('connection-mode-confirm_destructive'));
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(savedProfile).toMatchObject({
+        name: 'Prod',
+        uri: 'mongodb://prod',
+        connection_mode: 'confirm_destructive',
+      });
+    });
+  });
+
+  it('editing a profile with a mode shows it selected in the segmented control', async () => {
+    const roProfile = { id: 'p-ro', name: 'Read Only DB', uri: 'mongodb://ro:27017', connection_mode: 'read_only' };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([roProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await waitFor(() => expect(screen.getAllByText('Read Only DB')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Read Only DB')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByTestId('connection-mode-read_only')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('editing a legacy profile without connection_mode defaults the segmented control to Normal', async () => {
+    const legacyProfile = { id: 'p-legacy', name: 'Legacy', uri: 'mongodb://legacy:27017' };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([legacyProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await waitFor(() => expect(screen.getAllByText('Legacy')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Legacy')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByTestId('connection-mode-normal')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('duplicating a read-only profile inherits its connection mode (opposite of mcpEnabled)', async () => {
+    const roProfile = { id: 'p-ro', name: 'Prod', uri: 'mongodb://prod:27017', connection_mode: 'read_only' };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([roProfile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await waitFor(() => expect(screen.getAllByText('Prod')[0]).toBeInTheDocument());
+    fireEvent.click(screen.getAllByText('Prod')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^duplicate$/i }));
+
+    expect(screen.getByTestId('connection-mode-read_only')).toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
 describe('URI import and export', () => {
   const prodProfile = {
     id: 'p1',
@@ -1008,6 +1227,7 @@ describe('URI import and export', () => {
     mockSaveDialog.mockReset();
     mockReadTextFile.mockReset();
     mockWriteTextFile.mockReset();
+    localStorage.clear();
   });
 
   it('imports a URI from the clipboard into the editor form', async () => {
@@ -1095,6 +1315,117 @@ describe('URI import and export', () => {
 
     await waitFor(() => {
       expect(mockWriteTextFile).toHaveBeenCalledWith('/tmp/conn.txt', `${redacted}\n`);
+    });
+  });
+
+  it('exports all saved profile URIs to clipboard as JSON without passwords by default', async () => {
+    const { writeText } = setupClipboard();
+    renderManager([
+      { id: 'p1', name: 'Local', uri: 'mongodb://user:secret@localhost:27017/local', ssh: null, color_tag: null },
+      { id: 'p2', name: 'Prod', uri: 'mongodb://admin:pw@prod.example.com:27017/prod?replicaSet=rs0', ssh: null, color_tag: null },
+    ]);
+
+    fireEvent.click((await screen.findAllByText('Local'))[0]);
+    fireEvent.click(screen.getByTestId('export-all-uris-btn'));
+    await screen.findByTestId('export-uri-preview');
+    fireEvent.click(screen.getByTestId('export-copy-btn'));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(
+        JSON.stringify(
+          {
+            folders: [
+              { name: 'Local resources', connections: [] },
+            ],
+            connections: [
+              { name: 'Local', uri: 'mongodb://user@localhost:27017/local' },
+              { name: 'Prod', uri: 'mongodb://admin@prod.example.com:27017/prod?replicaSet=rs0' },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+    });
+  });
+
+  it('imports multiple connections from MQLens JSON including folders', async () => {
+    const saved: Array<{ name: string; uri: string }> = [];
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        saved.push({ name: args.profile.name, uri: args.profile.uri });
+        return Promise.resolve();
+      }
+      return Promise.resolve([]);
+    });
+    setupClipboard();
+    mockOpenDialog.mockResolvedValue('/tmp/connections.json');
+    mockReadTextFile.mockResolvedValue(JSON.stringify({
+      folders: [
+        {
+          name: 'Team',
+          connections: [
+            { name: 'Atlas', uri: 'mongodb+srv://user:pw@cluster0.example.net/app' },
+          ],
+        },
+      ],
+      connections: [
+        { name: 'Local', uri: 'mongodb://localhost:27017' },
+      ],
+    }));
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await openImportMenu();
+    fireEvent.click(await screen.findByTestId('import-from-file'));
+    fireEvent.click(await screen.findByRole('button', { name: /import all/i }));
+
+    await waitFor(() => {
+      expect(saved).toEqual([
+        { name: 'Atlas', uri: 'mongodb+srv://user:pw@cluster0.example.net/app' },
+        { name: 'Local', uri: 'mongodb://localhost:27017' },
+      ]);
+    });
+
+    const storedFolders = JSON.parse(localStorage.getItem('mqlens_folders') || '[]') as Array<{ name: string }>;
+    expect(storedFolders.some((folder) => folder.name === 'Team')).toBe(true);
+    const profileMap = JSON.parse(localStorage.getItem('mqlens_profile_folders') || '{}') as Record<string, string>;
+    expect(Object.keys(profileMap).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('imports multiple URIs from a Studio 3T-style export file', async () => {
+    const saved: Array<{ name: string; uri: string }> = [];
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        saved.push({ name: args.profile.name, uri: args.profile.uri });
+        return Promise.resolve();
+      }
+      return Promise.resolve([]);
+    });
+    setupClipboard();
+    mockOpenDialog.mockResolvedValue('/tmp/studio3t.uri');
+    mockReadTextFile.mockResolvedValue([
+      '# Local',
+      'mongodb://localhost:27017',
+      '',
+      '# Production',
+      'mongodb://user:pw@prod.example.com:27017/app',
+    ].join('\n'));
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await openImportMenu();
+    fireEvent.click(await screen.findByTestId('import-from-file'));
+    fireEvent.click(await screen.findByRole('button', { name: /import all/i }));
+
+    await waitFor(() => {
+      expect(saved).toEqual([
+        { name: 'Local', uri: 'mongodb://localhost:27017' },
+        { name: 'Production', uri: 'mongodb://user:pw@prod.example.com:27017/app' },
+      ]);
+      expect(screen.queryByTestId('import-uri-success')).not.toBeInTheDocument();
     });
   });
 });

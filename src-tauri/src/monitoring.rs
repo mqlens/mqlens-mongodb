@@ -5,6 +5,7 @@
 //! The curation functions (raw BSON `Document` -> typed struct) are pure and
 //! unit-tested; the async `*_impl` wrappers just run the command and curate.
 
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{connection_is_mock, require_real_client, AppState};
 use mongodb::bson::{doc, Bson, Document};
 use serde::Serialize;
@@ -420,6 +421,8 @@ pub async fn current_ops_impl(state: &AppState, id: &str) -> Result<Vec<CurrentO
 }
 
 pub async fn kill_op_impl(state: &AppState, id: &str, opid: i64) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::ServerAdmin, false)?;
+
     if connection_is_mock(state, id)? {
         return Ok(());
     }
@@ -452,6 +455,8 @@ pub async fn set_profiling_level_impl(
     level: i32,
     slow_ms: i32,
 ) -> Result<ProfilingStatus, String> {
+    guard_writable(state, id, WriteOp::ServerAdmin, false)?;
+
     if connection_is_mock(state, id)? {
         return Ok(ProfilingStatus { level: level as i64, slow_ms: slow_ms as i64 });
     }

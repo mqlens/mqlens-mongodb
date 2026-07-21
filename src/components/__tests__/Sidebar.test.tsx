@@ -49,6 +49,57 @@ describe('Sidebar Component', () => {
     expect(handleOpenModal).toHaveBeenCalledTimes(1);
   });
 
+  it('badges a connection opened via MCP with "via MCP", and not a human-opened one', () => {
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-1', name: 'Agent Conn', uri: 'mongodb://mock1', viaMcp: true },
+          { id: 'conn-2', name: 'Human Conn', uri: 'mongodb://mock2', viaMcp: false },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    const badges = screen.getAllByTestId('connection-via-mcp-badge');
+    expect(badges).toHaveLength(1);
+    expect(screen.getByText('Agent Conn')).toBeInTheDocument();
+    expect(screen.getByText('Human Conn')).toBeInTheDocument();
+  });
+
+  it('badges a read_only connection "read-only" and a confirm_destructive connection "guarded", but not a normal one (#188 Task 5)', () => {
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-1', name: 'Prod Cluster', uri: 'mongodb://mock1', mode: 'read_only' },
+          { id: 'conn-2', name: 'Guarded Cluster', uri: 'mongodb://mock2', mode: 'confirm_destructive' },
+          { id: 'conn-3', name: 'Normal Cluster', uri: 'mongodb://mock3', mode: 'normal' },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    const badges = screen.getAllByTestId('connection-mode-badge');
+    expect(badges).toHaveLength(2);
+
+    const readOnlyBadge = badges.find((b) => b.getAttribute('data-mode') === 'read_only');
+    expect(readOnlyBadge).toHaveTextContent('read-only');
+
+    const guardedBadge = badges.find((b) => b.getAttribute('data-mode') === 'confirm_destructive');
+    expect(guardedBadge).toHaveTextContent('guarded');
+
+    expect(screen.getByText('Normal Cluster')).toBeInTheDocument();
+  });
+
   it('filters the tree by the search box (database names)', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases') {
@@ -982,6 +1033,90 @@ describe('Sidebar Component', () => {
     expect(handleOpenDump).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
   });
 
+  it('opens Generate Data from the database and collection context menus (#91)', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') {
+        return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    const handleOpenGenerate = vi.fn();
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Prod DB Server', uri: 'mongodb://localhost:27017' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenGenerate={handleOpenGenerate}
+      />
+    );
+
+    // Database-level: starter-template generate.
+    const dbNode = await screen.findByText('sales_db');
+    fireEvent.contextMenu(dbNode);
+    fireEvent.click(screen.getByTestId('ctx-generate-db-conn-1-sales_db'));
+    expect(handleOpenGenerate).toHaveBeenCalledWith('conn-1', 'sales_db');
+
+    // Collection-level: schema-seeded generate.
+    fireEvent.click(dbNode);
+    const collectionsFolder = await screen.findByText('Collections');
+    fireEvent.click(collectionsFolder);
+    const collectionNode = await screen.findByText('customers');
+    fireEvent.contextMenu(collectionNode);
+    fireEvent.click(screen.getByTestId('ctx-generate-coll-conn-1-sales_db-customers'));
+    expect(handleOpenGenerate).toHaveBeenCalledWith('conn-1', 'sales_db', 'customers');
+  });
+
+  it('still shows Generate Data (unlike Dump) for a mock connection\'s collection entry (#91)', async () => {
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'list_databases' && args.id === 'conn-1') {
+        return Promise.resolve(['sales_db']);
+      }
+      if (cmd === 'list_collections' && args.id === 'conn-1' && args.db === 'sales_db') {
+        return Promise.resolve([{ name: 'customers', type: 'collection' }]);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Sample (mqlens_demo)', uri: 'mongodb://mock' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+        onOpenDump={vi.fn()}
+        onOpenGenerate={vi.fn()}
+      />
+    );
+
+    const dbNode = await screen.findByText('sales_db');
+    // Database-level: Generate Data still offered where Dump is not.
+    fireEvent.contextMenu(dbNode);
+    expect(screen.queryByTestId('ctx-dump-db-conn-1-sales_db')).not.toBeInTheDocument();
+    expect(screen.getByTestId('ctx-generate-db-conn-1-sales_db')).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    // Collection-level: same story.
+    fireEvent.click(dbNode);
+    const collectionsFolder = await screen.findByText('Collections');
+    fireEvent.click(collectionsFolder);
+    const collectionNode = await screen.findByText('customers');
+    fireEvent.contextMenu(collectionNode);
+    expect(screen.queryByTestId('ctx-dump-coll-conn-1-sales_db-customers')).not.toBeInTheDocument();
+    expect(screen.getByTestId('ctx-generate-coll-conn-1-sales_db-customers')).toBeInTheDocument();
+  });
+
   it('opens Validation Rules from the collection context menu', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases' && args.id === 'conn-1') {
@@ -1216,11 +1351,15 @@ describe('Sidebar Component', () => {
     await waitFor(() => {
       const r = calls.find((x) => x.cmd === 'rename_collection');
       expect(r).toBeTruthy();
+      // #188 Task 3: a normal connection's flow is unchanged — `confirmed`
+      // rides along as `false` (the guard passes normal connections through
+      // regardless) since there's no typed-name step to flip it to `true`.
       expect(r.args).toMatchObject({
         id: 'conn-real',
         database: 'shop',
         from: 'orders',
         to: 'archived_orders',
+        confirmed: false,
       });
     });
 
@@ -1230,7 +1369,7 @@ describe('Sidebar Component', () => {
     await waitFor(() => {
       const d = calls.find((x) => x.cmd === 'drop_collection');
       expect(d).toBeTruthy();
-      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop', collection: 'orders' });
+      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop', collection: 'orders', confirmed: false });
     });
 
     // Rename Database: in-app prompt for the new name, then a confirm dialog.
@@ -1246,6 +1385,7 @@ describe('Sidebar Component', () => {
         from: 'shop',
         to: 'shop_archive',
         dropSource: true,
+        confirmed: false,
       });
     });
 
@@ -1255,7 +1395,122 @@ describe('Sidebar Component', () => {
     await waitFor(() => {
       const d = calls.find((x) => x.cmd === 'drop_database');
       expect(d).toBeTruthy();
-      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop' });
+      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop', confirmed: false });
+    });
+  });
+
+  it('requires typed-name confirmation for destructive ops on a confirm_destructive (production-safeguard) connection (#188 Task 3)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['shop']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'orders', type: 'collection' }]);
+      if (
+        cmd === 'rename_collection' ||
+        cmd === 'drop_collection' ||
+        cmd === 'rename_database' ||
+        cmd === 'drop_database'
+      ) return Promise.resolve();
+      if (cmd === 'list_indexes') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+
+    // Drives the typed-name confirm dialog (a `prompt` request under the hood,
+    // same DOM shape as `submitPrompt` above).
+    const typeAndSubmit = async (value: string) => {
+      const input = await screen.findByTestId('dialog-input');
+      fireEvent.change(input, { target: { value } });
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+    };
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-real', name: 'Prod', uri: 'mongodb://localhost:27017', mode: 'confirm_destructive' },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    const dbNode = await screen.findByText('shop');
+    fireEvent.click(dbNode);
+    await screen.findByText('Collections');
+    fireEvent.click(screen.getByText('Collections'));
+    const ordersNode = await screen.findByText('orders');
+
+    // Rename Collection: the typed-name step (confirming "orders") comes
+    // FIRST, before the "enter new name" prompt even appears.
+    fireEvent.contextMenu(ordersNode);
+    fireEvent.click(screen.getByText('Rename Collection'));
+    await typeAndSubmit('wrong_name');
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((x) => x.cmd === 'rename_collection')).toBeFalsy();
+    await typeAndSubmit('orders'); // exact match -> proceeds to the "enter new name" prompt
+    await typeAndSubmit('archived_orders');
+    await waitFor(() => {
+      const r = calls.find((x) => x.cmd === 'rename_collection');
+      expect(r).toBeTruthy();
+      expect(r.args).toMatchObject({
+        id: 'conn-real',
+        database: 'shop',
+        from: 'orders',
+        to: 'archived_orders',
+        confirmed: true,
+      });
+    });
+
+    // Drop Collection: wrong typed name -> no invoke; exact name -> invoke
+    // with confirmed:true.
+    fireEvent.contextMenu(ordersNode);
+    fireEvent.click(screen.getByText('Drop Collection'));
+    await typeAndSubmit('not_orders');
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((x) => x.cmd === 'drop_collection')).toBeFalsy();
+    await typeAndSubmit('orders');
+    await waitFor(() => {
+      const d = calls.find((x) => x.cmd === 'drop_collection');
+      expect(d).toBeTruthy();
+      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop', collection: 'orders', confirmed: true });
+    });
+
+    // Rename Database: typed-name step (confirming "shop", the FROM side)
+    // replaces the ordinary yes/no confirm.
+    fireEvent.contextMenu(dbNode);
+    fireEvent.click(screen.getByText('Rename Database'));
+    await typeAndSubmit('shop_archive');
+    await typeAndSubmit('wrong_db');
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((x) => x.cmd === 'rename_database')).toBeFalsy();
+    await typeAndSubmit('shop');
+    await waitFor(() => {
+      const r = calls.find((x) => x.cmd === 'rename_database');
+      expect(r).toBeTruthy();
+      expect(r.args).toMatchObject({
+        id: 'conn-real',
+        from: 'shop',
+        to: 'shop_archive',
+        dropSource: true,
+        confirmed: true,
+      });
+    });
+
+    // Drop Database: wrong typed name -> no invoke; exact name -> invoke
+    // with confirmed:true.
+    fireEvent.contextMenu(dbNode);
+    fireEvent.click(screen.getByText('Drop Database'));
+    await typeAndSubmit('wrong_db');
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((x) => x.cmd === 'drop_database')).toBeFalsy();
+    await typeAndSubmit('shop');
+    await waitFor(() => {
+      const d = calls.find((x) => x.cmd === 'drop_database');
+      expect(d).toBeTruthy();
+      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop', confirmed: true });
     });
   });
 
@@ -1282,6 +1537,43 @@ describe('Sidebar Component', () => {
     fireEvent.click(screen.getByRole('button', { name: /pinned/i }));
     expect(await screen.findByText('orders')).toBeInTheDocument();
     expect(screen.getByText('sales_db')).toBeInTheDocument();
+  });
+
+  it('(Phase 3 Task 6c) a storage event for the pins key refreshes pinned items from another window; an unrelated key is ignored', async () => {
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /pinned/i }));
+    expect(screen.queryByText('orders')).not.toBeInTheDocument();
+
+    // A DIFFERENT window wrote to an UNRELATED localStorage key — jsdom only
+    // fires `storage` via a manual dispatch (real browsers fire it natively
+    // on every OTHER window; never on the window that made the write, which
+    // is what the in-window PINNED_CHANGED_EVENT already covers). Must not
+    // force a reload.
+    localStorage.setItem('some_other_key', 'x');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'some_other_key', newValue: 'x' }));
+    expect(screen.queryByText('orders')).not.toBeInTheDocument();
+
+    // Another window pinned something and wrote the pins key.
+    localStorage.setItem(
+      'mqlens_pinned_collections',
+      JSON.stringify([
+        { kind: 'collection', connectionName: 'Local', db: 'sales_db', collection: 'orders' },
+      ]),
+    );
+    window.dispatchEvent(new StorageEvent('storage', { key: 'mqlens_pinned_collections' }));
+
+    expect(await screen.findByText('orders')).toBeInTheDocument();
   });
 
   it('pins a connection from the context menu and shows a toast', async () => {

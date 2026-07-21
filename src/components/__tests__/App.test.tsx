@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '../../test/render-with-providers';
+import { resetUpdateTabStateDebounce } from '../../workspace/workspaceStore';
 import App from '../../App';
 
 vi.mock('../../lib/vault', () => ({
@@ -36,6 +37,29 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: any[]) => mockInvoke(...args),
 }));
 
+// Phase 3 Task 4: `listen` mocked to capture registered callbacks per event
+// name so tests can fire a `workspace-changed`/`connections-changed` payload
+// manually (Tauri has no real event channel under jsdom). `windowLabel()`
+// itself is left unmocked — `@tauri-apps/api/webviewWindow`'s real
+// `getCurrentWebviewWindow()` throws under jsdom (no `__TAURI_INTERNALS__`),
+// which is exactly the fallback-to-`"main"` path every test below relies on
+// ("running as main").
+const eventListeners = new Map<string, Array<(event: { payload: unknown }) => void>>();
+function fireMockEvent(eventName: string, payload: unknown) {
+  for (const cb of eventListeners.get(eventName) ?? []) cb({ payload });
+}
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: (eventName: string, cb: (event: { payload: unknown }) => void) => {
+    const arr = eventListeners.get(eventName) ?? [];
+    arr.push(cb);
+    eventListeners.set(eventName, arr);
+    return Promise.resolve(() => {
+      const idx = arr.indexOf(cb);
+      if (idx >= 0) arr.splice(idx, 1);
+    });
+  },
+}));
+
 vi.mock('@tauri-apps/api/app', () => ({
   getVersion: () => Promise.resolve('0.3.1'),
 }));
@@ -59,13 +83,34 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, activeConnections }: any) => (
     <div data-testid="mock-sidebar">
+      {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
+          `activeConnections` prop for its "Connections" tree — lets tests
+          assert a connection landed in this window's sidebar without
+          rendering the (heavy) real component. */}
+      <ul data-testid="mock-sidebar-connections">
+        {(activeConnections ?? []).map((c: any) => (
+          <li key={c.id} data-testid={`sidebar-conn-${c.id}`}>{c.name}</li>
+        ))}
+      </ul>
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
       </button>
       <button data-testid="select-orders-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'orders')}>
         Select Orders
+      </button>
+      <button
+        data-testid="rename-db-btn"
+        onClick={() => onDatabaseRenamed && onDatabaseRenamed('conn-1', 'sales_db', 'sales_db2')}
+      >
+        Rename sales_db
+      </button>
+      <button
+        data-testid="drop-db-btn"
+        onClick={() => onDatabaseDropped && onDatabaseDropped('conn-1', 'sales_db')}
+      >
+        Drop sales_db
       </button>
       <button data-testid="select-index-btn" onClick={() => onSelectIndex('conn-1', 'sales_db', 'customers', 'email_1')}>
         Select Index
@@ -91,19 +136,61 @@ vi.mock('../Sidebar', () => ({
       >
         Validation Rules
       </button>
+      <button
+        data-testid="open-generate-coll-btn"
+        onClick={() => onOpenGenerate && onOpenGenerate('conn-1', 'sales_db', 'customers')}
+      >
+        Generate Data (collection)
+      </button>
+      <button
+        data-testid="open-generate-db-btn"
+        onClick={() => onOpenGenerate && onOpenGenerate('conn-1', 'sales_db')}
+      >
+        Generate Data (database)
+      </button>
     </div>
   ),
+}));
+
+// Mock ConnectionManager: the real component's full add/edit/test/connect
+// form is exercised by its own dedicated test suite (ConnectionManager.test.tsx).
+// Here only the `onConnect` callback's WIRING through App.tsx matters (Phase
+// 3 Task 6's set_connection_meta call) — a single button that fires it with
+// fixed args, gated on `isOpen` like the real modal.
+vi.mock('../ConnectionManager', () => ({
+  ConnectionManager: ({ isOpen, onConnect }: any) =>
+    isOpen ? (
+      <div data-testid="mock-connection-manager">
+        <button
+          data-testid="mock-cm-connect-btn"
+          onClick={() => onConnect('cm-live-1', 'Staging Cluster', 'mongodb://staging', 'p-cm', '#fff')}
+        >
+          Connect
+        </button>
+      </div>
+    ) : null,
 }));
 
 describe('App Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    eventListeners.clear();
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'load_app_settings') {
         return Promise.resolve({});
       }
       return Promise.resolve([]);
     });
+    // `updateTabState`'s 500ms debounce (workspaceStore.ts) lives in
+    // MODULE-level state, not component state — a real `setTimeout` a
+    // previous test schedules (e.g. via a revived tab's eager query re-run)
+    // outlives that test's own render/cleanup and can fire mid-WAY through
+    // a later, unrelated test, recording a stray `workspace_apply` call
+    // into THAT test's `calls` array (final fix wave: found while adding a
+    // new test to this file shifted timing enough to expose it). Clearing
+    // it here, before every test, keeps each test's `mockInvoke` call log
+    // free of debounced fallout from whatever ran before it.
+    resetUpdateTabStateDebounce();
   });
 
   it('opens the Quick Start tab by default and shows bottom status bar with version info', async () => {
@@ -322,7 +409,54 @@ describe('App Component', () => {
     await waitFor(() => {
       const dm = calls.find((c) => c.cmd === 'delete_many');
       expect(dm).toBeTruthy();
-      expect(dm.args).toMatchObject({ database: 'sales_db', collection: 'customers' });
+      // #188 Task 3: a normal connection's flow is unchanged — `confirmed`
+      // rides along as `false` (the guard passes normal connections through
+      // regardless).
+      expect(dm.args).toMatchObject({ database: 'sales_db', collection: 'customers', confirmed: false });
+    });
+  });
+
+  it('delete-many on a confirm_destructive connection requires a typed collection-name match before invoking (#188 Task 3)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query')
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'count_documents') return Promise.resolve(7);
+      if (cmd === 'delete_many') return Promise.resolve(7);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor, act } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    // Mark 'conn-1' (the id every mock-sidebar button hardcodes) as a
+    // confirm_destructive connection before the tab opens.
+    await act(async () => {
+      fireMockEvent('connections-changed', {
+        connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'confirm_destructive' }],
+      });
+    });
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('delete-many-btn'));
+
+    // Wrong typed name -> no invoke, dialog stays open with an error.
+    const wrongInput = await screen.findByTestId('dialog-input');
+    fireEvent.change(wrongInput, { target: { value: 'not_customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((c) => c.cmd === 'delete_many')).toBeFalsy();
+
+    // Exact name -> invoke with confirmed:true.
+    const rightInput = screen.getByTestId('dialog-input');
+    fireEvent.change(rightInput, { target: { value: 'customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await waitFor(() => {
+      const dm = calls.find((c) => c.cmd === 'delete_many');
+      expect(dm).toBeTruthy();
+      expect(dm.args).toMatchObject({ database: 'sales_db', collection: 'customers', confirmed: true });
     });
   });
 
@@ -353,11 +487,165 @@ describe('App Component', () => {
     await waitFor(() => {
       const um = calls.find((c) => c.cmd === 'update_many');
       expect(um).toBeTruthy();
+      // #188 Task 3: unchanged normal-connection flow -> confirmed:false.
       expect(um.args).toMatchObject({
         database: 'sales_db',
         collection: 'customers',
         update: '{"$set":{"tier":"Gold"}}',
+        confirmed: false,
       });
+    });
+  });
+
+  it('update-many on a confirm_destructive connection requires a typed collection-name match before invoking (#188 Task 3)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query')
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'count_documents') return Promise.resolve(3);
+      if (cmd === 'update_many') return Promise.resolve(3);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor, act } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    await act(async () => {
+      fireMockEvent('connections-changed', {
+        connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'confirm_destructive' }],
+      });
+    });
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('update-many-btn'));
+    // The update-body prompt is unchanged (data entry, not a confirmation).
+    const updateInput = await screen.findByTestId('dialog-input');
+    fireEvent.change(updateInput, { target: { value: '{"$set":{"tier":"Gold"}}' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    // Wrong typed name -> no invoke.
+    const wrongInput = await screen.findByTestId('dialog-input');
+    fireEvent.change(wrongInput, { target: { value: 'not_customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((c) => c.cmd === 'update_many')).toBeFalsy();
+
+    // Exact name -> invoke with confirmed:true.
+    const rightInput = screen.getByTestId('dialog-input');
+    fireEvent.change(rightInput, { target: { value: 'customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await waitFor(() => {
+      const um = calls.find((c) => c.cmd === 'update_many');
+      expect(um).toBeTruthy();
+      expect(um.args).toMatchObject({
+        database: 'sales_db',
+        collection: 'customers',
+        update: '{"$set":{"tier":"Gold"}}',
+        confirmed: true,
+      });
+    });
+  });
+
+  describe('connection mode banner (#188 Task 5)', () => {
+    it('renders a red read-only banner above the tab content, with the expected testid/data-mode/text', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query')
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'count_documents') return Promise.resolve(1);
+        return Promise.resolve([]);
+      });
+      const { fireEvent, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      // Mark 'conn-1' (the id every mock-sidebar button hardcodes) as
+      // read-only via a connections-changed broadcast — mirrors the
+      // confirm_destructive tests above, and doubles as the "a
+      // connections-changed event carrying mode populates ActiveConnection"
+      // cross-window coherence check: the banner below only renders off
+      // `activeConnections.find(...).mode`, so its presence proves the
+      // broadcast's `mode` landed there.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'read_only' }],
+        });
+      });
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+      const banner = await screen.findByTestId('connection-mode-banner');
+      expect(banner).toHaveAttribute('data-mode', 'read_only');
+      expect(banner).toHaveTextContent('Read-only connection — writes are blocked');
+    });
+
+    it('renders an amber confirm_destructive banner above the tab content, with the expected testid/data-mode/text', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query')
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'count_documents') return Promise.resolve(1);
+        return Promise.resolve([]);
+      });
+      const { fireEvent, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'confirm_destructive' }],
+        });
+      });
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+      const banner = await screen.findByTestId('connection-mode-banner');
+      expect(banner).toHaveAttribute('data-mode', 'confirm_destructive');
+      expect(banner).toHaveTextContent('Production safeguard — destructive operations require confirmation');
+    });
+
+    it('threads the read_only mode into the DataGrid so write buttons are disabled (#188 Task 6, App→DataGrid)', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query')
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'count_documents') return Promise.resolve(1);
+        return Promise.resolve([]);
+      });
+      const { fireEvent, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      // Reuses the exact same connections-changed → activeConnections.mode
+      // path the banner test above relies on: DataGrid isn't rendered inside
+      // DocumentViewer itself (it's passed as DocumentViewer's children from
+      // App's renderTabContent), so this same `mode` lookup is what's handed
+      // straight to DataGrid's `connectionMode` prop.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'read_only' }],
+        });
+      });
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+      const insertBtn = await screen.findByTestId('insert-doc-btn');
+      expect(insertBtn).toBeDisabled();
+      expect(insertBtn).toHaveAttribute('title', 'Connection is read-only');
+    });
+
+    it('renders no banner for a normal (or unmarked) connection', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query')
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'count_documents') return Promise.resolve(1);
+        return Promise.resolve([]);
+      });
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+      expect(screen.queryByTestId('connection-mode-banner')).not.toBeInTheDocument();
     });
   });
 
@@ -898,6 +1186,428 @@ describe('App Component', () => {
       expect(opts).toBeTruthy();
       expect(opts.args).toMatchObject({ id: 'conn-1', database: 'sales_db', collection: 'customers' });
     });
+  });
+
+  it('opens the Generate Data tab from a collection context menu and infers the template (#91)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'infer_generate_template') {
+        return Promise.resolve('{\n  "name": "$name"\n}');
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+    // Tab-bar label (tabLabelFor) and the view's own header — both derived
+    // from the same tab, different text.
+    expect(screen.getByText('Generate: customers')).toBeInTheDocument();
+    expect(screen.getByText('Generate Data: sales_db.customers')).toBeInTheDocument();
+    await waitFor(() => {
+      const infer = calls.find((c) => c.cmd === 'infer_generate_template');
+      expect(infer).toBeTruthy();
+      expect(infer.args).toMatchObject({ id: 'conn-1', database: 'sales_db', collection: 'customers' });
+    });
+    // Switch to the raw editor to confirm the inferred template content
+    // (rather than the builder-decoded rows) made it into the view.
+    fireEvent.click(screen.getByTestId('generate-mode-raw'));
+    expect(await screen.findByTestId('generate-raw-editor')).toHaveValue('{\n  "name": "$name"\n}');
+  });
+
+  it('opens the Generate Data tab from a database context menu with a starter template, no inference call (#91)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-db-btn'));
+
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+    // No collection segment — both the tab label and the view header fall
+    // back to the bare database name.
+    expect(screen.getByText('Generate: sales_db')).toBeInTheDocument();
+    expect(screen.getByText('Generate Data: sales_db')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('generate-mode-raw'));
+    const editor = await screen.findByTestId('generate-raw-editor');
+    expect((editor as HTMLTextAreaElement).value).toContain('$name');
+    expect(calls.some((c) => c.cmd === 'infer_generate_template')).toBe(false);
+  });
+
+  it('dedupes the Generate Data tab (collection) on a second open — same tab focused, not duplicated (#91)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'infer_generate_template') return Promise.resolve('{}');
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, within } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+
+    const tabStrip = screen.getByTestId('workspace-tab-strip');
+    expect(within(tabStrip).getAllByText('Generate: customers')).toHaveLength(1);
+  });
+
+  // Fix 4 regression: `handleRunGenerate` used to call `handleOpenTasksTab()`
+  // right after starting the run — copied one call too literally from
+  // `handleRunDump`/`handleRunRestore`, which have no in-tab progress UI of
+  // their own. GenerateView DOES render inline progress, so that focus
+  // switch used to yank the user to the Tasks tab exactly when the inline
+  // progress they were expecting to see would have appeared.
+  it('does not switch away from the generate tab when starting a run (#91)', async () => {
+    const runningTask = {
+      id: 'task-generate-focus',
+      kind: 'generate',
+      label: 'Generate → sales_db.customers',
+      status: 'running',
+      processed: 0,
+      total: 100,
+      message: 'Queued',
+      path: null,
+      error: null,
+      createdAtMs: 1,
+      finishedAtMs: null,
+    };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'infer_generate_template') return Promise.resolve('{"name": "$name"}');
+      if (cmd === 'preview_generated_documents') return Promise.resolve([]);
+      if (cmd === 'count_documents') return Promise.resolve(0);
+      if (cmd === 'start_generate_task') return Promise.resolve(runningTask);
+      if (cmd === 'list_export_tasks') return Promise.resolve([runningTask]);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+    expect(await screen.findByTestId('generate-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('generate-run-btn'));
+    await screen.findByTestId('dialog-confirm');
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await screen.findByTestId('generate-progress'); // the run's inline progress landed
+    // The Tasks tab was never focused — its content never mounted.
+    expect(screen.queryByTestId('task-manager')).not.toBeInTheDocument();
+    // The generate tab itself is still the one showing.
+    expect(screen.getByTestId('generate-view')).toBeInTheDocument();
+  });
+
+  it('refreshes the source collection tab once its generate task completes (#91)', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-generate-refresh',
+        kind: 'generate',
+        label: 'Generate → sales_db.customers',
+        status: 'running',
+        processed: 0,
+        total: 100,
+        message: 'Queued',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      let taskStatus = 'running';
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'infer_generate_template') {
+          return Promise.resolve('{"name": "$name"}');
+        }
+        if (cmd === 'preview_generated_documents') {
+          return Promise.resolve([]);
+        }
+        if (cmd === 'count_documents') {
+          return Promise.resolve(0);
+        }
+        if (cmd === 'start_generate_task') {
+          return Promise.resolve(runningTask);
+        }
+        if (cmd === 'list_export_tasks') {
+          return Promise.resolve([{ ...runningTask, status: taskStatus }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500); // let the inferred template + first preview settle
+
+      fireEvent.click(screen.getByTestId('generate-run-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
+
+      const execCallsBefore = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+
+      // The task completes; the next poll tick should notice and re-run the
+      // source collection tab's query — same watcher as the import case,
+      // generalized to `task.kind === 'generate'`.
+      taskStatus = 'completed';
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await vi.waitFor(() => {
+        const execCallsAfter = calls.filter((c) => c.cmd === 'execute_mql_query').length;
+        expect(execCallsAfter).toBeGreaterThan(execCallsBefore);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps showing a completed generate task\'s message while its tab stays open, across multiple poll ticks (#91)', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-generate-stale',
+        kind: 'generate',
+        label: 'Generate → sales_db.customers',
+        status: 'running',
+        processed: 0,
+        total: 100,
+        message: 'Queued',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      let taskStatus = 'running';
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'infer_generate_template') {
+          return Promise.resolve('{"name": "$name"}');
+        }
+        if (cmd === 'preview_generated_documents') return Promise.resolve([]);
+        if (cmd === 'count_documents') return Promise.resolve(0);
+        if (cmd === 'start_generate_task') return Promise.resolve(runningTask);
+        if (cmd === 'list_export_tasks')
+          return Promise.resolve([{ ...runningTask, status: taskStatus, message: `msg:${taskStatus}` }]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+
+      fireEvent.click(screen.getByTestId('generate-run-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
+      // Unlike dump/restore/import, starting a generate does NOT steal focus
+      // to the Tasks tab — GenerateView renders its own inline progress, so
+      // the generate tab (and this section) is already showing.
+
+      taskStatus = 'completed';
+      await vi.advanceTimersByTimeAsync(1000);
+      // The completed message must actually become visible — this is the
+      // regression a completion-triggered ref eviction introduced (the same
+      // watcher effect that would evict it also refreshes the source
+      // collection tab, and THAT re-render reads the ref before the user
+      // ever sees this banner). Tracking is evicted on tab close only (the
+      // `close_tab` branch in `dispatchWorkspace`), not here.
+      await vi.waitFor(() => expect(screen.getByTestId('generate-task-message')).toHaveTextContent('msg:completed'));
+
+      // Stays visible across further poll ticks too, as long as the tab is open.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByTestId('generate-progress')).toBeInTheDocument();
+      expect(screen.getByTestId('generate-task-message')).toHaveTextContent('msg:completed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears generate-task tracking when the tab is closed mid-run, so reopening it does not show the old task (#91)', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-generate-close',
+        kind: 'generate',
+        label: 'Generate → sales_db.customers',
+        status: 'running',
+        processed: 10,
+        total: 100,
+        message: 'Generating (10 written)',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'infer_generate_template') return Promise.resolve('{"name": "$name"}');
+        if (cmd === 'preview_generated_documents') return Promise.resolve([]);
+        if (cmd === 'count_documents') return Promise.resolve(0);
+        if (cmd === 'start_generate_task') return Promise.resolve(runningTask);
+        // The task stays "running" for the task's own lifetime in this test —
+        // closing the tab must not depend on it ever completing.
+        if (cmd === 'list_export_tasks') return Promise.resolve([runningTask]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+
+      fireEvent.click(screen.getByTestId('generate-run-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
+      // Unlike dump/restore/import, starting a generate does not switch away
+      // from the generate tab — its own inline progress is already visible.
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() => expect(screen.getByTestId('generate-progress')).toBeInTheDocument());
+
+      // Close the tab mid-run (`close_tab`'s reducer branch is the choke
+      // point that evicts `generateTaskIdsRef`'s entry for it).
+      fireEvent.click(screen.getByRole('button', { name: 'Close Generate: customers' }));
+      await vi.waitFor(() => expect(screen.queryByTestId('generate-view')).not.toBeInTheDocument());
+
+      // Reopen the SAME deterministic tab id — a fresh view, and it must not
+      // resolve the old (still-running, per this test's mock) task, or it
+      // would render that stale task's progress bar immediately on mount.
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+      expect(screen.queryByTestId('generate-progress')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears generate-task tracking when its database is dropped (close_many), so reopening it does not show the old task (#91)', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: any[] = [];
+      const runningTask = {
+        id: 'task-generate-dropdb',
+        kind: 'generate',
+        label: 'Generate → sales_db.customers',
+        status: 'running',
+        processed: 10,
+        total: 100,
+        message: 'Generating (10 written)',
+        path: null,
+        error: null,
+        createdAtMs: 1,
+        finishedAtMs: null,
+      };
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'infer_generate_template') return Promise.resolve('{"name": "$name"}');
+        if (cmd === 'preview_generated_documents') return Promise.resolve([]);
+        if (cmd === 'count_documents') return Promise.resolve(0);
+        if (cmd === 'start_generate_task') return Promise.resolve(runningTask);
+        // The task stays "running" throughout — dropping the database must
+        // not depend on it ever completing (this is the close_many path,
+        // handleDatabaseDropped, not the completion watcher).
+        if (cmd === 'list_export_tasks') return Promise.resolve([runningTask]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await vi.waitFor(() => expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await vi.waitFor(() => expect(screen.getByText(/"John Doe"/)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+
+      fireEvent.click(screen.getByTestId('generate-run-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('dialog-confirm')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'start_generate_task')).toBe(true));
+      fireEvent.click(screen.getByText('Generate: customers'));
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() => expect(screen.getByTestId('generate-progress')).toBeInTheDocument());
+
+      // Drop the database — handleDatabaseDropped closes every tab on
+      // sales_db via `dispatchWorkspace({ type: 'close_many', tabIds })`,
+      // the live repro this fix targets: same connectionId survives (unlike
+      // Sidebar's `onDisconnect` or the cross-window connection-removal
+      // listener), so a recreated db.coll can resolve the same
+      // deterministic generate tab id.
+      fireEvent.click(screen.getByTestId('drop-db-btn'));
+      await vi.waitFor(() => expect(screen.queryByTestId('generate-view')).not.toBeInTheDocument());
+
+      // Recreate the namespace and reopen "Generate Data…" on it — the SAME
+      // deterministic tab id must not resolve the dropped run's task.
+      fireEvent.click(screen.getByTestId('open-generate-coll-btn'));
+      await vi.waitFor(() => expect(screen.getByTestId('generate-view')).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(500);
+      expect(screen.queryByTestId('generate-progress')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   const managedStatusesFixture = [
@@ -1448,6 +2158,63 @@ describe('App Component', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('name\nA\n'));
   });
 
+  it('routes a pane-scoped export handler to the rendered pane\'s tab, not the focused pane (#97 review Fix 1)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({ saved: [], history: [], default: null });
+      }
+      if (cmd === 'sample_export_fields') {
+        return Promise.resolve(['_id', 'name']);
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+
+    // Pane A: open "customers", then its Export tab (becomes the active tab).
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('export-btn'));
+    expect(await screen.findByTestId('export-view')).toBeInTheDocument();
+
+    // Split the active "Export: customers" tab into a new pane B. split_pane
+    // focuses the fresh pane, and leaves pane A re-activated on "customers".
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Split Right' } });
+    fireEvent.click(await screen.findByText('Split Right'));
+
+    // Refocus pane A (mousedown on an unfocused pane dispatches focus_pane).
+    // PaneView's own testid is `pane-${pane.id}` (e.g. "pane-pane-1"); react-resizable-panels
+    // also auto-sets `data-testid={id}` (e.g. "pane-1") on its wrapping Panel, so the
+    // "pane-pane-" prefix is needed to select only PaneView's own element.
+    const panes = screen.getAllByTestId(/^pane-pane-/);
+    expect(panes).toHaveLength(2);
+    fireEvent.mouseDown(panes[0]);
+
+    // With pane A focused, open a DIFFERENT collection there. Pre-fix, the export
+    // handlers read `activeTab`/the focused pane's state, so this is exactly the
+    // (wrong) state they would have leaked into pane B's still-visible export tab.
+    fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    // Trigger pane B's (unfocused) ExportView. It must act on ITS OWN rendered
+    // tab ("customers"), not the focused pane's active tab ("orders").
+    fireEvent.click(screen.getByTestId('export-scan-fields-btn'));
+
+    await waitFor(() => {
+      const scan = calls.find((c) => c.cmd === 'sample_export_fields');
+      expect(scan).toBeTruthy();
+      expect(scan.args).toMatchObject({ database: 'sales_db', collection: 'customers' });
+    });
+  });
+
   it('does not load profiles until the vault is unlocked', async () => {
     const vault = await import('../../lib/vault');
     (vault.getVaultStatus as any).mockResolvedValueOnce('locked');
@@ -1587,5 +2354,1649 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('toggle-query-builder'));
     const ordersFilterAgain = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
     expect(ordersFilterAgain.value).toContain('"shipped"');
+  });
+
+  describe('session restore + Reconnect banner (#97 phase 2 Task 6)', () => {
+    // Two collection tabs, both on profile p1, split into a row of two panes —
+    // matches persistence.ts's toDisconnectedSnapshot wire shape (camelCase,
+    // `profile:<profileId>` connection ids already baked into the tab ids).
+    const workspaceSnapshot = {
+      revision: 1,
+      windows: [
+        {
+          id: 'main',
+          focusedPaneId: 'pane-1',
+          splitTree: {
+            kind: 'split',
+            id: 'split-1',
+            dir: 'row',
+            ratio: 0.5,
+            children: [
+              {
+                kind: 'pane',
+                id: 'pane-1',
+                tabIds: ['profile:p1.sales_db.customers'],
+                activeTabId: 'profile:p1.sales_db.customers',
+              },
+              {
+                kind: 'pane',
+                id: 'pane-2',
+                tabIds: ['profile:p1.sales_db.orders'],
+                activeTabId: 'profile:p1.sales_db.orders',
+              },
+            ],
+          },
+        },
+      ],
+      tabs: [
+        {
+          id: 'profile:p1.sales_db.customers',
+          type: 'collection',
+          profileId: 'p1',
+          profileName: 'Prod Cluster',
+          db: 'sales_db',
+          collection: 'customers',
+        },
+        {
+          id: 'profile:p1.sales_db.orders',
+          type: 'collection',
+          profileId: 'p1',
+          profileName: 'Prod Cluster',
+          db: 'sales_db',
+          collection: 'orders',
+        },
+      ],
+    };
+
+    it('(a) restores a disconnected snapshot as ReconnectBanners, with no query invokes', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        return Promise.resolve([]);
+      });
+
+      renderWithProviders(<App />);
+
+      const banners = await screen.findAllByTestId('reconnect-banner');
+      expect(banners).toHaveLength(2);
+      expect(screen.getAllByRole('button', { name: /Reconnect Prod Cluster/ })).toHaveLength(2);
+
+      expect(mockInvoke).not.toHaveBeenCalledWith('execute_mql_query', expect.anything());
+      expect(mockInvoke).not.toHaveBeenCalledWith('execute_aggregate', expect.anything());
+    });
+
+    it('(b) clicking Reconnect resolves profiles + connect_db, revives all of the profile\'s tabs, and eagerly re-runs their queries', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const banners = await screen.findAllByTestId('reconnect-banner');
+      expect(banners).toHaveLength(2);
+
+      const [firstBtn] = screen.getAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      // One click on either pane's banner revives ALL tabs of that profile —
+      // both panes' banners disappear and both mount real content.
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0);
+      });
+      expect(await screen.findAllByText(/"Ada"/)).toHaveLength(2);
+
+      await waitFor(() => {
+        const execCalls = calls.filter((c) => c.cmd === 'execute_mql_query');
+        expect(execCalls).toHaveLength(2);
+        expect(execCalls.every((c) => c.args?.id === 'new-conn-1')).toBe(true);
+      });
+
+      const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
+      expect(connectCalls).toHaveLength(1); // one connect_db for the whole profile, not per-tab
+    });
+
+    it('(b1) clicking two banners for the same profile back-to-back only connects once — IMPORTANT fix regression guard', async () => {
+      // Both panes' banners share profileId p1. A synchronous double-click
+      // (or two banners firing before either's setReconnectState commits) used
+      // to both pass the busy check — reconnectState is render-captured, so
+      // neither call could see the other's in-flight state yet — and each
+      // called connect_db, leaking a connection. reconnectBusyRef is checked
+      // and set synchronously at the top of handleReconnectProfile, before
+      // any state update or await, so the second call must bail out.
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const banners = await screen.findAllByTestId('reconnect-banner');
+      expect(banners).toHaveLength(2);
+      const buttons = screen.getAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      expect(buttons).toHaveLength(2);
+
+      // Both clicks inside ONE `act()` so React defers re-rendering (and
+      // therefore re-committing `reconnectState`) until after BOTH
+      // synchronous handler prefixes have already run — reproducing the
+      // real race: two banner clicks that each observe the SAME
+      // pre-click `reconnectState` snapshot. Two separate `fireEvent.click`
+      // calls (each with its own implicit act()) would let the first
+      // click's state update flush and re-render before the second
+      // fires, masking the race this test exists to catch.
+      act(() => {
+        fireEvent.click(buttons[0]);
+        fireEvent.click(buttons[1]);
+      });
+
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0);
+      });
+
+      const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
+      expect(connectCalls).toHaveLength(1); // NOT 2 — the second click must have been dropped
+    });
+
+    it('(b2) a missing profile surfaces "no longer exists" as the banner error, without connecting', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') return Promise.resolve([]); // p1 is gone
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      // Both panes share the same profileId's error state — the error surfaces
+      // on every banner for that profile, not just the one that was clicked.
+      expect(await screen.findAllByText('Connection profile no longer exists')).toHaveLength(2);
+      expect(mockInvoke).not.toHaveBeenCalledWith('connect_db', expect.anything());
+      // Still disconnected — both banners remain.
+      expect(screen.getAllByTestId('reconnect-banner')).toHaveLength(2);
+    });
+
+    it('(c) a null snapshot keeps the default Quick Start tab', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(null);
+        return Promise.resolve([]);
+      });
+
+      renderWithProviders(<App />);
+      expect(await screen.findByTestId('quickstart-tab')).toBeInTheDocument();
+      expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument();
+    });
+
+    it('(d) banner click while the profile is already connected reuses the live connection — quick-connecting a profile that still has a ReconnectBanner clears it without a second connect_db (#97 phase 2 final review Fix 1)', async () => {
+      // One window, two panes: pane-1 shows the Quick Start tab (so its
+      // ConnectionCard is available to drive a quick-connect), pane-2 shows a
+      // restored-but-disconnected tab for the same profile p1.
+      const quickConnectSnapshot = {
+        revision: 1,
+        windows: [
+          {
+            id: 'main',
+            focusedPaneId: 'pane-1',
+            splitTree: {
+              kind: 'split',
+              id: 'split-1',
+              dir: 'row',
+              ratio: 0.5,
+              children: [
+                { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' },
+                {
+                  kind: 'pane',
+                  id: 'pane-2',
+                  tabIds: ['profile:p1.sales_db.customers'],
+                  activeTabId: 'profile:p1.sales_db.customers',
+                },
+              ],
+            },
+          },
+        ],
+        tabs: [
+          { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+          {
+            id: 'profile:p1.sales_db.customers',
+            type: 'collection',
+            profileId: 'p1',
+            profileName: 'Prod Cluster',
+            db: 'sales_db',
+            collection: 'customers',
+          },
+        ],
+      };
+
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(quickConnectSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      expect(await screen.findByTestId('reconnect-banner')).toBeInTheDocument();
+
+      // Quick-connect the SAME profile from the Quick Start pane, not the
+      // banner itself — this is the path that used to leave the banner
+      // showing (it only rebound tabs on an explicit banner click), so a
+      // later banner click would mint a duplicate `connect_db` for a
+      // profile that's already connected.
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+
+      // The rebind fires as part of the quick-connect itself — the banner
+      // must be gone WITHOUT ever needing a click on it.
+      await waitFor(() => {
+        expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument();
+      });
+
+      const connectCalls = calls.filter((c) => c.cmd === 'connect_db');
+      expect(connectCalls).toHaveLength(1); // NOT 2 — no duplicate backend connection for p1
+    });
+
+    it('(e) builder state seeded under the profile-space tab id survives reconnect (#97 phase 2 final review Fix 2)', async () => {
+      const seededBuilderState = {
+        queryMode: 'find',
+        filterQuery: '{"seeded":true}',
+        sortQuery: '{}',
+        projectionQuery: '{}',
+        limit: '50',
+        skip: '0',
+        stages: [{ id: 'stage-1', operator: '$match', content: '{\n  \n}' }],
+      };
+      const snapshotWithBuilderState = {
+        revision: 1,
+        windows: [
+          {
+            id: 'main',
+            focusedPaneId: 'pane-1',
+            splitTree: {
+              kind: 'pane',
+              id: 'pane-1',
+              tabIds: ['profile:p1.sales_db.customers'],
+              activeTabId: 'profile:p1.sales_db.customers',
+            },
+          },
+        ],
+        tabs: [
+          {
+            id: 'profile:p1.sales_db.customers',
+            type: 'collection',
+            profileId: 'p1',
+            profileName: 'Prod Cluster',
+            db: 'sales_db',
+            collection: 'customers',
+            builderState: seededBuilderState,
+          },
+        ],
+      };
+
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'workspace_get') return Promise.resolve(snapshotWithBuilderState);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0);
+      });
+
+      // The tab's id (and the builder-state cache entry seeded under its old
+      // profile-space id) must both have been rebound onto the live
+      // connection id — DocumentViewer's `initialBuilderState` reads the
+      // cache under the tab's CURRENT id, so a filter of "{}" here would
+      // mean the seeded state was dropped (leaked under the dead old id)
+      // instead of re-keyed.
+      const filterInput = await screen.findByTestId('query-filter-input');
+      expect((filterInput as HTMLInputElement).value).toBe('{"seeded":true}');
+    });
+  });
+
+  describe('dispatchWorkspace no-op mirror gate (#97 phase 2 final review Fix 3)', () => {
+    it('does not mirror split_pane when it moves a pane\'s only tab (a frontend reducer no-op)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      const { TAB_DRAG_MIME } = await import('../../workspace/PaneView');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // Open one collection tab, then close Quick Start — pane-1 now holds
+      // exactly one tab ("customers"), which is also its active tab. (The
+      // command palette's own "Split Right"/"Split Down" entries only ever
+      // appear when a pane has MORE than one tab, so this exact reproduction
+      // — a self-drop drag of a pane's only tab onto its own edge — is the
+      // one the UI actually lets through to `dispatchWorkspace`.)
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await screen.findByTestId('mock-sidebar');
+      fireEvent.click(screen.getByRole('button', { name: 'Close Quick Start' }));
+      await waitFor(() => {
+        expect(screen.queryByTestId('quickstart-tab')).not.toBeInTheDocument();
+      });
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+
+      calls.length = 0; // only care about ops mirrored from the drop below
+
+      // Drag the pane's own (only) tab and drop it on the pane's own right
+      // edge — model.ts's split_pane case returns the SAME layout reference
+      // for this ("would empty the source pane — pointless split"), so
+      // dispatchWorkspace must skip the mirror.
+      const pane = screen.getByTestId(/^pane-pane-/);
+      const data: Record<string, string> = { [TAB_DRAG_MIME]: 'conn-1.sales_db.customers' };
+      const dt = { getData: (k: string) => data[k] ?? '', setData: () => {}, types: [TAB_DRAG_MIME] };
+      Object.defineProperty(pane, 'getBoundingClientRect', {
+        value: () => ({ left: 0, top: 0, width: 1000, height: 500, right: 1000, bottom: 500 }),
+      });
+      fireEvent.dragOver(pane, { dataTransfer: dt, clientX: 950, clientY: 250 });
+      fireEvent.drop(pane, { dataTransfer: dt, clientX: 950, clientY: 250 });
+
+      // No second pane ever appears (the frontend reducer itself no-opped).
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+      const splitCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'split_pane');
+      expect(splitCalls).toHaveLength(0);
+    });
+
+    it('does mirror a normal split_pane (pane has more than one tab)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // pane-1 now holds two tabs: Quick Start and "customers" (active).
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Split Right' } });
+      fireEvent.click(await screen.findByText('Split Right'));
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(2);
+      });
+      const splitCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'split_pane');
+      expect(splitCalls).toHaveLength(1);
+    });
+
+    it('mirrors both rename_tab dispatches from a single-tick rename storm', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // Two collection tabs under the same connection+db — renaming the
+      // database renames BOTH tabs, dispatched back-to-back in one
+      // synchronous `forEach` (App.tsx's `handleDatabaseRenamed`).
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+      fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+
+      calls.length = 0; // only care about ops mirrored from the rename storm below
+
+      fireEvent.click(screen.getByTestId('rename-db-btn'));
+
+      const renameCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'rename_tab');
+      expect(renameCalls).toHaveLength(2);
+      const newIds = renameCalls.map((c) => (c.args.op as any).new_id).sort();
+      expect(newIds).toEqual(['conn-1.sales_db2.customers', 'conn-1.sales_db2.orders']);
+    });
+  });
+
+  describe('dispatchWorkspace trial-run id-counter parity (closing review amendment)', () => {
+    it('a real split_pane commits pane-pane-2, not pane-pane-3 — the no-op mirror gate\'s trial reducer call must not itself consume a pane id', async () => {
+      // The gate's trial run (see the previous describe block) calls
+      // `workspaceReducer` purely for reference-identity comparison and
+      // discards its result. Minting is a stateless scan of the layout being
+      // reduced (model.ts's `nextPaneId`/`nextSplitId`, #197), so this test
+      // needs no reset between runs: every App render starts from the same
+      // fresh `pane-1` root regardless of what earlier tests in this file
+      // minted, and the trial call above cannot leave any residue behind for
+      // this test to inherit.
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // pane-1 (root) now holds two tabs: Quick Start and "customers" (active).
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Split Right' } });
+      fireEvent.click(await screen.findByText('Split Right'));
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(2);
+      });
+
+      // Pre-fix: the discarded trial minted pane-2/split-1 for nothing, and
+      // the real (render-time) application then minted pane-3/split-2 —
+      // THAT is what got committed, one generation ahead of what the
+      // mirrored op causes the backend to mint from its own, separately-
+      // counted id space. Post-fix, the trial's mint is undone before the
+      // real application runs, so the real one mints pane-2 — the same id a
+      // single reducer application (matching the backend) would produce.
+      expect(screen.getByTestId('pane-pane-2')).toBeInTheDocument();
+      expect(screen.queryByTestId('pane-pane-3')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('foreign-event reconciliation (Phase 3 Task 4)', () => {
+    it('(a) a foreign NON-crossWindow event is bystander-only: lastWorkspaceRef updates, layout/tabs untouched', async () => {
+      const { fireEvent, waitFor, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // pane-1 now holds two already-known tabs: Quick Start + customers.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await within(screen.getByTestId('workspace-tab-strip')).findByText('customers');
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+
+      // A DIFFERENT window's (win-1) LOCAL, non-crossWindow op — per the
+      // backend's own guarantee (op_is_cross_window), this could only have
+      // touched win-1's own tree, never main's. main's entry below is
+      // deliberately a DIFFERENT shape (a 2-pane split) than what's
+      // actually committed here, standing in for a stale/pre-mirror
+      // snapshot — reconciling against it would be wrong, so it must be
+      // ignored outright (CRITICAL fix, review round 1). win-1's own entry
+      // claims 'conn-1.sales_db.orders' — reachable via the mock sidebar's
+      // "select orders" button, used below to prove the ref DID update.
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'win-1',
+          crossWindow: false,
+          workspace: {
+            revision: 1,
+            windows: [
+              {
+                id: 'main',
+                focusedPaneId: 'pane-1',
+                splitTree: {
+                  kind: 'split',
+                  id: 'split-1',
+                  dir: 'row',
+                  ratio: 0.5,
+                  children: [
+                    { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' },
+                    { kind: 'pane', id: 'pane-2', tabIds: [], activeTabId: null },
+                  ],
+                },
+              },
+              {
+                id: 'win-1',
+                focusedPaneId: 'pane-1',
+                splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['conn-1.sales_db.orders'], activeTabId: 'conn-1.sales_db.orders' },
+              },
+            ],
+            tabs: [
+              { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+              { id: 'conn-1.sales_db.orders', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'orders' },
+            ],
+          },
+        });
+      });
+
+      // Layout/tabs untouched — still exactly one pane, still "customers".
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+      });
+      expect(within(screen.getByTestId('workspace-tab-strip')).getByText('customers')).toBeInTheDocument();
+
+      // lastWorkspaceRef DID update, though (proven indirectly via the
+      // cross-window open dedupe, the other consumer of that ref): opening
+      // the tab this event said win-1 holds must be deduped/focus-routed,
+      // not added locally — which is only possible if the bystander path
+      // still updated lastWorkspaceRef even though it skipped hydrate/diff.
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        return Promise.resolve([]);
+      });
+      fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+      await waitFor(() => {
+        const focusCalls = calls.filter((c) => c.cmd === 'focus_window');
+        expect(focusCalls).toHaveLength(1);
+        expect(focusCalls[0].args).toEqual({ label: 'win-1' });
+      });
+      expect(within(screen.getByTestId('workspace-tab-strip')).queryByText('orders')).not.toBeInTheDocument();
+    });
+
+    it('(a2) a crossWindow event re-hydrates this window\'s layout', async () => {
+      const { fireEvent, waitFor, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // pane-1 now holds two already-known tabs: Quick Start + customers.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await within(screen.getByTestId('workspace-tab-strip')).findByText('customers');
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+
+      // A crossWindow op (move_tab_to_window/detach_tab/window_closed) —
+      // the one class of event that CAN touch this window's tree even when
+      // it didn't originate here. The broadcast carries the FULL workspace;
+      // main's entry now shows a split with the two tabs this window
+      // already knows about (no arriving/leaving).
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'win-1',
+          crossWindow: true,
+          workspace: {
+            revision: 1,
+            windows: [
+              {
+                id: 'main',
+                focusedPaneId: 'pane-1',
+                splitTree: {
+                  kind: 'split',
+                  id: 'split-1',
+                  dir: 'row',
+                  ratio: 0.5,
+                  children: [
+                    { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' },
+                    {
+                      kind: 'pane',
+                      id: 'pane-2',
+                      tabIds: ['conn-1.sales_db.customers'],
+                      activeTabId: 'conn-1.sales_db.customers',
+                    },
+                  ],
+                },
+              },
+              { id: 'win-1', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null } },
+            ],
+            tabs: [
+              { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+              { id: 'conn-1.sales_db.customers', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'customers' },
+            ],
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(2);
+      });
+    });
+
+    it('(i) an unmirrored (export/import) tab survives a crossWindow reconcile — never in any snapshot, must not be dropped', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const { fireEvent, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Export Collection' } });
+      fireEvent.click(await screen.findByText('Export Collection…'));
+
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      await within(tabStrip).findByText('Export: customers');
+
+      calls.length = 0;
+
+      // A crossWindow event affecting THIS window — main's backend tree
+      // only ever lists quickstart + the collection tab (export tabs are
+      // NEVER mirrored, toPersistedTab returns null for them), regardless
+      // of what unrelated activity elsewhere triggered this event.
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'win-1',
+          crossWindow: true,
+          workspace: {
+            revision: 1,
+            windows: [
+              {
+                id: 'main',
+                focusedPaneId: 'pane-1',
+                splitTree: {
+                  kind: 'pane',
+                  id: 'pane-1',
+                  tabIds: ['quickstart', 'conn-1.sales_db.customers'],
+                  activeTabId: 'conn-1.sales_db.customers',
+                },
+              },
+            ],
+            tabs: [
+              { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+              { id: 'conn-1.sales_db.customers', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'customers' },
+            ],
+          },
+        });
+      });
+
+      // Still there — never treated as "leaving" (IMPORTANT fix, review
+      // round 1: the leaving-set now excludes unmirroredTabIdsRef ids).
+      expect(within(tabStrip).getByText('Export: customers')).toBeInTheDocument();
+      // Grafted back into the LAYOUT tree too, not just left dangling in
+      // tabs[] — no dev-mode layout/tabs[] desync warning.
+      const desyncWarnings = consoleErrorSpy.mock.calls.filter(
+        (c) =>
+          typeof c[0] === 'string' &&
+          (c[0].includes('workspace layout references unknown tab') || c[0].includes('tabs[] contains ids missing'))
+      );
+      expect(desyncWarnings).toHaveLength(0);
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('(ii) an optimistic local open survives a foreign non-crossWindow event carrying an older (pre-mirror) snapshot', async () => {
+      const { fireEvent, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // Local optimistic open — in a real app its mirror (workspace_apply)
+      // is still in flight; nothing here waits for it.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      await within(tabStrip).findByText('customers');
+
+      // A foreign, non-crossWindow event from another window's UNRELATED
+      // activity — its snapshot of main's tree predates this window's
+      // local open (the backend hasn't processed that mirror yet), so it
+      // still shows only Quick Start. Pre-fix, this would have hydrated
+      // and wiped the just-opened tab (CRITICAL — review round 1). Post-fix:
+      // bystander semantics mean this window is untouched by definition —
+      // the race is trivially safe.
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'win-1',
+          crossWindow: false,
+          workspace: {
+            revision: 1,
+            windows: [
+              { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' } },
+              { id: 'win-1', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null } },
+            ],
+            tabs: [{ id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' }],
+          },
+        });
+      });
+
+      // Survives — this window was never touched by that event.
+      expect(within(tabStrip).getByText('customers')).toBeInTheDocument();
+    });
+
+    it('(b) an arriving tab materializes and refreshes when its connection is already live locally', async () => {
+      const workspaceSnapshot = {
+        revision: 1,
+        windows: [
+          { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.sales_db.customers'], activeTabId: 'profile:p1.sales_db.customers' } },
+        ],
+        tabs: [
+          { id: 'profile:p1.sales_db.customers', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'customers' },
+        ],
+      };
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('new-conn-1');
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      // Reconnect p1 — establishes activeConnections=[{id:'new-conn-1',profileId:'p1',...}]
+      // and rebinds the existing customers tab onto the live id.
+      const [firstBtn] = await screen.findAllByRole('button', { name: /Reconnect Prod Cluster/ });
+      fireEvent.click(firstBtn);
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0);
+      });
+
+      calls.length = 0; // only care about what the arriving event triggers below
+
+      // A crossWindow event: main's tree now ALSO holds an `orders` tab for
+      // the same profile p1 — arriving, and live (p1 is already connected
+      // here). Reconciliation only ever runs for crossWindow events now
+      // (bystander fix, review round 1) — a non-crossWindow event wouldn't
+      // reach this diff at all.
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 2,
+          origin: 'win-1',
+          crossWindow: true,
+          workspace: {
+            revision: 2,
+            windows: [
+              {
+                id: 'main',
+                focusedPaneId: 'pane-1',
+                splitTree: {
+                  kind: 'pane',
+                  id: 'pane-1',
+                  tabIds: ['profile:p1.sales_db.customers', 'profile:p1.sales_db.orders'],
+                  activeTabId: 'profile:p1.sales_db.orders',
+                },
+              },
+            ],
+            tabs: [
+              { id: 'profile:p1.sales_db.customers', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'customers' },
+              { id: 'profile:p1.sales_db.orders', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'orders' },
+            ],
+          },
+        });
+      });
+
+      // Materialized: shows up in the tab strip.
+      expect(await within(screen.getByTestId('workspace-tab-strip')).findByText('orders')).toBeInTheDocument();
+      // Live: refreshed automatically (re-ran the default query against the
+      // now-live connection) without any user interaction.
+      await waitFor(() => {
+        const orderCalls = calls.filter((c) => c.cmd === 'execute_mql_query' && c.args?.collection === 'orders');
+        expect(orderCalls.length).toBeGreaterThan(0);
+        expect(orderCalls[0].args.id).toBe('new-conn-1');
+      });
+    });
+
+    it('(c) a leaving tab is removed locally without mirroring a close', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      expect(within(tabStrip).getByText('customers')).toBeInTheDocument();
+
+      calls.length = 0; // only care about what firing the event below does
+
+      // A foreign event: main's tree now holds ONLY Quick Start — customers
+      // left (moved/closed elsewhere).
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'win-1',
+          crossWindow: true,
+          workspace: {
+            revision: 1,
+            windows: [
+              { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' } },
+            ],
+            tabs: [{ id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' }],
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(within(tabStrip).queryByText('customers')).not.toBeInTheDocument();
+      });
+      // Never mirrored — the window that moved/closed it already did.
+      const mirrored = calls.filter((c) => c.cmd === 'workspace_apply');
+      expect(mirrored).toHaveLength(0);
+    });
+
+    it('(d) a self-origin, non-cross-window event is ignored entirely', async () => {
+      const { waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('quickstart-tab');
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'main', // this window's own label
+          crossWindow: false,
+          workspace: {
+            revision: 1,
+            windows: [
+              {
+                id: 'main',
+                focusedPaneId: 'pane-1',
+                splitTree: {
+                  kind: 'split',
+                  id: 'split-1',
+                  dir: 'row',
+                  ratio: 0.5,
+                  children: [
+                    { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' },
+                    { kind: 'pane', id: 'pane-2', tabIds: [], activeTabId: null },
+                  ],
+                },
+              },
+            ],
+            tabs: [{ id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' }],
+          },
+        });
+      });
+
+      // Give any (incorrect) reconciliation a chance to run, then assert
+      // nothing changed — still exactly one pane.
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+      });
+    });
+
+    it('(e) an out-of-order/replayed event (revision <= last seen) is dropped', async () => {
+      const { act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // crossWindow: true throughout — reconciliation (and therefore this
+      // revision-replay guard) is only ever reached for crossWindow events
+      // now (bystander fix, review round 1).
+      const eventAt = (revision: number) => ({
+        revision,
+        origin: 'win-1',
+        crossWindow: true,
+        workspace: {
+          revision,
+          windows: [
+            { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.sales_db.customers'], activeTabId: 'profile:p1.sales_db.customers' } },
+          ],
+          tabs: [
+            { id: 'profile:p1.sales_db.customers', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'customers' },
+          ],
+        },
+      });
+
+      // revision 2 lands first — customers arrives.
+      await act(async () => {
+        fireMockEvent('workspace-changed', eventAt(2));
+      });
+      expect(await screen.findByText('customers')).toBeInTheDocument();
+
+      // A STALE revision 1 replay tries to wipe main's tree back to empty —
+      // it must be dropped entirely (by the revision check, before the
+      // crossWindow gate is even reached), leaving revision 2's state intact.
+      const staleEmpty = {
+        revision: 1,
+        origin: 'win-1',
+        crossWindow: true,
+        workspace: {
+          revision: 1,
+          windows: [{ id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null } }],
+          tabs: [],
+        },
+      };
+      await act(async () => {
+        fireMockEvent('workspace-changed', staleEmpty);
+      });
+
+      // Still there — the stale event never applied.
+      expect(screen.getByText('customers')).toBeInTheDocument();
+    });
+
+    it('(f) opening a tab already present in another window\'s tree does not add it locally (MANDATE)', async () => {
+      const quickConnectWorkspace = {
+        revision: 1,
+        windows: [
+          { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' } },
+          { id: 'win-1', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['conn-1.sales_db.customers'], activeTabId: 'conn-1.sales_db.customers' } },
+        ],
+        tabs: [
+          { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+          { id: 'conn-1.sales_db.customers', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'customers' },
+        ],
+      };
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(quickConnectWorkspace);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('quickstart-tab');
+
+      // 'customers' (conn-1.sales_db.customers) is already open in win-1's
+      // tree per the boot snapshot above (lastWorkspaceRef is seeded at
+      // boot). Selecting it here (running as main) must not add it locally.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+
+      await waitFor(() => {
+        const focusCalls = calls.filter((c) => c.cmd === 'focus_window');
+        expect(focusCalls).toHaveLength(1);
+        expect(focusCalls[0].args).toEqual({ label: 'win-1' });
+      });
+      // Never added to this window's tab strip/pane.
+      expect(screen.queryByText('customers')).not.toBeInTheDocument();
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+    });
+
+    it('(g) a connections-changed addition rebinds a restored profile\'s banner tabs without this window ever connecting itself', async () => {
+      const workspaceSnapshot = {
+        revision: 1,
+        windows: [
+          { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.sales_db.customers'], activeTabId: 'profile:p1.sales_db.customers' } },
+        ],
+        tabs: [
+          { id: 'profile:p1.sales_db.customers', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'customers' },
+        ],
+      };
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        return Promise.resolve([]);
+      });
+
+      const { waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      expect(await screen.findByTestId('reconnect-banner')).toBeInTheDocument();
+
+      // Another window connected p1 — this window never called connect_db.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'live-99', profileId: 'p1', name: 'Prod Cluster' }],
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument();
+      });
+      expect(calls.some((c) => c.cmd === 'connect_db')).toBe(false);
+    });
+
+    it('(h) the boot-time connection_list seed rebinds a restored profile\'s banner tab without any connect_db call (final whole-branch review Fix 2)', async () => {
+      const workspaceSnapshot = {
+        revision: 1,
+        windows: [
+          { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.sales_db.customers'], activeTabId: 'profile:p1.sales_db.customers' } },
+        ],
+        tabs: [
+          { id: 'profile:p1.sales_db.customers', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'customers' },
+        ],
+      };
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        // Simulates a window spawned into an already-live session — another
+        // window connected p1 before this one ever booted.
+        if (cmd === 'connection_list') {
+          return Promise.resolve([{ id: 'live-99', profileId: 'p1', name: 'Prod Cluster' }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      // Never even flashes a ReconnectBanner — the seed lands before the
+      // hydrated tab renders as "disconnected".
+      await waitFor(() => {
+        expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument();
+      });
+      expect(await screen.findByTestId('sidebar-conn-live-99')).toHaveTextContent('Prod Cluster');
+      expect(calls.some((c) => c.cmd === 'connect_db')).toBe(false);
+    });
+  });
+
+  describe('cross-window connection + pref coherence (Phase 3 Task 6)', () => {
+    it('(a1) a quick-connect from the Quick Start pane calls set_connection_meta for the fresh id', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) =>
+              c.cmd === 'set_connection_meta' &&
+              c.args?.id === 'live-1' &&
+              c.args?.profileId === 'p1' &&
+              c.args?.name === 'Prod Cluster',
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it('(a2) connecting via the ConnectionManager dialog calls set_connection_meta for the fresh id', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('quickstart-tab');
+
+      fireEvent.click(screen.getAllByText('New connection')[0]);
+      const connectBtn = await screen.findByTestId('mock-cm-connect-btn');
+      fireEvent.click(connectBtn);
+
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) =>
+              c.cmd === 'set_connection_meta' &&
+              c.args?.id === 'cm-live-1' &&
+              c.args?.profileId === 'p-cm' &&
+              c.args?.name === 'Staging Cluster',
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it('(a3) the fresh-connect branch of a ReconnectBanner click calls set_connection_meta for the new id', async () => {
+      const workspaceSnapshot = {
+        revision: 1,
+        windows: [
+          { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.sales_db.customers'], activeTabId: 'profile:p1.sales_db.customers' } },
+        ],
+        tabs: [
+          { id: 'profile:p1.sales_db.customers', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'customers' },
+        ],
+      };
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      expect(await screen.findByTestId('reconnect-banner')).toBeInTheDocument();
+      fireEvent.click(screen.getByText(/Reconnect Prod Cluster/));
+
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) =>
+              c.cmd === 'set_connection_meta' &&
+              c.args?.id === 'live-1' &&
+              c.args?.profileId === 'p1' &&
+              c.args?.name === 'Prod Cluster',
+          ),
+        ).toBe(true);
+      });
+      // The reuse branch (an id already in `activeConnections`) never calls
+      // `connect_db`/`set_connection_meta` a second time — see App.tsx's
+      // `handleReconnectProfile` comment. Nothing else exercises that branch
+      // here, so this just confirms `set_connection_meta` fired exactly once.
+      expect(calls.filter((c) => c.cmd === 'set_connection_meta')).toHaveLength(1);
+    });
+
+    it('(b) a connections-changed addition renders in this window\'s sidebar even though it never connected anything itself', async () => {
+      const { act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      expect(screen.queryByTestId('sidebar-conn-live-99')).not.toBeInTheDocument();
+
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'live-99', profileId: 'p1', name: 'Prod Cluster' }],
+        });
+      });
+
+      expect(await screen.findByTestId('sidebar-conn-live-99')).toHaveTextContent('Prod Cluster');
+    });
+
+    it('(b2) a connections-changed viaMcp addition for an ALREADY-connected profileId still renders its own sidebar row, badged "via MCP" (final fix wave, agent-connection visibility)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      // This window connects p1 itself first (a human connection).
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      expect(await screen.findByTestId('sidebar-conn-live-1')).toHaveTextContent('Prod Cluster');
+
+      // An MCP agent now also connects to the SAME profile (its own
+      // `connect` tool call, backend-side, broadcast as `viaMcp: true`) —
+      // previously `addActiveConnection`'s profileId dedupe silently
+      // dropped this: a live backend connection no window ever displayed.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [
+            { id: 'live-1', profileId: 'p1', name: 'Prod Cluster', viaMcp: false },
+            { id: 'mcp-live-2', profileId: 'p1', name: 'Prod Cluster', viaMcp: true },
+          ],
+        });
+      });
+
+      // Both rows now render — the pre-existing human connection AND the
+      // agent's own, distinct row for the same profile.
+      expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument();
+      expect(await screen.findByTestId('sidebar-conn-mcp-live-2')).toHaveTextContent('Prod Cluster');
+    });
+
+    it('(d) a stale connection_meta entry for a profile already live locally under a different id is left alone (no disconnect_db)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      await waitFor(() => expect(calls.some((c) => c.cmd === 'connect_db')).toBe(true));
+
+      calls.length = 0; // only the event handler's own reaction matters below
+
+      // The backend broadcast still carries an id for p1 this window did NOT
+      // mint (`live-old`) alongside the one it did (`live-1`) — the shape a
+      // genuinely-orphaned meta entry AND a same-profile race with another
+      // window are both indistinguishable in. Per App.tsx's comment, this is
+      // deliberately left alone rather than risk killing a live connection.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [
+            { id: 'live-1', profileId: 'p1', name: 'Prod Cluster' },
+            { id: 'live-old', profileId: 'p1', name: 'Prod Cluster' },
+          ],
+        });
+      });
+
+      expect(calls.some((c) => c.cmd === 'disconnect_db')).toBe(false);
+    });
+
+    it('(e) a connections-changed removal tears down local tabs without double-mirroring the close', async () => {
+      const workspaceSnapshot = {
+        revision: 1,
+        windows: [
+          { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.sales_db.customers'], activeTabId: 'profile:p1.sales_db.customers' } },
+        ],
+        tabs: [
+          { id: 'profile:p1.sales_db.customers', type: 'collection', profileId: 'p1', profileName: 'Prod Cluster', db: 'sales_db', collection: 'customers' },
+        ],
+      };
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'workspace_get') return Promise.resolve(workspaceSnapshot);
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { waitFor, act, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      expect(await screen.findByTestId('reconnect-banner')).toBeInTheDocument();
+
+      // Another window connected p1 first — rebinds this window's banner tab.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'live-99', profileId: 'p1', name: 'Prod Cluster' }],
+        });
+      });
+      await waitFor(() => expect(screen.queryByTestId('reconnect-banner')).not.toBeInTheDocument());
+      expect(within(screen.getByTestId('workspace-tab-strip')).getByText('customers')).toBeInTheDocument();
+
+      calls.length = 0; // only what the REMOVAL itself triggers matters below
+
+      // That connection is now gone from the broadcast — another window
+      // disconnected it (or this one would have via Sidebar's onDisconnect,
+      // which calls disconnect_db itself and is not exercised here).
+      await act(async () => {
+        fireMockEvent('connections-changed', { connections: [] });
+      });
+
+      await waitFor(() => {
+        expect(within(screen.getByTestId('workspace-tab-strip')).queryByText('customers')).not.toBeInTheDocument();
+      });
+      // The close is a raw local `dispatchLayout`, never re-mirrored to the
+      // backend workspace store — mirroring it again would double-apply the
+      // same close backend-side (see App.tsx's "Removals" comment). The
+      // tabs-empty effect firing afterward (main window resurrects Quick
+      // Start) DOES call workspace_apply for an `open_tab` — this only
+      // asserts no `close_many` op was ever mirrored.
+      const closeManyMirrors = calls.filter((c) => c.cmd === 'workspace_apply' && c.args?.op?.type === 'close_many');
+      expect(closeManyMirrors).toHaveLength(0);
+      expect(calls.some((c) => c.cmd === 'disconnect_db')).toBe(false);
+    });
+
+    it('(f) a fresh local connect survives an unrelated connections-changed broadcast that never mentions it, and re-fires set_connection_meta (final whole-branch review Fix 3)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      await waitFor(() => expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument());
+
+      calls.length = 0; // only the broadcast handler's own reaction matters below
+
+      // An unrelated broadcast lands — this window's own `set_connection_meta`
+      // for p1 hasn't registered backend-side yet (a race), so the very
+      // first connections-changed payload it ever sees doesn't mention p1
+      // at all. p1's own connection id ('live-1') was never SEEN in any
+      // prior broadcast (seenConnectionIdsRef is empty for it), so this
+      // must NOT be treated as a removal.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'live-other', profileId: 'p-other', name: 'Other Cluster' }],
+        });
+      });
+
+      // Still there — not torn down by a broadcast that has nothing to do
+      // with it.
+      expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument();
+      expect(calls.some((c) => c.cmd === 'disconnect_db')).toBe(false);
+      // Self-healing re-registration: re-announces this window's own live
+      // connection so the backend's connection_meta map (and hence the next
+      // broadcast) catches up.
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) => c.cmd === 'set_connection_meta' && c.args?.id === 'live-1' && c.args?.profileId === 'p1',
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it('(f2) a self-heal re-announce for a read_only connection preserves read_only — does NOT reset to normal (#188 Task 5 regression)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([
+            { id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null, connection_mode: 'read_only' },
+          ]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      await waitFor(() => expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument());
+
+      // Sanity check: the connect itself already announced the real mode
+      // (Task 1's connect-time registration) before exercising the self-heal
+      // path below.
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) => c.cmd === 'set_connection_meta' && c.args?.id === 'live-1' && c.args?.mode === 'read_only',
+          ),
+        ).toBe(true);
+      });
+
+      calls.length = 0; // only the self-heal reaction below matters now
+
+      // An unrelated broadcast lands before this window's own
+      // `set_connection_meta` for p1 has registered backend-side (the same
+      // race as (f) above) — the self-heal re-announce fires. CRITICAL: it
+      // must carry 'live-1's REAL current mode (read_only), never a
+      // hardcoded 'normal' — a hardcoded fallback here would silently
+      // downgrade a guarded connection's backend `connection_meta` entry
+      // (and hence every OTHER window's next `connections-changed`
+      // broadcast) to normal, defeating the read-only/confirm-destructive
+      // safeguard entirely.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'live-other', profileId: 'p-other', name: 'Other Cluster' }],
+        });
+      });
+
+      await waitFor(() => {
+        const reannounce = calls.find(
+          (c) => c.cmd === 'set_connection_meta' && c.args?.id === 'live-1' && c.args?.profileId === 'p1',
+        );
+        expect(reannounce).toBeTruthy();
+        expect(reannounce.args?.mode).toBe('read_only');
+      });
+    });
+
+    it('(g) a broadcast carrying a DIFFERENT connection for the SAME profile does not tear down this window\'s own not-yet-announced connection (closing review residual fix)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([{ id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null }]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      // This window connects p1 itself (a human connect_db) — 'live-1' is
+      // added to activeConnections synchronously, but this window's own
+      // `set_connection_meta` for it hasn't registered backend-side yet.
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      await waitFor(() => expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument());
+
+      calls.length = 0; // only the broadcast handler's own reaction matters below
+
+      // A broadcast lands carrying a DIFFERENT connection id for the SAME
+      // profile (an MCP agent's own `connect`, or a second window racing
+      // this one) — NOT the local 'live-1' id, which this window's own
+      // `set_connection_meta` hasn't announced backend-side yet. A
+      // profileId-keyed seen-gate would mark p1 "seen" off this row alone
+      // and tear down 'live-1' as if it had been genuinely removed; the
+      // connection-id-keyed gate must not, since 'live-1' itself was never
+      // mentioned in any broadcast.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'mcp-live-2', profileId: 'p1', name: 'Prod Cluster', viaMcp: true }],
+        });
+      });
+
+      // This window's own connection (and its tabs) survive — not torn
+      // down by a same-profile broadcast that isn't actually about it.
+      expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument();
+      expect(calls.some((c) => c.cmd === 'disconnect_db')).toBe(false);
+      expect(calls.some((c) => c.cmd === 'workspace_apply' && c.args?.op?.type === 'close_many')).toBe(false);
+      // The agent's own row still renders (Fix 2's two-rows behavior is
+      // unaffected by this fix).
+      expect(await screen.findByTestId('sidebar-conn-mcp-live-2')).toBeInTheDocument();
+      // Self-healing re-registration, not teardown: re-announces this
+      // window's own live connection so the backend's connection_meta map
+      // (and hence the next broadcast) catches up.
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) => c.cmd === 'set_connection_meta' && c.args?.id === 'live-1' && c.args?.profileId === 'p1',
+          ),
+        ).toBe(true);
+      });
+    });
+  });
+
+  describe('tab context menu — detach/move (Phase 3 Task 5)', () => {
+    // Seeds lastWorkspaceRef with a second open window (win-1, active tab
+    // "orders") via a workspace-changed event — the same seeding technique
+    // Task 4's reconciliation tests use. `crossWindow: false` is deliberate:
+    // per the bystander fix, a non-crossWindow event still updates
+    // lastWorkspaceRef (only the hydrate/diff is skipped), and updating the
+    // ref is all this describe block's context-menu items read from.
+    async function seedForeignWindow() {
+      const { act } = await import('@testing-library/react');
+      await act(async () => {
+        fireMockEvent('workspace-changed', {
+          revision: 1,
+          origin: 'win-1',
+          crossWindow: false,
+          workspace: {
+            revision: 1,
+            windows: [
+              { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' } },
+              { id: 'win-1', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['conn-1.sales_db.orders'], activeTabId: 'conn-1.sales_db.orders' } },
+            ],
+            tabs: [
+              { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+              { id: 'conn-1.sales_db.orders', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'orders' },
+            ],
+          },
+        });
+      });
+    }
+
+    it('shows "Detach to New Window" and "Move to <window>" for a tab once this window has more than one tab open', async () => {
+      const { fireEvent, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      await seedForeignWindow();
+
+      // pane-1 now holds two tabs: Quick Start + customers.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const customersTab = await within(tabStrip).findByText('customers');
+
+      fireEvent.contextMenu(customersTab.closest('div')!);
+
+      expect(await screen.findByTestId('context-menu')).toBeInTheDocument();
+      expect(screen.getByText('Detach to New Window')).toBeInTheDocument();
+      expect(screen.getByText('Move to win-1 (orders)')).toBeInTheDocument();
+    });
+
+    it('hides "Detach to New Window" when this window holds only one tab, but still offers "Move to <window>"', async () => {
+      const { fireEvent, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      await seedForeignWindow();
+
+      // Only the default Quick Start tab is open in this window.
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const quickstartTab = await within(tabStrip).findByText('Quick Start');
+      fireEvent.contextMenu(quickstartTab.closest('div')!);
+
+      expect(await screen.findByTestId('context-menu')).toBeInTheDocument();
+      expect(screen.queryByText('Detach to New Window')).not.toBeInTheDocument();
+      expect(screen.getByText('Move to win-1 (orders)')).toBeInTheDocument();
+    });
+
+    it('detaching calls workspace_detach_tab with this tab\'s id', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        return Promise.resolve([]);
+      });
+      const { fireEvent, within, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const customersTab = await within(tabStrip).findByText('customers');
+      calls.length = 0; // drop the open_tab mirror from selecting the collection above
+      fireEvent.contextMenu(customersTab.closest('div')!);
+
+      fireEvent.click(await screen.findByText('Detach to New Window'));
+
+      await waitFor(() => {
+        const detachCalls = calls.filter((c) => c.cmd === 'workspace_detach_tab');
+        expect(detachCalls).toHaveLength(1);
+        expect(detachCalls[0].args).toEqual({ tabId: 'conn-1.sales_db.customers', origin: 'main' });
+      });
+      // Never applied through the local layout reducer/dispatchWorkspace —
+      // this window's own tree is untouched by the detach click itself,
+      // only the crossWindow echo (not fired in this test) ever would be.
+      expect(calls.some((c) => c.cmd === 'workspace_apply')).toBe(false);
+    });
+
+    it('moving to another window calls workspace_apply with move_tab_to_window and never touches this window\'s local layout', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        return Promise.resolve([]);
+      });
+      const { fireEvent, within, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      await seedForeignWindow();
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const customersTab = await within(tabStrip).findByText('customers');
+      calls.length = 0;
+      fireEvent.contextMenu(customersTab.closest('div')!);
+
+      fireEvent.click(await screen.findByText('Move to win-1 (orders)'));
+
+      await waitFor(() => {
+        const moveCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'move_tab_to_window');
+        expect(moveCalls).toHaveLength(1);
+        expect(moveCalls[0].args).toEqual({
+          op: { type: 'move_tab_to_window', tab_id: 'conn-1.sales_db.customers', target_window_id: 'win-1' },
+          origin: 'main',
+        });
+      });
+      // Final whole-branch review, Fix 4(b): also fires `focus_window` for
+      // the target — the backend widens its contract to spawn `win-1` if
+      // the store still lists it but no OS window is currently open (a
+      // dead move target), so this self-heals instead of stranding the tab.
+      await waitFor(() => {
+        const focusCalls = calls.filter((c) => c.cmd === 'focus_window');
+        expect(focusCalls).toHaveLength(1);
+        expect(focusCalls[0].args).toEqual({ label: 'win-1' });
+      });
+      // CRITICAL: this window's own tab strip/pane is untouched by the
+      // click itself — dispatchLayout was never called for this op, only
+      // the crossWindow echo (not fired in this test) would ever remove it.
+      expect(within(tabStrip).getByText('customers')).toBeInTheDocument();
+      expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
+    });
+
+    it('hides both cross-window items for an unmirrored (export/import) tab, showing a disabled explanatory entry instead', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
+        return Promise.resolve([]);
+      });
+      const { fireEvent, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      await seedForeignWindow();
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Export Collection' } });
+      fireEvent.click(await screen.findByText('Export Collection…'));
+
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const exportTab = await within(tabStrip).findByText('Export: customers');
+      fireEvent.contextMenu(exportTab.closest('div')!);
+
+      expect(await screen.findByTestId('context-menu')).toBeInTheDocument();
+      expect(screen.queryByText('Detach to New Window')).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Move to /)).not.toBeInTheDocument();
+      const placeholder = screen.getByText('Export/import tabs stay in their window');
+      expect(placeholder.closest('button')).toBeDisabled();
+      expect(placeholder.closest('button')).toHaveAttribute('title', 'Export/import tabs stay in their window');
+    });
+
+    it('does not open an empty context menu for the sole tab when no other windows exist', async () => {
+      const { fireEvent, within } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // Only Quick Start is open, and no other windows were seeded — both
+      // "Detach to New Window" and any "Move to" entries are absent, so
+      // buildTabContextMenuItems returns [] and the menu must not open.
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const quickstartTab = await within(tabStrip).findByText('Quick Start');
+      fireEvent.contextMenu(quickstartTab.closest('div')!);
+
+      expect(screen.queryByTestId('context-menu')).not.toBeInTheDocument();
+    });
   });
 });

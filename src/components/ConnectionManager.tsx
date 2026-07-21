@@ -2,7 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
-import { buildExportUri, findMongoUriInText } from '@/lib/connection';
+import {
+  buildExportAllUris,
+  buildExportUri,
+  parseConnectionImportFile,
+  resolveImportUri,
+  type ImportedConnection,
+} from '@/lib/connection';
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
 import { useEscapeClose } from '../lib/useEscapeClose';
@@ -61,18 +67,25 @@ export type SshConfig = {
     | { type: 'agent' };
 };
 
+/** Mirrors backend `connections::ConnectionMode` (#188). */
+export type ConnectionMode = 'normal' | 'read_only' | 'confirm_destructive';
+
 interface ConnectionProfile {
   id: string;
   name: string;
   uri: string;
   color_tag?: string | null;
   ssh?: SshConfig | null;
+  /** Expose this profile to MCP agents. Mirrors backend `ConnectionProfile::mcp_enabled`. */
+  mcp_enabled?: boolean;
+  /** Read-only / confirm-destructive production safeguard. Mirrors backend `ConnectionProfile::connection_mode`. */
+  connection_mode?: ConnectionMode;
 }
 
 interface ConnectionManagerProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnect: (id: string, name: string, uri: string, profileId: string, colorTag?: string | null) => void;
+  onConnect: (id: string, name: string, uri: string, profileId: string, colorTag?: string | null, connectionMode?: ConnectionMode) => void;
   activeConnections?: { id: string; profileId: string; name: string; uri: string }[];
 }
 
@@ -129,7 +142,16 @@ const BLANK_CONN = {
   name: 'New Connection',
   folder: '',
   colorTag: '',
+  mcpEnabled: false,
+  connectionMode: 'normal' as ConnectionMode,
 };
+
+/** Connection mode editor options (#188 Task 1) — segmented control in the server panel. */
+const CONNECTION_MODE_OPTIONS: { value: ConnectionMode; label: string; description: string }[] = [
+  { value: 'normal', label: 'Normal', description: 'Full read/write' },
+  { value: 'read_only', label: 'Read-only', description: 'Blocks all writes' },
+  { value: 'confirm_destructive', label: 'Confirm destructive', description: 'Destructive ops need typed confirmation' },
+];
 
 const sidebarPanelClass =
   'flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar/40 text-sidebar-foreground';
@@ -403,9 +425,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   // URI import (clipboard/file) error — shown inline next to the Import menu,
   // since those sources fail without a dialog of their own to host a message.
   const [importError, setImportError] = useState<string | null>(null);
-  // Export-URI dialog: the URI being exported and whether the source profile
-  // has an SSH tunnel (which can't be represented in a mongodb:// URI).
-  const [exportDialog, setExportDialog] = useState<{ uri: string; hasSsh: boolean } | null>(null);
+  // Export dialog: a single profile URI, or all profiles as JSON with folders.
+  const [exportDialog, setExportDialog] = useState<
+    | { mode: 'single'; uri: string; hasSsh: boolean }
+    | { mode: 'all' }
+    | null
+  >(null);
   const [exportIncludePassword, setExportIncludePassword] = useState(false);
   const [exportIncludeSettings, setExportIncludeSettings] = useState(true);
   const [editorState, setEditorState] = useState<typeof BLANK_CONN>(BLANK_CONN);
@@ -524,6 +549,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       ...parsed,
       folder: profileFolderMap[profile.id] || '',
       colorTag: profile.color_tag || '',
+      mcpEnabled: profile.mcp_enabled ?? false,
+      connectionMode: profile.connection_mode ?? 'normal',
       ...sshFields,
     });
 
@@ -547,6 +574,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       hosts: [{ host: 'localhost', port: '27017' }],
       folder: profileFolderMap[profile.id] || '',
       colorTag: profile.color_tag || '',
+      // Adjudicated product call (final fix wave): a duplicated profile
+      // never inherits "Expose to MCP agents" from the profile it was
+      // copied from, even when the original has it on — the new profile is
+      // a distinct connection an agent hasn't been vetted for yet, and
+      // silently exposing it would be surprising. `handleEditClick` above
+      // is unaffected and keeps mapping `profile.mcp_enabled` as-is; this
+      // reset is specific to the duplicate-populate path.
+      mcpEnabled: false,
+      // Opposite call from `mcpEnabled` above (#188 Task 1, adjudicated):
+      // a read-only/confirm-destructive safeguard is exactly the kind of
+      // thing that should survive duplication rather than reset — the new
+      // profile is presumably still pointed at the same sensitive
+      // environment (e.g. "prod (copy for testing a filter)"), and
+      // silently dropping the safeguard back to unguarded `normal` would
+      // be the surprising outcome here, not the safe one.
+      connectionMode: profile.connection_mode ?? 'normal',
     });
     setError(null);
     setTestResult(null);
@@ -605,6 +648,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       color_tag: editorState.colorTag
         ? normalizeHexColor(editorState.colorTag) ?? editorState.colorTag
         : null,
+      mcp_enabled: editorState.mcpEnabled,
+      connection_mode: editorState.connectionMode,
     };
 
     setLoading(true);
@@ -667,7 +712,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     try {
       const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-      onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
+      onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, profile.connection_mode ?? 'normal');
     } catch (err: any) {
       setError(String(err));
     } finally {
@@ -693,24 +738,147 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     }
   };
 
-  // Apply an imported connection string → auto-detect protocol, hosts, auth,
-  // and topology. Accepts free-form text (a .env line, a note) and extracts
-  // the first mongodb:// / mongodb+srv:// URI from it.
-  const applyImportedUri = (raw: string | null | undefined, sourceHint: string) => {
-    const found = raw ? findMongoUriInText(raw) : null;
-    if (!found) {
-      setImportError(`No mongodb:// or mongodb+srv:// connection string found ${sourceHint}.`);
+  const openEditorForImport = () => {
+    if (showEditDialog) return;
+    setEditMode('new');
+    const defaultFolder = folders.length > 0 ? folders[0].id : '';
+    setEditorState({
+      ...BLANK_CONN,
+      name: 'New Connection',
+      hosts: [{ host: 'localhost', port: '27017' }],
+      folder: defaultFolder,
+    });
+    setError(null);
+    setTestResult(null);
+    setImportError(null);
+    setTesting(false);
+    setActiveEditorTab('server');
+    setShowEditDialog(true);
+  };
+
+  const applyImportedUri = (raw: string, name?: string) => {
+    const result = resolveImportUri(raw);
+    if (!result.ok) {
+      setImportError(result.error);
       return;
     }
     setImportError(null);
-    setEditorState(prev => ({ ...prev, uri: found, ...parseUriIntoFields(found) }));
+    setEditorState((prev) => ({
+      ...prev,
+      name: name || prev.name,
+      uri: result.uri,
+      ...parseUriIntoFields(result.uri),
+    }));
     setActiveEditorTab('server');
+  };
+
+  const uniqueImportName = (baseName: string, taken: Set<string>): string => {
+    let name = baseName.trim() || 'Imported Connection';
+    if (!taken.has(name.toLowerCase())) {
+      taken.add(name.toLowerCase());
+      return name;
+    }
+    let suffix = 2;
+    while (taken.has(`${name} (${suffix})`.toLowerCase())) suffix += 1;
+    const unique = `${name} (${suffix})`;
+    taken.add(unique.toLowerCase());
+    return unique;
+  };
+
+  const ensureImportFolder = (
+    folderName: string | null | undefined,
+    currentFolders: FolderNode[],
+    folderIdsByName: Map<string, string>,
+  ): { folderId: string | null; folders: FolderNode[] } => {
+    const trimmed = folderName?.trim();
+    if (!trimmed) return { folderId: null, folders: currentFolders };
+
+    const existingId = folderIdsByName.get(trimmed.toLowerCase());
+    if (existingId) return { folderId: existingId, folders: currentFolders };
+
+    const newFolder: FolderNode = {
+      id: `folder-${generateUUID()}`,
+      name: trimmed,
+      parentId: null,
+      shared: false,
+    };
+    folderIdsByName.set(trimmed.toLowerCase(), newFolder.id);
+    return { folderId: newFolder.id, folders: [...currentFolders, newFolder] };
+  };
+
+  const importParsedConnections = async (connections: ImportedConnection[]) => {
+    setImportError(null);
+    if (connections.length === 1 && !connections[0].folder) {
+      openEditorForImport();
+      applyImportedUri(connections[0].uri, connections[0].name);
+      return;
+    }
+
+    const proceed = await confirm({
+      title: 'Import connections',
+      message: `Found ${connections.length} connection URIs. Create a saved profile for each?`,
+      confirmLabel: 'Import all',
+    });
+    if (!proceed) return;
+
+    setLoading(true);
+    try {
+      const taken = new Set(profiles.map((profile) => profile.name.toLowerCase()));
+      let nextFolders = [...folders];
+      const folderIdsByName = new Map(
+        nextFolders.map((folder) => [folder.name.toLowerCase(), folder.id]),
+      );
+      const nextMap = { ...profileFolderMap };
+      let lastId: string | null = null;
+
+      for (const connection of connections) {
+        const name = uniqueImportName(connection.name, taken);
+        const profile: ConnectionProfile = {
+          id: generateUUID(),
+          name,
+          uri: connection.uri,
+          ssh: null,
+          color_tag: null,
+          mcp_enabled: false,
+        };
+        await invoke('save_connection_profile', { profile });
+
+        const ensured = ensureImportFolder(connection.folder, nextFolders, folderIdsByName);
+        nextFolders = ensured.folders;
+        if (ensured.folderId) nextMap[profile.id] = ensured.folderId;
+
+        lastId = profile.id;
+      }
+
+      saveFoldersToStorage(nextFolders, nextMap);
+      setExpandedFolders((prev) => {
+        const next = { ...prev };
+        for (const folder of nextFolders) next[folder.id] = true;
+        return next;
+      });
+      setShowEditDialog(false);
+      await loadProfiles();
+      if (lastId) setSelectedId(lastId);
+    } catch (err: unknown) {
+      setImportError(String(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleImportFromClipboard = async () => {
     try {
       const text = await navigator.clipboard?.readText?.();
-      applyImportedUri(text, 'in the clipboard');
+      if (!text?.trim()) {
+        setImportError('Clipboard is empty');
+        return;
+      }
+      const result = parseConnectionImportFile(text);
+      if (!result.ok) {
+        setImportError(result.error);
+        return;
+      }
+      await importParsedConnections(result.connections);
     } catch {
       setImportError('Could not read the clipboard.');
     }
@@ -718,53 +886,116 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   const handleImportFromFile = async () => {
     try {
-      const path = await open({ multiple: false, title: 'Import connection URI from file' });
+      const path = await open({
+        multiple: false,
+        directory: false,
+        title: 'Import connection URI from file',
+        filters: [
+          { name: 'JSON / Studio 3T URI', extensions: ['json', 'uri', 'txt', 'env'] },
+          { name: 'All files', extensions: ['*'] },
+        ],
+      });
       if (typeof path !== 'string') return;
       const text = await readTextFile(path);
-      applyImportedUri(text, `in ${path.split(/[\\/]/).pop()}`);
+      const result = parseConnectionImportFile(text);
+      if (!result.ok) {
+        setImportError(result.error);
+        return;
+      }
+      await importParsedConnections(result.connections);
     } catch {
       setImportError('Could not read the selected file.');
     }
   };
 
-  // Manual paste fallback (the original Import URI dialog).
+  // Manual paste — supports one or more URIs (with optional # labels / folders).
   const handleImportUri = async () => {
-    const uri = await prompt({
+    const text = await prompt({
       title: 'Import Connection URI',
-      message: `Paste a mongodb:// or mongodb+srv:// connection string. Protocol, hosts, auth, TLS, and topology are detected automatically. (${formatShortcut(shortcutById('submit-dialog')!)} to import)`,
-      placeholder: 'mongodb://user:pass@host1:27017,host2:27017/?replicaSet=rs0&tls=true',
+      message: `Paste one or more mongodb:// or mongodb+srv:// connection strings. Use # lines to name connections. (${formatShortcut(shortcutById('submit-dialog')!)} to import)`,
+      placeholder: '# Local\nmongodb://localhost:27017\n\n# Production\nmongodb://user:pass@host1:27017/?replicaSet=rs0',
       confirmLabel: 'Import',
       multiline: true,
-      validate: (v) => (/^mongodb(\+srv)?:\/\//i.test(v.trim()) ? null : 'Enter a mongodb:// or mongodb+srv:// URI'),
+      validate: (v) => {
+        const result = parseConnectionImportFile(v);
+        return result.ok ? null : result.error;
+      },
     });
-    if (!uri || !uri.trim()) return;
-    setImportError(null);
-    const clean = uri.trim();
-    setEditorState(prev => ({ ...prev, uri: clean, ...parseUriIntoFields(clean) }));
-    setActiveEditorTab('server');
+    if (!text || !text.trim()) return;
+    const result = parseConnectionImportFile(text);
+    if (!result.ok) {
+      setImportError(result.error);
+      return;
+    }
+    await importParsedConnections(result.connections);
   };
+
+  const importUriMenu = (testId = 'import-uri-btn', className?: string) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className={cn(className)} data-testid={testId}>
+          <ClipboardPaste size={testId === 'import-uri-btn' ? 11 : 12} />
+          <span>Import URI</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className={NESTED_SELECT_Z}>
+        <DropdownMenuItem onClick={() => void handleImportFromClipboard()} data-testid="import-from-clipboard">
+          From clipboard
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void handleImportFromFile()} data-testid="import-from-file">
+          From a file…
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void handleImportUri()} data-testid="import-paste-manually">
+          Paste manually…
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   // Export a URI with the password stripped by default (SSH/proxy secrets too);
   // the toggles opt back into secrets or drop the settings query entirely.
   const openExportDialog = (uri: string, hasSsh: boolean) => {
     setExportIncludePassword(false);
     setExportIncludeSettings(true);
-    setExportDialog({ uri, hasSsh });
+    setExportDialog({ mode: 'single', uri, hasSsh });
   };
 
-  const exportPreview = exportDialog
-    ? buildExportUri(exportDialog.uri, {
-        includePassword: exportIncludePassword,
-        includeSettings: exportIncludeSettings,
-      })
-    : '';
+  const openExportAllDialog = () => {
+    setExportIncludePassword(false);
+    setExportIncludeSettings(true);
+    setExportDialog({ mode: 'all' });
+  };
+
+  const exportOpts = {
+    includePassword: exportIncludePassword,
+    includeSettings: exportIncludeSettings,
+  };
+
+  const exportPreview = !exportDialog
+    ? ''
+    : exportDialog.mode === 'all'
+      ? buildExportAllUris(profiles, exportOpts, { folders, profileFolderMap })
+      : buildExportUri(exportDialog.uri, exportOpts);
 
   const handleExportSave = async () => {
     if (!exportDialog) return;
     try {
-      const path = await save({ defaultPath: 'connection-uri.txt', title: 'Save connection URI' });
+      const isAll = exportDialog.mode === 'all';
+      const path = await save({
+        defaultPath: isAll ? 'connections.json' : 'connection-uri.txt',
+        title: isAll ? 'Save connection URIs' : 'Save connection URI',
+        filters: isAll
+          ? [
+              { name: 'JSON', extensions: ['json'] },
+              { name: 'All files', extensions: ['*'] },
+            ]
+          : [
+              { name: 'Text', extensions: ['txt', 'env'] },
+              { name: 'All files', extensions: ['*'] },
+            ],
+      });
       if (!path) return;
-      await writeTextFile(path, `${exportPreview}\n`);
+      await writeTextFile(path, isAll ? exportPreview : `${exportPreview}\n`);
       setExportDialog(null);
     } catch {
       /* user cancelled or write failed — keep the dialog open */
@@ -903,15 +1134,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <Trash2 size={12} />
                 <span>Delete</span>
               </Button>
+              {importUriMenu('import-uri-toolbar-btn', 'h-8 gap-1.5 text-ui-xs')}
               <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" data-testid="export-uri-btn" onClick={() => {
                 if (selectedProfile) openExportDialog(selectedProfile.uri, !!selectedProfile.ssh?.enabled);
               }}>
                 <ExternalLink size={12} />
                 <span>Export URI</span>
               </Button>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" data-testid="export-all-uris-btn" onClick={openExportAllDialog}>
+                <ExternalLink size={12} />
+                <span>Export All URIs</span>
+              </Button>
             </>
           )}
         </section>
+
+        {importError && !showEditDialog && (
+          <div
+            className="flex shrink-0 items-center gap-1.5 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-[11px] text-destructive"
+            data-testid="import-uri-error"
+          >
+            <AlertCircle size={12} />
+            <span>{importError}</span>
+          </div>
+        )}
 
         {/* Content splits */}
         <div className="flex min-h-0 flex-1">
@@ -1445,6 +1691,43 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       </div>
                     )}
                   </div>
+
+                  <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                    <Label className="text-ui-xs">Connection mode</Label>
+                    <div className="flex flex-col gap-1.5" role="group" aria-label="Connection mode">
+                      {CONNECTION_MODE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          data-testid={`connection-mode-${opt.value}`}
+                          aria-pressed={editorState.connectionMode === opt.value}
+                          className={cn(
+                            'flex flex-col items-start gap-0.5 rounded-md border border-border px-2.5 py-1.5 text-left transition-colors hover:border-primary/50 hover:bg-accent',
+                            editorState.connectionMode === opt.value && 'border-primary bg-accent ring-1 ring-primary',
+                          )}
+                          onClick={() => setEditorState((prev) => ({ ...prev, connectionMode: opt.value }))}
+                        >
+                          <span className="text-[11px] font-medium">{opt.label}</span>
+                          <span className="text-[10.5px] leading-relaxed text-muted-foreground">{opt.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                    <label className="flex items-center gap-2 text-[11px]">
+                      <input
+                        id="mcp-enable"
+                        type="checkbox"
+                        checked={editorState.mcpEnabled}
+                        onChange={e => setEditorState(prev => ({ ...prev, mcpEnabled: e.target.checked }))}
+                      />
+                      <span>Expose to MCP agents</span>
+                    </label>
+                    <span className="text-[10.5px] leading-relaxed text-muted-foreground">
+                      Agents connected to the MQLens MCP server can see and connect to this profile.
+                    </span>
+                  </div>
                 </div>
               )}
 
@@ -1938,25 +2221,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
                   <span>Test Connection</span>
                 </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" data-testid="import-uri-btn">
-                      <ClipboardPaste size={11} />
-                      <span>Import URI</span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className={NESTED_SELECT_Z}>
-                    <DropdownMenuItem onClick={handleImportFromClipboard} data-testid="import-from-clipboard">
-                      From clipboard
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleImportFromFile} data-testid="import-from-file">
-                      From a file…
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleImportUri} data-testid="import-paste-manually">
-                      Paste manually…
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {importUriMenu()}
                 {importError && (
                   <span className="self-center text-ui-2xs text-destructive" data-testid="import-uri-error">
                     {importError}
@@ -1979,11 +2244,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       <Dialog open={!!exportDialog} onOpenChange={(o) => !o && setExportDialog(null)}>
         <DialogContent className="max-w-lg" data-testid="export-uri-dialog">
           <DialogHeader>
-            <DialogTitle>Export connection URI</DialogTitle>
+            <DialogTitle>
+              {exportDialog?.mode === 'all' ? 'Export All Connection URIs' : 'Export connection URI'}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {exportDialog?.mode === 'all' && (
+              <p className="text-ui-2xs text-muted-foreground">
+                Exporting {profiles.length} saved connection{profiles.length === 1 ? '' : 's'} as JSON
+                (including folder structure). Compatible with MQLens import and Studio 3T-style connection files.
+              </p>
+            )}
             <code
-              className="block break-all rounded-lg border border-border bg-muted/30 px-3 py-2 font-mono text-ui-2xs"
+              className={cn(
+                'block break-all rounded-lg border border-border bg-muted/30 px-3 py-2 font-mono text-ui-2xs',
+                exportDialog?.mode === 'all' && 'max-h-40 overflow-y-auto whitespace-pre-wrap',
+              )}
               data-testid="export-uri-preview"
             >
               {exportPreview}
@@ -2016,7 +2292,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 data-testid="export-include-settings"
               />
             </div>
-            {exportDialog?.hasSsh && (
+            {exportDialog?.mode === 'single' && exportDialog.hasSsh && (
               <p className="text-ui-2xs text-muted-foreground" data-testid="export-ssh-note">
                 This connection uses an SSH tunnel. Tunnel settings can’t be represented in a
                 MongoDB URI and are not exported.

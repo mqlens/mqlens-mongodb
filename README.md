@@ -57,6 +57,9 @@ queries actually do — from a single cross-platform desktop app.
 - **GridFS** — browse files in a bucket and download them to disk.
 - **Import / export** — JSON and CSV, including full-collection background
   exports.
+- **Data generation** — seed collections with realistic fake documents:
+  schema-aware templates, nested objects and arrays, preview before you
+  insert, background tasks for big counts.
 - **mongosh shell** — an embedded shell backed by a real `mongosh` binary.
 - **AI query assistant** — natural-language → MQL generation, with multiple
   providers (Anthropic / OpenAI / Gemini and local agent CLIs); the API key
@@ -64,6 +67,18 @@ queries actually do — from a single cross-platform desktop app.
 - **Encrypted credentials** — a master password gates the app; connection
   profiles and settings are encrypted at rest with AES-256-GCM (Argon2id key
   derivation).
+- **Split panes** — drag a tab to any pane edge to split the workspace; compare
+  collections side by side, keep a shell under your results.
+- **Detachable windows** — pop a tab out into its own window and spread your
+  workspace across monitors.
+- **Session restore** — your splits and tabs come back after a restart;
+  reconnect per connection with one click.
+- **MCP server** — expose your connections to Claude Code, Cursor, and other agents as
+  [Model Context Protocol tools](docs/mcp-tools.md); per-connection opt-in, writes gated behind
+  explicit confirmation, off by default.
+- **Production safeguards** — mark a connection read-only or require typed
+  confirmation for destructive operations; enforced at the command layer,
+  for the UI and AI agents alike.
 
 ## Install
 

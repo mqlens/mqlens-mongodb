@@ -3,7 +3,8 @@ mod tests {
     use crate::db::documents::CsvImportOptions;
     use crate::AppState;
     use crate::{
-        connect_db_impl, count_documents_impl, create_collection_impl, create_index_impl,
+        connect_db_impl, connection_list_impl, count_documents_impl, create_collection_impl,
+        create_index_impl,
         delete_document_impl, delete_gridfs_file_impl, disconnect_db_impl,
         download_gridfs_file_impl, drop_collection_impl,
         drop_database_impl, execute_aggregate_impl, execute_mql_query_impl, explain_mql_query_impl,
@@ -12,6 +13,7 @@ mod tests {
         json_to_bson_document, list_collections_impl, list_databases_impl, list_gridfs_files_impl,
         list_indexes_impl, parse_json_array_docs,
         preview_export_impl, rename_collection_impl, rename_database_impl, sample_export_fields_impl,
+        set_connection_meta_impl,
         start_collection_export_impl, start_filtered_export_impl, update_document_impl,
         upload_gridfs_file_impl, get_collection_options_impl, set_validator_impl,
     };
@@ -659,6 +661,65 @@ mod tests {
         assert_eq!(
             err,
             "Aggregation pipelines are not supported on mock connections"
+        );
+    }
+
+    /// #188 security review Fix 4 (IMPORTANT): $out/$merge in an export
+    /// pipeline is rejected explicitly by `build_source` now, not just
+    /// incidentally (a $count/$limit stage used to get appended after the
+    /// user's pipeline elsewhere, which happened to make $out/$merge fail
+    /// too — but that's not a real ban a future refactor couldn't remove).
+    /// Rejected before the connection is even looked up (`build_source`
+    /// runs first in `start_filtered_export_impl`), so "missing" doesn't
+    /// need to resolve to a real connection.
+    #[tokio::test]
+    async fn test_filtered_export_rejects_out_and_merge_pipeline() {
+        let state = AppState::new();
+
+        let out_err = start_filtered_export_impl(
+            &state,
+            "missing",
+            "db",
+            "coll",
+            "json",
+            "/tmp/agg-out.json",
+            "{}",
+            "{}",
+            "{}",
+            "[{\"$out\":\"target\"}]",
+            None,
+            None,
+            None,
+        )
+        .await
+        .err()
+        .expect("$out export pipeline should be rejected");
+        assert_eq!(
+            out_err,
+            "aggregation stages $out/$merge are not allowed in an export pipeline"
+        );
+
+        let merge_err = start_filtered_export_impl(
+            &state,
+            "missing",
+            "db",
+            "coll",
+            "json",
+            "/tmp/agg-merge.json",
+            "{}",
+            "{}",
+            "{}",
+            "[{\"$merge\":{\"into\":\"target\"}}]",
+            None,
+            None,
+            None,
+        )
+        .await
+        .err()
+        .expect("$merge export pipeline should be rejected");
+        assert_eq!(
+            merge_err,
+            "aggregation stages $out/$merge are not allowed in an export pipeline"
         );
     }
 
@@ -1440,7 +1501,9 @@ mod tests {
             .expect("connect mock");
 
         // Malformed pipeline JSON fails clearly before touching the connection.
-        let bad = execute_aggregate_impl(&state, &conn_id, "sales_db", "products", "[{bad}]").await;
+        let bad =
+            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", "[{bad}]", false)
+                .await;
         assert!(
             bad.unwrap_err()
                 .contains("Invalid aggregation pipeline JSON"),
@@ -1449,14 +1512,16 @@ mod tests {
 
         // A pipeline that isn't a JSON array is rejected.
         let not_array =
-            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", "{}").await;
+            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", "{}", false).await;
         assert!(
             not_array.unwrap_err().contains("must be a JSON array"),
             "non-array pipeline should be rejected"
         );
 
-        let bad_stage =
-            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", r#"["bad"]"#).await;
+        let bad_stage = execute_aggregate_impl(
+            &state, &conn_id, "sales_db", "products", r#"["bad"]"#, false,
+        )
+        .await;
         assert!(
             bad_stage.unwrap_err().contains("Invalid aggregation stage"),
             "non-document stage should be rejected"
@@ -1465,12 +1530,108 @@ mod tests {
         // A well-formed pipeline on a mock connection reports aggregation is unsupported there.
         let pipeline = r#"[{"$match": {"category": "Electronics"}}, {"$count": "count"}]"#;
         let mock_res =
-            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", pipeline).await;
+            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", pipeline, false)
+                .await;
         assert!(
             mock_res
                 .unwrap_err()
                 .contains("not supported on mock connections"),
             "aggregation on a mock connection should be rejected"
+        );
+    }
+
+    /// #188 security review Fix 1 (CRITICAL): `execute_aggregate_impl` must
+    /// guard `$out`/`$merge` stages exactly like every other write — but
+    /// ONLY when such a stage is present, so a pure-read aggregation keeps
+    /// working on a `read_only` connection. All four cases run against mock
+    /// connections; once the guard lets a call through it still fails with
+    /// the pre-existing "not supported on mock connections" message, which
+    /// is how these tests prove the guard didn't intercept it without
+    /// needing a real MongoDB server.
+    #[tokio::test]
+    async fn test_execute_aggregate_guards_out_and_merge_stages_by_mode() {
+        let out_pipeline = r#"[{"$match": {"a": 1}}, {"$out": "target_coll"}]"#;
+        let merge_pipeline = r#"[{"$merge": {"into": "target_coll"}}]"#;
+        let read_pipeline = r#"[{"$match": {"category": "Electronics"}}, {"$count": "count"}]"#;
+
+        // ReadOnly blocks a $out/$merge pipeline regardless of `confirmed`.
+        let ro_state = AppState::new();
+        let ro_id = connect_db_impl(&ro_state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        set_connection_meta_impl(
+            &ro_state,
+            &ro_id,
+            "p",
+            "ro",
+            false,
+            crate::connections::ConnectionMode::ReadOnly,
+        )
+        .unwrap();
+        for confirmed in [false, true] {
+            let err = execute_aggregate_impl(
+                &ro_state, &ro_id, "db", "coll", out_pipeline, confirmed,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err, crate::write_guard::READ_ONLY_MSG, "confirmed={confirmed}");
+        }
+        let err = execute_aggregate_impl(&ro_state, &ro_id, "db", "coll", merge_pipeline, true)
+            .await
+            .unwrap_err();
+        assert_eq!(err, crate::write_guard::READ_ONLY_MSG);
+
+        // The SAME read-only connection must NOT block a pure-read
+        // aggregation — it still errors (mock-connection message), but not
+        // with the read-only rejection, proving the guard only fires when a
+        // write stage is present.
+        let read_err = execute_aggregate_impl(&ro_state, &ro_id, "db", "coll", read_pipeline, false)
+            .await
+            .unwrap_err();
+        assert!(
+            read_err.contains("not supported on mock connections"),
+            "a pure-read aggregation must not be blocked on read_only, got: {read_err}"
+        );
+
+        // ConfirmDestructive blocks the $out pipeline unconfirmed, and lets
+        // it through the guard (reaching the mock-connection check) when
+        // confirmed.
+        let cd_state = AppState::new();
+        let cd_id = connect_db_impl(&cd_state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        set_connection_meta_impl(
+            &cd_state,
+            &cd_id,
+            "p",
+            "cd",
+            false,
+            crate::connections::ConnectionMode::ConfirmDestructive,
+        )
+        .unwrap();
+        let err = execute_aggregate_impl(&cd_state, &cd_id, "db", "coll", out_pipeline, false)
+            .await
+            .unwrap_err();
+        assert_eq!(err, crate::write_guard::CONFIRM_MSG);
+        let err = execute_aggregate_impl(&cd_state, &cd_id, "db", "coll", out_pipeline, true)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("not supported on mock connections"),
+            "a confirmed $out pipeline should pass the guard, got: {err}"
+        );
+
+        // Normal mode: an unconfirmed $out pipeline still runs past the guard.
+        let normal_state = AppState::new();
+        let normal_id = connect_db_impl(&normal_state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let err = execute_aggregate_impl(&normal_state, &normal_id, "db", "coll", out_pipeline, false)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("not supported on mock connections"),
+            "got: {err}"
         );
     }
 
@@ -1601,6 +1762,82 @@ mod tests {
             stop.is_ok(),
             "stopping an unknown session should be a no-op"
         );
+    }
+
+    /// #188 security review Fix 2 (CRITICAL): `start_mongosh_session_impl`
+    /// must refuse a `read_only` connection BEFORE spawning a shell —
+    /// mongosh pipes arbitrary free-form commands the guard can't classify
+    /// per-command. Proven on a mock connection (mongosh sessions are
+    /// already unconditionally rejected for mocks for an unrelated reason —
+    /// "External mongosh sessions require a real MongoDB URI" — so the
+    /// `ConfirmDestructive`/`Normal` cases below assert the error is NOT the
+    /// read-only rejection, i.e. the new gate let the call fall through to
+    /// that pre-existing mock restriction instead of blocking it itself).
+    #[tokio::test]
+    async fn test_start_mongosh_session_blocks_read_only_before_spawning() {
+        use crate::start_mongosh_session_impl;
+
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        set_connection_meta_impl(
+            &state,
+            &conn_id,
+            "p",
+            "ro",
+            false,
+            crate::connections::ConnectionMode::ReadOnly,
+        )
+        .unwrap();
+
+        let err = start_mongosh_session_impl(&state, &conn_id, "mongodb://mock", "db", "")
+            .await
+            .err()
+            .expect("read-only connection must refuse a mongosh session");
+        assert_eq!(err, crate::write_guard::READ_ONLY_MSG);
+    }
+
+    #[tokio::test]
+    async fn test_start_mongosh_session_confirm_destructive_and_normal_are_not_blocked_by_the_read_only_gate(
+    ) {
+        use crate::start_mongosh_session_impl;
+
+        let cd_state = AppState::new();
+        let cd_id = connect_db_impl(&cd_state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        set_connection_meta_impl(
+            &cd_state,
+            &cd_id,
+            "p",
+            "cd",
+            false,
+            crate::connections::ConnectionMode::ConfirmDestructive,
+        )
+        .unwrap();
+        let err = start_mongosh_session_impl(&cd_state, &cd_id, "mongodb://mock", "db", "")
+            .await
+            .err()
+            .expect("mock connections still can't run an external mongosh");
+        assert_ne!(
+            err,
+            crate::write_guard::READ_ONLY_MSG,
+            "confirm_destructive must not be blocked by the new read-only gate"
+        );
+        assert!(err.contains("real MongoDB URI"), "got: {err}");
+
+        // Normal (no connection_meta entry at all — fail-open default).
+        let normal_state = AppState::new();
+        let normal_id = connect_db_impl(&normal_state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let err = start_mongosh_session_impl(&normal_state, &normal_id, "mongodb://mock", "db", "")
+            .await
+            .err()
+            .expect("mock connections still can't run an external mongosh");
+        assert_ne!(err, crate::write_guard::READ_ONLY_MSG);
+        assert!(err.contains("real MongoDB URI"), "got: {err}");
     }
 
     #[tokio::test]
@@ -1752,14 +1989,14 @@ mod tests {
             .expect("connect mock");
 
         // delete_many: malformed filter is rejected.
-        let bad_filter = delete_many_impl(&state, &conn_id, "sales_db", "customers", "{bad").await;
+        let bad_filter = delete_many_impl(&state, &conn_id, "sales_db", "customers", "{bad", true).await;
         assert!(
             bad_filter.is_err(),
             "malformed delete filter should be rejected"
         );
 
         // delete_many: valid filter on mock no-ops (returns 0, no persistence).
-        let del = delete_many_impl(&state, &conn_id, "sales_db", "customers", r#"{"tier":"X"}"#)
+        let del = delete_many_impl(&state, &conn_id, "sales_db", "customers", r#"{"tier":"X"}"#, true)
             .await
             .expect("mock delete_many ok");
         assert_eq!(del, 0);
@@ -1772,6 +2009,7 @@ mod tests {
             "customers",
             "{}",
             r#"{"name":"x"}"#,
+            true,
         )
         .await;
         assert!(
@@ -1781,7 +2019,7 @@ mod tests {
 
         // update_many: malformed update JSON is rejected.
         let bad_update =
-            update_many_impl(&state, &conn_id, "sales_db", "customers", "{}", "{bad").await;
+            update_many_impl(&state, &conn_id, "sales_db", "customers", "{}", "{bad", true).await;
         assert!(bad_update.is_err(), "malformed update should be rejected");
 
         // update_many: a valid operator update on mock no-ops (returns 0).
@@ -1792,6 +2030,7 @@ mod tests {
             "customers",
             r#"{"tier":"X"}"#,
             r#"{"$set":{"tier":"Y"}}"#,
+            true,
         )
         .await
         .expect("mock update_many ok");
@@ -2011,36 +2250,37 @@ mod tests {
         create_collection_impl(&state, &conn_id, "sales_db", "new_coll")
             .await
             .expect("create collection should succeed in mock mode");
-        rename_collection_impl(&state, &conn_id, "sales_db", "new_coll", "renamed_coll")
+        rename_collection_impl(&state, &conn_id, "sales_db", "new_coll", "renamed_coll", true)
             .await
             .expect("rename collection should succeed in mock mode");
-        drop_collection_impl(&state, &conn_id, "sales_db", "new_coll")
+        drop_collection_impl(&state, &conn_id, "sales_db", "new_coll", true)
             .await
             .expect("drop collection should succeed in mock mode");
-        drop_database_impl(&state, &conn_id, "sales_db")
+        drop_database_impl(&state, &conn_id, "sales_db", true)
             .await
             .expect("drop database should succeed in mock mode");
-        let renamed = rename_database_impl(&state, &conn_id, "sales_db", "sales_archive", true)
-            .await
-            .expect("rename database should succeed in mock mode");
+        let renamed =
+            rename_database_impl(&state, &conn_id, "sales_db", "sales_archive", true, true)
+                .await
+                .expect("rename database should succeed in mock mode");
         assert_eq!(renamed.collections, 0);
         assert_eq!(renamed.documents, 0);
 
         assert!(
-            rename_collection_impl(&state, &conn_id, "sales_db", "", "renamed")
+            rename_collection_impl(&state, &conn_id, "sales_db", "", "renamed", true)
                 .await
                 .is_err()
         );
         assert!(
-            rename_collection_impl(&state, &conn_id, "sales_db", "same", "same")
+            rename_collection_impl(&state, &conn_id, "sales_db", "same", "same", true)
                 .await
                 .is_err()
         );
-        assert!(drop_database_impl(&state, &conn_id, "").await.is_err());
-        assert!(rename_database_impl(&state, &conn_id, "", "target", true)
+        assert!(drop_database_impl(&state, &conn_id, "", true).await.is_err());
+        assert!(rename_database_impl(&state, &conn_id, "", "target", true, true)
             .await
             .is_err());
-        assert!(rename_database_impl(&state, &conn_id, "same", "same", true)
+        assert!(rename_database_impl(&state, &conn_id, "same", "same", true, true)
             .await
             .is_err());
 
@@ -2057,19 +2297,19 @@ mod tests {
             "Connection client not found"
         );
         assert_eq!(
-            drop_collection_impl(&state, realish, "sales_db", "new_coll")
+            drop_collection_impl(&state, realish, "sales_db", "new_coll", true)
                 .await
                 .unwrap_err(),
             "Connection client not found"
         );
         assert_eq!(
-            rename_collection_impl(&state, realish, "sales_db", "from", "to")
+            rename_collection_impl(&state, realish, "sales_db", "from", "to", true)
                 .await
                 .unwrap_err(),
             "Connection client not found"
         );
         assert_eq!(
-            drop_database_impl(&state, realish, "sales_db")
+            drop_database_impl(&state, realish, "sales_db", true)
                 .await
                 .unwrap_err(),
             "Connection client not found"
@@ -2230,6 +2470,8 @@ mod tests {
             uri: "mongodb://mock".to_string(),
             color_tag: None,
             ssh: None,
+            mcp_enabled: false,
+            connection_mode: Default::default(),
         };
 
         // Save profile
@@ -2259,6 +2501,8 @@ mod tests {
                     passphrase: None,
                 },
             }),
+            mcp_enabled: true,
+            connection_mode: crate::connections::ConnectionMode::ReadOnly,
         };
         profiles.push(profile2.clone());
         crate::connections::save_profiles_to_file(&test_file_path, &profiles)
@@ -2285,6 +2529,84 @@ mod tests {
 
         // Clean up temp file
         let _ = std::fs::remove_file(&test_file_path);
+    }
+
+    // #98: mcp_enabled round-trips through plaintext (de)serialization, and old
+    // connections.json files written before the field existed must never opt a
+    // profile into MCP exposure by surprise — they must deserialize as false.
+    #[test]
+    fn test_connection_profile_mcp_enabled_roundtrip_and_legacy_default() {
+        use crate::connections::ConnectionProfile;
+
+        let profile = ConnectionProfile {
+            id: "p1".to_string(),
+            name: "Prod".to_string(),
+            uri: "mongodb://localhost:27017".to_string(),
+            color_tag: None,
+            ssh: None,
+            mcp_enabled: true,
+            connection_mode: Default::default(),
+        };
+        let json = serde_json::to_string(&profile).expect("serialize");
+        let round_tripped: ConnectionProfile = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(round_tripped, profile);
+        assert!(round_tripped.mcp_enabled);
+
+        // A JSON literal predating the field (no "mcp_enabled" key at all).
+        let legacy_json = r#"{
+            "id": "legacy-1",
+            "name": "Legacy DB",
+            "uri": "mongodb://legacy:27017"
+        }"#;
+        let legacy: ConnectionProfile = serde_json::from_str(legacy_json)
+            .expect("old connections.json without mcp_enabled must still deserialize");
+        assert_eq!(legacy.mcp_enabled, false, "legacy profiles must never be opted in by surprise");
+    }
+
+    // #188: connection_mode round-trips through plaintext (de)serialization,
+    // and old connections.json files written before the field existed must
+    // never opt a profile into a safeguard by surprise — they must
+    // deserialize as `Normal` (full read/write), same additive contract as
+    // `mcp_enabled` above.
+    #[test]
+    fn test_connection_profile_connection_mode_roundtrip_and_legacy_default() {
+        use crate::connections::{ConnectionMode, ConnectionProfile};
+
+        for mode in [ConnectionMode::Normal, ConnectionMode::ReadOnly, ConnectionMode::ConfirmDestructive] {
+            let profile = ConnectionProfile {
+                id: "p1".to_string(),
+                name: "Prod".to_string(),
+                uri: "mongodb://localhost:27017".to_string(),
+                color_tag: None,
+                ssh: None,
+                mcp_enabled: false,
+                connection_mode: mode,
+            };
+            let json = serde_json::to_string(&profile).expect("serialize");
+            let round_tripped: ConnectionProfile = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(round_tripped, profile);
+            assert_eq!(round_tripped.connection_mode, mode);
+        }
+
+        // Wire format sanity: the enum serializes as the spec's snake_case strings.
+        let json = serde_json::to_string(&ConnectionMode::ReadOnly).unwrap();
+        assert_eq!(json, "\"read_only\"");
+        let json = serde_json::to_string(&ConnectionMode::ConfirmDestructive).unwrap();
+        assert_eq!(json, "\"confirm_destructive\"");
+
+        // A JSON literal predating the field (no "connection_mode" key at all).
+        let legacy_json = r#"{
+            "id": "legacy-1",
+            "name": "Legacy DB",
+            "uri": "mongodb://legacy:27017"
+        }"#;
+        let legacy: ConnectionProfile = serde_json::from_str(legacy_json)
+            .expect("old connections.json without connection_mode must still deserialize");
+        assert_eq!(
+            legacy.connection_mode,
+            ConnectionMode::Normal,
+            "legacy profiles must never be safeguarded by surprise"
+        );
     }
 
     #[tokio::test]
@@ -2711,6 +3033,8 @@ mod tests {
             uri: "mongodb://user:secret@host:27017".into(),
             color_tag: None,
             ssh: None,
+            mcp_enabled: false,
+            connection_mode: Default::default(),
         }];
         save_profiles_encrypted(&prof_path, &key, &profiles).unwrap();
         // On-disk bytes must not contain the plaintext password.
@@ -2758,6 +3082,8 @@ mod tests {
             uri: "mongodb://localhost".into(),
             color_tag: None,
             ssh: None,
+            mcp_enabled: false,
+            connection_mode: Default::default(),
         }];
         save_profiles_to_file(&pt_profiles, &profiles).unwrap();
         assert!(pt_profiles.exists());
@@ -2987,6 +3313,8 @@ mod tests {
             uri: "mongodb://localhost".into(),
             color_tag: None,
             ssh: None,
+            mcp_enabled: false,
+            connection_mode: Default::default(),
         }];
         save_profiles_encrypted(&enc_profiles, &old_key, &profiles).unwrap();
 
@@ -3626,6 +3954,66 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn test_tool_install_probe_retries_transient_failure_then_succeeds() {
+        use crate::toolsetup::test_support::{fixture_zip_with_script, serve_bytes};
+        use crate::toolsetup::*;
+        use std::sync::atomic::AtomicBool;
+
+        // A "binary" that fails `--version` on its first two invocations and
+        // only succeeds on the third, simulating a transient exec/fs hiccup
+        // (not a genuinely broken binary) on a loaded machine. Tracks its own
+        // invocation count in a counter file that lives outside the
+        // staging/install tree so it survives regardless of what
+        // `install_one_tool` does with those directories.
+        let app_data = tool_install_test_dir("probe-retry-transient");
+        let counter = app_data.join("probe-attempts.txt");
+        let script = format!(
+            "#!/bin/sh\nN=0\nif [ -f '{counter}' ]; then N=$(cat '{counter}'); fi\nN=$((N + 1))\necho \"$N\" > '{counter}'\nif [ \"$N\" -lt 3 ]; then exit 1; fi\necho tool version 9.9.9\n",
+            counter = counter.display()
+        );
+        let bytes = fixture_zip_with_script("mongosh-2.9.2-darwin-arm64", &["mongosh"], script.as_bytes());
+        let sha256 = sha256_hex(&bytes);
+        let (base_url, _server) = serve_bytes(bytes);
+        let url = format!("{base_url}/mongosh-2.9.2-darwin-arm64.zip");
+
+        let cancel = AtomicBool::new(false);
+        install_one_tool(
+            &app_data,
+            "mongosh",
+            "2.9.2",
+            &url,
+            &sha256,
+            ArchiveKind::Zip,
+            "mongosh-2.9.2-darwin-arm64/bin",
+            &["mongosh".to_string()],
+            &cancel,
+            |_, _, _| {},
+        )
+        .await
+        .unwrap();
+
+        let attempts: u32 = std::fs::read_to_string(&counter).unwrap().trim().parse().unwrap();
+        assert_eq!(attempts, 3, "should have taken exactly 3 probe attempts to succeed");
+
+        let bin = app_data.join("tools/mongosh-2.9.2/bin/mongosh");
+        assert!(bin.exists(), "binary should be installed once the probe eventually succeeds");
+        assert!(
+            !app_data.join("tools/.staging-mongosh").exists(),
+            "staging dir should be cleaned up after success"
+        );
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    // `test_tool_install_probe_failure_leaves_no_install_dir` (above) already
+    // covers the complementary case: a binary that fails `--version` on
+    // *every* invocation (never a transient blip) still returns
+    // `Err(.. "failed to run --version")` after all retries are exhausted —
+    // the retry only tolerates a probe that eventually succeeds, it never
+    // hides a genuinely broken binary.
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn test_tool_install_task_end_to_end_with_cancel_flag_cleanup() {
         use crate::toolsetup::test_support::{fixture_zip, serve_bytes, test_tool};
         use crate::toolsetup::*;
@@ -3682,5 +4070,120 @@ mod tests {
         assert!(state.cancels.lock().unwrap().get(&task2.id).is_none(), "cancel flag cleaned up");
 
         let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 3 Task 3: connection-meta registry — CRUD, list determinism,
+    // and removal on disconnect. Impl-level (no `AppHandle`), matching
+    // `workspace::apply_impl`'s testing precedent: the `connections-changed`
+    // emit itself lives only in the `set_connection_meta`/`disconnect_db`
+    // command wrappers, which need a real Tauri app to exercise.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn set_connection_meta_inserts_and_overwrites() {
+        let state = AppState::new();
+        set_connection_meta_impl(&state, "conn-1", "profile-a", "Prod Cluster", false, crate::connections::ConnectionMode::ReadOnly).unwrap();
+        {
+            let meta = state.connection_meta.lock().unwrap();
+            let m = meta.get("conn-1").expect("meta inserted");
+            assert_eq!(m.profile_id, "profile-a");
+            assert_eq!(m.name, "Prod Cluster");
+            assert_eq!(m.mode, crate::connections::ConnectionMode::ReadOnly);
+        }
+
+        // Re-registering the same id (e.g. a reconnect) overwrites in place
+        // rather than accumulating a second entry — including the mode, in
+        // case the profile's safeguard setting changed between connects.
+        set_connection_meta_impl(&state, "conn-1", "profile-b", "Renamed", false, crate::connections::ConnectionMode::Normal).unwrap();
+        let meta = state.connection_meta.lock().unwrap();
+        assert_eq!(meta.len(), 1, "same id must overwrite, not duplicate");
+        let m = meta.get("conn-1").unwrap();
+        assert_eq!(m.profile_id, "profile-b");
+        assert_eq!(m.name, "Renamed");
+        assert_eq!(m.mode, crate::connections::ConnectionMode::Normal);
+    }
+
+    // #188: `connection_list_impl` must surface a registered mode through to
+    // the `ConnectionEntry` the frontend reads — the banner/badge (Task 5)
+    // depend on this, not on re-deriving mode from the profile store.
+    #[test]
+    fn connection_list_impl_surfaces_the_registered_mode() {
+        let state = AppState::new();
+        set_connection_meta_impl(&state, "conn-1", "profile-a", "Prod Cluster", false, crate::connections::ConnectionMode::ConfirmDestructive).unwrap();
+
+        let list = connection_list_impl(&state).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].mode, crate::connections::ConnectionMode::ConfirmDestructive);
+    }
+
+    #[test]
+    fn connection_meta_never_carries_a_uri() {
+        // Regression guard for the explicit constraint: event payloads must
+        // never carry a connection string. `ConnectionMeta`/`ConnectionEntry`
+        // only ever expose `profileId`/`name`/`mode` — this test would fail
+        // to compile (not just fail at runtime) the moment a `uri` field is
+        // added, since the struct literal below is exhaustive.
+        let meta = crate::ConnectionMeta { profile_id: "p".into(), name: "n".into(), via_mcp: false, mode: Default::default() };
+        let entry = crate::ConnectionEntry { id: "c".into(), profile_id: meta.profile_id.clone(), name: meta.name.clone(), via_mcp: meta.via_mcp, mode: meta.mode };
+        assert_eq!(entry.id, "c");
+    }
+
+    #[test]
+    fn connection_list_is_sorted_by_id_regardless_of_insertion_order() {
+        let state = AppState::new();
+        set_connection_meta_impl(&state, "conn-c", "p3", "Third", false, Default::default()).unwrap();
+        set_connection_meta_impl(&state, "conn-a", "p1", "First", false, Default::default()).unwrap();
+        set_connection_meta_impl(&state, "conn-b", "p2", "Second", false, Default::default()).unwrap();
+
+        let list = connection_list_impl(&state).unwrap();
+        let ids: Vec<&str> = list.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["conn-a", "conn-b", "conn-c"], "list must be sorted by id, not insertion order");
+
+        // Same map contents, re-listed: must produce the exact same order
+        // every time (determinism, not just "happens to sort now").
+        let list2 = connection_list_impl(&state).unwrap();
+        assert_eq!(list, list2);
+    }
+
+    #[test]
+    fn connection_list_is_empty_when_no_meta_registered() {
+        let state = AppState::new();
+        assert!(connection_list_impl(&state).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn disconnect_removes_connection_meta() {
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+        set_connection_meta_impl(&state, &conn_id, "profile-a", "Mock Conn", false, Default::default()).unwrap();
+        assert!(state.connection_meta.lock().unwrap().contains_key(&conn_id));
+
+        disconnect_db_impl(&state, &conn_id)
+            .await
+            .expect("disconnect should succeed");
+
+        assert!(
+            !state.connection_meta.lock().unwrap().contains_key(&conn_id),
+            "disconnect_db_impl must remove the connection's meta entry"
+        );
+        assert!(connection_list_impl(&state).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn disconnect_of_unregistered_meta_is_a_noop() {
+        // A connection that was never announced via `set_connection_meta`
+        // (e.g. one connected before this feature existed, or a mock in a
+        // test) must disconnect cleanly rather than erroring on a missing
+        // meta entry.
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("mock connect");
+        disconnect_db_impl(&state, &conn_id)
+            .await
+            .expect("disconnect must succeed even with no registered meta");
     }
 }

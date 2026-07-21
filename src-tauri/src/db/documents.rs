@@ -1,6 +1,7 @@
 //! Document mutation and import operations.
 
 use crate::limits::{IMPORT_BATCH_SIZE, MAX_IMPORT_DOCS};
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{connection_is_mock, require_real_client, AppState};
 
 use mongodb::bson::Document;
@@ -180,6 +181,8 @@ pub async fn delete_document_impl(
     collection: &str,
     filter: &str,
 ) -> Result<u64, String> {
+    guard_writable(state, id, WriteOp::DeleteOne, false)?;
+
     // Parse/validate up front so bad input fails the same way for mock & real.
     let filter_doc = json_to_bson_document(filter)?;
 
@@ -204,7 +207,10 @@ pub async fn delete_many_impl(
     database: &str,
     collection: &str,
     filter: &str,
+    confirmed: bool,
 ) -> Result<u64, String> {
+    guard_writable(state, id, WriteOp::DeleteMany, confirmed)?;
+
     let filter_doc = json_to_bson_document(filter)?;
     if connection_is_mock(state, id)? {
         return Ok(0); // mock connections don't persist deletes
@@ -226,7 +232,10 @@ pub async fn update_many_impl(
     collection: &str,
     filter: &str,
     update: &str,
+    confirmed: bool,
 ) -> Result<u64, String> {
+    guard_writable(state, id, WriteOp::UpdateMany, confirmed)?;
+
     let filter_doc = json_to_bson_document(filter)?;
     let update_doc = json_to_bson_document(update)?;
     // Require an operator-keyed update ({ "$set": … }); reject bare replacements
@@ -254,6 +263,8 @@ pub async fn insert_document_impl(
     collection: &str,
     document: &str,
 ) -> Result<String, String> {
+    guard_writable(state, id, WriteOp::Insert, false)?;
+
     let doc = json_to_bson_document(document)?;
 
     if connection_is_mock(state, id)? {
@@ -280,6 +291,8 @@ pub async fn update_document_impl(
     filter: &str,
     replacement: &str,
 ) -> Result<u64, String> {
+    guard_writable(state, id, WriteOp::ReplaceOne, false)?;
+
     let filter_doc = json_to_bson_document(filter)?;
     let replacement_doc = json_to_bson_document(replacement)?;
 
@@ -319,6 +332,8 @@ pub async fn import_documents_impl(
     docs: Vec<serde_json::Value>,
     mode: &str,
 ) -> Result<ImportResult, String> {
+    guard_writable(state, id, WriteOp::Import, false)?;
+
     // Convert all docs up front; a bad doc fails the whole import before writing.
     let mut bson_docs: Vec<Document> = Vec::with_capacity(docs.len());
     for value in docs {
@@ -366,6 +381,37 @@ async fn finalize_import(
     write_imported_docs(&coll, bson_docs, mode).await
 }
 
+/// Insert already-converted BSON documents in `IMPORT_BATCH_SIZE` chunks, no
+/// upsert/dedup bookkeeping. Hoisted out of `write_imported_docs` (Task 3,
+/// data generation) as the narrower reuse for pure-insert callers:
+/// `write_imported_docs`'s "skip"/"abort" modes both run an `existing_ids`
+/// `$in` lookup per batch to detect duplicate `_id`s before inserting, which
+/// is wasted work for a caller — like the generate task — that only ever
+/// inserts freshly generated documents and has no upsert/duplicate semantics
+/// to honor. `pub(crate)` so `db::generate` can call it directly.
+///
+/// `op_label` names the operation in the error message on failure (e.g.
+/// `"import"` for the import callers below, `"generate"` for
+/// `start_generate_task_impl`) — callers share this one insert loop but
+/// surface its failure directly as their task's error message, so a single
+/// hardcoded "Failed to import: …" would misdescribe a generate-task failure
+/// as an import failure.
+pub(crate) async fn insert_many_batched(
+    coll: &mongodb::Collection<Document>,
+    docs: Vec<Document>,
+    op_label: &str,
+) -> Result<(), String> {
+    for chunk in docs.chunks(IMPORT_BATCH_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+        coll.insert_many(chunk.to_vec())
+            .await
+            .map_err(|e| format!("Failed to {}: {}", op_label, e))?;
+    }
+    Ok(())
+}
+
 /// Write already-converted BSON documents to a live collection under the
 /// duplicate-handling mode. Shared by the JSON-value and file import paths.
 pub(crate) async fn write_imported_docs(
@@ -401,21 +447,6 @@ pub(crate) async fn write_imported_docs(
             }
         }
         Ok(found)
-    }
-
-    async fn insert_many_batched(
-        coll: &mongodb::Collection<mongodb::bson::Document>,
-        docs: Vec<mongodb::bson::Document>,
-    ) -> Result<(), String> {
-        for chunk in docs.chunks(IMPORT_BATCH_SIZE) {
-            if chunk.is_empty() {
-                continue;
-            }
-            coll.insert_many(chunk.to_vec())
-                .await
-                .map_err(|e| format!("Failed to import: {}", e))?;
-        }
-        Ok(())
     }
 
     match mode {
@@ -460,7 +491,7 @@ pub(crate) async fn write_imported_docs(
                 ));
             }
             let total = bson_docs.len() as u64;
-            insert_many_batched(coll, bson_docs).await?;
+            insert_many_batched(coll, bson_docs, "import").await?;
             Ok(ImportResult {
                 inserted: total,
                 updated: 0,
@@ -481,7 +512,7 @@ pub(crate) async fn write_imported_docs(
                 .collect();
             let inserted = to_insert.len() as u64;
             if !to_insert.is_empty() {
-                insert_many_batched(coll, to_insert).await?;
+                insert_many_batched(coll, to_insert, "import").await?;
             }
             Ok(ImportResult {
                 inserted,

@@ -40,7 +40,17 @@ interface DataGridProps {
   onPageSizeChange?: (newLimit: number) => void;
   // Fired when the user accepts the COLLSCAN suggestion banner's "Create Index" CTA.
   onCreateSuggestedIndex?: (suggestion: IndexSuggestion) => void;
+  // The owning connection's write-safeguard mode (#188). 'read_only' disables
+  // every write action in this grid (buttons + row actions + context-menu
+  // items) with a tooltip, since the backend write_guard would otherwise just
+  // bounce the request with a toast. 'confirm_destructive' is intentionally
+  // NOT handled here — those writes stay enabled; the typed-name confirm
+  // modal (Task 3) gates the actually-destructive ones. Undefined/'normal'
+  // behaves exactly as before this feature existed.
+  connectionMode?: 'normal' | 'read_only' | 'confirm_destructive';
 }
+
+const READ_ONLY_TOOLTIP = 'Connection is read-only';
 
 type ViewMode = 'table' | 'tree' | 'json' | 'chart';
 
@@ -450,10 +460,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onPageChange,
   onPageSizeChange,
   onCreateSuggestedIndex,
+  connectionMode,
 }) => {
   const themeCtx = useThemeOptional();
   const density: SpacingDensity =
     densityProp ?? themeCtx?.config.spacingDensity ?? 'cozy';
+
+  // #188: read_only disables writes in this grid; confirm_destructive does
+  // NOT (see the connectionMode doc comment on DataGridProps above).
+  const isReadOnly = connectionMode === 'read_only';
 
   // ESR-rule suggestion derived from the current explain plan (null unless it's a COLLSCAN).
   const indexSuggestion = useMemo(
@@ -503,8 +518,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
   const buildCtxItems = (m: NonNullable<typeof ctxMenu>): ContextMenuItem[] => {
     const items: ContextMenuItem[] = [];
-    if (onEditDocument) items.push({ label: 'Edit document', icon: <Edit size={13} />, onClick: () => onEditDocument(m.doc) });
-    if (onDuplicateDocument) items.push({ label: 'Duplicate document', icon: <Plus size={13} />, onClick: () => onDuplicateDocument(m.doc) });
+    if (onEditDocument) items.push({ label: 'Edit document', icon: <Edit size={13} />, onClick: () => onEditDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? READ_ONLY_TOOLTIP : undefined });
+    if (onDuplicateDocument) items.push({ label: 'Duplicate document', icon: <Plus size={13} />, onClick: () => onDuplicateDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? READ_ONLY_TOOLTIP : undefined });
     items.push({ label: 'Copy document (JSON)', icon: <Copy size={13} />, onClick: () => writeClipboard(JSON.stringify(m.doc, null, 2)) });
     if (!pendingCompare) {
       items.push({
@@ -540,7 +555,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       items.push({ label: 'Copy value', icon: <Copy size={13} />, separatorBefore: true, onClick: () => writeClipboard(valueToText(m.value)) });
       items.push({ label: 'Copy field name', icon: <Copy size={13} />, onClick: () => writeClipboard(m.field!) });
     }
-    if (onDeleteDocument) items.push({ label: 'Delete document', icon: <Trash2 size={13} />, danger: true, separatorBefore: true, onClick: () => onDeleteDocument(m.doc) });
+    if (onDeleteDocument) items.push({ label: 'Delete document', icon: <Trash2 size={13} />, danger: true, separatorBefore: true, onClick: () => onDeleteDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? READ_ONLY_TOOLTIP : undefined });
     return items;
   };
   const docViewerContext = useContext(DocumentViewerContext);
@@ -1078,8 +1093,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
               e.stopPropagation();
               onEditDocument(doc);
             }}
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-primary"
-            title="Edit document"
+            disabled={isReadOnly}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+            title={isReadOnly ? READ_ONLY_TOOLTIP : 'Edit document'}
             data-testid="edit-doc-btn"
           >
             <Edit size={12} />
@@ -1091,8 +1107,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
               e.stopPropagation();
               onDeleteDocument(doc);
             }}
-            className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-            title="Delete document"
+            disabled={isReadOnly}
+            className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
+            title={isReadOnly ? READ_ONLY_TOOLTIP : 'Delete document'}
             data-testid="delete-doc-btn"
           >
             <Trash2 size={12} />
@@ -1251,8 +1268,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
               variant="outline"
               size="sm"
               onClick={onInsertDocument}
+              disabled={isReadOnly}
               className="h-7 gap-1.5 text-[11px]"
-              title="Insert a new document"
+              title={isReadOnly ? READ_ONLY_TOOLTIP : 'Insert a new document'}
               data-testid="insert-doc-btn"
             >
               <Plus size={12} />
@@ -1279,8 +1297,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
               variant="outline"
               size="sm"
               onClick={onUpdateMany}
+              disabled={isReadOnly}
               className="h-7 gap-1.5 text-[11px]"
-              title="Update all documents matching the current filter"
+              title={isReadOnly ? READ_ONLY_TOOLTIP : 'Update all documents matching the current filter'}
               data-testid="update-many-btn"
             >
               <Edit size={12} />
@@ -1293,8 +1312,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
               variant="outline"
               size="sm"
               onClick={onDeleteMany}
+              disabled={isReadOnly}
               className="h-7 gap-1.5 border-destructive/30 bg-destructive/10 text-[11px] text-destructive hover:bg-destructive/20"
-              title="Delete all documents matching the current filter"
+              title={isReadOnly ? READ_ONLY_TOOLTIP : 'Delete all documents matching the current filter'}
               data-testid="delete-many-btn"
             >
               <Trash2 size={12} />
@@ -1551,6 +1571,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
                     size="sm"
                     className="h-7 shrink-0 gap-1.5 text-[11px] font-semibold"
                     onClick={() => onCreateSuggestedIndex?.(indexSuggestion)}
+                    disabled={isReadOnly}
+                    title={isReadOnly ? READ_ONLY_TOOLTIP : undefined}
                     data-testid="create-suggested-index-btn"
                   >
                     Create Index

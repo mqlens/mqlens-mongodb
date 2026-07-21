@@ -2,6 +2,7 @@
 //! list grantable roles. Live commands run against the real client; mock
 //! connections return synthetic users/roles so the view works in demo mode.
 
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{connection_is_mock, require_real_client, AppState};
 use mongodb::bson::{doc, Bson, Document};
 use serde::{Deserialize, Serialize};
@@ -169,6 +170,8 @@ pub async fn create_user_impl(
     password: &str,
     roles: &[RoleSpec],
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::UserWrite, false)?;
+
     if username.trim().is_empty() {
         return Err("Username is required".to_string());
     }
@@ -202,6 +205,8 @@ pub async fn update_user_impl(
     password: Option<&str>,
     roles: Option<&[RoleSpec]>,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::UserWrite, false)?;
+
     if username.trim().is_empty() {
         return Err("Username is required".to_string());
     }
@@ -236,6 +241,8 @@ pub async fn drop_user_impl(
     database: &str,
     username: &str,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::UserWrite, false)?;
+
     if username.trim().is_empty() {
         return Err("Username is required".to_string());
     }

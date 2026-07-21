@@ -8,6 +8,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+/** Custom MIME used to mark drags originating from a workspace tab (as opposed to
+ *  OS file/text drags). Owned here; re-exported from workspace/PaneView.tsx. */
+export const TAB_DRAG_MIME = 'application/x-mqlens-tab';
+
 export interface WorkspaceTab {
   id: string;
   label: string;
@@ -20,6 +24,15 @@ interface WorkspaceTabBarProps {
   activeTabId: string | null;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
+  /** Marks tabs draggable and sets TAB_DRAG_MIME data on drag start. */
+  draggable?: boolean;
+  onTabDragStart?: (id: string, e: React.DragEvent) => void;
+  /** Drop on the tab strip itself = move-to-end of this pane. */
+  onTabStripDrop?: (e: React.DragEvent) => void;
+  /** Right-click on a tab (Phase 3 Task 5's detach/move context menu).
+   *  Additive/optional — omitting it leaves right-click as a no-op, same as
+   *  before this prop existed. */
+  onTabContextMenu?: (id: string, e: React.MouseEvent) => void;
 }
 
 export function WorkspaceTabBar({
@@ -27,10 +40,29 @@ export function WorkspaceTabBar({
   activeTabId,
   onSelectTab,
   onCloseTab,
+  draggable,
+  onTabDragStart,
+  onTabStripDrop,
+  onTabContextMenu,
 }: WorkspaceTabBarProps) {
   return (
     <TooltipProvider delayDuration={400}>
-      <div className="flex h-9 shrink-0 items-end gap-0 border-b border-border bg-sidebar/60 mql-chrome">
+      <div
+        data-testid="workspace-tab-strip"
+        className="flex h-9 shrink-0 items-end gap-0 border-b border-border bg-sidebar/60 mql-chrome"
+        onDragOver={(e) => {
+          if (onTabStripDrop && e.dataTransfer.types.includes(TAB_DRAG_MIME)) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+        onDrop={(e) => {
+          if (onTabStripDrop && e.dataTransfer.types.includes(TAB_DRAG_MIME)) {
+            e.stopPropagation();
+            onTabStripDrop(e);
+          }
+        }}
+      >
         <ScrollArea className="w-full">
           <div className="flex h-9 items-end px-1">
             {tabs.map((tab) => {
@@ -45,6 +77,13 @@ export function WorkspaceTabBar({
                       : "border-transparent bg-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                   onClick={() => onSelectTab(tab.id)}
+                  draggable={draggable}
+                  onDragStart={(e) => onTabDragStart?.(tab.id, e)}
+                  onContextMenu={(e) => {
+                    if (!onTabContextMenu) return;
+                    e.preventDefault();
+                    onTabContextMenu(tab.id, e);
+                  }}
                 >
                   <span className="shrink-0">{tab.icon}</span>
                   <span className="truncate font-medium">{tab.label}</span>

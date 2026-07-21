@@ -2,16 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useDialogs } from './dialogs/DialogProvider';
+import { confirmByTypedName } from '../lib/typedNameConfirm';
 import { fuzzyMatch } from '../lib/fuzzyMatch';
 import { type CollectionSelection, emptySelection, toggleCollection, selectionScope } from '@/lib/collectionSelection';
 import {
   type FolderNode,
   FOLDERS_CHANGED_EVENT,
+  FOLDERS_STORAGE_KEY,
+  PROFILE_FOLDERS_STORAGE_KEY,
   loadConnectionFolders,
 } from '../lib/connectionFolders';
 import {
   type PinnedItem,
   PINNED_CHANGED_EVENT,
+  PINNED_STORAGE_KEY,
   loadPinnedCollections,
   isItemPinned,
   togglePinItem,
@@ -23,6 +27,7 @@ import {
 import {
   type FavoriteItem,
   FAVORITES_CHANGED_EVENT,
+  FAVORITES_STORAGE_KEY,
   loadFavoriteItems,
   isItemFavorited,
   toggleFavoriteItem,
@@ -96,6 +101,7 @@ import {
   DatabaseBackup,
   DatabaseZap,
   ShieldCheck,
+  Wand2,
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
@@ -172,7 +178,16 @@ interface SidebarProps {
   ) => void;
   onSelectIndex: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
   activeCollection: { connectionId: string; db: string; collection: string; indexName?: string } | null;
-  activeConnections: { id: string; name: string; uri: string; profileId?: string; color_tag?: string }[];
+  activeConnections: {
+    id: string;
+    name: string;
+    uri: string;
+    profileId?: string;
+    color_tag?: string;
+    viaMcp?: boolean;
+    /** Read-only / confirm-destructive production safeguard (#188), mirrors App.tsx's `ActiveConnection.mode`. */
+    mode?: 'normal' | 'read_only' | 'confirm_destructive';
+  }[];
   onOpenConnectionManager: () => void;
   onDisconnect: (connectionId: string) => void;
   width?: number;
@@ -190,6 +205,8 @@ interface SidebarProps {
   onOpenDump?: (connectionId: string, dbName?: string, collName?: string) => void;
   /** Open a Restore tab for the connection. */
   onOpenRestore?: (connectionId: string) => void;
+  /** Open a Generate Data tab scoped to a database (starter template) or a single collection (schema-seeded). */
+  onOpenGenerate?: (connectionId: string, dbName: string, collName?: string) => void;
   onCollectionRenamed?: (connectionId: string, dbName: string, oldName: string, newName: string) => void;
   onDatabaseDropped?: (connectionId: string, dbName: string) => void;
   onDatabaseRenamed?: (connectionId: string, oldName: string, newName: string) => void;
@@ -310,6 +327,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenGridfs,
   onOpenDump,
   onOpenRestore,
+  onOpenGenerate,
   onCollectionRenamed,
   onDatabaseDropped,
   onDatabaseRenamed,
@@ -528,15 +546,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     reloadPinned();
     const onPinned = () => reloadPinned();
+    // Phase 3 Task 6: pins live in localStorage, shared same-origin across
+    // every Tauri window — but each window only reads it once (on mount) and
+    // otherwise relies on the in-window `PINNED_CHANGED_EVENT` above, which
+    // never crosses windows (it's a plain `window.dispatchEvent`, scoped to
+    // this window's own `window` object). The browser-native `storage` event
+    // is the cross-window signal: it fires on every OTHER window's `window`
+    // when localStorage changes (never on the window that made the change —
+    // that's what `PINNED_CHANGED_EVENT` already covers), so the two
+    // listeners together keep pins in sync everywhere. Filtered by key so an
+    // unrelated localStorage write (folders, favorites, anything else) in
+    // another window doesn't force a redundant reload here.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PINNED_STORAGE_KEY) reloadPinned();
+    };
     window.addEventListener(PINNED_CHANGED_EVENT, onPinned);
-    return () => window.removeEventListener(PINNED_CHANGED_EVENT, onPinned);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(PINNED_CHANGED_EVENT, onPinned);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   useEffect(() => {
     reloadFavoritesStorage();
     const onFavorites = () => reloadFavoritesStorage();
+    // Cross-window sync via the native `storage` event — see the pins effect
+    // above for why this is needed alongside `FAVORITES_CHANGED_EVENT`.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === FAVORITES_STORAGE_KEY) reloadFavoritesStorage();
+    };
     window.addEventListener(FAVORITES_CHANGED_EVENT, onFavorites);
-    return () => window.removeEventListener(FAVORITES_CHANGED_EVENT, onFavorites);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(FAVORITES_CHANGED_EVENT, onFavorites);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   useEffect(() => {
@@ -557,8 +602,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   useEffect(() => {
     const onFolders = () => reloadFolders();
+    // Cross-window sync via the native `storage` event — see the pins
+    // effect above. Folders persist across two keys (the node list and the
+    // profile->folder map), so either one changing triggers a reload.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === FOLDERS_STORAGE_KEY || e.key === PROFILE_FOLDERS_STORAGE_KEY) reloadFolders();
+    };
     window.addEventListener(FOLDERS_CHANGED_EVENT, onFolders);
-    return () => window.removeEventListener(FOLDERS_CHANGED_EVENT, onFolders);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(FOLDERS_CHANGED_EVENT, onFolders);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   const ensureConnectionExpanded = (connId: string) => {
@@ -905,16 +960,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleDropCollection = async (connectionId: string, dbName: string, collName: string) => {
-    if (
+    const conn = activeConnections.find((c) => c.id === connectionId);
+    // #188 security review Fix 5: block read-only BEFORE the confirm dialog
+    // and, critically, before the `isMock` branch below — which mutates the
+    // sidebar's local state directly and returns without ever calling the
+    // backend, so a mock connection never hit `guard_writable`'s rejection
+    // the way a real connection's `invoke('drop_collection', ...)` does.
+    // Same exact wording as the backend's `write_guard::READ_ONLY_MSG` so a
+    // mock and a real read-only connection behave identically here.
+    if (conn?.mode === 'read_only') {
+      toast(
+        'This connection is read-only (production safeguard). Change the connection mode in its settings to modify data.',
+        'error'
+      );
+      return;
+    }
+    // #188 Task 3: on a confirm_destructive (production-safeguard) connection,
+    // the ordinary yes/no confirm is replaced by a typed-name match — see
+    // `confirmByTypedName`'s doc comment. `confirmed: true` is only ever
+    // passed after that exact match; the backend's `guard_writable` is the
+    // real gate either way.
+    const confirmed = conn?.mode === 'confirm_destructive';
+    if (confirmed) {
+      if (
+        !(await confirmByTypedName(prompt, {
+          title: 'Drop collection',
+          kind: 'collection',
+          expectedName: collName,
+        }))
+      )
+        return;
+    } else if (
       !(await confirm({
         title: 'Drop collection',
         message: `Are you sure you want to drop collection "${collName}"?`,
         confirmLabel: 'Drop',
         destructive: true,
       }))
-    )
+    ) {
       return;
-    const conn = activeConnections.find((c) => c.id === connectionId);
+    }
     const isMock = connectionId.startsWith('mock') || conn?.uri.startsWith('mongodb://mock');
 
     const clearActiveIfDropped = () => {
@@ -939,7 +1024,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     try {
-      await invoke('drop_collection', { id: connectionId, database: dbName, collection: collName });
+      await invoke('drop_collection', { id: connectionId, database: dbName, collection: collName, confirmed });
       clearActiveIfDropped();
       await handleRefreshDb(connectionId, dbName);
       onNamespaceMutated?.(connectionId);
@@ -949,6 +1034,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleRenameCollection = async (connectionId: string, dbName: string, collName: string) => {
+    const conn = activeConnections.find((c) => c.id === connectionId);
+    // #188 Task 3: on a confirm_destructive connection, typing the current
+    // collection name (the "already a prompt" precedent kept as-is below for
+    // the new name) proves intent before the "enter new name" prompt is even
+    // shown — see `confirmByTypedName`'s doc comment.
+    const confirmed = conn?.mode === 'confirm_destructive';
+    if (confirmed) {
+      if (
+        !(await confirmByTypedName(prompt, {
+          title: 'Rename collection',
+          kind: 'collection',
+          expectedName: collName,
+        }))
+      )
+        return;
+    }
+
     const newName = await prompt({
       title: 'Rename collection',
       message: 'Enter new collection name:',
@@ -957,7 +1059,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
     if (!newName || newName === collName) return;
 
-    const conn = activeConnections.find((c) => c.id === connectionId);
     const isMock = connectionId.startsWith('mock') || conn?.uri.startsWith('mongodb://mock');
 
     const applyLocalRename = () => {
@@ -1008,6 +1109,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         database: dbName,
         from: collName,
         to: newName,
+        confirmed,
       });
       applyLocalRename();
       await handleRefreshDb(connectionId, dbName);
@@ -1017,16 +1119,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleDropDatabase = async (connectionId: string, dbName: string) => {
-    if (
+    const conn = activeConnections.find((c) => c.id === connectionId);
+    // #188 security review Fix 5: see handleDropCollection's comment on this
+    // same pattern — blocks the `isMock` branch below from dropping a
+    // read-only mock connection's database without ever reaching the backend.
+    if (conn?.mode === 'read_only') {
+      toast(
+        'This connection is read-only (production safeguard). Change the connection mode in its settings to modify data.',
+        'error'
+      );
+      return;
+    }
+    // #188 Task 3: see handleDropCollection's comment on this same pattern.
+    const confirmed = conn?.mode === 'confirm_destructive';
+    if (confirmed) {
+      if (
+        !(await confirmByTypedName(prompt, {
+          title: 'Drop database',
+          kind: 'database',
+          expectedName: dbName,
+        }))
+      )
+        return;
+    } else if (
       !(await confirm({
         title: 'Drop database',
         message: `Are you sure you want to drop database "${dbName}"? This cannot be undone.`,
         confirmLabel: 'Drop',
         destructive: true,
       }))
-    )
+    ) {
       return;
-    const conn = activeConnections.find((c) => c.id === connectionId);
+    }
     const isMock = connectionId.startsWith('mock') || conn?.uri.startsWith('mongodb://mock');
 
     const clearLocalDatabase = () => {
@@ -1083,7 +1207,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     try {
-      await invoke('drop_database', { id: connectionId, database: dbName });
+      await invoke('drop_database', { id: connectionId, database: dbName, confirmed });
       clearLocalDatabase();
       await loadDatabases(connectionId);
     } catch (err) {
@@ -1099,16 +1223,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
       validate: (v) => (v ? null : 'Name is required'),
     });
     if (!newName || newName === dbName) return;
-    const ok = await confirm({
-      title: `Rename database "${dbName}"`,
-      message:
-        `Rename database "${dbName}" to "${newName}"?\n\n` +
-        `MongoDB does not support native database rename. MQLens will copy collections and indexes, verify document counts, then drop the source database.`,
-      confirmLabel: 'Rename',
-    });
-    if (!ok) return;
 
     const conn = activeConnections.find((c) => c.id === connectionId);
+    // #188 Task 3: on a confirm_destructive connection, the typed-name match
+    // (against the source/"from" database name) replaces the ordinary
+    // yes/no confirm below — see `confirmByTypedName`'s doc comment.
+    const confirmed = conn?.mode === 'confirm_destructive';
+    if (confirmed) {
+      if (
+        !(await confirmByTypedName(prompt, {
+          title: `Rename database "${dbName}"`,
+          kind: 'database',
+          expectedName: dbName,
+          message: `Rename database "${dbName}" to "${newName}"? MongoDB does not support native database rename. MQLens will copy collections and indexes, verify document counts, then drop the source database.\n\nType the database name to confirm.`,
+        }))
+      )
+        return;
+    } else if (
+      !(await confirm({
+        title: `Rename database "${dbName}"`,
+        message:
+          `Rename database "${dbName}" to "${newName}"?\n\n` +
+          `MongoDB does not support native database rename. MQLens will copy collections and indexes, verify document counts, then drop the source database.`,
+        confirmLabel: 'Rename',
+      }))
+    ) {
+      return;
+    }
+
     const isMock = connectionId.startsWith('mock') || conn?.uri.startsWith('mongodb://mock');
 
     const applyLocalRename = () => {
@@ -1181,6 +1323,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         from: dbName,
         to: newName,
         dropSource: true,
+        confirmed,
       });
       applyLocalRename();
       await loadDatabases(connectionId);
@@ -1331,6 +1474,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <ContextMenuItem className={ctxItemClass} onClick={() => onEditValidation?.(connId, dbName, collName)}>
                 <ShieldCheck />
                 <span>Validation Rules</span>
+              </ContextMenuItem>
+            )}
+            {/* #91: same shape gate as Validation Rules above (not
+                view/timeseries/system./gridfs bucket) — but, unlike Dump
+                below, NOT gated on `isMockConnection`: a mock connection's
+                generate run VALIDATES the template/count without writing
+                anything (mock_db has no insert capability at all), so mock
+                connections keep this entry — it's just a dry run there. */}
+            {collType !== 'view' && collType !== 'timeseries' && !collName.startsWith('system.') && !/\.(files|chunks)$/.test(collName) && (
+              <ContextMenuItem
+                className={ctxItemClass}
+                data-testid={`ctx-generate-coll-${connId}-${dbName}-${collName}`}
+                onClick={() => onOpenGenerate?.(connId, dbName, collName)}
+              >
+                <Wand2 />
+                <span>Generate Data…</span>
               </ContextMenuItem>
             )}
             {!isMockConnection(connId) && (
@@ -1535,6 +1694,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       )}
                       <Server size={12} className="shrink-0 text-primary" />
                       <span className="min-w-0 truncate font-medium">{conn.name}</span>
+                      {conn.viaMcp && (
+                        <Badge
+                          variant="secondary"
+                          className="h-4 shrink-0 px-1 text-[9px] font-normal text-muted-foreground"
+                          data-testid="connection-via-mcp-badge"
+                          aria-label="Connected via MCP"
+                        >
+                          via MCP
+                        </Badge>
+                      )}
+                      {conn.mode && conn.mode !== 'normal' && (
+                        <Badge
+                          variant={conn.mode === 'read_only' ? 'destructive' : 'warning'}
+                          className="h-4 shrink-0 px-1 text-[9px] font-normal"
+                          data-testid="connection-mode-badge"
+                          data-mode={conn.mode}
+                          aria-label={conn.mode === 'read_only' ? 'Read-only connection' : 'Production safeguard connection'}
+                        >
+                          {conn.mode === 'read_only' ? 'read-only' : 'guarded'}
+                        </Badge>
+                      )}
                       <span
                         className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
                         aria-label="Connected"
@@ -1822,6 +2002,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <span>Dump (mongodump)…</span>
                               </ContextMenuItem>
                             )}
+                            {/* #91: mocks ALLOWED (unlike Dump above) — see the
+                                collection-row entry's comment for why. */}
+                            <ContextMenuItem
+                              className={ctxItemClass}
+                              data-testid={`ctx-generate-db-${conn.id}-${dbName}`}
+                              onClick={() => onOpenGenerate?.(conn.id, dbName)}
+                            >
+                              <Wand2 />
+                              <span>Generate Data…</span>
+                            </ContextMenuItem>
                             <ContextMenuSeparator />
                             <ContextMenuItem
                               className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
