@@ -409,7 +409,54 @@ describe('App Component', () => {
     await waitFor(() => {
       const dm = calls.find((c) => c.cmd === 'delete_many');
       expect(dm).toBeTruthy();
-      expect(dm.args).toMatchObject({ database: 'sales_db', collection: 'customers' });
+      // #188 Task 3: a normal connection's flow is unchanged — `confirmed`
+      // rides along as `false` (the guard passes normal connections through
+      // regardless).
+      expect(dm.args).toMatchObject({ database: 'sales_db', collection: 'customers', confirmed: false });
+    });
+  });
+
+  it('delete-many on a confirm_destructive connection requires a typed collection-name match before invoking (#188 Task 3)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query')
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'count_documents') return Promise.resolve(7);
+      if (cmd === 'delete_many') return Promise.resolve(7);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor, act } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    // Mark 'conn-1' (the id every mock-sidebar button hardcodes) as a
+    // confirm_destructive connection before the tab opens.
+    await act(async () => {
+      fireMockEvent('connections-changed', {
+        connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'confirm_destructive' }],
+      });
+    });
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('delete-many-btn'));
+
+    // Wrong typed name -> no invoke, dialog stays open with an error.
+    const wrongInput = await screen.findByTestId('dialog-input');
+    fireEvent.change(wrongInput, { target: { value: 'not_customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((c) => c.cmd === 'delete_many')).toBeFalsy();
+
+    // Exact name -> invoke with confirmed:true.
+    const rightInput = screen.getByTestId('dialog-input');
+    fireEvent.change(rightInput, { target: { value: 'customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await waitFor(() => {
+      const dm = calls.find((c) => c.cmd === 'delete_many');
+      expect(dm).toBeTruthy();
+      expect(dm.args).toMatchObject({ database: 'sales_db', collection: 'customers', confirmed: true });
     });
   });
 
@@ -440,10 +487,63 @@ describe('App Component', () => {
     await waitFor(() => {
       const um = calls.find((c) => c.cmd === 'update_many');
       expect(um).toBeTruthy();
+      // #188 Task 3: unchanged normal-connection flow -> confirmed:false.
       expect(um.args).toMatchObject({
         database: 'sales_db',
         collection: 'customers',
         update: '{"$set":{"tier":"Gold"}}',
+        confirmed: false,
+      });
+    });
+  });
+
+  it('update-many on a confirm_destructive connection requires a typed collection-name match before invoking (#188 Task 3)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query')
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'count_documents') return Promise.resolve(3);
+      if (cmd === 'update_many') return Promise.resolve(3);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor, act } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    await act(async () => {
+      fireMockEvent('connections-changed', {
+        connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'confirm_destructive' }],
+      });
+    });
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('update-many-btn'));
+    // The update-body prompt is unchanged (data entry, not a confirmation).
+    const updateInput = await screen.findByTestId('dialog-input');
+    fireEvent.change(updateInput, { target: { value: '{"$set":{"tier":"Gold"}}' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    // Wrong typed name -> no invoke.
+    const wrongInput = await screen.findByTestId('dialog-input');
+    fireEvent.change(wrongInput, { target: { value: 'not_customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((c) => c.cmd === 'update_many')).toBeFalsy();
+
+    // Exact name -> invoke with confirmed:true.
+    const rightInput = screen.getByTestId('dialog-input');
+    fireEvent.change(rightInput, { target: { value: 'customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await waitFor(() => {
+      const um = calls.find((c) => c.cmd === 'update_many');
+      expect(um).toBeTruthy();
+      expect(um.args).toMatchObject({
+        database: 'sales_db',
+        collection: 'customers',
+        update: '{"$set":{"tier":"Gold"}}',
+        confirmed: true,
       });
     });
   });

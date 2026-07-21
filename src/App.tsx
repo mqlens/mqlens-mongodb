@@ -86,6 +86,7 @@ import { docToShell } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib/queryStore';
 import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from './lib/paletteIndex';
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
+import { confirmByTypedName } from './lib/typedNameConfirm';
 import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
@@ -492,18 +493,26 @@ function Workspace() {
   // displayed, since it never made it into `activeConnections` at all. A
   // non-MCP entry keeps the original profileId dedupe (a human never opens
   // two simultaneous connections to the same profile from one path).
+  // `mode` (#188 Task 3): the connection's read-only/confirm-destructive
+  // safeguard, captured at connect time. `ActiveConnection.mode` was
+  // type-only until now — this is the minimal threading needed so the
+  // destructive-op call sites below (`handleDeleteMany`/`handleUpdateMany`)
+  // can read a real value via `activeConnections.find(...).mode` instead of
+  // always seeing `undefined`. Full UI consumption (persistent banner,
+  // sidebar badge) is Task 5.
   const addActiveConnection = (
     id: string,
     name: string,
     uri: string,
     profileId: string,
     color_tag?: string,
-    viaMcp?: boolean
+    viaMcp?: boolean,
+    mode?: ActiveConnection['mode']
   ) => {
     setActiveConnections((prev) => {
       if (prev.some((c) => c.id === id)) return prev;
       if (!viaMcp && prev.some((c) => c.profileId === profileId)) return prev;
-      return [...prev, { id, profileId, name, uri, color_tag, viaMcp }];
+      return [...prev, { id, profileId, name, uri, color_tag, viaMcp, mode }];
     });
   };
 
@@ -602,7 +611,7 @@ function Workspace() {
       // always reaches `addActiveConnection` below, which is itself the
       // authority on whether this exact row already exists.
       if (!entry.viaMcp && localByProfile.has(entry.profileId)) continue;
-      addActiveConnection(entry.id, entry.name, '', entry.profileId, undefined, entry.viaMcp);
+      addActiveConnection(entry.id, entry.name, '', entry.profileId, undefined, entry.viaMcp, entry.mode);
       rebindProfileTabs(entry.profileId, entry.id);
     }
   };
@@ -786,7 +795,7 @@ function Workspace() {
     if (existing) return existing.id;
     try {
       const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-      addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
+      addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, undefined, profile.connection_mode ?? 'normal');
       // Announce this fresh id to every other window (Phase 3 Task 6) — see
       // `setConnectionMeta`'s doc comment for why every connect path calls it.
       setConnectionMeta(id, profile.id, profile.name, profile.connection_mode ?? 'normal');
@@ -2820,7 +2829,7 @@ function Workspace() {
         }
 
         newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-        addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined);
+        addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined, undefined, profile.connection_mode ?? 'normal');
         // Announce this fresh id to every other window (Phase 3 Task 6) —
         // see `setConnectionMeta`'s doc comment. Deliberately NOT called on
         // the `existing` (reuse) branch above: that id's meta was already
@@ -3111,6 +3120,15 @@ function Workspace() {
   const handleDeleteMany = async (tab: QueryTab) => {
     if (tab.type !== 'collection') return;
     const filter = bulkFilter(tab);
+    // #188 Task 3: on a confirm_destructive connection, delete_many requires
+    // a typed-name match before `confirmed: true` is sent — see
+    // `confirmByTypedName`'s doc comment. Read from `activeConnections`
+    // (populated at connect time — see `addActiveConnection`'s doc comment);
+    // defaults to 'normal' both when the connection carries no mode (a
+    // normal/sample connection) and pre-Task-5 for any connection this
+    // window learned about via `connections-changed` rather than connecting
+    // itself.
+    const mode = activeConnections.find((c) => c.id === tab.connectionId)?.mode ?? 'normal';
     try {
       const count = await invoke<number>('count_documents', {
         id: tab.connectionId,
@@ -3118,20 +3136,32 @@ function Workspace() {
         collection: tab.collection,
         filter,
       });
-      if (
+      let confirmed = false;
+      if (mode === 'confirm_destructive') {
+        const ok = await confirmByTypedName(prompt, {
+          title: 'Delete many',
+          kind: 'collection',
+          expectedName: tab.collection,
+          message: `${bulkConfirmMessage('Delete', count, filter)}\n\nType the collection name to confirm.`,
+        });
+        if (!ok) return;
+        confirmed = true;
+      } else if (
         !(await confirm({
           title: 'Delete many',
           message: bulkConfirmMessage('Delete', count, filter),
           confirmLabel: 'Delete',
           destructive: true,
         }))
-      )
+      ) {
         return;
+      }
       const deleted = await invoke<number>('delete_many', {
         id: tab.connectionId,
         database: tab.db,
         collection: tab.collection,
         filter,
+        confirmed,
       });
       await refreshTabResults(tab);
       toast(`Deleted ${deleted} document(s)`, 'success', { title: 'Deleted' });
@@ -3164,6 +3194,8 @@ function Workspace() {
       },
     });
     if (!update) return; // cancelled
+    // #188 Task 3: see handleDeleteMany's comment on this same lookup.
+    const mode = activeConnections.find((c) => c.id === tab.connectionId)?.mode ?? 'normal';
     try {
       const count = await invoke<number>('count_documents', {
         id: tab.connectionId,
@@ -3171,21 +3203,33 @@ function Workspace() {
         collection: tab.collection,
         filter,
       });
-      if (
+      let confirmed = false;
+      if (mode === 'confirm_destructive') {
+        const ok = await confirmByTypedName(prompt, {
+          title: 'Update many',
+          kind: 'collection',
+          expectedName: tab.collection,
+          message: `${bulkConfirmMessage('Apply this update to', count, filter)}\n\nType the collection name to confirm.`,
+        });
+        if (!ok) return;
+        confirmed = true;
+      } else if (
         !(await confirm({
           title: 'Update many',
           message: bulkConfirmMessage('Apply this update to', count, filter),
           confirmLabel: 'Update',
           destructive: true,
         }))
-      )
+      ) {
         return;
+      }
       const modified = await invoke<number>('update_many', {
         id: tab.connectionId,
         database: tab.db,
         collection: tab.collection,
         filter,
         update,
+        confirmed,
       });
       await refreshTabResults(tab);
       toast(`Modified ${modified} document(s)`, 'success', { title: 'Updated' });
@@ -3744,7 +3788,7 @@ function Workspace() {
             isOpen={isConnectionModalOpen}
             onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
             onConnect={(id, name, uri, profileId, colorTag, connectionMode) => {
-              addActiveConnection(id, name, uri, profileId, colorTag ?? undefined);
+              addActiveConnection(id, name, uri, profileId, colorTag ?? undefined, undefined, connectionMode ?? 'normal');
               // Announce this fresh id to every other window (Phase 3 Task 6)
               // — see `setConnectionMeta`'s doc comment.
               setConnectionMeta(id, profileId, name, connectionMode ?? 'normal');

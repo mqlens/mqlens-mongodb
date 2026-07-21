@@ -1445,8 +1445,10 @@ async fn drop_collection(
     id: String,
     database: String,
     collection: String,
+    // `Option<bool>` (see `delete_many`'s comment): missing key -> `false`.
+    confirmed: Option<bool>,
 ) -> Result<(), String> {
-    drop_collection_impl(&state, &id, &database, &collection).await
+    drop_collection_impl(&state, &id, &database, &collection, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1456,8 +1458,9 @@ async fn rename_collection(
     database: String,
     from: String,
     to: String,
+    confirmed: Option<bool>,
 ) -> Result<(), String> {
-    rename_collection_impl(&state, &id, &database, &from, &to).await
+    rename_collection_impl(&state, &id, &database, &from, &to, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1497,8 +1500,9 @@ async fn drop_database(
     state: tauri::State<'_, AppState>,
     id: String,
     database: String,
+    confirmed: Option<bool>,
 ) -> Result<(), String> {
-    drop_database_impl(&state, &id, &database).await
+    drop_database_impl(&state, &id, &database, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1508,8 +1512,9 @@ async fn rename_database(
     from: String,
     to: String,
     drop_source: bool,
+    confirmed: Option<bool>,
 ) -> Result<DatabaseRenameResult, String> {
-    rename_database_impl(&state, &id, &from, &to, drop_source).await
+    rename_database_impl(&state, &id, &from, &to, drop_source, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1621,8 +1626,14 @@ async fn delete_many(
     database: String,
     collection: String,
     filter: String,
+    // `Option<bool>` (not a raw `#[serde(default)]` attribute — Tauri's
+    // per-parameter command args don't support serde field attributes,
+    // only `Deserialize`-derived struct fields do; see mcp_tools.rs's
+    // `_confirm` for that pattern) so an omitted key defaults to `false`
+    // rather than the IPC layer rejecting the call outright.
+    confirmed: Option<bool>,
 ) -> Result<u64, String> {
-    delete_many_impl(&state, &id, &database, &collection, &filter).await
+    delete_many_impl(&state, &id, &database, &collection, &filter, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1633,8 +1644,9 @@ async fn update_many(
     collection: String,
     filter: String,
     update: String,
+    confirmed: Option<bool>,
 ) -> Result<u64, String> {
-    update_many_impl(&state, &id, &database, &collection, &filter, &update).await
+    update_many_impl(&state, &id, &database, &collection, &filter, &update, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]

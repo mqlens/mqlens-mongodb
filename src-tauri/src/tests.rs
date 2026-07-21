@@ -1754,14 +1754,14 @@ mod tests {
             .expect("connect mock");
 
         // delete_many: malformed filter is rejected.
-        let bad_filter = delete_many_impl(&state, &conn_id, "sales_db", "customers", "{bad").await;
+        let bad_filter = delete_many_impl(&state, &conn_id, "sales_db", "customers", "{bad", true).await;
         assert!(
             bad_filter.is_err(),
             "malformed delete filter should be rejected"
         );
 
         // delete_many: valid filter on mock no-ops (returns 0, no persistence).
-        let del = delete_many_impl(&state, &conn_id, "sales_db", "customers", r#"{"tier":"X"}"#)
+        let del = delete_many_impl(&state, &conn_id, "sales_db", "customers", r#"{"tier":"X"}"#, true)
             .await
             .expect("mock delete_many ok");
         assert_eq!(del, 0);
@@ -1774,6 +1774,7 @@ mod tests {
             "customers",
             "{}",
             r#"{"name":"x"}"#,
+            true,
         )
         .await;
         assert!(
@@ -1783,7 +1784,7 @@ mod tests {
 
         // update_many: malformed update JSON is rejected.
         let bad_update =
-            update_many_impl(&state, &conn_id, "sales_db", "customers", "{}", "{bad").await;
+            update_many_impl(&state, &conn_id, "sales_db", "customers", "{}", "{bad", true).await;
         assert!(bad_update.is_err(), "malformed update should be rejected");
 
         // update_many: a valid operator update on mock no-ops (returns 0).
@@ -1794,6 +1795,7 @@ mod tests {
             "customers",
             r#"{"tier":"X"}"#,
             r#"{"$set":{"tier":"Y"}}"#,
+            true,
         )
         .await
         .expect("mock update_many ok");
@@ -2013,36 +2015,37 @@ mod tests {
         create_collection_impl(&state, &conn_id, "sales_db", "new_coll")
             .await
             .expect("create collection should succeed in mock mode");
-        rename_collection_impl(&state, &conn_id, "sales_db", "new_coll", "renamed_coll")
+        rename_collection_impl(&state, &conn_id, "sales_db", "new_coll", "renamed_coll", true)
             .await
             .expect("rename collection should succeed in mock mode");
-        drop_collection_impl(&state, &conn_id, "sales_db", "new_coll")
+        drop_collection_impl(&state, &conn_id, "sales_db", "new_coll", true)
             .await
             .expect("drop collection should succeed in mock mode");
-        drop_database_impl(&state, &conn_id, "sales_db")
+        drop_database_impl(&state, &conn_id, "sales_db", true)
             .await
             .expect("drop database should succeed in mock mode");
-        let renamed = rename_database_impl(&state, &conn_id, "sales_db", "sales_archive", true)
-            .await
-            .expect("rename database should succeed in mock mode");
+        let renamed =
+            rename_database_impl(&state, &conn_id, "sales_db", "sales_archive", true, true)
+                .await
+                .expect("rename database should succeed in mock mode");
         assert_eq!(renamed.collections, 0);
         assert_eq!(renamed.documents, 0);
 
         assert!(
-            rename_collection_impl(&state, &conn_id, "sales_db", "", "renamed")
+            rename_collection_impl(&state, &conn_id, "sales_db", "", "renamed", true)
                 .await
                 .is_err()
         );
         assert!(
-            rename_collection_impl(&state, &conn_id, "sales_db", "same", "same")
+            rename_collection_impl(&state, &conn_id, "sales_db", "same", "same", true)
                 .await
                 .is_err()
         );
-        assert!(drop_database_impl(&state, &conn_id, "").await.is_err());
-        assert!(rename_database_impl(&state, &conn_id, "", "target", true)
+        assert!(drop_database_impl(&state, &conn_id, "", true).await.is_err());
+        assert!(rename_database_impl(&state, &conn_id, "", "target", true, true)
             .await
             .is_err());
-        assert!(rename_database_impl(&state, &conn_id, "same", "same", true)
+        assert!(rename_database_impl(&state, &conn_id, "same", "same", true, true)
             .await
             .is_err());
 
@@ -2059,19 +2062,19 @@ mod tests {
             "Connection client not found"
         );
         assert_eq!(
-            drop_collection_impl(&state, realish, "sales_db", "new_coll")
+            drop_collection_impl(&state, realish, "sales_db", "new_coll", true)
                 .await
                 .unwrap_err(),
             "Connection client not found"
         );
         assert_eq!(
-            rename_collection_impl(&state, realish, "sales_db", "from", "to")
+            rename_collection_impl(&state, realish, "sales_db", "from", "to", true)
                 .await
                 .unwrap_err(),
             "Connection client not found"
         );
         assert_eq!(
-            drop_database_impl(&state, realish, "sales_db")
+            drop_database_impl(&state, realish, "sales_db", true)
                 .await
                 .unwrap_err(),
             "Connection client not found"

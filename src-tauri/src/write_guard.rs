@@ -12,20 +12,37 @@
 //! opt-in production safeguard, not a security boundary against a hostile
 //! local user).
 //!
-//! Sequencing note (#188 Task 2 vs Task 3): this module guards every
-//! non-destructive mutating `_impl` with `confirmed=false` (irrelevant for
-//! those ops). The six destructive commands (`drop_collection`,
-//! `drop_database`, `delete_many`, `update_many`, `rename_collection`,
-//! `drop_index`) gain a real `confirmed: bool` command arg in Task 3, which
-//! is threaded through to this guard there.
+//! Sequencing note (#188 Task 2 vs Task 3, now both complete): Task 2 guarded
+//! every non-destructive mutating `_impl` with `confirmed=false` (irrelevant
+//! for those ops) and defined the guard + coverage test. Task 3 gave the six
+//! genuinely destructive impls (`delete_many`, `update_many`,
+//! `drop_collection`, `rename_collection`, `drop_database`,
+//! `rename_database`) a real `confirmed: bool` command arg threaded through
+//! to this guard, and extended the coverage test with a destructive-cases
+//! table asserting all three mode behaviors for each. Task 3 also added the
+//! two `WriteOp::ServerAdmin` guards (`kill_op`, `set_profiling_level`) to
+//! the non-destructive table.
 //!
-//! `delete_index_impl`/`WriteOp::DropIndex` is guarded HERE (Task 2), not in
-//! Task 3: `WriteOp::is_destructive` only covers `Drop | DeleteMany |
-//! UpdateMany | Rename` — `DropIndex` is not in that set, so it's a
-//! non-destructive-arg impl guarded with `confirmed=false` like the rest of
-//! this task's list. (The plan's prose mentions drop_index among Task 3's
-//! confirmed-arg set in one place, but the destructive-four definition and
-//! the file structure table are unambiguous: drop_index belongs here.)
+//! `delete_index_impl`/`WriteOp::DropIndex` is guarded in the non-destructive
+//! table: `WriteOp::is_destructive` only covers `Drop | DeleteMany |
+//! UpdateMany | Rename` — `DropIndex` is not in that set, so a
+//! `ConfirmDestructive` connection lets it through even with
+//! `confirmed=false` (its command has no `confirmed` arg at all — dropping
+//! an index isn't considered destructive enough to require typed
+//! confirmation, unlike dropping a collection/database).
+//!
+//! `WriteOp::UpdateOne` is intentionally unused (and shows up as dead code
+//! under `cargo clippy --lib`): it was defined in Task 2 mirroring the
+//! plan's `WriteOp` code block, but this codebase has no single-document
+//! *partial* update command distinct from `update_document`/`WriteOp::
+//! ReplaceOne` (which does a full replacement) — there's nothing for it to
+//! guard. Investigated as part of Task 3 (whose exit criterion is "clippy
+//! back to the 21 lib baseline") and confirmed this is a pre-existing enum/
+//! API mismatch from Task 1/2, not a Task-3-introduced or newly-discovered
+//! unguarded command, so it's left as-is rather than papering over it with
+//! an `#[allow(dead_code)]` or inventing a fake call site; clippy's lib
+//! warning count is 22 (21 baseline + this one), not 21 — see the Task 3
+//! report.
 
 use crate::connections::ConnectionMode;
 use crate::state::{AppState, LockExt};
@@ -55,6 +72,10 @@ pub enum WriteOp {
     CopyWrite,
     RestoreWrite,
     UserWrite,
+    /// Server-admin operations that mutate live server/database state but
+    /// aren't collection data writes: `killOp` and the profiler level
+    /// (`setProfilingLevel`). Non-destructive — not in `is_destructive`.
+    ServerAdmin,
 }
 
 impl WriteOp {
@@ -106,16 +127,18 @@ pub fn guard_writable(
 mod tests {
     use super::*;
     use crate::db::{copy, ddl, documents, generate, gridfs, import, metadata, mongotools, users};
+    use crate::monitoring;
     use crate::state::ConnectionMeta;
     use std::future::Future;
     use std::pin::Pin;
 
-    /// Number of non-destructive mutating `_impl`s wired in Task 2 (the
-    /// plan's explicit coverage list). A new mutating command must add a row
-    /// to `non_destructive_cases` below AND bump this constant — kept as a
-    /// paired assertion so a forgotten row fails the test loudly instead of
+    /// Number of non-destructive mutating `_impl`s wired in Task 2 (19) plus
+    /// the two `WriteOp::ServerAdmin` impls wired in Task 3 (`kill_op_impl`,
+    /// `set_profiling_level_impl`) = 21. A new mutating command must add a
+    /// row to `non_destructive_cases` below AND bump this constant — kept as
+    /// a paired assertion so a forgotten row fails the test loudly instead of
     /// silently shrinking coverage.
-    const NON_DESTRUCTIVE_GUARDED_COUNT: usize = 19;
+    const NON_DESTRUCTIVE_GUARDED_COUNT: usize = 21;
 
     /// Register a mock connection (`state.mocks`) with the given mode
     /// (`state.connection_meta`), mirroring the `mock_state` helper used
@@ -299,6 +322,18 @@ mod tests {
                     .map(|_| ())
                 }),
             ),
+            (
+                "kill_op_impl",
+                Box::pin(async move { monitoring::kill_op_impl(state, "ro", 1).await }),
+            ),
+            (
+                "set_profiling_level_impl",
+                Box::pin(async move {
+                    monitoring::set_profiling_level_impl(state, "ro", "db", 1, 100)
+                        .await
+                        .map(|_| ())
+                }),
+            ),
         ]
     }
 
@@ -366,27 +401,208 @@ mod tests {
         }
     }
 
-    /// `rename_database_impl` (ddl.rs) is a mutating command NOT in the
-    /// plan's Task 2/Task 3 coverage lists (it's neither one of the 19
-    /// non-destructive impls nor one of the six named destructive commands
-    /// `drop_collection`/`drop_database`/`delete_many`/`update_many`/
-    /// `rename_collection`/`drop_index`) — flagged and guarded here as an
-    /// addition beyond the plan. It renames every collection in a database
-    /// and optionally drops the source, which is at least as destructive as
-    /// `rename_collection`, so it's guarded with `WriteOp::Rename` — but
-    /// unlike the six named destructive commands it has no `confirmed`
-    /// command arg yet, so `confirmed` is hardcoded `false` here pending a
-    /// follow-up task giving it one (interim effect: blocked on both
-    /// `ReadOnly` and `ConfirmDestructive`, allowed on `Normal`). Not
-    /// counted in `NON_DESTRUCTIVE_GUARDED_COUNT` since it isn't actually
-    /// non-destructive; tested separately.
-    #[tokio::test]
-    async fn rename_database_impl_rejects_on_a_read_only_connection() {
-        let state = readonly_state(&["ro"]);
-        let err = match ddl::rename_database_impl(&state, "ro", "from_db", "to_db", false).await {
-            Err(e) => e,
-            Ok(_) => panic!("rename_database_impl should reject on a read-only connection"),
-        };
-        assert!(err.contains("read-only"), "got: {err}");
+    /// Number of destructive mutating `_impl`s wired in Task 3 with a real
+    /// `confirmed: bool` command arg: `delete_many_impl`, `update_many_impl`,
+    /// `drop_collection_impl`, `rename_collection_impl`, `drop_database_impl`,
+    /// `rename_database_impl`. That's 6, matching `WriteOp::is_destructive`'s
+    /// four variants (`Drop` covers both drop_collection and drop_database;
+    /// `Rename` covers both rename_collection and rename_database) — every
+    /// impl that guards with a destructive `WriteOp` is in this table.
+    /// (`delete_index_impl`/`WriteOp::DropIndex` is intentionally NOT here:
+    /// it's non-destructive, see `non_destructive_cases` above and the
+    /// module doc.) The plan text elsewhere says "7 destructive impls" /
+    /// `DESTRUCTIVE_GUARDED_COUNT (=7)`, but its own opening summary and
+    /// bulleted list enumerate exactly these 6 (drop_index is explicitly
+    /// excluded in that same list) — treated as a slip in the plan and
+    /// flagged in the Task 3 report rather than padding this table with a
+    /// duplicate/fictitious 7th row.
+    const DESTRUCTIVE_GUARDED_COUNT: usize = 6;
+
+    /// A destructive `_impl`, called with an explicit `confirmed` value so
+    /// the same case can be replayed against every mode. All args besides
+    /// `confirmed` are fixed, valid-for-a-mock values (see each impl's mock
+    /// branch): this only exercises the guard, not the rest of the impl.
+    type DestructiveCall =
+        for<'a> fn(&'a AppState, &'a str, bool) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+    fn destructive_cases() -> Vec<(&'static str, DestructiveCall)> {
+        vec![
+            ("delete_many_impl", |state, id, confirmed| {
+                Box::pin(async move {
+                    documents::delete_many_impl(state, id, "db", "coll", "{}", confirmed)
+                        .await
+                        .map(|_| ())
+                })
+            }),
+            ("update_many_impl", |state, id, confirmed| {
+                Box::pin(async move {
+                    documents::update_many_impl(
+                        state,
+                        id,
+                        "db",
+                        "coll",
+                        "{}",
+                        r#"{"$set":{"a":1}}"#,
+                        confirmed,
+                    )
+                    .await
+                    .map(|_| ())
+                })
+            }),
+            ("drop_collection_impl", |state, id, confirmed| {
+                Box::pin(async move {
+                    ddl::drop_collection_impl(state, id, "db", "coll", confirmed).await
+                })
+            }),
+            ("rename_collection_impl", |state, id, confirmed| {
+                Box::pin(async move {
+                    ddl::rename_collection_impl(state, id, "db", "from", "to", confirmed).await
+                })
+            }),
+            ("drop_database_impl", |state, id, confirmed| {
+                Box::pin(async move { ddl::drop_database_impl(state, id, "db", confirmed).await })
+            }),
+            ("rename_database_impl", |state, id, confirmed| {
+                Box::pin(async move {
+                    ddl::rename_database_impl(state, id, "from_db", "to_db", false, confirmed)
+                        .await
+                        .map(|_| ())
+                })
+            }),
+        ]
     }
+
+    /// The three-mode contract for every destructive `_impl`: `ReadOnly`
+    /// blocks it regardless of `confirmed` (there's no way to opt back into
+    /// writing on a read-only connection); `ConfirmDestructive` blocks it
+    /// unless `confirmed`, and passes when `confirmed`; `Normal` always
+    /// passes. Adding a new destructive command = adding a row to
+    /// `destructive_cases` (and bumping `DESTRUCTIVE_GUARDED_COUNT`).
+    #[tokio::test]
+    async fn destructive_impls_respect_mode_and_confirmed() {
+        let cases = destructive_cases();
+        assert_eq!(
+            cases.len(),
+            DESTRUCTIVE_GUARDED_COUNT,
+            "a row was added/removed without updating DESTRUCTIVE_GUARDED_COUNT"
+        );
+
+        for (name, call) in cases {
+            // ReadOnly blocks regardless of confirmed.
+            let ro = readonly_state(&["ro"]);
+            for confirmed in [false, true] {
+                let err = call(&ro, "ro", confirmed).await.expect_err(&format!(
+                    "{name} should reject on a read-only connection (confirmed={confirmed})"
+                ));
+                assert!(err.contains("read-only"), "{name}: got {err}");
+            }
+
+            // ConfirmDestructive blocks when unconfirmed, passes when confirmed.
+            let cd = AppState::new();
+            mock_conn(&cd, "cd", ConnectionMode::ConfirmDestructive);
+            let err = call(&cd, "cd", false)
+                .await
+                .expect_err(&format!("{name} should reject unconfirmed on confirm-destructive"));
+            assert_eq!(err, CONFIRM_MSG, "{name}: got {err}");
+            call(&cd, "cd", true)
+                .await
+                .unwrap_or_else(|e| panic!("{name} should pass when confirmed: {e}"));
+
+            // Normal passes regardless of confirmed.
+            let norm = AppState::new();
+            mock_conn(&norm, "norm", ConnectionMode::Normal);
+            call(&norm, "norm", false)
+                .await
+                .unwrap_or_else(|e| panic!("{name} should pass on a normal connection: {e}"));
+        }
+    }
+
+    // --- Part C: direct `guard_writable` unit tests (below the `_impl`
+    // coverage tables above, which exercise the guard indirectly through
+    // real commands). These pin down the guard's own contract in isolation.
+
+    /// Every `WriteOp` variant on a `Normal` connection (with meta present)
+    /// is allowed through, confirmed or not.
+    #[tokio::test]
+    async fn normal_with_meta_allows_every_op() {
+        let state = AppState::new();
+        mock_conn(&state, "norm", ConnectionMode::Normal);
+        for op in ALL_OPS {
+            guard_writable(&state, "norm", op, false)
+                .unwrap_or_else(|e| panic!("{op:?} confirmed=false should pass on normal: {e}"));
+            guard_writable(&state, "norm", op, true)
+                .unwrap_or_else(|e| panic!("{op:?} confirmed=true should pass on normal: {e}"));
+        }
+    }
+
+    /// A connection with no `connection_meta` entry at all defaults to
+    /// `Normal` (fail-open — this is an opt-in safeguard, not a security
+    /// boundary; see the module doc).
+    #[tokio::test]
+    async fn no_meta_fails_open_to_normal() {
+        let state = AppState::new();
+        for op in ALL_OPS {
+            guard_writable(&state, "unknown", op, false)
+                .unwrap_or_else(|e| panic!("{op:?} should fail open (no meta) to normal: {e}"));
+        }
+    }
+
+    /// `ReadOnly` rejects every op, destructive or not, confirmed or not.
+    #[tokio::test]
+    async fn read_only_blocks_destructive_and_non_destructive() {
+        let state = AppState::new();
+        mock_conn(&state, "ro", ConnectionMode::ReadOnly);
+        for (op, confirmed) in [
+            (WriteOp::Insert, false),
+            (WriteOp::Insert, true),
+            (WriteOp::DeleteMany, false),
+            (WriteOp::DeleteMany, true),
+        ] {
+            let err = guard_writable(&state, "ro", op, confirmed)
+                .expect_err(&format!("{op:?} confirmed={confirmed} should reject on read-only"));
+            assert_eq!(err, READ_ONLY_MSG);
+        }
+    }
+
+    /// `ConfirmDestructive`: non-destructive ops always pass; destructive
+    /// ops pass only when `confirmed`.
+    #[tokio::test]
+    async fn confirm_destructive_gates_only_destructive_ops() {
+        let state = AppState::new();
+        mock_conn(&state, "cd", ConnectionMode::ConfirmDestructive);
+
+        guard_writable(&state, "cd", WriteOp::Insert, false)
+            .expect("non-destructive op should pass unconfirmed on confirm-destructive");
+        guard_writable(&state, "cd", WriteOp::DeleteMany, true)
+            .expect("destructive op should pass when confirmed");
+        let err = guard_writable(&state, "cd", WriteOp::DeleteMany, false)
+            .expect_err("destructive op should reject when unconfirmed");
+        assert_eq!(err, CONFIRM_MSG);
+    }
+
+    /// All `WriteOp` variants, for the "every op" sweeps above. Kept as a
+    /// literal array (not derived) so adding a variant to the enum forces a
+    /// conscious edit here too.
+    const ALL_OPS: [WriteOp; 20] = [
+        WriteOp::Insert,
+        WriteOp::UpdateOne,
+        WriteOp::UpdateMany,
+        WriteOp::DeleteOne,
+        WriteOp::DeleteMany,
+        WriteOp::ReplaceOne,
+        WriteOp::Drop,
+        WriteOp::Rename,
+        WriteOp::CreateCollection,
+        WriteOp::CreateView,
+        WriteOp::CreateIndex,
+        WriteOp::DropIndex,
+        WriteOp::CollMod,
+        WriteOp::GridFsWrite,
+        WriteOp::Import,
+        WriteOp::Generate,
+        WriteOp::CopyWrite,
+        WriteOp::RestoreWrite,
+        WriteOp::UserWrite,
+        WriteOp::ServerAdmin,
+    ];
 }

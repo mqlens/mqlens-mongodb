@@ -349,6 +349,7 @@ mod integration {
             "people",
             r#"{"tier":"silver"}"#,
             r#"{"$set":{"tier":"bronze"}}"#,
+            true,
         )
         .await
         .expect("update_many");
@@ -359,7 +360,7 @@ mod integration {
             .await
             .expect("delete_one");
         assert_eq!(del_one, 1);
-        let del_many = delete_many_impl(&state, &id, &db, "people", r#"{"tier":"bronze"}"#)
+        let del_many = delete_many_impl(&state, &id, &db, "people", r#"{"tier":"bronze"}"#, true)
             .await
             .expect("delete_many");
         assert_eq!(del_many, 2);
@@ -440,7 +441,7 @@ mod integration {
             .expect("index for rename");
 
         // rename_collection real path (admin renameCollection).
-        rename_collection_impl(&state, &id, &db, "old_name", "new_name")
+        rename_collection_impl(&state, &id, &db, "old_name", "new_name", true)
             .await
             .expect("rename collection");
         let cols = list_collections_impl(&state, &id, &db).await.unwrap();
@@ -449,7 +450,7 @@ mod integration {
 
         // rename_database: copy all collections + indexes + docs to a new db, drop source.
         let target = format!("{}_renamed", db);
-        let result = rename_database_impl(&state, &id, &db, &target, true)
+        let result = rename_database_impl(&state, &id, &db, &target, true, true)
             .await
             .expect("rename database");
         assert_eq!(result.collections, 1);
@@ -473,7 +474,7 @@ mod integration {
         // Error: target already exists.
         let dup_target = format!("{}_dup", db);
         seed(&state, &id, &dup_target, "c", vec![doc! { "z": 1 }]).await;
-        let exists_err = rename_database_impl(&state, &id, &target, &dup_target, false)
+        let exists_err = rename_database_impl(&state, &id, &target, &dup_target, false, true)
             .await
             .err()
             .expect("rename to existing target should error");
@@ -481,7 +482,7 @@ mod integration {
 
         // Error: source does not exist.
         let missing_err =
-            rename_database_impl(&state, &id, "definitely_missing_db_xyz", "whatever", false)
+            rename_database_impl(&state, &id, "definitely_missing_db_xyz", "whatever", false, true)
                 .await
                 .err()
                 .expect("rename of missing source should error");
@@ -503,7 +504,7 @@ mod integration {
             .await
             .expect("create view");
         let target = format!("{}_vrenamed", db);
-        let err = rename_database_impl(&state, &id, &db, &target, false)
+        let err = rename_database_impl(&state, &id, &db, &target, false, true)
             .await
             .err()
             .expect("rename of db with a view should error");
@@ -518,7 +519,7 @@ mod integration {
             return;
         };
         seed(&state, &id, &db, "tmp", vec![doc! { "a": 1 }]).await;
-        drop_collection_impl(&state, &id, &db, "tmp")
+        drop_collection_impl(&state, &id, &db, "tmp", true)
             .await
             .expect("drop collection");
         let cols = list_collections_impl(&state, &id, &db).await.unwrap();
@@ -526,7 +527,7 @@ mod integration {
 
         // drop_database real path.
         seed(&state, &id, &db, "again", vec![doc! { "a": 1 }]).await;
-        drop_database_impl(&state, &id, &db)
+        drop_database_impl(&state, &id, &db, true)
             .await
             .expect("drop database");
         cleanup(&state, &id, &db).await;

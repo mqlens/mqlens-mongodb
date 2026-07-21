@@ -664,7 +664,7 @@ pub async fn update_many_tool_impl(state: &AppState, profiles_path: &Path, args:
     require_confirm(args._confirm, "update_many")?;
     let filter_json = serde_json::to_string(&args.filter).map_err(|e| format!("serialize filter: {e}"))?;
     let update_json = serde_json::to_string(&args.update).map_err(|e| format!("serialize update: {e}"))?;
-    let modified_count = crate::update_many_impl(state, &args.connection_id, &args.database, &args.collection, &filter_json, &update_json).await?;
+    let modified_count = crate::update_many_impl(state, &args.connection_id, &args.database, &args.collection, &filter_json, &update_json, args._confirm).await?;
     Ok(UpdateManyResult { modified_count })
 }
 
@@ -694,7 +694,7 @@ pub async fn delete_many_tool_impl(state: &AppState, profiles_path: &Path, args:
     require_mcp_connection(state, profiles_path, &args.connection_id)?;
     require_confirm(args._confirm, "delete_many")?;
     let filter_json = serde_json::to_string(&args.filter).map_err(|e| format!("serialize filter: {e}"))?;
-    let deleted_count = crate::delete_many_impl(state, &args.connection_id, &args.database, &args.collection, &filter_json).await?;
+    let deleted_count = crate::delete_many_impl(state, &args.connection_id, &args.database, &args.collection, &filter_json, args._confirm).await?;
     Ok(DeleteManyResult { deleted_count })
 }
 

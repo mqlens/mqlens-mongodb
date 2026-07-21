@@ -207,7 +207,10 @@ pub async fn delete_many_impl(
     database: &str,
     collection: &str,
     filter: &str,
+    confirmed: bool,
 ) -> Result<u64, String> {
+    guard_writable(state, id, WriteOp::DeleteMany, confirmed)?;
+
     let filter_doc = json_to_bson_document(filter)?;
     if connection_is_mock(state, id)? {
         return Ok(0); // mock connections don't persist deletes
@@ -229,7 +232,10 @@ pub async fn update_many_impl(
     collection: &str,
     filter: &str,
     update: &str,
+    confirmed: bool,
 ) -> Result<u64, String> {
+    guard_writable(state, id, WriteOp::UpdateMany, confirmed)?;
+
     let filter_doc = json_to_bson_document(filter)?;
     let update_doc = json_to_bson_document(update)?;
     // Require an operator-keyed update ({ "$set": … }); reject bare replacements
