@@ -1571,6 +1571,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
                     size="sm"
                     className="h-7 shrink-0 gap-1.5 text-[11px] font-semibold"
                     onClick={() => onCreateSuggestedIndex?.(indexSuggestion)}
+                    disabled={isReadOnly}
+                    title={isReadOnly ? READ_ONLY_TOOLTIP : undefined}
                     data-testid="create-suggested-index-btn"
                   >
                     Create Index

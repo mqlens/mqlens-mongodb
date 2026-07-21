@@ -462,6 +462,44 @@ describe('DataGrid — connectionMode (#188 Task 6: disable write UI on read_onl
       expect(screen.getByTestId(testId)).not.toBeDisabled();
     }
   });
+
+  // The COLLSCAN "Create Index" suggestion button is a real write
+  // (create_index, backend-guarded on read_only) even though it lives in the
+  // Explain tab rather than the toolbar — same clickable-then-errors UX this
+  // task exists to prevent, so it gets the same disabled+tooltip treatment.
+  const collscanExplain = JSON.stringify({
+    queryPlanner: {
+      namespace: 'shop.orders',
+      parsedQuery: { status: { $eq: 'open' } },
+      winningPlan: { stage: 'COLLSCAN' },
+    },
+  });
+
+  it('read_only: disables the Create Index suggestion button with a tooltip', () => {
+    render(
+      <DataGrid
+        documents={mockDocuments}
+        explainResult={collscanExplain}
+        onCreateSuggestedIndex={() => {}}
+        connectionMode="read_only"
+      />
+    );
+    const btn = screen.getByTestId('create-suggested-index-btn');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Connection is read-only');
+  });
+
+  it('confirm_destructive: leaves the Create Index suggestion button ENABLED (non-destructive)', () => {
+    render(
+      <DataGrid
+        documents={mockDocuments}
+        explainResult={collscanExplain}
+        onCreateSuggestedIndex={() => {}}
+        connectionMode="confirm_destructive"
+      />
+    );
+    expect(screen.getByTestId('create-suggested-index-btn')).not.toBeDisabled();
+  });
 });
 
 describe('DataGrid — Compare documents', () => {
