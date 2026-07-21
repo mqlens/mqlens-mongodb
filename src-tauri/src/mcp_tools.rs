@@ -30,6 +30,7 @@
 //! straight through as the tool's text content.
 
 use crate::state::{ConnectionEntry, LockExt};
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{AppState, CollectionInfo};
 // `rmcp::schemars` re-exports the `schemars` crate (server feature); the
 // `JsonSchema` derive macro's generated code refers to the crate by its bare
@@ -620,6 +621,16 @@ pub fn insert_one_summary(database: &str, collection: &str, document: &serde_jso
 
 pub async fn insert_one_impl(state: &AppState, profiles_path: &Path, args: InsertOneArgs) -> Result<InsertOneResult, String> {
     require_mcp_connection(state, profiles_path, &args.connection_id)?;
+    // Connection-mode guard is the OUTER gate (#188 Task 4): it runs after
+    // `require_mcp_connection` (an agent must still be opted-in/authorized
+    // first) but before `require_confirm`, so a read-only or unconfirmed
+    // confirm-destructive connection rejects here — before the tool ever
+    // gets to its own `_confirm` message. On a read-only connection ALL
+    // four MCP write tools error with the read-only message, even when
+    // `_confirm: true`. `insert_one` is non-destructive, so it passes
+    // `confirmed=false`: `ConnectionMode::ConfirmDestructive` never blocks
+    // it regardless.
+    guard_writable(state, &args.connection_id, WriteOp::Insert, false)?;
     require_confirm(args._confirm, "insert_one")?;
     let document_json = serde_json::to_string(&args.document).map_err(|e| format!("serialize document: {e}"))?;
     let inserted_id = crate::insert_document_impl(state, &args.connection_id, &args.database, &args.collection, &document_json).await?;
@@ -661,6 +672,13 @@ pub fn update_many_summary(database: &str, collection: &str, filter: &serde_json
 
 pub async fn update_many_tool_impl(state: &AppState, profiles_path: &Path, args: UpdateManyArgs) -> Result<UpdateManyResult, String> {
     require_mcp_connection(state, profiles_path, &args.connection_id)?;
+    // Outer gate (see `insert_one_impl`'s comment for the full rationale).
+    // `update_many` IS destructive (`WriteOp::is_destructive`), so on a
+    // `ConfirmDestructive` connection the guard also enforces `_confirm` —
+    // both it and `require_confirm` below would reject an unconfirmed call,
+    // but the guard runs first, so its `CONFIRM_MSG` wins over
+    // `require_confirm`'s `CONFIRM_REQUIRED` message.
+    guard_writable(state, &args.connection_id, WriteOp::UpdateMany, args._confirm)?;
     require_confirm(args._confirm, "update_many")?;
     let filter_json = serde_json::to_string(&args.filter).map_err(|e| format!("serialize filter: {e}"))?;
     let update_json = serde_json::to_string(&args.update).map_err(|e| format!("serialize update: {e}"))?;
@@ -692,6 +710,11 @@ pub fn delete_many_summary(database: &str, collection: &str, filter: &serde_json
 
 pub async fn delete_many_tool_impl(state: &AppState, profiles_path: &Path, args: DeleteManyArgs) -> Result<DeleteManyResult, String> {
     require_mcp_connection(state, profiles_path, &args.connection_id)?;
+    // Outer gate (see `insert_one_impl`'s comment). `delete_many` is
+    // destructive, same as `update_many`: on `ConfirmDestructive` the guard
+    // requires `_confirm` and, if unconfirmed, its `CONFIRM_MSG` wins over
+    // `require_confirm`'s message below since the guard runs first.
+    guard_writable(state, &args.connection_id, WriteOp::DeleteMany, args._confirm)?;
     require_confirm(args._confirm, "delete_many")?;
     let filter_json = serde_json::to_string(&args.filter).map_err(|e| format!("serialize filter: {e}"))?;
     let deleted_count = crate::delete_many_impl(state, &args.connection_id, &args.database, &args.collection, &filter_json, args._confirm).await?;
@@ -770,6 +793,10 @@ fn default_index_name(keys: &serde_json::Value) -> Result<String, String> {
 
 pub async fn create_index_tool_impl(state: &AppState, profiles_path: &Path, args: CreateIndexArgs) -> Result<CreateIndexResult, String> {
     require_mcp_connection(state, profiles_path, &args.connection_id)?;
+    // Outer gate (see `insert_one_impl`'s comment). `create_index` is
+    // non-destructive, so like `insert_one` it passes `confirmed=false` and
+    // is unaffected by `ConnectionMode::ConfirmDestructive`.
+    guard_writable(state, &args.connection_id, WriteOp::CreateIndex, false)?;
     require_confirm(args._confirm, "create_index")?;
     let name = match args.name {
         Some(n) if !n.trim().is_empty() => n,
@@ -828,6 +855,23 @@ mod tests {
             ssh: None,
             mcp_enabled,
             connection_mode: Default::default(),
+        }
+    }
+
+    /// An mcp-enabled profile carrying a non-default `ConnectionMode` —
+    /// `connect_impl` propagates `profile.connection_mode` into the live
+    /// connection's meta (see `connect_impl_propagates_the_profiles_connection_mode_into_meta`),
+    /// so connecting through this profile is how the Task 4 tests below get
+    /// a read-only/confirm-destructive MCP connection.
+    fn profile_with_mode(id: &str, name: &str, mode: crate::connections::ConnectionMode) -> ConnectionProfile {
+        ConnectionProfile {
+            id: id.to_string(),
+            name: name.to_string(),
+            uri: "mongodb://mock".to_string(),
+            color_tag: None,
+            ssh: None,
+            mcp_enabled: true,
+            connection_mode: mode,
         }
     }
 
@@ -1717,5 +1761,190 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err, CONNECTION_NOT_FOUND);
+    }
+
+    // ---- Task 4: connection-mode gate composition (guard_writable runs
+    // before require_confirm in all four write tools) ------------------
+
+    #[tokio::test]
+    async fn read_only_mcp_connection_blocks_all_four_write_tools_even_with_confirm_true() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("mode-gate-read-only.enc");
+        write_profiles(&path, &[profile_with_mode("p1", "RO", crate::connections::ConnectionMode::ReadOnly)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        // Every one of these passes `_confirm: true` — proving the guard,
+        // not `require_confirm`, is what's rejecting them: a confirm-only
+        // gate would have let these through.
+        let err = insert_one_impl(
+            &state,
+            &path,
+            InsertOneArgs { connection_id: id.clone(), database: "d".into(), collection: "c".into(), document: serde_json::json!({"a": 1}), _confirm: true },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("read-only"), "insert_one: {err}");
+
+        let err = update_many_tool_impl(
+            &state,
+            &path,
+            UpdateManyArgs {
+                connection_id: id.clone(),
+                database: "d".into(),
+                collection: "c".into(),
+                filter: serde_json::json!({}),
+                update: serde_json::json!({"$set": {"a": 1}}),
+                _confirm: true,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("read-only"), "update_many: {err}");
+
+        let err = delete_many_tool_impl(
+            &state,
+            &path,
+            DeleteManyArgs { connection_id: id.clone(), database: "d".into(), collection: "c".into(), filter: serde_json::json!({}), _confirm: true },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("read-only"), "delete_many: {err}");
+
+        let err = create_index_tool_impl(
+            &state,
+            &path,
+            CreateIndexArgs {
+                connection_id: id,
+                database: "d".into(),
+                collection: "c".into(),
+                keys: serde_json::json!({"a": 1}),
+                name: None,
+                unique: None,
+                sparse: None,
+                _confirm: true,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("read-only"), "create_index: {err}");
+    }
+
+    #[tokio::test]
+    async fn confirm_destructive_mcp_connection_the_guards_message_wins_over_require_confirms() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("mode-gate-confirm-destructive.enc");
+        write_profiles(&path, &[profile_with_mode("p1", "CD", crate::connections::ConnectionMode::ConfirmDestructive)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        // update_many / delete_many unconfirmed: BOTH `guard_writable` and
+        // `require_confirm` would reject, but the guard runs first, so its
+        // `write_guard::CONFIRM_MSG` is the error actually seen — not
+        // `require_confirm`'s `CONFIRM_REQUIRED`.
+        let err = update_many_tool_impl(
+            &state,
+            &path,
+            UpdateManyArgs {
+                connection_id: id.clone(),
+                database: "d".into(),
+                collection: "c".into(),
+                filter: serde_json::json!({}),
+                update: serde_json::json!({"$set": {"a": 1}}),
+                _confirm: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, crate::write_guard::CONFIRM_MSG, "the GUARD's message must win, not require_confirm's");
+        assert_ne!(err, CONFIRM_REQUIRED);
+
+        let err = delete_many_tool_impl(
+            &state,
+            &path,
+            DeleteManyArgs { connection_id: id.clone(), database: "d".into(), collection: "c".into(), filter: serde_json::json!({}), _confirm: false },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, crate::write_guard::CONFIRM_MSG, "the GUARD's message must win, not require_confirm's");
+
+        // Confirmed: passes the guard (and require_confirm), reaches the
+        // impl's documented mock no-op behavior.
+        let result = update_many_tool_impl(
+            &state,
+            &path,
+            UpdateManyArgs {
+                connection_id: id.clone(),
+                database: "d".into(),
+                collection: "c".into(),
+                filter: serde_json::json!({}),
+                update: serde_json::json!({"$set": {"a": 1}}),
+                _confirm: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.modified_count, 0);
+
+        let result = delete_many_tool_impl(
+            &state,
+            &path,
+            DeleteManyArgs { connection_id: id.clone(), database: "d".into(), collection: "c".into(), filter: serde_json::json!({}), _confirm: true },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.deleted_count, 0);
+
+        // insert_one / create_index are non-destructive — `WriteOp::is_destructive`
+        // doesn't cover them, so `ConnectionMode::ConfirmDestructive` never
+        // blocks them; they pass with `_confirm: true` same as on a normal
+        // connection.
+        let result = insert_one_impl(
+            &state,
+            &path,
+            InsertOneArgs { connection_id: id.clone(), database: "d".into(), collection: "c".into(), document: serde_json::json!({"a": 1}), _confirm: true },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.inserted_id, serde_json::Value::String("mock-inserted-id".to_string()));
+
+        let result = create_index_tool_impl(
+            &state,
+            &path,
+            CreateIndexArgs {
+                connection_id: id,
+                database: "d".into(),
+                collection: "c".into(),
+                keys: serde_json::json!({"a": 1}),
+                name: None,
+                unique: None,
+                sparse: None,
+                _confirm: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.name, "a_1");
+    }
+
+    #[tokio::test]
+    async fn normal_mcp_connection_unchanged_require_confirm_still_blocks_unconfirmed_writes() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("mode-gate-normal.enc");
+        write_profiles(&path, &[profile("p1", "Normal", true)]);
+        let id = connect_impl(&state, &path, "p1").await.unwrap();
+
+        // On a `Normal` connection the guard always passes, so the
+        // pre-existing `require_confirm` behavior is exactly what fires —
+        // unchanged from before Task 4.
+        let err = insert_one_impl(
+            &state,
+            &path,
+            InsertOneArgs { connection_id: id, database: "d".into(), collection: "c".into(), document: serde_json::json!({"a": 1}), _confirm: false },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, CONFIRM_REQUIRED);
     }
 }
