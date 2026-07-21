@@ -664,6 +664,65 @@ mod tests {
         );
     }
 
+    /// #188 security review Fix 4 (IMPORTANT): $out/$merge in an export
+    /// pipeline is rejected explicitly by `build_source` now, not just
+    /// incidentally (a $count/$limit stage used to get appended after the
+    /// user's pipeline elsewhere, which happened to make $out/$merge fail
+    /// too — but that's not a real ban a future refactor couldn't remove).
+    /// Rejected before the connection is even looked up (`build_source`
+    /// runs first in `start_filtered_export_impl`), so "missing" doesn't
+    /// need to resolve to a real connection.
+    #[tokio::test]
+    async fn test_filtered_export_rejects_out_and_merge_pipeline() {
+        let state = AppState::new();
+
+        let out_err = start_filtered_export_impl(
+            &state,
+            "missing",
+            "db",
+            "coll",
+            "json",
+            "/tmp/agg-out.json",
+            "{}",
+            "{}",
+            "{}",
+            "[{\"$out\":\"target\"}]",
+            None,
+            None,
+            None,
+        )
+        .await
+        .err()
+        .expect("$out export pipeline should be rejected");
+        assert_eq!(
+            out_err,
+            "aggregation stages $out/$merge are not allowed in an export pipeline"
+        );
+
+        let merge_err = start_filtered_export_impl(
+            &state,
+            "missing",
+            "db",
+            "coll",
+            "json",
+            "/tmp/agg-merge.json",
+            "{}",
+            "{}",
+            "{}",
+            "[{\"$merge\":{\"into\":\"target\"}}]",
+            None,
+            None,
+            None,
+        )
+        .await
+        .err()
+        .expect("$merge export pipeline should be rejected");
+        assert_eq!(
+            merge_err,
+            "aggregation stages $out/$merge are not allowed in an export pipeline"
+        );
+    }
+
     #[tokio::test]
     async fn test_filtered_export_validates_format_path_and_connection() {
         let state = AppState::new();
@@ -1442,7 +1501,9 @@ mod tests {
             .expect("connect mock");
 
         // Malformed pipeline JSON fails clearly before touching the connection.
-        let bad = execute_aggregate_impl(&state, &conn_id, "sales_db", "products", "[{bad}]").await;
+        let bad =
+            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", "[{bad}]", false)
+                .await;
         assert!(
             bad.unwrap_err()
                 .contains("Invalid aggregation pipeline JSON"),
@@ -1451,14 +1512,16 @@ mod tests {
 
         // A pipeline that isn't a JSON array is rejected.
         let not_array =
-            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", "{}").await;
+            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", "{}", false).await;
         assert!(
             not_array.unwrap_err().contains("must be a JSON array"),
             "non-array pipeline should be rejected"
         );
 
-        let bad_stage =
-            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", r#"["bad"]"#).await;
+        let bad_stage = execute_aggregate_impl(
+            &state, &conn_id, "sales_db", "products", r#"["bad"]"#, false,
+        )
+        .await;
         assert!(
             bad_stage.unwrap_err().contains("Invalid aggregation stage"),
             "non-document stage should be rejected"
@@ -1467,12 +1530,108 @@ mod tests {
         // A well-formed pipeline on a mock connection reports aggregation is unsupported there.
         let pipeline = r#"[{"$match": {"category": "Electronics"}}, {"$count": "count"}]"#;
         let mock_res =
-            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", pipeline).await;
+            execute_aggregate_impl(&state, &conn_id, "sales_db", "products", pipeline, false)
+                .await;
         assert!(
             mock_res
                 .unwrap_err()
                 .contains("not supported on mock connections"),
             "aggregation on a mock connection should be rejected"
+        );
+    }
+
+    /// #188 security review Fix 1 (CRITICAL): `execute_aggregate_impl` must
+    /// guard `$out`/`$merge` stages exactly like every other write — but
+    /// ONLY when such a stage is present, so a pure-read aggregation keeps
+    /// working on a `read_only` connection. All four cases run against mock
+    /// connections; once the guard lets a call through it still fails with
+    /// the pre-existing "not supported on mock connections" message, which
+    /// is how these tests prove the guard didn't intercept it without
+    /// needing a real MongoDB server.
+    #[tokio::test]
+    async fn test_execute_aggregate_guards_out_and_merge_stages_by_mode() {
+        let out_pipeline = r#"[{"$match": {"a": 1}}, {"$out": "target_coll"}]"#;
+        let merge_pipeline = r#"[{"$merge": {"into": "target_coll"}}]"#;
+        let read_pipeline = r#"[{"$match": {"category": "Electronics"}}, {"$count": "count"}]"#;
+
+        // ReadOnly blocks a $out/$merge pipeline regardless of `confirmed`.
+        let ro_state = AppState::new();
+        let ro_id = connect_db_impl(&ro_state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        set_connection_meta_impl(
+            &ro_state,
+            &ro_id,
+            "p",
+            "ro",
+            false,
+            crate::connections::ConnectionMode::ReadOnly,
+        )
+        .unwrap();
+        for confirmed in [false, true] {
+            let err = execute_aggregate_impl(
+                &ro_state, &ro_id, "db", "coll", out_pipeline, confirmed,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err, crate::write_guard::READ_ONLY_MSG, "confirmed={confirmed}");
+        }
+        let err = execute_aggregate_impl(&ro_state, &ro_id, "db", "coll", merge_pipeline, true)
+            .await
+            .unwrap_err();
+        assert_eq!(err, crate::write_guard::READ_ONLY_MSG);
+
+        // The SAME read-only connection must NOT block a pure-read
+        // aggregation — it still errors (mock-connection message), but not
+        // with the read-only rejection, proving the guard only fires when a
+        // write stage is present.
+        let read_err = execute_aggregate_impl(&ro_state, &ro_id, "db", "coll", read_pipeline, false)
+            .await
+            .unwrap_err();
+        assert!(
+            read_err.contains("not supported on mock connections"),
+            "a pure-read aggregation must not be blocked on read_only, got: {read_err}"
+        );
+
+        // ConfirmDestructive blocks the $out pipeline unconfirmed, and lets
+        // it through the guard (reaching the mock-connection check) when
+        // confirmed.
+        let cd_state = AppState::new();
+        let cd_id = connect_db_impl(&cd_state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        set_connection_meta_impl(
+            &cd_state,
+            &cd_id,
+            "p",
+            "cd",
+            false,
+            crate::connections::ConnectionMode::ConfirmDestructive,
+        )
+        .unwrap();
+        let err = execute_aggregate_impl(&cd_state, &cd_id, "db", "coll", out_pipeline, false)
+            .await
+            .unwrap_err();
+        assert_eq!(err, crate::write_guard::CONFIRM_MSG);
+        let err = execute_aggregate_impl(&cd_state, &cd_id, "db", "coll", out_pipeline, true)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("not supported on mock connections"),
+            "a confirmed $out pipeline should pass the guard, got: {err}"
+        );
+
+        // Normal mode: an unconfirmed $out pipeline still runs past the guard.
+        let normal_state = AppState::new();
+        let normal_id = connect_db_impl(&normal_state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let err = execute_aggregate_impl(&normal_state, &normal_id, "db", "coll", out_pipeline, false)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("not supported on mock connections"),
+            "got: {err}"
         );
     }
 
@@ -1603,6 +1762,82 @@ mod tests {
             stop.is_ok(),
             "stopping an unknown session should be a no-op"
         );
+    }
+
+    /// #188 security review Fix 2 (CRITICAL): `start_mongosh_session_impl`
+    /// must refuse a `read_only` connection BEFORE spawning a shell —
+    /// mongosh pipes arbitrary free-form commands the guard can't classify
+    /// per-command. Proven on a mock connection (mongosh sessions are
+    /// already unconditionally rejected for mocks for an unrelated reason —
+    /// "External mongosh sessions require a real MongoDB URI" — so the
+    /// `ConfirmDestructive`/`Normal` cases below assert the error is NOT the
+    /// read-only rejection, i.e. the new gate let the call fall through to
+    /// that pre-existing mock restriction instead of blocking it itself).
+    #[tokio::test]
+    async fn test_start_mongosh_session_blocks_read_only_before_spawning() {
+        use crate::start_mongosh_session_impl;
+
+        let state = AppState::new();
+        let conn_id = connect_db_impl(&state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        set_connection_meta_impl(
+            &state,
+            &conn_id,
+            "p",
+            "ro",
+            false,
+            crate::connections::ConnectionMode::ReadOnly,
+        )
+        .unwrap();
+
+        let err = start_mongosh_session_impl(&state, &conn_id, "mongodb://mock", "db", "")
+            .await
+            .err()
+            .expect("read-only connection must refuse a mongosh session");
+        assert_eq!(err, crate::write_guard::READ_ONLY_MSG);
+    }
+
+    #[tokio::test]
+    async fn test_start_mongosh_session_confirm_destructive_and_normal_are_not_blocked_by_the_read_only_gate(
+    ) {
+        use crate::start_mongosh_session_impl;
+
+        let cd_state = AppState::new();
+        let cd_id = connect_db_impl(&cd_state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        set_connection_meta_impl(
+            &cd_state,
+            &cd_id,
+            "p",
+            "cd",
+            false,
+            crate::connections::ConnectionMode::ConfirmDestructive,
+        )
+        .unwrap();
+        let err = start_mongosh_session_impl(&cd_state, &cd_id, "mongodb://mock", "db", "")
+            .await
+            .err()
+            .expect("mock connections still can't run an external mongosh");
+        assert_ne!(
+            err,
+            crate::write_guard::READ_ONLY_MSG,
+            "confirm_destructive must not be blocked by the new read-only gate"
+        );
+        assert!(err.contains("real MongoDB URI"), "got: {err}");
+
+        // Normal (no connection_meta entry at all — fail-open default).
+        let normal_state = AppState::new();
+        let normal_id = connect_db_impl(&normal_state, "mongodb://mock", None)
+            .await
+            .expect("connect mock");
+        let err = start_mongosh_session_impl(&normal_state, &normal_id, "mongodb://mock", "db", "")
+            .await
+            .err()
+            .expect("mock connections still can't run an external mongosh");
+        assert_ne!(err, crate::write_guard::READ_ONLY_MSG);
+        assert!(err.contains("real MongoDB URI"), "got: {err}");
     }
 
     #[tokio::test]

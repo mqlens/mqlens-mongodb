@@ -87,6 +87,7 @@ import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib
 import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from './lib/paletteIndex';
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
 import { confirmByTypedName } from './lib/typedNameConfirm';
+import { detectAggregateWriteStage } from './lib/aggregateWriteStage';
 import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
@@ -2455,6 +2456,34 @@ function Workspace() {
   };
 
   const handleExecuteAggregate = async (tab: QueryTab, pipeline: Record<string, unknown>[]) => {
+    // #188 security review Fix 1: a $out/$merge stage writes the pipeline's
+    // output into a collection ($out replaces it, $merge upserts) — on a
+    // confirm_destructive (production-safeguard) connection that needs the
+    // same typed-name confirmation as drop_collection/delete_many. A
+    // read_only connection is backend-blocked (`execute_aggregate_impl`'s
+    // guard) regardless of what's sent here; the error surfaces inline via
+    // the existing `tab.error` catch below, same as every other query error.
+    const mode = activeConnections.find(c => c.id === tab.connectionId)?.mode ?? 'normal';
+    let confirmed = false;
+    if (mode === 'confirm_destructive') {
+      const writeStage = detectAggregateWriteStage(pipeline);
+      if (writeStage.hasWriteStage) {
+        const ok = await confirmByTypedName(prompt, {
+          title: 'Run aggregation',
+          kind: 'collection',
+          // Fall back to a "type CONFIRM" prompt when the $out/$merge
+          // target couldn't be extracted cleanly (e.g. an unrecognized
+          // shape) rather than silently under-matching a name.
+          expectedName: writeStage.target ?? 'CONFIRM',
+          message: writeStage.target
+            ? `This pipeline writes into "${writeStage.target}" ($out/$merge) on a safeguarded connection.\n\nType the target collection name to confirm.`
+            : 'This pipeline writes to a collection via $out/$merge on a safeguarded connection, but the target could not be determined automatically.\n\nType CONFIRM to proceed.',
+        });
+        if (!ok) return;
+        confirmed = true;
+      }
+    }
+
     setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, loading: true, error: null } : t));
 
     try {
@@ -2463,6 +2492,7 @@ function Workspace() {
         database: tab.db,
         collection: tab.collection,
         pipeline: JSON.stringify(pipeline),
+        confirmed,
       });
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));

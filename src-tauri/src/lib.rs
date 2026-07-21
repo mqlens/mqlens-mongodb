@@ -11,6 +11,8 @@ use uuid::Uuid;
 
 pub mod limits;
 pub mod ai;
+#[cfg(test)]
+mod command_coverage;
 pub mod connections;
 mod db;
 pub mod mcp;
@@ -593,6 +595,17 @@ pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, St
     Ok(list)
 }
 
+/// #188 security review Fix 2 (CRITICAL): mongosh pipes arbitrary free-form
+/// commands (`db.dropDatabase()`, `db.coll.deleteMany({})`, …) straight to
+/// the driver — there is no per-command `WriteOp` to gate like every other
+/// mutating `_impl`, so the only place a `read_only` connection can be kept
+/// safe is here, before a shell is ever spawned. `ConfirmDestructive`
+/// deliberately falls through unblocked: the shell is a deliberate
+/// free-form power-user tool (the mode banner already warns the user), and
+/// per-command typed confirmation is impossible for arbitrary shell input —
+/// this is a documented v1 limitation, not an oversight. See
+/// `write_guard::connection_mode`'s doc comment for why this reads the mode
+/// directly instead of going through `guard_writable`.
 pub async fn start_mongosh_session_impl(
     state: &AppState,
     connection_id: &str,
@@ -600,6 +613,11 @@ pub async fn start_mongosh_session_impl(
     database: &str,
     mongosh_path: &str,
 ) -> Result<MongoshSessionInfo, String> {
+    if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
+    {
+        return Err(write_guard::READ_ONLY_MSG.to_string());
+    }
+
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;
         *mocks
@@ -1004,6 +1022,13 @@ async fn set_connection_meta(
     // `connection_mode` at the moment it was connected (#188) -- the
     // frontend has the profile it just connected with, so it supplies this
     // rather than the backend re-reading the (encrypted) profile store.
+    // #188 security review Fix 5: this command is renderer-callable with an
+    // ARBITRARY `mode` -- a hostile/compromised renderer could call it
+    // directly and claim `Normal` for a connection it knows is production.
+    // That's a trust edge consistent with this feature's accepted model
+    // (see write_guard.rs's module doc: "an opt-in production safeguard,
+    // not a security boundary against a hostile local user"), not a gap
+    // introduced by this fix wave.
     set_connection_meta_impl(&state, &id, &profile_id, &name, false, mode)?;
     let connections = connection_list_impl(&state)?;
     // Broadcast is best-effort: a window that misses this event picks up
@@ -1405,8 +1430,12 @@ async fn execute_aggregate(
     database: String,
     collection: String,
     pipeline: String,
+    // `Option<bool>` (see `delete_many`'s comment): missing key -> `false`.
+    // #188 review Fix 1: only matters when `pipeline` carries a $out/$merge
+    // stage — see `execute_aggregate_impl`'s doc comment.
+    confirmed: Option<bool>,
 ) -> Result<Vec<String>, String> {
-    execute_aggregate_impl(&state, &id, &database, &collection, &pipeline).await
+    execute_aggregate_impl(&state, &id, &database, &collection, &pipeline, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]

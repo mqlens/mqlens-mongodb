@@ -193,7 +193,7 @@ mod integration {
 
         let pipeline =
             r#"[{"$group":{"_id":"$region","total":{"$sum":"$amount"}}},{"$sort":{"_id":1}}]"#;
-        let rows = execute_aggregate_impl(&state, &id, &db, "sales", pipeline)
+        let rows = execute_aggregate_impl(&state, &id, &db, "sales", pipeline, false)
             .await
             .expect("real aggregate");
         assert_eq!(rows.len(), 2);

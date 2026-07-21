@@ -30,7 +30,7 @@
 //! straight through as the tool's text content.
 
 use crate::state::{ConnectionEntry, LockExt};
-use crate::write_guard::{guard_writable, WriteOp};
+use crate::write_guard::{guard_writable, stage_is_disallowed, WriteOp};
 use crate::{AppState, CollectionInfo};
 // `rmcp::schemars` re-exports the `schemars` crate (server feature); the
 // `JsonSchema` derive macro's generated code refers to the crate by its bare
@@ -451,19 +451,9 @@ pub struct AggregateResult {
     pub truncated: Option<String>,
 }
 
-/// True iff `stage` is a JSON object whose *sole* top-level key is `$out`
-/// or `$merge`. Deliberately shallow: a `$lookup` sub-pipeline (or any
-/// other nested structure) that happens to carry the string `"$merge"` as a
-/// VALUE — not as its own single top-level key — must not false-positive.
-/// A multi-key object that happens to include `$out`/`$merge` alongside
-/// another key isn't a valid single-stage form anyway and is left for the
-/// driver/server to reject on its own terms.
-fn stage_is_disallowed(stage: &serde_json::Value) -> bool {
-    stage
-        .as_object()
-        .map(|obj| obj.len() == 1 && obj.keys().next().map(|k| k == "$out" || k == "$merge").unwrap_or(false))
-        .unwrap_or(false)
-}
+// `stage_is_disallowed` moved to `write_guard.rs` (#188 review Fix 1/4) so
+// the UI aggregation runner and the export pipeline share this exact
+// definition instead of each growing their own drifted copy.
 
 pub async fn aggregate_impl(state: &AppState, profiles_path: &Path, args: AggregateArgs) -> Result<AggregateResult, String> {
     require_mcp_connection(state, profiles_path, &args.connection_id)?;
@@ -477,7 +467,10 @@ pub async fn aggregate_impl(state: &AppState, profiles_path: &Path, args: Aggreg
     // `execute_aggregate_impl` is real-connection-only and already returns
     // a clean "not supported on mock connections" error for mocks — no
     // separate `state.mocks` pre-check needed on top of that.
-    let docs = crate::execute_aggregate_impl(state, &args.connection_id, &args.database, &args.collection, &pipeline_json).await?;
+    // `confirmed: false` — MCP already hard-rejects any $out/$merge stage
+    // above, so `execute_aggregate_impl`'s own guard never has a write
+    // stage left to gate on by the time it sees this pipeline.
+    let docs = crate::execute_aggregate_impl(state, &args.connection_id, &args.database, &args.collection, &pipeline_json, false).await?;
     let (documents, truncated) = cap_and_parse(docs, CAP_MAX_DOCS, CAP_MAX_BYTES)?;
     Ok(AggregateResult { documents, truncated })
 }
@@ -940,21 +933,8 @@ mod tests {
         assert!(out.ends_with('…'));
     }
 
-    // ---- $out/$merge rejection ---------------------------------------
-
-    #[test]
-    fn stage_is_disallowed_flags_only_exact_single_key_out_or_merge() {
-        assert!(stage_is_disallowed(&serde_json::json!({"$out": "target_coll"})));
-        assert!(stage_is_disallowed(&serde_json::json!({"$merge": {"into": "target_coll"}})));
-        assert!(!stage_is_disallowed(&serde_json::json!({"$match": {"status": "active"}})));
-        // $merge appearing as a VALUE (not the stage's own top-level key)
-        // inside a $lookup sub-pipeline must not false-positive.
-        assert!(!stage_is_disallowed(&serde_json::json!({
-            "$lookup": {"from": "other", "pipeline": [{"$project": {"note": "$merge"}}], "as": "joined"}
-        })));
-        // Multi-key object: not a valid single-stage form either way.
-        assert!(!stage_is_disallowed(&serde_json::json!({"$merge": "x", "extra": 1})));
-    }
+    // `stage_is_disallowed`'s own unit test moved to `write_guard.rs`
+    // alongside its new home (#188 review Fix 1/4).
 
     // ---- list_profiles / list_connections ------------------------------
 

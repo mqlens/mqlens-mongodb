@@ -961,6 +961,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleDropCollection = async (connectionId: string, dbName: string, collName: string) => {
     const conn = activeConnections.find((c) => c.id === connectionId);
+    // #188 security review Fix 5: block read-only BEFORE the confirm dialog
+    // and, critically, before the `isMock` branch below — which mutates the
+    // sidebar's local state directly and returns without ever calling the
+    // backend, so a mock connection never hit `guard_writable`'s rejection
+    // the way a real connection's `invoke('drop_collection', ...)` does.
+    // Same exact wording as the backend's `write_guard::READ_ONLY_MSG` so a
+    // mock and a real read-only connection behave identically here.
+    if (conn?.mode === 'read_only') {
+      toast(
+        'This connection is read-only (production safeguard). Change the connection mode in its settings to modify data.',
+        'error'
+      );
+      return;
+    }
     // #188 Task 3: on a confirm_destructive (production-safeguard) connection,
     // the ordinary yes/no confirm is replaced by a typed-name match — see
     // `confirmByTypedName`'s doc comment. `confirmed: true` is only ever
@@ -1106,6 +1120,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleDropDatabase = async (connectionId: string, dbName: string) => {
     const conn = activeConnections.find((c) => c.id === connectionId);
+    // #188 security review Fix 5: see handleDropCollection's comment on this
+    // same pattern — blocks the `isMock` branch below from dropping a
+    // read-only mock connection's database without ever reaching the backend.
+    if (conn?.mode === 'read_only') {
+      toast(
+        'This connection is read-only (production safeguard). Change the connection mode in its settings to modify data.',
+        'error'
+      );
+      return;
+    }
     // #188 Task 3: see handleDropCollection's comment on this same pattern.
     const confirmed = conn?.mode === 'confirm_destructive';
     if (confirmed) {

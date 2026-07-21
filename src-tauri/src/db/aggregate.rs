@@ -2,14 +2,27 @@
 
 use crate::limits::MAX_AGGREGATE_RESULTS;
 use crate::state::LockExt;
+use crate::write_guard::{guard_writable, stage_is_disallowed, WriteOp};
 use crate::AppState;
 
+/// #188 security review Fix 1 (CRITICAL): `$out`/`$merge` stages write the
+/// pipeline's output into a collection — `$out` replaces it outright,
+/// `$merge` upserts into it — so this runs the same "drop"-shaped risk as
+/// `drop_collection` on a safeguarded connection, yet unlike every other
+/// mutating `_impl` it wasn't guarded at all (the MCP `aggregate` tool
+/// rejects `$out`/`$merge` outright via the same [`stage_is_disallowed`];
+/// the UI path historically ran the pipeline verbatim). Only guard when a
+/// write stage is actually present — a pure-read aggregation must keep
+/// working on a `read_only` connection, which is why the check runs on the
+/// already-parsed `stages_val` up front rather than blanket-guarding every
+/// call with `WriteOp::Drop`.
 pub async fn execute_aggregate_impl(
     state: &AppState,
     id: &str,
     database: &str,
     collection: &str,
     pipeline: &str,
+    confirmed: bool,
 ) -> Result<Vec<String>, String> {
     // Parse and validate the pipeline (a JSON array of stage documents) up front so a
     // malformed pipeline fails clearly regardless of the connection type.
@@ -22,6 +35,15 @@ pub async fn execute_aggregate_impl(
     let stages_val = pipeline_val
         .as_array()
         .ok_or_else(|| "Aggregation pipeline must be a JSON array of stages".to_string())?;
+
+    // Guard BEFORE any DB work — but only when a stage actually writes.
+    // `WriteOp::Drop` is the closest existing shape (it's in
+    // `WriteOp::is_destructive`, so `ConfirmDestructive` demands
+    // `confirmed`, and `ReadOnly` blocks unconditionally either way).
+    if stages_val.iter().any(stage_is_disallowed) {
+        guard_writable(state, id, WriteOp::Drop, confirmed)?;
+    }
+
     let mut stages: Vec<mongodb::bson::Document> = Vec::with_capacity(stages_val.len());
     for stage in stages_val {
         let doc = mongodb::bson::to_document(stage)

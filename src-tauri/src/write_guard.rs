@@ -30,6 +30,35 @@
 //! `confirmed=false` (its command has no `confirmed` arg at all — dropping
 //! an index isn't considered destructive enough to require typed
 //! confirmation, unlike dropping a collection/database).
+//!
+//! Security review #188 fix wave (Fix 1/2): `execute_aggregate_impl` and
+//! `start_mongosh_session_impl` are deliberately NOT rows in either
+//! `non_destructive_cases` or `destructive_cases` below, even though both
+//! are now guarded. Both tables share one test loop per table with a fixed
+//! assumption baked in — "every case rejects on read-only regardless of
+//! input" (non-destructive) or "the exact same fixed input passes on Normal,
+//! rejects unconfirmed/passes confirmed on ConfirmDestructive, and always
+//! rejects on ReadOnly" (destructive) — and neither holds for these two:
+//! `execute_aggregate_impl` only guards when the pipeline actually carries a
+//! `$out`/`$merge` stage (a plain read pipeline must NOT be blocked on
+//! read-only, breaking the non-destructive table's assumption), and neither
+//! impl can return `Ok` on a mock connection the way the rest of this
+//! module's mock-backed cases do (aggregation and external mongosh sessions
+//! both hard-reject mocks unconditionally), breaking the destructive
+//! table's "passes on Normal" assumption. Forcing either into a table built
+//! for a different shape would either not compile against the shared
+//! closure signature or assert something false. Each has its own dedicated
+//! multi-mode test instead: `tests::test_execute_aggregate_guards_out_and_merge_stages_by_mode`
+//! and `tests::test_start_mongosh_session_blocks_read_only_before_spawning`
+//! / `tests::test_start_mongosh_session_confirm_destructive_and_normal_are_not_blocked_by_the_read_only_gate`
+//! (both in `tests.rs`). The AUTHORITATIVE full-command enumeration is
+//! `command_coverage.rs` (Fix 3): both `execute_aggregate` and
+//! `start_mongosh_session` (plus `run_mongosh_command`, transitively
+//! protected by the session-start gate) are in its `GUARDED_WRITE_COMMANDS`
+//! set, which is cross-checked against every command actually registered in
+//! `lib.rs`'s `generate_handler!` — that's the mechanism that would have
+//! caught both of these being unguarded in the first place, not another
+//! hand-maintained table shaped like this module's.
 
 use crate::connections::ConnectionMode;
 use crate::state::{AppState, LockExt};
@@ -80,6 +109,18 @@ pub const READ_ONLY_MSG: &str =
 pub const CONFIRM_MSG: &str =
     "This operation modifies production data on a safeguarded connection. Confirm by typing the collection name.";
 
+/// The live mode of `connection_id`'s connection — `Normal` (fail-open) if
+/// there's no `connection_meta` entry, same default `guard_writable` uses.
+/// Exposed for callers that can't express their check as a single
+/// `WriteOp`/`guard_writable` call: the embedded mongosh shell
+/// (`start_mongosh_session_impl`) blocks `ReadOnly` at session creation
+/// instead of per-command, since free-form shell input has no `WriteOp` to
+/// classify it by. See that function's doc comment for the full rationale.
+pub fn connection_mode(state: &AppState, connection_id: &str) -> Result<ConnectionMode, String> {
+    let meta = state.connection_meta.lock_safe()?;
+    Ok(meta.get(connection_id).map(|m| m.mode).unwrap_or_default())
+}
+
 /// The single choke point for every mutating command. `connection_id` is
 /// always the connection the write actually lands on — for copy commands
 /// that's the TARGET connection, not the source, since a copy writes into
@@ -92,11 +133,7 @@ pub fn guard_writable(
     op: WriteOp,
     confirmed: bool,
 ) -> Result<(), String> {
-    let mode = {
-        let meta = state.connection_meta.lock_safe()?;
-        meta.get(connection_id).map(|m| m.mode).unwrap_or_default()
-    };
-    match mode {
+    match connection_mode(state, connection_id)? {
         ConnectionMode::Normal => Ok(()),
         ConnectionMode::ReadOnly => Err(READ_ONLY_MSG.to_string()),
         ConnectionMode::ConfirmDestructive => {
@@ -107,6 +144,35 @@ pub fn guard_writable(
             }
         }
     }
+}
+
+/// True iff `stage` is a JSON object whose *sole* top-level key is `$out`
+/// or `$merge` — the two aggregation stages that write to a collection
+/// instead of just reading one. Shared by every caller that has to tell a
+/// write-shaped pipeline from a read-shaped one (security review #188
+/// fix wave): the MCP `aggregate`/`explain` tools (`mcp_tools.rs`, which
+/// reject any such stage outright — MCP has no confirmation UI), the UI
+/// aggregation runner (`db::aggregate::execute_aggregate_impl`, which
+/// routes it through [`guard_writable`] like any other write instead of an
+/// outright ban), and the export pipeline (`db::export::mod::build_source`,
+/// which rejects it like MCP does — an export must never mutate data).
+/// Deliberately shallow: a `$lookup` sub-pipeline that happens to carry the
+/// string `"$merge"` as a VALUE — not as its own single top-level key —
+/// must not false-positive. A multi-key object that happens to include
+/// `$out`/`$merge` alongside another key isn't a valid single-stage form
+/// anyway and is left for the driver/server to reject on its own terms.
+pub fn stage_is_disallowed(stage: &serde_json::Value) -> bool {
+    stage
+        .as_object()
+        .map(|obj| {
+            obj.len() == 1
+                && obj
+                    .keys()
+                    .next()
+                    .map(|k| k == "$out" || k == "$merge")
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -564,6 +630,45 @@ mod tests {
         let err = guard_writable(&state, "cd", WriteOp::DeleteMany, false)
             .expect_err("destructive op should reject when unconfirmed");
         assert_eq!(err, CONFIRM_MSG);
+    }
+
+    /// Moved here from `mcp_tools.rs` (#188 review Fix 1/4) so both the MCP
+    /// tools and `execute_aggregate_impl`/`build_source` share one
+    /// definition instead of drifting apart.
+    #[test]
+    fn stage_is_disallowed_flags_only_exact_single_key_out_or_merge() {
+        assert!(stage_is_disallowed(&serde_json::json!({"$out": "target_coll"})));
+        assert!(stage_is_disallowed(
+            &serde_json::json!({"$merge": {"into": "target_coll"}})
+        ));
+        assert!(!stage_is_disallowed(
+            &serde_json::json!({"$match": {"status": "active"}})
+        ));
+        // $merge appearing as a VALUE (not the stage's own top-level key)
+        // inside a $lookup sub-pipeline must not false-positive.
+        assert!(!stage_is_disallowed(&serde_json::json!({
+            "$lookup": {"from": "other", "pipeline": [{"$project": {"note": "$merge"}}], "as": "joined"}
+        })));
+        // A multi-key object isn't a valid single-stage $out/$merge form.
+        assert!(!stage_is_disallowed(
+            &serde_json::json!({"$out": "x", "$extra": 1})
+        ));
+    }
+
+    /// `connection_mode` mirrors `guard_writable`'s own mode lookup: present
+    /// meta returns that mode, absent meta fails open to `Normal`.
+    #[tokio::test]
+    async fn connection_mode_reads_meta_and_fails_open() {
+        let state = AppState::new();
+        mock_conn(&state, "ro", ConnectionMode::ReadOnly);
+        assert_eq!(
+            connection_mode(&state, "ro").unwrap(),
+            ConnectionMode::ReadOnly
+        );
+        assert_eq!(
+            connection_mode(&state, "unknown").unwrap(),
+            ConnectionMode::Normal
+        );
     }
 
     /// All `WriteOp` variants, for the "every op" sweeps above. Kept as a

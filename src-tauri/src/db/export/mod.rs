@@ -19,6 +19,7 @@ use options::ExportOptions;
 use crate::state::LockExt;
 use crate::{mock_db, AppState, TaskInfo};
 use crate::db::tasks::{fail_task, finish_task, now_ms, update_task};
+use crate::write_guard::stage_is_disallowed;
 use futures::stream::{Stream, StreamExt};
 use mongodb::bson::{doc, Document};
 use mongodb::Client;
@@ -665,6 +666,18 @@ fn build_source(
         let stages_val = pipeline_val
             .as_array()
             .ok_or_else(|| "Aggregation pipeline must be a JSON array of stages".to_string())?;
+        // #188 security review Fix 4: reject $out/$merge explicitly instead
+        // of relying on the accident that a $count/$limit stage gets
+        // appended after the user's pipeline elsewhere in this module,
+        // which happened to make $out/$merge fail anyway. That's incidental
+        // behavior a future refactor could silently remove — an export
+        // must never mutate data, so ban it here directly, matching the MCP
+        // `aggregate`/`explain` tools' own outright rejection.
+        if stages_val.iter().any(stage_is_disallowed) {
+            return Err(
+                "aggregation stages $out/$merge are not allowed in an export pipeline".to_string(),
+            );
+        }
         let mut stages: Vec<Document> = Vec::with_capacity(stages_val.len());
         for stage in stages_val {
             let stage_doc = mongodb::bson::to_document(stage)
