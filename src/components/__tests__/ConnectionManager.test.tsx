@@ -1227,6 +1227,7 @@ describe('URI import and export', () => {
     mockSaveDialog.mockReset();
     mockReadTextFile.mockReset();
     mockWriteTextFile.mockReset();
+    localStorage.clear();
   });
 
   it('imports a URI from the clipboard into the editor form', async () => {
@@ -1314,6 +1315,117 @@ describe('URI import and export', () => {
 
     await waitFor(() => {
       expect(mockWriteTextFile).toHaveBeenCalledWith('/tmp/conn.txt', `${redacted}\n`);
+    });
+  });
+
+  it('exports all saved profile URIs to clipboard as JSON without passwords by default', async () => {
+    const { writeText } = setupClipboard();
+    renderManager([
+      { id: 'p1', name: 'Local', uri: 'mongodb://user:secret@localhost:27017/local', ssh: null, color_tag: null },
+      { id: 'p2', name: 'Prod', uri: 'mongodb://admin:pw@prod.example.com:27017/prod?replicaSet=rs0', ssh: null, color_tag: null },
+    ]);
+
+    fireEvent.click((await screen.findAllByText('Local'))[0]);
+    fireEvent.click(screen.getByTestId('export-all-uris-btn'));
+    await screen.findByTestId('export-uri-preview');
+    fireEvent.click(screen.getByTestId('export-copy-btn'));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(
+        JSON.stringify(
+          {
+            folders: [
+              { name: 'Local resources', connections: [] },
+            ],
+            connections: [
+              { name: 'Local', uri: 'mongodb://user@localhost:27017/local' },
+              { name: 'Prod', uri: 'mongodb://admin@prod.example.com:27017/prod?replicaSet=rs0' },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+    });
+  });
+
+  it('imports multiple connections from MQLens JSON including folders', async () => {
+    const saved: Array<{ name: string; uri: string }> = [];
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        saved.push({ name: args.profile.name, uri: args.profile.uri });
+        return Promise.resolve();
+      }
+      return Promise.resolve([]);
+    });
+    setupClipboard();
+    mockOpenDialog.mockResolvedValue('/tmp/connections.json');
+    mockReadTextFile.mockResolvedValue(JSON.stringify({
+      folders: [
+        {
+          name: 'Team',
+          connections: [
+            { name: 'Atlas', uri: 'mongodb+srv://user:pw@cluster0.example.net/app' },
+          ],
+        },
+      ],
+      connections: [
+        { name: 'Local', uri: 'mongodb://localhost:27017' },
+      ],
+    }));
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await openImportMenu();
+    fireEvent.click(await screen.findByTestId('import-from-file'));
+    fireEvent.click(await screen.findByRole('button', { name: /import all/i }));
+
+    await waitFor(() => {
+      expect(saved).toEqual([
+        { name: 'Atlas', uri: 'mongodb+srv://user:pw@cluster0.example.net/app' },
+        { name: 'Local', uri: 'mongodb://localhost:27017' },
+      ]);
+    });
+
+    const storedFolders = JSON.parse(localStorage.getItem('mqlens_folders') || '[]') as Array<{ name: string }>;
+    expect(storedFolders.some((folder) => folder.name === 'Team')).toBe(true);
+    const profileMap = JSON.parse(localStorage.getItem('mqlens_profile_folders') || '{}') as Record<string, string>;
+    expect(Object.keys(profileMap).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('imports multiple URIs from a Studio 3T-style export file', async () => {
+    const saved: Array<{ name: string; uri: string }> = [];
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        saved.push({ name: args.profile.name, uri: args.profile.uri });
+        return Promise.resolve();
+      }
+      return Promise.resolve([]);
+    });
+    setupClipboard();
+    mockOpenDialog.mockResolvedValue('/tmp/studio3t.uri');
+    mockReadTextFile.mockResolvedValue([
+      '# Local',
+      'mongodb://localhost:27017',
+      '',
+      '# Production',
+      'mongodb://user:pw@prod.example.com:27017/app',
+    ].join('\n'));
+
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+
+    await openImportMenu();
+    fireEvent.click(await screen.findByTestId('import-from-file'));
+    fireEvent.click(await screen.findByRole('button', { name: /import all/i }));
+
+    await waitFor(() => {
+      expect(saved).toEqual([
+        { name: 'Local', uri: 'mongodb://localhost:27017' },
+        { name: 'Production', uri: 'mongodb://user:pw@prod.example.com:27017/app' },
+      ]);
+      expect(screen.queryByTestId('import-uri-success')).not.toBeInTheDocument();
     });
   });
 });
