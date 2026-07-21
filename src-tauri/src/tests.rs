@@ -3954,6 +3954,66 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn test_tool_install_probe_retries_transient_failure_then_succeeds() {
+        use crate::toolsetup::test_support::{fixture_zip_with_script, serve_bytes};
+        use crate::toolsetup::*;
+        use std::sync::atomic::AtomicBool;
+
+        // A "binary" that fails `--version` on its first two invocations and
+        // only succeeds on the third, simulating a transient exec/fs hiccup
+        // (not a genuinely broken binary) on a loaded machine. Tracks its own
+        // invocation count in a counter file that lives outside the
+        // staging/install tree so it survives regardless of what
+        // `install_one_tool` does with those directories.
+        let app_data = tool_install_test_dir("probe-retry-transient");
+        let counter = app_data.join("probe-attempts.txt");
+        let script = format!(
+            "#!/bin/sh\nN=0\nif [ -f '{counter}' ]; then N=$(cat '{counter}'); fi\nN=$((N + 1))\necho \"$N\" > '{counter}'\nif [ \"$N\" -lt 3 ]; then exit 1; fi\necho tool version 9.9.9\n",
+            counter = counter.display()
+        );
+        let bytes = fixture_zip_with_script("mongosh-2.9.2-darwin-arm64", &["mongosh"], script.as_bytes());
+        let sha256 = sha256_hex(&bytes);
+        let (base_url, _server) = serve_bytes(bytes);
+        let url = format!("{base_url}/mongosh-2.9.2-darwin-arm64.zip");
+
+        let cancel = AtomicBool::new(false);
+        install_one_tool(
+            &app_data,
+            "mongosh",
+            "2.9.2",
+            &url,
+            &sha256,
+            ArchiveKind::Zip,
+            "mongosh-2.9.2-darwin-arm64/bin",
+            &["mongosh".to_string()],
+            &cancel,
+            |_, _, _| {},
+        )
+        .await
+        .unwrap();
+
+        let attempts: u32 = std::fs::read_to_string(&counter).unwrap().trim().parse().unwrap();
+        assert_eq!(attempts, 3, "should have taken exactly 3 probe attempts to succeed");
+
+        let bin = app_data.join("tools/mongosh-2.9.2/bin/mongosh");
+        assert!(bin.exists(), "binary should be installed once the probe eventually succeeds");
+        assert!(
+            !app_data.join("tools/.staging-mongosh").exists(),
+            "staging dir should be cleaned up after success"
+        );
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    // `test_tool_install_probe_failure_leaves_no_install_dir` (above) already
+    // covers the complementary case: a binary that fails `--version` on
+    // *every* invocation (never a transient blip) still returns
+    // `Err(.. "failed to run --version")` after all retries are exhausted —
+    // the retry only tolerates a probe that eventually succeeds, it never
+    // hides a genuinely broken binary.
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn test_tool_install_task_end_to_end_with_cancel_flag_cleanup() {
         use crate::toolsetup::test_support::{fixture_zip, serve_bytes, test_tool};
         use crate::toolsetup::*;
