@@ -30,19 +30,6 @@
 //! `confirmed=false` (its command has no `confirmed` arg at all — dropping
 //! an index isn't considered destructive enough to require typed
 //! confirmation, unlike dropping a collection/database).
-//!
-//! `WriteOp::UpdateOne` is intentionally unused (and shows up as dead code
-//! under `cargo clippy --lib`): it was defined in Task 2 mirroring the
-//! plan's `WriteOp` code block, but this codebase has no single-document
-//! *partial* update command distinct from `update_document`/`WriteOp::
-//! ReplaceOne` (which does a full replacement) — there's nothing for it to
-//! guard. Investigated as part of Task 3 (whose exit criterion is "clippy
-//! back to the 21 lib baseline") and confirmed this is a pre-existing enum/
-//! API mismatch from Task 1/2, not a Task-3-introduced or newly-discovered
-//! unguarded command, so it's left as-is rather than papering over it with
-//! an `#[allow(dead_code)]` or inventing a fake call site; clippy's lib
-//! warning count is 22 (21 baseline + this one), not 21 — see the Task 3
-//! report.
 
 use crate::connections::ConnectionMode;
 use crate::state::{AppState, LockExt};
@@ -54,7 +41,6 @@ use crate::state::{AppState, LockExt};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WriteOp {
     Insert,
-    UpdateOne,
     UpdateMany,
     DeleteOne,
     DeleteMany,
@@ -583,9 +569,8 @@ mod tests {
     /// All `WriteOp` variants, for the "every op" sweeps above. Kept as a
     /// literal array (not derived) so adding a variant to the enum forces a
     /// conscious edit here too.
-    const ALL_OPS: [WriteOp; 20] = [
+    const ALL_OPS: [WriteOp; 19] = [
         WriteOp::Insert,
-        WriteOp::UpdateOne,
         WriteOp::UpdateMany,
         WriteOp::DeleteOne,
         WriteOp::DeleteMany,
