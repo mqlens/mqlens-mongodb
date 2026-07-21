@@ -1,6 +1,7 @@
 //! Document mutation and import operations.
 
 use crate::limits::{IMPORT_BATCH_SIZE, MAX_IMPORT_DOCS};
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{connection_is_mock, require_real_client, AppState};
 
 use mongodb::bson::Document;
@@ -180,6 +181,8 @@ pub async fn delete_document_impl(
     collection: &str,
     filter: &str,
 ) -> Result<u64, String> {
+    guard_writable(state, id, WriteOp::DeleteOne, false)?;
+
     // Parse/validate up front so bad input fails the same way for mock & real.
     let filter_doc = json_to_bson_document(filter)?;
 
@@ -204,7 +207,10 @@ pub async fn delete_many_impl(
     database: &str,
     collection: &str,
     filter: &str,
+    confirmed: bool,
 ) -> Result<u64, String> {
+    guard_writable(state, id, WriteOp::DeleteMany, confirmed)?;
+
     let filter_doc = json_to_bson_document(filter)?;
     if connection_is_mock(state, id)? {
         return Ok(0); // mock connections don't persist deletes
@@ -226,7 +232,10 @@ pub async fn update_many_impl(
     collection: &str,
     filter: &str,
     update: &str,
+    confirmed: bool,
 ) -> Result<u64, String> {
+    guard_writable(state, id, WriteOp::UpdateMany, confirmed)?;
+
     let filter_doc = json_to_bson_document(filter)?;
     let update_doc = json_to_bson_document(update)?;
     // Require an operator-keyed update ({ "$set": … }); reject bare replacements
@@ -254,6 +263,8 @@ pub async fn insert_document_impl(
     collection: &str,
     document: &str,
 ) -> Result<String, String> {
+    guard_writable(state, id, WriteOp::Insert, false)?;
+
     let doc = json_to_bson_document(document)?;
 
     if connection_is_mock(state, id)? {
@@ -280,6 +291,8 @@ pub async fn update_document_impl(
     filter: &str,
     replacement: &str,
 ) -> Result<u64, String> {
+    guard_writable(state, id, WriteOp::ReplaceOne, false)?;
+
     let filter_doc = json_to_bson_document(filter)?;
     let replacement_doc = json_to_bson_document(replacement)?;
 
@@ -319,6 +332,8 @@ pub async fn import_documents_impl(
     docs: Vec<serde_json::Value>,
     mode: &str,
 ) -> Result<ImportResult, String> {
+    guard_writable(state, id, WriteOp::Import, false)?;
+
     // Convert all docs up front; a bad doc fails the whole import before writing.
     let mut bson_docs: Vec<Document> = Vec::with_capacity(docs.len());
     for value in docs {

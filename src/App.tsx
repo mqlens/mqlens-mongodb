@@ -86,12 +86,15 @@ import { docToShell } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib/queryStore';
 import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from './lib/paletteIndex';
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
+import { confirmByTypedName } from './lib/typedNameConfirm';
+import { detectAggregateWriteStage } from './lib/aggregateWriteStage';
 import type { ConnectionProfile } from './lib/connection';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
@@ -176,6 +179,14 @@ interface ActiveConnection {
   color_tag?: string;
   /** True iff opened by the embedded MCP server's `connect` tool rather than a human (#98 Task 4). */
   viaMcp?: boolean;
+  /**
+   * Read-only / confirm-destructive production safeguard (#188), captured
+   * at connect time. Type-only for now — populating this from
+   * `connections-changed`/`connection_list` and rendering the banner off it
+   * is Task 5; this field just needs to exist so that wiring compiles
+   * against a stable shape.
+   */
+  mode?: 'normal' | 'read_only' | 'confirm_destructive';
 }
 
 /** Extract the auth username from a MongoDB connection URI; '' when there are no credentials. */
@@ -298,6 +309,30 @@ const tabLabelFor = (
       return tab.collection;
   }
 };
+
+/**
+ * Tab types that operate on a live connection — everything except
+ * `settings`/`quickstart`/`tasks`, which render regardless of (or without)
+ * any particular connection. `renderTabContent`'s mode banner (#188 Task 5)
+ * only mounts for these, matching the plan's "skip settings/quickstart/tasks"
+ * instruction.
+ */
+const CONNECTION_TAB_TYPES = new Set<QueryTab['type']>([
+  'collection',
+  'index',
+  'shell',
+  'export',
+  'import',
+  'schema',
+  'create-view',
+  'gridfs',
+  'monitoring',
+  'users',
+  'dump',
+  'restore',
+  'validation',
+  'generate',
+]);
 
 /**
  * A short human hint for a FOREIGN window's tab-context-menu entry (Phase 3
@@ -484,18 +519,26 @@ function Workspace() {
   // displayed, since it never made it into `activeConnections` at all. A
   // non-MCP entry keeps the original profileId dedupe (a human never opens
   // two simultaneous connections to the same profile from one path).
+  // `mode` (#188 Task 3): the connection's read-only/confirm-destructive
+  // safeguard, captured at connect time. `ActiveConnection.mode` was
+  // type-only until now — this is the minimal threading needed so the
+  // destructive-op call sites below (`handleDeleteMany`/`handleUpdateMany`)
+  // can read a real value via `activeConnections.find(...).mode` instead of
+  // always seeing `undefined`. Full UI consumption (persistent banner,
+  // sidebar badge) is Task 5.
   const addActiveConnection = (
     id: string,
     name: string,
     uri: string,
     profileId: string,
     color_tag?: string,
-    viaMcp?: boolean
+    viaMcp?: boolean,
+    mode?: ActiveConnection['mode']
   ) => {
     setActiveConnections((prev) => {
       if (prev.some((c) => c.id === id)) return prev;
       if (!viaMcp && prev.some((c) => c.profileId === profileId)) return prev;
-      return [...prev, { id, profileId, name, uri, color_tag, viaMcp }];
+      return [...prev, { id, profileId, name, uri, color_tag, viaMcp, mode }];
     });
   };
 
@@ -594,7 +637,7 @@ function Workspace() {
       // always reaches `addActiveConnection` below, which is itself the
       // authority on whether this exact row already exists.
       if (!entry.viaMcp && localByProfile.has(entry.profileId)) continue;
-      addActiveConnection(entry.id, entry.name, '', entry.profileId, undefined, entry.viaMcp);
+      addActiveConnection(entry.id, entry.name, '', entry.profileId, undefined, entry.viaMcp, entry.mode);
       rebindProfileTabs(entry.profileId, entry.id);
     }
   };
@@ -778,10 +821,10 @@ function Workspace() {
     if (existing) return existing.id;
     try {
       const id = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-      addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined);
+      addActiveConnection(id, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, undefined, profile.connection_mode ?? 'normal');
       // Announce this fresh id to every other window (Phase 3 Task 6) — see
       // `setConnectionMeta`'s doc comment for why every connect path calls it.
-      setConnectionMeta(id, profile.id, profile.name);
+      setConnectionMeta(id, profile.id, profile.name, profile.connection_mode ?? 'normal');
       // Clear any ReconnectBanner this profile still has showing (#97 phase
       // 2 final review Fix 1) — see `rebindProfileTabs`'s doc comment.
       rebindProfileTabs(profile.id, id);
@@ -2413,6 +2456,34 @@ function Workspace() {
   };
 
   const handleExecuteAggregate = async (tab: QueryTab, pipeline: Record<string, unknown>[]) => {
+    // #188 security review Fix 1: a $out/$merge stage writes the pipeline's
+    // output into a collection ($out replaces it, $merge upserts) — on a
+    // confirm_destructive (production-safeguard) connection that needs the
+    // same typed-name confirmation as drop_collection/delete_many. A
+    // read_only connection is backend-blocked (`execute_aggregate_impl`'s
+    // guard) regardless of what's sent here; the error surfaces inline via
+    // the existing `tab.error` catch below, same as every other query error.
+    const mode = activeConnections.find(c => c.id === tab.connectionId)?.mode ?? 'normal';
+    let confirmed = false;
+    if (mode === 'confirm_destructive') {
+      const writeStage = detectAggregateWriteStage(pipeline);
+      if (writeStage.hasWriteStage) {
+        const ok = await confirmByTypedName(prompt, {
+          title: 'Run aggregation',
+          kind: 'collection',
+          // Fall back to a "type CONFIRM" prompt when the $out/$merge
+          // target couldn't be extracted cleanly (e.g. an unrecognized
+          // shape) rather than silently under-matching a name.
+          expectedName: writeStage.target ?? 'CONFIRM',
+          message: writeStage.target
+            ? `This pipeline writes into "${writeStage.target}" ($out/$merge) on a safeguarded connection.\n\nType the target collection name to confirm.`
+            : 'This pipeline writes to a collection via $out/$merge on a safeguarded connection, but the target could not be determined automatically.\n\nType CONFIRM to proceed.',
+        });
+        if (!ok) return;
+        confirmed = true;
+      }
+    }
+
     setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, loading: true, error: null } : t));
 
     try {
@@ -2421,6 +2492,7 @@ function Workspace() {
         database: tab.db,
         collection: tab.collection,
         pipeline: JSON.stringify(pipeline),
+        confirmed,
       });
 
       const parsedResults = resultStrs.map(s => JSON.parse(s));
@@ -2752,7 +2824,7 @@ function Workspace() {
         for (const local of activeConnectionsRef.current) {
           if (liveConnectionIds.has(local.id)) continue;
           if (!seenConnectionIdsRef.current.has(local.id)) {
-            setConnectionMeta(local.id, local.profileId, local.name);
+            setConnectionMeta(local.id, local.profileId, local.name, local.mode ?? 'normal');
             continue;
           }
           setActiveConnections((prev) => prev.filter((c) => c.id !== local.id));
@@ -2812,12 +2884,12 @@ function Workspace() {
         }
 
         newId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
-        addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined);
+        addActiveConnection(newId, profileName, profile.uri, profile.id, profile.color_tag ?? undefined, undefined, profile.connection_mode ?? 'normal');
         // Announce this fresh id to every other window (Phase 3 Task 6) —
         // see `setConnectionMeta`'s doc comment. Deliberately NOT called on
         // the `existing` (reuse) branch above: that id's meta was already
         // set the first time it connected.
-        setConnectionMeta(newId, profile.id, profileName);
+        setConnectionMeta(newId, profile.id, profileName, profile.connection_mode ?? 'normal');
       }
 
       // Captured before any state updates below — `tabs`/`layout` in this
@@ -3103,6 +3175,15 @@ function Workspace() {
   const handleDeleteMany = async (tab: QueryTab) => {
     if (tab.type !== 'collection') return;
     const filter = bulkFilter(tab);
+    // #188 Task 3: on a confirm_destructive connection, delete_many requires
+    // a typed-name match before `confirmed: true` is sent — see
+    // `confirmByTypedName`'s doc comment. Read from `activeConnections`
+    // (populated at connect time — see `addActiveConnection`'s doc comment);
+    // defaults to 'normal' both when the connection carries no mode (a
+    // normal/sample connection) and pre-Task-5 for any connection this
+    // window learned about via `connections-changed` rather than connecting
+    // itself.
+    const mode = activeConnections.find((c) => c.id === tab.connectionId)?.mode ?? 'normal';
     try {
       const count = await invoke<number>('count_documents', {
         id: tab.connectionId,
@@ -3110,20 +3191,32 @@ function Workspace() {
         collection: tab.collection,
         filter,
       });
-      if (
+      let confirmed = false;
+      if (mode === 'confirm_destructive') {
+        const ok = await confirmByTypedName(prompt, {
+          title: 'Delete many',
+          kind: 'collection',
+          expectedName: tab.collection,
+          message: `${bulkConfirmMessage('Delete', count, filter)}\n\nType the collection name to confirm.`,
+        });
+        if (!ok) return;
+        confirmed = true;
+      } else if (
         !(await confirm({
           title: 'Delete many',
           message: bulkConfirmMessage('Delete', count, filter),
           confirmLabel: 'Delete',
           destructive: true,
         }))
-      )
+      ) {
         return;
+      }
       const deleted = await invoke<number>('delete_many', {
         id: tab.connectionId,
         database: tab.db,
         collection: tab.collection,
         filter,
+        confirmed,
       });
       await refreshTabResults(tab);
       toast(`Deleted ${deleted} document(s)`, 'success', { title: 'Deleted' });
@@ -3156,6 +3249,8 @@ function Workspace() {
       },
     });
     if (!update) return; // cancelled
+    // #188 Task 3: see handleDeleteMany's comment on this same lookup.
+    const mode = activeConnections.find((c) => c.id === tab.connectionId)?.mode ?? 'normal';
     try {
       const count = await invoke<number>('count_documents', {
         id: tab.connectionId,
@@ -3163,21 +3258,33 @@ function Workspace() {
         collection: tab.collection,
         filter,
       });
-      if (
+      let confirmed = false;
+      if (mode === 'confirm_destructive') {
+        const ok = await confirmByTypedName(prompt, {
+          title: 'Update many',
+          kind: 'collection',
+          expectedName: tab.collection,
+          message: `${bulkConfirmMessage('Apply this update to', count, filter)}\n\nType the collection name to confirm.`,
+        });
+        if (!ok) return;
+        confirmed = true;
+      } else if (
         !(await confirm({
           title: 'Update many',
           message: bulkConfirmMessage('Apply this update to', count, filter),
           confirmLabel: 'Update',
           destructive: true,
         }))
-      )
+      ) {
         return;
+      }
       const modified = await invoke<number>('update_many', {
         id: tab.connectionId,
         database: tab.db,
         collection: tab.collection,
         filter,
         update,
+        confirmed,
       });
       await refreshTabResults(tab);
       toast(`Modified ${modified} document(s)`, 'success', { title: 'Updated' });
@@ -3269,7 +3376,16 @@ function Workspace() {
         />
       );
     }
-    return (
+    // Per-tab mode banner (#188 Task 5) — the connection's read-only /
+    // confirm-destructive safeguard, if any, read straight off
+    // `activeConnections` (populated at connect time, see `addActiveConnection`
+    // and `applyConnectionsAdditions`). Rendered ABOVE the tab's normal
+    // content (not instead of it, unlike the ReconnectBanner above) for every
+    // tab type that operates on a connection; `settings`/`quickstart`/`tasks`
+    // have no connection to badge.
+    const connMode = activeConnections.find((c) => c.id === tab.connectionId)?.mode;
+    const showModeBanner = !!connMode && connMode !== 'normal' && CONNECTION_TAB_TYPES.has(tab.type);
+    const body = (
       <>
         {tab.type === 'index' && (
           <IndexViewer
@@ -3361,6 +3477,7 @@ function Workspace() {
                     onAnalyzeSchema={() => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
                     onUpdateMany={() => handleUpdateMany(tab)}
                     onDeleteMany={() => handleDeleteMany(tab)}
+                    connectionMode={connMode}
                     totalCount={tab.totalCount}
                     estimated={tab.estimated}
                     countLoading={tab.countLoading}
@@ -3635,6 +3752,32 @@ function Workspace() {
         )}
       </>
     );
+
+    if (!showModeBanner) return body;
+
+    const bannerIsReadOnly = connMode === 'read_only';
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div
+          data-testid="connection-mode-banner"
+          data-mode={connMode}
+          className={cn(
+            'flex shrink-0 items-center gap-1.5 border-b px-3 py-1.5 text-xs font-medium',
+            bannerIsReadOnly
+              ? 'border-destructive/30 bg-destructive/10 text-destructive'
+              : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+          )}
+        >
+          {bannerIsReadOnly ? <Lock size={12} className="shrink-0" /> : <ShieldAlert size={12} className="shrink-0" />}
+          <span>
+            {bannerIsReadOnly
+              ? 'Read-only connection — writes are blocked'
+              : 'Production safeguard — destructive operations require confirmation'}
+          </span>
+        </div>
+        <div className="min-h-0 flex-1">{body}</div>
+      </div>
+    );
   };
 
   const renderEmptyPane = () => (
@@ -3735,11 +3878,11 @@ function Workspace() {
           <ConnectionManager
             isOpen={isConnectionModalOpen}
             onClose={() => { setIsConnectionModalOpen(false); setProfilesRefreshKey((k) => k + 1); }}
-            onConnect={(id, name, uri, profileId, colorTag) => {
-              addActiveConnection(id, name, uri, profileId, colorTag ?? undefined);
+            onConnect={(id, name, uri, profileId, colorTag, connectionMode) => {
+              addActiveConnection(id, name, uri, profileId, colorTag ?? undefined, undefined, connectionMode ?? 'normal');
               // Announce this fresh id to every other window (Phase 3 Task 6)
               // — see `setConnectionMeta`'s doc comment.
-              setConnectionMeta(id, profileId, name);
+              setConnectionMeta(id, profileId, name, connectionMode ?? 'normal');
               // Clear any ReconnectBanner this profile still has showing
               // (#97 phase 2 final review Fix 1) — see `rebindProfileTabs`'s
               // doc comment.

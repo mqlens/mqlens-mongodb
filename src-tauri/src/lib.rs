@@ -11,6 +11,8 @@ use uuid::Uuid;
 
 pub mod limits;
 pub mod ai;
+#[cfg(test)]
+mod command_coverage;
 pub mod connections;
 mod db;
 pub mod mcp;
@@ -27,6 +29,7 @@ mod vault;
 mod window;
 mod windows;
 mod workspace;
+mod write_guard;
 pub mod biometric;
 pub use db::aggregate::{execute_aggregate_impl, explain_aggregate_query_impl};
 pub use db::ddl::{
@@ -571,9 +574,10 @@ pub fn set_connection_meta_impl(
     profile_id: &str,
     name: &str,
     via_mcp: bool,
+    mode: connections::ConnectionMode,
 ) -> Result<(), String> {
     let mut meta = state.connection_meta.lock_safe()?;
-    meta.insert(id.to_string(), ConnectionMeta { profile_id: profile_id.to_string(), name: name.to_string(), via_mcp });
+    meta.insert(id.to_string(), ConnectionMeta { profile_id: profile_id.to_string(), name: name.to_string(), via_mcp, mode });
     Ok(())
 }
 
@@ -585,12 +589,23 @@ pub fn connection_list_impl(state: &AppState) -> Result<Vec<ConnectionEntry>, St
     let meta = state.connection_meta.lock_safe()?;
     let mut list: Vec<ConnectionEntry> = meta
         .iter()
-        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp })
+        .map(|(id, m)| ConnectionEntry { id: id.clone(), profile_id: m.profile_id.clone(), name: m.name.clone(), via_mcp: m.via_mcp, mode: m.mode })
         .collect();
     list.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(list)
 }
 
+/// #188 security review Fix 2 (CRITICAL): mongosh pipes arbitrary free-form
+/// commands (`db.dropDatabase()`, `db.coll.deleteMany({})`, …) straight to
+/// the driver — there is no per-command `WriteOp` to gate like every other
+/// mutating `_impl`, so the only place a `read_only` connection can be kept
+/// safe is here, before a shell is ever spawned. `ConfirmDestructive`
+/// deliberately falls through unblocked: the shell is a deliberate
+/// free-form power-user tool (the mode banner already warns the user), and
+/// per-command typed confirmation is impossible for arbitrary shell input —
+/// this is a documented v1 limitation, not an oversight. See
+/// `write_guard::connection_mode`'s doc comment for why this reads the mode
+/// directly instead of going through `guard_writable`.
 pub async fn start_mongosh_session_impl(
     state: &AppState,
     connection_id: &str,
@@ -598,6 +613,11 @@ pub async fn start_mongosh_session_impl(
     database: &str,
     mongosh_path: &str,
 ) -> Result<MongoshSessionInfo, String> {
+    if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
+    {
+        return Err(write_guard::READ_ONLY_MSG.to_string());
+    }
+
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;
         *mocks
@@ -993,12 +1013,23 @@ async fn set_connection_meta(
     id: String,
     profile_id: String,
     name: String,
+    mode: connections::ConnectionMode,
 ) -> Result<(), String> {
     use tauri::Emitter;
     // Frontend-initiated (sidebar/Connection Manager/quick-connect) -- never
     // an MCP agent connection, which flows through `mcp_tools::connect_impl`
-    // instead and passes `via_mcp: true` directly.
-    set_connection_meta_impl(&state, &id, &profile_id, &name, false)?;
+    // instead and passes `via_mcp: true` directly. `mode` is the profile's
+    // `connection_mode` at the moment it was connected (#188) -- the
+    // frontend has the profile it just connected with, so it supplies this
+    // rather than the backend re-reading the (encrypted) profile store.
+    // #188 security review Fix 5: this command is renderer-callable with an
+    // ARBITRARY `mode` -- a hostile/compromised renderer could call it
+    // directly and claim `Normal` for a connection it knows is production.
+    // That's a trust edge consistent with this feature's accepted model
+    // (see write_guard.rs's module doc: "an opt-in production safeguard,
+    // not a security boundary against a hostile local user"), not a gap
+    // introduced by this fix wave.
+    set_connection_meta_impl(&state, &id, &profile_id, &name, false, mode)?;
     let connections = connection_list_impl(&state)?;
     // Broadcast is best-effort: a window that misses this event picks up
     // current connection metadata the next time it connects or calls
@@ -1399,8 +1430,12 @@ async fn execute_aggregate(
     database: String,
     collection: String,
     pipeline: String,
+    // `Option<bool>` (see `delete_many`'s comment): missing key -> `false`.
+    // #188 review Fix 1: only matters when `pipeline` carries a $out/$merge
+    // stage — see `execute_aggregate_impl`'s doc comment.
+    confirmed: Option<bool>,
 ) -> Result<Vec<String>, String> {
-    execute_aggregate_impl(&state, &id, &database, &collection, &pipeline).await
+    execute_aggregate_impl(&state, &id, &database, &collection, &pipeline, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1439,8 +1474,10 @@ async fn drop_collection(
     id: String,
     database: String,
     collection: String,
+    // `Option<bool>` (see `delete_many`'s comment): missing key -> `false`.
+    confirmed: Option<bool>,
 ) -> Result<(), String> {
-    drop_collection_impl(&state, &id, &database, &collection).await
+    drop_collection_impl(&state, &id, &database, &collection, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1450,8 +1487,9 @@ async fn rename_collection(
     database: String,
     from: String,
     to: String,
+    confirmed: Option<bool>,
 ) -> Result<(), String> {
-    rename_collection_impl(&state, &id, &database, &from, &to).await
+    rename_collection_impl(&state, &id, &database, &from, &to, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1491,8 +1529,9 @@ async fn drop_database(
     state: tauri::State<'_, AppState>,
     id: String,
     database: String,
+    confirmed: Option<bool>,
 ) -> Result<(), String> {
-    drop_database_impl(&state, &id, &database).await
+    drop_database_impl(&state, &id, &database, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1502,8 +1541,9 @@ async fn rename_database(
     from: String,
     to: String,
     drop_source: bool,
+    confirmed: Option<bool>,
 ) -> Result<DatabaseRenameResult, String> {
-    rename_database_impl(&state, &id, &from, &to, drop_source).await
+    rename_database_impl(&state, &id, &from, &to, drop_source, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1615,8 +1655,14 @@ async fn delete_many(
     database: String,
     collection: String,
     filter: String,
+    // `Option<bool>` (not a raw `#[serde(default)]` attribute — Tauri's
+    // per-parameter command args don't support serde field attributes,
+    // only `Deserialize`-derived struct fields do; see mcp_tools.rs's
+    // `_confirm` for that pattern) so an omitted key defaults to `false`
+    // rather than the IPC layer rejecting the call outright.
+    confirmed: Option<bool>,
 ) -> Result<u64, String> {
-    delete_many_impl(&state, &id, &database, &collection, &filter).await
+    delete_many_impl(&state, &id, &database, &collection, &filter, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1627,8 +1673,9 @@ async fn update_many(
     collection: String,
     filter: String,
     update: String,
+    confirmed: Option<bool>,
 ) -> Result<u64, String> {
-    update_many_impl(&state, &id, &database, &collection, &filter, &update).await
+    update_many_impl(&state, &id, &database, &collection, &filter, &update, confirmed.unwrap_or(false)).await
 }
 
 #[tauri::command]

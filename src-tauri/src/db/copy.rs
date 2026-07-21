@@ -2,6 +2,7 @@
 
 use crate::limits::IMPORT_BATCH_SIZE;
 use crate::state::LockExt;
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{connection_is_mock, mock_db, require_real_client, AppState, CopyFailure, CopySummary, TaskInfo};
 use mongodb::bson::Document;
 use mongodb::Client;
@@ -422,6 +423,10 @@ pub async fn start_collection_copy_impl(
     include_indexes: bool,
     conflict_mode: String,
 ) -> Result<TaskInfo, String> {
+    // Copy commands guard the TARGET connection, not the source — a copy
+    // writes into the target.
+    guard_writable(state, target_id, WriteOp::CopyWrite, false)?;
+
     let mode = ConflictMode::parse(&conflict_mode)?;
     let filter_doc = parse_filter(filter.as_deref())?;
 
@@ -526,6 +531,10 @@ pub async fn start_database_copy_impl(
     include_views: bool,
     conflict_mode: String,
 ) -> Result<TaskInfo, String> {
+    // Copy commands guard the TARGET connection, not the source — a copy
+    // writes into the target.
+    guard_writable(state, target_id, WriteOp::CopyWrite, false)?;
+
     let mode = ConflictMode::parse(&conflict_mode)?;
     if source_id == target_id && source_db == target_db {
         return Err("Source and target database are the same — copy would overwrite itself".to_string());

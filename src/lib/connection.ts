@@ -1,5 +1,8 @@
 import type { SshConfig } from '../components/ConnectionManager';
 
+/** Mirrors backend `connections::ConnectionMode` (#188). */
+export type ConnectionMode = 'normal' | 'read_only' | 'confirm_destructive';
+
 /** A saved connection profile, mirroring the backend `ConnectionProfile`. */
 export interface ConnectionProfile {
   id: string;
@@ -9,6 +12,8 @@ export interface ConnectionProfile {
   ssh?: SshConfig | null;
   /** Expose this profile to MCP agents. Mirrors backend `ConnectionProfile::mcp_enabled`. */
   mcp_enabled?: boolean;
+  /** Read-only / confirm-destructive production safeguard. Mirrors backend `ConnectionProfile::connection_mode`. */
+  connection_mode?: ConnectionMode;
 }
 
 /** Options for exporting a connection URI for sharing. */

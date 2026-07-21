@@ -6,6 +6,7 @@ use crate::db::documents::{
     CsvImportOptions,
 };
 use crate::db::tasks::{fail_task, finish_task, now_ms, update_task};
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{AppState, LockExt, TaskInfo};
 use mongodb::bson::Document;
 use serde::{Deserialize, Serialize};
@@ -375,6 +376,8 @@ pub async fn start_import_task_impl(
     csv_options: Option<CsvImportOptions>,
     mode: &str,
 ) -> Result<TaskInfo, String> {
+    guard_writable(state, id, WriteOp::Import, false)?;
+
     if !matches!(mode, "skip" | "update" | "abort") {
         return Err("Import mode must be skip, update, or abort".to_string());
     }

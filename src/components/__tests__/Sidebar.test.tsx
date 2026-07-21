@@ -71,6 +71,35 @@ describe('Sidebar Component', () => {
     expect(screen.getByText('Human Conn')).toBeInTheDocument();
   });
 
+  it('badges a read_only connection "read-only" and a confirm_destructive connection "guarded", but not a normal one (#188 Task 5)', () => {
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-1', name: 'Prod Cluster', uri: 'mongodb://mock1', mode: 'read_only' },
+          { id: 'conn-2', name: 'Guarded Cluster', uri: 'mongodb://mock2', mode: 'confirm_destructive' },
+          { id: 'conn-3', name: 'Normal Cluster', uri: 'mongodb://mock3', mode: 'normal' },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    const badges = screen.getAllByTestId('connection-mode-badge');
+    expect(badges).toHaveLength(2);
+
+    const readOnlyBadge = badges.find((b) => b.getAttribute('data-mode') === 'read_only');
+    expect(readOnlyBadge).toHaveTextContent('read-only');
+
+    const guardedBadge = badges.find((b) => b.getAttribute('data-mode') === 'confirm_destructive');
+    expect(guardedBadge).toHaveTextContent('guarded');
+
+    expect(screen.getByText('Normal Cluster')).toBeInTheDocument();
+  });
+
   it('filters the tree by the search box (database names)', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases') {
@@ -1322,11 +1351,15 @@ describe('Sidebar Component', () => {
     await waitFor(() => {
       const r = calls.find((x) => x.cmd === 'rename_collection');
       expect(r).toBeTruthy();
+      // #188 Task 3: a normal connection's flow is unchanged — `confirmed`
+      // rides along as `false` (the guard passes normal connections through
+      // regardless) since there's no typed-name step to flip it to `true`.
       expect(r.args).toMatchObject({
         id: 'conn-real',
         database: 'shop',
         from: 'orders',
         to: 'archived_orders',
+        confirmed: false,
       });
     });
 
@@ -1336,7 +1369,7 @@ describe('Sidebar Component', () => {
     await waitFor(() => {
       const d = calls.find((x) => x.cmd === 'drop_collection');
       expect(d).toBeTruthy();
-      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop', collection: 'orders' });
+      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop', collection: 'orders', confirmed: false });
     });
 
     // Rename Database: in-app prompt for the new name, then a confirm dialog.
@@ -1352,6 +1385,7 @@ describe('Sidebar Component', () => {
         from: 'shop',
         to: 'shop_archive',
         dropSource: true,
+        confirmed: false,
       });
     });
 
@@ -1361,7 +1395,122 @@ describe('Sidebar Component', () => {
     await waitFor(() => {
       const d = calls.find((x) => x.cmd === 'drop_database');
       expect(d).toBeTruthy();
-      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop' });
+      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop', confirmed: false });
+    });
+  });
+
+  it('requires typed-name confirmation for destructive ops on a confirm_destructive (production-safeguard) connection (#188 Task 3)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'list_databases') return Promise.resolve(['shop']);
+      if (cmd === 'list_collections') return Promise.resolve([{ name: 'orders', type: 'collection' }]);
+      if (
+        cmd === 'rename_collection' ||
+        cmd === 'drop_collection' ||
+        cmd === 'rename_database' ||
+        cmd === 'drop_database'
+      ) return Promise.resolve();
+      if (cmd === 'list_indexes') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+
+    // Drives the typed-name confirm dialog (a `prompt` request under the hood,
+    // same DOM shape as `submitPrompt` above).
+    const typeAndSubmit = async (value: string) => {
+      const input = await screen.findByTestId('dialog-input');
+      fireEvent.change(input, { target: { value } });
+      fireEvent.click(screen.getByTestId('dialog-confirm'));
+    };
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-real', name: 'Prod', uri: 'mongodb://localhost:27017', mode: 'confirm_destructive' },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    const dbNode = await screen.findByText('shop');
+    fireEvent.click(dbNode);
+    await screen.findByText('Collections');
+    fireEvent.click(screen.getByText('Collections'));
+    const ordersNode = await screen.findByText('orders');
+
+    // Rename Collection: the typed-name step (confirming "orders") comes
+    // FIRST, before the "enter new name" prompt even appears.
+    fireEvent.contextMenu(ordersNode);
+    fireEvent.click(screen.getByText('Rename Collection'));
+    await typeAndSubmit('wrong_name');
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((x) => x.cmd === 'rename_collection')).toBeFalsy();
+    await typeAndSubmit('orders'); // exact match -> proceeds to the "enter new name" prompt
+    await typeAndSubmit('archived_orders');
+    await waitFor(() => {
+      const r = calls.find((x) => x.cmd === 'rename_collection');
+      expect(r).toBeTruthy();
+      expect(r.args).toMatchObject({
+        id: 'conn-real',
+        database: 'shop',
+        from: 'orders',
+        to: 'archived_orders',
+        confirmed: true,
+      });
+    });
+
+    // Drop Collection: wrong typed name -> no invoke; exact name -> invoke
+    // with confirmed:true.
+    fireEvent.contextMenu(ordersNode);
+    fireEvent.click(screen.getByText('Drop Collection'));
+    await typeAndSubmit('not_orders');
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((x) => x.cmd === 'drop_collection')).toBeFalsy();
+    await typeAndSubmit('orders');
+    await waitFor(() => {
+      const d = calls.find((x) => x.cmd === 'drop_collection');
+      expect(d).toBeTruthy();
+      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop', collection: 'orders', confirmed: true });
+    });
+
+    // Rename Database: typed-name step (confirming "shop", the FROM side)
+    // replaces the ordinary yes/no confirm.
+    fireEvent.contextMenu(dbNode);
+    fireEvent.click(screen.getByText('Rename Database'));
+    await typeAndSubmit('shop_archive');
+    await typeAndSubmit('wrong_db');
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((x) => x.cmd === 'rename_database')).toBeFalsy();
+    await typeAndSubmit('shop');
+    await waitFor(() => {
+      const r = calls.find((x) => x.cmd === 'rename_database');
+      expect(r).toBeTruthy();
+      expect(r.args).toMatchObject({
+        id: 'conn-real',
+        from: 'shop',
+        to: 'shop_archive',
+        dropSource: true,
+        confirmed: true,
+      });
+    });
+
+    // Drop Database: wrong typed name -> no invoke; exact name -> invoke
+    // with confirmed:true.
+    fireEvent.contextMenu(dbNode);
+    fireEvent.click(screen.getByText('Drop Database'));
+    await typeAndSubmit('wrong_db');
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((x) => x.cmd === 'drop_database')).toBeFalsy();
+    await typeAndSubmit('shop');
+    await waitFor(() => {
+      const d = calls.find((x) => x.cmd === 'drop_database');
+      expect(d).toBeTruthy();
+      expect(d.args).toMatchObject({ id: 'conn-real', database: 'shop', confirmed: true });
     });
   });
 

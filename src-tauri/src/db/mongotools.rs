@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::db::tasks::{fail_task, finish_task, now_ms, update_task};
 use crate::state::{AppState, LockExt};
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::TaskInfo;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -958,6 +959,8 @@ pub async fn start_restore_task_impl(
     tool_path: &str,
     options: RestoreOptions,
 ) -> Result<TaskInfo, String> {
+    guard_writable(state, id, WriteOp::RestoreWrite, false)?;
+
     let uri = require_real_conn_uri(state, id)?;
     let tunneled = state.ssh_tunnels.lock_safe()?.contains_key(id);
     let args = build_restore_args(&options)?;

@@ -409,7 +409,54 @@ describe('App Component', () => {
     await waitFor(() => {
       const dm = calls.find((c) => c.cmd === 'delete_many');
       expect(dm).toBeTruthy();
-      expect(dm.args).toMatchObject({ database: 'sales_db', collection: 'customers' });
+      // #188 Task 3: a normal connection's flow is unchanged — `confirmed`
+      // rides along as `false` (the guard passes normal connections through
+      // regardless).
+      expect(dm.args).toMatchObject({ database: 'sales_db', collection: 'customers', confirmed: false });
+    });
+  });
+
+  it('delete-many on a confirm_destructive connection requires a typed collection-name match before invoking (#188 Task 3)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query')
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'count_documents') return Promise.resolve(7);
+      if (cmd === 'delete_many') return Promise.resolve(7);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor, act } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    // Mark 'conn-1' (the id every mock-sidebar button hardcodes) as a
+    // confirm_destructive connection before the tab opens.
+    await act(async () => {
+      fireMockEvent('connections-changed', {
+        connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'confirm_destructive' }],
+      });
+    });
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('delete-many-btn'));
+
+    // Wrong typed name -> no invoke, dialog stays open with an error.
+    const wrongInput = await screen.findByTestId('dialog-input');
+    fireEvent.change(wrongInput, { target: { value: 'not_customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((c) => c.cmd === 'delete_many')).toBeFalsy();
+
+    // Exact name -> invoke with confirmed:true.
+    const rightInput = screen.getByTestId('dialog-input');
+    fireEvent.change(rightInput, { target: { value: 'customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await waitFor(() => {
+      const dm = calls.find((c) => c.cmd === 'delete_many');
+      expect(dm).toBeTruthy();
+      expect(dm.args).toMatchObject({ database: 'sales_db', collection: 'customers', confirmed: true });
     });
   });
 
@@ -440,11 +487,165 @@ describe('App Component', () => {
     await waitFor(() => {
       const um = calls.find((c) => c.cmd === 'update_many');
       expect(um).toBeTruthy();
+      // #188 Task 3: unchanged normal-connection flow -> confirmed:false.
       expect(um.args).toMatchObject({
         database: 'sales_db',
         collection: 'customers',
         update: '{"$set":{"tier":"Gold"}}',
+        confirmed: false,
       });
+    });
+  });
+
+  it('update-many on a confirm_destructive connection requires a typed collection-name match before invoking (#188 Task 3)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query')
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      if (cmd === 'count_documents') return Promise.resolve(3);
+      if (cmd === 'update_many') return Promise.resolve(3);
+      return Promise.resolve([]);
+    });
+    const { fireEvent, waitFor, act } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    await act(async () => {
+      fireMockEvent('connections-changed', {
+        connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'confirm_destructive' }],
+      });
+    });
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('update-many-btn'));
+    // The update-body prompt is unchanged (data entry, not a confirmation).
+    const updateInput = await screen.findByTestId('dialog-input');
+    fireEvent.change(updateInput, { target: { value: '{"$set":{"tier":"Gold"}}' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    // Wrong typed name -> no invoke.
+    const wrongInput = await screen.findByTestId('dialog-input');
+    fireEvent.change(wrongInput, { target: { value: 'not_customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+    expect(await screen.findByTestId('dialog-error')).toHaveTextContent('Name does not match');
+    expect(calls.find((c) => c.cmd === 'update_many')).toBeFalsy();
+
+    // Exact name -> invoke with confirmed:true.
+    const rightInput = screen.getByTestId('dialog-input');
+    fireEvent.change(rightInput, { target: { value: 'customers' } });
+    fireEvent.click(screen.getByTestId('dialog-confirm'));
+
+    await waitFor(() => {
+      const um = calls.find((c) => c.cmd === 'update_many');
+      expect(um).toBeTruthy();
+      expect(um.args).toMatchObject({
+        database: 'sales_db',
+        collection: 'customers',
+        update: '{"$set":{"tier":"Gold"}}',
+        confirmed: true,
+      });
+    });
+  });
+
+  describe('connection mode banner (#188 Task 5)', () => {
+    it('renders a red read-only banner above the tab content, with the expected testid/data-mode/text', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query')
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'count_documents') return Promise.resolve(1);
+        return Promise.resolve([]);
+      });
+      const { fireEvent, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      // Mark 'conn-1' (the id every mock-sidebar button hardcodes) as
+      // read-only via a connections-changed broadcast — mirrors the
+      // confirm_destructive tests above, and doubles as the "a
+      // connections-changed event carrying mode populates ActiveConnection"
+      // cross-window coherence check: the banner below only renders off
+      // `activeConnections.find(...).mode`, so its presence proves the
+      // broadcast's `mode` landed there.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'read_only' }],
+        });
+      });
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+      const banner = await screen.findByTestId('connection-mode-banner');
+      expect(banner).toHaveAttribute('data-mode', 'read_only');
+      expect(banner).toHaveTextContent('Read-only connection — writes are blocked');
+    });
+
+    it('renders an amber confirm_destructive banner above the tab content, with the expected testid/data-mode/text', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query')
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'count_documents') return Promise.resolve(1);
+        return Promise.resolve([]);
+      });
+      const { fireEvent, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'confirm_destructive' }],
+        });
+      });
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+      const banner = await screen.findByTestId('connection-mode-banner');
+      expect(banner).toHaveAttribute('data-mode', 'confirm_destructive');
+      expect(banner).toHaveTextContent('Production safeguard — destructive operations require confirmation');
+    });
+
+    it('threads the read_only mode into the DataGrid so write buttons are disabled (#188 Task 6, App→DataGrid)', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query')
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'count_documents') return Promise.resolve(1);
+        return Promise.resolve([]);
+      });
+      const { fireEvent, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      // Reuses the exact same connections-changed → activeConnections.mode
+      // path the banner test above relies on: DataGrid isn't rendered inside
+      // DocumentViewer itself (it's passed as DocumentViewer's children from
+      // App's renderTabContent), so this same `mode` lookup is what's handed
+      // straight to DataGrid's `connectionMode` prop.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'conn-1', profileId: 'p1', name: 'Prod', mode: 'read_only' }],
+        });
+      });
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+      const insertBtn = await screen.findByTestId('insert-doc-btn');
+      expect(insertBtn).toBeDisabled();
+      expect(insertBtn).toHaveAttribute('title', 'Connection is read-only');
+    });
+
+    it('renders no banner for a normal (or unmarked) connection', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'execute_mql_query')
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        if (cmd === 'count_documents') return Promise.resolve(1);
+        return Promise.resolve([]);
+      });
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByText(/"John Doe"/)).toBeInTheDocument();
+
+      expect(screen.queryByTestId('connection-mode-banner')).not.toBeInTheDocument();
     });
   });
 
@@ -3502,6 +3703,63 @@ describe('App Component', () => {
             (c) => c.cmd === 'set_connection_meta' && c.args?.id === 'live-1' && c.args?.profileId === 'p1',
           ),
         ).toBe(true);
+      });
+    });
+
+    it('(f2) a self-heal re-announce for a read_only connection preserves read_only — does NOT reset to normal (#188 Task 5 regression)', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_connection_profiles') {
+          return Promise.resolve([
+            { id: 'p1', name: 'Prod Cluster', uri: 'mongodb://prod', ssh: null, connection_mode: 'read_only' },
+          ]);
+        }
+        if (cmd === 'connect_db') return Promise.resolve('live-1');
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor, act } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+
+      const connectCard = await screen.findByTestId('conn-card-p1');
+      fireEvent.click(connectCard);
+      await waitFor(() => expect(screen.getByTestId('sidebar-conn-live-1')).toBeInTheDocument());
+
+      // Sanity check: the connect itself already announced the real mode
+      // (Task 1's connect-time registration) before exercising the self-heal
+      // path below.
+      await waitFor(() => {
+        expect(
+          calls.some(
+            (c) => c.cmd === 'set_connection_meta' && c.args?.id === 'live-1' && c.args?.mode === 'read_only',
+          ),
+        ).toBe(true);
+      });
+
+      calls.length = 0; // only the self-heal reaction below matters now
+
+      // An unrelated broadcast lands before this window's own
+      // `set_connection_meta` for p1 has registered backend-side (the same
+      // race as (f) above) — the self-heal re-announce fires. CRITICAL: it
+      // must carry 'live-1's REAL current mode (read_only), never a
+      // hardcoded 'normal' — a hardcoded fallback here would silently
+      // downgrade a guarded connection's backend `connection_meta` entry
+      // (and hence every OTHER window's next `connections-changed`
+      // broadcast) to normal, defeating the read-only/confirm-destructive
+      // safeguard entirely.
+      await act(async () => {
+        fireMockEvent('connections-changed', {
+          connections: [{ id: 'live-other', profileId: 'p-other', name: 'Other Cluster' }],
+        });
+      });
+
+      await waitFor(() => {
+        const reannounce = calls.find(
+          (c) => c.cmd === 'set_connection_meta' && c.args?.id === 'live-1' && c.args?.profileId === 'p1',
+        );
+        expect(reannounce).toBeTruthy();
+        expect(reannounce.args?.mode).toBe('read_only');
       });
     });
 

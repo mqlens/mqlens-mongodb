@@ -5,6 +5,21 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::Manager;
 
+/// Per-connection production safeguard (#188): `Normal` allows every write,
+/// `ReadOnly` blocks all writes at the command layer, `ConfirmDestructive`
+/// requires an explicit typed-name confirmation for destructive ops (drop,
+/// delete_many, update_many, rename). `#[default] Normal` + `serde(default)`
+/// on the field below is the same additive pattern as `mcp_enabled` — old
+/// profiles/connections.json entries without the field read as `Normal`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionMode {
+    #[default]
+    Normal,
+    ReadOnly,
+    ConfirmDestructive,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ConnectionProfile {
     pub id: String,
@@ -21,6 +36,11 @@ pub struct ConnectionProfile {
     /// without the field deserialize as false — never opted in by surprise.
     #[serde(default)]
     pub mcp_enabled: bool,
+    /// Read-only / confirm-destructive production safeguard (#188). Old
+    /// profiles without the field deserialize as `ConnectionMode::Normal` —
+    /// same additive pattern as `mcp_enabled`.
+    #[serde(default)]
+    pub connection_mode: ConnectionMode,
 }
 
 fn default_anthropic_model() -> String {

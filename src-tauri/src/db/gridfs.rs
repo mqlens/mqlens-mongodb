@@ -1,6 +1,7 @@
 //! GridFS browsing (M7): list, upload, download, and delete files in a bucket.
 
 use crate::limits::{GRIDFS_STREAM_BUF, MAX_GRIDFS_LIST, MAX_GRIDFS_UPLOAD_BYTES};
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{connection_is_mock, require_real_client, AppState};
 use serde::Serialize;
 use std::path::Path;
@@ -150,6 +151,8 @@ pub async fn upload_gridfs_file_impl(
     content_type: Option<&str>,
     on_progress: Option<&(dyn Fn(GridFsTransferProgress) + Send + Sync)>,
 ) -> Result<String, String> {
+    guard_writable(state, id, WriteOp::GridFsWrite, false)?;
+
     if connection_is_mock(state, id)? {
         return Err("GridFS is not supported on mock connections".to_string());
     }
@@ -269,6 +272,8 @@ pub async fn delete_gridfs_file_impl(
     bucket: &str,
     file_id_json: &str,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::GridFsWrite, false)?;
+
     if connection_is_mock(state, id)? {
         return Err("GridFS is not supported on mock connections".to_string());
     }

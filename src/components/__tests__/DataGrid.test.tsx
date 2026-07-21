@@ -380,6 +380,128 @@ describe('DataGrid Component', () => {
   });
 });
 
+describe('DataGrid — connectionMode (#188 Task 6: disable write UI on read_only)', () => {
+  const writeHandlers = {
+    onInsertDocument: () => {},
+    onUpdateMany: () => {},
+    onDeleteMany: () => {},
+    onEditDocument: () => {},
+    onDuplicateDocument: () => {},
+    onDeleteDocument: () => {},
+  };
+
+  it('read_only: disables the Insert / Update Many / Delete Many toolbar buttons with a tooltip', () => {
+    render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="read_only" />);
+    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+      const btn = screen.getByTestId(testId);
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute('title', 'Connection is read-only');
+    }
+  });
+
+  it('read_only: disables the inline row Edit/Delete buttons (with tooltip) but leaves Copy enabled', () => {
+    render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="read_only" />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    const editBtn = screen.getAllByTestId('edit-doc-btn')[0];
+    const deleteBtn = screen.getAllByTestId('delete-doc-btn')[0];
+    const copyBtn = screen.getAllByTestId('copy-doc-btn')[0];
+    expect(editBtn).toBeDisabled();
+    expect(editBtn).toHaveAttribute('title', 'Connection is read-only');
+    expect(deleteBtn).toBeDisabled();
+    expect(deleteBtn).toHaveAttribute('title', 'Connection is read-only');
+    expect(copyBtn).not.toBeDisabled();
+  });
+
+  it('read_only: disables the Edit/Duplicate/Delete context-menu items (with tooltip) but leaves Copy/Compare enabled', () => {
+    render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="read_only" />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.contextMenu(screen.getByText('Alice Smith'));
+    const editItem = screen.getByText('Edit document').closest('button')!;
+    const dupItem = screen.getByText('Duplicate document').closest('button')!;
+    const delItem = screen.getByText('Delete document').closest('button')!;
+    const copyItem = screen.getByText('Copy document (JSON)').closest('button')!;
+    const compareItem = screen.getByText('Compare with…').closest('button')!;
+    expect(editItem).toBeDisabled();
+    expect(editItem).toHaveAttribute('title', 'Connection is read-only');
+    expect(dupItem).toBeDisabled();
+    expect(delItem).toBeDisabled();
+    expect(copyItem).not.toBeDisabled();
+    expect(compareItem).not.toBeDisabled();
+  });
+
+  it('read_only: clicking a disabled context-menu item does not fire its handler', () => {
+    const onEditDocument = vi.fn();
+    render(<DataGrid documents={mockDocuments} {...writeHandlers} onEditDocument={onEditDocument} connectionMode="read_only" />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    fireEvent.contextMenu(screen.getByText('Alice Smith'));
+    fireEvent.click(screen.getByText('Edit document'));
+    expect(onEditDocument).not.toHaveBeenCalled();
+  });
+
+  it('confirm_destructive: leaves every write control ENABLED (regression guard — only read_only disables)', () => {
+    render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="confirm_destructive" />);
+    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+      expect(screen.getByTestId(testId)).not.toBeDisabled();
+    }
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    expect(screen.getAllByTestId('edit-doc-btn')[0]).not.toBeDisabled();
+    expect(screen.getAllByTestId('delete-doc-btn')[0]).not.toBeDisabled();
+    fireEvent.contextMenu(screen.getByText('Alice Smith'));
+    expect(screen.getByText('Edit document').closest('button')).not.toBeDisabled();
+    expect(screen.getByText('Duplicate document').closest('button')).not.toBeDisabled();
+    expect(screen.getByText('Delete document').closest('button')).not.toBeDisabled();
+  });
+
+  it('normal (and unset connectionMode): leaves every write control ENABLED', () => {
+    const { rerender } = render(<DataGrid documents={mockDocuments} {...writeHandlers} connectionMode="normal" />);
+    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+      expect(screen.getByTestId(testId)).not.toBeDisabled();
+    }
+    rerender(<DataGrid documents={mockDocuments} {...writeHandlers} />);
+    for (const testId of ['insert-doc-btn', 'update-many-btn', 'delete-many-btn']) {
+      expect(screen.getByTestId(testId)).not.toBeDisabled();
+    }
+  });
+
+  // The COLLSCAN "Create Index" suggestion button is a real write
+  // (create_index, backend-guarded on read_only) even though it lives in the
+  // Explain tab rather than the toolbar — same clickable-then-errors UX this
+  // task exists to prevent, so it gets the same disabled+tooltip treatment.
+  const collscanExplain = JSON.stringify({
+    queryPlanner: {
+      namespace: 'shop.orders',
+      parsedQuery: { status: { $eq: 'open' } },
+      winningPlan: { stage: 'COLLSCAN' },
+    },
+  });
+
+  it('read_only: disables the Create Index suggestion button with a tooltip', () => {
+    render(
+      <DataGrid
+        documents={mockDocuments}
+        explainResult={collscanExplain}
+        onCreateSuggestedIndex={() => {}}
+        connectionMode="read_only"
+      />
+    );
+    const btn = screen.getByTestId('create-suggested-index-btn');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Connection is read-only');
+  });
+
+  it('confirm_destructive: leaves the Create Index suggestion button ENABLED (non-destructive)', () => {
+    render(
+      <DataGrid
+        documents={mockDocuments}
+        explainResult={collscanExplain}
+        onCreateSuggestedIndex={() => {}}
+        connectionMode="confirm_destructive"
+      />
+    );
+    expect(screen.getByTestId('create-suggested-index-btn')).not.toBeDisabled();
+  });
+});
+
 describe('DataGrid — Compare documents', () => {
   const docs = [
     { _id: { $oid: '603d779f4f102e3a185c3220' }, name: 'Alice', city: 'NYC' },

@@ -1,5 +1,6 @@
 //! Collection, view, and database DDL operations.
 
+use crate::write_guard::{guard_writable, WriteOp};
 use crate::{connection_is_mock, require_real_client, AppState};
 
 #[derive(serde::Serialize)]
@@ -22,6 +23,8 @@ pub async fn create_collection_impl(
     database: &str,
     collection: &str,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::CreateCollection, false)?;
+
     if collection.trim().is_empty() {
         return Err("Collection name is required".to_string());
     }
@@ -44,6 +47,8 @@ pub async fn create_view_impl(
     source_collection: &str,
     pipeline: &str,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::CreateView, false)?;
+
     if view_name.trim().is_empty() {
         return Err("View name is required".to_string());
     }
@@ -85,7 +90,10 @@ pub async fn drop_collection_impl(
     id: &str,
     database: &str,
     collection: &str,
+    confirmed: bool,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::Drop, confirmed)?;
+
     if connection_is_mock(state, id)? {
         return Ok(());
     }
@@ -104,7 +112,10 @@ pub async fn rename_collection_impl(
     database: &str,
     from: &str,
     to: &str,
+    confirmed: bool,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::Rename, confirmed)?;
+
     if from.trim().is_empty() || to.trim().is_empty() {
         return Err("Collection name is required".to_string());
     }
@@ -186,6 +197,8 @@ pub async fn set_validator_impl(
     validation_level: &str,
     validation_action: &str,
 ) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::CollMod, false)?;
+
     if collection.trim().is_empty() {
         return Err("Collection name is required".into());
     }
@@ -223,7 +236,14 @@ pub async fn set_validator_impl(
         .map_err(|e| format!("Failed to apply validation rules: {}", e))
 }
 
-pub async fn drop_database_impl(state: &AppState, id: &str, database: &str) -> Result<(), String> {
+pub async fn drop_database_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    confirmed: bool,
+) -> Result<(), String> {
+    guard_writable(state, id, WriteOp::Drop, confirmed)?;
+
     if database.trim().is_empty() {
         return Err("Database name is required".to_string());
     }
@@ -244,7 +264,17 @@ pub async fn rename_database_impl(
     from: &str,
     to: &str,
     drop_source: bool,
+    confirmed: bool,
 ) -> Result<DatabaseRenameResult, String> {
+    // `rename_database_impl` was found during Task 2 to be a mutating
+    // command outside the plan's Task 2 coverage list (see write_guard.rs's
+    // module doc for detail); Task 2 guarded it with a hardcoded
+    // `confirmed=false` interim. It's at least as destructive as
+    // `rename_collection` (renames every collection in the db, optionally
+    // drops the source), so — like `rename_collection` — Task 3 gives it a
+    // real `confirmed` command arg here.
+    guard_writable(state, id, WriteOp::Rename, confirmed)?;
+
     if from.trim().is_empty() || to.trim().is_empty() {
         return Err("Database name is required".to_string());
     }
