@@ -1680,6 +1680,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           via MCP
                         </Badge>
                       )}
+                      {conn.mode && conn.mode !== 'normal' && (
+                        <Badge
+                          variant={conn.mode === 'read_only' ? 'destructive' : 'warning'}
+                          className="h-4 shrink-0 px-1 text-[9px] font-normal"
+                          data-testid="connection-mode-badge"
+                          data-mode={conn.mode}
+                          aria-label={conn.mode === 'read_only' ? 'Read-only connection' : 'Production safeguard connection'}
+                        >
+                          {conn.mode === 'read_only' ? 'read-only' : 'guarded'}
+                        </Badge>
+                      )}
                       <span
                         className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
                         aria-label="Connected"

@@ -92,7 +92,8 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 interface QueryTab {
@@ -307,6 +308,30 @@ const tabLabelFor = (
       return tab.collection;
   }
 };
+
+/**
+ * Tab types that operate on a live connection — everything except
+ * `settings`/`quickstart`/`tasks`, which render regardless of (or without)
+ * any particular connection. `renderTabContent`'s mode banner (#188 Task 5)
+ * only mounts for these, matching the plan's "skip settings/quickstart/tasks"
+ * instruction.
+ */
+const CONNECTION_TAB_TYPES = new Set<QueryTab['type']>([
+  'collection',
+  'index',
+  'shell',
+  'export',
+  'import',
+  'schema',
+  'create-view',
+  'gridfs',
+  'monitoring',
+  'users',
+  'dump',
+  'restore',
+  'validation',
+  'generate',
+]);
 
 /**
  * A short human hint for a FOREIGN window's tab-context-menu entry (Phase 3
@@ -3321,7 +3346,16 @@ function Workspace() {
         />
       );
     }
-    return (
+    // Per-tab mode banner (#188 Task 5) — the connection's read-only /
+    // confirm-destructive safeguard, if any, read straight off
+    // `activeConnections` (populated at connect time, see `addActiveConnection`
+    // and `applyConnectionsAdditions`). Rendered ABOVE the tab's normal
+    // content (not instead of it, unlike the ReconnectBanner above) for every
+    // tab type that operates on a connection; `settings`/`quickstart`/`tasks`
+    // have no connection to badge.
+    const connMode = activeConnections.find((c) => c.id === tab.connectionId)?.mode;
+    const showModeBanner = !!connMode && connMode !== 'normal' && CONNECTION_TAB_TYPES.has(tab.type);
+    const body = (
       <>
         {tab.type === 'index' && (
           <IndexViewer
@@ -3686,6 +3720,32 @@ function Workspace() {
           />
         )}
       </>
+    );
+
+    if (!showModeBanner) return body;
+
+    const bannerIsReadOnly = connMode === 'read_only';
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div
+          data-testid="connection-mode-banner"
+          data-mode={connMode}
+          className={cn(
+            'flex shrink-0 items-center gap-1.5 border-b px-3 py-1.5 text-xs font-medium',
+            bannerIsReadOnly
+              ? 'border-destructive/30 bg-destructive/10 text-destructive'
+              : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+          )}
+        >
+          {bannerIsReadOnly ? <Lock size={12} className="shrink-0" /> : <ShieldAlert size={12} className="shrink-0" />}
+          <span>
+            {bannerIsReadOnly
+              ? 'Read-only connection — writes are blocked'
+              : 'Production safeguard — destructive operations require confirmation'}
+          </span>
+        </div>
+        <div className="min-h-0 flex-1">{body}</div>
+      </div>
     );
   };
 

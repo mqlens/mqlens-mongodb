@@ -71,6 +71,35 @@ describe('Sidebar Component', () => {
     expect(screen.getByText('Human Conn')).toBeInTheDocument();
   });
 
+  it('badges a read_only connection "read-only" and a confirm_destructive connection "guarded", but not a normal one (#188 Task 5)', () => {
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-1', name: 'Prod Cluster', uri: 'mongodb://mock1', mode: 'read_only' },
+          { id: 'conn-2', name: 'Guarded Cluster', uri: 'mongodb://mock2', mode: 'confirm_destructive' },
+          { id: 'conn-3', name: 'Normal Cluster', uri: 'mongodb://mock3', mode: 'normal' },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+
+    const badges = screen.getAllByTestId('connection-mode-badge');
+    expect(badges).toHaveLength(2);
+
+    const readOnlyBadge = badges.find((b) => b.getAttribute('data-mode') === 'read_only');
+    expect(readOnlyBadge).toHaveTextContent('read-only');
+
+    const guardedBadge = badges.find((b) => b.getAttribute('data-mode') === 'confirm_destructive');
+    expect(guardedBadge).toHaveTextContent('guarded');
+
+    expect(screen.getByText('Normal Cluster')).toBeInTheDocument();
+  });
+
   it('filters the tree by the search box (database names)', async () => {
     mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_databases') {
