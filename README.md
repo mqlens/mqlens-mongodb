@@ -76,6 +76,9 @@ queries actually do — from a single cross-platform desktop app.
 - **MCP server** — expose your connections to Claude Code, Cursor, and other agents as
   [Model Context Protocol tools](docs/mcp-tools.md); per-connection opt-in, writes gated behind
   explicit confirmation, off by default.
+- **Production safeguards** — mark a connection read-only or require typed
+  confirmation for destructive operations; enforced at the command layer,
+  for the UI and AI agents alike.
 
 ## Install
 
