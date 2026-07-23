@@ -69,6 +69,7 @@ import {
 } from './workspace/persistence';
 import { ReconnectBanner } from './workspace/ReconnectBanner';
 import { collectionTabsMatching } from './workspace/collectionTabs';
+import { uniqueCollectionTabId } from './workspace/tabId';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
@@ -1200,11 +1201,20 @@ function Workspace() {
 
   // savedQuery (palette "jump to saved query") runs instead of the pinned
   // default — for existing tabs it re-runs in place.
-  const handleSelectCollection = async (connectionId: string, dbName: string, collName: string, savedQuery?: SavedQueryBody) => {
+  const handleSelectCollection = async (
+    connectionId: string,
+    dbName: string,
+    collName: string,
+    savedQuery?: SavedQueryBody,
+    opts?: { newTab?: boolean },
+  ) => {
     if (!connectionId || !dbName || !collName) return;
 
-    const tabId = `${connectionId}.${dbName}.${collName}`;
-    const tabExists = tabs.some(t => t.id === tabId);
+    const baseId = `${connectionId}.${dbName}.${collName}`;
+    const tabId = opts?.newTab
+      ? uniqueCollectionTabId(baseId, tabs.map((t) => t.id))
+      : baseId;
+    const tabExists = !opts?.newTab && tabs.some(t => t.id === tabId);
 
     if (!tabExists || savedQuery) {
       let newTab: QueryTab | undefined;
@@ -1242,6 +1252,44 @@ function Workspace() {
     } else {
       dispatchWorkspace({ type: 'open_tab', tabId });
     }
+  };
+
+  const handleDuplicateTab = (sourceTabId: string) => {
+    const src = tabs.find((t) => t.id === sourceTabId && t.type === 'collection');
+    if (!src) return;
+
+    const baseId = `${src.connectionId}.${src.db}.${src.collection}`;
+    const tabId = uniqueCollectionTabId(baseId, tabs.map((t) => t.id));
+
+    const def: QueryDef | null = src.lastAggregate
+      ? { queryType: 'aggregate', pipeline: src.lastAggregate }
+      : src.lastQuery
+        ? {
+            queryType: 'find',
+            filter: JSON.parse(src.lastQuery.filter || '{}'),
+            sort: JSON.parse(src.lastQuery.sort || '{}'),
+            projection: JSON.parse(src.lastQuery.projection || '{}'),
+            limit: src.lastQuery.limit,
+            skip: src.lastQuery.skip,
+          }
+        : null;
+
+    const newTab: QueryTab = {
+      id: tabId,
+      type: 'collection',
+      connectionId: src.connectionId,
+      db: src.db,
+      collection: src.collection,
+      results: [],
+      loading: true,
+      error: null,
+      explainResult: null,
+      lastQuery: src.lastQuery ?? DEFAULT_QUERY,
+      lastAggregate: src.lastAggregate,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    void loadTabResults(tabId, src.connectionId, src.db, src.collection, def);
   };
 
   const handleSelectIndex = (connectionId: string, dbName: string, collName: string, indexName: string) => {
@@ -2237,10 +2285,21 @@ function Workspace() {
     }
 
     const items: ContextMenuItem[] = [];
+
+    const dupSource = tabs.find((t) => t.id === tabId && t.type === 'collection');
+    if (dupSource) {
+      items.push({
+        label: 'Duplicate Tab',
+        icon: <Copy />,
+        onClick: () => handleDuplicateTab(tabId),
+      });
+    }
+
     if (allTabIds(layout).length > 1) {
       items.push({
         label: 'Detach to New Window',
         icon: <ExternalLink />,
+        separatorBefore: items.length > 0,
         onClick: () => handleDetachTab(tabId),
       });
     }
