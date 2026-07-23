@@ -68,6 +68,8 @@ import {
   type PersistedTab,
 } from './workspace/persistence';
 import { ReconnectBanner } from './workspace/ReconnectBanner';
+import { collectionTabsMatching } from './workspace/collectionTabs';
+import { uniqueCollectionTabId } from './workspace/tabId';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
@@ -1119,13 +1121,100 @@ function Workspace() {
     closeWorkspaceWindow();
   }, [tabs.length, isMainWindow]);
 
+  // The resolved query definition for a tab: either a saved query or the
+  // collection's pinned default (see handleSelectCollection below).
+  type QueryDef =
+    | { queryType: 'aggregate'; pipeline: Record<string, unknown>[] }
+    | { queryType: 'find'; filter?: unknown; sort?: unknown; projection?: unknown; limit?: number; skip?: number };
+
+  // Runs `def` for `tabId` (aggregate or find), updates its results/loading
+  // state, fetches the document count for find queries, and records history.
+  // Assumes the tab already exists in `tabs` and its `open_tab` dispatch has
+  // already happened — callers are responsible for both.
+  const loadTabResults = async (
+    tabId: string,
+    connectionId: string,
+    dbName: string,
+    collName: string,
+    def: QueryDef | null,
+  ) => {
+    try {
+      if (def && def.queryType === 'aggregate') {
+        const pipeline = (def.pipeline ?? []) as Record<string, unknown>[];
+        const resultStrs = await invoke<string[]>('execute_aggregate', {
+          id: connectionId,
+          database: dbName,
+          collection: collName,
+          pipeline: JSON.stringify(pipeline),
+        });
+        const parsedResults = resultStrs.map(s => JSON.parse(s));
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
+        // History is best-effort: never surface an error after a successful run.
+        recordHistory(connectionNameFor(connectionId), dbName, collName, {
+          queryType: 'aggregate',
+          pipeline,
+        }).catch(() => {});
+      } else {
+        const q = def && def.queryType === 'find'
+          ? {
+              filter: JSON.stringify(def.filter ?? {}),
+              sort: JSON.stringify(def.sort ?? {}),
+              projection: JSON.stringify(def.projection ?? {}),
+              limit: def.limit ?? 50,
+              skip: def.skip ?? 0,
+            }
+          : { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
+        const resultStrs = await invoke<string[]>('execute_mql_query', {
+          id: connectionId,
+          database: dbName,
+          collection: collName,
+          ...q,
+        });
+        const parsedResults = resultStrs.map(s => JSON.parse(s));
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastQuery: q } : t));
+        // History is best-effort: never surface an error after a successful run.
+        recordHistory(connectionNameFor(connectionId), dbName, collName, {
+          queryType: 'find',
+          filter: JSON.parse(q.filter || '{}'),
+          sort: JSON.parse(q.sort || '{}'),
+          projection: JSON.parse(q.projection || '{}'),
+          limit: q.limit,
+          skip: q.skip,
+        }).catch(() => {});
+        // Fetch count for first open (filter is always new on open).
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, countLoading: true } : t));
+        try {
+          const total = await invoke<number>('count_documents', {
+            id: connectionId, database: dbName, collection: collName, filter: q.filter,
+          });
+          setTabs(prev => prev.map(t => t.id === tabId
+            ? { ...t, totalCount: total, estimated: isEmptyFilter(q.filter), countLoading: false }
+            : t));
+        } catch {
+          setTabs(prev => prev.map(t => t.id === tabId ? { ...t, countLoading: false } : t));
+        }
+      }
+    } catch (err: any) {
+      setTabs(prev => prev.map(t => t.id === tabId ? { ...t, error: String(err), loading: false } : t));
+    }
+  };
+
   // savedQuery (palette "jump to saved query") runs instead of the pinned
   // default — for existing tabs it re-runs in place.
-  const handleSelectCollection = async (connectionId: string, dbName: string, collName: string, savedQuery?: SavedQueryBody) => {
+  const handleSelectCollection = async (
+    connectionId: string,
+    dbName: string,
+    collName: string,
+    savedQuery?: SavedQueryBody,
+    opts?: { newTab?: boolean },
+  ) => {
     if (!connectionId || !dbName || !collName) return;
 
-    const tabId = `${connectionId}.${dbName}.${collName}`;
-    const tabExists = tabs.some(t => t.id === tabId);
+    const baseId = `${connectionId}.${dbName}.${collName}`;
+    const tabId = opts?.newTab
+      ? uniqueCollectionTabId(baseId, tabs.map((t) => t.id))
+      : baseId;
+    const tabExists = !opts?.newTab && tabs.some(t => t.id === tabId);
 
     if (!tabExists || savedQuery) {
       let newTab: QueryTab | undefined;
@@ -1148,80 +1237,64 @@ function Workspace() {
       }
       dispatchWorkspace({ type: 'open_tab', tabId }, newTab ? { tab: newTab } : undefined);
 
-      try {
-        // A saved query (palette) wins; otherwise a pinned default query loads
-        // instead of the plain {} find.
-        let def: any = savedQuery ?? null;
-        if (!def) {
-          try {
-            const cq = await loadCollectionQueries(connectionNameFor(connectionId), dbName, collName);
-            def = cq.default;
-          } catch {
-            def = null;
-          }
+      // A saved query (palette) wins; otherwise a pinned default query loads
+      // instead of the plain {} find.
+      let def: QueryDef | null = (savedQuery as QueryDef | undefined) ?? null;
+      if (!def) {
+        try {
+          const cq = await loadCollectionQueries(connectionNameFor(connectionId), dbName, collName);
+          def = (cq.default as QueryDef | null) ?? null;
+        } catch {
+          def = null;
         }
-
-        if (def && def.queryType === 'aggregate') {
-          const pipeline = (def.pipeline ?? []) as Record<string, unknown>[];
-          const resultStrs = await invoke<string[]>('execute_aggregate', {
-            id: connectionId,
-            database: dbName,
-            collection: collName,
-            pipeline: JSON.stringify(pipeline),
-          });
-          const parsedResults = resultStrs.map(s => JSON.parse(s));
-          setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
-          // History is best-effort: never surface an error after a successful run.
-          recordHistory(connectionNameFor(connectionId), dbName, collName, {
-            queryType: 'aggregate',
-            pipeline,
-          }).catch(() => {});
-        } else {
-          const q = def && def.queryType === 'find'
-            ? {
-                filter: JSON.stringify(def.filter ?? {}),
-                sort: JSON.stringify(def.sort ?? {}),
-                projection: JSON.stringify(def.projection ?? {}),
-                limit: def.limit ?? 50,
-                skip: def.skip ?? 0,
-              }
-            : { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
-          const resultStrs = await invoke<string[]>('execute_mql_query', {
-            id: connectionId,
-            database: dbName,
-            collection: collName,
-            ...q,
-          });
-          const parsedResults = resultStrs.map(s => JSON.parse(s));
-          setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastQuery: q } : t));
-          // History is best-effort: never surface an error after a successful run.
-          recordHistory(connectionNameFor(connectionId), dbName, collName, {
-            queryType: 'find',
-            filter: JSON.parse(q.filter || '{}'),
-            sort: JSON.parse(q.sort || '{}'),
-            projection: JSON.parse(q.projection || '{}'),
-            limit: q.limit,
-            skip: q.skip,
-          }).catch(() => {});
-          // Fetch count for first open (filter is always new on open).
-          setTabs(prev => prev.map(t => t.id === tabId ? { ...t, countLoading: true } : t));
-          try {
-            const total = await invoke<number>('count_documents', {
-              id: connectionId, database: dbName, collection: collName, filter: q.filter,
-            });
-            setTabs(prev => prev.map(t => t.id === tabId
-              ? { ...t, totalCount: total, estimated: isEmptyFilter(q.filter), countLoading: false }
-              : t));
-          } catch {
-            setTabs(prev => prev.map(t => t.id === tabId ? { ...t, countLoading: false } : t));
-          }
-        }
-      } catch (err: any) {
-        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, error: String(err), loading: false } : t));
       }
+      await loadTabResults(tabId, connectionId, dbName, collName, def);
     } else {
       dispatchWorkspace({ type: 'open_tab', tabId });
     }
+  };
+
+  const handleDuplicateTab = (sourceTabId: string) => {
+    const src = tabs.find((t) => t.id === sourceTabId && t.type === 'collection');
+    if (!src) return;
+
+    const baseId = `${src.connectionId}.${src.db}.${src.collection}`;
+    const tabId = uniqueCollectionTabId(baseId, tabs.map((t) => t.id));
+
+    let def: QueryDef | null;
+    try {
+      def = src.lastAggregate
+        ? { queryType: 'aggregate', pipeline: src.lastAggregate }
+        : src.lastQuery
+          ? {
+              queryType: 'find',
+              filter: JSON.parse(src.lastQuery.filter || '{}'),
+              sort: JSON.parse(src.lastQuery.sort || '{}'),
+              projection: JSON.parse(src.lastQuery.projection || '{}'),
+              limit: src.lastQuery.limit,
+              skip: src.lastQuery.skip,
+            }
+          : null;
+    } catch {
+      def = null; // corrupted persisted query — fall back to the default find
+    }
+
+    const newTab: QueryTab = {
+      id: tabId,
+      type: 'collection',
+      connectionId: src.connectionId,
+      db: src.db,
+      collection: src.collection,
+      results: [],
+      loading: true,
+      error: null,
+      explainResult: null,
+      lastQuery: src.lastQuery ?? DEFAULT_QUERY,
+      lastAggregate: src.lastAggregate,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+    void loadTabResults(tabId, src.connectionId, src.db, src.collection, def);
   };
 
   const handleSelectIndex = (connectionId: string, dbName: string, collName: string, indexName: string) => {
@@ -1338,6 +1411,7 @@ function Workspace() {
       setTabs(prev => [...prev, newTab]);
       dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
     } else {
+      setTabs(prev => prev.map(t => t.id === tabId ? { ...t, exportSourceTabId: sourceTab.id } : t));
       dispatchWorkspace({ type: 'open_tab', tabId });
     }
     loadExportTasks();
@@ -2217,10 +2291,21 @@ function Workspace() {
     }
 
     const items: ContextMenuItem[] = [];
+
+    const dupSource = tabs.find((t) => t.id === tabId && t.type === 'collection');
+    if (dupSource) {
+      items.push({
+        label: 'Duplicate Tab',
+        icon: <Copy />,
+        onClick: () => handleDuplicateTab(tabId),
+      });
+    }
+
     if (allTabIds(layout).length > 1) {
       items.push({
         label: 'Detach to New Window',
         icon: <ExternalLink />,
+        separatorBefore: items.length > 0,
         onClick: () => handleDetachTab(tabId),
       });
     }
@@ -2938,14 +3023,12 @@ function Workspace() {
       const info = pending.get(task.id);
       if (!info) continue;
       pending.delete(task.id);
-      const match = tabs.find(
-        (t) =>
-          t.type === 'collection' &&
-          t.connectionId === info.connectionId &&
-          t.db === info.db &&
-          t.collection === info.collection
-      );
-      if (match) refreshTabResults(match);
+      const matches = collectionTabsMatching(tabs, {
+        connectionId: info.connectionId,
+        db: info.db,
+        collection: info.collection,
+      });
+      for (const match of matches) refreshTabResults(match);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportTasks]);
@@ -3803,6 +3886,9 @@ function Workspace() {
       sidebar={
         <Sidebar
           onSelectCollection={handleSelectCollection}
+          isCollectionOpen={(connectionId, db, collection) =>
+            collectionTabsMatching(tabs, { connectionId, db, collection }).length > 0
+          }
           onSelectIndex={handleSelectIndex}
           onCreateIndex={handleOpenIndexModalForCreate}
           onDeleteIndex={handleDeleteIndex}
