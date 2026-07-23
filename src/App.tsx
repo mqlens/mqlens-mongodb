@@ -1120,6 +1120,84 @@ function Workspace() {
     closeWorkspaceWindow();
   }, [tabs.length, isMainWindow]);
 
+  // The resolved query definition for a tab: either a saved query or the
+  // collection's pinned default (see handleSelectCollection below).
+  type QueryDef =
+    | { queryType: 'aggregate'; pipeline: Record<string, unknown>[] }
+    | { queryType: 'find'; filter?: unknown; sort?: unknown; projection?: unknown; limit?: number; skip?: number };
+
+  // Runs `def` for `tabId` (aggregate or find), updates its results/loading
+  // state, fetches the document count for find queries, and records history.
+  // Assumes the tab already exists in `tabs` and its `open_tab` dispatch has
+  // already happened — callers are responsible for both.
+  const loadTabResults = async (
+    tabId: string,
+    connectionId: string,
+    dbName: string,
+    collName: string,
+    def: QueryDef | null,
+  ) => {
+    try {
+      if (def && def.queryType === 'aggregate') {
+        const pipeline = (def.pipeline ?? []) as Record<string, unknown>[];
+        const resultStrs = await invoke<string[]>('execute_aggregate', {
+          id: connectionId,
+          database: dbName,
+          collection: collName,
+          pipeline: JSON.stringify(pipeline),
+        });
+        const parsedResults = resultStrs.map(s => JSON.parse(s));
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
+        // History is best-effort: never surface an error after a successful run.
+        recordHistory(connectionNameFor(connectionId), dbName, collName, {
+          queryType: 'aggregate',
+          pipeline,
+        }).catch(() => {});
+      } else {
+        const q = def && def.queryType === 'find'
+          ? {
+              filter: JSON.stringify(def.filter ?? {}),
+              sort: JSON.stringify(def.sort ?? {}),
+              projection: JSON.stringify(def.projection ?? {}),
+              limit: def.limit ?? 50,
+              skip: def.skip ?? 0,
+            }
+          : { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
+        const resultStrs = await invoke<string[]>('execute_mql_query', {
+          id: connectionId,
+          database: dbName,
+          collection: collName,
+          ...q,
+        });
+        const parsedResults = resultStrs.map(s => JSON.parse(s));
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastQuery: q } : t));
+        // History is best-effort: never surface an error after a successful run.
+        recordHistory(connectionNameFor(connectionId), dbName, collName, {
+          queryType: 'find',
+          filter: JSON.parse(q.filter || '{}'),
+          sort: JSON.parse(q.sort || '{}'),
+          projection: JSON.parse(q.projection || '{}'),
+          limit: q.limit,
+          skip: q.skip,
+        }).catch(() => {});
+        // Fetch count for first open (filter is always new on open).
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, countLoading: true } : t));
+        try {
+          const total = await invoke<number>('count_documents', {
+            id: connectionId, database: dbName, collection: collName, filter: q.filter,
+          });
+          setTabs(prev => prev.map(t => t.id === tabId
+            ? { ...t, totalCount: total, estimated: isEmptyFilter(q.filter), countLoading: false }
+            : t));
+        } catch {
+          setTabs(prev => prev.map(t => t.id === tabId ? { ...t, countLoading: false } : t));
+        }
+      }
+    } catch (err: any) {
+      setTabs(prev => prev.map(t => t.id === tabId ? { ...t, error: String(err), loading: false } : t));
+    }
+  };
+
   // savedQuery (palette "jump to saved query") runs instead of the pinned
   // default — for existing tabs it re-runs in place.
   const handleSelectCollection = async (connectionId: string, dbName: string, collName: string, savedQuery?: SavedQueryBody) => {
@@ -1149,77 +1227,18 @@ function Workspace() {
       }
       dispatchWorkspace({ type: 'open_tab', tabId }, newTab ? { tab: newTab } : undefined);
 
-      try {
-        // A saved query (palette) wins; otherwise a pinned default query loads
-        // instead of the plain {} find.
-        let def: any = savedQuery ?? null;
-        if (!def) {
-          try {
-            const cq = await loadCollectionQueries(connectionNameFor(connectionId), dbName, collName);
-            def = cq.default;
-          } catch {
-            def = null;
-          }
+      // A saved query (palette) wins; otherwise a pinned default query loads
+      // instead of the plain {} find.
+      let def: QueryDef | null = (savedQuery as QueryDef | undefined) ?? null;
+      if (!def) {
+        try {
+          const cq = await loadCollectionQueries(connectionNameFor(connectionId), dbName, collName);
+          def = (cq.default as QueryDef | null) ?? null;
+        } catch {
+          def = null;
         }
-
-        if (def && def.queryType === 'aggregate') {
-          const pipeline = (def.pipeline ?? []) as Record<string, unknown>[];
-          const resultStrs = await invoke<string[]>('execute_aggregate', {
-            id: connectionId,
-            database: dbName,
-            collection: collName,
-            pipeline: JSON.stringify(pipeline),
-          });
-          const parsedResults = resultStrs.map(s => JSON.parse(s));
-          setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
-          // History is best-effort: never surface an error after a successful run.
-          recordHistory(connectionNameFor(connectionId), dbName, collName, {
-            queryType: 'aggregate',
-            pipeline,
-          }).catch(() => {});
-        } else {
-          const q = def && def.queryType === 'find'
-            ? {
-                filter: JSON.stringify(def.filter ?? {}),
-                sort: JSON.stringify(def.sort ?? {}),
-                projection: JSON.stringify(def.projection ?? {}),
-                limit: def.limit ?? 50,
-                skip: def.skip ?? 0,
-              }
-            : { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
-          const resultStrs = await invoke<string[]>('execute_mql_query', {
-            id: connectionId,
-            database: dbName,
-            collection: collName,
-            ...q,
-          });
-          const parsedResults = resultStrs.map(s => JSON.parse(s));
-          setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastQuery: q } : t));
-          // History is best-effort: never surface an error after a successful run.
-          recordHistory(connectionNameFor(connectionId), dbName, collName, {
-            queryType: 'find',
-            filter: JSON.parse(q.filter || '{}'),
-            sort: JSON.parse(q.sort || '{}'),
-            projection: JSON.parse(q.projection || '{}'),
-            limit: q.limit,
-            skip: q.skip,
-          }).catch(() => {});
-          // Fetch count for first open (filter is always new on open).
-          setTabs(prev => prev.map(t => t.id === tabId ? { ...t, countLoading: true } : t));
-          try {
-            const total = await invoke<number>('count_documents', {
-              id: connectionId, database: dbName, collection: collName, filter: q.filter,
-            });
-            setTabs(prev => prev.map(t => t.id === tabId
-              ? { ...t, totalCount: total, estimated: isEmptyFilter(q.filter), countLoading: false }
-              : t));
-          } catch {
-            setTabs(prev => prev.map(t => t.id === tabId ? { ...t, countLoading: false } : t));
-          }
-        }
-      } catch (err: any) {
-        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, error: String(err), loading: false } : t));
       }
+      await loadTabResults(tabId, connectionId, dbName, collName, def);
     } else {
       dispatchWorkspace({ type: 'open_tab', tabId });
     }
