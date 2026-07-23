@@ -1261,18 +1261,23 @@ function Workspace() {
     const baseId = `${src.connectionId}.${src.db}.${src.collection}`;
     const tabId = uniqueCollectionTabId(baseId, tabs.map((t) => t.id));
 
-    const def: QueryDef | null = src.lastAggregate
-      ? { queryType: 'aggregate', pipeline: src.lastAggregate }
-      : src.lastQuery
-        ? {
-            queryType: 'find',
-            filter: JSON.parse(src.lastQuery.filter || '{}'),
-            sort: JSON.parse(src.lastQuery.sort || '{}'),
-            projection: JSON.parse(src.lastQuery.projection || '{}'),
-            limit: src.lastQuery.limit,
-            skip: src.lastQuery.skip,
-          }
-        : null;
+    let def: QueryDef | null;
+    try {
+      def = src.lastAggregate
+        ? { queryType: 'aggregate', pipeline: src.lastAggregate }
+        : src.lastQuery
+          ? {
+              queryType: 'find',
+              filter: JSON.parse(src.lastQuery.filter || '{}'),
+              sort: JSON.parse(src.lastQuery.sort || '{}'),
+              projection: JSON.parse(src.lastQuery.projection || '{}'),
+              limit: src.lastQuery.limit,
+              skip: src.lastQuery.skip,
+            }
+          : null;
+    } catch {
+      def = null; // corrupted persisted query — fall back to the default find
+    }
 
     const newTab: QueryTab = {
       id: tabId,
@@ -1406,6 +1411,7 @@ function Workspace() {
       setTabs(prev => [...prev, newTab]);
       dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
     } else {
+      setTabs(prev => prev.map(t => t.id === tabId ? { ...t, exportSourceTabId: sourceTab.id } : t));
       dispatchWorkspace({ type: 'open_tab', tabId });
     }
     loadExportTasks();
@@ -3880,6 +3886,9 @@ function Workspace() {
       sidebar={
         <Sidebar
           onSelectCollection={handleSelectCollection}
+          isCollectionOpen={(connectionId, db, collection) =>
+            collectionTabsMatching(tabs, { connectionId, db, collection }).length > 0
+          }
           onSelectIndex={handleSelectIndex}
           onCreateIndex={handleOpenIndexModalForCreate}
           onDeleteIndex={handleDeleteIndex}

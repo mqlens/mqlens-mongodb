@@ -1870,7 +1870,10 @@ describe('opening additional collection tabs (#206)', () => {
   // Expansion sequence mirrors the existing tests in this file that click a db
   // row to reveal the "Collections" virtual folder, then click it to reveal
   // collection rows (see "shows a collection stats popover..." above).
-  const renderWithCollection = (onSelectCollection: (...a: any[]) => void) => {
+  const renderWithCollection = (
+    onSelectCollection: (...a: any[]) => void,
+    isCollectionOpen: (connectionId: string, db: string, collection: string) => boolean = () => true,
+  ) => {
     mockInvoke.mockImplementation((cmd: string, args: any) => {
       if (cmd === 'load_connection_profiles') return Promise.resolve([]);
       if (cmd === 'list_all_saved_queries') return Promise.resolve([]);
@@ -1884,6 +1887,7 @@ describe('opening additional collection tabs (#206)', () => {
     return render(
       <Sidebar
         onSelectCollection={onSelectCollection}
+        isCollectionOpen={isCollectionOpen}
         onSelectIndex={() => {}}
         activeCollection={{ connectionId: 'c1', db: 'app', collection: 'orders' }}
         activeConnections={[activeConn]}
@@ -1911,11 +1915,25 @@ describe('opening additional collection tabs (#206)', () => {
     expect(onSelect).toHaveBeenCalledWith('c1', 'app', 'orders', undefined, { newTab: true });
   });
 
-  it('double-clicking a collection opens a new tab', async () => {
+  it('double-clicking an already-open collection opens a new tab', async () => {
     const onSelect = vi.fn();
-    renderWithCollection(onSelect);
+    renderWithCollection(onSelect, () => true); // collection already open
     const coll = await revealOrders();
+    fireEvent.mouseDown(coll, { detail: 1 });
     fireEvent.doubleClick(coll);
     expect(onSelect).toHaveBeenCalledWith('c1', 'app', 'orders', undefined, { newTab: true });
+  });
+
+  it('double-clicking a cold (not-yet-open) collection does NOT open a second tab', async () => {
+    const onSelect = vi.fn();
+    renderWithCollection(onSelect, () => false); // collection not open at press
+    const coll = await revealOrders();
+    fireEvent.mouseDown(coll, { detail: 1 });
+    fireEvent.doubleClick(coll);
+    // No { newTab: true } call — the leading single-click (not fired here) would
+    // have opened the sole tab; the double-click must be a no-op.
+    expect(onSelect).not.toHaveBeenCalledWith(
+      'c1', 'app', 'orders', undefined, { newTab: true },
+    );
   });
 });
