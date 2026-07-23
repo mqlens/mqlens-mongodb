@@ -69,6 +69,7 @@ import {
   Database,
   Folder,
   FolderOpen,
+  FolderPlus,
   Server,
   RefreshCw,
   Trash2,
@@ -175,6 +176,7 @@ interface SidebarProps {
     dbName: string,
     collName: string,
     savedQuery?: SavedQueryBody,
+    opts?: { newTab?: boolean },
   ) => void;
   onSelectIndex: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
   activeCollection: { connectionId: string; db: string; collection: string; indexName?: string } | null;
@@ -234,6 +236,10 @@ interface SidebarProps {
   refreshTargetNonce?: number;
   /** Hover delay before the connection cluster-health popover opens (ms). */
   clusterHoverDelayMs?: number;
+  /** Whether the given collection already has at least one open tab. Used to gate
+   *  double-click: a cold collection's double-click is a no-op (the single click
+   *  already opened its sole tab), an already-open collection's adds another. */
+  isCollectionOpen?: (connectionId: string, db: string, collection: string) => boolean;
 }
 
 const treeRowClass = (active?: boolean) =>
@@ -345,10 +351,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   refreshTarget,
   refreshTargetNonce,
   clusterHoverDelayMs = 400,
+  isCollectionOpen,
 }) => {
   const { toast, confirm, prompt } = useDialogs();
   const [filterQuery, setFilterQuery] = useState('');
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+  // Whether the collection under a double-click gesture already had an open tab
+  // at the moment the gesture began (captured on the first mousedown, before the
+  // leading single-click opens it). Gates cold double-click to a single tab.
+  const collectionWasOpenOnPressRef = React.useRef(false);
 
   // Stats hover popover: which row's card is open (connection → cluster
   // health, database/collection/index → their stats cards), plus open-delay
@@ -1367,6 +1378,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   toggleCollectionNode(connId, dbName, collName);
                 }
               }}
+              onMouseDown={(e) => {
+                // detail === 1 is the first press of a potential double-click;
+                // capture BEFORE the click's open mutates the tab list. Skip
+                // cmd/ctrl (multi-select, not an open).
+                if (e.detail === 1 && !e.metaKey && !e.ctrlKey) {
+                  collectionWasOpenOnPressRef.current =
+                    isCollectionOpen?.(connId, dbName, collName) ?? false;
+                }
+              }}
+              onDoubleClick={(e) => {
+                if (e.metaKey || e.ctrlKey) return; // cmd/ctrl is multi-select, not open
+                e.preventDefault();
+                e.stopPropagation();
+                // Only open a NEW tab if the collection was ALREADY open before
+                // this gesture. Cold collection: the leading single-click already
+                // opened its one tab, so do nothing (no accidental pair).
+                if (collectionWasOpenOnPressRef.current) {
+                  onSelectCollection(connId, dbName, collName, undefined, { newTab: true });
+                }
+              }}
               className={cn(treeRowClass(isActive), isSelected && 'bg-accent')}
               {...statsHoverHandlers({ kind: 'collection', connId, db: dbName, coll: collName })}
             >
@@ -1397,6 +1428,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <FolderOpen />
               <span>Open Collection</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={ctxItemClass}
+              onClick={() => onSelectCollection(connId, dbName, collName, undefined, { newTab: true })}
+            >
+              <FolderPlus />
+              <span>Open in New Tab</span>
             </ContextMenuItem>
             <ContextMenuItem
               className={ctxItemClass}

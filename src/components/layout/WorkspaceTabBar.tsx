@@ -63,15 +63,15 @@ export function WorkspaceTabBar({
           }
         }}
       >
-        <ScrollArea className="w-full">
-          <div className="flex h-9 items-end px-1">
+        <ScrollArea className="w-full" orientation="horizontal">
+          <div className="flex h-9 w-max items-end px-1">
             {tabs.map((tab) => {
               const isActive = tab.id === activeTabId;
               return (
                 <div
                   key={tab.id}
                   className={cn(
-                    "group relative flex h-8 max-w-[200px] cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-ui-xs transition-colors",
+                    "group relative flex h-8 max-w-[200px] shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-ui-xs transition-colors",
                     isActive
                       ? "border-border bg-background text-foreground"
                       : "border-transparent bg-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground"

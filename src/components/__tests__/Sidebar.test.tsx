@@ -1863,3 +1863,77 @@ describe('Sidebar Component', () => {
     expect(screen.queryByText('Settings')).toBeNull();
   });
 });
+
+describe('opening additional collection tabs (#206)', () => {
+  const activeConn = { id: 'c1', name: 'Local', uri: 'mongodb://mock', profileId: 'p1' };
+
+  // Expansion sequence mirrors the existing tests in this file that click a db
+  // row to reveal the "Collections" virtual folder, then click it to reveal
+  // collection rows (see "shows a collection stats popover..." above).
+  const renderWithCollection = (
+    onSelectCollection: (...a: any[]) => void,
+    isCollectionOpen: (connectionId: string, db: string, collection: string) => boolean = () => true,
+  ) => {
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'list_all_saved_queries') return Promise.resolve([]);
+      if (cmd === 'list_databases') return Promise.resolve(['app']);
+      if (cmd === 'list_collections' && args?.db === 'app') {
+        return Promise.resolve([{ name: 'orders', type: 'collection' }]);
+      }
+      if (cmd === 'list_collections') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+    return render(
+      <Sidebar
+        onSelectCollection={onSelectCollection}
+        isCollectionOpen={isCollectionOpen}
+        onSelectIndex={() => {}}
+        activeCollection={{ connectionId: 'c1', db: 'app', collection: 'orders' }}
+        activeConnections={[activeConn]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+  };
+
+  // Reveal the 'orders' collection row and return it.
+  const revealOrders = async () => {
+    fireEvent.click(await screen.findByText('app'));          // expand db -> "Collections" folder
+    fireEvent.click(await screen.findByText('Collections'));  // expand folder -> collection rows
+    return screen.findByText('orders');
+  };
+
+  it('"Open in New Tab" calls onSelectCollection with { newTab: true }', async () => {
+    const onSelect = vi.fn();
+    renderWithCollection(onSelect);
+    const coll = await revealOrders();
+    fireEvent.contextMenu(coll);
+    const item = await screen.findByText('Open in New Tab');
+    fireEvent.click(item);
+    expect(onSelect).toHaveBeenCalledWith('c1', 'app', 'orders', undefined, { newTab: true });
+  });
+
+  it('double-clicking an already-open collection opens a new tab', async () => {
+    const onSelect = vi.fn();
+    renderWithCollection(onSelect, () => true); // collection already open
+    const coll = await revealOrders();
+    fireEvent.mouseDown(coll, { detail: 1 });
+    fireEvent.doubleClick(coll);
+    expect(onSelect).toHaveBeenCalledWith('c1', 'app', 'orders', undefined, { newTab: true });
+  });
+
+  it('double-clicking a cold (not-yet-open) collection does NOT open a second tab', async () => {
+    const onSelect = vi.fn();
+    renderWithCollection(onSelect, () => false); // collection not open at press
+    const coll = await revealOrders();
+    fireEvent.mouseDown(coll, { detail: 1 });
+    fireEvent.doubleClick(coll);
+    // No { newTab: true } call — the leading single-click (not fired here) would
+    // have opened the sole tab; the double-click must be a no-op.
+    expect(onSelect).not.toHaveBeenCalledWith(
+      'c1', 'app', 'orders', undefined, { newTab: true },
+    );
+  });
+});

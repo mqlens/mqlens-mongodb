@@ -4,17 +4,30 @@ import { cn } from "@/lib/utils";
 
 const ScrollArea = React.forwardRef<
   React.ElementRef<typeof ScrollAreaPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root> & {
+    /** Which scrollbar to render. Defaults to vertical (existing behavior).
+     *  Use "horizontal" for a single-row strip that overflows sideways. */
+    orientation?: "vertical" | "horizontal";
+  }
+>(({ className, children, orientation = "vertical", ...props }, ref) => (
   <ScrollAreaPrimitive.Root
     ref={ref}
     className={cn("relative min-h-0 overflow-hidden", className)}
     {...props}
   >
-    <ScrollAreaPrimitive.Viewport className="size-full rounded-[inherit] [&>div]:block">
+    {/* Radix's default content wrapper is `display:table` so it can grow past the
+        viewport for horizontal scrolling. Force `block` only for vertical lists
+        (its original behavior); leaving it `table` is what lets a horizontal
+        strip overflow and scroll. */}
+    <ScrollAreaPrimitive.Viewport
+      className={cn(
+        "size-full rounded-[inherit]",
+        orientation === "vertical" && "[&>div]:block"
+      )}
+    >
       {children}
     </ScrollAreaPrimitive.Viewport>
-    <ScrollBar />
+    <ScrollBar orientation={orientation} />
     <ScrollAreaPrimitive.Corner />
   </ScrollAreaPrimitive.Root>
 ));
@@ -32,7 +45,7 @@ const ScrollBar = React.forwardRef<
       orientation === "vertical" &&
         "h-full w-2 border-l border-l-transparent p-[1px]",
       orientation === "horizontal" &&
-        "h-2 flex-col border-t border-t-transparent p-[1px]",
+        "h-1 flex-col p-px",
       className
     )}
     {...props}
