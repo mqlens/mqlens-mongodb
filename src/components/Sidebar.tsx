@@ -69,6 +69,7 @@ import {
   Database,
   Folder,
   FolderOpen,
+  FolderPlus,
   Server,
   RefreshCw,
   Trash2,
@@ -175,6 +176,7 @@ interface SidebarProps {
     dbName: string,
     collName: string,
     savedQuery?: SavedQueryBody,
+    opts?: { newTab?: boolean },
   ) => void;
   onSelectIndex: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
   activeCollection: { connectionId: string; db: string; collection: string; indexName?: string } | null;
@@ -1367,6 +1369,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   toggleCollectionNode(connId, dbName, collName);
                 }
               }}
+              onDoubleClick={(e) => {
+                if (e.metaKey || e.ctrlKey) return; // cmd/ctrl is multi-select, not open
+                e.preventDefault();
+                e.stopPropagation();
+                onSelectCollection(connId, dbName, collName, undefined, { newTab: true });
+              }}
               className={cn(treeRowClass(isActive), isSelected && 'bg-accent')}
               {...statsHoverHandlers({ kind: 'collection', connId, db: dbName, coll: collName })}
             >
@@ -1397,6 +1405,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <FolderOpen />
               <span>Open Collection</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              className={ctxItemClass}
+              onClick={() => onSelectCollection(connId, dbName, collName, undefined, { newTab: true })}
+            >
+              <FolderPlus />
+              <span>Open in New Tab</span>
             </ContextMenuItem>
             <ContextMenuItem
               className={ctxItemClass}
