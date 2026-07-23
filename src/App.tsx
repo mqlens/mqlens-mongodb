@@ -68,6 +68,7 @@ import {
   type PersistedTab,
 } from './workspace/persistence';
 import { ReconnectBanner } from './workspace/ReconnectBanner';
+import { collectionTabsMatching } from './workspace/collectionTabs';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { CreateViewView } from './components/CreateViewView';
 import { ValidationRulesView } from './components/ValidationRulesView';
@@ -2938,14 +2939,12 @@ function Workspace() {
       const info = pending.get(task.id);
       if (!info) continue;
       pending.delete(task.id);
-      const match = tabs.find(
-        (t) =>
-          t.type === 'collection' &&
-          t.connectionId === info.connectionId &&
-          t.db === info.db &&
-          t.collection === info.collection
-      );
-      if (match) refreshTabResults(match);
+      const matches = collectionTabsMatching(tabs, {
+        connectionId: info.connectionId,
+        db: info.db,
+        collection: info.collection,
+      });
+      for (const match of matches) refreshTabResults(match);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportTasks]);
