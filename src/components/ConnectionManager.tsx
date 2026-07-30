@@ -460,7 +460,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     { nameKey: 'test.stageConnect', status: 'pending' },
     { nameKey: 'test.stagePing', status: 'pending' },
   ]);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  // `message` carries raw (English) driver text for the failure path only; the
+  // success path has no driver text to preserve, so its label is rendered from
+  // `success` at display time (see t('test.successMessage') below) rather than
+  // being frozen into state, so it doesn't go stale on a mid-session language switch.
+  const [testResult, setTestResult] = useState<{ success: boolean; message?: string } | null>(null);
   const [showErrDetail, setShowErrDetail] = useState(false);
 
   // Initialize folders and load connection profiles
@@ -1054,7 +1058,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         onPhase: channel,
       });
       setTestProgress(100);
-      setTestResult({ success: true, message: t('test.successMessage') });
+      setTestResult({ success: true });
     } catch (err: any) {
       // The failing row is already painted from its 'fail' update; as a fallback
       // (e.g. the call rejected before any update), mark the first unfinished row.
@@ -2184,9 +2188,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   let summary: string;
                   let hint: string | undefined;
                   if (testResult.success) {
-                    summary = testResult.message;
+                    summary = t('test.successMessage');
                   } else {
-                    const info = summarizeConnectionError(testResult.message);
+                    const info = summarizeConnectionError(testResult.message ?? '');
                     summary = 'summaryKey' in info ? t(info.summaryKey) : info.summaryText;
                     hint = 'hintKey' in info && info.hintKey ? t(info.hintKey) : undefined;
                   }

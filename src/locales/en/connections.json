@@ -70,7 +70,7 @@
       "title": "Delete connection profile"
     },
     "importConnections": {
-      "message_one": "Found {{count}} connection URI. Create a saved profile for each?",
+      "message_one": "Found {{count}} connection URIs. Create a saved profile for each?",
       "message_other": "Found {{count}} connection URIs. Create a saved profile for each?",
       "title": "Import connections"
     },
