@@ -12,23 +12,23 @@
     "viaMcpBadge": "über MCP"
   },
   "ctx": {
-    "addCollection": "Collection hinzufügen",
+    "addCollection": "Sammlung hinzufügen",
     "addDatabase": "Datenbank hinzufügen",
     "addToFavorites": "Zu Favoriten hinzufügen",
     "analyzeSchema": "Schema analysieren",
     "copy": "Kopieren",
-    "copyCollectionName": "Collection-Namen kopieren",
+    "copyCollectionName": "Sammlungsnamen kopieren",
     "copyDatabase": "Datenbank kopieren",
     "copyDatabaseTo": "Datenbank kopieren nach…",
     "copyIndexName": "Indexnamen kopieren",
     "copyTo": "Kopieren nach…",
     "createIndex": "Index erstellen",
-    "createView": "View erstellen",
+    "createView": "Ansicht erstellen",
     "deleteIndex": "Index löschen",
     "disconnect": "Trennen",
-    "dropCollection": "Collection löschen",
+    "dropCollection": "Sammlung löschen",
     "dropDatabase": "Datenbank löschen",
-    "dropView": "View löschen",
+    "dropView": "Ansicht löschen",
     "dump": "Dump (mongodump)…",
     "generateData": "Daten generieren…",
     "manageConnections": "Verbindungen verwalten",
@@ -36,10 +36,10 @@
     "manageUsersDatabase": "Benutzer verwalten",
     "monitorCluster": "Cluster überwachen",
     "newBucket": "Neuer Bucket",
-    "newCollection": "Neue Collection",
+    "newCollection": "Neue Sammlung",
     "newConnection": "Neue Verbindung",
     "open": "Öffnen",
-    "openCollection": "Collection öffnen",
+    "openCollection": "Sammlung öffnen",
     "openInNewTab": "In neuem Tab öffnen",
     "openShell": "mongosh-Shell öffnen",
     "pasteHere": "Hier einfügen",
@@ -47,7 +47,7 @@
     "refreshDatabase": "Datenbank aktualisieren",
     "refreshDatabases": "Datenbanken aktualisieren",
     "removeFromFavorites": "Aus Favoriten entfernen",
-    "renameCollection": "Collection umbenennen",
+    "renameCollection": "Sammlung umbenennen",
     "renameDatabase": "Datenbank umbenennen",
     "restore": "Restore (mongorestore)…",
     "settings": "Einstellungen",
@@ -58,15 +58,15 @@
   "dialogs": {
     "dropCollection": {
       "confirmLabel": "Löschen",
-      "message": "Möchtest du die Collection \"{{name}}\" wirklich löschen?",
-      "title": "Collection löschen"
+      "message": "Möchtest du die Sammlung \"{{name}}\" wirklich löschen?",
+      "title": "Sammlung löschen"
     },
     "dropDatabase": {
       "confirmLabel": "Löschen",
       "message": "Möchtest du die Datenbank \"{{name}}\" wirklich löschen? Dies kann nicht rückgängig gemacht werden.",
       "title": "Datenbank löschen"
     },
-    "enterNewCollectionName": "Neuen Collection-Namen eingeben:",
+    "enterNewCollectionName": "Neuen Sammlungsnamen eingeben:",
     "enterNewDatabaseName": "Neuen Datenbanknamen eingeben:",
     "gridfsBucket": {
       "bucketDefault": "fs",
@@ -76,30 +76,30 @@
         "noSystemPrefix": "Bucket-Name darf nicht mit \"system\" beginnen",
         "required": "Bucket-Name ist erforderlich"
       },
-      "message": "Bucket-Name (Collections werden beim ersten Upload erstellt):",
+      "message": "Bucket-Name (Sammlungen werden beim ersten Upload erstellt):",
       "title": "GridFS-Bucket öffnen"
     },
     "initialCollection": {
-      "defaultValue": "collection",
-      "message": "Die Datenbank benötigt eine erste Collection. Gib deren Namen ein:",
-      "title": "Erste Collection"
+      "defaultValue": "sammlung",
+      "message": "Die Datenbank benötigt eine erste Sammlung. Gib deren Namen ein:",
+      "title": "Erste Sammlung"
     },
     "nameRequired": "Name ist erforderlich",
     "newCollection": {
-      "placeholder": "Collection-Name",
-      "title": "Neue Collection"
+      "placeholder": "Sammlungsname",
+      "title": "Neue Sammlung"
     },
     "newDatabase": {
       "placeholder": "Datenbankname",
       "title": "Neue Datenbank"
     },
     "renameCollection": {
-      "title": "Collection umbenennen"
+      "title": "Sammlung umbenennen"
     },
     "renameDatabase": {
       "confirmLabel": "Umbenennen",
-      "messagePlain": "Datenbank \"{{oldName}}\" in \"{{newName}}\" umbenennen?\n\nMongoDB unterstützt kein natives Umbenennen von Datenbanken. MQLens kopiert Collections und Indexe, überprüft die Dokumentanzahl und löscht anschließend die Quelldatenbank.",
-      "messageTyped": "Datenbank \"{{oldName}}\" in \"{{newName}}\" umbenennen? MongoDB unterstützt kein natives Umbenennen von Datenbanken. MQLens kopiert Collections und Indexe, überprüft die Dokumentanzahl und löscht anschließend die Quelldatenbank.\n\nGib den Datenbanknamen zur Bestätigung ein.",
+      "messagePlain": "Datenbank \"{{oldName}}\" in \"{{newName}}\" umbenennen?\n\nMongoDB unterstützt kein natives Umbenennen von Datenbanken. MQLens kopiert Sammlungen und Indexe, überprüft die Dokumentanzahl und löscht anschließend die Quelldatenbank.",
+      "messageTyped": "Datenbank \"{{oldName}}\" in \"{{newName}}\" umbenennen? MongoDB unterstützt kein natives Umbenennen von Datenbanken. MQLens kopiert Sammlungen und Indexe, überprüft die Dokumentanzahl und löscht anschließend die Quelldatenbank.\n\nGib den Datenbanknamen zur Bestätigung ein.",
       "promptTitle": "Datenbank umbenennen",
       "title": "Datenbank \"{{name}}\" umbenennen"
     }
@@ -107,10 +107,10 @@
   "empty": {
     "connectAriaLabel": "Mit Datenbank verbinden",
     "connectButton": "Mit Datenbank verbinden...",
-    "favoritesHint": "Rechtsklick auf Elemente im Baum, oder favorisiere eine gespeicherte Query aus einem Collection-Tab",
+    "favoritesHint": "Rechtsklick auf Elemente im Baum, oder favorisiere eine gespeicherte Query aus einem Sammlungstab",
     "foldersHint": "Speichere Verbindungen im Verbindungsmanager",
     "noConnections": "Mit einem MongoDB-Server verbinden, um die Datenbankstruktur zu durchsuchen.",
-    "pinnedHint": "Rechtsklick auf eine Verbindung, Datenbank oder Collection → An Seitenleiste anheften"
+    "pinnedHint": "Rechtsklick auf eine Verbindung, Datenbank oder Sammlung → An Seitenleiste anheften"
   },
   "folders": {
     "manageConnectionsButton": "Verbindungen verwalten"
@@ -132,7 +132,7 @@
   "search": {
     "ariaLabel": "Seitenleiste durchsuchen",
     "clearAriaLabel": "Suche löschen",
-    "placeholder": "Verbindungen, Datenbanken, Collections durchsuchen…"
+    "placeholder": "Verbindungen, Datenbanken, Sammlungen durchsuchen…"
   },
   "sections": {
     "connections": "VERBINDUNGEN",
@@ -146,32 +146,32 @@
     "couldNotConnect": "Verbindung zu {{name}} fehlgeschlagen",
     "couldNotUpdateFavorites": "Favoriten konnten nicht aktualisiert werden",
     "couldNotUpdatePinned": "Angepinnte Elemente konnten nicht aktualisiert werden",
-    "createCollectionFailed": "Collection konnte nicht erstellt werden: {{error}}",
+    "createCollectionFailed": "Sammlung konnte nicht erstellt werden: {{error}}",
     "createDatabaseFailed": "Datenbank konnte nicht erstellt werden: {{error}}",
-    "dropCollectionFailed": "Collection konnte nicht gelöscht werden: {{error}}",
+    "dropCollectionFailed": "Sammlung konnte nicht gelöscht werden: {{error}}",
     "dropDatabaseFailed": "Datenbank konnte nicht gelöscht werden: {{error}}",
     "noSavedConnection": "Keine gespeicherte Verbindung \"{{name}}\". Füge sie im Verbindungsmanager hinzu und versuche es erneut.",
     "pinned": "An Seitenleiste angeheftet",
     "readOnlyBlocked": "Diese Verbindung ist schreibgeschützt (Produktionsschutz). Ändere den Verbindungsmodus in den Einstellungen, um Daten zu bearbeiten.",
     "removedFromFavorites": "Aus Favoriten entfernt",
-    "renameCollectionFailed": "Collection konnte nicht umbenannt werden: {{error}}",
+    "renameCollectionFailed": "Sammlung konnte nicht umbenannt werden: {{error}}",
     "renameDatabaseFailed": "Datenbank konnte nicht umbenannt werden: {{error}}",
     "savedQueryGone": "Gespeicherte Query existiert nicht mehr",
     "unpinned": "Von Seitenleiste gelöst"
   },
   "tree": {
-    "collectionsLabel": "Collections",
+    "collectionsLabel": "Sammlungen",
     "databaseAriaLabel": "Datenbank {{name}}",
     "empty": "Leer",
     "gridfsBucketsLabel": "GridFS-Buckets",
-    "indexesLabel": "indizes",
+    "indexesLabel": "Indizes",
     "newBucketAriaLabel": "Neuer Bucket",
     "newBucketInline": "Neuer Bucket…",
-    "newCollectionAriaLabel": "Neue Collection",
+    "newCollectionAriaLabel": "Neue Sammlung",
     "offlineSuffix": " · offline",
-    "rootLabel": "Stamm",
+    "rootLabel": "Wurzel",
     "systemLabel": "System",
-    "timeseriesAriaLabel": "Time-Series-Collection",
-    "viewsLabel": "Views"
+    "timeseriesAriaLabel": "Time-Series-Sammlung",
+    "viewsLabel": "Ansichten"
   }
 }
