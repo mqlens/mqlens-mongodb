@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { I18nextProvider } from 'react-i18next';
 import { changeLocale, i18next, initI18n } from '@/lib/i18n';
 import { DEFAULT_LOCALE, isSupportedLocale, type Locale } from '@/lib/i18n/locales';
+import { VAULT_UNLOCKED_EVENT } from '@/lib/vault';
 
 interface LocaleContextValue {
   locale: Locale;
@@ -18,34 +19,63 @@ export function useLocale(): LocaleContextValue {
 }
 
 /**
- * Owns i18next and the active locale. Mounted outermost, above ThemeProvider:
- * strings are needed everywhere and i18n has no reason to depend on theming.
- * Children render only once i18next is ready, so nothing ever paints a raw key.
+ * Owns i18next and the active locale. Mounted outermost, above ThemeProvider
+ * *and* above VaultGate: strings are needed everywhere, including on the
+ * unlock screen itself.
+ *
+ * The persisted locale lives in encrypted app settings, which cannot be read
+ * until the vault is unlocked — and VaultGate, the component that prompts for
+ * unlock, is a descendant of this provider. So the tree is never gated on the
+ * settings read: i18next initialises to English synchronously-ish and
+ * children render immediately, letting VaultGate mount and the user unlock.
+ * The persisted locale (if any) is then reconciled in the background, once
+ * after the initial read and again on VAULT_UNLOCKED_EVENT — mirroring how
+ * ThemeProvider re-reads appearance settings after unlock.
  */
 export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [locale, setLocaleState] = useState<Locale>(DEFAULT_LOCALE);
   const [ready, setReady] = useState(false);
 
+  const reconcilePersistedLocale = useCallback(async () => {
+    try {
+      const settings = await invoke<{ locale?: unknown }>('load_app_settings');
+      // A persisted locale can be stale or hand-edited — validate, don't trust.
+      if (!isSupportedLocale(settings?.locale)) return;
+      const next = settings.locale;
+      setLocaleState((current) => {
+        if (next !== current) {
+          void changeLocale(next);
+          return next;
+        }
+        return current;
+      });
+    } catch {
+      // Vault still locked or settings unavailable — keep the current locale.
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
     (async () => {
-      let next: Locale = DEFAULT_LOCALE;
-      try {
-        const settings = await invoke<{ locale?: unknown }>('load_app_settings');
-        // A persisted locale can be stale or hand-edited — validate, don't trust.
-        if (isSupportedLocale(settings?.locale)) next = settings.locale;
-      } catch {
-        // Never block startup on settings: fall back to English.
-      }
-      await initI18n(next);
+      await initI18n(DEFAULT_LOCALE);
       if (!alive) return;
-      setLocaleState(next);
       setReady(true);
+      // Best-effort: on a cold start the vault is typically still locked, so
+      // this read commonly fails here and succeeds later, on unlock.
+      void reconcilePersistedLocale();
     })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [reconcilePersistedLocale]);
+
+  useEffect(() => {
+    const onVaultUnlocked = () => {
+      void reconcilePersistedLocale();
+    };
+    window.addEventListener(VAULT_UNLOCKED_EVENT, onVaultUnlocked);
+    return () => window.removeEventListener(VAULT_UNLOCKED_EVENT, onVaultUnlocked);
+  }, [reconcilePersistedLocale]);
 
   const setLocale = (next: Locale) => {
     setLocaleState(next);

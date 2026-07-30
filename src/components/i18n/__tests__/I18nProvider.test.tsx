@@ -6,6 +6,7 @@ const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => mockInvoke(...a) }));
 
 import { I18nProvider, useLocale } from '../I18nProvider';
+import { VAULT_UNLOCKED_EVENT } from '@/lib/vault';
 
 function Probe() {
   const { t } = useTranslation('common');
@@ -55,5 +56,25 @@ describe('I18nProvider', () => {
         settings: expect.objectContaining({ locale: 'de' }),
       })),
     );
+  });
+
+  it('applies the persisted locale once the vault unlocks, after a locked cold start', async () => {
+    // Models real boot order: I18nProvider reads settings before VaultGate
+    // has had a chance to unlock the vault, so the first read fails.
+    mockInvoke.mockRejectedValueOnce(new Error('vault is locked'));
+    mockInvoke.mockResolvedValue({ locale: 'de' });
+
+    render(<I18nProvider><Probe /></I18nProvider>);
+
+    // The app must still boot (in English) instead of hanging on the failed read.
+    expect(await screen.findByTestId('cancel')).toHaveTextContent('Cancel');
+    expect(screen.getByTestId('locale')).toHaveTextContent('en');
+
+    // Simulate VaultGate unlocking the vault.
+    fireEvent(window, new Event(VAULT_UNLOCKED_EVENT));
+
+    // The previously-unreadable persisted locale should now be honoured.
+    await waitFor(() => expect(screen.getByTestId('cancel')).toHaveTextContent('Abbrechen'));
+    expect(screen.getByTestId('locale')).toHaveTextContent('de');
   });
 });
