@@ -1,0 +1,17 @@
+{
+  "conn": {
+    "authFailed": "Authentifizierung fehlgeschlagen.",
+    "authFailedHint": "Prüfe Benutzername, Passwort und Authentifizierungsdatenbank.",
+    "dnsFailed": "Host nicht gefunden (DNS-Suche fehlgeschlagen).",
+    "dnsFailedHint": "Prüfe den Hostnamen; für private Hosts ist eventuell ein SSH-Tunnel nötig.",
+    "handshakeClosed": "Server hat die Verbindung während des Handshakes geschlossen.",
+    "handshakeClosedHint": "Meist liegt es daran, dass der Server älter als MongoDB 4.2 ist, der älteste von MQLens unterstützte Stand — Server vor 3.6 sprechen das vom Treiber verwendete Wire-Protokoll nicht. Andernfalls benötigt der Server TLS, während TLS hier deaktiviert ist.",
+    "refused": "Verbindung abgelehnt.",
+    "refusedHint": "Läuft der Server, und sind Host/Port von diesem Rechner aus erreichbar?",
+    "selectionTimeout": "Kein Server erreichbar (Serverauswahl-Timeout).",
+    "selectionTimeoutHint": "Prüfe Host/Port und TLS-Einstellungen sowie ob dieser Rechner den Cluster erreichen kann.",
+    "timedOut": "Verbindung wurde zeitüberschritten.",
+    "tlsNotTrusted": "TLS-Zertifikat nicht vertrauenswürdig.",
+    "tlsNotTrustedHint": "Gib die CA-Datei des Clusters unter TLS an oder aktiviere „Ungültige Zertifikate zulassen“ für selbstsignierte/Entwicklungscluster."
+  }
+}

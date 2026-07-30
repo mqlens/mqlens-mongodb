@@ -1,0 +1,242 @@
+{
+  "actions": {
+    "alreadyConnected": "Already Connected",
+    "browse": "Browse…",
+    "connect": "Connect",
+    "connecting": "Connecting...",
+    "create": "Create",
+    "delete": "Delete",
+    "duplicate": "Duplicate",
+    "edit": "Edit",
+    "export": "Export…",
+    "exportAllUris": "Export All URIs",
+    "exportUri": "Export URI",
+    "hidePassword": "Hide password",
+    "import": "Import",
+    "importAll": "Import all",
+    "importUri": "Import URI",
+    "new": "New...",
+    "newFolder": "New Folder",
+    "showPassword": "Show password",
+    "testConnection": "Test Connection"
+  },
+  "advanced": {
+    "compression": "BSON Compression",
+    "compressionNone": "None",
+    "compressionSnappy": "Snappy",
+    "compressionZlib": "Zlib",
+    "defaultDb": "Default Database"
+  },
+  "auth": {
+    "authDatabase": "Authentication Database",
+    "externalNotePrefix": "Authenticates against the",
+    "externalNoteSuffix": "database.",
+    "method": "Authentication Method",
+    "methodAws": "MONGODB-AWS (IAM)",
+    "methodKerberos": "GSSAPI (Kerberos)",
+    "methodLdap": "LDAP (PLAIN)",
+    "methodNone": "None (Guest Access)",
+    "methodScram1": "SCRAM-SHA-1",
+    "methodScram256": "SCRAM-SHA-256 (Default)",
+    "methodX509": "x.509 Client Certificate",
+    "passLabelAws": "Secret Access Key",
+    "passLabelDefault": "Password",
+    "serviceName": "Service Name (optional, default: mongodb)",
+    "sessionToken": "Session Token (optional)",
+    "sessionTokenPlaceholder": "for temporary STS credentials",
+    "userLabelAws": "Access Key ID",
+    "userLabelDefault": "Username",
+    "userLabelKerberos": "Principal",
+    "userLabelX509": "Username (optional — derived from certificate)",
+    "x509Note": "Requires TLS with a client certificate (TLS tab)."
+  },
+  "connectionMode": {
+    "confirmDestructive": {
+      "description": "Destructive ops need typed confirmation",
+      "label": "Confirm destructive"
+    },
+    "normal": {
+      "description": "Full read/write",
+      "label": "Normal"
+    },
+    "readOnly": {
+      "description": "Blocks all writes",
+      "label": "Read-only"
+    }
+  },
+  "dialogs": {
+    "deleteProfile": {
+      "message": "Are you sure you want to delete this connection profile?",
+      "title": "Delete connection profile"
+    },
+    "importConnections": {
+      "message_one": "Found {{count}} connection URI. Create a saved profile for each?",
+      "message_other": "Found {{count}} connection URIs. Create a saved profile for each?",
+      "title": "Import connections"
+    },
+    "importUri": {
+      "message": "Paste one or more mongodb:// or mongodb+srv:// connection strings. Use # lines to name connections. ({{shortcut}} to import)",
+      "placeholder": "# Local\nmongodb://localhost:27017\n\n# Production\nmongodb://user:pass@host1:27017/?replicaSet=rs0",
+      "title": "Import Connection URI"
+    }
+  },
+  "editor": {
+    "duplicateTitle": "Duplicate Connection",
+    "editTitle": "Edit Connection",
+    "newTitle": "New Connection",
+    "subtitle": "Configure server, auth, TLS, and advanced options",
+    "tabsAria": "Connection settings sections"
+  },
+  "empty": {
+    "message": "Select a connection from the sidebar, or choose \"New…\" in the toolbar to create one."
+  },
+  "errors": {
+    "alreadyActive": "This connection is already active",
+    "clipboardEmpty": "Clipboard is empty",
+    "clipboardReadFailed": "Could not read the clipboard.",
+    "displayNameRequired": "Display Name is required",
+    "fileReadFailed": "Could not read the selected file.",
+    "folderNameExists": "A folder with this name already exists",
+    "folderNameRequired": "Folder name is required"
+  },
+  "export": {
+    "allDescription_one": "Exporting {{count}} saved connection as JSON (including folder structure). Compatible with MQLens import and Studio 3T-style connection files.",
+    "allDescription_other": "Exporting {{count}} saved connections as JSON (including folder structure). Compatible with MQLens import and Studio 3T-style connection files.",
+    "allTitle": "Export All Connection URIs",
+    "copyToClipboard": "Copy to clipboard",
+    "includePassword": "Include password",
+    "includePasswordDescription": "Off strips the auth password and proxy/token secrets so the URI is safe to share.",
+    "includeSettings": "Include connection settings",
+    "includeSettingsDescription": "TLS files, replica set, auth mechanism, appName, proxy, and timeouts.",
+    "saveAllTitle": "Save connection URIs",
+    "saveTitle": "Save connection URI",
+    "saveToFile": "Save to file…",
+    "singleTitle": "Export connection URI",
+    "sshNote": "This connection uses an SSH tunnel. Tunnel settings can’t be represented in a MongoDB URI and are not exported."
+  },
+  "filePicker": {
+    "allFilesFilter": "All files",
+    "certificatesFilter": "Certificates",
+    "importFileTitle": "Import connection URI from file",
+    "jsonFilter": "JSON",
+    "jsonStudio3tFilter": "JSON / Studio 3T URI",
+    "selectCertificateTitle": "Select certificate file",
+    "textFilter": "Text"
+  },
+  "folder": {
+    "closeDialogAria": "Close folder dialog",
+    "nameLabel": "Folder Name",
+    "root": "(root)"
+  },
+  "form": {
+    "colorTag": "Color tag",
+    "colorTagGroupAria": "Connection color tag",
+    "connectionMode": "Connection mode",
+    "connectionUriLabel": "Connection URI",
+    "custom": "Custom",
+    "displayName": "Display Name",
+    "folder": "Folder",
+    "hostList": "Host List",
+    "hostListHostnameOnly": "(hostname only)",
+    "hostListHostPort": "(host:port, comma-separated)",
+    "mcpEnabled": "Expose to MCP agents",
+    "mcpEnabledDescription": "Agents connected to the MQLens MCP server can see and connect to this profile.",
+    "noColor": "No color",
+    "parseIntoFields": "Parse into form fields",
+    "parseUriTitle": "Fill the Server and Auth form fields from this URI so you can edit them",
+    "pickCustomColor": "Pick a custom color",
+    "protocol": "Protocol",
+    "replicaSetName": "Replica Set Name",
+    "showPasswordToEdit": "Show password to edit",
+    "topology": "Topology",
+    "topologyReplicaSet": "Replica Set",
+    "topologySharded": "Sharded Cluster (mongos)",
+    "topologyStandalone": "Standalone / Direct",
+    "topologyUriOnly": "Full URI String Only",
+    "uriBadge": "URI"
+  },
+  "import": {
+    "fromClipboard": "From clipboard",
+    "fromFile": "From a file…",
+    "pasteManually": "Paste manually…"
+  },
+  "list": {
+    "colorDotTitle": "Connection color"
+  },
+  "profile": {
+    "connectedActive": "Connected (Active)",
+    "connectionUri": "Connection URI",
+    "disconnected": "Disconnected",
+    "metadata": "Connection Metadata",
+    "profileId": "Profile ID:",
+    "status": "Status:",
+    "subtitle": "Connection profile"
+  },
+  "proxy": {
+    "description": "The MongoDB driver tunnels its connection through a SOCKS5 proxy. (HTTP proxies are not supported by the driver.)",
+    "enableLabel": "Enable SOCKS5 Client Proxy",
+    "host": "Proxy Host",
+    "password": "Proxy Password (optional)",
+    "port": "Proxy Port",
+    "username": "Proxy Username (optional)"
+  },
+  "sidebar": {
+    "allFolders": "All Folders",
+    "allFoldersPlaceholder": "All folders",
+    "connectedTitle": "Connected",
+    "emptyFolder": "Empty folder",
+    "searchPlaceholder": "Search connections...",
+    "unnamedConnection": "Unnamed connection"
+  },
+  "ssh": {
+    "agentNote": "Authentication uses your system ssh-agent (SSH_AUTH_SOCK). Keys and passphrases stay in the agent and never touch MQLens or the saved profile.",
+    "authAgent": "SSH Agent",
+    "authKey": "Private Key",
+    "authMethod": "Auth Method",
+    "authPassword": "Password",
+    "enableLabel": "Enable SSH Tunnel Proxy Gateway",
+    "host": "SSH Server Host",
+    "hostKeyNotePrefix": "The SSH server's host key must be in",
+    "hostKeyNoteSuffix": ". Credentials are stored with the profile (plaintext); prefer key-based auth.",
+    "keyPassphrase": "Key Passphrase (optional)",
+    "keyPassphrasePlaceholder": "Leave blank if the key is unencrypted",
+    "password": "SSH Password",
+    "port": "SSH Port",
+    "privateKeyPath": "Private Key Path",
+    "username": "SSH Username"
+  },
+  "subtitle": "Manage saved MongoDB profiles and folders",
+  "tabs": {
+    "advanced": "Advanced",
+    "auth": "Authentication",
+    "proxy": "Proxy",
+    "server": "Server",
+    "ssh": "SSH Tunnel",
+    "tls": "TLS / SSL"
+  },
+  "test": {
+    "dismissAria": "Dismiss test result",
+    "dismissTitle": "Dismiss",
+    "hideDetails": "Hide details",
+    "progressLabel": "Connection Test Progress",
+    "showDetails": "Show details",
+    "stageConnect": "Initialize Driver Client",
+    "stageParse": "Parse Connection URI",
+    "stagePing": "Verify Connection (Ping)",
+    "stageResolve": "Resolve Host & Port",
+    "successMessage": "Connection test successful"
+  },
+  "title": "Connection Manager",
+  "tls": {
+    "allowInvalidCerts": "Allow invalid certificates",
+    "allowInvalidHosts": "Allow invalid hostnames",
+    "caFilePath": "CA File Path",
+    "certValidation": "Certificate Validation",
+    "insecureTag": "(insecure)",
+    "mode": "SSL / TLS Certificate Mode",
+    "modeFile": "Custom CA File Upload",
+    "modeOff": "Off (Insecure Plaintext)",
+    "modeSystem": "System Root CA Certificates",
+    "validationWarning": "Disabling certificate validation exposes the connection to man-in-the-middle attacks. Enable only for trusted/self-signed test servers."
+  }
+}

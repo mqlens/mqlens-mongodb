@@ -3,6 +3,7 @@ import type { ReactElement } from 'react';
 import { render as rtlRender, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ConnectionManager, buildUri, buildSshConfig, parseUriIntoFields, summarizeConnectionError } from '../ConnectionManager';
 import { DialogProvider } from '../dialogs/DialogProvider';
+import enErrors from '../../locales/en/errors.json';
 
 // ConnectionManager now uses the in-app dialog system, so it must render inside a provider.
 const render = (ui: ReactElement) => rtlRender(<DialogProvider>{ui}</DialogProvider>);
@@ -61,43 +62,58 @@ const baseConn = {
   defaultDb: '',
 } as any;
 
+// ConnectionErrorSummary is a discriminated union (summaryKey+hintKey for
+// known causes, bare summaryText for the untranslated raw-error fallback) so
+// the untranslatable branch stays honest at the type level. These narrow it
+// for assertions without weakening that guarantee in the production code.
+const summaryKeyOf = (info: ReturnType<typeof summarizeConnectionError>) =>
+  'summaryKey' in info ? info.summaryKey : undefined;
+const hintKeyOf = (info: ReturnType<typeof summarizeConnectionError>) =>
+  'hintKey' in info ? info.hintKey : undefined;
+const summaryTextOf = (info: ReturnType<typeof summarizeConnectionError>) =>
+  'summaryText' in info ? info.summaryText : undefined;
+
 describe('summarizeConnectionError', () => {
   it('reports a TLS trust problem buried inside a server-selection timeout', () => {
     const raw = 'Kind: Server selection timeout: No available servers. Topology: { Servers: [ { Address: 1.2.3.4:27017, Type: Unknown, Error: Kind: I/O error: invalid peer certificate: UnknownIssuer } ] }';
-    const { summary, hint } = summarizeConnectionError(raw);
-    expect(summary).toMatch(/certificate not trusted/i);
-    expect(hint).toMatch(/CA file|invalid certificates/i);
+    const info = summarizeConnectionError(raw);
+    expect(summaryKeyOf(info)).toBe('errors:conn.tlsNotTrusted');
+    expect(hintKeyOf(info)).toBe('errors:conn.tlsNotTrustedHint');
   });
 
   it('detects authentication failures', () => {
-    expect(summarizeConnectionError('Authentication failed. (18)').summary).toMatch(/authentication failed/i);
+    expect(summaryKeyOf(summarizeConnectionError('Authentication failed. (18)'))).toBe('errors:conn.authFailed');
   });
 
   it('detects connection refused', () => {
-    expect(summarizeConnectionError('Kind: I/O error: Connection refused (os error 61)').summary).toMatch(/refused/i);
+    expect(summaryKeyOf(summarizeConnectionError('Kind: I/O error: Connection refused (os error 61)'))).toBe('errors:conn.refused');
   });
 
   it('falls back to a trimmed first line for unknown errors', () => {
-    const { summary, hint } = summarizeConnectionError('Kind: some weird failure\nwith more lines');
-    expect(summary).toBe('some weird failure');
-    expect(hint).toBeUndefined();
+    const info = summarizeConnectionError('Kind: some weird failure\nwith more lines');
+    expect(summaryTextOf(info)).toBe('some weird failure');
+    expect(summaryKeyOf(info)).toBeUndefined();
   });
 
   it('summarizes a bare server-selection timeout when no deeper cause is present', () => {
-    expect(summarizeConnectionError('Server selection timeout: No available servers').summary).toMatch(/selection timed out/i);
+    expect(summaryKeyOf(summarizeConnectionError('Server selection timeout: No available servers')))
+      .toBe('errors:conn.selectionTimeout');
     // #230: a pre-3.6 server drops the connection instead of reporting its
     // version, so the raw error is an I/O EOF nested in a selection timeout.
     // That must be named, not swallowed by the generic timeout message.
     const legacy = summarizeConnectionError(
       'Kind: Server selection timeout: No available servers. Topology: { Type: Single, Servers: [ { Address: localhost:12220, Type: Unknown, Error: Kind: I/O error: unexpected end of file, Labels: {"SystemOverloadedError"} } ] }',
     );
-    expect(legacy.summary).toMatch(/closed the connection during handshake/i);
-    expect(legacy.hint).toMatch(/4\.2/);
-    expect(legacy.hint).toMatch(/TLS/i);
+    expect(summaryKeyOf(legacy)).toBe('errors:conn.handshakeClosed');
+    expect(hintKeyOf(legacy)).toBe('errors:conn.handshakeClosedHint');
+    // And the English catalog must still carry the same wording users saw before.
+    expect(enErrors.conn.handshakeClosed).toMatch(/closed the connection during handshake/i);
+    expect(enErrors.conn.handshakeClosedHint).toMatch(/4\.2/);
+    expect(enErrors.conn.handshakeClosedHint).toMatch(/TLS/i);
     // A plain selection timeout with no EOF still gets the generic message.
     expect(
-      summarizeConnectionError('Server selection timeout: No available servers').summary,
-    ).toMatch(/selection timed out/i);
+      summaryKeyOf(summarizeConnectionError('Server selection timeout: No available servers')),
+    ).toBe('errors:conn.selectionTimeout');
   });
 });
 

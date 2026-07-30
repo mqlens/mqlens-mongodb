@@ -1,0 +1,17 @@
+{
+  "conn": {
+    "authFailed": "Authentication failed.",
+    "authFailedHint": "Check the username, password, and authentication database.",
+    "dnsFailed": "Host not found (DNS lookup failed).",
+    "dnsFailedHint": "Check the hostname; for private hosts you may need an SSH tunnel.",
+    "handshakeClosed": "Server closed the connection during handshake.",
+    "handshakeClosedHint": "Most often the server predates MongoDB 4.2, the oldest MQLens currently supports — servers before 3.6 don’t speak the wire protocol the driver uses. Otherwise the server may require TLS while TLS is off here.",
+    "refused": "Connection refused.",
+    "refusedHint": "Is the server running and the host/port reachable from this machine?",
+    "selectionTimeout": "Couldn’t reach any server (selection timed out).",
+    "selectionTimeoutHint": "Check the host/port and TLS settings, and that this machine can reach the cluster.",
+    "timedOut": "Connection timed out.",
+    "tlsNotTrusted": "TLS certificate not trusted.",
+    "tlsNotTrustedHint": "Provide the cluster’s CA file under TLS, or enable “Allow invalid certificates” for self-signed / dev clusters."
+  }
+}

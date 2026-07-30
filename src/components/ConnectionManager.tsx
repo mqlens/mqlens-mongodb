@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
@@ -90,7 +91,7 @@ interface ConnectionManagerProps {
 }
 
 interface TestStep {
-  name: string;
+  nameKey: string;
   status: 'pending' | 'running' | 'success' | 'failed';
 }
 
@@ -147,10 +148,10 @@ const BLANK_CONN = {
 };
 
 /** Connection mode editor options (#188 Task 1) — segmented control in the server panel. */
-const CONNECTION_MODE_OPTIONS: { value: ConnectionMode; label: string; description: string }[] = [
-  { value: 'normal', label: 'Normal', description: 'Full read/write' },
-  { value: 'read_only', label: 'Read-only', description: 'Blocks all writes' },
-  { value: 'confirm_destructive', label: 'Confirm destructive', description: 'Destructive ops need typed confirmation' },
+const CONNECTION_MODE_OPTIONS: { value: ConnectionMode; labelKey: string; descriptionKey: string }[] = [
+  { value: 'normal', labelKey: 'connectionMode.normal.label', descriptionKey: 'connectionMode.normal.description' },
+  { value: 'read_only', labelKey: 'connectionMode.readOnly.label', descriptionKey: 'connectionMode.readOnly.description' },
+  { value: 'confirm_destructive', labelKey: 'connectionMode.confirmDestructive.label', descriptionKey: 'connectionMode.confirmDestructive.description' },
 ];
 
 const sidebarPanelClass =
@@ -176,23 +177,25 @@ const treeRowClass = (active?: boolean) =>
       : 'text-muted-foreground hover:bg-sidebar-accent/70 hover:text-foreground',
   );
 
-const ConnectionColorDot = ({ color, className }: { color?: string | null; className?: string }) =>
-  color ? (
+const ConnectionColorDot = ({ color, className }: { color?: string | null; className?: string }) => {
+  const { t } = useTranslation('connections');
+  return color ? (
     <span
       className={cn('h-2 w-2 shrink-0 rounded-full', className)}
       style={{ backgroundColor: color }}
-      title="Connection color"
+      title={t('list.colorDotTitle')}
       data-testid="connection-color-dot"
     />
   ) : null;
+};
 
 const TABS = [
-  { id: 'server', label: 'Server', icon: Server },
-  { id: 'auth', label: 'Authentication', icon: ShieldAlert },
-  { id: 'tls', label: 'TLS / SSL', icon: ShieldAlert },
-  { id: 'ssh', label: 'SSH Tunnel', icon: ExternalLink },
-  { id: 'proxy', label: 'Proxy', icon: RefreshCw },
-  { id: 'adv', label: 'Advanced', icon: LayoutGrid },
+  { id: 'server', labelKey: 'tabs.server', icon: Server },
+  { id: 'auth', labelKey: 'tabs.auth', icon: ShieldAlert },
+  { id: 'tls', labelKey: 'tabs.tls', icon: ShieldAlert },
+  { id: 'ssh', labelKey: 'tabs.ssh', icon: ExternalLink },
+  { id: 'proxy', labelKey: 'tabs.proxy', icon: RefreshCw },
+  { id: 'adv', labelKey: 'tabs.advanced', icon: LayoutGrid },
 ];
 
 // Replace the password in a mongodb URI (//user:PASSWORD@host) with dots, so the
@@ -204,19 +207,20 @@ export const maskUriPassword = (uri: string): string =>
 // the full topology dump) into a concise root-cause headline + actionable hint.
 // TLS/auth/refused/DNS are checked first because those causes are usually buried
 // inside the topology of a wrapping "server selection timeout".
-export const summarizeConnectionError = (raw: string): { summary: string; hint?: string } => {
+export type ConnectionErrorSummary =
+  | { summaryKey: string; hintKey?: string }
+  | { summaryText: string };
+
+export const summarizeConnectionError = (raw: string): ConnectionErrorSummary => {
   const e = (raw || '').toLowerCase();
   if (/invalid peer certificate|unknownissuer|certnotvalidfor|certificate verify failed|self.?signed/.test(e))
-    return {
-      summary: 'TLS certificate not trusted.',
-      hint: 'Provide the cluster’s CA file under TLS, or enable “Allow invalid certificates” for self-signed / dev clusters.',
-    };
+    return { summaryKey: 'errors:conn.tlsNotTrusted', hintKey: 'errors:conn.tlsNotTrustedHint' };
   if (/authentication failed|\(18\)|bad auth|authenticationfailed/.test(e))
-    return { summary: 'Authentication failed.', hint: 'Check the username, password, and authentication database.' };
+    return { summaryKey: 'errors:conn.authFailed', hintKey: 'errors:conn.authFailedHint' };
   if (/connection refused|os error 61|os error 111|actively refused/.test(e))
-    return { summary: 'Connection refused.', hint: 'Is the server running and the host/port reachable from this machine?' };
+    return { summaryKey: 'errors:conn.refused', hintKey: 'errors:conn.refusedHint' };
   if (/failed to lookup|name or service not known|no such host|nodename nor servname|dns error/.test(e))
-    return { summary: 'Host not found (DNS lookup failed).', hint: 'Check the hostname; for private hosts you may need an SSH tunnel.' };
+    return { summaryKey: 'errors:conn.dnsFailed', hintKey: 'errors:conn.dnsFailedHint' };
   // The server accepted the socket then hung up mid-handshake. Two causes look
   // identical here, so name both rather than guess: a server older than the
   // driver supports (pre-3.6 servers don't speak OP_MSG, so they drop the
@@ -224,19 +228,12 @@ export const summarizeConnectionError = (raw: string): { summary: string; hint?:
   // TLS while TLS is off. Must precede the generic server-selection check, since
   // the driver nests this I/O error inside that timeout.
   if (/unexpected end of file|end of stream/.test(e))
-    return {
-      summary: 'Server closed the connection during handshake.',
-      hint:
-        'Most often the server predates MongoDB 4.2, the oldest MQLens currently supports — servers before 3.6 don’t speak the wire protocol the driver uses. Otherwise the server may require TLS while TLS is off here.',
-    };
+    return { summaryKey: 'errors:conn.handshakeClosed', hintKey: 'errors:conn.handshakeClosedHint' };
   if (/server selection timeout|no available servers|no suitable servers/.test(e))
-    return {
-      summary: 'Couldn’t reach any server (selection timed out).',
-      hint: 'Check the host/port and TLS settings, and that this machine can reach the cluster.',
-    };
-  if (/timed out|timeout/.test(e)) return { summary: 'Connection timed out.' };
+    return { summaryKey: 'errors:conn.selectionTimeout', hintKey: 'errors:conn.selectionTimeoutHint' };
+  if (/timed out|timeout/.test(e)) return { summaryKey: 'errors:conn.timedOut' };
   const firstLine = (raw || 'Connection failed').replace(/^kind:\s*/i, '').split(/\n|\. /)[0].trim();
-  return { summary: firstLine.length > 160 ? `${firstLine.slice(0, 160)}…` : firstLine };
+  return { summaryText: firstLine.length > 160 ? `${firstLine.slice(0, 160)}…` : firstLine };
 };
 
 // Parse a mongodb URI into structured editor fields so the form (protocol / hosts
@@ -417,6 +414,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   activeConnections = [],
 }) => {
   const { confirm, prompt } = useDialogs();
+  const { t } = useTranslation('connections');
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -457,10 +455,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [testing, setTesting] = useState(false);
   const [testProgress, setTestProgress] = useState(0);
   const [testSteps, setTestSteps] = useState<TestStep[]>([
-    { name: 'Parse Connection URI', status: 'running' },
-    { name: 'Resolve Host & Port', status: 'pending' },
-    { name: 'Initialize Driver Client', status: 'pending' },
-    { name: 'Verify Connection (Ping)', status: 'pending' },
+    { nameKey: 'test.stageParse', status: 'running' },
+    { nameKey: 'test.stageResolve', status: 'pending' },
+    { nameKey: 'test.stageConnect', status: 'pending' },
+    { nameKey: 'test.stagePing', status: 'pending' },
   ]);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [showErrDetail, setShowErrDetail] = useState(false);
@@ -619,12 +617,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const handleCreateFolder = () => {
     const folderName = newFolderName.trim();
     if (!folderName) {
-      setFolderError('Folder name is required');
+      setFolderError(t('errors.folderNameRequired'));
       return;
     }
     const folderExists = folders.some((folder) => folder.name.toLowerCase() === folderName.toLowerCase());
     if (folderExists) {
-      setFolderError('A folder with this name already exists');
+      setFolderError(t('errors.folderNameExists'));
       return;
     }
 
@@ -646,7 +644,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   const handleSave = async () => {
     if (!editorState.name.trim()) {
-      setError('Display Name is required');
+      setError(t('errors.displayNameRequired'));
       return;
     }
 
@@ -685,9 +683,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const handleDelete = async (profileId: string) => {
     if (
       !(await confirm({
-        title: 'Delete connection profile',
-        message: 'Are you sure you want to delete this connection profile?',
-        confirmLabel: 'Delete',
+        title: t('dialogs.deleteProfile.title'),
+        message: t('dialogs.deleteProfile.message'),
+        confirmLabel: t('actions.delete'),
         destructive: true,
       }))
     )
@@ -716,7 +714,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
     const isAlreadyConnected = activeConnections.some((c) => c.profileId === profile.id);
     if (isAlreadyConnected) {
-      setError('This connection is already active');
+      setError(t('errors.alreadyActive'));
       return;
     }
 
@@ -738,10 +736,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       const path = await open({
         multiple: false,
         directory: false,
-        title: 'Select certificate file',
+        title: t('filePicker.selectCertificateTitle'),
         filters: [
-          { name: 'Certificates', extensions: ['pem', 'crt', 'cer', 'key', 'p12', 'pfx'] },
-          { name: 'All files', extensions: ['*'] },
+          { name: t('filePicker.certificatesFilter'), extensions: ['pem', 'crt', 'cer', 'key', 'p12', 'pfx'] },
+          { name: t('filePicker.allFilesFilter'), extensions: ['*'] },
         ],
       });
       if (typeof path === 'string') setEditorState(prev => ({ ...prev, [field]: path }));
@@ -827,9 +825,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     }
 
     const proceed = await confirm({
-      title: 'Import connections',
-      message: `Found ${connections.length} connection URIs. Create a saved profile for each?`,
-      confirmLabel: 'Import all',
+      title: t('dialogs.importConnections.title'),
+      message: t('dialogs.importConnections.message', { count: connections.length }),
+      confirmLabel: t('actions.importAll'),
     });
     if (!proceed) return;
 
@@ -882,7 +880,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     try {
       const text = await navigator.clipboard?.readText?.();
       if (!text?.trim()) {
-        setImportError('Clipboard is empty');
+        setImportError(t('errors.clipboardEmpty'));
         return;
       }
       const result = parseConnectionImportFile(text);
@@ -892,7 +890,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       }
       await importParsedConnections(result.connections);
     } catch {
-      setImportError('Could not read the clipboard.');
+      setImportError(t('errors.clipboardReadFailed'));
     }
   };
 
@@ -901,10 +899,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       const path = await open({
         multiple: false,
         directory: false,
-        title: 'Import connection URI from file',
+        title: t('filePicker.importFileTitle'),
         filters: [
-          { name: 'JSON / Studio 3T URI', extensions: ['json', 'uri', 'txt', 'env'] },
-          { name: 'All files', extensions: ['*'] },
+          { name: t('filePicker.jsonStudio3tFilter'), extensions: ['json', 'uri', 'txt', 'env'] },
+          { name: t('filePicker.allFilesFilter'), extensions: ['*'] },
         ],
       });
       if (typeof path !== 'string') return;
@@ -916,17 +914,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       }
       await importParsedConnections(result.connections);
     } catch {
-      setImportError('Could not read the selected file.');
+      setImportError(t('errors.fileReadFailed'));
     }
   };
 
   // Manual paste — supports one or more URIs (with optional # labels / folders).
   const handleImportUri = async () => {
     const text = await prompt({
-      title: 'Import Connection URI',
-      message: `Paste one or more mongodb:// or mongodb+srv:// connection strings. Use # lines to name connections. (${formatShortcut(shortcutById('submit-dialog')!)} to import)`,
-      placeholder: '# Local\nmongodb://localhost:27017\n\n# Production\nmongodb://user:pass@host1:27017/?replicaSet=rs0',
-      confirmLabel: 'Import',
+      title: t('dialogs.importUri.title'),
+      message: t('dialogs.importUri.message', { shortcut: formatShortcut(shortcutById('submit-dialog')!) }),
+      placeholder: t('dialogs.importUri.placeholder'),
+      confirmLabel: t('actions.import'),
       multiline: true,
       validate: (v) => {
         const result = parseConnectionImportFile(v);
@@ -947,18 +945,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" className={cn(className)} data-testid={testId}>
           <ClipboardPaste size={testId === 'import-uri-btn' ? 11 : 12} />
-          <span>Import URI</span>
+          <span>{t('actions.importUri')}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className={NESTED_SELECT_Z}>
         <DropdownMenuItem onClick={() => void handleImportFromClipboard()} data-testid="import-from-clipboard">
-          From clipboard
+          {t('import.fromClipboard')}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => void handleImportFromFile()} data-testid="import-from-file">
-          From a file…
+          {t('import.fromFile')}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => void handleImportUri()} data-testid="import-paste-manually">
-          Paste manually…
+          {t('import.pasteManually')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -995,15 +993,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       const isAll = exportDialog.mode === 'all';
       const path = await save({
         defaultPath: isAll ? 'connections.json' : 'connection-uri.txt',
-        title: isAll ? 'Save connection URIs' : 'Save connection URI',
+        title: isAll ? t('export.saveAllTitle') : t('export.saveTitle'),
         filters: isAll
           ? [
-              { name: 'JSON', extensions: ['json'] },
-              { name: 'All files', extensions: ['*'] },
+              { name: t('filePicker.jsonFilter'), extensions: ['json'] },
+              { name: t('filePicker.allFilesFilter'), extensions: ['*'] },
             ]
           : [
-              { name: 'Text', extensions: ['txt', 'env'] },
-              { name: 'All files', extensions: ['*'] },
+              { name: t('filePicker.textFilter'), extensions: ['txt', 'env'] },
+              { name: t('filePicker.allFilesFilter'), extensions: ['*'] },
             ],
       });
       if (!path) return;
@@ -1021,10 +1019,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setTestProgress(0);
 
     const steps: TestStep[] = [
-      { name: 'Parse Connection URI', status: 'pending' },
-      { name: 'Resolve Host & Port', status: 'pending' },
-      { name: 'Initialize Driver Client', status: 'pending' },
-      { name: 'Verify Connection (Ping)', status: 'pending' },
+      { nameKey: 'test.stageParse', status: 'pending' },
+      { nameKey: 'test.stageResolve', status: 'pending' },
+      { nameKey: 'test.stageConnect', status: 'pending' },
+      { nameKey: 'test.stagePing', status: 'pending' },
     ];
     setTestSteps([...steps]);
 
@@ -1056,7 +1054,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         onPhase: channel,
       });
       setTestProgress(100);
-      setTestResult({ success: true, message: 'Connection test successful' });
+      setTestResult({ success: true, message: t('test.successMessage') });
     } catch (err: any) {
       // The failing row is already painted from its 'fail' update; as a fallback
       // (e.g. the call rejected before any update), mark the first unfinished row.
@@ -1112,50 +1110,50 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               <Server className="h-5 w-5 text-primary" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-sm font-semibold leading-tight text-foreground">Connection Manager</h2>
-              <p className="truncate text-ui-xs text-muted-foreground">Manage saved MongoDB profiles and folders</p>
+              <h2 className="text-sm font-semibold leading-tight text-foreground">{t('title')}</h2>
+              <p className="truncate text-ui-xs text-muted-foreground">{t('subtitle')}</p>
             </div>
           </div>
-          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose} aria-label="Close">
+          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose} aria-label={t('common:close')}>
             <X size={14} />
           </Button>
         </header>
 
         {/* Toolbar */}
         <section className="flex shrink-0 flex-row flex-wrap items-center gap-1.5 border-b border-border bg-muted/30 px-4 py-2">
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={handleNewClick} aria-label="New...">
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={handleNewClick} aria-label={t('actions.new')}>
             <Plus size={12} className="text-primary" />
-            <span>New...</span>
+            <span>{t('actions.new')}</span>
           </Button>
           <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={handleNewFolderClick}>
             <FolderPlus size={12} className="text-warning" />
-            <span>New Folder</span>
+            <span>{t('actions.newFolder')}</span>
           </Button>
           {selectedId && (
             <>
               <div className="mx-1 h-4 w-px bg-border" />
               <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={() => handleEditClick(selectedId)}>
                 <Edit3 size={12} className="text-primary" />
-                <span>Edit</span>
+                <span>{t('actions.edit')}</span>
               </Button>
               <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" onClick={() => handleDuplicateClick(selectedId)}>
                 <Copy size={12} className="text-muted-foreground" />
-                <span>Duplicate</span>
+                <span>{t('actions.duplicate')}</span>
               </Button>
               <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs text-destructive hover:text-destructive" onClick={() => handleDelete(selectedId)}>
                 <Trash2 size={12} />
-                <span>Delete</span>
+                <span>{t('actions.delete')}</span>
               </Button>
               {importUriMenu('import-uri-toolbar-btn', 'h-8 gap-1.5 text-ui-xs')}
               <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" data-testid="export-uri-btn" onClick={() => {
                 if (selectedProfile) openExportDialog(selectedProfile.uri, !!selectedProfile.ssh?.enabled);
               }}>
                 <ExternalLink size={12} />
-                <span>Export URI</span>
+                <span>{t('actions.exportUri')}</span>
               </Button>
               <Button variant="outline" size="sm" className="h-8 gap-1.5 text-ui-xs" data-testid="export-all-uris-btn" onClick={openExportAllDialog}>
                 <ExternalLink size={12} />
-                <span>Export All URIs</span>
+                <span>{t('actions.exportAllUris')}</span>
               </Button>
             </>
           )}
@@ -1180,7 +1178,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <Search size={13} className="absolute left-2.5 text-muted-foreground" />
                 <Input
                   type="text"
-                  placeholder="Search connections..."
+                  placeholder={t('sidebar.searchPlaceholder')}
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                   className="h-8 border-sidebar-border bg-background/80 pl-8 text-ui-xs"
@@ -1188,11 +1186,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               </div>
               <Select value={folderFilter} onValueChange={setFolderFilter}>
                 <SelectTrigger data-testid="folder-filter-select" className="h-8 w-full border-sidebar-border bg-background/80 text-ui-xs">
-                  <SelectValue placeholder="All folders" />
+                  <SelectValue placeholder={t('sidebar.allFoldersPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent className={NESTED_SELECT_Z}>
-                  <SelectItem value="all">All Folders</SelectItem>
-                  <SelectItem value="root">(root)</SelectItem>
+                  <SelectItem value="all">{t('sidebar.allFolders')}</SelectItem>
+                  <SelectItem value="root">{t('folder.root')}</SelectItem>
                   {folders.map(f => (
                     <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
                   ))}
@@ -1239,9 +1237,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             >
                               <ConnectionColorDot color={p.color_tag} />
                               <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
-                              <span className="min-w-0 truncate">{p.name || 'Unnamed connection'}</span>
+                              <span className="min-w-0 truncate">{p.name || t('sidebar.unnamedConnection')}</span>
                               {isActive && (
-                                <Badge variant="success" className="ml-auto h-4 px-1 text-ui-2xs" title="Connected">
+                                <Badge variant="success" className="ml-auto h-4 px-1 text-ui-2xs" title={t('sidebar.connectedTitle')}>
                                   ●
                                 </Badge>
                               )}
@@ -1249,7 +1247,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           );
                         })}
                         {folderProfiles.length === 0 && (
-                          <div className="pl-4 text-ui-2xs italic text-muted-foreground">Empty folder</div>
+                          <div className="pl-4 text-ui-2xs italic text-muted-foreground">{t('sidebar.emptyFolder')}</div>
                         )}
                       </div>
                     )}
@@ -1270,9 +1268,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   >
                     <ConnectionColorDot color={p.color_tag} />
                     <Server size={12} className={cn('shrink-0', isSel ? 'text-primary' : 'text-muted-foreground')} />
-                    <span className="min-w-0 truncate">{p.name || 'Unnamed connection'}</span>
+                    <span className="min-w-0 truncate">{p.name || t('sidebar.unnamedConnection')}</span>
                     {isActive && (
-                      <Badge variant="success" className="ml-auto h-4 px-1 text-ui-2xs" title="Connected">
+                      <Badge variant="success" className="ml-auto h-4 px-1 text-ui-2xs" title={t('sidebar.connectedTitle')}>
                         ●
                       </Badge>
                     )}
@@ -1298,13 +1296,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         <ConnectionColorDot color={selectedProfile.color_tag} className="h-2.5 w-2.5" />
                         <h3 className="truncate text-base font-semibold text-foreground">{selectedProfile.name}</h3>
                       </div>
-                      <p className="text-ui-xs text-muted-foreground">Connection profile</p>
+                      <p className="text-ui-xs text-muted-foreground">{t('profile.subtitle')}</p>
                     </div>
                   </div>
 
                   <div className="mb-4 flex flex-col gap-1.5">
                     <div className="flex items-center justify-between">
-                      <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">Connection URI</Label>
+                      <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">{t('profile.connectionUri')}</Label>
                       {maskUriPassword(selectedProfile.uri) !== selectedProfile.uri && (
                         <Button
                           type="button"
@@ -1312,8 +1310,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           size="icon"
                           className="h-6 w-6"
                           onClick={() => setRevealDetailUri(v => !v)}
-                          title={revealDetailUri ? 'Hide password' : 'Show password'}
-                          aria-label={revealDetailUri ? 'Hide password' : 'Show password'}
+                          title={revealDetailUri ? t('actions.hidePassword') : t('actions.showPassword')}
+                          aria-label={revealDetailUri ? t('actions.hidePassword') : t('actions.showPassword')}
                         >
                           {revealDetailUri ? <EyeOff size={13} /> : <Eye size={13} />}
                         </Button>
@@ -1325,16 +1323,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">Connection Metadata</Label>
+                    <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">{t('profile.metadata')}</Label>
                     <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3 text-ui-xs">
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Status:</span>
+                        <span className="text-muted-foreground">{t('profile.status')}</span>
                         <span className="font-medium">
-                          {activeConnections.some(c => c.profileId === selectedProfile.id) ? 'Connected (Active)' : 'Disconnected'}
+                          {activeConnections.some(c => c.profileId === selectedProfile.id) ? t('profile.connectedActive') : t('profile.disconnected')}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Profile ID:</span>
+                        <span className="text-muted-foreground">{t('profile.profileId')}</span>
                         <span className="font-mono text-ui-2xs">{selectedProfile.id}</span>
                       </div>
                     </div>
@@ -1353,13 +1351,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     onClick={handleConnectClick}
                     disabled={loading || activeConnections.some(c => c.profileId === selectedProfile.id)}
                     size="sm"
-                    aria-label={activeConnections.some(c => c.profileId === selectedProfile.id) ? "Already Connected" : loading ? "Connecting..." : "Connect"}
+                    aria-label={activeConnections.some(c => c.profileId === selectedProfile.id) ? t('actions.alreadyConnected') : loading ? t('actions.connecting') : t('actions.connect')}
                   >
                     <Play size={11} fill="currentColor" />
-                    <span>{activeConnections.some(c => c.profileId === selectedProfile.id) ? "Already Connected" : loading ? "Connecting..." : "Connect"}</span>
+                    <span>{activeConnections.some(c => c.profileId === selectedProfile.id) ? t('actions.alreadyConnected') : loading ? t('actions.connecting') : t('actions.connect')}</span>
                   </Button>
                   <Button variant="outline" size="sm" onClick={onClose}>
-                    Close
+                    {t('common:close')}
                   </Button>
                 </footer>
               </div>
@@ -1368,7 +1366,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
                   <Server size={28} className="text-muted-foreground" />
                 </div>
-                <span className="max-w-sm text-ui-xs leading-relaxed">Select a connection from the sidebar, or choose &quot;New…&quot; in the toolbar to create one.</span>
+                <span className="max-w-sm text-ui-xs leading-relaxed">{t('empty.message')}</span>
               </div>
             )}
             </div>
@@ -1390,14 +1388,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             <DialogHeader className="flex-row items-center justify-between space-y-0">
               <div className="flex items-center gap-2">
                 <FolderPlus size={14} className="text-warning" />
-                <DialogTitle className="text-sm">New Folder</DialogTitle>
+                <DialogTitle className="text-sm">{t('actions.newFolder')}</DialogTitle>
               </div>
-              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label="Close folder dialog" onClick={() => setShowFolderDialog(false)}>
+              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label={t('folder.closeDialogAria')} onClick={() => setShowFolderDialog(false)}>
                 <X size={13} />
               </Button>
             </DialogHeader>
             <div className="space-y-3 py-4">
-              <Label htmlFor="new-folder-name">Folder Name</Label>
+              <Label htmlFor="new-folder-name">{t('folder.nameLabel')}</Label>
               <Input
                 id="new-folder-name"
                 data-testid="new-folder-name-input"
@@ -1416,10 +1414,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowFolderDialog(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setShowFolderDialog(false)}>{t('common:cancel')}</Button>
               <Button type="submit">
                 <Check size={11} />
-                <span>Create</span>
+                <span>{t('actions.create')}</span>
               </Button>
             </DialogFooter>
           </form>
@@ -1453,12 +1451,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 </div>
                 <div className="min-w-0">
                   <h2 className="text-sm font-semibold leading-tight text-foreground">
-                    {editMode === 'new' ? 'New Connection' : editMode === 'duplicate' ? 'Duplicate Connection' : 'Edit Connection'}
+                    {editMode === 'new' ? t('editor.newTitle') : editMode === 'duplicate' ? t('editor.duplicateTitle') : t('editor.editTitle')}
                   </h2>
-                  <p className="truncate text-ui-xs text-muted-foreground">Configure server, auth, TLS, and advanced options</p>
+                  <p className="truncate text-ui-xs text-muted-foreground">{t('editor.subtitle')}</p>
                 </div>
               </div>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setShowEditDialog(false)} aria-label="Close">
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setShowEditDialog(false)} aria-label={t('common:close')}>
                 <X size={14} />
               </Button>
             </header>
@@ -1466,7 +1464,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             {/* Dialog Meta details */}
             <section className="shrink-0 space-y-2 border-b border-border bg-muted/20 px-4 py-3">
               <div className="flex flex-wrap items-center gap-2">
-                <Label htmlFor="connection-name" className="shrink-0 text-ui-xs">Display Name</Label>
+                <Label htmlFor="connection-name" className="shrink-0 text-ui-xs">{t('form.displayName')}</Label>
                 <Input
                   id="connection-name"
                   type="text"
@@ -1475,13 +1473,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   className="h-8 min-w-[160px] flex-1 text-ui-xs"
                 />
 
-                <Label htmlFor="folder-select" className="shrink-0 text-ui-xs">Folder</Label>
+                <Label htmlFor="folder-select" className="shrink-0 text-ui-xs">{t('form.folder')}</Label>
                 <Select value={editorState.folder || '__root__'} onValueChange={(v) => setEditorState(prev => ({ ...prev, folder: v === '__root__' ? '' : v }))}>
                   <SelectTrigger id="folder-select" className="h-8 w-[140px] text-ui-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className={NESTED_SELECT_Z}>
-                    <SelectItem value="__root__">(root)</SelectItem>
+                    <SelectItem value="__root__">{t('folder.root')}</SelectItem>
                     {folders.map(f => (
                       <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
                     ))}
@@ -1490,13 +1488,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <Label className="shrink-0 text-ui-xs">Color tag</Label>
-                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Connection color tag">
+                <Label className="shrink-0 text-ui-xs">{t('form.colorTag')}</Label>
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t('form.colorTagGroupAria')}>
                   <button
                     type="button"
                     data-testid="color-swatch-none"
-                    title="No color"
-                    aria-label="No color"
+                    title={t('form.noColor')}
+                    aria-label={t('form.noColor')}
                     aria-pressed={!editorState.colorTag}
                     className={cn(
                       'flex h-5 w-5 items-center justify-center rounded-full border border-border text-ui-2xs text-muted-foreground transition-colors',
@@ -1529,10 +1527,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         && !isPresetConnectionColor(editorState.colorTag)
                         && 'border-solid ring-2 ring-primary ring-offset-1 ring-offset-background',
                     )}
-                    title="Pick a custom color"
+                    title={t('form.pickCustomColor')}
                   >
                     <Pipette size={11} className="pointer-events-none shrink-0" aria-hidden="true" />
-                    <span className="pointer-events-none">Custom</span>
+                    <span className="pointer-events-none">{t('form.custom')}</span>
                     {editorState.colorTag && !isPresetConnectionColor(editorState.colorTag) && (
                       <span
                         className="pointer-events-none h-2.5 w-2.5 shrink-0 rounded-full border border-border"
@@ -1543,7 +1541,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     <input
                       type="color"
                       data-testid="color-picker-custom"
-                      aria-label="Pick a custom color"
+                      aria-label={t('form.pickCustomColor')}
                       value={colorInputValue(editorState.colorTag)}
                       onChange={(e) => setEditorState((prev) => ({ ...prev, colorTag: e.target.value }))}
                       className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
@@ -1553,29 +1551,29 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               </div>
 
               <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
-                <Badge variant="secondary" className="shrink-0 text-ui-2xs">URI</Badge>
+                <Badge variant="secondary" className="shrink-0 text-ui-2xs">{t('form.uriBadge')}</Badge>
                 <code className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{maskUriPassword(buildUri(editorState))}</code>
                 <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 gap-1 text-ui-2xs" data-testid="editor-export-uri-btn" onClick={() => openExportDialog(buildUri(editorState), editorState.sshEnabled)}>
                   <Copy size={12} />
-                  <span>Export…</span>
+                  <span>{t('actions.export')}</span>
                 </Button>
               </div>
             </section>
 
             <div className="flex min-h-0 flex-1">
             <aside className={cn(sidebarPanelClass, 'w-48 xl:w-52')}>
-              <nav className="flex flex-col gap-0.5 p-2" aria-label="Connection settings sections">
-                {TABS.map(t => {
-                  const TabIcon = t.icon;
+              <nav className="flex flex-col gap-0.5 p-2" aria-label={t('editor.tabsAria')}>
+                {TABS.map(tab => {
+                  const TabIcon = tab.icon;
                   return (
                     <button
-                      key={t.id}
+                      key={tab.id}
                       type="button"
-                      onClick={() => setActiveEditorTab(t.id)}
-                      className={sidebarNavButtonClass(activeEditorTab === t.id)}
+                      onClick={() => setActiveEditorTab(tab.id)}
+                      className={sidebarNavButtonClass(activeEditorTab === tab.id)}
                     >
-                      <TabIcon className={cn('h-4 w-4 shrink-0', activeEditorTab === t.id ? 'text-primary' : '')} />
-                      <span className="truncate">{t.label}</span>
+                      <TabIcon className={cn('h-4 w-4 shrink-0', activeEditorTab === tab.id ? 'text-primary' : '')} />
+                      <span className="truncate">{t(tab.labelKey)}</span>
                     </button>
                   );
                 })}
@@ -1590,7 +1588,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <div className="flex flex-col gap-2.5">
                   {editorState.topology === 'uri' && (
                   <div className="flex flex-col gap-1">
-                    <Label htmlFor="connection-uri">Connection URI</Label>
+                    <Label htmlFor="connection-uri">{t('form.connectionUriLabel')}</Label>
                     {(() => {
                       const masked = maskUriPassword(editorState.uri);
                       const hasSecret = masked !== editorState.uri;
@@ -1613,8 +1611,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                               variant="ghost"
                               size="icon"
                               className="absolute right-0 top-0 h-full w-8"
-                              aria-label={revealUri ? 'Hide password' : 'Show password'}
-                              title={revealUri ? 'Hide password' : 'Show password to edit'}
+                              aria-label={revealUri ? t('actions.hidePassword') : t('actions.showPassword')}
+                              title={revealUri ? t('actions.hidePassword') : t('form.showPasswordToEdit')}
                               onClick={() => setRevealUri(v => !v)}
                               tabIndex={-1}
                             >
@@ -1632,9 +1630,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       data-testid="parse-uri-btn"
                       disabled={!editorState.uri.trim()}
                       onClick={() => setEditorState(prev => ({ ...prev, ...parseUriIntoFields(prev.uri) }))}
-                      title="Fill the Server and Auth form fields from this URI so you can edit them"
+                      title={t('form.parseUriTitle')}
                     >
-                      <LayoutGrid size={12} /> Parse into form fields
+                      <LayoutGrid size={12} /> {t('form.parseIntoFields')}
                     </Button>
                   </div>
                   )}
@@ -1642,7 +1640,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   {editorState.topology !== 'uri' && (
                     <div className="flex flex-col gap-1">
                       <Label>
-                        Host List {editorState.protocol === 'mongodb+srv' ? '(hostname only)' : '(host:port, comma-separated)'}
+                        {t('form.hostList')} {editorState.protocol === 'mongodb+srv' ? t('form.hostListHostnameOnly') : t('form.hostListHostPort')}
                       </Label>
                       <Input
                         type="text"
@@ -1658,7 +1656,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   <div className="flex gap-3 border-t border-border pt-2.5">
                     {editorState.topology !== 'uri' && (
                       <div className="flex flex-1 flex-col gap-1">
-                        <Label>Protocol</Label>
+                        <Label>{t('form.protocol')}</Label>
                         <Select
                           value={editorState.protocol}
                           onValueChange={(v) => setEditorState(prev => ({ ...prev, protocol: v }))}
@@ -1674,7 +1672,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       </div>
                     )}
                     <div className="flex flex-1 flex-col gap-1">
-                      <Label>Topology</Label>
+                      <Label>{t('form.topology')}</Label>
                       <Select
                         value={editorState.topology}
                         onValueChange={(v) => setEditorState(prev => ({ ...prev, topology: v }))}
@@ -1683,17 +1681,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className={NESTED_SELECT_Z}>
-                          <SelectItem value="standalone">Standalone / Direct</SelectItem>
-                          <SelectItem value="replicaSet">Replica Set</SelectItem>
-                          <SelectItem value="sharded">Sharded Cluster (mongos)</SelectItem>
-                          <SelectItem value="uri">Full URI String Only</SelectItem>
+                          <SelectItem value="standalone">{t('form.topologyStandalone')}</SelectItem>
+                          <SelectItem value="replicaSet">{t('form.topologyReplicaSet')}</SelectItem>
+                          <SelectItem value="sharded">{t('form.topologySharded')}</SelectItem>
+                          <SelectItem value="uri">{t('form.topologyUriOnly')}</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
 
                     {editorState.topology === 'replicaSet' && (
                       <div className="flex flex-1 flex-col gap-1">
-                        <Label>Replica Set Name</Label>
+                        <Label>{t('form.replicaSetName')}</Label>
                         <Input
                           type="text"
                           value={editorState.replicaSetName}
@@ -1705,8 +1703,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   </div>
 
                   <div className="flex flex-col gap-2 border-t border-border pt-2.5">
-                    <Label className="text-ui-xs">Connection mode</Label>
-                    <div className="flex flex-col gap-1.5" role="group" aria-label="Connection mode">
+                    <Label className="text-ui-xs">{t('form.connectionMode')}</Label>
+                    <div className="flex flex-col gap-1.5" role="group" aria-label={t('form.connectionMode')}>
                       {CONNECTION_MODE_OPTIONS.map((opt) => (
                         <button
                           key={opt.value}
@@ -1719,8 +1717,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           )}
                           onClick={() => setEditorState((prev) => ({ ...prev, connectionMode: opt.value }))}
                         >
-                          <span className="text-[11px] font-medium">{opt.label}</span>
-                          <span className="text-[10.5px] leading-relaxed text-muted-foreground">{opt.description}</span>
+                          <span className="text-[11px] font-medium">{t(opt.labelKey)}</span>
+                          <span className="text-[10.5px] leading-relaxed text-muted-foreground">{t(opt.descriptionKey)}</span>
                         </button>
                       ))}
                     </div>
@@ -1734,10 +1732,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         checked={editorState.mcpEnabled}
                         onChange={e => setEditorState(prev => ({ ...prev, mcpEnabled: e.target.checked }))}
                       />
-                      <span>Expose to MCP agents</span>
+                      <span>{t('form.mcpEnabled')}</span>
                     </label>
                     <span className="text-[10.5px] leading-relaxed text-muted-foreground">
-                      Agents connected to the MQLens MCP server can see and connect to this profile.
+                      {t('form.mcpEnabledDescription')}
                     </span>
                   </div>
                 </div>
@@ -1746,19 +1744,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               {activeEditorTab === 'auth' && (
                 <div className="flex flex-col gap-2.5">
                   <div className="flex flex-col gap-1">
-                    <Label>Authentication Method</Label>
+                    <Label>{t('auth.method')}</Label>
                     <Select value={editorState.authMethod} onValueChange={(v) => setEditorState(prev => ({ ...prev, authMethod: v }))}>
                       <SelectTrigger className="h-8 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className={NESTED_SELECT_Z}>
-                        <SelectItem value="none">None (Guest Access)</SelectItem>
-                        <SelectItem value="scram-256">SCRAM-SHA-256 (Default)</SelectItem>
-                        <SelectItem value="scram-1">SCRAM-SHA-1</SelectItem>
-                        <SelectItem value="x509">x.509 Client Certificate</SelectItem>
-                        <SelectItem value="aws">MONGODB-AWS (IAM)</SelectItem>
-                        <SelectItem value="kerberos">GSSAPI (Kerberos)</SelectItem>
-                        <SelectItem value="ldap">LDAP (PLAIN)</SelectItem>
+                        <SelectItem value="none">{t('auth.methodNone')}</SelectItem>
+                        <SelectItem value="scram-256">{t('auth.methodScram256')}</SelectItem>
+                        <SelectItem value="scram-1">{t('auth.methodScram1')}</SelectItem>
+                        <SelectItem value="x509">{t('auth.methodX509')}</SelectItem>
+                        <SelectItem value="aws">{t('auth.methodAws')}</SelectItem>
+                        <SelectItem value="kerberos">{t('auth.methodKerberos')}</SelectItem>
+                        <SelectItem value="ldap">{t('auth.methodLdap')}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1768,11 +1766,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     const isScram = m === 'scram-1' || m === 'scram-256';
                     const isExternal = m === 'x509' || m === 'aws' || m === 'kerberos' || m === 'ldap';
                     const userLabel =
-                      m === 'aws' ? 'Access Key ID'
-                      : m === 'kerberos' ? 'Principal'
-                      : m === 'x509' ? 'Username (optional — derived from certificate)'
-                      : 'Username';
-                    const passLabel = m === 'aws' ? 'Secret Access Key' : 'Password';
+                      m === 'aws' ? t('auth.userLabelAws')
+                      : m === 'kerberos' ? t('auth.userLabelKerberos')
+                      : m === 'x509' ? t('auth.userLabelX509')
+                      : t('auth.userLabelDefault');
+                    const passLabel = m === 'aws' ? t('auth.passLabelAws') : t('auth.passLabelDefault');
                     const showPasswordField = m !== 'x509' && m !== 'kerberos';
                     return (
                     <div className="flex flex-col gap-2 border-t border-border pt-2.5">
@@ -1788,7 +1786,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         </div>
                         {isScram && (
                           <div className="flex flex-1 flex-col gap-1">
-                            <Label>Authentication Database</Label>
+                            <Label>{t('auth.authDatabase')}</Label>
                             <Input
                               type="text"
                               value={editorState.authDb}
@@ -1825,19 +1823,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
                       {m === 'aws' && (
                         <div className="flex flex-col gap-1">
-                          <Label>Session Token (optional)</Label>
+                          <Label>{t('auth.sessionToken')}</Label>
                           <Input
                             type="text"
                             value={editorState.awsSessionToken}
                             onChange={e => setEditorState(prev => ({ ...prev, awsSessionToken: e.target.value }))}
-                            placeholder="for temporary STS credentials"
+                            placeholder={t('auth.sessionTokenPlaceholder')}
                           />
                         </div>
                       )}
 
                       {m === 'kerberos' && (
                         <div className="flex flex-col gap-1">
-                          <Label>Service Name (optional, default: mongodb)</Label>
+                          <Label>{t('auth.serviceName')}</Label>
                           <Input
                             type="text"
                             value={editorState.kerberosServiceName}
@@ -1849,12 +1847,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
                       {m === 'x509' && (
                         <p className="m-0 text-[10px] text-muted-foreground">
-                          Requires TLS with a client certificate (TLS tab).
+                          {t('auth.x509Note')}
                         </p>
                       )}
                       {isExternal && (
                         <p className="m-0 text-[10px] text-muted-foreground">
-                          Authenticates against the <code>$external</code> database.
+                          {t('auth.externalNotePrefix')} <code>$external</code> {t('auth.externalNoteSuffix')}
                         </p>
                       )}
                     </div>
@@ -1866,22 +1864,22 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               {activeEditorTab === 'tls' && (
                 <div className="flex flex-col gap-2.5">
                   <div className="flex flex-col gap-1">
-                    <Label>SSL / TLS Certificate Mode</Label>
+                    <Label>{t('tls.mode')}</Label>
                     <Select value={editorState.tlsMode} onValueChange={(v) => setEditorState(prev => ({ ...prev, tlsMode: v }))}>
                       <SelectTrigger className="h-8 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className={NESTED_SELECT_Z}>
-                        <SelectItem value="off">Off (Insecure Plaintext)</SelectItem>
-                        <SelectItem value="system">System Root CA Certificates</SelectItem>
-                        <SelectItem value="file">Custom CA File Upload</SelectItem>
+                        <SelectItem value="off">{t('tls.modeOff')}</SelectItem>
+                        <SelectItem value="system">{t('tls.modeSystem')}</SelectItem>
+                        <SelectItem value="file">{t('tls.modeFile')}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
 
                   {editorState.tlsMode === 'file' && (
                     <div className="flex flex-col gap-1 border-t border-border pt-2.5">
-                      <Label>CA File Path</Label>
+                      <Label>{t('tls.caFilePath')}</Label>
                       <div className="flex gap-1.5">
                         <Input
                           type="text"
@@ -1897,7 +1895,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           data-testid="ca-file-browse"
                           onClick={() => pickTlsFile('tlsCa')}
                         >
-                          Browse…
+                          {t('actions.browse')}
                         </Button>
                       </div>
                     </div>
@@ -1905,14 +1903,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
                   {editorState.tlsMode !== 'off' && (
                     <div className="flex flex-col gap-2 border-t border-border pt-2.5">
-                      <Label>Certificate Validation</Label>
+                      <Label>{t('tls.certValidation')}</Label>
                       <label className="flex items-center gap-2 text-[11px]">
                         <input
                           type="checkbox"
                           checked={editorState.tlsAllowInvalidCerts}
                           onChange={e => setEditorState(prev => ({ ...prev, tlsAllowInvalidCerts: e.target.checked }))}
                         />
-                        <span>Allow invalid certificates <span className="text-destructive">(insecure)</span></span>
+                        <span>{t('tls.allowInvalidCerts')} <span className="text-destructive">{t('tls.insecureTag')}</span></span>
                       </label>
                       <label className="flex items-center gap-2 text-[11px]">
                         <input
@@ -1920,11 +1918,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           checked={editorState.tlsAllowInvalidHosts}
                           onChange={e => setEditorState(prev => ({ ...prev, tlsAllowInvalidHosts: e.target.checked }))}
                         />
-                        <span>Allow invalid hostnames</span>
+                        <span>{t('tls.allowInvalidHosts')}</span>
                       </label>
                       <span className="text-[10.5px] leading-relaxed text-muted-foreground">
-                        Disabling certificate validation exposes the connection to man-in-the-middle
-                        attacks. Enable only for trusted/self-signed test servers.
+                        {t('tls.validationWarning')}
                       </span>
                     </div>
                   )}
@@ -1940,14 +1937,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       checked={editorState.sshEnabled}
                       onChange={e => setEditorState(prev => ({ ...prev, sshEnabled: e.target.checked }))}
                     />
-                    <Label htmlFor="ssh-enable" className="text-[11px] font-medium">Enable SSH Tunnel Proxy Gateway</Label>
+                    <Label htmlFor="ssh-enable" className="text-[11px] font-medium">{t('ssh.enableLabel')}</Label>
                   </div>
 
                   {editorState.sshEnabled && (
                     <div className="flex flex-col gap-2 border-t border-border pt-2.5">
                       <div className="flex gap-2">
                         <div className="flex flex-[2] flex-col gap-1">
-                          <Label>SSH Server Host</Label>
+                          <Label>{t('ssh.host')}</Label>
                           <Input
                             type="text"
                             value={editorState.sshHost}
@@ -1956,7 +1953,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           />
                         </div>
                         <div className="flex flex-1 flex-col gap-1">
-                          <Label>SSH Port</Label>
+                          <Label>{t('ssh.port')}</Label>
                           <Input
                             type="text"
                             value={editorState.sshPort}
@@ -1969,7 +1966,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
                       <div className="flex gap-2">
                         <div className="flex flex-[2] flex-col gap-1">
-                          <Label>SSH Username</Label>
+                          <Label>{t('ssh.username')}</Label>
                           <Input
                             type="text"
                             value={editorState.sshUser}
@@ -1978,15 +1975,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           />
                         </div>
                         <div className="flex flex-1 flex-col gap-1">
-                          <Label>Auth Method</Label>
+                          <Label>{t('ssh.authMethod')}</Label>
                           <Select value={editorState.sshAuth} onValueChange={(v) => setEditorState(prev => ({ ...prev, sshAuth: v }))}>
                             <SelectTrigger className="h-8 text-xs" data-testid="ssh-auth-select">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent className={NESTED_SELECT_Z}>
-                              <SelectItem value="key">Private Key</SelectItem>
-                              <SelectItem value="password">Password</SelectItem>
-                              <SelectItem value="agent">SSH Agent</SelectItem>
+                              <SelectItem value="key">{t('ssh.authKey')}</SelectItem>
+                              <SelectItem value="password">{t('ssh.authPassword')}</SelectItem>
+                              <SelectItem value="agent">{t('ssh.authAgent')}</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -1995,7 +1992,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       {editorState.sshAuth === 'key' && (
                         <>
                           <div className="flex flex-col gap-1">
-                            <Label>Private Key Path</Label>
+                            <Label>{t('ssh.privateKeyPath')}</Label>
                             <Input
                               type="text"
                               value={editorState.sshKey}
@@ -2005,11 +2002,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             />
                           </div>
                           <div className="flex flex-col gap-1">
-                            <Label>Key Passphrase (optional)</Label>
+                            <Label>{t('ssh.keyPassphrase')}</Label>
                             <PasswordInput
                               value={editorState.sshPass}
                               onChange={e => setEditorState(prev => ({ ...prev, sshPass: e.target.value }))}
-                              placeholder="Leave blank if the key is unencrypted"
+                              placeholder={t('ssh.keyPassphrasePlaceholder')}
                               className="font-mono"
                             />
                           </div>
@@ -2017,7 +2014,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       )}
                       {editorState.sshAuth === 'password' && (
                         <div className="flex flex-col gap-1">
-                          <Label>SSH Password</Label>
+                          <Label>{t('ssh.password')}</Label>
                           <PasswordInput
                             value={editorState.sshPass}
                             onChange={e => setEditorState(prev => ({ ...prev, sshPass: e.target.value }))}
@@ -2031,14 +2028,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           data-testid="ssh-agent-note"
                           className="rounded border border-border bg-muted/40 px-2 py-1.5 text-[10.5px] leading-relaxed text-muted-foreground"
                         >
-                          Authentication uses your system ssh-agent (SSH_AUTH_SOCK). Keys and
-                          passphrases stay in the agent and never touch MQLens or the saved profile.
+                          {t('ssh.agentNote')}
                         </div>
                       )}
 
                       <div className="text-[10.5px] leading-relaxed text-muted-foreground">
-                        The SSH server's host key must be in <code>~/.ssh/known_hosts</code>. Credentials are
-                        stored with the profile (plaintext); prefer key-based auth.
+                        {t('ssh.hostKeyNotePrefix')} <code>~/.ssh/known_hosts</code>{t('ssh.hostKeyNoteSuffix')}
                       </div>
                     </div>
                   )}
@@ -2054,17 +2049,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       checked={editorState.proxyEnabled}
                       onChange={e => setEditorState(prev => ({ ...prev, proxyEnabled: e.target.checked }))}
                     />
-                    <Label htmlFor="proxy-enable" className="text-[11px] font-medium">Enable SOCKS5 Client Proxy</Label>
+                    <Label htmlFor="proxy-enable" className="text-[11px] font-medium">{t('proxy.enableLabel')}</Label>
                   </div>
                   <p className="m-0 text-[10px] text-muted-foreground">
-                    The MongoDB driver tunnels its connection through a SOCKS5 proxy. (HTTP proxies are not supported by the driver.)
+                    {t('proxy.description')}
                   </p>
 
                   {editorState.proxyEnabled && (
                     <div className="flex flex-col gap-2 border-t border-border pt-2.5">
                       <div className="flex gap-2">
                         <div className="flex flex-[2] flex-col gap-1">
-                          <Label>Proxy Host</Label>
+                          <Label>{t('proxy.host')}</Label>
                           <Input
                             type="text"
                             value={editorState.proxyHost}
@@ -2073,7 +2068,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           />
                         </div>
                         <div className="flex flex-1 flex-col gap-1">
-                          <Label>Proxy Port</Label>
+                          <Label>{t('proxy.port')}</Label>
                           <Input
                             type="text"
                             value={editorState.proxyPort}
@@ -2086,7 +2081,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
                       <div className="flex gap-2">
                         <div className="flex flex-1 flex-col gap-1">
-                          <Label>Proxy Username (optional)</Label>
+                          <Label>{t('proxy.username')}</Label>
                           <Input
                             type="text"
                             value={editorState.proxyUser}
@@ -2095,7 +2090,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           />
                         </div>
                         <div className="flex flex-1 flex-col gap-1">
-                          <Label>Proxy Password (optional)</Label>
+                          <Label>{t('proxy.password')}</Label>
                           <Input
                             type="password"
                             value={editorState.proxyPass}
@@ -2113,7 +2108,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-2">
                     <div className="flex flex-1 flex-col gap-1">
-                      <Label>Default Database</Label>
+                      <Label>{t('advanced.defaultDb')}</Label>
                       <Input
                         type="text"
                         value={editorState.defaultDb}
@@ -2122,15 +2117,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       />
                     </div>
                     <div className="flex flex-1 flex-col gap-1">
-                      <Label>BSON Compression</Label>
+                      <Label>{t('advanced.compression')}</Label>
                       <Select value={editorState.compression} onValueChange={(v) => setEditorState(prev => ({ ...prev, compression: v }))}>
                         <SelectTrigger className="h-8 text-xs">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className={NESTED_SELECT_Z}>
-                          <SelectItem value="none">None</SelectItem>
-                          <SelectItem value="snappy">Snappy</SelectItem>
-                          <SelectItem value="zlib">Zlib</SelectItem>
+                          <SelectItem value="none">{t('advanced.compressionNone')}</SelectItem>
+                          <SelectItem value="snappy">{t('advanced.compressionSnappy')}</SelectItem>
+                          <SelectItem value="zlib">{t('advanced.compressionZlib')}</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -2143,7 +2138,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             {(testing || testResult) && (
               <div className="mx-4 mb-2 flex max-h-[200px] shrink-0 flex-col gap-2 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3">
                 <div className="flex items-center justify-between gap-2">
-                  <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">Connection Test Progress</Label>
+                  <Label className="text-ui-2xs uppercase tracking-wide text-muted-foreground">{t('test.progressLabel')}</Label>
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-[10px] font-semibold text-primary">{testProgress}%</span>
                     {testResult && !testing && (
@@ -2153,8 +2148,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         size="icon"
                         className="h-6 w-6"
                         data-testid="test-dismiss"
-                        aria-label="Dismiss test result"
-                        title="Dismiss"
+                        aria-label={t('test.dismissAria')}
+                        title={t('test.dismissTitle')}
                         onClick={() => { setTestResult(null); setShowErrDetail(false); setTestProgress(0); }}
                       >
                         <X size={13} />
@@ -2174,7 +2169,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         step.status === 'pending' && 'text-muted-foreground',
                         step.status === 'running' && 'text-primary',
                         (step.status === 'success' || step.status === 'failed') && 'text-foreground'
-                      )}>{step.name}</span>
+                      )}>{t(step.nameKey)}</span>
                       <span>
                         {step.status === 'pending' && <span className="inline-block h-2 w-2 rounded-full border border-border" />}
                         {step.status === 'running' && <RefreshCw size={10} className="animate-spin text-primary" />}
@@ -2186,9 +2181,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 </div>
 
                 {testResult && (() => {
-                  const info = testResult.success
-                    ? { summary: testResult.message, hint: undefined as string | undefined }
-                    : summarizeConnectionError(testResult.message);
+                  let summary: string;
+                  let hint: string | undefined;
+                  if (testResult.success) {
+                    summary = testResult.message;
+                  } else {
+                    const info = summarizeConnectionError(testResult.message);
+                    summary = 'summaryKey' in info ? t(info.summaryKey) : info.summaryText;
+                    hint = 'hintKey' in info && info.hintKey ? t(info.hintKey) : undefined;
+                  }
                   return (
                     <div className={cn(
                       'rounded border p-2 text-[11px]',
@@ -2198,10 +2199,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     )}>
                       <div className="flex items-start gap-1.5">
                         {testResult.success ? <Check size={12} className="mt-px shrink-0" /> : <AlertCircle size={12} className="mt-px shrink-0" />}
-                        <span className="font-semibold" data-testid="test-result-summary">{info.summary}</span>
+                        <span className="font-semibold" data-testid="test-result-summary">{summary}</span>
                       </div>
-                      {info.hint && (
-                        <div className="ml-[18px] mt-1 font-normal text-muted-foreground">{info.hint}</div>
+                      {hint && (
+                        <div className="ml-[18px] mt-1 font-normal text-muted-foreground">{hint}</div>
                       )}
                       {!testResult.success && (
                         <>
@@ -2212,7 +2213,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             data-testid="test-error-details-toggle"
                             onClick={() => setShowErrDetail(v => !v)}
                           >
-                            {showErrDetail ? 'Hide details' : 'Show details'}
+                            {showErrDetail ? t('test.hideDetails') : t('test.showDetails')}
                           </Button>
                           {showErrDetail && (
                             <pre data-testid="test-error-detail" className="mb-0 mt-1.5 whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-muted-foreground">
@@ -2231,7 +2232,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={runTestStepSequence} disabled={testing}>
                   <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
-                  <span>Test Connection</span>
+                  <span>{t('actions.testConnection')}</span>
                 </Button>
                 {importUriMenu()}
                 {importError && (
@@ -2241,10 +2242,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 )}
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setShowEditDialog(false)}>Cancel</Button>
+                <Button variant="outline" size="sm" onClick={() => setShowEditDialog(false)}>{t('common:cancel')}</Button>
                 <Button size="sm" onClick={handleSave} disabled={loading || testing}>
                   <Check size={11} />
-                  <span>Save</span>
+                  <span>{t('common:save')}</span>
                 </Button>
               </div>
             </footer>
@@ -2257,14 +2258,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         <DialogContent className="max-w-lg" data-testid="export-uri-dialog">
           <DialogHeader>
             <DialogTitle>
-              {exportDialog?.mode === 'all' ? 'Export All Connection URIs' : 'Export connection URI'}
+              {exportDialog?.mode === 'all' ? t('export.allTitle') : t('export.singleTitle')}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             {exportDialog?.mode === 'all' && (
               <p className="text-ui-2xs text-muted-foreground">
-                Exporting {profiles.length} saved connection{profiles.length === 1 ? '' : 's'} as JSON
-                (including folder structure). Compatible with MQLens import and Studio 3T-style connection files.
+                {t('export.allDescription', { count: profiles.length })}
               </p>
             )}
             <code
@@ -2278,9 +2278,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </code>
             <div className="flex items-center justify-between gap-2">
               <div>
-                <Label htmlFor="export-include-password" className="text-ui-xs">Include password</Label>
+                <Label htmlFor="export-include-password" className="text-ui-xs">{t('export.includePassword')}</Label>
                 <p className="text-ui-2xs text-muted-foreground">
-                  Off strips the auth password and proxy/token secrets so the URI is safe to share.
+                  {t('export.includePasswordDescription')}
                 </p>
               </div>
               <Switch
@@ -2292,9 +2292,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </div>
             <div className="flex items-center justify-between gap-2">
               <div>
-                <Label htmlFor="export-include-settings" className="text-ui-xs">Include connection settings</Label>
+                <Label htmlFor="export-include-settings" className="text-ui-xs">{t('export.includeSettings')}</Label>
                 <p className="text-ui-2xs text-muted-foreground">
-                  TLS files, replica set, auth mechanism, appName, proxy, and timeouts.
+                  {t('export.includeSettingsDescription')}
                 </p>
               </div>
               <Switch
@@ -2306,8 +2306,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </div>
             {exportDialog?.mode === 'single' && exportDialog.hasSsh && (
               <p className="text-ui-2xs text-muted-foreground" data-testid="export-ssh-note">
-                This connection uses an SSH tunnel. Tunnel settings can’t be represented in a
-                MongoDB URI and are not exported.
+                {t('export.sshNote')}
               </p>
             )}
           </div>
@@ -2318,14 +2317,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               data-testid="export-save-btn"
               onClick={handleExportSave}
             >
-              Save to file…
+              {t('export.saveToFile')}
             </Button>
             <Button
               size="sm"
               data-testid="export-copy-btn"
               onClick={() => navigator.clipboard?.writeText(exportPreview)}
             >
-              Copy to clipboard
+              {t('export.copyToClipboard')}
             </Button>
           </DialogFooter>
         </DialogContent>

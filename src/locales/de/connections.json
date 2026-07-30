@@ -1,0 +1,242 @@
+{
+  "actions": {
+    "alreadyConnected": "Bereits verbunden",
+    "browse": "Durchsuchen…",
+    "connect": "Verbinden",
+    "connecting": "Verbinde...",
+    "create": "Erstellen",
+    "delete": "Löschen",
+    "duplicate": "Duplizieren",
+    "edit": "Bearbeiten",
+    "export": "Exportieren…",
+    "exportAllUris": "Alle URIs exportieren",
+    "exportUri": "URI exportieren",
+    "hidePassword": "Passwort verbergen",
+    "import": "Importieren",
+    "importAll": "Alle importieren",
+    "importUri": "URI importieren",
+    "new": "Neu...",
+    "newFolder": "Neuer Ordner",
+    "showPassword": "Passwort anzeigen",
+    "testConnection": "Verbindung testen"
+  },
+  "advanced": {
+    "compression": "BSON-Komprimierung",
+    "compressionNone": "Keine",
+    "compressionSnappy": "Snappy",
+    "compressionZlib": "Zlib",
+    "defaultDb": "Standarddatenbank"
+  },
+  "auth": {
+    "authDatabase": "Authentifizierungsdatenbank",
+    "externalNotePrefix": "Authentifiziert gegen die",
+    "externalNoteSuffix": "Datenbank.",
+    "method": "Authentifizierungsmethode",
+    "methodAws": "MONGODB-AWS (IAM)",
+    "methodKerberos": "GSSAPI (Kerberos)",
+    "methodLdap": "LDAP (PLAIN)",
+    "methodNone": "Keine (Gastzugriff)",
+    "methodScram1": "SCRAM-SHA-1",
+    "methodScram256": "SCRAM-SHA-256 (Standard)",
+    "methodX509": "x.509-Clientzertifikat",
+    "passLabelAws": "Geheimer Zugriffsschlüssel",
+    "passLabelDefault": "Passwort",
+    "serviceName": "Servicename (optional, Standard: mongodb)",
+    "sessionToken": "Sitzungstoken (optional)",
+    "sessionTokenPlaceholder": "für temporäre STS-Anmeldedaten",
+    "userLabelAws": "Zugriffsschlüssel-ID",
+    "userLabelDefault": "Benutzername",
+    "userLabelKerberos": "Principal",
+    "userLabelX509": "Benutzername (optional — aus dem Zertifikat abgeleitet)",
+    "x509Note": "Erfordert TLS mit einem Clientzertifikat (Tab TLS)."
+  },
+  "connectionMode": {
+    "confirmDestructive": {
+      "description": "Destruktive Vorgänge erfordern eine getippte Bestätigung",
+      "label": "Bestätigung bei destruktiv"
+    },
+    "normal": {
+      "description": "Voller Lese-/Schreibzugriff",
+      "label": "Normal"
+    },
+    "readOnly": {
+      "description": "Blockiert alle Schreibvorgänge",
+      "label": "Nur Lesen"
+    }
+  },
+  "dialogs": {
+    "deleteProfile": {
+      "message": "Möchtest du dieses Verbindungsprofil wirklich löschen?",
+      "title": "Verbindungsprofil löschen"
+    },
+    "importConnections": {
+      "message_one": "{{count}} Verbindungs-URI gefunden. Dafür ein gespeichertes Profil anlegen?",
+      "message_other": "{{count}} Verbindungs-URIs gefunden. Für jede ein gespeichertes Profil anlegen?",
+      "title": "Verbindungen importieren"
+    },
+    "importUri": {
+      "message": "Füge eine oder mehrere mongodb:// oder mongodb+srv://-Verbindungszeichenfolgen ein. Verwende #-Zeilen, um Verbindungen zu benennen. ({{shortcut}} zum Importieren)",
+      "placeholder": "# Lokal\nmongodb://localhost:27017\n\n# Produktion\nmongodb://user:pass@host1:27017/?replicaSet=rs0",
+      "title": "Verbindungs-URI importieren"
+    }
+  },
+  "editor": {
+    "duplicateTitle": "Verbindung duplizieren",
+    "editTitle": "Verbindung bearbeiten",
+    "newTitle": "Neue Verbindung",
+    "subtitle": "Server, Authentifizierung, TLS und erweiterte Optionen konfigurieren",
+    "tabsAria": "Verbindungseinstellungsbereiche"
+  },
+  "empty": {
+    "message": "Wähle eine Verbindung aus der Seitenleiste oder klicke in der Symbolleiste auf \"Neu…\", um eine zu erstellen."
+  },
+  "errors": {
+    "alreadyActive": "Diese Verbindung ist bereits aktiv",
+    "clipboardEmpty": "Zwischenablage ist leer",
+    "clipboardReadFailed": "Zwischenablage konnte nicht gelesen werden.",
+    "displayNameRequired": "Anzeigename ist erforderlich",
+    "fileReadFailed": "Ausgewählte Datei konnte nicht gelesen werden.",
+    "folderNameExists": "Ein Ordner mit diesem Namen existiert bereits",
+    "folderNameRequired": "Ordnername ist erforderlich"
+  },
+  "export": {
+    "allDescription_one": "Exportiere {{count}} gespeicherte Verbindung als JSON (einschließlich Ordnerstruktur). Kompatibel mit dem MQLens-Import und Studio-3T-artigen Verbindungsdateien.",
+    "allDescription_other": "Exportiere {{count}} gespeicherte Verbindungen als JSON (einschließlich Ordnerstruktur). Kompatibel mit dem MQLens-Import und Studio-3T-artigen Verbindungsdateien.",
+    "allTitle": "Alle Verbindungs-URIs exportieren",
+    "copyToClipboard": "In Zwischenablage kopieren",
+    "includePassword": "Passwort einschließen",
+    "includePasswordDescription": "Aus entfernt das Auth-Passwort sowie Proxy-/Token-Geheimnisse, sodass die URI sicher geteilt werden kann.",
+    "includeSettings": "Verbindungseinstellungen einschließen",
+    "includeSettingsDescription": "TLS-Dateien, Replikatset, Authentifizierungsmechanismus, appName, Proxy und Timeouts.",
+    "saveAllTitle": "Verbindungs-URIs speichern",
+    "saveTitle": "Verbindungs-URI speichern",
+    "saveToFile": "In Datei speichern…",
+    "singleTitle": "Verbindungs-URI exportieren",
+    "sshNote": "Diese Verbindung verwendet einen SSH-Tunnel. Tunneleinstellungen lassen sich nicht in einer MongoDB-URI abbilden und werden nicht exportiert."
+  },
+  "filePicker": {
+    "allFilesFilter": "Alle Dateien",
+    "certificatesFilter": "Zertifikate",
+    "importFileTitle": "Verbindungs-URI aus Datei importieren",
+    "jsonFilter": "JSON",
+    "jsonStudio3tFilter": "JSON / Studio 3T-URI",
+    "selectCertificateTitle": "Zertifikatsdatei auswählen",
+    "textFilter": "Text"
+  },
+  "folder": {
+    "closeDialogAria": "Ordnerdialog schließen",
+    "nameLabel": "Ordnername",
+    "root": "(Stammverzeichnis)"
+  },
+  "form": {
+    "colorTag": "Farbmarkierung",
+    "colorTagGroupAria": "Verbindungsfarbmarkierung",
+    "connectionMode": "Verbindungsmodus",
+    "connectionUriLabel": "Verbindungs-URI",
+    "custom": "Eigene",
+    "displayName": "Anzeigename",
+    "folder": "Ordner",
+    "hostList": "Hostliste",
+    "hostListHostPort": "(Host:Port, kommagetrennt)",
+    "hostListHostnameOnly": "(nur Hostname)",
+    "mcpEnabled": "Für MCP-Agenten freigeben",
+    "mcpEnabledDescription": "Agenten, die mit dem MQLens-MCP-Server verbunden sind, können dieses Profil sehen und nutzen.",
+    "noColor": "Keine Farbe",
+    "parseIntoFields": "In Formularfelder übernehmen",
+    "parseUriTitle": "Füllt die Felder in Server und Authentifizierung aus dieser URI, damit du sie bearbeiten kannst",
+    "pickCustomColor": "Eigene Farbe wählen",
+    "protocol": "Protokoll",
+    "replicaSetName": "Replikatset-Name",
+    "showPasswordToEdit": "Passwort zum Bearbeiten anzeigen",
+    "topology": "Topologie",
+    "topologyReplicaSet": "Replikatset",
+    "topologySharded": "Sharded-Cluster (mongos)",
+    "topologyStandalone": "Standalone / Direkt",
+    "topologyUriOnly": "Nur vollständige URI-Zeichenfolge",
+    "uriBadge": "URI"
+  },
+  "import": {
+    "fromClipboard": "Aus Zwischenablage",
+    "fromFile": "Aus einer Datei…",
+    "pasteManually": "Manuell einfügen…"
+  },
+  "list": {
+    "colorDotTitle": "Verbindungsfarbe"
+  },
+  "profile": {
+    "connectedActive": "Verbunden (aktiv)",
+    "connectionUri": "Verbindungs-URI",
+    "disconnected": "Getrennt",
+    "metadata": "Verbindungsmetadaten",
+    "profileId": "Profil-ID:",
+    "status": "Status:",
+    "subtitle": "Verbindungsprofil"
+  },
+  "proxy": {
+    "description": "Der MongoDB-Treiber leitet seine Verbindung durch einen SOCKS5-Proxy. (HTTP-Proxys werden vom Treiber nicht unterstützt.)",
+    "enableLabel": "SOCKS5-Client-Proxy aktivieren",
+    "host": "Proxy-Host",
+    "password": "Proxy-Passwort (optional)",
+    "port": "Proxy-Port",
+    "username": "Proxy-Benutzername (optional)"
+  },
+  "sidebar": {
+    "allFolders": "Alle Ordner",
+    "allFoldersPlaceholder": "Alle Ordner",
+    "connectedTitle": "Verbunden",
+    "emptyFolder": "Leerer Ordner",
+    "searchPlaceholder": "Verbindungen durchsuchen...",
+    "unnamedConnection": "Unbenannte Verbindung"
+  },
+  "ssh": {
+    "agentNote": "Die Authentifizierung nutzt deinen System-ssh-agent (SSH_AUTH_SOCK). Schlüssel und Passphrasen bleiben im Agenten und gelangen nie zu MQLens oder ins gespeicherte Profil.",
+    "authAgent": "SSH-Agent",
+    "authKey": "Privater Schlüssel",
+    "authMethod": "Authentifizierungsmethode",
+    "authPassword": "Passwort",
+    "enableLabel": "SSH-Tunnel-Proxy-Gateway aktivieren",
+    "host": "SSH-Serverhost",
+    "hostKeyNotePrefix": "Der Host-Key des SSH-Servers muss in",
+    "hostKeyNoteSuffix": " stehen. Anmeldedaten werden mit dem Profil (im Klartext) gespeichert; bevorzuge schlüsselbasierte Authentifizierung.",
+    "keyPassphrase": "Schlüssel-Passphrase (optional)",
+    "keyPassphrasePlaceholder": "Leer lassen, wenn der Schlüssel unverschlüsselt ist",
+    "password": "SSH-Passwort",
+    "port": "SSH-Port",
+    "privateKeyPath": "Pfad zum privaten Schlüssel",
+    "username": "SSH-Benutzername"
+  },
+  "subtitle": "Gespeicherte MongoDB-Profile und Ordner verwalten",
+  "tabs": {
+    "advanced": "Erweitert",
+    "auth": "Authentifizierung",
+    "proxy": "Proxy",
+    "server": "Server",
+    "ssh": "SSH-Tunnel",
+    "tls": "TLS / SSL"
+  },
+  "test": {
+    "dismissAria": "Testergebnis verwerfen",
+    "dismissTitle": "Verwerfen",
+    "hideDetails": "Details ausblenden",
+    "progressLabel": "Fortschritt des Verbindungstests",
+    "showDetails": "Details anzeigen",
+    "stageConnect": "Treiber-Client initialisieren",
+    "stageParse": "Verbindungs-URI parsen",
+    "stagePing": "Verbindung prüfen (Ping)",
+    "stageResolve": "Host & Port auflösen",
+    "successMessage": "Verbindungstest erfolgreich"
+  },
+  "title": "Verbindungsmanager",
+  "tls": {
+    "allowInvalidCerts": "Ungültige Zertifikate zulassen",
+    "allowInvalidHosts": "Ungültige Hostnamen zulassen",
+    "caFilePath": "CA-Dateipfad",
+    "certValidation": "Zertifikatsvalidierung",
+    "insecureTag": "(unsicher)",
+    "mode": "SSL/TLS-Zertifikatsmodus",
+    "modeFile": "Eigene CA-Datei hochladen",
+    "modeOff": "Aus (unsicherer Klartext)",
+    "modeSystem": "Root-CA-Zertifikate des Systems",
+    "validationWarning": "Das Deaktivieren der Zertifikatsvalidierung setzt die Verbindung Man-in-the-Middle-Angriffen aus. Nur für vertrauenswürdige/selbstsignierte Testserver aktivieren."
+  }
+}

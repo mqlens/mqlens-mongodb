@@ -7,16 +7,22 @@ import { defineConfig } from 'i18next-cli';
  * just `en` means `primaryLanguage` is 'en' and `secondaryLanguages` defaults
  * to the empty set, so extraction and the CI check never touch src/locales/de/.
  *
- * `common.appName`/`cancel`/`save`/`close` are keys seeded by the i18n
- * bootstrap that aren't referenced by any `t()` call yet — the UI surfaces
- * that will use them land in follow-up work. `preservePatterns` keeps
- * extraction from pruning them as "unused" in the meantime; remove the
- * entries here once each key is actually wired up to a `t()` call.
+ * `common.appName` is a key seeded by the i18n bootstrap that isn't
+ * referenced by any `t()` call yet — the UI surface that will use it lands in
+ * follow-up work. `preservePatterns` keeps extraction from pruning it as
+ * "unused" in the meantime; remove the entry once it's wired up to a `t()`
+ * call. `common.cancel`/`save`/`close` were the same story but are now read
+ * from ConnectionManager.tsx, so they've been dropped from this list.
  *
  * The `settings:<section>.tabLabel`/`tabDescription` keys are read through
  * `SETTINGS_TABS` in SettingsModal.tsx via `t(labelKey)`/`t(descriptionKey)`
  * — a variable, not a string literal — so the extractor's static analysis
- * can never see the reference. They're preserved here for the same reason.
+ * can never see the reference. They're preserved here for the same reason,
+ * as are the ConnectionManager.tsx equivalents: `TABS`/`CONNECTION_MODE_OPTIONS`
+ * read via `t(tab.labelKey)`/`t(opt.labelKey)`/`t(opt.descriptionKey)`, the
+ * test-step checklist read via `t(step.nameKey)`, and the
+ * `summarizeConnectionError` result keys read via `t(info.summaryKey)`/
+ * `t(info.hintKey)`.
  */
 export default defineConfig({
   locales: ['en'],
@@ -31,9 +37,6 @@ export default defineConfig({
     defaultValue: '',
     preservePatterns: [
       'common:appName',
-      'common:cancel',
-      'common:save',
-      'common:close',
       'settings:appearance.tabLabel',
       'settings:appearance.tabDescription',
       'settings:ai.tabLabel',
@@ -50,6 +53,35 @@ export default defineConfig({
       'settings:security.tabDescription',
       'settings:language.tabLabel',
       'settings:language.tabDescription',
+      'connections:tabs.server',
+      'connections:tabs.auth',
+      'connections:tabs.tls',
+      'connections:tabs.ssh',
+      'connections:tabs.proxy',
+      'connections:tabs.advanced',
+      'connections:connectionMode.normal.label',
+      'connections:connectionMode.normal.description',
+      'connections:connectionMode.readOnly.label',
+      'connections:connectionMode.readOnly.description',
+      'connections:connectionMode.confirmDestructive.label',
+      'connections:connectionMode.confirmDestructive.description',
+      'connections:test.stageParse',
+      'connections:test.stageResolve',
+      'connections:test.stageConnect',
+      'connections:test.stagePing',
+      'errors:conn.tlsNotTrusted',
+      'errors:conn.tlsNotTrustedHint',
+      'errors:conn.authFailed',
+      'errors:conn.authFailedHint',
+      'errors:conn.refused',
+      'errors:conn.refusedHint',
+      'errors:conn.dnsFailed',
+      'errors:conn.dnsFailedHint',
+      'errors:conn.handshakeClosed',
+      'errors:conn.handshakeClosedHint',
+      'errors:conn.selectionTimeout',
+      'errors:conn.selectionTimeoutHint',
+      'errors:conn.timedOut',
     ],
   },
 });
