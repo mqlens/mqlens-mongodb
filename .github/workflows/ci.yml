@@ -27,6 +27,8 @@ jobs:
         run: npm run build
       - name: Unit tests with coverage
         run: npm run coverage:frontend
+      - name: i18n catalog check
+        run: npm run i18n:check
       - name: Frontend coverage summary
         run: |
           node <<'NODE'

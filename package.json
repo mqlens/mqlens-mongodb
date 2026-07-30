@@ -13,6 +13,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
+    "i18n:extract": "i18next-cli extract",
+    "i18n:check": "i18next-cli extract --ci --dry-run",
     "coverage:frontend": "vitest run --coverage",
     "coverage:backend": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\\.rs'",
     "coverage": "npm run coverage:frontend && npm run coverage:backend"
@@ -69,7 +71,7 @@
     "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^4.6.0",
     "@vitest/coverage-v8": "^4.1.7",
-    "i18next-parser": "^9.4.0",
+    "i18next-cli": "^1.67.3",
     "jsdom": "^29.1.1",
     "typescript": "~5.8.3",
     "vite": "^7.3.5",
