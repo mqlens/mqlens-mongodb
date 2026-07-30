@@ -17,6 +17,15 @@ vi.mock('../../lib/vault', () => ({
   notifyVaultUnlocked: vi.fn(),
 }));
 
+// App is rendered directly here (I18nProvider only wraps it at the
+// main.tsx entry point, not inside App.tsx itself), so SettingsView's
+// useLocale() call — added when the Settings tab gained a Language section —
+// has no real provider to read from. Mock it, matching the same pattern
+// used in SettingsModal.test.tsx and SettingsMcp.test.tsx.
+vi.mock('@/components/i18n/I18nProvider', () => ({
+  useLocale: () => ({ locale: 'en', setLocale: vi.fn() }),
+}));
+
 // Mock Tauri invoke function
 const mockInvoke = vi.fn();
 // Monaco does not render a usable DOM under jsdom. The aggregation stage editor

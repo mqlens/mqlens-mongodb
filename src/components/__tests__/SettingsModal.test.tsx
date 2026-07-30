@@ -13,6 +13,17 @@ vi.mock('../theme/AppearanceSettings', () => ({
   AppearanceSettings: () => <div data-testid="appearance-settings">Theme preset</div>,
 }));
 
+// SettingsView reads/writes the active locale through useLocale(), whose real
+// implementation is I18nProvider's context — a provider this suite doesn't
+// mount (see the file-level note on why: the async "ready" gate would break
+// every synchronous openTab() call already written below). Mock it the same
+// way AppearanceSettings and lib/vault are mocked above, rather than
+// wrapping renderSettings() in a real I18nProvider.
+const mockSetLocale = vi.fn();
+vi.mock('@/components/i18n/I18nProvider', () => ({
+  useLocale: () => ({ locale: 'en', setLocale: mockSetLocale }),
+}));
+
 const mockChangeVaultPassword = vi.fn();
 const mockResetVault = vi.fn();
 const mockBiometricStatus = vi.fn();
@@ -269,5 +280,20 @@ describe('SettingsView Component', () => {
   it('opens the shortcuts tab when initialTab is shortcuts', async () => {
     render(<SettingsView initialTab="shortcuts" />);
     expect(await screen.findByTestId('shortcuts-group-zoom')).toBeInTheDocument();
+  });
+});
+
+describe('SettingsModal — language section (#123)', () => {
+  it('offers a Language section listing every shipped locale', async () => {
+    renderSettings();               // use this file's existing render helper
+    fireEvent.click(await screen.findByText('Language'));
+    expect(screen.getByRole('option', { name: 'English' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Deutsch' })).toBeInTheDocument();
+  });
+
+  it('explains that untranslated text falls back to English', async () => {
+    renderSettings();
+    fireEvent.click(await screen.findByText('Language'));
+    expect(screen.getByText(/falls back to English/i)).toBeInTheDocument();
   });
 });

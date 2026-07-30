@@ -1,4 +1,5 @@
 import { Download, Upload, RotateCcw, Check } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
@@ -27,6 +28,7 @@ import {
 import { formatZoomShortcutHint } from "@/lib/shortcuts";
 
 export function AppearanceSettings() {
+  const { t } = useTranslation("settings");
   const {
     config,
     presets,
@@ -76,10 +78,8 @@ export function AppearanceSettings() {
       <div className="flex min-w-0 flex-col gap-8">
         <section className="space-y-3">
           <div>
-            <h3 className="text-sm font-semibold">Theme preset</h3>
-            <p className="text-xs text-muted-foreground">
-              Pick a color system — mode follows each preset unless overridden below.
-            </p>
+            <h3 className="text-sm font-semibold">{t("appearance.presetTitle")}</h3>
+            <p className="text-xs text-muted-foreground">{t("appearance.presetDescription")}</p>
           </div>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-4">
             {presets.map((preset) => (
@@ -119,21 +119,21 @@ export function AppearanceSettings() {
 
         <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           <div className="space-y-2">
-            <Label>Color mode</Label>
+            <Label>{t("appearance.colorMode")}</Label>
             <Select value={config.mode} onValueChange={(v) => setMode(v as ThemeMode)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="dark">Dark</SelectItem>
-                <SelectItem value="light">Light</SelectItem>
-                <SelectItem value="system">System</SelectItem>
+                <SelectItem value="dark">{t("appearance.dark")}</SelectItem>
+                <SelectItem value="light">{t("appearance.light")}</SelectItem>
+                <SelectItem value="system">{t("appearance.system")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div className="space-y-2">
-            <Label>Spacing density</Label>
+            <Label>{t("appearance.spacingDensity")}</Label>
             <Select
               value={config.spacingDensity}
               onValueChange={(v) => setSpacingDensity(v as SpacingDensity)}
@@ -142,16 +142,16 @@ export function AppearanceSettings() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="compact">Compact</SelectItem>
-                <SelectItem value="cozy">Cozy</SelectItem>
-                <SelectItem value="roomy">Roomy</SelectItem>
+                <SelectItem value="compact">{t("appearance.compact")}</SelectItem>
+                <SelectItem value="cozy">{t("appearance.cozy")}</SelectItem>
+                <SelectItem value="roomy">{t("appearance.roomy")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div className="space-y-2 md:col-span-2 xl:col-span-1">
             <div className="flex items-center justify-between">
-              <Label>Interface zoom</Label>
+              <Label>{t("appearance.interfaceZoom")}</Label>
               <span className="font-mono text-xs text-muted-foreground">
                 {Math.round(config.uiZoom * 100)}%
               </span>
@@ -164,13 +164,13 @@ export function AppearanceSettings() {
               onValueChange={([v]) => setUiZoom(clampUiZoom(v))}
             />
             <p className="text-[11px] text-muted-foreground">
-              Shortcut: {formatZoomShortcutHint()}
+              {t("appearance.zoomShortcutHint", { shortcut: formatZoomShortcutHint() })}
             </p>
           </div>
 
           <div className="space-y-2 md:col-span-2 xl:col-span-1">
             <div className="flex items-center justify-between">
-              <Label>Font size</Label>
+              <Label>{t("appearance.fontSize")}</Label>
               <span className="font-mono text-xs text-muted-foreground">{config.fontSize}px</span>
             </div>
             <Slider
@@ -184,7 +184,7 @@ export function AppearanceSettings() {
 
           <div className="space-y-2 md:col-span-2 xl:col-span-1">
             <div className="flex items-center justify-between">
-              <Label>Query bar height</Label>
+              <Label>{t("appearance.queryBarHeight")}</Label>
               <span className="font-mono text-xs text-muted-foreground">
                 {config.queryBarHeight}px
               </span>
@@ -197,15 +197,14 @@ export function AppearanceSettings() {
               onValueChange={([v]) => setQueryBarHeight(clampQueryBarHeight(v))}
             />
             <p className="text-[11px] text-muted-foreground">
-              Sizes the Query field and its text. Projection, sort, skip and
-              limit stay compact.
+              {t("appearance.queryBarHeightHint")}
             </p>
           </div>
         </section>
 
         <section className="grid gap-6 md:grid-cols-2">
           <div className="space-y-2">
-            <Label>UI font</Label>
+            <Label>{t("appearance.uiFont")}</Label>
             <Select value={config.fonts.sans} onValueChange={setFontSans}>
               <SelectTrigger>
                 <SelectValue />
@@ -221,7 +220,7 @@ export function AppearanceSettings() {
           </div>
 
           <div className="space-y-2">
-            <Label>Monospace font</Label>
+            <Label>{t("appearance.monospaceFont")}</Label>
             <Select value={config.fonts.mono} onValueChange={setFontMono}>
               <SelectTrigger>
                 <SelectValue />
@@ -239,24 +238,24 @@ export function AppearanceSettings() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Theme files</CardTitle>
-            <CardDescription>Export, import, or reset custom token overrides.</CardDescription>
+            <CardTitle className="text-sm">{t("appearance.themeFilesTitle")}</CardTitle>
+            <CardDescription>{t("appearance.themeFilesDescription")}</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={handleExport}>
               <Download className="h-4 w-4" />
-              Export theme
+              {t("appearance.exportTheme")}
             </Button>
             <Button variant="outline" size="sm" onClick={handleImport}>
               <Upload className="h-4 w-4" />
-              Import theme
+              {t("appearance.importTheme")}
             </Button>
             <Button variant="outline" size="sm" onClick={clearOverrides}>
               <RotateCcw className="h-4 w-4" />
-              Reset overrides
+              {t("appearance.resetOverrides")}
             </Button>
             <Button size="sm" onClick={() => saveAppearance()}>
-              Save appearance
+              {t("appearance.saveAppearance")}
             </Button>
           </CardContent>
         </Card>
@@ -264,14 +263,14 @@ export function AppearanceSettings() {
 
       <aside className="hidden xl:block">
         <div className="sticky top-0 space-y-3">
-          <Label className="text-xs uppercase tracking-wide text-muted-foreground">Live preview</Label>
+          <Label className="text-xs uppercase tracking-wide text-muted-foreground">{t("appearance.livePreview")}</Label>
           <Card className="overflow-hidden shadow-md">
             <div className="flex items-center gap-1.5 border-b border-border bg-muted/40 px-3 py-2">
               <span className="h-2.5 w-2.5 rounded-full bg-destructive/80" />
               <span className="h-2.5 w-2.5 rounded-full bg-warning/80" />
               <span className="h-2.5 w-2.5 rounded-full bg-success/80" />
               <span className="ml-2 truncate text-[10px] text-muted-foreground">
-                {activePreset?.name ?? "Theme"} · {resolvedMode}
+                {activePreset?.name ?? t("appearance.themeFallback")} · {resolvedMode}
               </span>
             </div>
             <CardContent className="space-y-3 p-4">
@@ -290,9 +289,9 @@ export function AppearanceSettings() {
                 {'{ "status": "active" }'}
               </div>
               <div className="flex gap-2 text-[10px]">
-                <span className="rounded bg-success/15 px-1.5 py-0.5 text-success">success</span>
-                <span className="rounded bg-warning/15 px-1.5 py-0.5 text-warning">warning</span>
-                <span className="rounded bg-destructive/15 px-1.5 py-0.5 text-destructive">error</span>
+                <span className="rounded bg-success/15 px-1.5 py-0.5 text-success">{t("appearance.previewSuccess")}</span>
+                <span className="rounded bg-warning/15 px-1.5 py-0.5 text-warning">{t("appearance.previewWarning")}</span>
+                <span className="rounded bg-destructive/15 px-1.5 py-0.5 text-destructive">{t("appearance.previewError")}</span>
               </div>
             </CardContent>
           </Card>

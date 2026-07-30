@@ -13,6 +13,14 @@ vi.mock('../theme/AppearanceSettings', () => ({
   AppearanceSettings: () => <div data-testid="appearance-settings">Theme preset</div>,
 }));
 
+// SettingsView reads the active locale through useLocale(), whose real
+// implementation is I18nProvider's context — a provider this suite doesn't
+// mount. Mocked the same way AppearanceSettings and lib/vault are mocked
+// above (see SettingsModal.test.tsx for the fuller rationale).
+vi.mock('@/components/i18n/I18nProvider', () => ({
+  useLocale: () => ({ locale: 'en', setLocale: vi.fn() }),
+}));
+
 vi.mock('../../lib/vault', () => ({
   changeVaultPassword: vi.fn(),
   resetVault: vi.fn(),

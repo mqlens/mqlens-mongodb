@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useTranslation } from 'react-i18next';
 import {
   LayoutGrid,
   Save,
@@ -11,6 +12,7 @@ import {
   Keyboard,
   Wrench,
   Copy,
+  Languages,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -21,6 +23,8 @@ import {
   biometricDisable,
   type BiometricStatus,
 } from '../lib/vault';
+import { useLocale } from '@/components/i18n/I18nProvider';
+import { SUPPORTED_LOCALES, type Locale } from '@/lib/i18n/locales';
 import { getMcpStatus, mcpSetEnabled, mcpRegenerateToken, type McpStatusUi } from '@/lib/mcpApi';
 import type { ConnectionProfile } from '@/lib/connection';
 import { CHECK_UPDATE_EVENT } from './UpdatePrompt';
@@ -93,59 +97,73 @@ const PROVIDER_LABELS: Record<string, string> = {
   antigravity: 'Antigravity (local)',
 };
 
-type SettingsTabId = 'appearance' | 'ai' | 'mcp' | 'tools' | 'updates' | 'shortcuts' | 'security';
+type SettingsTabId =
+  | 'appearance'
+  | 'ai'
+  | 'mcp'
+  | 'tools'
+  | 'updates'
+  | 'shortcuts'
+  | 'security'
+  | 'language';
 
 const SETTINGS_TABS: {
   id: SettingsTabId;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
   Icon: LucideIcon;
   persistFooter?: boolean;
 }[] = [
   {
     id: 'appearance',
-    label: 'Appearance',
-    description: 'Theme presets, typography, spacing, and color mode.',
+    labelKey: 'appearance.tabLabel',
+    descriptionKey: 'appearance.tabDescription',
     Icon: LayoutGrid,
   },
   {
     id: 'ai',
-    label: 'AI Assistant',
-    description: 'Cloud API keys, local agents, and custom query instructions.',
+    labelKey: 'ai.tabLabel',
+    descriptionKey: 'ai.tabDescription',
     Icon: Sparkles,
     persistFooter: true,
   },
   {
     id: 'mcp',
-    label: 'MCP',
-    description: 'Model Context Protocol servers for AI tool integrations.',
+    labelKey: 'mcp.tabLabel',
+    descriptionKey: 'mcp.tabDescription',
     Icon: Server,
   },
   {
     id: 'tools',
-    label: 'Tools',
-    description: 'Mongosh and MongoDB Database Tools binaries, plus managed installs.',
+    labelKey: 'tools.tabLabel',
+    descriptionKey: 'tools.tabDescription',
     Icon: Wrench,
     persistFooter: true,
   },
   {
     id: 'updates',
-    label: 'Updates',
-    description: 'Release channel and manual update checks.',
+    labelKey: 'updates.tabLabel',
+    descriptionKey: 'updates.tabDescription',
     Icon: ArrowUpCircle,
     persistFooter: true,
   },
   {
     id: 'shortcuts',
-    label: 'Shortcuts',
-    description: 'Keyboard shortcuts reference for the workspace.',
+    labelKey: 'shortcuts.tabLabel',
+    descriptionKey: 'shortcuts.tabDescription',
     Icon: Keyboard,
   },
   {
     id: 'security',
-    label: 'Security',
-    description: 'Master password, biometrics, and vault recovery.',
+    labelKey: 'security.tabLabel',
+    descriptionKey: 'security.tabDescription',
     Icon: ShieldCheck,
+  },
+  {
+    id: 'language',
+    labelKey: 'language.tabLabel',
+    descriptionKey: 'language.tabDescription',
+    Icon: Languages,
   },
 ];
 
@@ -171,6 +189,7 @@ function formatMcpLogTime(tsMs: number): string {
  * the MCP tab itself is selected, not on every `SettingsView` re-render.
  */
 const McpSettingsPanel: React.FC = () => {
+  const { t } = useTranslation('settings');
   const [status, setStatus] = useState<McpStatusUi | null>(null);
   const [portInput, setPortInput] = useState(String(8765));
   const [busy, setBusy] = useState(false);
@@ -242,7 +261,7 @@ const McpSettingsPanel: React.FC = () => {
       // backend bind attempt, surfacing as an opaque OS-level bind error
       // instead of a clear "pick a different port" message.
       if (next && (!Number.isFinite(parsedPort) || parsedPort < MCP_MIN_PORT || parsedPort > MCP_MAX_PORT)) {
-        setError(`Port must be between ${MCP_MIN_PORT} and ${MCP_MAX_PORT}.`);
+        setError(t('mcp.portRangeError', { min: MCP_MIN_PORT, max: MCP_MAX_PORT }));
         return;
       }
       const port = next ? parsedPort : undefined;
@@ -288,12 +307,9 @@ const McpSettingsPanel: React.FC = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Server className="h-4 w-4 text-primary" />
-            MCP server
+            {t('mcp.title')}
           </CardTitle>
-          <CardDescription>
-            Expose your connections to Claude Code, Cursor, and other agents as Model Context
-            Protocol tools. Reads and confirm-gated writes only; off by default.
-          </CardDescription>
+          <CardDescription>{t('mcp.description')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center gap-3">
@@ -303,11 +319,11 @@ const McpSettingsPanel: React.FC = () => {
               disabled={busy}
               onCheckedChange={onToggle}
             />
-            <Label className="font-normal">{enabled ? 'Enabled' : 'Disabled'}</Label>
+            <Label className="font-normal">{enabled ? t('mcp.enabled') : t('mcp.disabled')}</Label>
           </div>
 
           <div className="max-w-[10rem] space-y-2">
-            <Label htmlFor="mcp-port">Port</Label>
+            <Label htmlFor="mcp-port">{t('mcp.port')}</Label>
             <Input
               id="mcp-port"
               type="number"
@@ -320,7 +336,7 @@ const McpSettingsPanel: React.FC = () => {
               data-testid="mcp-port-input"
             />
             <p className="text-xs text-muted-foreground">
-              Applied the next time the server is enabled. Must be {MCP_MIN_PORT}–{MCP_MAX_PORT}.
+              {t('mcp.portHint', { min: MCP_MIN_PORT, max: MCP_MAX_PORT })}
             </p>
           </div>
 
@@ -335,7 +351,7 @@ const McpSettingsPanel: React.FC = () => {
 
           {enabled && (
             <div className="space-y-2 border-t border-border pt-4">
-              <Label>Bearer token</Label>
+              <Label>{t('mcp.bearerToken')}</Label>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-sm" data-testid="mcp-token-display">
                   {tokenRevealed ? token : '••••••••••••••••'}
@@ -347,7 +363,7 @@ const McpSettingsPanel: React.FC = () => {
                   onClick={() => setTokenRevealed((v) => !v)}
                   data-testid="mcp-token-reveal"
                 >
-                  {tokenRevealed ? 'Hide' : 'Reveal'}
+                  {tokenRevealed ? t('mcp.hide') : t('mcp.reveal')}
                 </Button>
                 <Button
                   type="button"
@@ -357,7 +373,7 @@ const McpSettingsPanel: React.FC = () => {
                   data-testid="mcp-token-copy"
                 >
                   <Copy className="h-3 w-3" />
-                  {copiedKey === 'token' ? 'Copied' : 'Copy'}
+                  {copiedKey === 'token' ? t('mcp.copied') : t('mcp.copy')}
                 </Button>
                 <Button
                   type="button"
@@ -367,12 +383,12 @@ const McpSettingsPanel: React.FC = () => {
                   disabled={busy}
                   data-testid="mcp-token-regenerate"
                 >
-                  Regenerate
+                  {t('mcp.regenerate')}
                 </Button>
               </div>
               {regenerated && (
                 <p className="text-xs text-warning" data-testid="mcp-regenerate-note">
-                  Token regenerated — existing clients must be updated with the new token.
+                  {t('mcp.tokenRegeneratedNote')}
                 </p>
               )}
             </div>
@@ -385,7 +401,7 @@ const McpSettingsPanel: React.FC = () => {
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Claude Code</CardTitle>
-              <CardDescription>Run in a terminal to register MQLens as an MCP server.</CardDescription>
+              <CardDescription>{t('mcp.claudeSnippetHint')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
               <code
@@ -403,7 +419,7 @@ const McpSettingsPanel: React.FC = () => {
                   data-testid="mcp-claude-copy"
                 >
                   <Copy className="h-3 w-3" />
-                  {copiedKey === 'claude' ? 'Copied' : 'Copy'}
+                  {copiedKey === 'claude' ? t('mcp.copied') : t('mcp.copy')}
                 </Button>
               </div>
             </CardContent>
@@ -412,7 +428,7 @@ const McpSettingsPanel: React.FC = () => {
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Cursor</CardTitle>
-              <CardDescription>Add to Cursor&apos;s MCP server configuration.</CardDescription>
+              <CardDescription>{t('mcp.cursorSnippetHint')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
               <code
@@ -430,7 +446,7 @@ const McpSettingsPanel: React.FC = () => {
                   data-testid="mcp-cursor-copy"
                 >
                   <Copy className="h-3 w-3" />
-                  {copiedKey === 'cursor' ? 'Copied' : 'Copy'}
+                  {copiedKey === 'cursor' ? t('mcp.copied') : t('mcp.copy')}
                 </Button>
               </div>
             </CardContent>
@@ -440,14 +456,13 @@ const McpSettingsPanel: React.FC = () => {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Opted-in profiles</CardTitle>
-          <CardDescription>Connections agents can see and connect to.</CardDescription>
+          <CardTitle className="text-base">{t('mcp.profilesTitle')}</CardTitle>
+          <CardDescription>{t('mcp.profilesDescription')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
           {profiles.length === 0 ? (
             <p className="text-sm text-muted-foreground" data-testid="mcp-profiles-empty">
-              No profiles are exposed. Enable &quot;Expose to MCP agents&quot; in the Connection
-              Manager.
+              {t('mcp.profilesEmpty')}
             </p>
           ) : (
             <ul className="space-y-1.5">
@@ -466,19 +481,19 @@ const McpSettingsPanel: React.FC = () => {
               ))}
             </ul>
           )}
-          <p className="text-xs text-muted-foreground">Manage in Connection Manager.</p>
+          <p className="text-xs text-muted-foreground">{t('mcp.manageInConnectionManager')}</p>
         </CardContent>
       </Card>
 
       <Card className="xl:col-span-2">
         <CardHeader>
-          <CardTitle className="text-base">Call log</CardTitle>
-          <CardDescription>Last 200 tool calls, newest first.</CardDescription>
+          <CardTitle className="text-base">{t('mcp.callLogTitle')}</CardTitle>
+          <CardDescription>{t('mcp.callLogDescription')}</CardDescription>
         </CardHeader>
         <CardContent>
           {!status || status.log.length === 0 ? (
             <p className="text-sm text-muted-foreground" data-testid="mcp-log-empty">
-              No tool calls yet.
+              {t('mcp.callLogEmpty')}
             </p>
           ) : (
             <div className="max-h-72 space-y-1 overflow-y-auto font-mono text-[11px]" data-testid="mcp-log-list">
@@ -492,7 +507,7 @@ const McpSettingsPanel: React.FC = () => {
                   <span>{entry.tool}</span>
                   <span className="truncate text-muted-foreground">{entry.summary}</span>
                   <span className={entry.ok ? 'text-success' : 'text-destructive'}>
-                    {entry.ok ? '' : 'ERR'}
+                    {entry.ok ? '' : t('mcp.err')}
                   </span>
                 </div>
               ))}
@@ -519,6 +534,8 @@ export interface SettingsViewProps {
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstallTools, toolStatusRefreshNonce }) => {
+  const { t } = useTranslation('settings');
+  const { locale, setLocale } = useLocale();
   const [tab, setTab] = useState<SettingsTabId>(initialTab ?? 'appearance');
   const [mongoshPath, setMongoshPath] = useState('');
   const [managedTools, setManagedTools] = useState<ManagedToolStatusUi[] | null>(null);
@@ -549,13 +566,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   const [newPw, setNewPw] = useState('');
   const [newPw2, setNewPw2] = useState('');
   const [secMsg, setSecMsg] = useState('');
+  const [secMsgKind, setSecMsgKind] = useState<'success' | 'error' | ''>('');
   const [bio, setBio] = useState<BiometricStatus | null>(null);
   const [bioBusy, setBioBusy] = useState(false);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheckSnapshot | null>(() =>
     readUpdateCheckSnapshot(),
   );
 
-  const activeTab = SETTINGS_TABS.find((t) => t.id === tab) ?? SETTINGS_TABS[0];
+  const activeTab = SETTINGS_TABS.find((entry) => entry.id === tab) ?? SETTINGS_TABS[0];
 
   useEffect(() => {
     const sync = () => setUpdateCheck(readUpdateCheckSnapshot());
@@ -628,7 +646,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
           update_channel: updateChannel,
         },
       });
-      setStatus('Settings saved');
+      setStatus(t('footer.settingsSaved'));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -651,7 +669,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
     setStatus(null);
     try {
       const version = await invoke<string>('test_mongosh_path', { path: mongoshPath.trim() });
-      setStatus(version || 'mongosh path resolved');
+      setStatus(version || t('tools.mongoshPathResolved'));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -661,14 +679,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
 
   const onChangePw = async () => {
     setSecMsg('');
-    if (!oldPw) { setSecMsg('Current password is required'); return; }
-    if (!newPw) { setSecMsg('New password is required'); return; }
-    if (newPw !== newPw2) { setSecMsg('New passwords do not match'); return; }
+    setSecMsgKind('');
+    if (!oldPw) { setSecMsg(t('security.currentPasswordRequired')); setSecMsgKind('error'); return; }
+    if (!newPw) { setSecMsg(t('security.newPasswordRequired')); setSecMsgKind('error'); return; }
+    if (newPw !== newPw2) { setSecMsg(t('security.passwordsDoNotMatch')); setSecMsgKind('error'); return; }
     try {
       await changeVaultPassword(oldPw, newPw);
-      setSecMsg('Master password changed');
+      setSecMsg(t('security.passwordChanged'));
+      setSecMsgKind('success');
       setOldPw(''); setNewPw(''); setNewPw2('');
-    } catch (e) { setSecMsg(String(e)); }
+    } catch (e) { setSecMsg(String(e)); setSecMsgKind('error'); }
   };
 
   const toggleBiometric = async (checked: boolean) => {
@@ -684,18 +704,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
       }
     } catch (e) {
       setSecMsg(String(e));
+      setSecMsgKind('error');
     } finally {
       setBioBusy(false);
     }
   };
 
   const onResetVault = async () => {
-    if (!window.confirm('Reset deletes ALL saved connections and API keys. Continue?')) return;
+    if (!window.confirm(t('security.resetVaultConfirm'))) return;
     setSecMsg('');
     try {
       await resetVault();
-      setSecMsg('Vault reset — please restart the app.');
-    } catch (e) { setSecMsg(String(e)); }
+      setSecMsg(t('security.resetVaultSuccess'));
+      setSecMsgKind('error');
+    } catch (e) { setSecMsg(String(e)); setSecMsgKind('error'); }
   };
 
   const renderTabContent = () => {
@@ -713,16 +735,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <ArrowUpCircle className="h-4 w-4 text-primary" />
-                  Release channel
+                  {t('updates.channelTitle')}
                 </CardTitle>
-                <CardDescription>
-                  MQLens checks for updates on launch and installs only after you approve.
-                </CardDescription>
+                <CardDescription>{t('updates.channelDescription')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label>Channel</Label>
-                  <div role="group" aria-label="Update channel" className="flex flex-wrap gap-2">
+                  <Label>{t('updates.channelLabel')}</Label>
+                  <div role="group" aria-label={t('updates.channelGroupAriaLabel')} className="flex flex-wrap gap-2">
                     {(['stable', 'dev'] as const).map((ch) => (
                       <Button
                         key={ch}
@@ -732,35 +752,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                         data-testid={`update-channel-${ch}`}
                         onClick={() => setUpdateChannel(ch)}
                       >
-                        {ch === 'stable' ? 'Stable' : 'Dev (pre-release)'}
+                        {ch === 'stable' ? t('updates.stable') : t('updates.devPrerelease')}
                       </Button>
                     ))}
                   </div>
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    Dev receives pre-release builds. Switching to Dev pulls newer dev builds; switching
-                    back to Stable won&apos;t downgrade automatically. Click Save to apply.
+                    {t('updates.channelHint')}
                   </p>
                 </div>
               </CardContent>
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Manual check</CardTitle>
-                <CardDescription>Trigger an update check without restarting the app.</CardDescription>
+                <CardTitle className="text-base">{t('updates.manualCheckTitle')}</CardTitle>
+                <CardDescription>{t('updates.manualCheckDescription')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {updateCheck ? (
                   <div className="space-y-1 text-sm" data-testid="update-last-checked">
                     <p className="text-muted-foreground">
-                      Last checked: {formatLastChecked(updateCheck.checkedAt)}
+                      {t('updates.lastChecked', { time: formatLastChecked(updateCheck.checkedAt) })}
                     </p>
                     <p className="text-foreground">
-                      Result: {updateCheckResultLabel(updateCheck.result)}
+                      {t('updates.result', { result: updateCheckResultLabel(updateCheck.result) })}
                     </p>
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground" data-testid="update-last-checked">
-                    No update check recorded yet.
+                    {t('updates.noCheckYet')}
                   </p>
                 )}
                 <Button
@@ -770,7 +789,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                   onClick={() => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT))}
                 >
                   <ArrowUpCircle className="h-3.5 w-3.5" />
-                  Check for updates
+                  {t('updates.checkForUpdatesBtn')}
                 </Button>
               </CardContent>
             </Card>
@@ -784,15 +803,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
                 <Terminal className="h-4 w-4 text-success" />
-                Mongosh binary
+                {t('tools.mongoshTitle')}
               </CardTitle>
-              <CardDescription>
-                Absolute path or command name resolved via your system PATH.
-              </CardDescription>
+              <CardDescription>{t('tools.mongoshDescription')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="mongosh-path">Executable path</Label>
+                <Label htmlFor="mongosh-path">{t('tools.mongoshPath')}</Label>
                 <Input
                   id="mongosh-path"
                   className="font-mono"
@@ -805,7 +822,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
               <div className="flex justify-end">
                 <Button variant="outline" onClick={testMongosh} disabled={testing} type="button">
                   <Terminal className="h-3 w-3" />
-                  {testing ? 'Testing...' : 'Test path'}
+                  {testing ? t('tools.testing') : t('tools.testPath')}
                 </Button>
               </div>
             </CardContent>
@@ -815,15 +832,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
                 <Terminal className="h-4 w-4 text-success" />
-                MongoDB Database Tools
+                {t('tools.dbToolsTitle')}
               </CardTitle>
-              <CardDescription>
-                Directory containing the mongodump/mongorestore binaries, used by the Dump and
-                Restore tabs.
-              </CardDescription>
+              <CardDescription>{t('tools.dbToolsDescription')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Label htmlFor="mongo-tools-dir">Tools directory</Label>
+              <Label htmlFor="mongo-tools-dir">{t('tools.dirLabel')}</Label>
               <Input
                 id="mongo-tools-dir"
                 className="font-mono"
@@ -832,9 +846,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                 placeholder="/usr/local/bin"
                 data-testid="mongo-tools-dir-input"
               />
-              <p className="text-xs text-muted-foreground">
-                Directory containing mongodump/mongorestore. Leave empty to use PATH.
-              </p>
+              <p className="text-xs text-muted-foreground">{t('tools.dirHint')}</p>
             </CardContent>
           </Card>
 
@@ -842,25 +854,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
                 <Wrench className="h-4 w-4 text-success" />
-                Managed tools
+                {t('tools.managedTitle')}
               </CardTitle>
-              <CardDescription>
-                MQLens can download and manage mongodump/mongorestore and mongosh for you instead
-                of relying on your system PATH.
-              </CardDescription>
+              <CardDescription>{t('tools.managedDescription')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {managedTools === null ? (
-                <p className="text-xs text-muted-foreground">Checking installed tools…</p>
+                <p className="text-xs text-muted-foreground">{t('tools.checkingInstalled')}</p>
               ) : (
                 <ul className="space-y-1">
-                  {managedTools.map((t) => (
+                  {managedTools.map((tool) => (
                     <li
-                      key={t.name}
+                      key={tool.name}
                       className="text-xs text-muted-foreground"
-                      data-testid={`settings-managed-tool-${t.name}`}
+                      data-testid={`settings-managed-tool-${tool.name}`}
                     >
-                      {t.name}: {t.installed ? `v${t.version} installed` : 'not installed'}
+                      {tool.name}: {tool.installed
+                        ? t('tools.installedVersion', { version: tool.version })
+                        : t('tools.notInstalled')}
                     </li>
                   ))}
                 </ul>
@@ -875,7 +886,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                     data-testid="settings-install-tools-btn"
                   >
                     <Wrench className="h-3 w-3" />
-                    Install tools…
+                    {t('tools.installToolsBtn')}
                   </Button>
                 </div>
               )}
@@ -891,15 +902,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Sparkles className="h-4 w-4 text-primary" />
-                  Provider
+                  {t('ai.providerTitle')}
                 </CardTitle>
-                <CardDescription>
-                  Choose a cloud API or a local agent CLI for the query assistant.
-                </CardDescription>
+                <CardDescription>{t('ai.providerDescription')}</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="max-w-md space-y-2">
-                  <Label>Active provider</Label>
+                  <Label>{t('ai.activeProvider')}</Label>
                   <Select value={aiProvider} onValueChange={setAiProvider}>
                     <SelectTrigger data-testid="ai-provider-select">
                       <SelectValue />
@@ -921,7 +930,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="anthropic-key">API key</Label>
+                    <Label htmlFor="anthropic-key">{t('ai.apiKey')}</Label>
                     <Input
                       id="anthropic-key"
                       type="password"
@@ -933,7 +942,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="anthropic-model">Model</Label>
+                    <Label htmlFor="anthropic-model">{t('ai.model')}</Label>
                     <Input
                       id="anthropic-model"
                       className="font-mono"
@@ -954,7 +963,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="openai-key">API key</Label>
+                    <Label htmlFor="openai-key">{t('ai.apiKey')}</Label>
                     <Input
                       id="openai-key"
                       type="password"
@@ -966,7 +975,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="openai-model">Model</Label>
+                    <Label htmlFor="openai-model">{t('ai.model')}</Label>
                     <Input
                       id="openai-model"
                       className="font-mono"
@@ -987,7 +996,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="gemini-key">API key</Label>
+                    <Label htmlFor="gemini-key">{t('ai.apiKey')}</Label>
                     <Input
                       id="gemini-key"
                       type="password"
@@ -999,7 +1008,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="gemini-model">Model</Label>
+                    <Label htmlFor="gemini-model">{t('ai.model')}</Label>
                     <Input
                       id="gemini-model"
                       className="font-mono"
@@ -1016,7 +1025,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
             {(LOCAL_AGENTS as readonly string[]).includes(aiProvider) && (
               <Card className="xl:col-span-2">
                 <CardHeader>
-                  <CardTitle className="text-base">Local agent</CardTitle>
+                  <CardTitle className="text-base">{t('ai.localAgentTitle')}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {(() => {
@@ -1024,13 +1033,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                     return (
                       <p className="text-xs text-muted-foreground" data-testid="agent-availability">
                         {det?.available
-                          ? `✓ Installed${det.version ? ` — ${det.version}` : ''}`
-                          : '✗ Not detected on PATH — install it or set an absolute path below.'}
+                          ? (det.version
+                              ? t('ai.detectedInstalledWithVersion', { version: det.version })
+                              : t('ai.detectedInstalled'))
+                          : t('ai.notDetected')}
                       </p>
                     );
                   })()}
                   <div className="space-y-2">
-                    <Label htmlFor="local-command">Command (use {'{prompt}'} for the prompt)</Label>
+                    <Label htmlFor="local-command">{t('ai.localCommandLabel')}</Label>
                     <Input
                       id="local-command"
                       className="font-mono"
@@ -1039,9 +1050,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                       placeholder={DEFAULT_LOCAL_COMMANDS[aiProvider]}
                       data-testid="local-command-input"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Runs the agent locally using its own auth — no API key stored.
-                    </p>
+                    <p className="text-xs text-muted-foreground">{t('ai.localCommandHint')}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -1049,8 +1058,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
 
             <Card className="xl:col-span-2">
               <CardHeader>
-                <CardTitle className="text-base">Custom instructions</CardTitle>
-                <CardDescription>Optional system prompt appended to every AI query request.</CardDescription>
+                <CardTitle className="text-base">{t('ai.customInstructionsTitle')}</CardTitle>
+                <CardDescription>{t('ai.customInstructionsDescription')}</CardDescription>
               </CardHeader>
               <CardContent>
                 <textarea
@@ -1061,7 +1070,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                   )}
                   value={customInstructions}
                   onChange={(e) => setCustomInstructions(e.target.value)}
-                  placeholder="e.g. Always project only the fields the user mentions; prefer $regex for text search."
+                  placeholder={t('ai.customInstructionsPlaceholder')}
                   data-testid="ai-instructions-input"
                 />
               </CardContent>
@@ -1079,45 +1088,45 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <ShieldCheck className="h-4 w-4 text-warning" />
-                  Master password
+                  {t('security.masterPassword')}
                 </CardTitle>
-                <CardDescription>Encrypts stored connections and API keys in the vault.</CardDescription>
+                <CardDescription>{t('security.masterPasswordDescription')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="sec-old-pw">Current password</Label>
+                  <Label htmlFor="sec-old-pw">{t('security.currentPassword')}</Label>
                   <Input
                     id="sec-old-pw"
                     type="password"
                     className="font-mono"
                     value={oldPw}
                     onChange={(e) => setOldPw(e.target.value)}
-                    placeholder="Current password"
+                    placeholder={t('security.currentPassword')}
                     data-testid="sec-old-pw"
                   />
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="sec-new-pw">New password</Label>
+                    <Label htmlFor="sec-new-pw">{t('security.newPassword')}</Label>
                     <Input
                       id="sec-new-pw"
                       type="password"
                       className="font-mono"
                       value={newPw}
                       onChange={(e) => setNewPw(e.target.value)}
-                      placeholder="New password"
+                      placeholder={t('security.newPassword')}
                       data-testid="sec-new-pw"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="sec-new-pw2">Confirm</Label>
+                    <Label htmlFor="sec-new-pw2">{t('security.confirmPassword')}</Label>
                     <Input
                       id="sec-new-pw2"
                       type="password"
                       className="font-mono"
                       value={newPw2}
                       onChange={(e) => setNewPw2(e.target.value)}
-                      placeholder="Confirm new password"
+                      placeholder={t('security.confirmNewPasswordPlaceholder')}
                       data-testid="sec-new-pw2"
                     />
                   </div>
@@ -1127,7 +1136,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                   <div
                     className={cn(
                       'rounded-md px-3 py-2 text-sm',
-                      secMsg === 'Master password changed'
+                      secMsgKind === 'success'
                         ? 'bg-success/10 text-success'
                         : 'bg-destructive/10 text-destructive'
                     )}
@@ -1140,7 +1149,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={onChangePw} type="button" data-testid="sec-change-pw-btn">
                     <ShieldCheck className="h-3 w-3" />
-                    Change password
+                    {t('security.changePasswordBtn')}
                   </Button>
                 </div>
               </CardContent>
@@ -1150,8 +1159,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
               {bio?.available && (
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Biometric unlock</CardTitle>
-                    <CardDescription>Unlock the vault with Touch ID or Face ID on this device.</CardDescription>
+                    <CardTitle className="text-base">{t('security.biometricTitle')}</CardTitle>
+                    <CardDescription>{t('security.biometricDescription')}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="flex items-center gap-3">
@@ -1162,7 +1171,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                         onCheckedChange={toggleBiometric}
                       />
                       <Label className="font-normal">
-                        Unlock with {bio.biometryType === 2 ? 'Touch ID' : bio.biometryType === 3 ? 'Face ID' : 'biometrics'}
+                        {t('security.unlockWith', {
+                          type:
+                            bio.biometryType === 2
+                              ? 'Touch ID'
+                              : bio.biometryType === 3
+                                ? 'Face ID'
+                                : t('security.biometricsGeneric'),
+                        })}
                       </Label>
                     </div>
                   </CardContent>
@@ -1171,8 +1187,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
 
               <Card className="border-destructive/30">
                 <CardHeader>
-                  <CardTitle className="text-base text-destructive">Danger zone</CardTitle>
-                  <CardDescription>Permanently deletes all saved connections and secrets.</CardDescription>
+                  <CardTitle className="text-base text-destructive">{t('security.dangerZoneTitle')}</CardTitle>
+                  <CardDescription>{t('security.dangerZoneDescription')}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <Button
@@ -1182,12 +1198,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                     data-testid="sec-reset-btn"
                     className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                   >
-                    Reset vault
+                    {t('security.resetVaultBtn')}
                   </Button>
                 </CardContent>
               </Card>
             </div>
           </div>
+        );
+
+      case 'language':
+        return (
+          <section className="max-w-md space-y-2">
+            <Label>{t('language.label')}</Label>
+            <Select
+              value={locale}
+              onValueChange={(v) => setLocale(v as Locale)}
+              defaultOpen
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SUPPORTED_LOCALES.map((l) => (
+                  <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">{t('language.fallbackNote')}</p>
+          </section>
         );
 
       default:
@@ -1204,15 +1242,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
               <LayoutGrid className="h-4 w-4 text-primary" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-sm font-semibold leading-tight">Settings</h2>
-              <p className="truncate text-[10px] text-muted-foreground">MQLens preferences</p>
+              <h2 className="text-sm font-semibold leading-tight">{t('nav.title')}</h2>
+              <p className="truncate text-[10px] text-muted-foreground">{t('nav.subtitle')}</p>
             </div>
           </div>
         </div>
 
         <ScrollArea className="min-h-0 flex-1">
-          <nav className="flex flex-col gap-0.5 p-2" aria-label="Settings sections">
-            {SETTINGS_TABS.map(({ id, label, Icon }) => (
+          <nav className="flex flex-col gap-0.5 p-2" aria-label={t('nav.sectionsAriaLabel')}>
+            {SETTINGS_TABS.map(({ id, labelKey, Icon }) => (
               <button
                 key={id}
                 type="button"
@@ -1226,7 +1264,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                 )}
               >
                 <Icon className={cn('h-4 w-4 shrink-0', tab === id ? 'text-primary' : '')} />
-                <span className="truncate">{label}</span>
+                <span className="truncate">{t(labelKey)}</span>
               </button>
             ))}
           </nav>
@@ -1240,8 +1278,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
               <activeTab.Icon className="h-5 w-5 text-primary" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-lg font-semibold tracking-tight">{activeTab.label}</h1>
-              <p className="mt-0.5 text-sm text-muted-foreground">{activeTab.description}</p>
+              <h1 className="text-lg font-semibold tracking-tight">{t(activeTab.labelKey)}</h1>
+              <p className="mt-0.5 text-sm text-muted-foreground">{t(activeTab.descriptionKey)}</p>
             </div>
           </div>
         </header>
@@ -1260,7 +1298,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
             </div>
             <Button onClick={saveSettings} disabled={saving} type="button" data-testid="settings-save-btn">
               <Save className="h-3.5 w-3.5" />
-              {saving ? 'Saving...' : 'Save changes'}
+              {saving ? t('footer.saving') : t('footer.saveChanges')}
             </Button>
           </footer>
         )}

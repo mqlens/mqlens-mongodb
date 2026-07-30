@@ -12,6 +12,11 @@ import { defineConfig } from 'i18next-cli';
  * that will use them land in follow-up work. `preservePatterns` keeps
  * extraction from pruning them as "unused" in the meantime; remove the
  * entries here once each key is actually wired up to a `t()` call.
+ *
+ * The `settings:<section>.tabLabel`/`tabDescription` keys are read through
+ * `SETTINGS_TABS` in SettingsModal.tsx via `t(labelKey)`/`t(descriptionKey)`
+ * — a variable, not a string literal — so the extractor's static analysis
+ * can never see the reference. They're preserved here for the same reason.
  */
 export default defineConfig({
   locales: ['en'],
@@ -24,6 +29,27 @@ export default defineConfig({
     sort: true,
     // Fail loudly rather than inventing English copy from a key name.
     defaultValue: '',
-    preservePatterns: ['common:appName', 'common:cancel', 'common:save', 'common:close'],
+    preservePatterns: [
+      'common:appName',
+      'common:cancel',
+      'common:save',
+      'common:close',
+      'settings:appearance.tabLabel',
+      'settings:appearance.tabDescription',
+      'settings:ai.tabLabel',
+      'settings:ai.tabDescription',
+      'settings:mcp.tabLabel',
+      'settings:mcp.tabDescription',
+      'settings:tools.tabLabel',
+      'settings:tools.tabDescription',
+      'settings:updates.tabLabel',
+      'settings:updates.tabDescription',
+      'settings:shortcuts.tabLabel',
+      'settings:shortcuts.tabDescription',
+      'settings:security.tabLabel',
+      'settings:security.tabDescription',
+      'settings:language.tabLabel',
+      'settings:language.tabDescription',
+    ],
   },
 });

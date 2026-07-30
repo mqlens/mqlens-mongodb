@@ -4,16 +4,18 @@ import { DEFAULT_LOCALE, type Locale } from './locales';
 
 import enCommon from '../../locales/en/common.json';
 import deCommon from '../../locales/de/common.json';
+import enSettings from '../../locales/en/settings.json';
+import deSettings from '../../locales/de/settings.json';
 
 /** Namespaces mirror the UI surfaces so a translator can take one file at a
  *  time. Every namespace must exist for every locale (enforced by the catalog
  *  parity test) — English is the fallback for any missing key. */
 const resources = {
-  en: { common: enCommon },
-  de: { common: deCommon },
+  en: { common: enCommon, settings: enSettings },
+  de: { common: deCommon, settings: deSettings },
 } as const;
 
-export const NAMESPACES = ['common'] as const;
+export const NAMESPACES = ['common', 'settings'] as const;
 
 export async function initI18n(locale: Locale = DEFAULT_LOCALE): Promise<void> {
   if (i18next.isInitialized) {
