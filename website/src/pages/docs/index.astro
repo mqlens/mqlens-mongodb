@@ -9,6 +9,7 @@ const toc = [
   { id: 'data-generation', label: 'Data generation' },
   { id: 'mcp', label: 'MCP server (AI agents)' },
   { id: 'safeguards', label: 'Production safeguards' },
+  { id: 'settings', label: 'Settings' },
   { id: 'verifying', label: 'Verifying downloads' },
   { id: 'security', label: 'Security model' },
   { id: 'build', label: 'Build from source' },
@@ -151,6 +152,11 @@ sudo dpkg -i MQLens_*.deb</code></pre>
           <li><strong>Normal</strong> — full read/write (the default).</li>
         </ul>
         <p>Set the mode in the <strong>Connection Manager</strong> when editing a connection. The mode is applied when you connect, so if you change it on a live connection, reconnect for it to take effect.</p>
+
+        <h2 id="settings">Settings</h2>
+        <ul>
+          <li><strong>Language</strong> — Settings → Language switches the interface between English and German; untranslated text falls back to English. Adding a language is a JSON file and one list entry (see <code>docs/CONTRIBUTING-i18n.md</code>).</li>
+        </ul>
 
         <h2 id="verifying">Verifying downloads</h2>
         <p>Every release asset ships with a detached GPG signature (<code>.asc</code>), and macOS bundles are additionally Apple-notarized. To verify a download:</p>
