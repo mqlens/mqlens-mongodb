@@ -93,9 +93,11 @@ fn default_ui_zoom() -> f32 {
     1.0
 }
 
-/// UI language. "en" is the source locale and the fallback.
+/// UI language setting. "system" follows the device language; "en"/"de" pin it.
+/// Defaults to "system" so a non-English device is localized without the user
+/// having to find the setting.
 fn default_locale() -> String {
-    "en".to_string()
+    "system".to_string()
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]

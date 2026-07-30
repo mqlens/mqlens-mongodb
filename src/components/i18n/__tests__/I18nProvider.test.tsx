@@ -77,4 +77,29 @@ describe('I18nProvider', () => {
     await waitFor(() => expect(screen.getByTestId('cancel')).toHaveTextContent('Abbrechen'));
     expect(screen.getByTestId('locale')).toHaveTextContent('de');
   });
+
+  it('follows the device language when nothing is persisted (#123 auto-detect)', async () => {
+    // No stored preference: a German device should get German without the user
+    // ever opening Settings.
+    mockInvoke.mockResolvedValue({});
+    const spy = vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['de-AT', 'en-US']);
+    try {
+      render(<I18nProvider><Probe /></I18nProvider>);
+      expect(await screen.findByTestId('cancel')).toHaveTextContent('Abbrechen');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('lets an explicit choice override the device language', async () => {
+    // A German device with English explicitly chosen must stay English.
+    mockInvoke.mockResolvedValue({ locale: 'en' });
+    const spy = vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['de-DE']);
+    try {
+      render(<I18nProvider><Probe /></I18nProvider>);
+      expect(await screen.findByTestId('cancel')).toHaveTextContent('Cancel');
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

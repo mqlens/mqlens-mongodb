@@ -24,7 +24,7 @@ import {
   type BiometricStatus,
 } from '../lib/vault';
 import { useLocale } from '@/components/i18n/I18nProvider';
-import { SUPPORTED_LOCALES, type Locale } from '@/lib/i18n/locales';
+import { SUPPORTED_LOCALES, SYSTEM_LOCALE, type LocaleSetting } from '@/lib/i18n/locales';
 import { getMcpStatus, mcpSetEnabled, mcpRegenerateToken, type McpStatusUi } from '@/lib/mcpApi';
 import type { ConnectionProfile } from '@/lib/connection';
 import { CHECK_UPDATE_EVENT } from './UpdatePrompt';
@@ -535,7 +535,7 @@ export interface SettingsViewProps {
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstallTools, toolStatusRefreshNonce }) => {
   const { t } = useTranslation('settings');
-  const { locale, setLocale } = useLocale();
+  const { localeSetting, setLocale } = useLocale();
   const [tab, setTab] = useState<SettingsTabId>(initialTab ?? 'appearance');
   const [mongoshPath, setMongoshPath] = useState('');
   const [managedTools, setManagedTools] = useState<ManagedToolStatusUi[] | null>(null);
@@ -1214,13 +1214,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
           <section className="max-w-md space-y-2">
             <Label>{t('language.label')}</Label>
             <Select
-              value={locale}
-              onValueChange={(v) => setLocale(v as Locale)}
+              value={localeSetting}
+              onValueChange={(v) => setLocale(v as LocaleSetting)}
             >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value={SYSTEM_LOCALE}>{t('language.system')}</SelectItem>
                 {SUPPORTED_LOCALES.map((l) => (
                   <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>
                 ))}

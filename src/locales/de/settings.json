@@ -58,7 +58,8 @@
     "fallbackNote": "Noch nicht übersetzter Text wird auf Englisch angezeigt.",
     "label": "Sprache",
     "tabDescription": "Oberflächensprache für Menüs, Beschriftungen und Meldungen.",
-    "tabLabel": "Sprache"
+    "tabLabel": "Sprache",
+    "system": "System"
   },
   "mcp": {
     "bearerToken": "Bearer-Token",

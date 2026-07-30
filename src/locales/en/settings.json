@@ -57,6 +57,7 @@
   "language": {
     "fallbackNote": "Text that hasn't been translated yet falls back to English.",
     "label": "Language",
+    "system": "System",
     "tabDescription": "Interface language for menus, labels, and messages.",
     "tabLabel": "Language"
   },

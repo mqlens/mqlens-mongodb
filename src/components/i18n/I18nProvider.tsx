@@ -2,12 +2,22 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import { invoke } from '@tauri-apps/api/core';
 import { I18nextProvider } from 'react-i18next';
 import { changeLocale, i18next, initI18n } from '@/lib/i18n';
-import { DEFAULT_LOCALE, isSupportedLocale, type Locale } from '@/lib/i18n/locales';
+import {
+  DEFAULT_LOCALE_SETTING,
+  deviceLanguages,
+  isLocaleSetting,
+  resolveLocale,
+  type Locale,
+  type LocaleSetting,
+} from '@/lib/i18n/locales';
 import { VAULT_UNLOCKED_EVENT } from '@/lib/vault';
 
 interface LocaleContextValue {
+  /** The locale actually in use — `system` already resolved to a real one. */
   locale: Locale;
-  setLocale: (locale: Locale) => void;
+  /** What the user picked, including `system`. This is what the picker binds to. */
+  localeSetting: LocaleSetting;
+  setLocale: (setting: LocaleSetting) => void;
 }
 
 const LocaleContext = createContext<LocaleContextValue | null>(null);
@@ -33,15 +43,19 @@ export function useLocale(): LocaleContextValue {
  * ThemeProvider re-reads appearance settings after unlock.
  */
 export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [locale, setLocaleState] = useState<Locale>(DEFAULT_LOCALE);
+  const [localeSetting, setLocaleSettingState] = useState<LocaleSetting>(DEFAULT_LOCALE_SETTING);
+  const [locale, setLocaleState] = useState<Locale>(() =>
+    resolveLocale(DEFAULT_LOCALE_SETTING, deviceLanguages())
+  );
   const [ready, setReady] = useState(false);
 
   const reconcilePersistedLocale = useCallback(async () => {
     try {
       const settings = await invoke<{ locale?: unknown }>('load_app_settings');
-      // A persisted locale can be stale or hand-edited — validate, don't trust.
-      if (!isSupportedLocale(settings?.locale)) return;
-      const next = settings.locale;
+      // A persisted setting can be stale or hand-edited — validate, don't trust.
+      if (!isLocaleSetting(settings?.locale)) return;
+      setLocaleSettingState(settings.locale);
+      const next = resolveLocale(settings.locale, deviceLanguages());
       setLocaleState((current) => {
         if (next !== current) {
           void changeLocale(next);
@@ -57,7 +71,7 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let alive = true;
     (async () => {
-      await initI18n(DEFAULT_LOCALE);
+      await initI18n(resolveLocale(DEFAULT_LOCALE_SETTING, deviceLanguages()));
       if (!alive) return;
       setReady(true);
       // Best-effort: on a cold start the vault is typically still locked, so
@@ -77,13 +91,16 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => window.removeEventListener(VAULT_UNLOCKED_EVENT, onVaultUnlocked);
   }, [reconcilePersistedLocale]);
 
-  const setLocale = (next: Locale) => {
+  const setLocale = (setting: LocaleSetting) => {
+    // Persist the SETTING (which may be `system`); apply the RESOLVED locale.
+    const next = resolveLocale(setting, deviceLanguages());
+    setLocaleSettingState(setting);
     setLocaleState(next);
     void changeLocale(next);
     void (async () => {
       try {
         const current = await invoke<Record<string, unknown>>('load_app_settings');
-        await invoke('save_app_settings', { settings: { ...current, locale: next } });
+        await invoke('save_app_settings', { settings: { ...current, locale: setting } });
       } catch {
         // A failed write leaves the session translated but unpersisted; not fatal.
       }
@@ -93,7 +110,7 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   if (!ready) return null;
 
   return (
-    <LocaleContext.Provider value={{ locale, setLocale }}>
+    <LocaleContext.Provider value={{ locale, localeSetting, setLocale }}>
       <I18nextProvider i18n={i18next}>{children}</I18nextProvider>
     </LocaleContext.Provider>
   );
