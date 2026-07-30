@@ -10,16 +10,18 @@ import enConnections from '../../locales/en/connections.json';
 import deConnections from '../../locales/de/connections.json';
 import enErrors from '../../locales/en/errors.json';
 import deErrors from '../../locales/de/errors.json';
+import enSidebar from '../../locales/en/sidebar.json';
+import deSidebar from '../../locales/de/sidebar.json';
 
 /** Namespaces mirror the UI surfaces so a translator can take one file at a
  *  time. Every namespace must exist for every locale (enforced by the catalog
  *  parity test) — English is the fallback for any missing key. */
 const resources = {
-  en: { common: enCommon, settings: enSettings, connections: enConnections, errors: enErrors },
-  de: { common: deCommon, settings: deSettings, connections: deConnections, errors: deErrors },
+  en: { common: enCommon, settings: enSettings, connections: enConnections, errors: enErrors, sidebar: enSidebar },
+  de: { common: deCommon, settings: deSettings, connections: deConnections, errors: deErrors, sidebar: deSidebar },
 } as const;
 
-export const NAMESPACES = ['common', 'settings', 'connections', 'errors'] as const;
+export const NAMESPACES = ['common', 'settings', 'connections', 'errors', 'sidebar'] as const;
 
 export async function initI18n(locale: Locale = DEFAULT_LOCALE): Promise<void> {
   if (i18next.isInitialized) {

@@ -1,0 +1,177 @@
+{
+  "connection": {
+    "ariaLabel": "Connection {{name}}",
+    "colorAriaLabel": "Connection color",
+    "connectedAriaLabel": "Connected",
+    "guardedAriaLabel": "Production safeguard connection",
+    "guardedBadge": "guarded",
+    "readOnlyAriaLabel": "Read-only connection",
+    "readOnlyBadge": "read-only",
+    "refreshAriaLabel": "Refresh databases",
+    "viaMcpAriaLabel": "Connected via MCP",
+    "viaMcpBadge": "via MCP"
+  },
+  "ctx": {
+    "addCollection": "Add Collection",
+    "addDatabase": "Add Database",
+    "addToFavorites": "Add to favorites",
+    "analyzeSchema": "Analyze Schema",
+    "copy": "Copy",
+    "copyCollectionName": "Copy Collection Name",
+    "copyDatabase": "Copy database",
+    "copyDatabaseTo": "Copy database to…",
+    "copyIndexName": "Copy Index Name",
+    "copyTo": "Copy to…",
+    "createIndex": "Create Index",
+    "createView": "Create View",
+    "deleteIndex": "Delete Index",
+    "disconnect": "Disconnect",
+    "dropCollection": "Drop Collection",
+    "dropDatabase": "Drop Database",
+    "dropView": "Drop View",
+    "dump": "Dump (mongodump)…",
+    "generateData": "Generate Data…",
+    "manageConnections": "Manage Connections",
+    "manageUsersConnection": "Manage users",
+    "manageUsersDatabase": "Manage Users",
+    "monitorCluster": "Monitor cluster",
+    "newBucket": "New Bucket",
+    "newCollection": "New Collection",
+    "newConnection": "New Connection",
+    "open": "Open",
+    "openCollection": "Open Collection",
+    "openInNewTab": "Open in New Tab",
+    "openShell": "Open mongosh Shell",
+    "pasteHere": "Paste here",
+    "pinToSidebar": "Pin to sidebar",
+    "refreshDatabase": "Refresh Database",
+    "refreshDatabases": "Refresh Databases",
+    "removeFromFavorites": "Remove from favorites",
+    "renameCollection": "Rename Collection",
+    "renameDatabase": "Rename Database",
+    "restore": "Restore (mongorestore)…",
+    "settings": "Settings",
+    "unpin": "Unpin",
+    "unpinFromSidebar": "Unpin from sidebar",
+    "validationRules": "Validation Rules"
+  },
+  "dialogs": {
+    "dropCollection": {
+      "confirmLabel": "Drop",
+      "message": "Are you sure you want to drop collection \"{{name}}\"?",
+      "title": "Drop collection"
+    },
+    "dropDatabase": {
+      "confirmLabel": "Drop",
+      "message": "Are you sure you want to drop database \"{{name}}\"? This cannot be undone.",
+      "title": "Drop database"
+    },
+    "enterNewCollectionName": "Enter new collection name:",
+    "enterNewDatabaseName": "Enter new database name:",
+    "gridfsBucket": {
+      "bucketDefault": "fs",
+      "errors": {
+        "invalidChars": "Use letters, numbers, underscore, or hyphen only",
+        "noDot": "Bucket name cannot contain \".\"",
+        "noSystemPrefix": "Bucket name cannot start with \"system\"",
+        "required": "Bucket name is required"
+      },
+      "message": "Bucket name (collections are created on first upload):",
+      "title": "Open GridFS bucket"
+    },
+    "initialCollection": {
+      "defaultValue": "collection",
+      "message": "Database needs an initial collection. Enter its name:",
+      "title": "Initial collection"
+    },
+    "nameRequired": "Name is required",
+    "newCollection": {
+      "placeholder": "collection name",
+      "title": "New collection"
+    },
+    "newDatabase": {
+      "placeholder": "database name",
+      "title": "New database"
+    },
+    "renameCollection": {
+      "title": "Rename collection"
+    },
+    "renameDatabase": {
+      "confirmLabel": "Rename",
+      "messagePlain": "Rename database \"{{oldName}}\" to \"{{newName}}\"?\n\nMongoDB does not support native database rename. MQLens will copy collections and indexes, verify document counts, then drop the source database.",
+      "messageTyped": "Rename database \"{{oldName}}\" to \"{{newName}}\"? MongoDB does not support native database rename. MQLens will copy collections and indexes, verify document counts, then drop the source database.\n\nType the database name to confirm.",
+      "promptTitle": "Rename database",
+      "title": "Rename database \"{{name}}\""
+    }
+  },
+  "empty": {
+    "connectAriaLabel": "Connect to Database",
+    "connectButton": "Connect to Database...",
+    "favoritesHint": "Right-click items in the tree, or favorite a saved query from a collection tab",
+    "foldersHint": "Save connections in Connection Manager",
+    "noConnections": "Connect to MongoDB server to browse database tree structures.",
+    "pinnedHint": "Right-click a connection, database, or collection → Pin to sidebar"
+  },
+  "folders": {
+    "manageConnectionsButton": "Manage connections"
+  },
+  "footer": {
+    "themeLabel": "Theme"
+  },
+  "header": {
+    "helpAriaLabel": "Help and feedback",
+    "openSettingsAriaLabel": "Open Settings",
+    "title": "MQLens Workspace"
+  },
+  "help": {
+    "documentation": "Documentation",
+    "reportBug": "Report a bug",
+    "requestFeature": "Request a feature",
+    "starOnGithub": "Star on GitHub"
+  },
+  "search": {
+    "ariaLabel": "Search sidebar",
+    "clearAriaLabel": "Clear search",
+    "placeholder": "Search connections, databases, collections…"
+  },
+  "sections": {
+    "connections": "Connections",
+    "favorites": "Favorites",
+    "folders": "Folders",
+    "pinned": "Pinned"
+  },
+  "toasts": {
+    "addedToFavorites": "Added to favorites",
+    "connectingTo": "Connecting to {{name}}…",
+    "couldNotConnect": "Could not connect to {{name}}",
+    "couldNotUpdateFavorites": "Could not update favorites",
+    "couldNotUpdatePinned": "Could not update pinned items",
+    "createCollectionFailed": "Failed to create collection: {{error}}",
+    "createDatabaseFailed": "Failed to create database: {{error}}",
+    "dropCollectionFailed": "Failed to drop collection: {{error}}",
+    "dropDatabaseFailed": "Failed to drop database: {{error}}",
+    "noSavedConnection": "No saved connection \"{{name}}\". Add it in Connection Manager, then try again.",
+    "pinned": "Pinned to sidebar",
+    "readOnlyBlocked": "This connection is read-only (production safeguard). Change the connection mode in its settings to modify data.",
+    "removedFromFavorites": "Removed from favorites",
+    "renameCollectionFailed": "Failed to rename collection: {{error}}",
+    "renameDatabaseFailed": "Failed to rename database: {{error}}",
+    "savedQueryGone": "Saved query no longer exists",
+    "unpinned": "Unpinned from sidebar"
+  },
+  "tree": {
+    "collectionsLabel": "Collections",
+    "databaseAriaLabel": "Database {{name}}",
+    "empty": "Empty",
+    "gridfsBucketsLabel": "GridFS Buckets",
+    "indexesLabel": "indexes",
+    "newBucketAriaLabel": "New bucket",
+    "newBucketInline": "New bucket…",
+    "newCollectionAriaLabel": "New collection",
+    "offlineSuffix": " · offline",
+    "rootLabel": "root",
+    "systemLabel": "System",
+    "timeseriesAriaLabel": "Time-series collection",
+    "viewsLabel": "Views"
+  }
+}

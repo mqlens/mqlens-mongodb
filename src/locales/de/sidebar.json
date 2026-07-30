@@ -1,0 +1,177 @@
+{
+  "connection": {
+    "ariaLabel": "Verbindung {{name}}",
+    "colorAriaLabel": "Verbindungsfarbe",
+    "connectedAriaLabel": "Verbunden",
+    "guardedAriaLabel": "Verbindung mit Produktionsschutz",
+    "guardedBadge": "geschützt",
+    "readOnlyAriaLabel": "Schreibgeschützte Verbindung",
+    "readOnlyBadge": "schreibgeschützt",
+    "refreshAriaLabel": "Datenbanken aktualisieren",
+    "viaMcpAriaLabel": "Verbunden über MCP",
+    "viaMcpBadge": "über MCP"
+  },
+  "ctx": {
+    "addCollection": "Collection hinzufügen",
+    "addDatabase": "Datenbank hinzufügen",
+    "addToFavorites": "Zu Favoriten hinzufügen",
+    "analyzeSchema": "Schema analysieren",
+    "copy": "Kopieren",
+    "copyCollectionName": "Collection-Namen kopieren",
+    "copyDatabase": "Datenbank kopieren",
+    "copyDatabaseTo": "Datenbank kopieren nach…",
+    "copyIndexName": "Indexnamen kopieren",
+    "copyTo": "Kopieren nach…",
+    "createIndex": "Index erstellen",
+    "createView": "View erstellen",
+    "deleteIndex": "Index löschen",
+    "disconnect": "Trennen",
+    "dropCollection": "Collection löschen",
+    "dropDatabase": "Datenbank löschen",
+    "dropView": "View löschen",
+    "dump": "Dump (mongodump)…",
+    "generateData": "Daten generieren…",
+    "manageConnections": "Verbindungen verwalten",
+    "manageUsersConnection": "Benutzer verwalten",
+    "manageUsersDatabase": "Benutzer verwalten",
+    "monitorCluster": "Cluster überwachen",
+    "newBucket": "Neuer Bucket",
+    "newCollection": "Neue Collection",
+    "newConnection": "Neue Verbindung",
+    "open": "Öffnen",
+    "openCollection": "Collection öffnen",
+    "openInNewTab": "In neuem Tab öffnen",
+    "openShell": "mongosh-Shell öffnen",
+    "pasteHere": "Hier einfügen",
+    "pinToSidebar": "An Seitenleiste anheften",
+    "refreshDatabase": "Datenbank aktualisieren",
+    "refreshDatabases": "Datenbanken aktualisieren",
+    "removeFromFavorites": "Aus Favoriten entfernen",
+    "renameCollection": "Collection umbenennen",
+    "renameDatabase": "Datenbank umbenennen",
+    "restore": "Restore (mongorestore)…",
+    "settings": "Einstellungen",
+    "unpin": "Loslösen",
+    "unpinFromSidebar": "Von Seitenleiste loslösen",
+    "validationRules": "Validierungsregeln"
+  },
+  "dialogs": {
+    "dropCollection": {
+      "confirmLabel": "Löschen",
+      "message": "Möchtest du die Collection \"{{name}}\" wirklich löschen?",
+      "title": "Collection löschen"
+    },
+    "dropDatabase": {
+      "confirmLabel": "Löschen",
+      "message": "Möchtest du die Datenbank \"{{name}}\" wirklich löschen? Dies kann nicht rückgängig gemacht werden.",
+      "title": "Datenbank löschen"
+    },
+    "enterNewCollectionName": "Neuen Collection-Namen eingeben:",
+    "enterNewDatabaseName": "Neuen Datenbanknamen eingeben:",
+    "gridfsBucket": {
+      "bucketDefault": "fs",
+      "errors": {
+        "invalidChars": "Nur Buchstaben, Zahlen, Unterstrich oder Bindestrich verwenden",
+        "noDot": "Bucket-Name darf kein \".\" enthalten",
+        "noSystemPrefix": "Bucket-Name darf nicht mit \"system\" beginnen",
+        "required": "Bucket-Name ist erforderlich"
+      },
+      "message": "Bucket-Name (Collections werden beim ersten Upload erstellt):",
+      "title": "GridFS-Bucket öffnen"
+    },
+    "initialCollection": {
+      "defaultValue": "collection",
+      "message": "Die Datenbank benötigt eine erste Collection. Gib deren Namen ein:",
+      "title": "Erste Collection"
+    },
+    "nameRequired": "Name ist erforderlich",
+    "newCollection": {
+      "placeholder": "Collection-Name",
+      "title": "Neue Collection"
+    },
+    "newDatabase": {
+      "placeholder": "Datenbankname",
+      "title": "Neue Datenbank"
+    },
+    "renameCollection": {
+      "title": "Collection umbenennen"
+    },
+    "renameDatabase": {
+      "confirmLabel": "Umbenennen",
+      "messagePlain": "Datenbank \"{{oldName}}\" in \"{{newName}}\" umbenennen?\n\nMongoDB unterstützt kein natives Umbenennen von Datenbanken. MQLens kopiert Collections und Indexe, überprüft die Dokumentanzahl und löscht anschließend die Quelldatenbank.",
+      "messageTyped": "Datenbank \"{{oldName}}\" in \"{{newName}}\" umbenennen? MongoDB unterstützt kein natives Umbenennen von Datenbanken. MQLens kopiert Collections und Indexe, überprüft die Dokumentanzahl und löscht anschließend die Quelldatenbank.\n\nGib den Datenbanknamen zur Bestätigung ein.",
+      "promptTitle": "Datenbank umbenennen",
+      "title": "Datenbank \"{{name}}\" umbenennen"
+    }
+  },
+  "empty": {
+    "connectAriaLabel": "Mit Datenbank verbinden",
+    "connectButton": "Mit Datenbank verbinden...",
+    "favoritesHint": "Rechtsklick auf Elemente im Baum, oder favorisiere eine gespeicherte Query aus einem Collection-Tab",
+    "foldersHint": "Speichere Verbindungen im Verbindungsmanager",
+    "noConnections": "Mit einem MongoDB-Server verbinden, um die Datenbankstruktur zu durchsuchen.",
+    "pinnedHint": "Rechtsklick auf eine Verbindung, Datenbank oder Collection → An Seitenleiste anheften"
+  },
+  "folders": {
+    "manageConnectionsButton": "Verbindungen verwalten"
+  },
+  "footer": {
+    "themeLabel": "Design"
+  },
+  "header": {
+    "helpAriaLabel": "Hilfe und Feedback",
+    "openSettingsAriaLabel": "Einstellungen öffnen",
+    "title": "MQLens Workspace"
+  },
+  "help": {
+    "documentation": "Dokumentation",
+    "reportBug": "Fehler melden",
+    "requestFeature": "Feature anfragen",
+    "starOnGithub": "Auf GitHub mit Stern versehen"
+  },
+  "search": {
+    "ariaLabel": "Seitenleiste durchsuchen",
+    "clearAriaLabel": "Suche löschen",
+    "placeholder": "Verbindungen, Datenbanken, Collections durchsuchen…"
+  },
+  "sections": {
+    "connections": "VERBINDUNGEN",
+    "favorites": "FAVORITEN",
+    "folders": "ORDNER",
+    "pinned": "ANGEPINNT"
+  },
+  "toasts": {
+    "addedToFavorites": "Zu Favoriten hinzugefügt",
+    "connectingTo": "Verbinde mit {{name}}…",
+    "couldNotConnect": "Verbindung zu {{name}} fehlgeschlagen",
+    "couldNotUpdateFavorites": "Favoriten konnten nicht aktualisiert werden",
+    "couldNotUpdatePinned": "Angepinnte Elemente konnten nicht aktualisiert werden",
+    "createCollectionFailed": "Collection konnte nicht erstellt werden: {{error}}",
+    "createDatabaseFailed": "Datenbank konnte nicht erstellt werden: {{error}}",
+    "dropCollectionFailed": "Collection konnte nicht gelöscht werden: {{error}}",
+    "dropDatabaseFailed": "Datenbank konnte nicht gelöscht werden: {{error}}",
+    "noSavedConnection": "Keine gespeicherte Verbindung \"{{name}}\". Füge sie im Verbindungsmanager hinzu und versuche es erneut.",
+    "pinned": "An Seitenleiste angeheftet",
+    "readOnlyBlocked": "Diese Verbindung ist schreibgeschützt (Produktionsschutz). Ändere den Verbindungsmodus in den Einstellungen, um Daten zu bearbeiten.",
+    "removedFromFavorites": "Aus Favoriten entfernt",
+    "renameCollectionFailed": "Collection konnte nicht umbenannt werden: {{error}}",
+    "renameDatabaseFailed": "Datenbank konnte nicht umbenannt werden: {{error}}",
+    "savedQueryGone": "Gespeicherte Query existiert nicht mehr",
+    "unpinned": "Von Seitenleiste gelöst"
+  },
+  "tree": {
+    "collectionsLabel": "Collections",
+    "databaseAriaLabel": "Datenbank {{name}}",
+    "empty": "Leer",
+    "gridfsBucketsLabel": "GridFS-Buckets",
+    "indexesLabel": "indizes",
+    "newBucketAriaLabel": "Neuer Bucket",
+    "newBucketInline": "Neuer Bucket…",
+    "newCollectionAriaLabel": "Neue Collection",
+    "offlineSuffix": " · offline",
+    "rootLabel": "Stamm",
+    "systemLabel": "System",
+    "timeseriesAriaLabel": "Time-Series-Collection",
+    "viewsLabel": "Views"
+  }
+}

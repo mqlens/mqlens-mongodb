@@ -1862,6 +1862,28 @@ describe('Sidebar Component', () => {
     expect(screen.queryByText('New Connection')).toBeNull();
     expect(screen.queryByText('Settings')).toBeNull();
   });
+
+  it('renders sidebar section headings from the active locale (#123)', async () => {
+    // i18next is initialised to en in src/test/setup.ts; switch for this case.
+    const { i18next } = await import('@/lib/i18n');
+    await i18next.changeLanguage('de');
+    try {
+      render(
+        <Sidebar
+          onSelectCollection={() => {}}
+          onSelectIndex={() => {}}
+          activeCollection={null}
+          activeConnections={[]}
+          onOpenConnectionManager={() => {}}
+          onDisconnect={() => {}}
+          onOpenSettings={() => {}}
+        />,
+      );
+      expect(screen.getByText('VERBINDUNGEN')).toBeInTheDocument();
+    } finally {
+      await i18next.changeLanguage('en');
+    }
+  });
 });
 
 describe('opening additional collection tabs (#206)', () => {

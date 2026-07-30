@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useDialogs } from './dialogs/DialogProvider';
@@ -106,12 +107,6 @@ import {
 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/mqlens/mqlens-mongodb';
-const HELP_LINKS = [
-  { Icon: Bug, label: 'Report a bug', url: `${REPO_URL}/issues/new?template=bug_report.yml` },
-  { Icon: Lightbulb, label: 'Request a feature', url: `${REPO_URL}/issues/new?template=feature_request.yml` },
-  { Icon: BookOpen, label: 'Documentation', url: 'https://mqlens.com/docs/' },
-  { Icon: Star, label: 'Star on GitHub', url: `${REPO_URL}/stargazers` },
-];
 
 // Mirrors the backend CollectionInfo struct returned by `list_collections`.
 export interface CollectionInfo {
@@ -151,17 +146,6 @@ const targetKey = (t: StatsPopoverTarget): string => {
 
 const compareCollectionNames = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
-
-const validateGridfsBucketName = (value: string): string | null => {
-  const trimmed = value.trim();
-  if (!trimmed) return 'Bucket name is required';
-  if (trimmed.includes('.')) return 'Bucket name cannot contain "."';
-  if (trimmed.startsWith('system')) return 'Bucket name cannot start with "system"';
-  if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
-    return 'Use letters, numbers, underscore, or hyphen only';
-  }
-  return null;
-};
 
 interface ConnectionProfile {
   id: string;
@@ -296,17 +280,18 @@ function EmptySpaceContextMenu({
   onNewConnection: () => void;
   onSettings: () => void;
 }) {
+  const { t } = useTranslation('sidebar');
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem className={ctxItemClass} onClick={onNewConnection}>
           <Plus />
-          <span>New Connection</span>
+          <span>{t('ctx.newConnection')}</span>
         </ContextMenuItem>
         <ContextMenuItem className={ctxItemClass} onClick={onSettings}>
           <Settings />
-          <span>Settings</span>
+          <span>{t('ctx.settings')}</span>
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
@@ -353,7 +338,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
   clusterHoverDelayMs = 400,
   isCollectionOpen,
 }) => {
+  const { t } = useTranslation('sidebar');
   const { toast, confirm, prompt } = useDialogs();
+
+  const helpLinks = [
+    { Icon: Bug, label: t('help.reportBug'), url: `${REPO_URL}/issues/new?template=bug_report.yml` },
+    { Icon: Lightbulb, label: t('help.requestFeature'), url: `${REPO_URL}/issues/new?template=feature_request.yml` },
+    { Icon: BookOpen, label: t('help.documentation'), url: 'https://mqlens.com/docs/' },
+    { Icon: Star, label: t('help.starOnGithub'), url: `${REPO_URL}/stargazers` },
+  ];
+
+  const validateGridfsBucketName = (value: string): string | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return t('dialogs.gridfsBucket.errors.required');
+    if (trimmed.includes('.')) return t('dialogs.gridfsBucket.errors.noDot');
+    if (trimmed.startsWith('system')) return t('dialogs.gridfsBucket.errors.noSystemPrefix');
+    if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+      return t('dialogs.gridfsBucket.errors.invalidChars');
+    }
+    return null;
+  };
+
   const [filterQuery, setFilterQuery] = useState('');
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   // Whether the collection under a double-click gesture already had an open tab
@@ -511,18 +516,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }
     }
     if (!profile || !onConnectProfile) {
-      toast(
-        `No saved connection "${connectionName}". Add it in Connection Manager, then try again.`,
-        'error',
-      );
+      toast(t('toasts.noSavedConnection', { name: connectionName }), 'error');
       return null;
     }
 
-    toast(`Connecting to ${connectionName}…`, 'info');
+    toast(t('toasts.connectingTo', { name: connectionName }), 'info');
     const connId = await onConnectProfile(profile);
     if (connId) return connId;
 
-    toast(`Could not connect to ${connectionName}`, 'error');
+    toast(t('toasts.couldNotConnect', { name: connectionName }), 'error');
     return null;
   };
 
@@ -665,7 +667,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           q.id === item.queryId,
       );
       if (!resolved) {
-        toast('Saved query no longer exists', 'info');
+        toast(t('toasts.savedQueryGone'), 'info');
         return;
       }
       await openCollectionTarget(
@@ -705,9 +707,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       if (!wasPinned) {
         setSectionsOpen((s) => ({ ...s, pinned: true }));
       }
-      toast(wasPinned ? 'Unpinned from sidebar' : 'Pinned to sidebar', wasPinned ? 'info' : 'success');
+      toast(wasPinned ? t('toasts.unpinned') : t('toasts.pinned'), wasPinned ? 'info' : 'success');
     } catch {
-      toast('Could not update pinned items', 'error');
+      toast(t('toasts.couldNotUpdatePinned'), 'error');
     }
   };
 
@@ -719,17 +721,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
       if (!wasFav) {
         setSectionsOpen((s) => ({ ...s, favorites: true }));
       }
-      toast(wasFav ? 'Removed from favorites' : 'Added to favorites', wasFav ? 'info' : 'success');
+      toast(wasFav ? t('toasts.removedFromFavorites') : t('toasts.addedToFavorites'), wasFav ? 'info' : 'success');
     } catch {
-      toast('Could not update favorites', 'error');
+      toast(t('toasts.couldNotUpdateFavorites'), 'error');
     }
   };
 
   const pinMenuLabel = (entry: PinnedItem): string =>
-    isItemPinned(pinnedItems, entry) ? 'Unpin from sidebar' : 'Pin to sidebar';
+    isItemPinned(pinnedItems, entry) ? t('ctx.unpinFromSidebar') : t('ctx.pinToSidebar');
 
   const favoriteMenuLabel = (entry: FavoriteItem): string =>
-    isItemFavorited(favoriteItems, entry) ? 'Remove from favorites' : 'Add to favorites';
+    isItemFavorited(favoriteItems, entry) ? t('ctx.removeFromFavorites') : t('ctx.addToFavorites');
 
   const toggleIndexesFolder = (connectionId: string, dbName: string, collName: string) => {
     const key = `${connectionId}/${dbName}/${collName}`;
@@ -892,10 +894,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleAddDatabase = async (connectionId: string) => {
     const name = await prompt({
-      title: 'New database',
-      message: 'Enter new database name:',
-      placeholder: 'database name',
-      validate: (v) => (v ? null : 'Name is required'),
+      title: t('dialogs.newDatabase.title'),
+      message: t('dialogs.enterNewDatabaseName'),
+      placeholder: t('dialogs.newDatabase.placeholder'),
+      validate: (v) => (v ? null : t('dialogs.nameRequired')),
     });
     if (!name) return;
 
@@ -912,10 +914,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     const firstColl = await prompt({
-      title: 'Initial collection',
-      message: 'Database needs an initial collection. Enter its name:',
-      defaultValue: 'collection',
-      validate: (v) => (v ? null : 'Name is required'),
+      title: t('dialogs.initialCollection.title'),
+      message: t('dialogs.initialCollection.message'),
+      defaultValue: t('dialogs.initialCollection.defaultValue'),
+      validate: (v) => (v ? null : t('dialogs.nameRequired')),
     });
     if (!firstColl) return;
     try {
@@ -923,16 +925,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       await loadDatabases(connectionId);
       onNamespaceMutated?.(connectionId);
     } catch (err) {
-      toast(`Failed to create database: ${err}`, 'error');
+      toast(t('toasts.createDatabaseFailed', { error: `${err}` }), 'error');
     }
   };
 
   const handleAddCollection = async (connectionId: string, dbName: string) => {
     const name = await prompt({
-      title: 'New collection',
-      message: 'Enter new collection name:',
-      placeholder: 'collection name',
-      validate: (v) => (v ? null : 'Name is required'),
+      title: t('dialogs.newCollection.title'),
+      message: t('dialogs.enterNewCollectionName'),
+      placeholder: t('dialogs.newCollection.placeholder'),
+      validate: (v) => (v ? null : t('dialogs.nameRequired')),
     });
     if (!name) return;
 
@@ -954,16 +956,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       await handleRefreshDb(connectionId, dbName);
       onNamespaceMutated?.(connectionId);
     } catch (err) {
-      toast(`Failed to create collection: ${err}`, 'error');
+      toast(t('toasts.createCollectionFailed', { error: `${err}` }), 'error');
     }
   };
 
   const handleOpenGridfsBucket = async (connectionId: string, dbName: string) => {
     const name = await prompt({
-      title: 'Open GridFS bucket',
-      message: 'Bucket name (collections are created on first upload):',
-      defaultValue: 'fs',
-      placeholder: 'fs',
+      title: t('dialogs.gridfsBucket.title'),
+      message: t('dialogs.gridfsBucket.message'),
+      defaultValue: t('dialogs.gridfsBucket.bucketDefault'),
+      placeholder: t('dialogs.gridfsBucket.bucketDefault'),
       validate: validateGridfsBucketName,
     });
     if (!name) return;
@@ -980,10 +982,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     // Same exact wording as the backend's `write_guard::READ_ONLY_MSG` so a
     // mock and a real read-only connection behave identically here.
     if (conn?.mode === 'read_only') {
-      toast(
-        'This connection is read-only (production safeguard). Change the connection mode in its settings to modify data.',
-        'error'
-      );
+      toast(t('toasts.readOnlyBlocked'), 'error');
       return;
     }
     // #188 Task 3: on a confirm_destructive (production-safeguard) connection,
@@ -995,7 +994,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (confirmed) {
       if (
         !(await confirmByTypedName(prompt, {
-          title: 'Drop collection',
+          title: t('dialogs.dropCollection.title'),
           kind: 'collection',
           expectedName: collName,
         }))
@@ -1003,9 +1002,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return;
     } else if (
       !(await confirm({
-        title: 'Drop collection',
-        message: `Are you sure you want to drop collection "${collName}"?`,
-        confirmLabel: 'Drop',
+        title: t('dialogs.dropCollection.title'),
+        message: t('dialogs.dropCollection.message', { name: collName }),
+        confirmLabel: t('dialogs.dropCollection.confirmLabel'),
         destructive: true,
       }))
     ) {
@@ -1040,7 +1039,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       await handleRefreshDb(connectionId, dbName);
       onNamespaceMutated?.(connectionId);
     } catch (err) {
-      toast(`Failed to drop collection: ${err}`, 'error');
+      toast(t('toasts.dropCollectionFailed', { error: `${err}` }), 'error');
     }
   };
 
@@ -1054,7 +1053,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (confirmed) {
       if (
         !(await confirmByTypedName(prompt, {
-          title: 'Rename collection',
+          title: t('dialogs.renameCollection.title'),
           kind: 'collection',
           expectedName: collName,
         }))
@@ -1063,10 +1062,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     const newName = await prompt({
-      title: 'Rename collection',
-      message: 'Enter new collection name:',
+      title: t('dialogs.renameCollection.title'),
+      message: t('dialogs.enterNewCollectionName'),
       defaultValue: collName,
-      validate: (v) => (v ? null : 'Name is required'),
+      validate: (v) => (v ? null : t('dialogs.nameRequired')),
     });
     if (!newName || newName === collName) return;
 
@@ -1125,7 +1124,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       applyLocalRename();
       await handleRefreshDb(connectionId, dbName);
     } catch (err) {
-      toast(`Failed to rename collection: ${err}`, 'error');
+      toast(t('toasts.renameCollectionFailed', { error: `${err}` }), 'error');
     }
   };
 
@@ -1135,10 +1134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     // same pattern — blocks the `isMock` branch below from dropping a
     // read-only mock connection's database without ever reaching the backend.
     if (conn?.mode === 'read_only') {
-      toast(
-        'This connection is read-only (production safeguard). Change the connection mode in its settings to modify data.',
-        'error'
-      );
+      toast(t('toasts.readOnlyBlocked'), 'error');
       return;
     }
     // #188 Task 3: see handleDropCollection's comment on this same pattern.
@@ -1146,7 +1142,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (confirmed) {
       if (
         !(await confirmByTypedName(prompt, {
-          title: 'Drop database',
+          title: t('dialogs.dropDatabase.title'),
           kind: 'database',
           expectedName: dbName,
         }))
@@ -1154,9 +1150,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return;
     } else if (
       !(await confirm({
-        title: 'Drop database',
-        message: `Are you sure you want to drop database "${dbName}"? This cannot be undone.`,
-        confirmLabel: 'Drop',
+        title: t('dialogs.dropDatabase.title'),
+        message: t('dialogs.dropDatabase.message', { name: dbName }),
+        confirmLabel: t('dialogs.dropDatabase.confirmLabel'),
         destructive: true,
       }))
     ) {
@@ -1222,16 +1218,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       clearLocalDatabase();
       await loadDatabases(connectionId);
     } catch (err) {
-      toast(`Failed to drop database: ${err}`, 'error');
+      toast(t('toasts.dropDatabaseFailed', { error: `${err}` }), 'error');
     }
   };
 
   const handleRenameDatabase = async (connectionId: string, dbName: string) => {
     const newName = await prompt({
-      title: 'Rename database',
-      message: 'Enter new database name:',
+      title: t('dialogs.renameDatabase.promptTitle'),
+      message: t('dialogs.enterNewDatabaseName'),
       defaultValue: dbName,
-      validate: (v) => (v ? null : 'Name is required'),
+      validate: (v) => (v ? null : t('dialogs.nameRequired')),
     });
     if (!newName || newName === dbName) return;
 
@@ -1243,20 +1239,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (confirmed) {
       if (
         !(await confirmByTypedName(prompt, {
-          title: `Rename database "${dbName}"`,
+          title: t('dialogs.renameDatabase.title', { name: dbName }),
           kind: 'database',
           expectedName: dbName,
-          message: `Rename database "${dbName}" to "${newName}"? MongoDB does not support native database rename. MQLens will copy collections and indexes, verify document counts, then drop the source database.\n\nType the database name to confirm.`,
+          message: t('dialogs.renameDatabase.messageTyped', { oldName: dbName, newName }),
         }))
       )
         return;
     } else if (
       !(await confirm({
-        title: `Rename database "${dbName}"`,
-        message:
-          `Rename database "${dbName}" to "${newName}"?\n\n` +
-          `MongoDB does not support native database rename. MQLens will copy collections and indexes, verify document counts, then drop the source database.`,
-        confirmLabel: 'Rename',
+        title: t('dialogs.renameDatabase.title', { name: dbName }),
+        message: t('dialogs.renameDatabase.messagePlain', { oldName: dbName, newName }),
+        confirmLabel: t('dialogs.renameDatabase.confirmLabel'),
       }))
     ) {
       return;
@@ -1339,7 +1333,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       applyLocalRename();
       await loadDatabases(connectionId);
     } catch (err) {
-      toast(`Failed to rename database: ${err}`, 'error');
+      toast(t('toasts.renameDatabaseFailed', { error: `${err}` }), 'error');
     }
   };
 
@@ -1407,7 +1401,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               />
               {collType === 'timeseries' ? (
                 <span
-                  aria-label="Time-series collection"
+                  aria-label={t('tree.timeseriesAriaLabel')}
                   data-testid="coll-icon-timeseries"
                   className="flex shrink-0 items-center"
                 >
@@ -1427,14 +1421,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => onSelectCollection(connId, dbName, collName)}
             >
               <FolderOpen />
-              <span>Open Collection</span>
+              <span>{t('ctx.openCollection')}</span>
             </ContextMenuItem>
             <ContextMenuItem
               className={ctxItemClass}
               onClick={() => onSelectCollection(connId, dbName, collName, undefined, { newTab: true })}
             >
               <FolderPlus />
-              <span>Open in New Tab</span>
+              <span>{t('ctx.openInNewTab')}</span>
             </ContextMenuItem>
             <ContextMenuItem
               className={ctxItemClass}
@@ -1462,7 +1456,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         db: dbName,
                         collection: collName,
                       })
-                    : 'Pin to sidebar';
+                    : t('ctx.pinToSidebar');
                 })()}
               </span>
             </ContextMenuItem>
@@ -1491,7 +1485,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         db: dbName,
                         collection: collName,
                       })
-                    : 'Add to favorites';
+                    : t('ctx.addToFavorites');
                 })()}
               </span>
             </ContextMenuItem>
@@ -1502,16 +1496,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }
             >
               <Terminal />
-              <span>Open mongosh Shell</span>
+              <span>{t('ctx.openShell')}</span>
             </ContextMenuItem>
             <ContextMenuItem className={ctxItemClass} onClick={() => onAnalyzeSchema?.(connId, dbName, collName)}>
               <Table2 />
-              <span>Analyze Schema</span>
+              <span>{t('ctx.analyzeSchema')}</span>
             </ContextMenuItem>
             {collType !== 'view' && collType !== 'timeseries' && !collName.startsWith('system.') && !/\.(files|chunks)$/.test(collName) && (
               <ContextMenuItem className={ctxItemClass} onClick={() => onEditValidation?.(connId, dbName, collName)}>
                 <ShieldCheck />
-                <span>Validation Rules</span>
+                <span>{t('ctx.validationRules')}</span>
               </ContextMenuItem>
             )}
             {/* #91: same shape gate as Validation Rules above (not
@@ -1527,7 +1521,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => onOpenGenerate?.(connId, dbName, collName)}
               >
                 <Wand2 />
-                <span>Generate Data…</span>
+                <span>{t('ctx.generateData')}</span>
               </ContextMenuItem>
             )}
             {!isMockConnection(connId) && (
@@ -1537,7 +1531,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => onOpenDump?.(connId, dbName, collName)}
               >
                 <DatabaseBackup />
-                <span>Dump (mongodump)…</span>
+                <span>{t('ctx.dump')}</span>
               </ContextMenuItem>
             )}
             <ContextMenuItem
@@ -1545,24 +1539,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => onCopyToClipboard?.(connId, dbName, selectedNamesFor(connId, dbName, collName))}
             >
               <Copy />
-              <span>Copy</span>
+              <span>{t('ctx.copy')}</span>
             </ContextMenuItem>
             <ContextMenuItem
               className={ctxItemClass}
               onClick={() => onCopyCollections?.(connId, dbName, selectedNamesFor(connId, dbName, collName))}
             >
-              Copy to…
+              {t('ctx.copyTo')}
             </ContextMenuItem>
             <ContextMenuItem
               className={ctxItemClass}
               onClick={() => navigator.clipboard?.writeText(collName)}
             >
               <FolderOpen />
-              <span>Copy Collection Name</span>
+              <span>{t('ctx.copyCollectionName')}</span>
             </ContextMenuItem>
             <ContextMenuItem className={ctxItemClass} onClick={() => handleRenameCollection(connId, dbName, collName)}>
               <Pencil />
-              <span>Rename Collection</span>
+              <span>{t('ctx.renameCollection')}</span>
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem
@@ -1572,8 +1566,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Trash2 />
               <span>
                 {(collections[`${connId}/${dbName}`] || []).find((c) => c.name === collName)?.type === 'view'
-                  ? 'Drop View'
-                  : 'Drop Collection'}
+                  ? t('ctx.dropView')
+                  : t('ctx.dropCollection')}
               </span>
             </ContextMenuItem>
           </ContextMenuContent>
@@ -1598,7 +1592,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     )}
                   />
                   <Folder size={11} className="shrink-0 text-amber-500" />
-                  <span className="text-muted-foreground">indexes</span>
+                  <span className="text-muted-foreground">{t('tree.indexesLabel')}</span>
                   {collIndexes.length > 0 && (
                     <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="indexes-count">
                       ({collIndexes.length})
@@ -1609,7 +1603,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <ContextMenuContent>
                 <ContextMenuItem className={ctxItemClass} onClick={() => onCreateIndex?.(connId, dbName, collName)}>
                   <Plus />
-                  <span>Create Index</span>
+                  <span>{t('ctx.createIndex')}</span>
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>
@@ -1647,7 +1641,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           onClick={() => navigator.clipboard?.writeText(indexName)}
                         >
                           <Plus />
-                          <span>Copy Index Name</span>
+                          <span>{t('ctx.copyIndexName')}</span>
                         </ContextMenuItem>
                         <ContextMenuSeparator />
                         <ContextMenuItem
@@ -1655,14 +1649,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           onClick={() => onDeleteIndex?.(connId, dbName, collName, indexName)}
                         >
                           <Trash2 />
-                          <span>Delete Index</span>
+                          <span>{t('ctx.deleteIndex')}</span>
                         </ContextMenuItem>
                       </ContextMenuContent>
                     </ContextMenu>
                   );
                 })}
                 {collIndexes.length === 0 && (
-                  <div className="py-0.5 pl-6 text-[9px] italic text-muted-foreground">Empty</div>
+                  <div className="py-0.5 pl-6 text-[9px] italic text-muted-foreground">{t('tree.empty')}</div>
                 )}
               </div>
             )}
@@ -1676,10 +1670,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (activeConnections.length === 0) {
       return (
         <div className="sidebar-empty-prompt flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground">
-          <span className="text-[11px]">Connect to MongoDB server to browse database tree structures.</span>
-          <Button size="sm" onClick={onOpenConnectionManager} aria-label="Connect to Database">
+          <span className="text-[11px]">{t('empty.noConnections')}</span>
+          <Button size="sm" onClick={onOpenConnectionManager} aria-label={t('empty.connectAriaLabel')}>
             <Plus className="mr-1.5 size-3" />
-            Connect to Database...
+            {t('empty.connectButton')}
           </Button>
         </div>
       );
@@ -1714,7 +1708,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     style={conn.color_tag ? { borderLeftColor: conn.color_tag } : undefined}
                     role="button"
                     aria-expanded={isConnExpanded}
-                    aria-label={`Connection ${conn.name}`}
+                    aria-label={t('connection.ariaLabel', { name: conn.name })}
                     onClick={() => setExpandedConnections((prev) => ({ ...prev, [conn.id]: !prev[conn.id] }))}
                     {...statsHoverHandlers({ kind: 'connection', connId: conn.id })}
                   >
@@ -1727,7 +1721,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <span
                           className="h-2 w-2 shrink-0 rounded-full"
                           style={{ backgroundColor: conn.color_tag }}
-                          aria-label="Connection color"
+                          aria-label={t('connection.colorAriaLabel')}
                         />
                       )}
                       <Server size={12} className="shrink-0 text-primary" />
@@ -1737,9 +1731,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           variant="secondary"
                           className="h-4 shrink-0 px-1 text-[9px] font-normal text-muted-foreground"
                           data-testid="connection-via-mcp-badge"
-                          aria-label="Connected via MCP"
+                          aria-label={t('connection.viaMcpAriaLabel')}
                         >
-                          via MCP
+                          {t('connection.viaMcpBadge')}
                         </Badge>
                       )}
                       {conn.mode && conn.mode !== 'normal' && (
@@ -1748,14 +1742,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           className="h-4 shrink-0 px-1 text-[9px] font-normal"
                           data-testid="connection-mode-badge"
                           data-mode={conn.mode}
-                          aria-label={conn.mode === 'read_only' ? 'Read-only connection' : 'Production safeguard connection'}
+                          aria-label={conn.mode === 'read_only' ? t('connection.readOnlyAriaLabel') : t('connection.guardedAriaLabel')}
                         >
-                          {conn.mode === 'read_only' ? 'read-only' : 'guarded'}
+                          {conn.mode === 'read_only' ? t('connection.readOnlyBadge') : t('connection.guardedBadge')}
                         </Badge>
                       )}
                       <span
                         className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                        aria-label="Connected"
+                        aria-label={t('connection.connectedAriaLabel')}
                       />
                     </div>
                     <Button
@@ -1766,7 +1760,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         e.stopPropagation();
                         loadDatabases(conn.id);
                       }}
-                      aria-label="Refresh databases"
+                      aria-label={t('connection.refreshAriaLabel')}
                     >
                       <RefreshCw className="size-3" />
                     </Button>
@@ -1778,7 +1772,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         e.stopPropagation();
                         onDisconnect(conn.id);
                       }}
-                      aria-label="Disconnect"
+                      aria-label={t('ctx.disconnect')}
                     >
                       <LogOut className="size-3" />
                     </Button>
@@ -1787,16 +1781,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <ContextMenuContent>
                   <ContextMenuItem className={ctxItemClass} onClick={() => handleAddDatabase(conn.id)}>
                     <Plus />
-                    <span>Add Database</span>
+                    <span>{t('ctx.addDatabase')}</span>
                   </ContextMenuItem>
                   <ContextMenuItem className={ctxItemClass} onClick={() => loadDatabases(conn.id)}>
                     <RefreshCw />
-                    <span>Refresh Databases</span>
+                    <span>{t('ctx.refreshDatabases')}</span>
                   </ContextMenuItem>
                   {canPaste && (
                     <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id)}>
                       <ClipboardPaste />
-                      <span>Paste here</span>
+                      <span>{t('ctx.pasteHere')}</span>
                     </ContextMenuItem>
                   )}
                   <ContextMenuItem
@@ -1811,7 +1805,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span>
                       {(() => {
                         const entry = pinEntryForConnection(conn.id);
-                        return entry ? pinMenuLabel(entry) : 'Pin to sidebar';
+                        return entry ? pinMenuLabel(entry) : t('ctx.pinToSidebar');
                       })()}
                     </span>
                   </ContextMenuItem>
@@ -1826,13 +1820,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span>
                       {(() => {
                         const entry = favoriteEntryForConnection(conn.id);
-                        return entry ? favoriteMenuLabel(entry) : 'Add to favorites';
+                        return entry ? favoriteMenuLabel(entry) : t('ctx.addToFavorites');
                       })()}
                     </span>
                   </ContextMenuItem>
                   <ContextMenuItem className={ctxItemClass} onClick={onOpenConnectionManager}>
                     <Server />
-                    <span>Manage Connections</span>
+                    <span>{t('ctx.manageConnections')}</span>
                   </ContextMenuItem>
                   <ContextMenuItem
                     className={ctxItemClass}
@@ -1840,7 +1834,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onClick={() => onOpenMonitoring?.(conn.id)}
                   >
                     <Activity />
-                    <span>Monitor cluster</span>
+                    <span>{t('ctx.monitorCluster')}</span>
                   </ContextMenuItem>
                   <ContextMenuItem
                     className={ctxItemClass}
@@ -1848,7 +1842,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onClick={() => onOpenUsers?.(conn.id)}
                   >
                     <Users />
-                    <span>Manage users</span>
+                    <span>{t('ctx.manageUsersConnection')}</span>
                   </ContextMenuItem>
                   {!isMockConnection(conn.id) && (
                     <ContextMenuItem
@@ -1857,7 +1851,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onClick={() => onOpenDump?.(conn.id)}
                     >
                       <DatabaseBackup />
-                      <span>Dump (mongodump)…</span>
+                      <span>{t('ctx.dump')}</span>
                     </ContextMenuItem>
                   )}
                   {!isMockConnection(conn.id) && (
@@ -1867,7 +1861,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onClick={() => onOpenRestore?.(conn.id)}
                     >
                       <DatabaseZap />
-                      <span>Restore (mongorestore)…</span>
+                      <span>{t('ctx.restore')}</span>
                     </ContextMenuItem>
                   )}
                   <ContextMenuSeparator />
@@ -1876,7 +1870,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onClick={() => onDisconnect(conn.id)}
                   >
                     <LogOut />
-                    <span>Disconnect</span>
+                    <span>{t('ctx.disconnect')}</span>
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
@@ -1926,7 +1920,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               className={treeRowClass()}
                               role="button"
                               aria-expanded={isDbExpanded}
-                              aria-label={`Database ${dbName}`}
+                              aria-label={t('tree.databaseAriaLabel', { name: dbName })}
                               onClick={() => toggleDb(conn.id, dbName)}
                               {...statsHoverHandlers({ kind: 'database', connId: conn.id, db: dbName })}
                             >
@@ -1941,7 +1935,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           <ContextMenuContent>
                             <ContextMenuItem className={ctxItemClass} onClick={() => handleAddCollection(conn.id, dbName)}>
                               <Plus />
-                              <span>Add Collection</span>
+                              <span>{t('ctx.addCollection')}</span>
                             </ContextMenuItem>
                             <ContextMenuItem
                               className={ctxItemClass}
@@ -1984,19 +1978,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             </ContextMenuItem>
                             <ContextMenuItem className={ctxItemClass} onClick={() => onCreateView?.(conn.id, dbName)}>
                               <Eye />
-                              <span>Create View</span>
+                              <span>{t('ctx.createView')}</span>
                             </ContextMenuItem>
                             <ContextMenuItem className={ctxItemClass} onClick={() => onCopyToClipboard?.(conn.id, dbName, [])}>
                               <Copy />
-                              <span>Copy database</span>
+                              <span>{t('ctx.copyDatabase')}</span>
                             </ContextMenuItem>
                             <ContextMenuItem className={ctxItemClass} onClick={() => onCopyDatabase?.(conn.id, dbName)}>
-                              Copy database to…
+                              {t('ctx.copyDatabaseTo')}
                             </ContextMenuItem>
                             {canPaste && (
                               <ContextMenuItem className={ctxItemClass} onClick={() => onPasteInto?.(conn.id, dbName)}>
                                 <ClipboardPaste />
-                                <span>Paste here</span>
+                                <span>{t('ctx.pasteHere')}</span>
                               </ContextMenuItem>
                             )}
                             <ContextMenuItem
@@ -2005,22 +1999,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
                             >
                               <Archive />
-                              <span>New Bucket</span>
+                              <span>{t('ctx.newBucket')}</span>
                             </ContextMenuItem>
                             <ContextMenuItem
                               className={ctxItemClass}
                               onClick={() => onOpenShell?.(conn.id, dbName, undefined, 'show collections')}
                             >
                               <Terminal />
-                              <span>Open mongosh Shell</span>
+                              <span>{t('ctx.openShell')}</span>
                             </ContextMenuItem>
                             <ContextMenuItem className={ctxItemClass} onClick={() => handleRefreshDb(conn.id, dbName)}>
                               <RefreshCw />
-                              <span>Refresh Database</span>
+                              <span>{t('ctx.refreshDatabase')}</span>
                             </ContextMenuItem>
                             <ContextMenuItem className={ctxItemClass} onClick={() => handleRenameDatabase(conn.id, dbName)}>
                               <Pencil />
-                              <span>Rename Database</span>
+                              <span>{t('ctx.renameDatabase')}</span>
                             </ContextMenuItem>
                             <ContextMenuItem
                               className={ctxItemClass}
@@ -2028,7 +2022,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               onClick={() => onOpenUsers?.(conn.id, dbName)}
                             >
                               <Users />
-                              <span>Manage Users</span>
+                              <span>{t('ctx.manageUsersDatabase')}</span>
                             </ContextMenuItem>
                             {!isMockConnection(conn.id) && (
                               <ContextMenuItem
@@ -2037,7 +2031,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 onClick={() => onOpenDump?.(conn.id, dbName)}
                               >
                                 <DatabaseBackup />
-                                <span>Dump (mongodump)…</span>
+                                <span>{t('ctx.dump')}</span>
                               </ContextMenuItem>
                             )}
                             {/* #91: mocks ALLOWED (unlike Dump above) — see the
@@ -2048,7 +2042,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               onClick={() => onOpenGenerate?.(conn.id, dbName)}
                             >
                               <Wand2 />
-                              <span>Generate Data…</span>
+                              <span>{t('ctx.generateData')}</span>
                             </ContextMenuItem>
                             <ContextMenuSeparator />
                             <ContextMenuItem
@@ -2056,7 +2050,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               onClick={() => handleDropDatabase(conn.id, dbName)}
                             >
                               <Trash2 />
-                              <span>Drop Database</span>
+                              <span>{t('ctx.dropDatabase')}</span>
                             </ContextMenuItem>
                           </ContextMenuContent>
                         </ContextMenu>
@@ -2072,7 +2066,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isFolderExpanded && 'rotate-90')}
                                     />
                                     <Folder size={11} className="shrink-0 text-amber-500" />
-                                    <span className="text-muted-foreground">Collections</span>
+                                    <span className="text-muted-foreground">{t('tree.collectionsLabel')}</span>
                                     <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="collections-count">
                                       ({regularColls.length})
                                     </Badge>
@@ -2082,7 +2076,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       size="icon"
                                       className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
                                       data-testid={`collections-new-${conn.id}-${dbName}`}
-                                      aria-label="New collection"
+                                      aria-label={t('tree.newCollectionAriaLabel')}
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         void handleAddCollection(conn.id, dbName);
@@ -2095,7 +2089,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     <div className="ml-3 border-l border-border/50 pl-1">
                                       {regularColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
                                       {regularColls.length === 0 && (
-                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
+                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">{t('tree.empty')}</div>
                                       )}
                                     </div>
                                   )}
@@ -2108,7 +2102,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   onClick={() => void handleAddCollection(conn.id, dbName)}
                                 >
                                   <Plus />
-                                  <span>New Collection</span>
+                                  <span>{t('ctx.newCollection')}</span>
                                 </ContextMenuItem>
                               </ContextMenuContent>
                             </ContextMenu>
@@ -2122,7 +2116,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isViewsExpanded && 'rotate-90')}
                                     />
                                     <Eye size={11} className="shrink-0 text-amber-500" />
-                                    <span className="text-muted-foreground">Views</span>
+                                    <span className="text-muted-foreground">{t('tree.viewsLabel')}</span>
                                     <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="views-count">
                                       ({views.length})
                                     </Badge>
@@ -2131,7 +2125,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     <div className="ml-3 border-l border-border/50 pl-1">
                                       {views.map((viewName) => renderCollectionNode(conn.id, dbName, viewName))}
                                       {views.length === 0 && (
-                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
+                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">{t('tree.empty')}</div>
                                       )}
                                     </div>
                                   )}
@@ -2144,7 +2138,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   onClick={() => onCreateView?.(conn.id, dbName)}
                                 >
                                   <Eye />
-                                  <span>Create View</span>
+                                  <span>{t('ctx.createView')}</span>
                                 </ContextMenuItem>
                               </ContextMenuContent>
                             </ContextMenu>
@@ -2158,7 +2152,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isGridfsExpanded && 'rotate-90')}
                                     />
                                     <Archive size={11} className="shrink-0 text-amber-500" />
-                                    <span className="text-muted-foreground">GridFS Buckets</span>
+                                    <span className="text-muted-foreground">{t('tree.gridfsBucketsLabel')}</span>
                                     <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="gridfs-count">
                                       ({gridfsBuckets.length})
                                     </Badge>
@@ -2168,7 +2162,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       size="icon"
                                       className="ml-auto h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
                                       data-testid={`gridfs-new-bucket-${conn.id}-${dbName}`}
-                                      aria-label="New bucket"
+                                      aria-label={t('tree.newBucketAriaLabel')}
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         void handleOpenGridfsBucket(conn.id, dbName);
@@ -2197,7 +2191,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
                                       >
                                         <Plus size={11} className="ml-3.5 shrink-0" />
-                                        <span>New bucket…</span>
+                                        <span>{t('tree.newBucketInline')}</span>
                                       </div>
                                     </div>
                                   )}
@@ -2210,7 +2204,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   onClick={() => void handleOpenGridfsBucket(conn.id, dbName)}
                                 >
                                   <Plus />
-                                  <span>New Bucket</span>
+                                  <span>{t('ctx.newBucket')}</span>
                                 </ContextMenuItem>
                               </ContextMenuContent>
                             </ContextMenu>
@@ -2224,7 +2218,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       className={cn('shrink-0 text-muted-foreground transition-transform duration-150', isSystemExpanded && 'rotate-90')}
                                     />
                                     <Cog size={11} className="shrink-0 text-amber-500" />
-                                    <span className="text-muted-foreground">System</span>
+                                    <span className="text-muted-foreground">{t('tree.systemLabel')}</span>
                                     <Badge variant="secondary" className="h-4 px-1 text-[9px] font-normal" data-testid="system-count">
                                       ({systemColls.length})
                                     </Badge>
@@ -2233,7 +2227,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     <div className="ml-3 border-l border-border/50 pl-1">
                                       {systemColls.map((collName) => renderCollectionNode(conn.id, dbName, collName))}
                                       {systemColls.length === 0 && (
-                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
+                                        <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">{t('tree.empty')}</div>
                                       )}
                                     </div>
                                   )}
@@ -2246,7 +2240,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   onClick={() => void handleRefreshDb(conn.id, dbName)}
                                 >
                                   <RefreshCw />
-                                  <span>Refresh Database</span>
+                                  <span>{t('ctx.refreshDatabase')}</span>
                                 </ContextMenuItem>
                               </ContextMenuContent>
                             </ContextMenu>
@@ -2256,7 +2250,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     );
                   })}
                   {connDbs.length === 0 && (
-                    <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">Empty</div>
+                    <div className="py-0.5 pl-6 text-[10px] italic text-muted-foreground">{t('tree.empty')}</div>
                   )}
                 </div>
               )}
@@ -2276,10 +2270,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
         <div className="flex items-center gap-1.5">
           <Server size={14} className="text-primary" />
-          <span className="text-ui-xs font-semibold tracking-wide">MQLens Workspace</span>
+          <span className="text-ui-xs font-semibold tracking-wide">{t('header.title')}</span>
         </div>
         <div className="flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onOpenSettings} aria-label="Open Settings">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onOpenSettings} aria-label={t('header.openSettingsAriaLabel')}>
             <Settings className="size-3.5" />
           </Button>
           <DropdownMenu>
@@ -2288,14 +2282,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
-                aria-label="Help and feedback"
+                aria-label={t('header.helpAriaLabel')}
                 data-testid="help-menu-btn"
               >
                 <HelpCircle className="size-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
-              {HELP_LINKS.map(({ Icon, label, url }) => (
+              {helpLinks.map(({ Icon, label, url }) => (
                 <DropdownMenuItem key={label} className="gap-2 text-xs" onClick={() => void openUrl(url)}>
                   <Icon className="size-3.5" />
                   <span>{label}</span>
@@ -2308,7 +2302,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             size="icon"
             className="h-7 w-7"
             onClick={onOpenConnectionManager}
-            aria-label="Manage Connections"
+            aria-label={t('ctx.manageConnections')}
           >
             <Plus className="size-3.5" />
           </Button>
@@ -2324,8 +2318,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               type="text"
               value={filterQuery}
               onChange={(e) => setFilterQuery(e.target.value)}
-              placeholder="Search connections, databases, collections…"
-              aria-label="Search sidebar"
+              placeholder={t('search.placeholder')}
+              aria-label={t('search.ariaLabel')}
               data-testid="sidebar-search"
               className="h-7 pl-7 pr-7 text-ui-xs"
             />
@@ -2336,7 +2330,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 size="icon"
                 className="absolute right-0 top-0 h-7 w-7"
                 onClick={() => setFilterQuery('')}
-                aria-label="Clear search"
+                aria-label={t('search.clearAriaLabel')}
               >
                 <X className="size-3" />
               </Button>
@@ -2348,7 +2342,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <ScrollArea className="min-h-0 flex-1">
           <div className="database-tree-container p-2">
             <SidebarSection
-              title="Connections"
+              title={t('sections.connections')}
               icon={Server}
               open={sectionsOpen.connections}
               onOpenChange={(open) => setSectionsOpen((s) => ({ ...s, connections: open }))}
@@ -2357,12 +2351,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </SidebarSection>
 
             <SidebarSection
-              title="Pinned"
+              title={t('sections.pinned')}
               icon={Pin}
               open={sectionsOpen.pinned}
               onOpenChange={(open) => setSectionsOpen((s) => ({ ...s, pinned: open }))}
               isEmpty={pinnedItems.length === 0}
-              emptyText="Right-click a connection, database, or collection → Pin to sidebar"
+              emptyText={t('empty.pinnedHint')}
             >
               <div className="flex flex-col gap-0.5 pb-1">
                 {pinnedItems.map((p) => {
@@ -2403,7 +2397,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             </span>
                             <span className="ml-auto truncate text-[10px] text-muted-foreground">
                               {subtitle}
-                              {!connected && ' · offline'}
+                              {!connected && t('tree.offlineSuffix')}
                             </span>
                           </div>
                         </ContextMenuTrigger>
@@ -2413,7 +2407,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             onClick={() => void navigateToPinned(p)}
                           >
                             <FolderOpen />
-                            <span>Open</span>
+                            <span>{t('ctx.open')}</span>
                           </ContextMenuItem>
                           <ContextMenuItem
                             className={ctxItemClass}
@@ -2423,7 +2417,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             }}
                           >
                             <Pin />
-                            <span>Unpin</span>
+                            <span>{t('ctx.unpin')}</span>
                           </ContextMenuItem>
                         </ContextMenuContent>
                       </ContextMenu>
@@ -2433,7 +2427,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </SidebarSection>
 
             <SidebarSection
-              title="Favorites"
+              title={t('sections.favorites')}
               icon={Heart}
               open={sectionsOpen.favorites}
               onOpenChange={(open) => {
@@ -2441,7 +2435,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 if (open) void reloadSavedQueryCatalog();
               }}
               isEmpty={favoriteItems.length === 0}
-              emptyText="Right-click items in the tree, or favorite a saved query from a collection tab"
+              emptyText={t('empty.favoritesHint')}
             >
               <div className="flex flex-col gap-0.5 pb-1">
                 {favoriteItems.map((fav) => {
@@ -2473,7 +2467,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <span className="min-w-0 truncate">{label}</span>
                             <span className="ml-auto truncate text-[10px] text-muted-foreground">
                               {subtitle}
-                              {!connected && fav.kind !== 'query' ? ' · offline' : ''}
+                              {!connected && fav.kind !== 'query' ? t('tree.offlineSuffix') : ''}
                             </span>
                           </div>
                         </ContextMenuTrigger>
@@ -2483,7 +2477,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             onClick={() => void navigateToFavorite(fav)}
                           >
                             <FolderOpen />
-                            <span>Open</span>
+                            <span>{t('ctx.open')}</span>
                           </ContextMenuItem>
                           <ContextMenuItem
                             className={ctxItemClass}
@@ -2493,7 +2487,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             }}
                           >
                             <Heart />
-                            <span>Remove from favorites</span>
+                            <span>{t('ctx.removeFromFavorites')}</span>
                           </ContextMenuItem>
                         </ContextMenuContent>
                       </ContextMenu>
@@ -2503,13 +2497,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </SidebarSection>
 
             <SidebarSection
-              title="Folders"
+              title={t('sections.folders')}
               icon={FolderOpen}
               open={sectionsOpen.folders}
               onOpenChange={(open) => setSectionsOpen((s) => ({ ...s, folders: open }))}
               emptyText={
                 connectionProfiles.length === 0
-                  ? 'Save connections in Connection Manager'
+                  ? t('empty.foldersHint')
                   : undefined
               }
             >
@@ -2568,7 +2562,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   {isConnected && (
                                     <span
                                       className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                                      aria-label="Connected"
+                                      aria-label={t('connection.connectedAriaLabel')}
                                     />
                                   )}
                                 </div>
@@ -2597,7 +2591,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             )}
                           />
                           <span className="min-w-0 truncate">{profile.name}</span>
-                          <span className="ml-auto text-[10px] text-muted-foreground">root</span>
+                          <span className="ml-auto text-[10px] text-muted-foreground">{t('tree.rootLabel')}</span>
                         </div>
                       );
                     })}
@@ -2609,7 +2603,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onClick={onOpenConnectionManager}
                   >
                     <Settings size={11} />
-                    Manage connections
+                    {t('folders.manageConnectionsButton')}
                   </Button>
                 </div>
               )}
@@ -2619,7 +2613,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       <footer className="flex shrink-0 items-center justify-between border-t border-border px-3 py-2">
         <ThemePicker />
-        <span className="text-[10px] text-muted-foreground">Theme</span>
+        <span className="text-[10px] text-muted-foreground">{t('footer.themeLabel')}</span>
       </footer>
 
       {/* Single root-level stats popover shared by connection/database/collection/index
