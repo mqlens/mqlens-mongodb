@@ -140,6 +140,7 @@ const BLANK_CONN = {
   connectTimeout: 10000,
   serverSelectionTimeout: 30000,
   compression: 'none',
+  // Stored profile data, not UI copy — intentionally English in every locale (i18n out of scope).
   name: 'New Connection',
   folder: '',
   colorTag: '',
@@ -232,6 +233,7 @@ export const summarizeConnectionError = (raw: string): ConnectionErrorSummary =>
   if (/server selection timeout|no available servers|no suitable servers/.test(e))
     return { summaryKey: 'errors:conn.selectionTimeout', hintKey: 'errors:conn.selectionTimeoutHint' };
   if (/timed out|timeout/.test(e)) return { summaryKey: 'errors:conn.timedOut' };
+  // Fallback for raw driver text, not UI copy — intentionally English in every locale (i18n out of scope).
   const firstLine = (raw || 'Connection failed').replace(/^kind:\s*/i, '').split(/\n|\. /)[0].trim();
   return { summaryText: firstLine.length > 160 ? `${firstLine.slice(0, 160)}…` : firstLine };
 };
@@ -787,6 +789,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   };
 
   const uniqueImportName = (baseName: string, taken: Set<string>): string => {
+    // Stored profile data, not UI copy — intentionally English in every locale (i18n out of scope).
     let name = baseName.trim() || 'Imported Connection';
     if (!taken.has(name.toLowerCase())) {
       taken.add(name.toLowerCase());

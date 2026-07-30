@@ -10,7 +10,7 @@
     "refusedHint": "Läuft der Server, und sind Host/Port von diesem Rechner aus erreichbar?",
     "selectionTimeout": "Kein Server erreichbar (Serverauswahl-Timeout).",
     "selectionTimeoutHint": "Prüfe Host/Port und TLS-Einstellungen sowie ob dieser Rechner den Cluster erreichen kann.",
-    "timedOut": "Verbindung wurde zeitüberschritten.",
+    "timedOut": "Zeitüberschreitung bei der Verbindung.",
     "tlsNotTrusted": "TLS-Zertifikat nicht vertrauenswürdig.",
     "tlsNotTrustedHint": "Gib die CA-Datei des Clusters unter TLS an oder aktiviere „Ungültige Zertifikate zulassen“ für selbstsignierte/Entwicklungscluster."
   }

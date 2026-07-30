@@ -51,8 +51,8 @@
     "renameDatabase": "Datenbank umbenennen",
     "restore": "Restore (mongorestore)…",
     "settings": "Einstellungen",
-    "unpin": "Loslösen",
-    "unpinFromSidebar": "Von Seitenleiste loslösen",
+    "unpin": "Anheftung aufheben",
+    "unpinFromSidebar": "Anheftung an Seitenleiste aufheben",
     "validationRules": "Validierungsregeln"
   },
   "dialogs": {
@@ -80,7 +80,7 @@
       "title": "GridFS-Bucket öffnen"
     },
     "initialCollection": {
-      "defaultValue": "sammlung",
+      "defaultValue": "collection",
       "message": "Die Datenbank benötigt eine erste Sammlung. Gib deren Namen ein:",
       "title": "Erste Sammlung"
     },
@@ -98,8 +98,8 @@
     },
     "renameDatabase": {
       "confirmLabel": "Umbenennen",
-      "messagePlain": "Datenbank \"{{oldName}}\" in \"{{newName}}\" umbenennen?\n\nMongoDB unterstützt kein natives Umbenennen von Datenbanken. MQLens kopiert Sammlungen und Indexe, überprüft die Dokumentanzahl und löscht anschließend die Quelldatenbank.",
-      "messageTyped": "Datenbank \"{{oldName}}\" in \"{{newName}}\" umbenennen? MongoDB unterstützt kein natives Umbenennen von Datenbanken. MQLens kopiert Sammlungen und Indexe, überprüft die Dokumentanzahl und löscht anschließend die Quelldatenbank.\n\nGib den Datenbanknamen zur Bestätigung ein.",
+      "messagePlain": "Datenbank \"{{oldName}}\" in \"{{newName}}\" umbenennen?\n\nMongoDB unterstützt kein natives Umbenennen von Datenbanken. MQLens kopiert Sammlungen und Indizes, überprüft die Dokumentanzahl und löscht anschließend die Quelldatenbank.",
+      "messageTyped": "Datenbank \"{{oldName}}\" in \"{{newName}}\" umbenennen? MongoDB unterstützt kein natives Umbenennen von Datenbanken. MQLens kopiert Sammlungen und Indizes, überprüft die Dokumentanzahl und löscht anschließend die Quelldatenbank.\n\nGib den Datenbanknamen zur Bestätigung ein.",
       "promptTitle": "Datenbank umbenennen",
       "title": "Datenbank \"{{name}}\" umbenennen"
     }
@@ -107,7 +107,7 @@
   "empty": {
     "connectAriaLabel": "Mit Datenbank verbinden",
     "connectButton": "Mit Datenbank verbinden...",
-    "favoritesHint": "Rechtsklick auf Elemente im Baum, oder favorisiere eine gespeicherte Query aus einem Sammlungstab",
+    "favoritesHint": "Rechtsklick auf Elemente im Baum, oder favorisiere eine gespeicherte Abfrage aus einem Sammlungstab",
     "foldersHint": "Speichere Verbindungen im Verbindungsmanager",
     "noConnections": "Mit einem MongoDB-Server verbinden, um die Datenbankstruktur zu durchsuchen.",
     "pinnedHint": "Rechtsklick auf eine Verbindung, Datenbank oder Sammlung → An Seitenleiste anheften"
@@ -116,7 +116,7 @@
     "manageConnectionsButton": "Verbindungen verwalten"
   },
   "footer": {
-    "themeLabel": "Design"
+    "themeLabel": "Theme"
   },
   "header": {
     "helpAriaLabel": "Hilfe und Feedback",
@@ -152,12 +152,12 @@
     "dropDatabaseFailed": "Datenbank konnte nicht gelöscht werden: {{error}}",
     "noSavedConnection": "Keine gespeicherte Verbindung \"{{name}}\". Füge sie im Verbindungsmanager hinzu und versuche es erneut.",
     "pinned": "An Seitenleiste angeheftet",
-    "readOnlyBlocked": "Diese Verbindung ist schreibgeschützt (Produktionsschutz). Ändere den Verbindungsmodus in den Einstellungen, um Daten zu bearbeiten.",
+    "readOnlyBlocked": "Diese Verbindung ist schreibgeschützt (Produktionsschutz). Ändere den Verbindungsmodus im Verbindungsmanager, um Daten zu bearbeiten.",
     "removedFromFavorites": "Aus Favoriten entfernt",
     "renameCollectionFailed": "Sammlung konnte nicht umbenannt werden: {{error}}",
     "renameDatabaseFailed": "Datenbank konnte nicht umbenannt werden: {{error}}",
-    "savedQueryGone": "Gespeicherte Query existiert nicht mehr",
-    "unpinned": "Von Seitenleiste gelöst"
+    "savedQueryGone": "Gespeicherte Abfrage existiert nicht mehr",
+    "unpinned": "Anheftung an Seitenleiste aufgehoben"
   },
   "tree": {
     "collectionsLabel": "Sammlungen",
@@ -169,7 +169,7 @@
     "newBucketInline": "Neuer Bucket…",
     "newCollectionAriaLabel": "Neue Sammlung",
     "offlineSuffix": " · offline",
-    "rootLabel": "Wurzel",
+    "rootLabel": "Stammverzeichnis",
     "systemLabel": "System",
     "timeseriesAriaLabel": "Time-Series-Sammlung",
     "viewsLabel": "Ansichten"

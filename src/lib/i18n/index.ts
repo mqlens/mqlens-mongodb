@@ -16,7 +16,9 @@ import deSidebar from '../../locales/de/sidebar.json';
 /** Namespaces mirror the UI surfaces so a translator can take one file at a
  *  time. Every namespace must exist for every locale (enforced by the catalog
  *  parity test) — English is the fallback for any missing key. */
-const resources = {
+// Exported (only) so the catalog test suite can assert this object's locale
+// keys stay in lockstep with SUPPORTED_LOCALES — nothing else should import it.
+export const resources = {
   en: { common: enCommon, settings: enSettings, connections: enConnections, errors: enErrors, sidebar: enSidebar },
   de: { common: deCommon, settings: deSettings, connections: deConnections, errors: deErrors, sidebar: deSidebar },
 } as const;

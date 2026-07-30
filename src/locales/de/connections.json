@@ -53,7 +53,7 @@
   "connectionMode": {
     "confirmDestructive": {
       "description": "Destruktive Vorgänge erfordern eine getippte Bestätigung",
-      "label": "Bestätigung bei destruktiv"
+      "label": "Destruktive Vorgänge bestätigen"
     },
     "normal": {
       "description": "Voller Lese-/Schreibzugriff",
@@ -61,7 +61,7 @@
     },
     "readOnly": {
       "description": "Blockiert alle Schreibvorgänge",
-      "label": "Nur Lesen"
+      "label": "Schreibgeschützt"
     }
   },
   "dialogs": {
