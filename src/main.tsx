@@ -12,13 +12,16 @@ import App from "./App";
 import "./styles/globals.css";
 import { ThemeProvider } from "./components/theme/ThemeProvider";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { I18nProvider } from "./components/i18n/I18nProvider";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <ThemeProvider>
-      <TooltipProvider>
-        <App />
-      </TooltipProvider>
-    </ThemeProvider>
+    <I18nProvider>
+      <ThemeProvider>
+        <TooltipProvider>
+          <App />
+        </TooltipProvider>
+      </ThemeProvider>
+    </I18nProvider>
   </React.StrictMode>,
 );

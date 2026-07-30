@@ -27,3 +27,10 @@ if (typeof globalThis.DragEvent === 'undefined') {
   }
   globalThis.DragEvent = DragEventPolyfill;
 }
+
+import { initI18n } from '@/lib/i18n';
+
+// Tests render components directly, without I18nProvider. Initialise i18next
+// once up front so useTranslation() resolves real English copy rather than
+// throwing or emitting raw keys.
+await initI18n('en');

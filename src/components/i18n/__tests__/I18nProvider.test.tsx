@@ -1,0 +1,59 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { useTranslation } from 'react-i18next';
+
+const mockInvoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => mockInvoke(...a) }));
+
+import { I18nProvider, useLocale } from '../I18nProvider';
+
+function Probe() {
+  const { t } = useTranslation('common');
+  const { locale, setLocale } = useLocale();
+  return (
+    <div>
+      <span data-testid="cancel">{t('cancel')}</span>
+      <span data-testid="locale">{locale}</span>
+      <button onClick={() => setLocale('de')}>to-de</button>
+    </div>
+  );
+}
+
+describe('I18nProvider', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInvoke.mockResolvedValue({ locale: 'en' });
+  });
+
+  it('renders the persisted locale', async () => {
+    mockInvoke.mockResolvedValue({ locale: 'de' });
+    render(<I18nProvider><Probe /></I18nProvider>);
+    expect(await screen.findByTestId('cancel')).toHaveTextContent('Abbrechen');
+    expect(screen.getByTestId('locale')).toHaveTextContent('de');
+  });
+
+  it('falls back to English for an unknown persisted locale', async () => {
+    mockInvoke.mockResolvedValue({ locale: 'klingon' });
+    render(<I18nProvider><Probe /></I18nProvider>);
+    expect(await screen.findByTestId('cancel')).toHaveTextContent('Cancel');
+  });
+
+  it('still starts when settings cannot be read', async () => {
+    mockInvoke.mockRejectedValue(new Error('vault locked'));
+    render(<I18nProvider><Probe /></I18nProvider>);
+    // The app must never fail to boot because a locale could not be read.
+    expect(await screen.findByTestId('cancel')).toHaveTextContent('Cancel');
+  });
+
+  it('switches locale and persists it', async () => {
+    render(<I18nProvider><Probe /></I18nProvider>);
+    await screen.findByTestId('cancel');
+    fireEvent.click(screen.getByText('to-de'));
+    await waitFor(() => expect(screen.getByTestId('cancel')).toHaveTextContent('Abbrechen'));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('save_app_settings', expect.objectContaining({
+        settings: expect.objectContaining({ locale: 'de' }),
+      })),
+    );
+  });
+});
