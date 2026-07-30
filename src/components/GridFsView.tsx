@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatBytes } from '../lib/format';
 import { gridfsMetadataForUpload, validateGridfsMetadataJson } from '../lib/gridfsUpload';
+import { useTranslation } from 'react-i18next';
 import { useDialogs } from './dialogs/DialogProvider';
 
 interface GridFsFile {
@@ -48,6 +49,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
   onNamespaceMutated = () => {},
 }) => {
   const { toast, confirm, prompt, choose } = useDialogs();
+  const { t } = useTranslation('common');
   const [files, setFiles] = useState<GridFsFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -159,18 +161,18 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
           onProgress: channel,
         });
         uploadedAny = true;
-        toast(`Uploaded ${filename}`, 'success');
+        toast(t('toast.fileUploaded', { filename }), 'success');
       } catch (err: any) {
         // Don't abort the batch — keep uploading the remaining files and
         // report which ones failed at the end.
         failed.push(filename);
-        toast(`Upload failed for ${filename}: ${err?.message || err}`, 'error');
+        toast(t('toast.uploadFailedFor', { filename, detail: err?.message || err }), 'error');
       } finally {
         setTransfer(null);
       }
     }
     if (failed.length > 1) {
-      toast(`${failed.length} files failed to upload.`, 'error');
+      toast(t('toast.filesFailedToUpload', { count: failed.length }), 'error');
     }
     await loadFiles();
     if (uploadedAny) {
@@ -185,7 +187,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
       const paths = Array.isArray(selected) ? selected : [selected];
       await uploadPaths(paths.filter((p): p is string => typeof p === 'string'));
     } catch (err: any) {
-      toast(`Upload failed: ${err?.message || err}`, 'error');
+      toast(t('toast.uploadFailed', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -205,12 +207,12 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
           totalBytes: file.length,
           onProgress: channel,
         });
-        toast(`Downloaded ${file.filename}`, 'success');
+        toast(t('toast.fileDownloaded', { filename: file.filename }), 'success');
       } finally {
         setTransfer(null);
       }
     } catch (err: any) {
-      toast(`Download failed: ${err?.message || err}`, 'error');
+      toast(t('toast.downloadFailed', { detail: err?.message || err }), 'error');
       setTransfer(null);
     }
   };
@@ -234,11 +236,11 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
         bucket,
         fileId: file.id,
       });
-      toast(`Deleted ${file.filename}`, 'success');
+      toast(t('toast.fileDeleted', { filename: file.filename }), 'success');
       await loadFiles();
       onNamespaceMutated();
     } catch (err: any) {
-      toast(`Delete failed: ${err?.message || err}`, 'error');
+      toast(t('toast.fileDeleteFailed', { detail: err?.message || err }), 'error');
     }
   };
 

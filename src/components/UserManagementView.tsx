@@ -35,6 +35,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { PasswordInput } from './PasswordInput';
+import { useTranslation } from 'react-i18next';
 import { useDialogs } from './dialogs/DialogProvider';
 import { useEscapeClose } from '../lib/useEscapeClose';
 import {
@@ -78,6 +79,7 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
   onSaved,
 }) => {
   const { toast } = useDialogs();
+  const { t } = useTranslation('common');
   const isEdit = editor.mode === 'edit';
   const [username, setUsername] = useState(editor.user?.user ?? '');
   const [authDb, setAuthDb] = useState(
@@ -132,10 +134,10 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
     try {
       if (isEdit) {
         await updateUser(connectionId, authDb, name, password || null, cleanRoles);
-        toast(`Updated user ${name}`, 'success');
+        toast(t('toast.userUpdated', { name }), 'success');
       } else {
         await createUser(connectionId, authDb, name, password, cleanRoles);
-        toast(`Created user ${name}`, 'success');
+        toast(t('toast.userCreated', { name }), 'success');
       }
       onSaved();
     } catch (err: any) {
@@ -310,6 +312,7 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
 
 export const UserManagementView: React.FC<UserManagementViewProps> = ({ connectionId, database }) => {
   const { toast, confirm } = useDialogs();
+  const { t } = useTranslation('common');
   const [users, setUsers] = useState<MongoUser[]>([]);
   const [databases, setDatabases] = useState<string[]>([]);
   const [scope, setScope] = useState<string>(database || ALL_DBS);
@@ -383,10 +386,10 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
     if (!ok) return;
     try {
       await dropUser(connectionId, user.db, user.user);
-      toast(`Dropped user ${user.user}`, 'success');
+      toast(t('toast.userDropped', { name: user.user }), 'success');
       refresh();
     } catch (err: any) {
-      toast(`Failed to drop user: ${err?.message || err}`, 'error');
+      toast(t('toast.failedToDropUser', { detail: err?.message || err }), 'error');
     }
   };
 

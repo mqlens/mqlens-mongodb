@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { QueryEditor } from './QueryEditor';
+import { useTranslation } from 'react-i18next';
 import { useDialogs } from './dialogs/DialogProvider';
 import type { ExportTaskInfo } from './TaskManager';
 import {
@@ -551,6 +552,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
   onCancel,
 }) => {
   const { confirm, prompt, toast } = useDialogs();
+  const { t } = useTranslation('common');
 
   const [targetCollection, setTargetCollection] = useState('');
   const [templateText, setTemplateText] = useState<string>(collection ? '' : STARTER_TEMPLATE);
@@ -782,7 +784,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
 
       onRun(templateText, count, seedNum, effectiveCollection);
     } catch (err: any) {
-      toast(`Could not start generate: ${err?.message || err}`, 'error');
+      toast(t('toast.couldNotStartGenerate', { detail: err?.message || err }), 'error');
     } finally {
       setRunning(false);
     }

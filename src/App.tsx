@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useReducer } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AppShell } from '@/components/layout/AppShell';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { Toaster } from '@/components/ui/sonner';
@@ -371,6 +372,7 @@ function activeTabHintFor(win: PersistedWindow, allTabs: PersistedTab[]): string
 
 function Workspace() {
   const { toast, confirm, prompt } = useDialogs();
+  const { t } = useTranslation('common');
   const { config, resolvedMode, setMode, setSpacingDensity, resetZoom } = useTheme();
   const density = config.spacingDensity;
   // Phase 3 Task 4: every window runs this same component — `isMainWindow`
@@ -846,7 +848,7 @@ function Workspace() {
       rebindProfileTabs(profile.id, id);
       return id;
     } catch (e) {
-      toast(`Could not connect to ${profile.name}: ${(e as any)?.message || String(e)}`, 'error');
+      toast(t('toast.couldNotConnectToProfile', { name: profile.name, detail: (e as any)?.message || String(e) }), 'error');
       return null;
     }
   };
@@ -858,7 +860,7 @@ function Workspace() {
       const id = await invoke<string>('connect_db', { uri: 'mongodb://mock', ssh: null });
       addActiveConnection(id, 'Sample (mqlens_demo)', 'mongodb://mock', SAMPLE_ID);
     } catch (e) {
-      toast(`Could not load sample data: ${(e as any)?.message || String(e)}`, 'error');
+      toast(t('toast.couldNotLoadSampleData', { detail: (e as any)?.message || String(e) }), 'error');
     }
   };
   const [isIndexModalOpen, setIsIndexModalOpen] = useState(false);
@@ -1038,8 +1040,10 @@ function Workspace() {
   // Copy → clipboard (no dialog); Paste-here opens the dialog pre-filled with that target.
   const handleCopyToClipboard = (connectionId: string, db: string, collections: string[]) => {
     setCopyClipboard({ connectionId, db, collections });
-    const what = collections.length === 0 ? `database ${db}` : `${collections.length} collection(s)`;
-    toast(`Copied ${what} — right-click a target and choose “Paste here”.`, 'success');
+    const what = collections.length === 0
+      ? t('toast.copyWhatDatabase', { db })
+      : t('toast.copyWhatCollections', { count: collections.length });
+    toast(t('toast.copiedToClipboard', { what }), 'success');
   };
   const handlePasteInto = (connectionId: string, db?: string) => {
     if (!copyClipboard) return;
@@ -1052,7 +1056,7 @@ function Workspace() {
       await loadExportTasks();
       return true;
     } catch (err: any) {
-      toast(`Could not cancel: ${err?.message || err}`, 'error');
+      toast(t('toast.couldNotCancelTask', { detail: err?.message || err }), 'error');
       return false;
     }
   };
@@ -1510,10 +1514,10 @@ function Workspace() {
         insertExportTasks([task]);
         await loadExportTasks();
       } catch (err: any) {
-        toast(`Could not start tool install: ${err?.message || err}`, 'error');
+        toast(t('toast.couldNotStartToolInstall', { detail: err?.message || err }), 'error');
       }
     },
-    [loadExportTasks, toast]
+    [loadExportTasks, toast, t]
   );
 
   const handleCancelToolInstall = React.useCallback(() => {
@@ -1669,7 +1673,7 @@ function Workspace() {
       handleOpenTasksTab();
       await loadExportTasks();
     } catch (err: any) {
-      toast(`Dump failed to start: ${err?.message || err}`, 'error');
+      toast(t('toast.dumpFailedToStart', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -1686,7 +1690,7 @@ function Workspace() {
       handleOpenTasksTab();
       await loadExportTasks();
     } catch (err: any) {
-      toast(`Restore failed to start: ${err?.message || err}`, 'error');
+      toast(t('toast.restoreFailedToStart', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -1728,7 +1732,7 @@ function Workspace() {
       // `handleOpenTasksTab()`.
       await loadExportTasks();
     } catch (err: any) {
-      toast(`Generate failed to start: ${err?.message || err}`, 'error');
+      toast(t('toast.generateFailedToStart', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -2037,7 +2041,7 @@ function Workspace() {
       // Automatically open/focus the new index tab!
       handleSelectIndex(connectionId, db, collection, indexName);
     } catch (err: any) {
-      toast(`Failed to save index: ${err}`, 'error');
+      toast(t('toast.failedToSaveIndex', { detail: err }), 'error');
     }
   };
 
@@ -2057,7 +2061,7 @@ function Workspace() {
       // Trigger sidebar refresh
       setIndexMutationTrigger(prev => prev + 1);
     } catch (err: any) {
-      toast(`Failed to delete index: ${err}`, 'error');
+      toast(t('toast.failedToDeleteIndex', { detail: err }), 'error');
     }
   };
 
@@ -3066,7 +3070,7 @@ function Workspace() {
     const docs = targetTab.type === 'collection' ? targetTab.results || [] : [];
     if (scope === 'current' && docs.length === 0) return;
     if (scope === 'filtered' && !query) {
-      toast('No query to export — edit the filter first.', 'error');
+      toast(t('toast.noQueryToExport'), 'error');
       return;
     }
     try {
@@ -3118,9 +3122,9 @@ function Workspace() {
       // format (including bson/xlsx binary output) so the frontend just forwards
       // the in-memory docs and lets it write the file.
       await invoke('format_current_docs', { docs, format, options, path });
-      toast(`Exported ${docs.length} document(s) to ${path}`, 'success');
+      toast(t('toast.exportedDocuments', { count: docs.length, path }), 'success');
     } catch (err: any) {
-      toast(`Export failed: ${err?.message || err}`, 'error');
+      toast(t('toast.exportFailed', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -3142,9 +3146,9 @@ function Workspace() {
         path: null,
       });
       if (text) await navigator.clipboard.writeText(text);
-      toast(`Copied ${sourceTab.results.length} document(s) as ${format.toUpperCase()}`, 'success');
+      toast(t('toast.copiedDocumentsAs', { count: sourceTab.results.length, format: format.toUpperCase() }), 'success');
     } catch (err: any) {
-      toast(`Copy failed: ${err?.message || err}`, 'error');
+      toast(t('toast.copyFailed', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -3231,7 +3235,7 @@ function Workspace() {
 
   const handleDeleteDocument = async (tab: QueryTab, doc: Record<string, any>) => {
     if (doc._id === undefined) {
-      toast('Cannot delete: this document has no _id.', 'error');
+      toast(t('toast.cannotDeleteNoId'), 'error');
       return;
     }
     if (
@@ -3251,9 +3255,9 @@ function Workspace() {
         filter: JSON.stringify({ _id: doc._id }),
       });
       await refreshTabResults(tab);
-      toast(`Document deleted from ${tab.collection}`, 'success', { title: 'Deleted' });
+      toast(t('toast.documentDeletedFrom', { collection: tab.collection }), 'success', { title: t('toast.deletedTitle') });
     } catch (err: any) {
-      toast(`Failed to delete document: ${err}`, 'error');
+      toast(t('toast.failedToDeleteDocument', { detail: err }), 'error');
     }
   };
 
@@ -3316,9 +3320,9 @@ function Workspace() {
         confirmed,
       });
       await refreshTabResults(tab);
-      toast(`Deleted ${deleted} document(s)`, 'success', { title: 'Deleted' });
+      toast(t('toast.deletedDocuments', { count: deleted }), 'success', { title: t('toast.deletedTitle') });
     } catch (err: any) {
-      toast(`Delete failed: ${err?.message || err}`, 'error');
+      toast(t('toast.deleteFailed', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -3384,9 +3388,9 @@ function Workspace() {
         confirmed,
       });
       await refreshTabResults(tab);
-      toast(`Modified ${modified} document(s)`, 'success', { title: 'Updated' });
+      toast(t('toast.modifiedDocuments', { count: modified }), 'success', { title: t('toast.updatedTitle') });
     } catch (err: any) {
-      toast(`Update failed: ${err?.message || err}`, 'error');
+      toast(t('toast.updateFailed', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -3404,7 +3408,7 @@ function Workspace() {
       });
       setDocumentModal(null);
       await refreshTabResults(tab);
-      toast(`Document inserted into ${collection}`, 'success', { title: 'Inserted' });
+      toast(t('toast.documentInsertedInto', { collection }), 'success', { title: t('toast.insertedTitle') });
       return;
     }
 
@@ -3421,7 +3425,7 @@ function Workspace() {
     });
     setDocumentModal(null);
     await refreshTabResults(tab);
-    toast(`Document saved in ${collection}`, 'success', { title: 'Saved' });
+    toast(t('toast.documentSavedIn', { collection }), 'success', { title: t('toast.savedTitle') });
   };
 
   const handleExplainQuery = async (tab: QueryTab, filter: string): Promise<string> => {
@@ -3717,7 +3721,7 @@ function Workspace() {
                   handleOpenTasksTab();
                   await loadExportTasks();
                 } catch (err: any) {
-                  toast(`Import failed to start: ${err?.message || err}`, 'error');
+                  toast(t('toast.importFailedToStart', { detail: err?.message || err }), 'error');
                 }
               }}
             />

@@ -233,6 +233,28 @@ describe('DocumentViewer Component', () => {
     expect(screen.getByText('Cleared filter parameters')).toBeInTheDocument();
   });
 
+  it('shows toasts in the active locale (#123)', async () => {
+    const { i18next } = await import('@/lib/i18n');
+    await i18next.changeLanguage('de');
+    try {
+      render(
+        <DocumentViewer
+          connectionName="test-conn"
+          databaseName="test-db"
+          collectionName="test-coll"
+          onExecute={mockOnExecute}
+          onExplain={mockOnExplain}
+          loading={false}
+        />
+      );
+      fireEvent.change(screen.getByTestId('query-filter-input'), { target: { value: '{"a": 1}' } });
+      fireEvent.click(screen.getByTitle('Clear Filter'));
+      expect(await screen.findByText('Filterparameter zurückgesetzt')).toBeInTheDocument();
+    } finally {
+      await i18next.changeLanguage('en');
+    }
+  });
+
   it('toggles visual query builder panel', () => {
     render(
       <DocumentViewer

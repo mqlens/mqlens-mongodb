@@ -23,6 +23,12 @@ import { defineConfig } from 'i18next-cli';
  * test-step checklist read via `t(step.nameKey)`, and the
  * `summarizeConnectionError` result keys read via `t(info.summaryKey)`/
  * `t(info.hintKey)`.
+ *
+ * The `toast.*` keys below are read through DocumentViewer.tsx's `notify()`
+ * helper (`notify(key, kind, options)` → `t(key, options)`), whose `key`
+ * argument is itself a variable at every call site (a plain identifier, or a
+ * ternary choosing between two key names for `handleClearField`) — never a
+ * string literal the extractor's static analysis can see.
  */
 export default defineConfig({
   locales: ['en'],
@@ -82,6 +88,20 @@ export default defineConfig({
       'errors:conn.selectionTimeout',
       'errors:conn.selectionTimeoutHint',
       'errors:conn.timedOut',
+      'common:toast.querySaved',
+      'common:toast.querySavedAndFavorited',
+      'common:toast.couldNotSaveQuery',
+      'common:toast.savedQueryDeleted',
+      'common:toast.couldNotDeleteQuery',
+      'common:toast.defaultQuerySet',
+      'common:toast.couldNotSetDefault',
+      'common:toast.defaultQueryCleared',
+      'common:toast.couldNotClearDefault',
+      'common:toast.filterCleared',
+      'common:toast.projectionCleared',
+      'common:toast.sortCleared',
+      'common:toast.openedInMongosh',
+      'common:toast.copiedMongoshCommand',
     ],
   },
 });
