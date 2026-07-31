@@ -134,7 +134,7 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
           ) : (
             <Select value={source || '__none__'} onValueChange={(v) => setSource(v === '__none__' ? '' : v)}>
               <SelectTrigger data-testid="view-source-select">
-                <SelectValue placeholder={t('createViewView.options.noCollectionsPlaceholder')} />
+                <SelectValue placeholder={t('createViewView.options.noCollections')} />
               </SelectTrigger>
               <SelectContent>
                 {collections.length === 0 && (

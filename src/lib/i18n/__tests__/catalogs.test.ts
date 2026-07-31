@@ -146,6 +146,10 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'admin:statsCards.indexStats.index', // Index: — established loanword + colon, matches connections:profile.status
   'admin:clusterHealthCard.memberStatus.onlinePrimary', // "— Online [PRIMARY]" — Online loanword + raw replica-set state identifier
   'admin:clusterHealthCard.memberStatus.onlinePrefix', // "— Online [{{state}}] · " — Online loanword + raw interpolation, nothing to translate
+  // "Capped collection" is established MongoDB terminology (like Cluster,
+  // Bucket, Shell, mongosh, GridFS) — kept as the loanword rather than
+  // translated to a native German word.
+  'admin:statsCards.collStats.labels.capped', // Capped
 ]);
 
 describe('locale catalogs', () => {

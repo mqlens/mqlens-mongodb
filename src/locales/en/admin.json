@@ -232,8 +232,7 @@
       "sparseIndex": "Sparse index",
       "nonSparse": "Non-sparse (indexes all documents)",
       "singleFieldIndex": "Single-field index",
-      "fieldsCompound_one": "{{count}} field (compound)",
-      "fieldsCompound_other": "{{count}} fields (compound)"
+      "fieldsCompound": "{{count}} fields (compound)"
     },
     "size": {
       "onDiskIndexSize": "On-disk index size"
@@ -310,7 +309,6 @@
       "validator": "Validator (JSON Schema)",
       "validationLevel": "Validation Level",
       "validationAction": "Validation Action",
-      "defaultPlaceholder": "(default)",
       "defaultOption": "(default)"
     },
     "hints": {
@@ -338,7 +336,6 @@
     },
     "loading": "Loading collections…",
     "options": {
-      "noCollectionsPlaceholder": "(no collections)",
       "noCollections": "(no collections)"
     },
     "errors": {

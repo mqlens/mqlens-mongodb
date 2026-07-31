@@ -150,7 +150,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
                 }}
               >
                 <SelectTrigger data-testid="validation-level-select">
-                  <SelectValue placeholder={t('validationRulesView.labels.defaultPlaceholder')} />
+                  <SelectValue placeholder={t('validationRulesView.labels.defaultOption')} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE_VALUE}>{t('validationRulesView.labels.defaultOption')}</SelectItem>
@@ -171,7 +171,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
                 }}
               >
                 <SelectTrigger data-testid="validation-action-select">
-                  <SelectValue placeholder={t('validationRulesView.labels.defaultPlaceholder')} />
+                  <SelectValue placeholder={t('validationRulesView.labels.defaultOption')} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE_VALUE}>{t('validationRulesView.labels.defaultOption')}</SelectItem>

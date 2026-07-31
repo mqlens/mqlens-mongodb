@@ -58,7 +58,7 @@
       "connections": "Verbindungen",
       "connectionsAvail": "{{count}} verfügbar",
       "opsPerSec": "Vorgänge/s",
-      "residentMem": "Resident. Speicher",
+      "residentMem": "Residenter Speicher",
       "residentVirt": "{{mb}} MB virt.",
       "cache": "Cache",
       "cacheNotAvailable": "n. v.",
@@ -232,8 +232,7 @@
       "sparseIndex": "Sparse-Index",
       "nonSparse": "Nicht-Sparse (indiziert alle Dokumente)",
       "singleFieldIndex": "Einzelfeld-Index",
-      "fieldsCompound_one": "{{count}} Feld (Verbund)",
-      "fieldsCompound_other": "{{count}} Felder (Verbund)"
+      "fieldsCompound": "{{count}} Felder (Verbund)"
     },
     "size": {
       "onDiskIndexSize": "Index-Größe auf der Festplatte"
@@ -296,7 +295,7 @@
     },
     "errors": {
       "keysMustBeObject": "Indexschlüssel müssen ein JSON-Objekt sein (z. B. { \"field\": 1 })",
-      "invalidDirection": "Die Indexrichtung für „{{field}}“ muss 1 (Ascending) oder -1 (Descending) sein",
+      "invalidDirection": "Die Indexrichtung für „{{field}}“ muss 1 (Aufsteigend) oder -1 (Absteigend) sein",
       "invalidJsonSyntax": "Ungültige JSON-Syntax",
       "allFieldsNeedName": "Alle Indexschlüsselfelder müssen einen Namen haben",
       "specifyAtLeastOneKey": "Gib mindestens einen Indexschlüssel an",
@@ -310,7 +309,6 @@
       "validator": "Validator (JSON-Schema)",
       "validationLevel": "Validierungsstufe",
       "validationAction": "Validierungsaktion",
-      "defaultPlaceholder": "(Standard)",
       "defaultOption": "(Standard)"
     },
     "hints": {
@@ -338,7 +336,6 @@
     },
     "loading": "Sammlungen werden geladen…",
     "options": {
-      "noCollectionsPlaceholder": "(keine Sammlungen)",
       "noCollections": "(keine Sammlungen)"
     },
     "errors": {
@@ -381,7 +378,7 @@
         "storageSize": "Speichergröße",
         "indexes": "Indizes",
         "totalIndexSize": "Gesamte Indexgröße",
-        "capped": "Begrenzt"
+        "capped": "Capped"
       },
       "yes": "ja"
     },
