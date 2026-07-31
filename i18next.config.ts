@@ -150,6 +150,32 @@ export default defineConfig({
       'admin:monitoringView.refreshOptions.30s',
       'admin:monitoringView.refreshOptions.1m',
       'admin:monitoringView.refreshOptions.off',
+      // `shell:commandPalette.buckets.*.label` are read through CommandPalette.tsx's
+      // `BUCKET_META` via `t(BUCKET_META[bucket].labelKey)` — a variable, not a
+      // string literal the extractor's static analysis can see.
+      'shell:commandPalette.buckets.commands.label',
+      'shell:commandPalette.buckets.collections.label',
+      'shell:commandPalette.buckets.queries.label',
+      // `shell:toolSetupDialog.toolLabels.*` are read through ToolSetupDialog.tsx's
+      // `toolLabel()` via `t(TOOL_LABEL_KEYS[name])` — a variable, not a string
+      // literal the extractor's static analysis can see.
+      'shell:toolSetupDialog.toolLabels.databaseTools',
+      'shell:toolSetupDialog.toolLabels.mongosh',
+      // `documents:documentViewer.builder.operators.*` and
+      // `documents:documentViewer.pipeline.stageGroups.*` are read through
+      // DocumentViewer.tsx's `OPERATORS`/`STAGE_OPERATORS` via `t(entry.labelKey)`
+      // — a variable, not a string literal the extractor's static analysis can see.
+      'documents:documentViewer.builder.operators.in',
+      'documents:documentViewer.builder.operators.notIn',
+      'documents:documentViewer.builder.operators.regex',
+      'documents:documentViewer.builder.operators.exists',
+      'documents:documentViewer.pipeline.stageGroups.filtering',
+      'documents:documentViewer.pipeline.stageGroups.grouping',
+      'documents:documentViewer.pipeline.stageGroups.ordering',
+      'documents:documentViewer.pipeline.stageGroups.arraysJoins',
+      'documents:documentViewer.pipeline.stageGroups.windows',
+      'documents:documentViewer.pipeline.stageGroups.geospatial',
+      'documents:documentViewer.pipeline.stageGroups.sourcesOutput',
     ],
   },
 });

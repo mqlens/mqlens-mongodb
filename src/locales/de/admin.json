@@ -3,7 +3,8 @@
     "title": "Monitoring",
     "tabs": {
       "ops": "Aktuelle Vorgänge",
-      "opsCount": " ({{count}})",
+      "opsCount_one": " ({{count}})",
+      "opsCount_other": " ({{count}})",
       "profiler": "Profiler",
       "cluster": "Cluster"
     },
@@ -23,16 +24,13 @@
     },
     "labels": {
       "serverFallback": "Server",
-      "opid": "Vorgang-ID",
+      "opid": "opid",
       "op": "Vorgang",
-      "ns": "Namespace",
+      "ns": "ns",
       "desc": "Beschreibung",
       "running": "Laufzeit",
       "client": "Client",
-      "command": "Befehl",
       "commandHeading": "Befehl",
-      "secs": "Sek.",
-      "millis": "ms",
       "plan": "Plan",
       "duration": "Dauer",
       "time": "Zeit"
@@ -60,7 +58,8 @@
     },
     "metrics": {
       "connections": "Verbindungen",
-      "connectionsAvail": "{{count}} verfügbar",
+      "connectionsAvail_one": "{{count}} verfügbar",
+      "connectionsAvail_other": "{{count}} verfügbar",
       "opsPerSec": "Vorgänge/s",
       "residentMem": "Residenter Speicher",
       "residentVirt": "{{mb}} MB virt.",
@@ -104,7 +103,8 @@
       "shardedNotice": "Sharded-Cluster — Zustand auf Mitgliedsebene ist über mongos nicht verfügbar. Verbinde dich direkt mit dem Replikatset eines Shards, um dessen Mitglieder zu prüfen.",
       "notReplsetNotice": "Diese Verbindung ist ein eigenständiger MongoDB-Server — Replikatset-Zustand ist hier nicht anwendbar.",
       "summaryReplicaSetPrefix": "Replikatset ",
-      "summaryMembersCount": "{{count}} Mitglieder",
+      "summaryMembersCount_one": "{{count}} Mitglied",
+      "summaryMembersCount_other": "{{count}} Mitglieder",
       "summaryVersionClause": " · MongoDB {{version}}",
       "summaryYouClause": " · dieser Knoten: {{state}}",
       "youBadge": "(dieser Knoten)",
@@ -236,7 +236,8 @@
       "sparseIndex": "Sparse-Index",
       "nonSparse": "Nicht-Sparse (indiziert alle Dokumente)",
       "singleFieldIndex": "Einzelfeld-Index",
-      "fieldsCompound": "{{count}} Felder (Verbund)"
+      "fieldsCompound_one": "{{count}} Feld (Verbund)",
+      "fieldsCompound_other": "{{count}} Felder (Verbund)"
     },
     "size": {
       "onDiskIndexSize": "Index-Größe auf der Festplatte"
@@ -425,7 +426,8 @@
   "gridfsView": {
     "loading": "GridFS-Dateien werden geladen…",
     "labels": {
-      "fileCount": "{{count}} Datei(en)",
+      "fileCount_one": "{{count}} Datei",
+      "fileCount_other": "{{count}} Dateien",
       "theseFiles": "Diese Dateien",
       "thisFile": "Diese Datei"
     },

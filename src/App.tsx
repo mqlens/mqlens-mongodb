@@ -2580,15 +2580,18 @@ function Workspace() {
       const writeStage = detectAggregateWriteStage(pipeline);
       if (writeStage.hasWriteStage) {
         const ok = await confirmByTypedName(prompt, {
-          title: 'Run aggregation',
+          title: t('documents:documentViewer.dialogs.runAggregate.title'),
           kind: 'collection',
           // Fall back to a "type CONFIRM" prompt when the $out/$merge
           // target couldn't be extracted cleanly (e.g. an unrecognized
-          // shape) rather than silently under-matching a name.
+          // shape) rather than silently under-matching a name. `expectedName`
+          // is compared verbatim against what the user types (see
+          // `confirmByTypedName`'s doc comment) — it must stay the raw
+          // collection name/`'CONFIRM'`, never a translated string.
           expectedName: writeStage.target ?? 'CONFIRM',
           message: writeStage.target
-            ? `This pipeline writes into "${writeStage.target}" ($out/$merge) on a safeguarded connection.\n\nType the target collection name to confirm.`
-            : 'This pipeline writes to a collection via $out/$merge on a safeguarded connection, but the target could not be determined automatically.\n\nType CONFIRM to proceed.',
+            ? t('documents:documentViewer.dialogs.runAggregate.messageWithTarget', { target: writeStage.target })
+            : t('documents:documentViewer.dialogs.runAggregate.messageUnknownTarget'),
         });
         if (!ok) return;
         confirmed = true;
@@ -3248,7 +3251,7 @@ function Workspace() {
     }
     if (
       !(await confirm({
-        title: 'Delete document',
+        title: t('documents:dataGrid.actions.deleteDocument'),
         message: 'Delete this document? This cannot be undone.',
         confirmLabel: 'Delete',
         destructive: true,
@@ -3274,10 +3277,20 @@ function Workspace() {
   const isEmptyFilterStr = (f: string) => {
     try { return Object.keys(JSON.parse(f)).length === 0; } catch { return false; }
   };
-  const bulkConfirmMessage = (verb: string, count: number, filter: string) => {
-    const base = `${verb} ${count} document(s) matching:\n${filter}`;
+  // Each action gets its own complete-sentence catalog key
+  // (documents:dataGrid.dialogs.<action>.body), interpolated with count/filter,
+  // rather than splicing an English verb phrase (e.g. 'Delete', 'Apply this
+  // update to') into a shared template: German verb placement differs from
+  // English, so a fragment-concatenation approach can't produce correct
+  // German no matter how the fragments are translated. The "affects ALL"
+  // warning is a separate, independent sentence appended after a blank line
+  // (not glued mid-sentence), so it's safe to keep as its own shared key.
+  const bulkConfirmMessage = (action: 'delete' | 'update', count: number, filter: string) => {
+    const base = action === 'delete'
+      ? t('documents:dataGrid.dialogs.deleteMany.body', { count, filter })
+      : t('documents:dataGrid.dialogs.updateMany.body', { count, filter });
     return isEmptyFilterStr(filter)
-      ? `${base}\n\n⚠ This affects ALL ${count} documents in the collection.`
+      ? `${base}${t('documents:dataGrid.dialogs.bulkAllWarning', { count })}`
       : base;
   };
 
@@ -3303,17 +3316,19 @@ function Workspace() {
       let confirmed = false;
       if (mode === 'confirm_destructive') {
         const ok = await confirmByTypedName(prompt, {
-          title: 'Delete many',
+          title: t('documents:dataGrid.dialogs.deleteMany.title'),
           kind: 'collection',
+          // Raw collection name — compared verbatim against the user's
+          // typed input by confirmByTypedName, never a translated string.
           expectedName: tab.collection,
-          message: `${bulkConfirmMessage('Delete', count, filter)}\n\nType the collection name to confirm.`,
+          message: `${bulkConfirmMessage('delete', count, filter)}${t('documents:dataGrid.dialogs.typeCollectionNameSuffix')}`,
         });
         if (!ok) return;
         confirmed = true;
       } else if (
         !(await confirm({
-          title: 'Delete many',
-          message: bulkConfirmMessage('Delete', count, filter),
+          title: t('documents:dataGrid.dialogs.deleteMany.title'),
+          message: bulkConfirmMessage('delete', count, filter),
           confirmLabel: 'Delete',
           destructive: true,
         }))
@@ -3338,7 +3353,7 @@ function Workspace() {
     if (tab.type !== 'collection') return;
     const filter = bulkFilter(tab);
     const update = await prompt({
-      title: 'Update many',
+      title: t('documents:dataGrid.dialogs.updateMany.title'),
       message: 'Update document (operators, e.g. {"$set": {...}}):',
       defaultValue: '{ "$set": {} }',
       validate: (v) => {
@@ -3370,17 +3385,19 @@ function Workspace() {
       let confirmed = false;
       if (mode === 'confirm_destructive') {
         const ok = await confirmByTypedName(prompt, {
-          title: 'Update many',
+          title: t('documents:dataGrid.dialogs.updateMany.title'),
           kind: 'collection',
+          // Raw collection name — compared verbatim against the user's
+          // typed input by confirmByTypedName, never a translated string.
           expectedName: tab.collection,
-          message: `${bulkConfirmMessage('Apply this update to', count, filter)}\n\nType the collection name to confirm.`,
+          message: `${bulkConfirmMessage('update', count, filter)}${t('documents:dataGrid.dialogs.typeCollectionNameSuffix')}`,
         });
         if (!ok) return;
         confirmed = true;
       } else if (
         !(await confirm({
-          title: 'Update many',
-          message: bulkConfirmMessage('Apply this update to', count, filter),
+          title: t('documents:dataGrid.dialogs.updateMany.title'),
+          message: bulkConfirmMessage('update', count, filter),
           confirmLabel: 'Update',
           destructive: true,
         }))
@@ -3558,7 +3575,7 @@ function Workspace() {
                       variant="outline"
                       size="sm"
                       className="shrink-0"
-                      title="Copy error message"
+                      title={t('documents:dataGrid.dialogs.copyErrorMessage')}
                       onClick={() => { try { navigator.clipboard?.writeText(String(tab.error)); } catch { /* clipboard unavailable */ } }}
                     >
                       <Copy size={11} />
@@ -3570,7 +3587,7 @@ function Workspace() {
                   <div className="flex-grow flex items-center justify-center text-muted-foreground bg-background">
                     <div className="flex flex-col items-center gap-2 select-none">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
-                      <span className="text-xs">Streaming documents asynchronously...</span>
+                      <span className="text-xs">{t('documents:dataGrid.labels.streamingDocuments')}</span>
                     </div>
                   </div>
                 ) : (
@@ -3702,7 +3719,10 @@ function Workspace() {
               onPickFile={async () => {
                 const p = await open({
                   multiple: false,
-                  filters: [{ name: 'Data', extensions: ['json', 'jsonl', 'ndjson', 'csv', 'bson'] }],
+                  // Display label for the native OS file-type filter dropdown
+                  // only (Tauri's dialog plugin) — not an identifier compared
+                  // or dispatched anywhere, so safe to translate.
+                  filters: [{ name: t('transfer:importView.source.fileFilterName'), extensions: ['json', 'jsonl', 'ndjson', 'csv', 'bson'] }],
                 });
                 return typeof p === 'string' ? p : null;
               }}
@@ -3806,7 +3826,7 @@ function Workspace() {
         {tab.type === 'tasks' && (
           <div className="flex h-full flex-col overflow-auto p-4" data-testid="tasks-view">
             <header className="mb-3">
-              <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
+              <h2 className="text-sm font-semibold text-foreground">{tShell('taskManager.header.title')}</h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 Background copy and export jobs.
               </p>

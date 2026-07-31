@@ -97,7 +97,8 @@
       "viewInTasks": "In Aufgaben anzeigen"
     },
     "confirm": {
-      "insertMessage": "{{count}} Dokumente in {{namespace}} einfügen.",
+      "insertMessage_one": "{{count}} Dokument in {{namespace}} einfügen.",
+      "insertMessage_other": "{{count}} Dokumente in {{namespace}} einfügen.",
       "insertMessageExistingClause": " Dies kommt zu den vorhandenen {{existing}} Dokumenten hinzu.",
       "title": "Dokumente generieren",
       "typedMessage": "Gib die genaue Anzahl der einzufügenden Dokumente ein.",
@@ -151,7 +152,8 @@
       "min": "Min",
       "past": "letzte",
       "pastDaysMode": "Letzte N Tage",
-      "previewTitle": "Vorschau ({{count}} Dokumente)",
+      "previewTitle_one": "Vorschau ({{count}} Dokument)",
+      "previewTitle_other": "Vorschau ({{count}} Dokumente)",
       "rangeMode": "Von / bis",
       "seedOptional": "Seed (optional)",
       "seedPlaceholder": "zufällig",
@@ -191,11 +193,12 @@
       "import": "Import"
     },
     "source": {
-      "title": "Quelle",
-      "hint": "Wähle eine Datei zum Importieren aus oder füge Dokumente direkt ein.",
       "file": "Datei",
+      "fileFilterName": "Daten",
+      "hint": "Wähle eine Datei zum Importieren aus oder füge Dokumente direkt ein.",
       "paste": "Einfügen",
-      "pasteCapNote": "Einfügen ist auf 2 MB begrenzt — speichere es als Datei und importiere sie stattdessen"
+      "pasteCapNote": "Einfügen ist auf 2 MB begrenzt — speichere es als Datei und importiere sie stattdessen",
+      "title": "Quelle"
     },
     "labels": {
       "format": "Format"
@@ -224,8 +227,10 @@
     "preview": {
       "title": "Vorschau",
       "captionChoose": "Wähle eine Quelle zur Vorschau",
-      "captionCount": "Vorschau der ersten {{count}} Dokument(e)",
-      "captionCountWithTotal": "Vorschau der ersten {{count}} Dokument(e) von ~{{total}}"
+      "captionCount_one": "Vorschau der ersten {{count}} Dokument",
+      "captionCount_other": "Vorschau der ersten {{count}} Dokumente",
+      "captionCountWithTotal_one": "Vorschau der ersten {{count}} Dokument von ~{{total}}",
+      "captionCountWithTotal_other": "Vorschau der ersten {{count}} Dokumente von ~{{total}}"
     },
     "duplicates": {
       "title": "Umgang mit Duplikaten",
@@ -365,7 +370,8 @@
   "copyToDialog": {
     "title": {
       "collection": "Sammlung \"{{name}}\" kopieren",
-      "collections": "{{count}} Sammlungen kopieren",
+      "collections_one": "{{count}} Sammlung kopieren",
+      "collections_other": "{{count}} Sammlungen kopieren",
       "database": "Datenbank \"{{name}}\" kopieren"
     },
     "labels": {

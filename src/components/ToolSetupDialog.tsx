@@ -45,8 +45,8 @@ const checkboxLabelClassName = 'flex cursor-pointer items-center gap-2 text-sm t
 // (toolLabel takes `t` as a param since this is a module-level constant/helper
 // and can't call the useTranslation hook itself).
 const TOOL_LABEL_KEYS: Record<string, string> = {
-  'database-tools': 'toolSetupDialog.toolLabels.databaseTools',
-  mongosh: 'toolSetupDialog.toolLabels.mongosh',
+  'database-tools': 'shell:toolSetupDialog.toolLabels.databaseTools',
+  mongosh: 'shell:toolSetupDialog.toolLabels.mongosh',
 };
 
 function toolLabel(t: (key: string) => string, name: string): string {

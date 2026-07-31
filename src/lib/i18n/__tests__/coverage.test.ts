@@ -31,7 +31,13 @@ import { join } from 'node:path';
  * .superpowers/sdd/task-6-report.md for the full triage log.
  */
 
-const COMPONENTS_DIR = 'src/components';
+// Scans the whole `src` tree (not just `src/components`) — the gate used to
+// stop at `src/components`, which left `src/App.tsx` and `src/workspace/*.tsx`
+// (the tab context menu that motivated this whole task lives in App.tsx)
+// structurally invisible to it. `__tests__` and `test/` hold test code, not
+// UI copy, so they're walked past.
+const SCAN_DIR = 'src';
+const EXCLUDED_DIR_NAMES = new Set(['__tests__', 'test']);
 
 /** Files that render no user-facing prose at all (pure UI primitives that
  *  only pass through `children`/`className` props, or wrappers with zero
@@ -268,11 +274,19 @@ describe('i18n coverage', () => {
     const walk = (d: string) => {
       for (const e of readdirSync(d, { withFileTypes: true })) {
         const p = join(d, e.name);
-        if (e.isDirectory() && e.name !== '__tests__') walk(p);
-        else if (e.name.endsWith('.tsx')) files.push(p);
+        if (e.isDirectory()) {
+          if (!EXCLUDED_DIR_NAMES.has(e.name)) walk(p);
+        } else if (e.name.endsWith('.tsx')) {
+          // EXEMPT_FILES/EXEMPT_HITS are keyed with `/` (as written in this
+          // file); `join()` yields `\` on Windows, which would silently stop
+          // matching those lookups and fail the gate for every Windows
+          // contributor on every already-triaged exemption. Normalize once,
+          // here, rather than at each lookup site.
+          files.push(p.split('\\').join('/'));
+        }
       }
     };
-    walk(COMPONENTS_DIR);
+    walk(SCAN_DIR);
 
     const offenders: string[] = [];
     for (const file of files) {

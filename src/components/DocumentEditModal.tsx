@@ -18,15 +18,15 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 
 function validateDocument(text: string, t: TFunction): string | null {
-  if (!text.trim()) return t('editModal.errors.empty');
+  if (!text.trim()) return t('documents:editModal.errors.empty');
   let parsed: unknown;
   try {
     parsed = JSON.parse(shellToEjson(text));
   } catch (e: any) {
-    return t('editModal.errors.invalid', { message: e?.message || t('editModal.errors.syntaxError') });
+    return t('documents:editModal.errors.invalid', { message: e?.message || t('documents:editModal.errors.syntaxError') });
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return t('editModal.errors.mustBeObject');
+    return t('documents:editModal.errors.mustBeObject');
   }
   return null;
 }

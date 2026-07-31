@@ -1,4 +1,175 @@
 {
+  "aiChatPanel": {
+    "header": {
+      "title": "KI-Abfrageassistent",
+      "closeTitle": "KI-Assistent schließen"
+    },
+    "empty": {
+      "body": "Formuliere eine Abfrage in normaler Sprache — z. B. <i>„aktive Nutzer über 30, sortiert nach Alter“</i> oder<i> „durchschnittlicher Bestellwert pro Kunde“</i>. Ich erkläre, was ich tue, und du kannst das Ergebnis einfügen."
+    },
+    "roles": {
+      "you": "Du",
+      "assistant": "Assistent"
+    },
+    "queryType": {
+      "aggregate": "Aggregations-Pipeline",
+      "script": "Shell-Skript",
+      "find": "Find-Abfrage"
+    },
+    "actions": {
+      "copy": "Kopieren",
+      "insert": "Einfügen",
+      "insertAndRun": "Einfügen & ausführen"
+    },
+    "thinking": "Denke nach…",
+    "composer": {
+      "placeholder": "Beschreibe eine Abfrage… (Enter zum Senden, Umschalt+Enter für Zeilenumbruch)",
+      "send": "Senden"
+    },
+    "fallbackExplanation": "Hier ist eine Abfrage."
+  },
+  "commandPalette": {
+    "title": "Befehlspalette",
+    "searchPlaceholder": "Befehle, Sammlungen, gespeicherte Abfragen durchsuchen…",
+    "buckets": {
+      "commands": {
+        "label": "Befehle"
+      },
+      "collections": {
+        "label": "Sammlungen"
+      },
+      "queries": {
+        "label": "Gespeicherte Abfragen"
+      }
+    },
+    "scopeFilterTitle": "Sidebar-Filter: {{scope}}",
+    "scopeLabel": "Sidebar-Bereich",
+    "noMatchingResults": "Keine passenden Ergebnisse",
+    "typeMoreHint": "Mindestens 2 Zeichen eingeben, um Sammlungen zu durchsuchen",
+    "results_one": "{{count}} Ergebnis",
+    "results_other": "{{count}} Ergebnisse",
+    "noResults": "Keine Ergebnisse",
+    "hints": {
+      "navigate": "navigieren",
+      "run": "ausführen",
+      "close": "schließen"
+    },
+    "paletteActions": {
+      "newConnection": {
+        "title": "Neue Verbindung…",
+        "keywords": "verbinden datenbank hinzufügen server connect database add"
+      },
+      "toggleTheme": {
+        "title": "Hell-/Dunkelmodus umschalten",
+        "keywords": "darstellung farbe modus appearance color"
+      },
+      "openSettings": {
+        "title": "Einstellungen öffnen",
+        "keywords": "einstellungen konfiguration dichte preferences config density"
+      },
+      "openQuickstart": {
+        "title": "Schnellstart öffnen",
+        "keywords": "willkommen start hilfe welcome home help"
+      },
+      "refreshPaletteIndex": {
+        "title": "Befehlspalette-Index aktualisieren",
+        "keywords": "neu laden datenbanken sammlungen namensräume cache veraltet reload databases collections namespaces stale"
+      },
+      "densityRoomy": {
+        "title": "Dichte: Geräumig",
+        "keywords": "layout abstand spacing"
+      },
+      "densityCozy": {
+        "title": "Dichte: Gemütlich",
+        "keywords": "layout abstand spacing"
+      },
+      "densityCompact": {
+        "title": "Dichte: Kompakt",
+        "keywords": "layout abstand dicht spacing dense"
+      },
+      "openShell": {
+        "title": "mongosh-Shell öffnen",
+        "keywords": "terminal mongosh skript script"
+      },
+      "exportCollection": {
+        "title": "Sammlung exportieren…",
+        "keywords": "herunterladen json csv import download"
+      },
+      "analyzeSchema": {
+        "title": "Schema analysieren",
+        "keywords": "felder typen fields types"
+      },
+      "closeTab": {
+        "title": "Tab schließen",
+        "keywords": "tab"
+      },
+      "nextTab": {
+        "title": "Nächster Tab",
+        "keywords": "tab wechseln switch"
+      },
+      "prevTab": {
+        "title": "Vorheriger Tab",
+        "keywords": "tab wechseln switch"
+      },
+      "splitRight": {
+        "title": "Rechts teilen",
+        "keywords": "arbeitsbereich bereich layout workspace pane"
+      },
+      "splitDown": {
+        "title": "Unten teilen",
+        "keywords": "arbeitsbereich bereich layout workspace pane"
+      },
+      "focusNextPane": {
+        "title": "Nächsten Bereich fokussieren",
+        "keywords": "arbeitsbereich bereich layout wechseln workspace pane switch"
+      },
+      "openMonitoring": {
+        "title": "Monitoring öffnen: {{name}}",
+        "keywords": "monitoring metriken server status profiler metrics"
+      },
+      "manageUsers": {
+        "title": "Benutzer verwalten: {{name}}",
+        "keywords": "benutzer rollen zugriff berechtigungen authentifizierung administration users roles access permissions authentication admin"
+      },
+      "checkUpdates": {
+        "title": "Nach Updates suchen",
+        "keywords": "version aktualisierung release upgrade"
+      }
+    },
+    "dynamic": {
+      "savedQueryTitle": "Gespeicherte Abfrage: {{name}}",
+      "savedQueryKeywords": "gespeicherte abfrage {{collection}} {{db}} saved query",
+      "collectionKeywords": "sammlung {{db}} {{connectionName}} collection"
+    }
+  },
+  "connectionCard": {
+    "tooltip": {
+      "alreadyConnected": "Bereits verbunden",
+      "connectTo": "Mit {{name}} verbinden"
+    },
+    "ariaLabel": {
+      "alreadyConnected": "{{name}} – bereits verbunden"
+    },
+    "badge": {
+      "srvTooltip": "MongoDB-SRV-Eintrag",
+      "srv": "SRV",
+      "ssh": "SSH",
+      "connected": "Verbunden"
+    },
+    "connecting": "Verbinde…",
+    "connect": "Verbinden"
+  },
+  "dialog": {
+    "resizeAriaLabel": "Dialog in der Größe ändern",
+    "resizeTitle": "Zum Ändern der Größe ziehen"
+  },
+  "keyboardShortcuts": {
+    "title": "Tastenkürzel",
+    "description": "Globale Tastenkürzel für Navigation, Abfragen, die Sidebar, Zoom und die Befehlspalette.",
+    "searchPlaceholder": "Tastenkürzel durchsuchen…",
+    "searchAriaLabel": "Tastenkürzel durchsuchen",
+    "empty": "Keine Tastenkürzel entsprechen deiner Suche."
+  },
   "mongoShell": {
     "help": {
       "title": "Shell-Hilfe",
@@ -65,86 +236,6 @@
       "runAnyway": "Trotzdem ausführen"
     }
   },
-  "taskManager": {
-    "ariaLabel": "Aufgabenverwaltung",
-    "header": {
-      "title": "Aufgaben",
-      "runningBadge": "{{count}} laufend"
-    },
-    "actions": {
-      "refreshTasks": "Aufgaben aktualisieren",
-      "clearFinishedTasks": "Abgeschlossene Aufgaben löschen",
-      "cancel": "Abbrechen",
-      "cancelling": "Wird abgebrochen…"
-    },
-    "empty": {
-      "noTasks": "Noch keine Hintergrundaufgaben."
-    },
-    "status": {
-      "running": "läuft",
-      "completed": "abgeschlossen",
-      "failed": "fehlgeschlagen",
-      "cancelled": "abgebrochen"
-    },
-    "row": {
-      "itemsProgressSuffix": " · {{processed}}/{{total}} Sammlungen",
-      "summary": {
-        "copied": "{{count}} kopiert",
-        "skippedSuffix": ", {{count}} übersprungen",
-        "indexesSuffix": ", {{count}} Indizes",
-        "failedSuffix": " · {{count}} fehlgeschlagen",
-        "skippedTitlePrefix": "Übersprungen: {{list}}"
-      }
-    }
-  },
-  "commandPalette": {
-    "title": "Befehlspalette",
-    "searchPlaceholder": "Befehle, Sammlungen, gespeicherte Abfragen durchsuchen…",
-    "buckets": {
-      "commands": { "label": "Befehle" },
-      "collections": { "label": "Sammlungen" },
-      "queries": { "label": "Gespeicherte Abfragen" }
-    },
-    "scopeFilterTitle": "Sidebar-Filter: {{scope}}",
-    "scopeLabel": "Sidebar-Bereich",
-    "noMatchingResults": "Keine passenden Ergebnisse",
-    "typeMoreHint": "Mindestens 2 Zeichen eingeben, um Sammlungen zu durchsuchen",
-    "results_one": "{{count}} Ergebnis",
-    "results_other": "{{count}} Ergebnisse",
-    "noResults": "Keine Ergebnisse",
-    "hints": {
-      "navigate": "navigieren",
-      "run": "ausführen",
-      "close": "schließen"
-    },
-    "paletteActions": {
-      "newConnection": { "title": "Neue Verbindung…", "keywords": "verbinden datenbank hinzufügen server connect database add" },
-      "toggleTheme": { "title": "Hell-/Dunkelmodus umschalten", "keywords": "darstellung farbe modus appearance color" },
-      "openSettings": { "title": "Einstellungen öffnen", "keywords": "einstellungen konfiguration dichte preferences config density" },
-      "openQuickstart": { "title": "Schnellstart öffnen", "keywords": "willkommen start hilfe welcome home help" },
-      "refreshPaletteIndex": { "title": "Befehlspalette-Index aktualisieren", "keywords": "neu laden datenbanken sammlungen namensräume cache veraltet reload databases collections namespaces stale" },
-      "densityRoomy": { "title": "Dichte: Geräumig", "keywords": "layout abstand spacing" },
-      "densityCozy": { "title": "Dichte: Gemütlich", "keywords": "layout abstand spacing" },
-      "densityCompact": { "title": "Dichte: Kompakt", "keywords": "layout abstand dicht spacing dense" },
-      "openShell": { "title": "mongosh-Shell öffnen", "keywords": "terminal mongosh skript script" },
-      "exportCollection": { "title": "Sammlung exportieren…", "keywords": "herunterladen json csv import download" },
-      "analyzeSchema": { "title": "Schema analysieren", "keywords": "felder typen fields types" },
-      "closeTab": { "title": "Tab schließen", "keywords": "tab" },
-      "nextTab": { "title": "Nächster Tab", "keywords": "tab wechseln switch" },
-      "prevTab": { "title": "Vorheriger Tab", "keywords": "tab wechseln switch" },
-      "splitRight": { "title": "Rechts teilen", "keywords": "arbeitsbereich bereich layout workspace pane" },
-      "splitDown": { "title": "Unten teilen", "keywords": "arbeitsbereich bereich layout workspace pane" },
-      "focusNextPane": { "title": "Nächsten Bereich fokussieren", "keywords": "arbeitsbereich bereich layout wechseln workspace pane switch" },
-      "openMonitoring": { "title": "Monitoring öffnen: {{name}}", "keywords": "monitoring metriken server status profiler metrics" },
-      "manageUsers": { "title": "Benutzer verwalten: {{name}}", "keywords": "benutzer rollen zugriff berechtigungen authentifizierung administration users roles access permissions authentication admin" },
-      "checkUpdates": { "title": "Nach Updates suchen", "keywords": "version aktualisierung release upgrade" }
-    },
-    "dynamic": {
-      "savedQueryTitle": "Gespeicherte Abfrage: {{name}}",
-      "savedQueryKeywords": "gespeicherte abfrage {{collection}} {{db}} saved query",
-      "collectionKeywords": "sammlung {{db}} {{connectionName}} collection"
-    }
-  },
   "quickStart": {
     "header": {
       "eyebrow": "Schnellstart",
@@ -185,6 +276,88 @@
       "localStorageTitle": "Lokaler Speicher",
       "localStorageDescription": "Alles bleibt auf deinem Rechner.",
       "dataDirectory": "Datenverzeichnis"
+    }
+  },
+  "reconnectBanner": {
+    "disconnected": "Getrennt"
+  },
+  "statusBar": {
+    "engineOnline": "MQLens-Engine online",
+    "cpu": "CPU {{value}}",
+    "ram": "RAM {{value}}",
+    "mongodb": "MongoDB {{value}}",
+    "resetZoom": "Zoom zurücksetzen ({{shortcut}})",
+    "tasks": "Aufgaben",
+    "runningTasks_one": "{{count}} laufende Aufgabe",
+    "runningTasks_other": "{{count}} laufende Aufgaben",
+    "backgroundTasks": "Hintergrundaufgaben",
+    "appVersion": "MQLens {{version}}"
+  },
+  "taskManager": {
+    "ariaLabel": "Aufgabenverwaltung",
+    "header": {
+      "title": "Aufgaben",
+      "runningBadge_one": "{{count}} laufend",
+      "runningBadge_other": "{{count}} laufend"
+    },
+    "actions": {
+      "refreshTasks": "Aufgaben aktualisieren",
+      "clearFinishedTasks": "Abgeschlossene Aufgaben löschen",
+      "cancel": "Abbrechen",
+      "cancelling": "Wird abgebrochen…"
+    },
+    "empty": {
+      "noTasks": "Noch keine Hintergrundaufgaben."
+    },
+    "status": {
+      "running": "läuft",
+      "completed": "abgeschlossen",
+      "failed": "fehlgeschlagen",
+      "cancelled": "abgebrochen"
+    },
+    "row": {
+      "itemsProgressSuffix": " · {{processed}}/{{total}} Sammlungen",
+      "summary": {
+        "copied_one": "{{count}} kopiert",
+        "copied_other": "{{count}} kopiert",
+        "skippedSuffix_one": ", {{count}} übersprungen",
+        "skippedSuffix_other": ", {{count}} übersprungen",
+        "indexesSuffix_one": ", {{count}} Index",
+        "indexesSuffix_other": ", {{count}} Indizes",
+        "failedSuffix_one": " · {{count}} fehlgeschlagen",
+        "failedSuffix_other": " · {{count}} fehlgeschlagen",
+        "skippedTitlePrefix": "Übersprungen: {{list}}"
+      }
+    }
+  },
+  "toastStack": {
+    "defaultTitle": {
+      "success": "Erfolg",
+      "error": "Fehler",
+      "info": "Hinweis"
+    },
+    "dismissAriaLabel": "Benachrichtigung verwerfen"
+  },
+  "toolSetupDialog": {
+    "title": "MongoDB-Tools einrichten",
+    "checkingTools": "Installierte Tools werden geprüft…",
+    "intro": "MQLens benötigt diese Kommandozeilen-Tools für Dump, Restore, Import und Export. Wähle aus, welche installiert oder neu installiert werden sollen.",
+    "toolLabels": {
+      "databaseTools": "Database Tools (mongodump, mongorestore)",
+      "mongosh": "mongosh"
+    },
+    "installedBadge": "Installiert",
+    "pathSuffix": " — {{path}}",
+    "reinstallWarning": "Wird neu installiert: bereits installierte, angehakte Tools werden erneut heruntergeladen und ersetzt.",
+    "sizeNote": "Downloads sind pro Tool etwa 50–100 MB groß und werden im Datenverzeichnis der App zwischengespeichert.",
+    "licenseNote": "Offizielle Apache-2.0-Builds, heruntergeladen von mongodb.com",
+    "cancelled": "Abgebrochen",
+    "actions": {
+      "install": "Installieren",
+      "starting": "Wird gestartet…",
+      "retry": "Erneut versuchen",
+      "dismiss": "Verwerfen",
+      "done": "Fertig"
     }
   },
   "updatePrompt": {
@@ -234,100 +407,6 @@
       "generic": "Biometrie verwenden"
     }
   },
-  "statusBar": {
-    "engineOnline": "MQLens-Engine online",
-    "cpu": "CPU {{value}}",
-    "ram": "RAM {{value}}",
-    "mongodb": "MongoDB {{value}}",
-    "resetZoom": "Zoom zurücksetzen ({{shortcut}})",
-    "tasks": "Aufgaben",
-    "runningTasks": "{{count}} laufende Aufgabe(n)",
-    "backgroundTasks": "Hintergrundaufgaben",
-    "appVersion": "MQLens {{version}}"
-  },
-  "toastStack": {
-    "defaultTitle": {
-      "success": "Erfolg",
-      "error": "Fehler",
-      "info": "Hinweis"
-    },
-    "dismissAriaLabel": "Benachrichtigung verwerfen"
-  },
-  "aiChatPanel": {
-    "header": {
-      "title": "KI-Abfrageassistent",
-      "closeTitle": "KI-Assistent schließen"
-    },
-    "empty": {
-      "body": "Formuliere eine Abfrage in normaler Sprache — z. B. <i>„aktive Nutzer über 30, sortiert nach Alter“</i> oder<i> „durchschnittlicher Bestellwert pro Kunde“</i>. Ich erkläre, was ich tue, und du kannst das Ergebnis einfügen."
-    },
-    "roles": {
-      "you": "Du",
-      "assistant": "Assistent"
-    },
-    "queryType": {
-      "aggregate": "Aggregations-Pipeline",
-      "script": "Shell-Skript",
-      "find": "Find-Abfrage"
-    },
-    "actions": {
-      "copy": "Kopieren",
-      "insert": "Einfügen",
-      "insertAndRun": "Einfügen & ausführen"
-    },
-    "thinking": "Denke nach…",
-    "composer": {
-      "placeholder": "Beschreibe eine Abfrage… (Enter zum Senden, Umschalt+Enter für Zeilenumbruch)",
-      "send": "Senden"
-    },
-    "fallbackExplanation": "Hier ist eine Abfrage."
-  },
-  "toolSetupDialog": {
-    "title": "MongoDB-Tools einrichten",
-    "checkingTools": "Installierte Tools werden geprüft…",
-    "intro": "MQLens benötigt diese Kommandozeilen-Tools für Dump, Restore, Import und Export. Wähle aus, welche installiert oder neu installiert werden sollen.",
-    "toolLabels": {
-      "databaseTools": "Database Tools (mongodump, mongorestore)",
-      "mongosh": "mongosh"
-    },
-    "installedBadge": "Installiert",
-    "pathSuffix": " — {{path}}",
-    "reinstallWarning": "Wird neu installiert: bereits installierte, angehakte Tools werden erneut heruntergeladen und ersetzt.",
-    "sizeNote": "Downloads sind pro Tool etwa 50–100 MB groß und werden im Datenverzeichnis der App zwischengespeichert.",
-    "licenseNote": "Offizielle Apache-2.0-Builds, heruntergeladen von mongodb.com",
-    "cancelled": "Abgebrochen",
-    "actions": {
-      "install": "Installieren",
-      "starting": "Wird gestartet…",
-      "retry": "Erneut versuchen",
-      "dismiss": "Verwerfen",
-      "done": "Fertig"
-    }
-  },
-  "connectionCard": {
-    "tooltip": {
-      "alreadyConnected": "Bereits verbunden",
-      "connectTo": "Mit {{name}} verbinden"
-    },
-    "ariaLabel": {
-      "alreadyConnected": "{{name}} – bereits verbunden"
-    },
-    "badge": {
-      "srvTooltip": "MongoDB-SRV-Eintrag",
-      "srv": "SRV",
-      "ssh": "SSH",
-      "connected": "Verbunden"
-    },
-    "connecting": "Verbinde…",
-    "connect": "Verbinden"
-  },
-  "keyboardShortcuts": {
-    "title": "Tastenkürzel",
-    "description": "Globale Tastenkürzel für Navigation, Abfragen, die Sidebar, Zoom und die Befehlspalette.",
-    "searchPlaceholder": "Tastenkürzel durchsuchen…",
-    "searchAriaLabel": "Tastenkürzel durchsuchen",
-    "empty": "Keine Tastenkürzel entsprechen deiner Suche."
-  },
   "workspaceTabBar": {
     "closeTab": "{{label}} schließen",
     "closeTooltip": "Tab schließen",
@@ -337,9 +416,5 @@
       "moveToWindow": "Verschieben nach {{target}}",
       "unmirroredExplanation": "Export-/Import-Tabs bleiben in ihrem Fenster"
     }
-  },
-  "dialog": {
-    "resizeAriaLabel": "Dialog in der Größe ändern",
-    "resizeTitle": "Zum Ändern der Größe ziehen"
   }
 }

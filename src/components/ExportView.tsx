@@ -114,11 +114,11 @@ function checkJsonObject(raw: string, t: TFunc): { ok: boolean; error?: string }
   try {
     const value = JSON.parse(trimmed);
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-      return { ok: false, error: t('exportView.errors.mustBeObject') };
+      return { ok: false, error: t('transfer:exportView.errors.mustBeObject') };
     }
     return { ok: true };
   } catch {
-    return { ok: false, error: t('exportView.errors.invalidJson') };
+    return { ok: false, error: t('transfer:exportView.errors.invalidJson') };
   }
 }
 
@@ -128,10 +128,10 @@ function checkJsonArray(raw: string, t: TFunc): { ok: boolean; error?: string } 
   if (trimmed === '' || trimmed === '[]') return { ok: true };
   try {
     const value = JSON.parse(trimmed);
-    if (!Array.isArray(value)) return { ok: false, error: t('exportView.errors.pipelineMustBeArray') };
+    if (!Array.isArray(value)) return { ok: false, error: t('transfer:exportView.errors.pipelineMustBeArray') };
     return { ok: true };
   } catch {
-    return { ok: false, error: t('exportView.errors.invalidJson') };
+    return { ok: false, error: t('transfer:exportView.errors.invalidJson') };
   }
 }
 
@@ -466,7 +466,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
               </div>
               {!delimiterValid && (
                 <span className="w-full text-xs text-destructive">
-                  {t('exportView.errors.delimiterAscii')}
+                  {t('transfer:exportView.errors.delimiterAscii')}
                 </span>
               )}
             </div>

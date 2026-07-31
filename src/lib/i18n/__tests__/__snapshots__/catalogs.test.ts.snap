@@ -14,7 +14,13 @@ exports[`locale catalogs > keeps a snapshot of which values carry significant le
 ]
 `;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 6`] = `[]`;
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 6`] = `
+[
+  "dataGrid.dialogs.bulkAllWarning_one",
+  "dataGrid.dialogs.bulkAllWarning_other",
+  "dataGrid.dialogs.typeCollectionNameSuffix",
+]
+`;
 
 exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 7`] = `
 [
@@ -34,7 +40,8 @@ exports[`locale catalogs > keeps a snapshot of which values carry significant le
   "monitoringView.cluster.summaryYouClause",
   "monitoringView.status.replSetClause",
   "monitoringView.status.uptimeClause",
-  "monitoringView.tabs.opsCount",
+  "monitoringView.tabs.opsCount_one",
+  "monitoringView.tabs.opsCount_other",
 ]
 `;
 
@@ -53,7 +60,8 @@ exports[`locale catalogs > keeps a snapshot of which values carry significant le
   "mongoShell.help.showDbs",
   "mongoShell.help.useDb",
   "taskManager.row.itemsProgressSuffix",
-  "taskManager.row.summary.failedSuffix",
+  "taskManager.row.summary.failedSuffix_one",
+  "taskManager.row.summary.failedSuffix_other",
   "toolSetupDialog.pathSuffix",
 ]
 `;
@@ -76,7 +84,13 @@ exports[`locale catalogs > keeps a snapshot of which values carry significant le
 ]
 `;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 15`] = `[]`;
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 15`] = `
+[
+  "dataGrid.dialogs.bulkAllWarning_one",
+  "dataGrid.dialogs.bulkAllWarning_other",
+  "dataGrid.dialogs.typeCollectionNameSuffix",
+]
+`;
 
 exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 16`] = `
 [
@@ -96,7 +110,8 @@ exports[`locale catalogs > keeps a snapshot of which values carry significant le
   "monitoringView.cluster.summaryYouClause",
   "monitoringView.status.replSetClause",
   "monitoringView.status.uptimeClause",
-  "monitoringView.tabs.opsCount",
+  "monitoringView.tabs.opsCount_one",
+  "monitoringView.tabs.opsCount_other",
 ]
 `;
 
@@ -115,7 +130,8 @@ exports[`locale catalogs > keeps a snapshot of which values carry significant le
   "mongoShell.help.showDbs",
   "mongoShell.help.useDb",
   "taskManager.row.itemsProgressSuffix",
-  "taskManager.row.summary.failedSuffix",
+  "taskManager.row.summary.failedSuffix_one",
+  "taskManager.row.summary.failedSuffix_other",
   "toolSetupDialog.pathSuffix",
 ]
 `;

@@ -24,9 +24,9 @@ import {
 // Takes `t` as a parameter rather than calling useTranslation itself — this is
 // a module-level helper (not a component), so it can't call hooks directly.
 function biometryLabel(t: (key: string) => string, type: number): string {
-  if (type === 2) return t('vaultGate.biometry.touchId');
-  if (type === 3) return t('vaultGate.biometry.faceId');
-  return t('vaultGate.biometry.generic');
+  if (type === 2) return t('shell:vaultGate.biometry.touchId');
+  if (type === 3) return t('shell:vaultGate.biometry.faceId');
+  return t('shell:vaultGate.biometry.generic');
 }
 
 interface VaultGateProps {

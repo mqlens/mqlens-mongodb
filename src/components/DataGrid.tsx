@@ -121,15 +121,15 @@ const defaultExplainT: ExplainTFunc = (key, options) => {
 
 const getStageNameLabel = (stage: string, t: ExplainTFunc = defaultExplainT): string => {
   const s = stage.toUpperCase();
-  if (s === 'COLLSCAN') return t('dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' });
-  if (s === 'IXSCAN') return t('dataGrid.explain.stage.indexScan', { defaultValue: 'Index scan' });
-  if (s === 'FETCH') return t('dataGrid.explain.stage.fetchDocuments', { defaultValue: 'Fetch documents' });
-  if (s === 'PROJECTION_SIMPLE' || s === 'PROJECTION') return t('dataGrid.explain.stage.projection', { defaultValue: 'Projection' });
-  if (s === 'SORT') return t('dataGrid.explain.stage.sort', { defaultValue: 'Sort' });
-  if (s === 'SKIP') return t('dataGrid.explain.stage.skip', { defaultValue: 'Skip' });
-  if (s === 'LIMIT') return t('dataGrid.explain.stage.limit', { defaultValue: 'Limit' });
-  if (s === 'OR') return t('dataGrid.explain.stage.orMerge', { defaultValue: 'OR Merge' });
-  if (s === 'AND_HASH' || s === 'AND_SORTED') return t('dataGrid.explain.stage.indexIntersection', { defaultValue: 'Index Intersection' });
+  if (s === 'COLLSCAN') return t('documents:dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' });
+  if (s === 'IXSCAN') return t('documents:dataGrid.explain.stage.indexScan', { defaultValue: 'Index scan' });
+  if (s === 'FETCH') return t('documents:dataGrid.explain.stage.fetchDocuments', { defaultValue: 'Fetch documents' });
+  if (s === 'PROJECTION_SIMPLE' || s === 'PROJECTION') return t('documents:dataGrid.explain.stage.projection', { defaultValue: 'Projection' });
+  if (s === 'SORT') return t('documents:dataGrid.explain.stage.sort', { defaultValue: 'Sort' });
+  if (s === 'SKIP') return t('documents:dataGrid.explain.stage.skip', { defaultValue: 'Skip' });
+  if (s === 'LIMIT') return t('documents:dataGrid.explain.stage.limit', { defaultValue: 'Limit' });
+  if (s === 'OR') return t('documents:dataGrid.explain.stage.orMerge', { defaultValue: 'OR Merge' });
+  if (s === 'AND_HASH' || s === 'AND_SORTED') return t('documents:dataGrid.explain.stage.indexIntersection', { defaultValue: 'Index Intersection' });
   return stage.charAt(0).toUpperCase() + stage.slice(1).toLowerCase();
 };
 
@@ -152,7 +152,7 @@ const makeParseStage = (namespace: string, t: ExplainTFunc = defaultExplainT) =>
     if (children.length === 0) {
       if (stageName === 'IXSCAN') {
         children.push({
-          name: t('dataGrid.explain.labels.indexNode', {
+          name: t('documents:dataGrid.explain.labels.indexNode', {
             indexName: stageObj.indexName || "category_1",
             defaultValue: 'Index: {{indexName}}',
           }),
@@ -161,7 +161,7 @@ const makeParseStage = (namespace: string, t: ExplainTFunc = defaultExplainT) =>
         });
       } else {
         children.push({
-          name: t('dataGrid.explain.labels.collectionNode', {
+          name: t('documents:dataGrid.explain.labels.collectionNode', {
             namespace,
             defaultValue: 'Collection\n{{namespace}}',
           }),
@@ -197,7 +197,7 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
       const cursorChild: ExplainNode = cursorQP?.winningPlan
         ? parseStage(cursorQP.winningPlan)
         : {
-            name: t('dataGrid.explain.labels.collectionNode', { namespace, defaultValue: 'Collection\n{{namespace}}' }),
+            name: t('documents:dataGrid.explain.labels.collectionNode', { namespace, defaultValue: 'Collection\n{{namespace}}' }),
             type: 'collection',
             detail: namespace,
           };
@@ -210,7 +210,7 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
           current = {
             name: '$cursor',
             type: 'stage',
-            detail: t('dataGrid.explain.labels.documentsFromCollection', { defaultValue: 'Documents from collection' }),
+            detail: t('documents:dataGrid.explain.labels.documentsFromCollection', { defaultValue: 'Documents from collection' }),
             children: [cursorChild],
           };
         } else {
@@ -222,7 +222,7 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
           };
         }
       });
-      return { name: t('dataGrid.explain.stage.result', { defaultValue: 'Result' }), type: "result", children: current ? [current] : [] };
+      return { name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }), type: "result", children: current ? [current] : [] };
     }
 
     const queryPlanner = explainJson?.queryPlanner || {};
@@ -231,16 +231,16 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
 
     if (!winningPlan) {
       return {
-        name: t('dataGrid.explain.stage.result', { defaultValue: 'Result' }),
+        name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
         type: "result",
         children: [
           {
-            name: t('dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' }),
+            name: t('documents:dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' }),
             type: "stage",
             detail: "COLLSCAN",
             children: [
               {
-                name: t('dataGrid.explain.labels.collectionNode', { namespace, defaultValue: 'Collection\n{{namespace}}' }),
+                name: t('documents:dataGrid.explain.labels.collectionNode', { namespace, defaultValue: 'Collection\n{{namespace}}' }),
                 type: "collection",
                 detail: namespace
               }
@@ -251,7 +251,7 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
     }
 
     return {
-      name: t('dataGrid.explain.stage.result', { defaultValue: 'Result' }),
+      name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
       type: "result",
       children: [makeParseStage(namespace, t)(winningPlan)]
     };
@@ -259,16 +259,16 @@ export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExpl
   } catch (e) {
     console.error("Failed to parse explain tree", e);
     return {
-      name: t('dataGrid.explain.stage.result', { defaultValue: 'Result' }),
+      name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
       type: "result",
       children: [
         {
-          name: t('dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' }),
+          name: t('documents:dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' }),
           type: "stage",
           detail: "COLLSCAN",
           children: [
             {
-              name: t('dataGrid.explain.labels.collectionFallback', { defaultValue: 'Collection' }),
+              name: t('documents:dataGrid.explain.labels.collectionFallback', { defaultValue: 'Collection' }),
               type: "collection",
               detail: "collection"
             }
@@ -447,7 +447,7 @@ const JsonRow = ({
             onClick={() => toggleFold(line.foldId!)}
             className="flex cursor-pointer items-center justify-center rounded-sm hover:bg-accent hover:text-foreground"
             data-testid="json-fold-btn"
-            aria-label={folded ? t('dataGrid.tooltips.expand') : t('dataGrid.tooltips.collapse')}
+            aria-label={folded ? t('documents:dataGrid.tooltips.expand') : t('documents:dataGrid.tooltips.collapse')}
           >
             {folded ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
           </button>
@@ -1248,7 +1248,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
               onClick={() => toggleTreeFold(row.foldId!)}
               className="mr-1 flex shrink-0 items-center text-muted-foreground hover:text-foreground"
               data-testid="tree-fold-btn"
-              aria-label={collapsed ? t('dataGrid.tooltips.expand') : t('dataGrid.tooltips.collapse')}
+              aria-label={collapsed ? t('documents:dataGrid.tooltips.expand') : t('documents:dataGrid.tooltips.collapse')}
             >
               {collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
             </button>

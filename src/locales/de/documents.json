@@ -55,6 +55,11 @@
       "valuePlaceholder": "Wert"
     },
     "dialogs": {
+      "runAggregate": {
+        "messageUnknownTarget": "Diese Pipeline schreibt über $out/$merge in eine Sammlung auf einer abgesicherten Verbindung, aber das Ziel konnte nicht automatisch ermittelt werden.\n\nGib CONFIRM ein, um fortzufahren.",
+        "messageWithTarget": "Diese Pipeline schreibt in \"{{target}}\" ($out/$merge) auf einer abgesicherten Verbindung.\n\nGib den Namen der Zielsammlung ein, um zu bestätigen.",
+        "title": "Aggregation ausführen"
+      },
       "saveQuery": {
         "message": "Gib einen Namen für diese Abfrage ein:",
         "nameRequired": "Name ist erforderlich",
@@ -70,7 +75,8 @@
       "invalidJsonSyntax": "Ungültige JSON-Syntax: {{message}}"
     },
     "history": {
-      "aggregateSummary": "aggregate · {{count}} Stufe(n)",
+      "aggregateSummary_one": "aggregate · {{count}} Stufe",
+      "aggregateSummary_other": "aggregate · {{count}} Stufen",
       "findSummary": "find · {{filter}}"
     },
     "pipeline": {
@@ -141,16 +147,20 @@
   "diffModal": {
     "title": "Dokumente vergleichen",
     "errors": {
-      "tooLarge": "Dieser Diff ist zu groß für die Anzeige ({{count}} Zeilen)"
+      "tooLarge_one": "Dieser Diff ist zu groß für die Anzeige ({{count}} Zeile)",
+      "tooLarge_other": "Dieser Diff ist zu groß für die Anzeige ({{count}} Zeilen)"
     },
     "labels": {
       "documentA": "Dokument A",
       "documentB": "Dokument B"
     },
     "summary": {
-      "added": "{{count}} hinzugefügt",
-      "changed": "{{count}} geändert",
-      "removed": "{{count}} entfernt"
+      "added_one": "{{count}} hinzugefügt",
+      "added_other": "{{count}} hinzugefügt",
+      "changed_one": "{{count}} geändert",
+      "changed_other": "{{count}} geändert",
+      "removed_one": "{{count}} entfernt",
+      "removed_other": "{{count}} entfernt"
     },
     "tooltips": {
       "closeModal": "Fenster schließen"
@@ -198,7 +208,8 @@
     "footer": {
       "charting_one": "{{count}} geladenes Dokument wird dargestellt — erhöhe das Seitengrößen-Limit, um mehr zu visualisieren.",
       "charting_other": "{{count}} geladene Dokumente werden dargestellt — erhöhe das Seitengrößen-Limit, um mehr zu visualisieren.",
-      "truncatedNote": "(+{{count}} weitere {{unit}} nicht angezeigt)",
+      "truncatedNote_one": "(+{{count}} weitere {{unit}} nicht angezeigt)",
+      "truncatedNote_other": "(+{{count}} weitere {{unit}} nicht angezeigt)",
       "unitCategories": "Kategorien",
       "unitPoints": "Punkte"
     },
@@ -249,6 +260,22 @@
       "schema": "Schema",
       "updateMany": "Mehrere aktualisieren"
     },
+    "dialogs": {
+      "bulkAllWarning_one": "\n\n⚠ Dies betrifft ALLE {{count}} Dokument in der Sammlung.",
+      "bulkAllWarning_other": "\n\n⚠ Dies betrifft ALLE {{count}} Dokumente in der Sammlung.",
+      "copyErrorMessage": "Fehlermeldung kopieren",
+      "deleteMany": {
+        "body_one": "Lösche {{count}} Dokument, das folgendem Kriterium entspricht:\n{{filter}}",
+        "body_other": "Lösche {{count}} Dokumente, die folgendem Kriterium entsprechen:\n{{filter}}",
+        "title": "Mehrere löschen"
+      },
+      "typeCollectionNameSuffix": "\n\nGib den Namen der Sammlung ein, um zu bestätigen.",
+      "updateMany": {
+        "body_one": "Wende dieses Update auf {{count}} Dokument an, das folgendem Kriterium entspricht:\n{{filter}}",
+        "body_other": "Wende dieses Update auf {{count}} Dokumente an, die folgendem Kriterium entsprechen:\n{{filter}}",
+        "title": "Mehrere aktualisieren"
+      }
+    },
     "empty": {
       "explainHint": "Um einen zu erstellen, öffne das <strong>Ausführen</strong>-Dropdown-Menü in der Symbolleiste des Abfrageeditors und wähle <strong>Explain ausführen</strong>.",
       "noDocuments": "Keine Dokumente gefunden, die den Kriterien entsprechen.",
@@ -277,8 +304,10 @@
     },
     "labels": {
       "actions": "Aktionen",
-      "docsCountEstimated": "~{{count}} Dokumente",
-      "docsCountExact": "{{count}} Dokumente",
+      "docsCountEstimated_one": "~{{count}} Dokument",
+      "docsCountEstimated_other": "~{{count}} Dokumente",
+      "docsCountExact_one": "{{count}} Dokument",
+      "docsCountExact_other": "{{count}} Dokumente",
       "elements_one": "[ {{count}} Element ]",
       "elements_other": "[ {{count}} Elemente ]",
       "fields_one": "{ {{count}} Feld }",
@@ -291,6 +320,7 @@
       "queryPlanGenerated": "Abfrageplan erstellt",
       "showingEmpty": "zeige {{from}}",
       "showingRange": "zeige {{from}}–{{to}}",
+      "streamingDocuments": "Dokumente werden asynchron gestreamt...",
       "type": "Typ",
       "value": "Wert"
     },
@@ -333,7 +363,8 @@
       "analyzing": "Schema wird analysiert…",
       "coverage": "Abdeckung",
       "field": "Feld",
-      "fieldsCount": "{{count}} Felder",
+      "fieldsCount_one": "{{count}} Feld",
+      "fieldsCount_other": "{{count}} Felder",
       "planned": "Geplant",
       "sampledSummary": "{{sampled}} Dokumente untersucht · {{fields}} Felder",
       "schemaPrefix": "Schema:",

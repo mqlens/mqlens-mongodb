@@ -126,8 +126,11 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   // abbreviations and pure-interpolation fragments, identical spelling in
   // both languages.
   'admin:monitoringView.title', // Monitoring — established German loanword for ops/infra monitoring
-  'admin:monitoringView.tabs.opsCount', // " ({{count}})" — punctuation + interpolation only
+  'admin:monitoringView.tabs.opsCount_one', // " ({{count}})" — punctuation + interpolation only
+  'admin:monitoringView.tabs.opsCount_other', // " ({{count}})" — punctuation + interpolation only
   'admin:monitoringView.tabs.profiler', // Profiler — established loanword
+  'admin:monitoringView.labels.opid', // opid — literal MongoDB currentOp field name, never translated
+  'admin:monitoringView.labels.ns', // ns — literal MongoDB currentOp field name, never translated
   'admin:monitoringView.tabs.cluster', // Cluster — explicitly a kept loanword per the terminology brief
   'admin:monitoringView.status.hostVersion', // "{{host}} · MongoDB {{version}}" — product name + interpolation only
   'admin:monitoringView.status.replSetClause', // " · {{replSet}}" — pure interpolation, matches sidebar:tree.offlineSuffix pattern
