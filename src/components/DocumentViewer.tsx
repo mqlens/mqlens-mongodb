@@ -213,17 +213,22 @@ interface DocumentViewerProps {
   children?: React.ReactNode;
 }
 
-const OPERATORS = [
+// Comparison operators are bare symbols (=, !=, >, ...), not language, so they
+// stay literal `label`s. The word operators (in / not in / regex / exists)
+// are real English words a German user reads as prose, so they route through
+// `labelKey` instead — same module-level-constant pattern as STAGE_OPERATORS
+// below, translated at render time.
+const OPERATORS: { value: string; label?: string; labelKey?: string }[] = [
   { value: '$eq', label: '=' },
   { value: '$ne', label: '!=' },
   { value: '$gt', label: '>' },
   { value: '$gte', label: '>=' },
   { value: '$lt', label: '<' },
   { value: '$lte', label: '<=' },
-  { value: '$in', label: 'in' },
-  { value: '$nin', label: 'not in' },
-  { value: '$regex', label: 'regex' },
-  { value: '$exists', label: 'exists' },
+  { value: '$in', labelKey: 'documentViewer.builder.operators.in' },
+  { value: '$nin', labelKey: 'documentViewer.builder.operators.notIn' },
+  { value: '$regex', labelKey: 'documentViewer.builder.operators.regex' },
+  { value: '$exists', labelKey: 'documentViewer.builder.operators.exists' },
 ];
 
 // MongoDB aggregation pipeline stages, grouped for the stage-operator dropdown.
@@ -2007,7 +2012,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                                 data-testid={`rule-operator-${rule.id}`}
                               >
                                 {OPERATORS.map(op => (
-                                  <option key={op.value} value={op.value}>{op.label}</option>
+                                  <option key={op.value} value={op.value}>{op.labelKey ? td(op.labelKey) : op.label}</option>
                                 ))}
                               </select>
 

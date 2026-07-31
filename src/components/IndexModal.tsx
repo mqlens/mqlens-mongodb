@@ -349,7 +349,7 @@ export const IndexModal: React.FC<IndexModalProps> = ({
                               type="text"
                               value={rule.field === '__custom__' ? '' : rule.field}
                               onChange={(e) => handleKeyRowChange(idx, { field: e.target.value })}
-                              placeholder="field.path"
+                              placeholder={t('indexModal.placeholders.fieldPath')}
                               required
                               className="min-w-0 flex-1 font-mono text-sm"
                               data-testid={`index-key-field-${idx}`}

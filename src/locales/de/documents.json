@@ -43,6 +43,12 @@
       "includeOption": "Einschließen ({{n}})",
       "matchAll": "Alle abgleichen ({{op}})",
       "matchAny": "Beliebige abgleichen ({{op}})",
+      "operators": {
+        "in": "in",
+        "notIn": "nicht in",
+        "regex": "Regex",
+        "exists": "vorhanden"
+      },
       "projection": "Projektion",
       "query": "Abfrage",
       "sort": "Sortierung",

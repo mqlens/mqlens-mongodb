@@ -179,6 +179,10 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   // Command palette action keywords (Task 5 additional scope): "tab" is the
   // established German loanword for a UI tab, matches transfer:exportView.labels.tab.
   'shell:commandPalette.paletteActions.closeTab.keywords', // tab
+  // Task 6 (coverage gate triage): "in" is the established short
+  // set-membership operator keyword in the filter-builder's operator
+  // dropdown (mirrors SQL's untranslated "IN"), identical spelling in German.
+  'documents:documentViewer.builder.operators.in', // in
 ]);
 
 describe('locale catalogs', () => {

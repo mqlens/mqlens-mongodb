@@ -25,6 +25,11 @@
       "resultToDataViewer_one": "{{count}} Dokument -> Datenansicht",
       "resultToDataViewer_other": "{{count}} Dokumente -> Datenansicht"
     },
+    "errors": {
+      "invalidJsonLiteral": "Ungültiges mongosh-JSON-Literal: {{value}}",
+      "aggregateExpectsPipeline": "aggregate() erwartet ein Pipeline-Array",
+      "sessionRequiredForScripts": "Für Skripte ist eine mongosh-Sitzung erforderlich"
+    },
     "gate": {
       "startingSession": "mongosh-Sitzung wird gestartet…",
       "requiresMongosh": "MongoShell benötigt mongosh",

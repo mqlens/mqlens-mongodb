@@ -279,17 +279,17 @@ const MonitoringDetail: React.FC<{
         <div className="px-4 py-2">
           {detail.kind === 'op' ? (
             <>
-              <DetailRow label="opid">{detail.data.opid}</DetailRow>
-              <DetailRow label="op"><OpBadge op={detail.data.op} /></DetailRow>
-              <DetailRow label="ns">{detail.data.ns}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.opid')}>{detail.data.opid}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.op')}><OpBadge op={detail.data.op} /></DetailRow>
+              <DetailRow label={t('monitoringView.labels.ns')}>{detail.data.ns}</DetailRow>
               <DetailRow label={t('monitoringView.labels.running')}>{detail.data.secsRunning}s</DetailRow>
               <DetailRow label={t('monitoringView.labels.client')}>{detail.data.client}</DetailRow>
-              <DetailRow label="desc">{detail.data.desc || '—'}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.desc')}>{detail.data.desc || '—'}</DetailRow>
             </>
           ) : (
             <>
-              <DetailRow label="op"><OpBadge op={detail.data.op} /></DetailRow>
-              <DetailRow label="ns">{detail.data.ns}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.op')}><OpBadge op={detail.data.op} /></DetailRow>
+              <DetailRow label={t('monitoringView.labels.ns')}>{detail.data.ns}</DetailRow>
               <DetailRow label={t('monitoringView.labels.duration')}>{detail.data.millis} ms</DetailRow>
               <DetailRow label={t('monitoringView.labels.plan')}>{detail.data.planSummary || '—'}</DetailRow>
               <DetailRow label={t('monitoringView.labels.time')}>{fmtTs(detail.data.tsMs)}</DetailRow>

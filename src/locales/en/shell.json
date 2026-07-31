@@ -25,6 +25,11 @@
       "resultToDataViewer_one": "{{count}} document -> Data Viewer",
       "resultToDataViewer_other": "{{count}} documents -> Data Viewer"
     },
+    "errors": {
+      "invalidJsonLiteral": "Invalid mongosh JSON literal: {{value}}",
+      "aggregateExpectsPipeline": "aggregate() expects a pipeline array",
+      "sessionRequiredForScripts": "mongosh session required to run scripts"
+    },
     "gate": {
       "startingSession": "Starting mongosh session…",
       "requiresMongosh": "MongoShell requires mongosh",

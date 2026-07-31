@@ -120,7 +120,12 @@ const splitCalls = (source: string): { calls: ParsedCall[]; rest: string } => {
   return { calls, rest: source.slice(i) };
 };
 
-const parseLoose = (source: string, fallback: unknown = {}) => {
+// Pure, module-scope helper — can't call the useTranslation hook. Every call
+// site is inside the component, where the real `t` is in scope, so it's
+// threaded through as a required parameter instead; the thrown message ends
+// up in a shell `error` entry the user reads, so it must be translated like
+// any other visible copy.
+const parseLoose = (source: string, fallback: unknown, t: (key: string, opts?: any) => string) => {
   const trimmed = source.trim();
   if (!trimmed) return fallback;
   try {
@@ -133,7 +138,7 @@ const parseLoose = (source: string, fallback: unknown = {}) => {
         .replace(/,(\s*[}\]])/g, '$1');
       return JSON.parse(normalized);
     } catch {
-      throw new Error(`Invalid mongosh JSON literal: ${trimmed}`);
+      throw new Error(t('mongoShell.errors.invalidJsonLiteral', { value: trimmed }));
     }
   }
 };
@@ -193,6 +198,11 @@ const extractVersion = (value: unknown) => {
   return text.match(/\d+\.\d+\.\d+(?:[-\w.]*)?/)?.[0] || text || 'unavailable';
 };
 
+// Reproduces mongosh's own startup banner verbatim (same convention as
+// HELP_LINE_KEYS' findSyntax/aggregateSyntax/etc. below: real mongosh output
+// is English-only regardless of the host OS locale, so translating this
+// would misrepresent what the actual CLI tool prints). Not UI copy — i18n
+// out of scope by design, kept as an exempt literal.
 const buildStartupLines = (
   logId: string,
   target: string,
@@ -467,8 +477,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   ) => {
     const op = calls[0];
     const call = (name: string) => calls.find((candidate) => candidate.name === name);
-    const filter = parseLoose(firstArg(op.argText), {});
-    const sort = call('sort') ? parseLoose(call('sort')!.argText, {}) : {};
+    const filter = parseLoose(firstArg(op.argText), {}, t);
+    const sort = call('sort') ? parseLoose(call('sort')!.argText, {}, t) : {};
     const skip = call('skip') ? Number.parseInt(call('skip')!.argText, 10) || 0 : 0;
     const limit = forceLimit ?? (call('limit') ? Number.parseInt(call('limit')!.argText, 10) || 50 : 50);
     const started = performance.now();
@@ -494,8 +504,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   };
 
   const executeAggregate = async (collName: string, calls: ParsedCall[]) => {
-    const pipeline = parseLoose(calls[0].argText, []) as Array<Record<string, unknown>>;
-    if (!Array.isArray(pipeline)) throw new Error('aggregate() expects a pipeline array');
+    const pipeline = parseLoose(calls[0].argText, [], t) as Array<Record<string, unknown>>;
+    if (!Array.isArray(pipeline)) throw new Error(t('mongoShell.errors.aggregateExpectsPipeline'));
     // Run the real pipeline (every stage — $group, $project, $unwind, …) via the
     // driver, rather than collapsing it down to a find().
     const started = performance.now();
@@ -640,7 +650,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
             id: connectionId,
             database: currentDb,
             collection: collName,
-            filter: JSON.stringify(parseLoose(firstArg(calls[0].argText), {})),
+            filter: JSON.stringify(parseLoose(firstArg(calls[0].argText), {}, t)),
           });
           setEntries((prev) => [...prev, { kind: 'value', value: count }, { kind: 'note', text: `${Math.round((performance.now() - started) * 10) / 10} ms` }]);
           setTab('console');
@@ -657,7 +667,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       // gated behind a session, so the no-session case is unreachable in practice;
       // guard defensively.
       if (ranExternally) return;
-      throw new Error('mongosh session required to run scripts');
+      throw new Error(t('mongoShell.errors.sessionRequiredForScripts'));
     } catch (err: any) {
       setEntries((prev) => [...prev, { kind: 'error', message: err.message || String(err) }]);
       setTab('console');

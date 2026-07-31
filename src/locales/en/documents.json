@@ -43,6 +43,12 @@
       "includeOption": "Include ({{n}})",
       "matchAll": "Match All ({{op}})",
       "matchAny": "Match Any ({{op}})",
+      "operators": {
+        "in": "in",
+        "notIn": "not in",
+        "regex": "regex",
+        "exists": "exists"
+      },
       "projection": "Projection",
       "query": "Query",
       "sort": "Sort",
