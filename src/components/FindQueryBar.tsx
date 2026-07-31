@@ -189,6 +189,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
             className="mr-1 h-6 w-6 shrink-0"
             onClick={clearFilter}
             title={t('findQueryBar.tooltips.clearFilter')}
+            data-testid="query-clear-filter"
           >
             <Eraser size={11} />
           </Button>

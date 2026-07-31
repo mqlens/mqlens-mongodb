@@ -24,62 +24,78 @@ const OTHER_LOCALES = SUPPORTED_LOCALES.filter((l) => l.code !== 'en');
 // that a German-speaking developer would recognise unchanged. Anything not
 // on this list that matches English is presumed untranslated — translate
 // it, don't add it here without checking it really is a loanword.
+//
+// Keyed by `namespace:key.path` (not by bare value!) so an exemption only
+// covers the exact key that earned it. A value being a loanword at one key
+// says nothing about a *different* key that happens to share the same
+// English text — e.g. "Export" is a fine German loanword for a button label,
+// but a future namespace could ship an untranslated "Export" that should
+// fail this check. Add one entry per key, even if several keys share a
+// value.
 const ALLOWED_IDENTICAL_VALUES = new Set([
   // Product / brand names
-  'MQLens',
-  'MongoDB Database Tools',
+  'common:appName', // MQLens
+  'settings:tools.dbToolsTitle', // MongoDB Database Tools
   // Established German loanwords (identical spelling in both languages)
-  'System',
-  'Theme',
-  'Port',
-  'Tools',
-  'Updates',
-  'Normal',
-  'Text',
-  'Status:',
-  'Proxy',
-  'Server',
-  ' · offline',
+  'settings:appearance.system', // System
+  'settings:language.system', // System
+  'sidebar:tree.systemLabel', // System
+  'settings:appearance.themeFallback', // Theme
+  'sidebar:footer.themeLabel', // Theme
+  'settings:mcp.port', // Port
+  'settings:tools.tabLabel', // Tools
+  'settings:updates.tabLabel', // Updates
+  'connections:connectionMode.normal.label', // Normal
+  'connections:filePicker.textFilter', // Text
+  'connections:profile.status', // Status:
+  'connections:tabs.proxy', // Proxy
+  'connections:tabs.server', // Server
+  'sidebar:tree.offlineSuffix', // ' · offline'
   // Acronyms / format & protocol identifiers, never translated
-  'MCP',
-  'JSON',
-  'URI',
-  'TLS / SSL',
-  'SCRAM-SHA-1',
-  'MONGODB-AWS (IAM)',
-  'GSSAPI (Kerberos)',
-  'LDAP (PLAIN)',
-  'Snappy',
-  'Zlib',
+  'settings:mcp.tabLabel', // MCP
+  'connections:filePicker.jsonFilter', // JSON
+  'documents:dataGrid.viewModes.json', // JSON
+  'connections:form.uriBadge', // URI
+  'connections:tabs.tls', // TLS / SSL
+  'connections:auth.methodScram1', // SCRAM-SHA-1
+  'connections:auth.methodAws', // MONGODB-AWS (IAM)
+  'connections:auth.methodKerberos', // GSSAPI (Kerberos)
+  'connections:auth.methodLdap', // LDAP (PLAIN)
+  'connections:advanced.compressionSnappy', // Snappy
+  'connections:advanced.compressionZlib', // Zlib
   // Kerberos-protocol-specific term (RFC 4120), kept untranslated like "Realm"
-  'Principal',
+  'connections:auth.userLabelKerberos', // Principal
   // Feature/tab names shared with the (currently English-only, out-of-scope)
   // Dump/Restore views — see settings:tools.dbToolsDescription
-  'Dump (mongodump)…',
-  'Restore (mongorestore)…',
+  'sidebar:ctx.dump', // Dump (mongodump)…
+  'sidebar:ctx.restore', // Restore (mongorestore)…
   // Literal default value for the GridFS bucket prefix, not UI copy
-  'fs',
+  'sidebar:dialogs.gridfsBucket.bucketDefault', // fs
   // Literal default value for the initial-collection prompt, not UI copy —
   // it is written straight to create_collection, so it must never be a
-  // translated word (see sidebar:dialogs.initialCollection.defaultValue).
-  'collection',
+  // translated word.
+  'sidebar:dialogs.initialCollection.defaultValue', // collection
   // documents namespace (Task 1): more established German loanwords/cognates
   // and technical identifiers, identical spelling in both languages.
-  'Export',
-  'Import',
-  'Aggregation',
-  'Limit',
-  'Skip',
-  'PNG',
-  'Schema:',
-  'Schema',
+  'documents:documentViewer.actions.export', // Export
+  'documents:documentViewer.actions.import', // Import
+  'documents:documentViewer.tabs.aggregation', // Aggregation
+  // Query-option labels mirroring the MongoDB find() option names — kept as
+  // the established loanword/keyword, distinct from the explain-plan stage
+  // name of the same concept (dataGrid:explain.stage.limit/skip), which is
+  // translated prose and NOT exempted here.
+  'documents:findQueryBar.labels.limit', // Limit
+  'documents:findQueryBar.labels.skip', // Skip
+  'documents:chartView.actions.exportPng', // PNG
+  'documents:schemaView.labels.schemaPrefix', // Schema:
+  'documents:dataGrid.actions.schema', // Schema
   // Literal mongosh-style method-name prefix + raw interpolated query JSON
   // (documentViewer:history.findSummary) — "find" mirrors db.collection.find()
   // and the rest is the user's own filter re-serialized, nothing to translate.
-  'find · {{filter}}',
+  'documents:documentViewer.history.findSummary', // find · {{filter}}
   // dataGrid:explain.labels.indexNode — "Index" is the established capitalized
   // loanword and the rest is pure interpolation, nothing left to translate.
-  'Index: {{indexName}}',
+  'documents:dataGrid.explain.labels.indexNode', // Index: {{indexName}}
 ]);
 
 describe('locale catalogs', () => {
@@ -118,7 +134,7 @@ describe('locale catalogs', () => {
           return (
             typeof enVal === 'string' &&
             enVal === otherVal &&
-            !ALLOWED_IDENTICAL_VALUES.has(enVal)
+            !ALLOWED_IDENTICAL_VALUES.has(`${ns}:${k}`)
           );
         });
         expect(

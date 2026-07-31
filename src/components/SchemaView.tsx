@@ -33,14 +33,14 @@ interface SchemaViewProps {
 type SortKey = 'field' | 'coverage';
 
 const TypesCell: React.FC<{ field: FieldStat }> = ({ field }) => {
-  const total = field.types.reduce((sum, t) => sum + t.count, 0) || 1;
+  const total = field.types.reduce((sum, ty) => sum + ty.count, 0) || 1;
   return (
     <span data-testid={`schema-types-${field.path}`} className="flex flex-wrap gap-x-3 gap-y-0.5">
-      {field.types.map((t) => (
-        <span key={t.type} className="text-foreground">
-          {t.type}
+      {field.types.map((ty) => (
+        <span key={ty.type} className="text-foreground">
+          {ty.type}
           {field.types.length > 1 && (
-            <span className="text-muted-foreground"> {Math.round((t.count / total) * 100)}%</span>
+            <span className="text-muted-foreground"> {Math.round((ty.count / total) * 100)}%</span>
           )}
         </span>
       ))}

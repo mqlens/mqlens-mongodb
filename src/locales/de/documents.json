@@ -261,7 +261,7 @@
         "fetchDocuments": "Dokumente abrufen",
         "indexIntersection": "Indexschnittmenge",
         "indexScan": "Indexscan",
-        "limit": "Limit",
+        "limit": "Begrenzung",
         "orMerge": "OR-Merge",
         "projection": "Projektion",
         "result": "Ergebnis",
