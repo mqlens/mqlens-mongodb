@@ -81,7 +81,7 @@
       "failed": "Preview failed: {{error}}"
     },
     "footer": {
-      "backgroundNote": "Filtered and full-collection exports run in the background. Track their progress in the <button>Tasks</button> tab."
+      "backgroundNote": "Filtered and full-collection exports run in the background. Track their progress in the <2>Tasks</2> tab."
     }
   },
   "generateView": {
@@ -218,7 +218,8 @@
       "string": "string",
       "number": "number",
       "boolean": "boolean",
-      "date": "date"
+      "date": "date",
+      "json": "json"
     },
     "preview": {
       "title": "Preview",
@@ -238,7 +239,7 @@
       "hint": "Runs in the background and reports progress in the Tasks tab."
     },
     "footer": {
-      "backgroundNote": "Imports run in the background. Track their progress in the <button>Tasks</button> tab."
+      "backgroundNote": "Imports run in the background. Track their progress in the <2>Tasks</2> tab."
     }
   },
   "dumpView": {
@@ -295,7 +296,7 @@
       "hint": "Runs in the background and reports progress in the Tasks tab."
     },
     "footer": {
-      "backgroundNote": "Dumps run in the background. Track their progress in the <button>Tasks</button> tab."
+      "backgroundNote": "Dumps run in the background. Track their progress in the <2>Tasks</2> tab."
     }
   },
   "restoreView": {
@@ -358,7 +359,7 @@
       "entireArchive": "(entire archive)"
     },
     "footer": {
-      "backgroundNote": "Restores run in the background. Track their progress in the <button>Tasks</button> tab."
+      "backgroundNote": "Restores run in the background. Track their progress in the <2>Tasks</2> tab."
     }
   },
   "copyToDialog": {

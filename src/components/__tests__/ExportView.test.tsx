@@ -338,6 +338,14 @@ describe('ExportView', () => {
     expect(onOpenTasks).toHaveBeenCalledTimes(1);
   });
 
+  it('renders the footer Tasks link as a real, clickable button (not escaped markup)', () => {
+    const onOpenTasks = vi.fn();
+    renderExportView({ onOpenTasks });
+    expect(screen.queryByText(/<button>/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
+    expect(onOpenTasks).toHaveBeenCalledTimes(1);
+  });
+
   it('starts a background export via invoke when full collection is chosen', async () => {
     renderWithProviders(
       <DialogProvider>

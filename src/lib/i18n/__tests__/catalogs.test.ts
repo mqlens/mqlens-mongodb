@@ -119,6 +119,9 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'transfer:importView.csv.tab', // Tab — matches transfer:exportView.labels.tab
   'transfer:dumpView.title', // Dump — established MongoDB technical term ("Datenbank-Dump"), not translated
   'transfer:copyToDialog.labels.filter', // Filter (EJSON, optional) — every word is an unchanged German loanword/acronym
+  // Kept as the English loanword on purpose: "Editor" would collide with the
+  // Raw tab, which is the pane that actually hosts the code editor.
+  'transfer:generateView.tabs.builder', // Builder
 ]);
 
 describe('locale catalogs', () => {

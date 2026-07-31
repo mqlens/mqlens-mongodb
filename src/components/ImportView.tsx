@@ -421,7 +421,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
                           >
                             {CSV_COLUMN_TYPES.map((colType) => (
                               <option key={colType} value={colType}>
-                                {colType === 'json' ? 'json' : t(`importView.columnTypes.${colType}`)}
+                                {t(`importView.columnTypes.${colType}`)}
                               </option>
                             ))}
                           </select>

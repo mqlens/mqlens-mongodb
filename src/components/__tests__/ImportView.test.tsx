@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ImportView, detectImportFormat } from '../ImportView';
+import { changeLocale } from '../../lib/i18n';
 
 const renderImportView = (overrides: Record<string, unknown> = {}) => {
   const props = {
@@ -100,6 +101,23 @@ describe('ImportView preview', () => {
     expect(screen.getByTestId('import-coltype-a')).toBeInTheDocument();
   });
 
+  it('localizes every column type option, including json, in German', async () => {
+    await changeLocale('de');
+    try {
+      const onPreview = vi.fn().mockResolvedValue(csvPreview);
+      renderImportView({ onPreview });
+      fireEvent.click(screen.getByTestId('import-pick-file-btn'));
+      await waitFor(() => expect(screen.getByTestId('import-coltype-a')).toBeInTheDocument());
+      const select = screen.getByTestId('import-coltype-a') as HTMLSelectElement;
+      const labels = Array.from(select.options).map((o) => o.text);
+      expect(labels).toEqual([
+        'automatisch', 'Zeichenfolge', 'Zahl', 'Boolescher Wert', 'Datum', 'JSON',
+      ]);
+    } finally {
+      await changeLocale('en');
+    }
+  });
+
   it('type select changes flow into onRunImport payload', async () => {
     const onPreview = vi.fn().mockResolvedValue(csvPreview);
     const props = renderImportView({ onPreview });
@@ -187,5 +205,13 @@ describe('ImportView preview', () => {
     fireEvent.click(screen.getByTestId('import-pick-file-btn'));
     await waitFor(() => expect(screen.getByTestId('import-preview-error')).toHaveTextContent('line 2'));
     expect(screen.getByTestId('import-preview-docs')).toHaveTextContent('"n"');
+  });
+
+  it('renders the footer Tasks link as a real, clickable button (not escaped markup)', () => {
+    const onOpenTasks = vi.fn();
+    renderImportView({ onOpenTasks });
+    expect(screen.queryByText(/<button>/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
+    expect(onOpenTasks).toHaveBeenCalledTimes(1);
   });
 });

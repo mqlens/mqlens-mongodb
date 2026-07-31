@@ -81,7 +81,7 @@
       "failed": "Vorschau fehlgeschlagen: {{error}}"
     },
     "footer": {
-      "backgroundNote": "Gefilterte und vollständige Sammlungsexporte laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <button>Aufgaben</button>."
+      "backgroundNote": "Gefilterte und vollständige Sammlungsexporte laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <2>Aufgaben</2>."
     }
   },
   "generateView": {
@@ -162,7 +162,7 @@
       "words": "Wörter"
     },
     "tabs": {
-      "builder": "Editor",
+      "builder": "Builder",
       "raw": "Roh"
     },
     "tooltips": {
@@ -218,7 +218,8 @@
       "string": "Zeichenfolge",
       "number": "Zahl",
       "boolean": "Boolescher Wert",
-      "date": "Datum"
+      "date": "Datum",
+      "json": "JSON"
     },
     "preview": {
       "title": "Vorschau",
@@ -238,7 +239,7 @@
       "hint": "Läuft im Hintergrund und meldet den Fortschritt im Aufgaben-Tab."
     },
     "footer": {
-      "backgroundNote": "Importe laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <button>Aufgaben</button>."
+      "backgroundNote": "Importe laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <2>Aufgaben</2>."
     }
   },
   "dumpView": {
@@ -288,14 +289,14 @@
       "gzip": "Ausgabe mit Gzip komprimieren",
       "forceTableScan": "Vollständigen Tabellen-Scan erzwingen (Indizes ignorieren)",
       "usersAndRoles": "Benutzer und Rollen einschließen (nur im Datenbank-Umfang)",
-      "oplog": "oplog für Point-in-Time-Wiederherstellung einschließen (nur im Server-Umfang)"
+      "oplog": "Oplog für Point-in-Time-Wiederherstellung einschließen (nur im Server-Umfang)"
     },
     "run": {
       "title": "Ausführen",
       "hint": "Läuft im Hintergrund und meldet den Fortschritt im Aufgaben-Tab."
     },
     "footer": {
-      "backgroundNote": "Dumps laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <button>Aufgaben</button>."
+      "backgroundNote": "Dumps laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <2>Aufgaben</2>."
     }
   },
   "restoreView": {
@@ -358,7 +359,7 @@
       "entireArchive": "(gesamtes Archiv)"
     },
     "footer": {
-      "backgroundNote": "Wiederherstellungen laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <button>Aufgaben</button>."
+      "backgroundNote": "Wiederherstellungen laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <2>Aufgaben</2>."
     }
   },
   "copyToDialog": {

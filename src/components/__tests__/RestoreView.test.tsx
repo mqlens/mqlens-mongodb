@@ -308,3 +308,13 @@ describe('RestoreView command preview', () => {
     );
   });
 });
+
+describe('RestoreView footer', () => {
+  it('renders the footer Tasks link as a real, clickable button (not escaped markup)', () => {
+    const onOpenTasks = vi.fn();
+    renderRestoreView({ onOpenTasks });
+    expect(screen.queryByText(/<button>/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
+    expect(onOpenTasks).toHaveBeenCalledTimes(1);
+  });
+});
