@@ -169,6 +169,16 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'shell:toolSetupDialog.pathSuffix', // " — {{path}}" — punctuation + interpolation only
   'shell:connectionCard.badge.srv', // SRV — DNS record type acronym
   'shell:connectionCard.badge.ssh', // SSH — protocol acronym
+  // Task 5: workspace tab labels that are pure interpolation of an
+  // identifier (collection/db name) with no surrounding prose to translate.
+  'common:tabs.export', // "Export: {{collection}}" — matches transfer:exportView.title's Export loanword
+  'common:tabs.import', // "Import: {{collection}}" — matches transfer:importView.title's Import loanword
+  'common:tabs.schema', // "Schema: {{collection}}" — pure interpolation, label prefix is a raw MongoDB term
+  'common:tabs.gridfs', // "GridFS: {{collection}}" — GridFS is a MongoDB product name, never translated
+  'common:tabs.dump', // "Dump: {{name}}" — established MongoDB technical term, matches transfer:dumpView.title
+  // Command palette action keywords (Task 5 additional scope): "tab" is the
+  // established German loanword for a UI tab, matches transfer:exportView.labels.tab.
+  'shell:commandPalette.paletteActions.closeTab.keywords', // tab
 ]);
 
 describe('locale catalogs', () => {

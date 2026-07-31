@@ -111,6 +111,33 @@
       "navigate": "navigieren",
       "run": "ausführen",
       "close": "schließen"
+    },
+    "paletteActions": {
+      "newConnection": { "title": "Neue Verbindung…", "keywords": "verbinden datenbank hinzufügen server" },
+      "toggleTheme": { "title": "Hell-/Dunkelmodus umschalten", "keywords": "darstellung farbe modus" },
+      "openSettings": { "title": "Einstellungen öffnen", "keywords": "einstellungen konfiguration dichte" },
+      "openQuickstart": { "title": "Schnellstart öffnen", "keywords": "willkommen start hilfe" },
+      "refreshPaletteIndex": { "title": "Befehlspalette-Index aktualisieren", "keywords": "neu laden datenbanken sammlungen namensräume cache veraltet" },
+      "densityRoomy": { "title": "Dichte: Geräumig", "keywords": "layout abstand" },
+      "densityCozy": { "title": "Dichte: Gemütlich", "keywords": "layout abstand" },
+      "densityCompact": { "title": "Dichte: Kompakt", "keywords": "layout abstand dicht" },
+      "openShell": { "title": "mongosh-Shell öffnen", "keywords": "terminal mongosh skript" },
+      "exportCollection": { "title": "Sammlung exportieren…", "keywords": "herunterladen json csv import" },
+      "analyzeSchema": { "title": "Schema analysieren", "keywords": "felder typen" },
+      "closeTab": { "title": "Tab schließen", "keywords": "tab" },
+      "nextTab": { "title": "Nächster Tab", "keywords": "tab wechseln" },
+      "prevTab": { "title": "Vorheriger Tab", "keywords": "tab wechseln" },
+      "splitRight": { "title": "Rechts teilen", "keywords": "arbeitsbereich bereich layout" },
+      "splitDown": { "title": "Unten teilen", "keywords": "arbeitsbereich bereich layout" },
+      "focusNextPane": { "title": "Nächsten Bereich fokussieren", "keywords": "arbeitsbereich bereich layout wechseln" },
+      "openMonitoring": { "title": "Monitoring öffnen: {{name}}", "keywords": "monitoring metriken server status profiler" },
+      "manageUsers": { "title": "Benutzer verwalten: {{name}}", "keywords": "benutzer rollen zugriff berechtigungen authentifizierung administration" },
+      "checkUpdates": { "title": "Nach Updates suchen", "keywords": "version aktualisierung release" }
+    },
+    "dynamic": {
+      "savedQueryTitle": "Gespeicherte Abfrage: {{name}}",
+      "savedQueryKeywords": "gespeicherte abfrage {{collection}} {{db}}",
+      "collectionKeywords": "sammlung {{db}} {{connectionName}}"
     }
   },
   "quickStart": {

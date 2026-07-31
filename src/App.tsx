@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useReducer } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { AppShell } from '@/components/layout/AppShell';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { Toaster } from '@/components/ui/sonner';
@@ -100,7 +101,7 @@ import { cn } from '@/lib/utils';
 import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
-interface QueryTab {
+export interface QueryTab {
   id: string;
   type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate';
   connectionId: string;
@@ -285,9 +286,10 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
   }
 };
 
-const tabLabelFor = (
+export const tabLabelFor = (
   tab: QueryTab,
-  connectionName: (connectionId: string) => string
+  connectionName: (connectionId: string) => string,
+  t: TFunction
 ): string => {
   switch (tab.type) {
     case 'index':
@@ -295,33 +297,33 @@ const tabLabelFor = (
     case 'shell':
       return `mongosh: ${tab.collection || tab.db}`;
     case 'settings':
-      return 'Settings';
+      return t('tabs.settings');
     case 'quickstart':
-      return 'Quick Start';
+      return t('tabs.quickStart');
     case 'export':
-      return `Export: ${tab.collection}`;
+      return t('tabs.export', { collection: tab.collection });
     case 'import':
-      return `Import: ${tab.collection}`;
+      return t('tabs.import', { collection: tab.collection });
     case 'tasks':
-      return 'Tasks';
+      return t('tabs.tasks');
     case 'schema':
-      return `Schema: ${tab.collection}`;
+      return t('tabs.schema', { collection: tab.collection });
     case 'create-view':
-      return `New View: ${tab.db}`;
+      return t('tabs.createView', { db: tab.db });
     case 'gridfs':
-      return `GridFS: ${tab.collection}`;
+      return t('tabs.gridfs', { collection: tab.collection });
     case 'monitoring':
-      return `Monitor: ${connectionName(tab.connectionId)}`;
+      return t('tabs.monitor', { name: connectionName(tab.connectionId) });
     case 'users':
-      return `Users: ${connectionName(tab.connectionId)}`;
+      return t('tabs.users', { name: connectionName(tab.connectionId) });
     case 'dump':
-      return `Dump: ${tab.db || connectionName(tab.connectionId)}`;
+      return t('tabs.dump', { name: tab.db || connectionName(tab.connectionId) });
     case 'restore':
-      return `Restore: ${connectionName(tab.connectionId)}`;
+      return t('tabs.restore', { name: connectionName(tab.connectionId) });
     case 'validation':
-      return `Validation: ${tab.collection}`;
+      return t('tabs.validation', { collection: tab.collection });
     case 'generate':
-      return `Generate: ${tab.collection || tab.db}`;
+      return t('tabs.generate', { name: tab.collection || tab.db });
     default:
       return tab.collection;
   }
@@ -373,6 +375,10 @@ function activeTabHintFor(win: PersistedWindow, allTabs: PersistedTab[]): string
 function Workspace() {
   const { toast, confirm, prompt } = useDialogs();
   const { t } = useTranslation('common');
+  // Command palette action titles/keywords live in `shell` alongside the
+  // rest of the palette's copy (see src/locales/{en,de}/shell.json), not
+  // `common` — a second hook since `t` above is bound to `common`.
+  const { t: tShell, i18n: shellI18n } = useTranslation('shell');
   const { config, resolvedMode, setMode, setSpacingDensity, resetZoom } = useTheme();
   const density = config.spacingDensity;
   // Phase 3 Task 4: every window runs this same component — `isMainWindow`
@@ -2406,6 +2412,7 @@ function Workspace() {
       activeConnections.map(c => `${c.id}:${c.name}`).join('|'),
       collTabs.map(t => `${t.id}:${t.connectionId}:${t.db}:${t.collection}`).join('|'),
       paletteNamespaceScope,
+      shellI18n.language,
     ].join('::');
     if (paletteDynamicLoadKey.current === loadKey) return;
     paletteDynamicLoadKey.current = loadKey;
@@ -2422,7 +2429,7 @@ function Workspace() {
             id: `coll:${ns.connectionId}:${ns.db}:${coll}`,
             title: coll,
             hint: `${ns.connectionName} · ${ns.db}`,
-            keywords: `collection ${ns.db} ${ns.connectionName}`,
+            keywords: tShell('commandPalette.dynamic.collectionKeywords', { db: ns.db, connectionName: ns.connectionName }),
             run: () => { void handleSelectCollection(ns.connectionId, ns.db, coll); },
           });
         }
@@ -2437,9 +2444,9 @@ function Workspace() {
           for (const s of cq.saved) {
             items.push({
               id: `saved:${t.id}:${s.id}`,
-              title: `Saved query: ${s.name}`,
+              title: tShell('commandPalette.dynamic.savedQueryTitle', { name: s.name }),
               hint: `${t.db}.${t.collection}`,
-              keywords: `saved query ${t.collection} ${t.db}`,
+              keywords: tShell('commandPalette.dynamic.savedQueryKeywords', { collection: t.collection, db: t.db }),
               run: () => { void handleSelectCollection(t.connectionId, t.db, t.collection, s.query); },
             });
           }
@@ -2449,33 +2456,33 @@ function Workspace() {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shouldLoadPaletteDynamic, activeConnections, tabs, paletteNamespaceScope]);
+  }, [shouldLoadPaletteDynamic, activeConnections, tabs, paletteNamespaceScope, shellI18n.language]);
 
   const paletteActions: PaletteAction[] = [
-    { id: 'new-connection', title: 'New Connection…', keywords: 'connect database add server', run: () => setIsConnectionModalOpen(true) },
-    { id: 'toggle-theme', title: 'Toggle Light/Dark Theme', keywords: 'appearance color mode', run: toggleTheme },
-    { id: 'open-settings', title: 'Open Settings', keywords: 'preferences config density', run: handleOpenSettingsTab },
-    { id: 'open-quickstart', title: 'Open Quick Start', keywords: 'welcome home help', run: openQuickStartTab },
-    { id: 'refresh-palette-index', title: 'Refresh Command Palette Index', keywords: 'reload databases collections namespaces cache stale', run: () => invalidatePaletteNamespaceIndex() },
-    { id: 'density-roomy', title: 'Density: Roomy', keywords: 'layout spacing', run: () => setSpacingDensity('roomy') },
-    { id: 'density-cozy', title: 'Density: Cozy', keywords: 'layout spacing', run: () => setSpacingDensity('cozy') },
-    { id: 'density-compact', title: 'Density: Compact', keywords: 'layout spacing dense', run: () => setSpacingDensity('compact') },
+    { id: 'new-connection', title: tShell('commandPalette.paletteActions.newConnection.title'), keywords: tShell('commandPalette.paletteActions.newConnection.keywords'), run: () => setIsConnectionModalOpen(true) },
+    { id: 'toggle-theme', title: tShell('commandPalette.paletteActions.toggleTheme.title'), keywords: tShell('commandPalette.paletteActions.toggleTheme.keywords'), run: toggleTheme },
+    { id: 'open-settings', title: tShell('commandPalette.paletteActions.openSettings.title'), keywords: tShell('commandPalette.paletteActions.openSettings.keywords'), run: handleOpenSettingsTab },
+    { id: 'open-quickstart', title: tShell('commandPalette.paletteActions.openQuickstart.title'), keywords: tShell('commandPalette.paletteActions.openQuickstart.keywords'), run: openQuickStartTab },
+    { id: 'refresh-palette-index', title: tShell('commandPalette.paletteActions.refreshPaletteIndex.title'), keywords: tShell('commandPalette.paletteActions.refreshPaletteIndex.keywords'), run: () => invalidatePaletteNamespaceIndex() },
+    { id: 'density-roomy', title: tShell('commandPalette.paletteActions.densityRoomy.title'), keywords: tShell('commandPalette.paletteActions.densityRoomy.keywords'), run: () => setSpacingDensity('roomy') },
+    { id: 'density-cozy', title: tShell('commandPalette.paletteActions.densityCozy.title'), keywords: tShell('commandPalette.paletteActions.densityCozy.keywords'), run: () => setSpacingDensity('cozy') },
+    { id: 'density-compact', title: tShell('commandPalette.paletteActions.densityCompact.title'), keywords: tShell('commandPalette.paletteActions.densityCompact.keywords'), run: () => setSpacingDensity('compact') },
     ...(activeTab && activeTab.type === 'collection' ? [
-      { id: 'open-shell', title: 'Open mongosh Shell', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'terminal mongosh script', run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) },
-      { id: 'export-collection', title: 'Export Collection…', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'download json csv import', run: () => handleOpenExportTab(activeTab) },
-      { id: 'analyze-schema', title: 'Analyze Schema', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'fields types', run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
+      { id: 'open-shell', title: tShell('commandPalette.paletteActions.openShell.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.openShell.keywords'), run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) },
+      { id: 'export-collection', title: tShell('commandPalette.paletteActions.exportCollection.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.exportCollection.keywords'), run: () => handleOpenExportTab(activeTab) },
+      { id: 'analyze-schema', title: tShell('commandPalette.paletteActions.analyzeSchema.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.analyzeSchema.keywords'), run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
     ] : []),
-    ...(activeTabId ? [{ id: 'close-tab', title: 'Close Tab', keywords: 'tab', run: () => closeTabById(activeTabId) }] : []),
+    ...(activeTabId ? [{ id: 'close-tab', title: tShell('commandPalette.paletteActions.closeTab.title'), keywords: tShell('commandPalette.paletteActions.closeTab.keywords'), run: () => closeTabById(activeTabId) }] : []),
     ...(focusedPane && focusedPane.tabIds.length > 1 ? [
-      { id: 'next-tab', title: 'Next Tab', keywords: 'tab switch', run: () => cycleTab(1) },
-      { id: 'prev-tab', title: 'Previous Tab', keywords: 'tab switch', run: () => cycleTab(-1) },
+      { id: 'next-tab', title: tShell('commandPalette.paletteActions.nextTab.title'), keywords: tShell('commandPalette.paletteActions.nextTab.keywords'), run: () => cycleTab(1) },
+      { id: 'prev-tab', title: tShell('commandPalette.paletteActions.prevTab.title'), keywords: tShell('commandPalette.paletteActions.prevTab.keywords'), run: () => cycleTab(-1) },
     ] : []),
     ...(activeTabId && focusedPane && focusedPane.tabIds.length > 1 ? [
-      { id: 'workspace.split-right', title: 'Split Right', keywords: 'workspace pane layout', run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'row', side: 'end', moveTabId: activeTabId }) },
-      { id: 'workspace.split-down', title: 'Split Down', keywords: 'workspace pane layout', run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'col', side: 'end', moveTabId: activeTabId }) },
+      { id: 'workspace.split-right', title: tShell('commandPalette.paletteActions.splitRight.title'), keywords: tShell('commandPalette.paletteActions.splitRight.keywords'), run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'row', side: 'end', moveTabId: activeTabId }) },
+      { id: 'workspace.split-down', title: tShell('commandPalette.paletteActions.splitDown.title'), keywords: tShell('commandPalette.paletteActions.splitDown.keywords'), run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'col', side: 'end', moveTabId: activeTabId }) },
     ] : []),
     ...(allPanes(layout.root).length > 1 ? [
-      { id: 'workspace.focus-next-pane', title: 'Focus Next Pane', keywords: 'workspace pane layout switch', run: () => {
+      { id: 'workspace.focus-next-pane', title: tShell('commandPalette.paletteActions.focusNextPane.title'), keywords: tShell('commandPalette.paletteActions.focusNextPane.keywords'), run: () => {
         const panes = allPanes(layout.root);
         const i = panes.findIndex(p => p.id === layout.focusedPaneId);
         dispatchWorkspace({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
@@ -2483,17 +2490,17 @@ function Workspace() {
     ] : []),
     ...activeConnections.map(c => ({
       id: `monitoring:${c.id}`,
-      title: `Open Monitoring: ${c.name}`,
-      keywords: 'monitoring metrics server status profiler',
+      title: tShell('commandPalette.paletteActions.openMonitoring.title', { name: c.name }),
+      keywords: tShell('commandPalette.paletteActions.openMonitoring.keywords'),
       run: () => handleOpenMonitoringTab(c.id),
     })),
     ...activeConnections.map(c => ({
       id: `users:${c.id}`,
-      title: `Manage Users: ${c.name}`,
-      keywords: 'users roles access permissions authentication admin',
+      title: tShell('commandPalette.paletteActions.manageUsers.title', { name: c.name }),
+      keywords: tShell('commandPalette.paletteActions.manageUsers.keywords'),
       run: () => handleOpenUsersTab(c.id),
     })),
-    { id: 'check-updates', title: 'Check for Updates', keywords: 'version upgrade release', run: () => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT)) },
+    { id: 'check-updates', title: tShell('commandPalette.paletteActions.checkUpdates.title'), keywords: tShell('commandPalette.paletteActions.checkUpdates.keywords'), run: () => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT)) },
     ...paletteDynamicItems,
   ];
 
@@ -4098,7 +4105,7 @@ function Workspace() {
           pane.tabIds
             .map(id => tabs.find(t => t.id === id))
             .filter((t): t is QueryTab => !!t)
-            .map(t => ({ id: t.id, label: tabLabelFor(t, connectionNameFor), icon: tabIconFor(t, t.id === pane.activeTabId) }))
+            .map(tab => ({ id: tab.id, label: tabLabelFor(tab, connectionNameFor, t), icon: tabIconFor(tab, tab.id === pane.activeTabId) }))
         }
         renderTabContent={renderTabContent}
         renderEmptyPane={renderEmptyPane}

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '../../test/render-with-providers';
 import { resetUpdateTabStateDebounce } from '../../workspace/workspaceStore';
-import App from '../../App';
+import App, { tabLabelFor, type QueryTab } from '../../App';
 
 vi.mock('../../lib/vault', () => ({
   getVaultStatus: vi.fn().mockResolvedValue('unlocked'),
@@ -4006,6 +4006,35 @@ describe('App Component', () => {
       fireEvent.contextMenu(quickstartTab.closest('div')!);
 
       expect(screen.queryByTestId('context-menu')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('German localization (Task 5)', () => {
+    it('translates workspace tab labels', async () => {
+      const { i18next } = await import('@/lib/i18n');
+      await i18next.changeLanguage('de');
+      const t = i18next.getFixedT('de', 'common');
+      const label = tabLabelFor({ type: 'settings' } as QueryTab, () => 'conn', t);
+      expect(label).toBe('Einstellungen');
+      await i18next.changeLanguage('en');
+    });
+
+    it('finds a command palette action by its GERMAN title (Task 4 gap: PaletteAction.title was still English)', async () => {
+      const { i18next } = await import('@/lib/i18n');
+      await i18next.changeLanguage('de');
+      try {
+        const { fireEvent } = await import('@testing-library/react');
+        renderWithProviders(<App />);
+        await screen.findByTestId('mock-sidebar');
+
+        fireEvent.keyDown(window, { key: 'k', metaKey: true });
+        fireEvent.change(await screen.findByTestId('command-palette-input'), {
+          target: { value: 'Einstellungen' },
+        });
+        expect(await screen.findByText('Einstellungen öffnen')).toBeInTheDocument();
+      } finally {
+        await i18next.changeLanguage('en');
+      }
     });
   });
 });

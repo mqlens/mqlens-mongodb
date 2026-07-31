@@ -3,6 +3,22 @@
   "cancel": "Cancel",
   "close": "Close",
   "save": "Save",
+  "tabs": {
+    "settings": "Settings",
+    "quickStart": "Quick Start",
+    "tasks": "Tasks",
+    "export": "Export: {{collection}}",
+    "import": "Import: {{collection}}",
+    "schema": "Schema: {{collection}}",
+    "createView": "New View: {{db}}",
+    "gridfs": "GridFS: {{collection}}",
+    "monitor": "Monitor: {{name}}",
+    "users": "Users: {{name}}",
+    "dump": "Dump: {{name}}",
+    "restore": "Restore: {{name}}",
+    "validation": "Validation: {{collection}}",
+    "generate": "Generate: {{name}}"
+  },
   "toast": {
     "aggregationPipelineApplied": "Aggregation pipeline applied",
     "cannotDeleteNoId": "Cannot delete: this document has no _id.",

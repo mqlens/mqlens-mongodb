@@ -111,6 +111,33 @@
       "navigate": "navigate",
       "run": "run",
       "close": "close"
+    },
+    "paletteActions": {
+      "newConnection": { "title": "New Connection…", "keywords": "connect database add server" },
+      "toggleTheme": { "title": "Toggle Light/Dark Theme", "keywords": "appearance color mode" },
+      "openSettings": { "title": "Open Settings", "keywords": "preferences config density" },
+      "openQuickstart": { "title": "Open Quick Start", "keywords": "welcome home help" },
+      "refreshPaletteIndex": { "title": "Refresh Command Palette Index", "keywords": "reload databases collections namespaces cache stale" },
+      "densityRoomy": { "title": "Density: Roomy", "keywords": "layout spacing" },
+      "densityCozy": { "title": "Density: Cozy", "keywords": "layout spacing" },
+      "densityCompact": { "title": "Density: Compact", "keywords": "layout spacing dense" },
+      "openShell": { "title": "Open mongosh Shell", "keywords": "terminal mongosh script" },
+      "exportCollection": { "title": "Export Collection…", "keywords": "download json csv import" },
+      "analyzeSchema": { "title": "Analyze Schema", "keywords": "fields types" },
+      "closeTab": { "title": "Close Tab", "keywords": "tab" },
+      "nextTab": { "title": "Next Tab", "keywords": "tab switch" },
+      "prevTab": { "title": "Previous Tab", "keywords": "tab switch" },
+      "splitRight": { "title": "Split Right", "keywords": "workspace pane layout" },
+      "splitDown": { "title": "Split Down", "keywords": "workspace pane layout" },
+      "focusNextPane": { "title": "Focus Next Pane", "keywords": "workspace pane layout switch" },
+      "openMonitoring": { "title": "Open Monitoring: {{name}}", "keywords": "monitoring metrics server status profiler" },
+      "manageUsers": { "title": "Manage Users: {{name}}", "keywords": "users roles access permissions authentication admin" },
+      "checkUpdates": { "title": "Check for Updates", "keywords": "version upgrade release" }
+    },
+    "dynamic": {
+      "savedQueryTitle": "Saved query: {{name}}",
+      "savedQueryKeywords": "saved query {{collection}} {{db}}",
+      "collectionKeywords": "collection {{db}} {{connectionName}}"
     }
   },
   "quickStart": {
