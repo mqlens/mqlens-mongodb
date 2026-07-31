@@ -1,4 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertCircle, ArrowUpDown, ChevronDown, ChevronRight, Eraser } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,12 +64,6 @@ const fieldBadgeClass = (invalid: boolean) =>
     invalid ? 'bg-destructive/5 text-destructive' : 'bg-muted/40 text-muted-foreground'
   );
 
-const invalidBadge = (
-  <span className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap">
-    <AlertCircle size={10} /> Invalid JSON
-  </span>
-);
-
 /**
  * The compact filter / projection / sort (and optional skip / limit) query bar,
  * shared by the document view and the export view so both stay identical.
@@ -102,6 +97,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
   // query, projection and sort fields stay symmetric. rem keeps it tracking the
   // interface scale.
   const themeCtx = useThemeOptional();
+  const { t } = useTranslation('documents');
   // Two panes can show collection tabs at once, so the region id must be unique
   // or both toggles' aria-controls resolve to the first one.
   const optionsRegionId = `additional-query-options-container-${useId()}`;
@@ -163,11 +159,17 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
     else onSortChange('');
   };
 
+  const invalidBadge = (
+    <span className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap">
+      <AlertCircle size={10} /> {t('findQueryBar.errors.invalidJson')}
+    </span>
+  );
+
   return (
     <div className="flex flex-col border-b border-border bg-muted/20">
       <div className="flex w-full border-b border-border">
         <div className={queryColClass(filterInvalid)}>
-          <span className={fieldBadgeClass(filterInvalid)} style={queryRowStyle}>Query</span>
+          <span className={fieldBadgeClass(filterInvalid)} style={queryRowStyle}>{t('findQueryBar.labels.query')}</span>
           <QueryEditor
             singleLine
             large={collapsibleOptions}
@@ -186,7 +188,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
             size="icon"
             className="mr-1 h-6 w-6 shrink-0"
             onClick={clearFilter}
-            title="Clear Filter"
+            title={t('findQueryBar.tooltips.clearFilter')}
           >
             <Eraser size={11} />
           </Button>
@@ -196,17 +198,17 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
               data-testid="query-options-toggle"
               aria-expanded={optionsOpen}
               aria-controls={optionsRegionId}
-              aria-label={optionsOpen ? 'Fewer Options' : 'More Options'}
+              aria-label={optionsOpen ? t('findQueryBar.tooltips.fewerOptions') : t('findQueryBar.tooltips.moreOptions')}
               onClick={() => setOptionsOpen(!optionsOpen)}
-              title={optionsOpen ? 'Hide projection, sort, skip and limit' : 'Show projection, sort, skip and limit'}
+              title={optionsOpen ? t('findQueryBar.tooltips.hideOptions') : t('findQueryBar.tooltips.showOptions')}
               className="mr-1 flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
             >
               {optionsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-              Options
+              {t('findQueryBar.labels.options')}
               {!optionsOpen && hasOptionValues && (
                 <span
                   data-testid="query-options-dot"
-                  title="Projection, sort, skip or limit is set"
+                  title={t('findQueryBar.tooltips.optionsSet')}
                   className="ml-0.5 h-1.5 w-1.5 rounded-full bg-primary"
                 />
               )}
@@ -223,7 +225,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
 
       <div className="flex w-full border-b border-border">
         <div className={queryColClass(projectionInvalid)}>
-          <span className={fieldBadgeClass(projectionInvalid)} style={optionRowStyle}>Projection</span>
+          <span className={fieldBadgeClass(projectionInvalid)} style={optionRowStyle}>{t('findQueryBar.labels.projection')}</span>
           <QueryEditor
             singleLine
             surface="projection"
@@ -241,7 +243,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
             size="icon"
             className="mr-1 h-6 w-6 shrink-0"
             onClick={clearProjection}
-            title="Clear Projection"
+            title={t('findQueryBar.tooltips.clearProjection')}
           >
             <Eraser size={11} />
           </Button>
@@ -252,7 +254,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
           smaller options after giving `project` a row of its own. */}
       <div className="flex w-full">
         <div className={queryColClass(sortInvalid)}>
-          <span className={fieldBadgeClass(sortInvalid)} style={optionRowStyle}>Sort</span>
+          <span className={fieldBadgeClass(sortInvalid)} style={optionRowStyle}>{t('findQueryBar.labels.sort')}</span>
           <QueryEditor
             singleLine
             surface="sort"
@@ -270,7 +272,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
             size="icon"
             className="mr-0.5 h-6 w-6 shrink-0 text-warning"
             onClick={cycleSort}
-            title="Quick Sort Direction"
+            title={t('findQueryBar.tooltips.quickSortDirection')}
           >
             <ArrowUpDown size={11} />
           </Button>
@@ -279,7 +281,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
             size="icon"
             className="mr-1 h-6 w-6 shrink-0"
             onClick={clearSort}
-            title="Clear Sort"
+            title={t('findQueryBar.tooltips.clearSort')}
           >
             <Eraser size={11} />
           </Button>
@@ -288,7 +290,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
         {showPagination && (
           <>
           <div className={queryColClass(false)}>
-            <span className={fieldBadgeClass(false)} style={optionRowStyle}>Skip</span>
+            <span className={fieldBadgeClass(false)} style={optionRowStyle}>{t('findQueryBar.labels.skip')}</span>
             <Input
               type="number"
               value={skip}
@@ -305,7 +307,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
                 size="icon"
                 className="mr-1 h-6 w-6 shrink-0"
                 onClick={() => onSkipChange?.('0')}
-                title="Reset Skip"
+                title={t('findQueryBar.tooltips.resetSkip')}
               >
                 <Eraser size={11} />
               </Button>
@@ -313,7 +315,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
           </div>
 
           <div className={queryColClass(false)}>
-            <span className={fieldBadgeClass(false)} style={optionRowStyle}>Limit</span>
+            <span className={fieldBadgeClass(false)} style={optionRowStyle}>{t('findQueryBar.labels.limit')}</span>
             <Input
               type="number"
               value={limit}
@@ -330,7 +332,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
                 size="icon"
                 className="mr-1 h-6 w-6 shrink-0"
                 onClick={() => onLimitChange?.('50')}
-                title="Reset Limit"
+                title={t('findQueryBar.tooltips.resetLimit')}
               >
                 <Eraser size={11} />
               </Button>

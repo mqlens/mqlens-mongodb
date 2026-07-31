@@ -248,7 +248,10 @@ describe('DocumentViewer Component', () => {
         />
       );
       fireEvent.change(screen.getByTestId('query-filter-input'), { target: { value: '{"a": 1}' } });
-      fireEvent.click(screen.getByTitle('Clear Filter'));
+      // FindQueryBar's own "Clear Filter" tooltip is now localized (documents
+      // namespace, Task 1 of the i18n plan) — under German locale it renders
+      // "Filter leeren", not the English title.
+      fireEvent.click(screen.getByTitle('Filter leeren'));
       expect(await screen.findByText('Filterparameter zurückgesetzt')).toBeInTheDocument();
     } finally {
       await i18next.changeLanguage('en');

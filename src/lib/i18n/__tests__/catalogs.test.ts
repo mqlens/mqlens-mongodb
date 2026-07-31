@@ -63,6 +63,23 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   // it is written straight to create_collection, so it must never be a
   // translated word (see sidebar:dialogs.initialCollection.defaultValue).
   'collection',
+  // documents namespace (Task 1): more established German loanwords/cognates
+  // and technical identifiers, identical spelling in both languages.
+  'Export',
+  'Import',
+  'Aggregation',
+  'Limit',
+  'Skip',
+  'PNG',
+  'Schema:',
+  'Schema',
+  // Literal mongosh-style method-name prefix + raw interpolated query JSON
+  // (documentViewer:history.findSummary) — "find" mirrors db.collection.find()
+  // and the rest is the user's own filter re-serialized, nothing to translate.
+  'find · {{filter}}',
+  // dataGrid:explain.labels.indexNode — "Index" is the established capitalized
+  // loanword and the rest is pure interpolation, nothing left to translate.
+  'Index: {{indexName}}',
 ]);
 
 describe('locale catalogs', () => {

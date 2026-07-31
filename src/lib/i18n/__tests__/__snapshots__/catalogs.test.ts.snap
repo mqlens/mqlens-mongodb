@@ -18,16 +18,20 @@ exports[`locale catalogs > keeps a snapshot of which values carry significant le
 
 exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 7`] = `[]`;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 8`] = `
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 8`] = `[]`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 9`] = `
 [
   "ssh.hostKeyNoteSuffix",
 ]
 `;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 9`] = `[]`;
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 10`] = `[]`;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 10`] = `
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 11`] = `
 [
   "tree.offlineSuffix",
 ]
 `;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 12`] = `[]`;
