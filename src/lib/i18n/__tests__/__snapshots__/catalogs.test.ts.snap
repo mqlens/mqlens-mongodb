@@ -16,22 +16,34 @@ exports[`locale catalogs > keeps a snapshot of which values carry significant le
 
 exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 6`] = `[]`;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 7`] = `[]`;
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 7`] = `
+[
+  "generateView.confirm.insertMessageExistingClause",
+]
+`;
 
 exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 8`] = `[]`;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 9`] = `
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 9`] = `[]`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 10`] = `
 [
   "ssh.hostKeyNoteSuffix",
 ]
 `;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 10`] = `[]`;
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 11`] = `[]`;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 11`] = `
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 12`] = `
 [
   "tree.offlineSuffix",
 ]
 `;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 12`] = `[]`;
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 13`] = `[]`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 14`] = `
+[
+  "generateView.confirm.insertMessageExistingClause",
+]
+`;

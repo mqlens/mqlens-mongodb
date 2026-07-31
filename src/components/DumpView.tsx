@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation, Trans } from 'react-i18next';
 import { DatabaseBackup, ListChecks, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -77,6 +78,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
   onRunDump,
   onOpenTasks,
 }) => {
+  const { t } = useTranslation('transfer');
   const [scope, setScope] = React.useState<DumpScopeUi>(initialScope ?? { kind: 'server' });
   const [query, setQuery] = React.useState('');
   const [targetKind, setTargetKind] = React.useState<'folder' | 'archive'>('folder');
@@ -190,9 +192,9 @@ export const DumpView: React.FC<DumpViewProps> = ({
       JSON.parse(query);
       return null;
     } catch {
-      return 'Not valid JSON. mongodump only accepts canonical extended JSON.';
+      return t('dumpView.errors.invalidQueryJson');
     }
-  }, [scope.kind, query]);
+  }, [scope.kind, query, t]);
 
   const canRun = !!tools?.mongodump && destPath !== null && scopeReady && !queryError;
 
@@ -210,12 +212,12 @@ export const DumpView: React.FC<DumpViewProps> = ({
     <div className="flex h-full flex-col overflow-auto" data-testid="dump-view">
       <header className="flex items-center justify-between gap-4 border-b border-border bg-muted/30 px-3.5 py-2">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Dump</h2>
+          <h2 className="text-sm font-semibold text-foreground">{t('dumpView.title')}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">{connectionName}</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onOpenTasks}>
           <ListChecks size={12} />
-          View Tasks
+          {t('dumpView.actions.viewTasks')}
         </Button>
       </header>
 
@@ -228,7 +230,9 @@ export const DumpView: React.FC<DumpViewProps> = ({
             </h3>
           </div>
           {tools === null ? (
-            <p className="text-xs text-muted-foreground">Detecting mongodump / mongorestore…</p>
+            <p className="text-xs text-muted-foreground">
+              {t('dumpView.status.detecting', { tools: 'mongodump / mongorestore' })}
+            </p>
           ) : tools.mongodump ? (
             <p className="text-xs text-muted-foreground">
               mongodump {tools.mongodump.version} — {tools.mongodump.path}
@@ -239,13 +243,12 @@ export const DumpView: React.FC<DumpViewProps> = ({
               data-testid="dump-tools-missing"
             >
               <p className="text-xs text-muted-foreground">
-                mongodump was not found. Install MongoDB Database Tools and set the path in
-                Settings.
+                {t('dumpView.errors.toolMissing')}
               </p>
               <div className="flex items-center gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={onOpenSettings}>
                   <Settings size={12} />
-                  Open Settings
+                  {t('dumpView.actions.openSettings')}
                 </Button>
                 {onInstallTools && (
                   <Button
@@ -255,7 +258,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                     onClick={onInstallTools}
                     data-testid="dump-install-tools-btn"
                   >
-                    Install tools…
+                    {t('dumpView.actions.installTools')}
                   </Button>
                 )}
               </div>
@@ -265,9 +268,9 @@ export const DumpView: React.FC<DumpViewProps> = ({
 
         <section className="flex flex-col gap-2 px-3.5 py-3">
           <div>
-            <h3 className="text-sm font-medium text-foreground">Scope</h3>
+            <h3 className="text-sm font-medium text-foreground">{t('dumpView.scope.title')}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Dump the entire server, a single database, or one collection.
+              {t('dumpView.scope.hint')}
             </p>
           </div>
 
@@ -280,7 +283,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 checked={scope.kind === 'server'}
                 onChange={() => selectScopeKind('server')}
               />
-              <span>Entire server</span>
+              <span>{t('dumpView.scope.optionServer')}</span>
             </label>
             <label className={checkboxLabelClassName}>
               <input
@@ -290,7 +293,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 checked={scope.kind === 'db'}
                 onChange={() => selectScopeKind('db')}
               />
-              <span>Database</span>
+              <span>{t('dumpView.scope.optionDatabase')}</span>
             </label>
             <label className={checkboxLabelClassName}>
               <input
@@ -300,13 +303,13 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 checked={scope.kind === 'collection'}
                 onChange={() => selectScopeKind('collection')}
               />
-              <span>Collection</span>
+              <span>{t('dumpView.scope.optionCollection')}</span>
             </label>
           </div>
 
           {scope.kind !== 'server' && (
             <div className="flex flex-wrap items-center gap-2">
-              <Label className="text-xs text-muted-foreground">Database</Label>
+              <Label className="text-xs text-muted-foreground">{t('dumpView.labels.database')}</Label>
               <select
                 value={scope.db}
                 onChange={(e) => selectDb(e.target.value)}
@@ -314,7 +317,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 data-testid="dump-db-select"
               >
                 <option value="" disabled>
-                  Select database…
+                  {t('dumpView.labels.selectDatabase')}
                 </option>
                 {databases.map((d) => (
                   <option key={d.name} value={d.name}>
@@ -325,7 +328,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
 
               {scope.kind === 'collection' && (
                 <>
-                  <Label className="text-xs text-muted-foreground">Collection</Label>
+                  <Label className="text-xs text-muted-foreground">{t('dumpView.labels.collection')}</Label>
                   <select
                     value={scope.coll}
                     onChange={(e) => selectColl(e.target.value)}
@@ -333,7 +336,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                     data-testid="dump-coll-select"
                   >
                     <option value="" disabled>
-                      Select collection…
+                      {t('dumpView.labels.selectCollection')}
                     </option>
                     {(databases.find((d) => d.name === scope.db)?.collections ?? []).map((c) => (
                       <option key={c} value={c}>
@@ -348,7 +351,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
 
           {scope.kind === 'collection' && (
             <div className="flex flex-col gap-1">
-              <Label className="text-xs text-muted-foreground">Query filter (optional)</Label>
+              <Label className="text-xs text-muted-foreground">{t('dumpView.labels.queryFilter')}</Label>
               <div className={editorShellClassName}>
                 <QueryEditor
                   surface="filter"
@@ -360,8 +363,10 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                mongodump requires canonical extended JSON — quoted keys and typed wrappers such
-                as {'{"$oid": "…"}'} or {'{"$date": "…"}'}.
+                {t('dumpView.hints.queryFilterEjson', {
+                  oidExample: '{"$oid": "…"}',
+                  dateExample: '{"$date": "…"}',
+                })}
               </p>
               {queryError && (
                 <p className="text-xs text-destructive" data-testid="dump-query-error">
@@ -374,9 +379,9 @@ export const DumpView: React.FC<DumpViewProps> = ({
 
         <section className="flex flex-col gap-2 px-3.5 py-3">
           <div>
-            <h3 className="text-sm font-medium text-foreground">Destination</h3>
+            <h3 className="text-sm font-medium text-foreground">{t('dumpView.destination.title')}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Dump to a folder of BSON files, or a single compressed archive.
+              {t('dumpView.destination.hint')}
             </p>
           </div>
 
@@ -389,7 +394,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 checked={targetKind === 'folder'}
                 onChange={() => setTargetKind('folder')}
               />
-              <span>Folder (multiple files)</span>
+              <span>{t('dumpView.destination.optionFolder')}</span>
             </label>
             <label className={checkboxLabelClassName}>
               <input
@@ -399,7 +404,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 checked={targetKind === 'archive'}
                 onChange={() => setTargetKind('archive')}
               />
-              <span>Single archive file</span>
+              <span>{t('dumpView.destination.optionArchive')}</span>
             </label>
           </div>
 
@@ -411,7 +416,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
               onClick={pickDestination}
               data-testid="dump-pick-dest-btn"
             >
-              Choose {targetKind === 'folder' ? 'folder' : 'file'}…
+              {targetKind === 'folder' ? t('dumpView.actions.chooseFolder') : t('dumpView.actions.chooseFile')}
             </Button>
             {destPath && (
               <span className="truncate text-xs text-muted-foreground" data-testid="dump-dest-path">
@@ -423,9 +428,9 @@ export const DumpView: React.FC<DumpViewProps> = ({
 
         <section className="flex flex-col gap-2 px-3.5 py-3">
           <div>
-            <h3 className="text-sm font-medium text-foreground">Options</h3>
+            <h3 className="text-sm font-medium text-foreground">{t('dumpView.options.title')}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Passed through to mongodump as CLI flags.
+              {t('dumpView.options.hint')}
             </p>
           </div>
           <div className="flex flex-col gap-2">
@@ -436,7 +441,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 onChange={() => setGzip((g) => !g)}
                 data-testid="dump-opt-gzip"
               />
-              <span>Gzip compress output</span>
+              <span>{t('dumpView.options.gzip')}</span>
             </label>
             <label className={checkboxLabelClassName}>
               <input
@@ -445,7 +450,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 onChange={() => setForceTableScan((v) => !v)}
                 data-testid="dump-opt-forcetablescan"
               />
-              <span>Force table scan (ignore indexes)</span>
+              <span>{t('dumpView.options.forceTableScan')}</span>
             </label>
             <label className={cn(checkboxLabelClassName, scope.kind !== 'db' && 'opacity-50')}>
               <input
@@ -455,7 +460,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 onChange={() => setDumpUsersAndRoles((v) => !v)}
                 data-testid="dump-opt-usersroles"
               />
-              <span>Include users and roles (database scope only)</span>
+              <span>{t('dumpView.options.usersAndRoles')}</span>
             </label>
             <label className={cn(checkboxLabelClassName, scope.kind !== 'server' && 'opacity-50')}>
               <input
@@ -465,7 +470,7 @@ export const DumpView: React.FC<DumpViewProps> = ({
                 onChange={() => setOplog((v) => !v)}
                 data-testid="dump-opt-oplog"
               />
-              <span>Include oplog for point-in-time restore (server scope only)</span>
+              <span>{t('dumpView.options.oplog')}</span>
             </label>
           </div>
         </section>
@@ -474,10 +479,10 @@ export const DumpView: React.FC<DumpViewProps> = ({
           <div className="min-w-0 flex-1">
             <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
               <DatabaseBackup size={14} />
-              <span>Run</span>
+              <span>{t('dumpView.run.title')}</span>
             </h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Runs in the background and reports progress in the Tasks tab.
+              {t('dumpView.run.hint')}
             </p>
             <code
               data-testid="dump-preview-cmd"
@@ -494,17 +499,19 @@ export const DumpView: React.FC<DumpViewProps> = ({
             data-testid="dump-run-btn"
           >
             <DatabaseBackup size={13} />
-            {starting ? 'Starting…' : 'Run Dump'}
+            {starting ? t('dumpView.actions.starting') : t('dumpView.actions.runDump')}
           </Button>
         </section>
       </div>
 
       <p className="px-3.5 py-3 text-xs text-muted-foreground">
-        Dumps run in the background. Track their progress in the{' '}
-        <button type="button" className="underline hover:text-foreground" onClick={onOpenTasks}>
-          Tasks
-        </button>{' '}
-        tab.
+        <Trans i18nKey="dumpView.footer.backgroundNote" t={t}>
+          Dumps run in the background. Track their progress in the{' '}
+          <button type="button" className="underline hover:text-foreground" onClick={onOpenTasks}>
+            Tasks
+          </button>{' '}
+          tab.
+        </Trans>
       </p>
     </div>
   );

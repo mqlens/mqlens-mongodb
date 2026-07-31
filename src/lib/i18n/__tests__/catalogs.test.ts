@@ -96,6 +96,29 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   // dataGrid:explain.labels.indexNode — "Index" is the established capitalized
   // loanword and the rest is pure interpolation, nothing left to translate.
   'documents:dataGrid.explain.labels.indexNode', // Index: {{indexName}}
+  // transfer namespace (Task 2): loanwords, established query-option terms and
+  // MongoDB/Extended-JSON technical mode names, identical spelling in both languages.
+  'transfer:exportView.title', // Export
+  'transfer:exportView.labels.format', // Format
+  'transfer:exportView.labels.relaxed', // Extended JSON mode name ("Relaxed Mode")
+  'transfer:exportView.labels.canonical', // Extended JSON mode name ("Canonical Mode")
+  'transfer:exportView.labels.tab', // Tab
+  'transfer:exportView.labels.lf', // LF (\n) — line-ending acronym
+  'transfer:exportView.labels.crlf', // CRLF (\r\n) — line-ending acronym
+  'transfer:exportView.labels.skip', // Established loanword, matches documents:findQueryBar.labels.skip
+  'transfer:exportView.labels.limit', // Established loanword, matches documents:findQueryBar.labels.limit
+  'transfer:exportView.filtered.pipeline', // Pipeline
+  'transfer:generateView.kindLabels.objectId', // ObjectId — BSON type name, established loanword
+  'transfer:generateView.kindLabels.uuid', // UUID — acronym
+  'transfer:generateView.labels.seedOptional', // Seed (optional) — both words used unchanged in German tech writing
+  'transfer:generateView.tooltips.maximum', // Maximum — identical spelling in German
+  'transfer:generateView.tooltips.minimum', // Minimum — identical spelling in German
+  'transfer:importView.title', // Import — established loanword, matches documents:documentViewer.actions.import
+  'transfer:importView.actions.import', // Import — established loanword, matches documents:documentViewer.actions.import
+  'transfer:importView.labels.format', // Format — matches transfer:exportView.labels.format
+  'transfer:importView.csv.tab', // Tab — matches transfer:exportView.labels.tab
+  'transfer:dumpView.title', // Dump — established MongoDB technical term ("Datenbank-Dump"), not translated
+  'transfer:copyToDialog.labels.filter', // Filter (EJSON, optional) — every word is an unchanged German loanword/acronym
 ]);
 
 describe('locale catalogs', () => {

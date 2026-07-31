@@ -29,6 +29,16 @@ import { defineConfig } from 'i18next-cli';
  * argument is itself a variable at every call site (a plain identifier, or a
  * ternary choosing between two key names for `handleClearField`) — never a
  * string literal the extractor's static analysis can see.
+ *
+ * The `transfer:restoreView.options.flags.*` keys are read through
+ * RestoreView.tsx's `FLAG_FIELDS` via `t(f.labelKey)` — a variable, not a
+ * literal. The `transfer:generateView.kindLabels.*` keys are read through
+ * GenerateView.tsx's `RowEditor` via `` tg(`generateView.kindLabels.${k}`) ``
+ * — a template literal keyed off the field's `GenKind`. The
+ * `transfer:importView.columnTypes.*` keys (excluding `.json`, which renders
+ * its literal value directly and never calls `t()`) are read through
+ * ImportView.tsx via `` t(`importView.columnTypes.${colType}`) ``. None of
+ * these are string literals the extractor's static analysis can see.
  */
 export default defineConfig({
   locales: ['en'],
@@ -102,6 +112,34 @@ export default defineConfig({
       'common:toast.sortCleared',
       'common:toast.openedInMongosh',
       'common:toast.copiedMongoshCommand',
+      'transfer:restoreView.options.flags.drop',
+      'transfer:restoreView.options.flags.keepIndexVersion',
+      'transfer:restoreView.options.flags.noIndexRestore',
+      'transfer:restoreView.options.flags.noOptionsRestore',
+      'transfer:restoreView.options.flags.maintainInsertionOrder',
+      'transfer:restoreView.options.flags.stopOnError',
+      'transfer:restoreView.options.flags.bypassDocumentValidation',
+      'transfer:restoreView.options.flags.restoreDbUsersAndRoles',
+      'transfer:generateView.kindLabels.array',
+      'transfer:generateView.kindLabels.bool',
+      'transfer:generateView.kindLabels.date',
+      'transfer:generateView.kindLabels.email',
+      'transfer:generateView.kindLabels.firstName',
+      'transfer:generateView.kindLabels.float',
+      'transfer:generateView.kindLabels.int',
+      'transfer:generateView.kindLabels.lastName',
+      'transfer:generateView.kindLabels.literal',
+      'transfer:generateView.kindLabels.lorem',
+      'transfer:generateView.kindLabels.name',
+      'transfer:generateView.kindLabels.object',
+      'transfer:generateView.kindLabels.objectId',
+      'transfer:generateView.kindLabels.pick',
+      'transfer:generateView.kindLabels.uuid',
+      'transfer:importView.columnTypes.auto',
+      'transfer:importView.columnTypes.string',
+      'transfer:importView.columnTypes.number',
+      'transfer:importView.columnTypes.boolean',
+      'transfer:importView.columnTypes.date',
     ],
   },
 });

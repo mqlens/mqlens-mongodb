@@ -1,0 +1,402 @@
+{
+  "exportView": {
+    "title": "Export",
+    "actions": {
+      "viewTasks": "View Tasks",
+      "exportFormat": "Export {{format}}",
+      "copyToClipboard": "Copy to clipboard",
+      "scanFields": "Scan fields",
+      "scanning": "Scanning…",
+      "selectAll": "Select all",
+      "deselectAll": "Deselect all",
+      "count": "Count",
+      "counting": "Counting…",
+      "preview": "Preview",
+      "previewing": "Previewing…"
+    },
+    "labels": {
+      "format": "Format",
+      "jsonMode": "JSON mode",
+      "relaxed": "Relaxed",
+      "relaxedHint": "Human-readable",
+      "canonical": "Canonical",
+      "canonicalHint": "mongoexport-compatible, lossless types",
+      "delimiter": "Delimiter",
+      "customDelimiter": "Custom delimiter",
+      "quote": "Quote",
+      "recordSeparator": "Record separator",
+      "includeHeaders": "Include column headers",
+      "leaveNullEmpty": "Leave null fields empty",
+      "boldHeaderRow": "Bold header row",
+      "autoSizeColumns": "Auto-size columns",
+      "alignment": "Alignment",
+      "left": "Left",
+      "center": "Center",
+      "right": "Right",
+      "comma": "Comma (,)",
+      "semicolon": "Semicolon (;)",
+      "tab": "Tab",
+      "custom": "Custom…",
+      "lf": "LF (\\n)",
+      "crlf": "CRLF (\\r\\n)",
+      "skip": "Skip",
+      "limit": "Limit"
+    },
+    "errors": {
+      "delimiterAscii": "Delimiter must be a single ASCII character.",
+      "mustBeObject": "Must be a JSON object",
+      "invalidJson": "Invalid JSON",
+      "pipelineMustBeArray": "Pipeline must be a JSON array of stages"
+    },
+    "fields": {
+      "title": "Fields",
+      "hint": "Scan a sample of documents to choose which fields to export.",
+      "filterPlaceholder": "Filter fields",
+      "noneToScan": "No documents to scan — exporting all fields.",
+      "selectedCount": "{{selected}} of {{total}} selected",
+      "projectionDisabled": "Projection disabled — using field selection"
+    },
+    "current": {
+      "title": "Current Results",
+      "loadedCount_one": "{{count}} loaded document",
+      "loadedCount_other": "{{count}} loaded documents"
+    },
+    "full": {
+      "title": "Full Collection",
+      "hint": "Runs in the background and writes directly to disk."
+    },
+    "filtered": {
+      "title": "Filtered Results",
+      "hintAggregate": "Edit the aggregation pipeline, then export every resulting document.",
+      "hintFind": "Edit the query (reused from the document view), then export every match.",
+      "pipeline": "Pipeline",
+      "countNotRun": "Count not run yet",
+      "countFailed": "Count failed",
+      "matchCount_one": "{{formatted}} matching document",
+      "matchCount_other": "{{formatted}} matching documents"
+    },
+    "preview": {
+      "title": "Preview",
+      "hint": "See a sample of the exported output before running.",
+      "failed": "Preview failed: {{error}}"
+    },
+    "footer": {
+      "backgroundNote": "Filtered and full-collection exports run in the background. Track their progress in the <button>Tasks</button> tab."
+    }
+  },
+  "generateView": {
+    "actions": {
+      "addArray": "Add array",
+      "addField": "Add field",
+      "addNestedObject": "Add nested object",
+      "addValue": "Add value",
+      "cancel": "Cancel",
+      "generate": "Generate",
+      "refresh": "Refresh",
+      "starting": "Starting…",
+      "viewInTasks": "View in Tasks"
+    },
+    "confirm": {
+      "insertMessage": "Insert {{count}} documents into {{namespace}}.",
+      "insertMessageExistingClause": " This adds to the existing {{existing}} documents.",
+      "title": "Generate documents",
+      "typedMessage": "Type the exact number of documents to insert.",
+      "typedTitle": "Confirm count",
+      "typedValidateError": "Type the exact count to confirm"
+    },
+    "errors": {
+      "countNotWholeNumber": "Count must be a whole number",
+      "countOutOfRange": "Count must be between 1 and {{max}}",
+      "countRequired": "Count is required",
+      "emptyPickFooter": "“{{name}}” needs at least one value for $pick.",
+      "emptyPickPreview": "\"{{name}}\" needs at least one value for $pick.",
+      "invalidJson": "Invalid JSON: {{message}}",
+      "pickListEmpty": "Add at least one value — $pick can't be empty.",
+      "seedNegative": "Seed must not be negative",
+      "seedNotWholeNumber": "Seed must be a whole number",
+      "syntaxError": "syntax error"
+    },
+    "hints": {
+      "chooseTargetCollection": "Choose a target collection first.",
+      "customTemplateNotice": "Custom template — editing as raw JSON. Fix or simplify it to switch back to the builder.",
+      "runInProgress": "A generate run is already in progress for this tab."
+    },
+    "kindLabels": {
+      "array": "Array of… ({{token}})",
+      "bool": "Boolean ({{token}})",
+      "date": "Date ({{token}})",
+      "email": "Email ({{token}})",
+      "firstName": "First name ({{token}})",
+      "float": "Float ({{token}})",
+      "int": "Integer ({{token}})",
+      "lastName": "Last name ({{token}})",
+      "literal": "Literal value",
+      "lorem": "Lorem text ({{token}})",
+      "name": "Full name ({{token}})",
+      "object": "Nested object",
+      "objectId": "ObjectId ({{token}})",
+      "pick": "Pick from list ({{token}})",
+      "uuid": "UUID ({{token}})"
+    },
+    "labels": {
+      "arrayItem": "Array item",
+      "arrayItemInline": "array item",
+      "count": "Count",
+      "days": "days",
+      "decimals": "decimals",
+      "fieldNamePlaceholder": "field name",
+      "fromIsoPlaceholder": "from (ISO)",
+      "loadingTemplate": "Loading template…",
+      "max": "max",
+      "min": "min",
+      "past": "past",
+      "pastDaysMode": "Past N days",
+      "previewTitle": "Preview ({{count}} docs)",
+      "rangeMode": "From / to",
+      "seedOptional": "Seed (optional)",
+      "seedPlaceholder": "random",
+      "targetCollection": "Target collection",
+      "targetCollectionPlaceholder": "collection name",
+      "title": "Generate Data: {{namespace}}",
+      "toIsoPlaceholder": "to (ISO)",
+      "words": "words"
+    },
+    "tabs": {
+      "builder": "Builder",
+      "raw": "Raw"
+    },
+    "tooltips": {
+      "arrayMaxLength": "Array maximum length",
+      "arrayMinLength": "Array minimum length",
+      "dateMode": "Date mode",
+      "decimals": "Decimals",
+      "fieldName": "Field name",
+      "from": "From",
+      "literalValue": "Literal value",
+      "maximum": "Maximum",
+      "minimum": "Minimum",
+      "pastDays": "Past days",
+      "pickValue": "Pick value {{n}}",
+      "removeField": "Remove field",
+      "removePickValue": "Remove pick value {{n}}",
+      "to": "To",
+      "words": "Words"
+    }
+  },
+  "importView": {
+    "title": "Import",
+    "actions": {
+      "viewTasks": "View Tasks",
+      "chooseFile": "Choose file…",
+      "import": "Import"
+    },
+    "source": {
+      "title": "Source",
+      "hint": "Choose a file to import, or paste documents directly.",
+      "file": "File",
+      "paste": "Paste",
+      "pasteCapNote": "paste is limited to 2 MB — save it as a file and import that"
+    },
+    "labels": {
+      "format": "Format"
+    },
+    "csv": {
+      "delimiter": "Delimiter",
+      "comma": "Comma (,)",
+      "semicolon": "Semicolon (;)",
+      "tab": "Tab",
+      "custom": "Custom…",
+      "customDelimiter": "Custom delimiter",
+      "quote": "Quote",
+      "skipLines": "Skip lines",
+      "hasHeaders": "First row is headers",
+      "delimiterAscii": "Delimiter must be a single ASCII character.",
+      "quoteAscii": "Quote must be a single ASCII character"
+    },
+    "columnTypes": {
+      "auto": "auto",
+      "string": "string",
+      "number": "number",
+      "boolean": "boolean",
+      "date": "date"
+    },
+    "preview": {
+      "title": "Preview",
+      "captionChoose": "Choose a source to preview",
+      "captionCount": "Previewing first {{count}} document(s)",
+      "captionCountWithTotal": "Previewing first {{count}} document(s) of ~{{total}}"
+    },
+    "duplicates": {
+      "title": "Duplicate handling",
+      "hint": "How should existing documents with the same _id be handled?",
+      "skip": "Skip duplicates (insert new only)",
+      "update": "Update existing by _id",
+      "abort": "Abort if any _id already exists"
+    },
+    "run": {
+      "title": "Run",
+      "hint": "Runs in the background and reports progress in the Tasks tab."
+    },
+    "footer": {
+      "backgroundNote": "Imports run in the background. Track their progress in the <button>Tasks</button> tab."
+    }
+  },
+  "dumpView": {
+    "title": "Dump",
+    "actions": {
+      "viewTasks": "View Tasks",
+      "openSettings": "Open Settings",
+      "installTools": "Install tools…",
+      "chooseFolder": "Choose folder…",
+      "chooseFile": "Choose file…",
+      "starting": "Starting…",
+      "runDump": "Run Dump"
+    },
+    "status": {
+      "detecting": "Detecting {{tools}}…"
+    },
+    "errors": {
+      "toolMissing": "mongodump was not found. Install MongoDB Database Tools and set the path in Settings.",
+      "invalidQueryJson": "Not valid JSON. mongodump only accepts canonical extended JSON."
+    },
+    "scope": {
+      "title": "Scope",
+      "hint": "Dump the entire server, a single database, or one collection.",
+      "optionServer": "Entire server",
+      "optionDatabase": "Database",
+      "optionCollection": "Collection"
+    },
+    "labels": {
+      "database": "Database",
+      "collection": "Collection",
+      "selectDatabase": "Select database…",
+      "selectCollection": "Select collection…",
+      "queryFilter": "Query filter (optional)"
+    },
+    "hints": {
+      "queryFilterEjson": "mongodump requires canonical extended JSON — quoted keys and typed wrappers such as {{oidExample}} or {{dateExample}}."
+    },
+    "destination": {
+      "title": "Destination",
+      "hint": "Dump to a folder of BSON files, or a single compressed archive.",
+      "optionFolder": "Folder (multiple files)",
+      "optionArchive": "Single archive file"
+    },
+    "options": {
+      "title": "Options",
+      "hint": "Passed through to mongodump as CLI flags.",
+      "gzip": "Gzip compress output",
+      "forceTableScan": "Force table scan (ignore indexes)",
+      "usersAndRoles": "Include users and roles (database scope only)",
+      "oplog": "Include oplog for point-in-time restore (server scope only)"
+    },
+    "run": {
+      "title": "Run",
+      "hint": "Runs in the background and reports progress in the Tasks tab."
+    },
+    "footer": {
+      "backgroundNote": "Dumps run in the background. Track their progress in the <button>Tasks</button> tab."
+    }
+  },
+  "restoreView": {
+    "title": "Restore",
+    "actions": {
+      "viewTasks": "View Tasks",
+      "openSettings": "Open Settings",
+      "installTools": "Install tools…",
+      "chooseFolder": "Choose folder…",
+      "chooseArchive": "Choose archive…",
+      "run": "Restore",
+      "starting": "Starting…",
+      "dropAndRestore": "Drop and restore",
+      "cancel": "Cancel"
+    },
+    "tools": {
+      "missing": "mongorestore was not found. Configure the MongoDB Database Tools directory in Settings."
+    },
+    "source": {
+      "title": "Source",
+      "hint": "Restore from a dump folder or a single archive file.",
+      "folder": "Folder",
+      "archive": "Archive",
+      "browseError": "Failed to browse dump folder: {{error}}",
+      "gzipLabel": "gzip compressed",
+      "archiveFilterHint": "Leave both blank to restore everything in the archive, or filter to a single database or namespace."
+    },
+    "tree": {
+      "emptySelectionHint": "Select at least one collection to restore."
+    },
+    "rename": {
+      "placeholder": "new name (or db.name)",
+      "title": "A bare name restores into the same database; use db.name to restore into a different database."
+    },
+    "labels": {
+      "databaseFilter": "Database filter",
+      "collectionFilter": "Collection filter"
+    },
+    "options": {
+      "title": "Options",
+      "hint": "mongorestore flags.",
+      "flags": {
+        "drop": "Drop existing collections before restoring",
+        "keepIndexVersion": "Keep original index version",
+        "noIndexRestore": "Do not restore indexes",
+        "noOptionsRestore": "Do not restore collection options",
+        "maintainInsertionOrder": "Maintain document insertion order",
+        "stopOnError": "Stop on error",
+        "bypassDocumentValidation": "Bypass document validation",
+        "restoreDbUsersAndRoles": "Restore users and roles"
+      },
+      "oplogReplay": "Replay oplog for point-in-time consistency (full dump only)"
+    },
+    "run": {
+      "title": "Run",
+      "hint": "Runs in the background and reports progress in the Tasks tab."
+    },
+    "confirm": {
+      "dropWarning": "This will drop the following namespace(s) before restoring:",
+      "entireArchive": "(entire archive)"
+    },
+    "footer": {
+      "backgroundNote": "Restores run in the background. Track their progress in the <button>Tasks</button> tab."
+    }
+  },
+  "copyToDialog": {
+    "title": {
+      "collection": "Copy collection \"{{name}}\"",
+      "collections": "Copy {{count}} collections",
+      "database": "Copy database \"{{name}}\""
+    },
+    "labels": {
+      "targetConnection": "Target connection",
+      "targetDatabase": "Target database",
+      "targetCollection": "Target collection",
+      "filter": "Filter (EJSON, optional)",
+      "options": "Options",
+      "includeIndexes": "Include indexes",
+      "includeViews": "Include views",
+      "conflictResolution": "Conflict resolution",
+      "conflictModeSkip": "Skip — leave existing target documents untouched",
+      "conflictModeMerge": "Merge — keep existing documents, add new ones (duplicate _ids skipped)",
+      "conflictModeOverwrite": "Overwrite — drop and replace the target collection(s)",
+      "overwriteConfirm": "I understand this replaces the target collection(s)"
+    },
+    "placeholders": {
+      "selectConnection": "Select connection…",
+      "newDatabaseName": "New database name…",
+      "selectDatabase": "Select database…",
+      "collectionName": "Collection name…"
+    },
+    "actions": {
+      "newDatabase": "➕ New database…",
+      "cancel": "Cancel",
+      "startCopy": "Start copy"
+    },
+    "hints": {
+      "newDatabaseWillBeCreated": "Doesn't exist on the target — it will be created."
+    },
+    "errors": {
+      "selfOverwrite": "Source and target are the same collection — copy is not allowed."
+    }
+  }
+}
