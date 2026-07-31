@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useTranslation } from 'react-i18next';
 import { formatBytes } from '@/lib/format';
 
 interface DbStatsUi {
@@ -38,16 +39,19 @@ const Row: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value
   </div>
 );
 
-const RefreshLink: React.FC<{ onClick: () => void }> = ({ onClick }) => (
-  <button
-    type="button"
-    className="mt-0.5 self-start text-primary underline-offset-2 hover:underline"
-    onClick={onClick}
-    data-testid="stats-refresh"
-  >
-    Refresh
-  </button>
-);
+const RefreshLink: React.FC<{ onClick: () => void }> = ({ onClick }) => {
+  const { t } = useTranslation('admin');
+  return (
+    <button
+      type="button"
+      className="mt-0.5 self-start text-primary underline-offset-2 hover:underline"
+      onClick={onClick}
+      data-testid="stats-refresh"
+    >
+      {t('statsCards.actions.refresh')}
+    </button>
+  );
+};
 
 interface DbStatsCardProps {
   connectionId: string;
@@ -58,6 +62,7 @@ interface DbStatsCardProps {
  *  — i.e. once per popover open — so there is no background polling cost.
  *  Refresh re-runs the fetch in place via the `nonce` bump below. */
 export const DbStatsCard: React.FC<DbStatsCardProps> = ({ connectionId, db }) => {
+  const { t } = useTranslation('admin');
   const [data, setData] = useState<DbStatsUi | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -85,20 +90,20 @@ export const DbStatsCard: React.FC<DbStatsCardProps> = ({ connectionId, db }) =>
   return (
     <div className={CARD_CLASS} data-testid="db-stats-card">
       {err && <div className="text-destructive">{err}</div>}
-      {!err && !data && <div className="text-muted-foreground">Loading database stats…</div>}
+      {!err && !data && <div className="text-muted-foreground">{t('statsCards.dbStats.loading')}</div>}
       {!err && data && (
         <>
           <div>
-            Database: <span className="font-semibold text-foreground">{db}</span>
+            {t('statsCards.dbStats.database')} <span className="font-semibold text-foreground">{db}</span>
           </div>
-          <Row label="Collections" value={data.collections.toLocaleString()} />
-          <Row label="Views" value={data.views.toLocaleString()} />
-          <Row label="Objects" value={data.objects.toLocaleString()} />
-          <Row label="Avg. object size" value={formatBytes(data.avgObjSize)} />
-          <Row label="Data size" value={formatBytes(data.dataSize)} />
-          <Row label="Storage size" value={formatBytes(data.storageSize)} />
-          <Row label="Indexes" value={data.indexes.toLocaleString()} />
-          <Row label="Total index size" value={formatBytes(data.totalIndexSize)} />
+          <Row label={t('statsCards.dbStats.labels.collections')} value={data.collections.toLocaleString()} />
+          <Row label={t('statsCards.dbStats.labels.views')} value={data.views.toLocaleString()} />
+          <Row label={t('statsCards.dbStats.labels.objects')} value={data.objects.toLocaleString()} />
+          <Row label={t('statsCards.dbStats.labels.avgObjectSize')} value={formatBytes(data.avgObjSize)} />
+          <Row label={t('statsCards.dbStats.labels.dataSize')} value={formatBytes(data.dataSize)} />
+          <Row label={t('statsCards.dbStats.labels.storageSize')} value={formatBytes(data.storageSize)} />
+          <Row label={t('statsCards.dbStats.labels.indexes')} value={data.indexes.toLocaleString()} />
+          <Row label={t('statsCards.dbStats.labels.totalIndexSize')} value={formatBytes(data.totalIndexSize)} />
         </>
       )}
       {(data || err) && <RefreshLink onClick={refresh} />}
@@ -115,6 +120,7 @@ interface CollStatsCardProps {
 /** Compact collection-level stats summary (issue #178). Same fetch-once +
  *  nonce-refresh pattern as DbStatsCard. */
 export const CollStatsCard: React.FC<CollStatsCardProps> = ({ connectionId, db, collection }) => {
+  const { t } = useTranslation('admin');
   const [data, setData] = useState<CollStatsUi | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -142,22 +148,22 @@ export const CollStatsCard: React.FC<CollStatsCardProps> = ({ connectionId, db, 
   return (
     <div className={CARD_CLASS} data-testid="coll-stats-card">
       {err && <div className="text-destructive">{err}</div>}
-      {!err && !data && <div className="text-muted-foreground">Loading collection stats…</div>}
+      {!err && !data && <div className="text-muted-foreground">{t('statsCards.collStats.loading')}</div>}
       {!err && data && (
         <>
           <div>
-            Collection:{' '}
+            {t('statsCards.collStats.collection')}{' '}
             <span className="font-semibold text-foreground">
               {db}.{collection}
             </span>
           </div>
-          <Row label="Documents" value={data.count.toLocaleString()} />
-          <Row label="Avg. object size" value={formatBytes(data.avgObjSize)} />
-          <Row label="Data size" value={formatBytes(data.size)} />
-          <Row label="Storage size" value={formatBytes(data.storageSize)} />
-          <Row label="Indexes" value={data.nindexes.toLocaleString()} />
-          <Row label="Total index size" value={formatBytes(data.totalIndexSize)} />
-          {data.capped && <Row label="Capped" value="yes" />}
+          <Row label={t('statsCards.collStats.labels.documents')} value={data.count.toLocaleString()} />
+          <Row label={t('statsCards.collStats.labels.avgObjectSize')} value={formatBytes(data.avgObjSize)} />
+          <Row label={t('statsCards.collStats.labels.dataSize')} value={formatBytes(data.size)} />
+          <Row label={t('statsCards.collStats.labels.storageSize')} value={formatBytes(data.storageSize)} />
+          <Row label={t('statsCards.collStats.labels.indexes')} value={data.nindexes.toLocaleString()} />
+          <Row label={t('statsCards.collStats.labels.totalIndexSize')} value={formatBytes(data.totalIndexSize)} />
+          {data.capped && <Row label={t('statsCards.collStats.labels.capped')} value={t('statsCards.collStats.yes')} />}
         </>
       )}
       {(data || err) && <RefreshLink onClick={refresh} />}
@@ -176,6 +182,7 @@ interface IndexStatsCardProps {
  *  every index on the collection; this card picks the one matching
  *  `indexName` out of that array. */
 export const IndexStatsCard: React.FC<IndexStatsCardProps> = ({ connectionId, db, collection, indexName }) => {
+  const { t } = useTranslation('admin');
   const [data, setData] = useState<IndexStatUi[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -205,28 +212,28 @@ export const IndexStatsCard: React.FC<IndexStatsCardProps> = ({ connectionId, db
   return (
     <div className={CARD_CLASS} data-testid="index-stats-card">
       {err && <div className="text-destructive">{err}</div>}
-      {!err && !data && <div className="text-muted-foreground">Loading index stats…</div>}
+      {!err && !data && <div className="text-muted-foreground">{t('statsCards.indexStats.loading')}</div>}
       {!err && data && (
         <>
           <div>
-            Index:{' '}
+            {t('statsCards.indexStats.index')}{' '}
             <span className="font-semibold text-foreground">
-              {indexName} on {db}.{collection}
+              {t('statsCards.indexStats.indexOnNamespace', { indexName, namespace: `${db}.${collection}` })}
             </span>
           </div>
-          {!entry && <div className="text-muted-foreground">No stats for this index.</div>}
+          {!entry && <div className="text-muted-foreground">{t('statsCards.indexStats.noStatsForIndex')}</div>}
           {entry && (
             <>
-              <Row label="Size" value={formatBytes(entry.sizeBytes)} />
+              <Row label={t('statsCards.indexStats.labels.size')} value={formatBytes(entry.sizeBytes)} />
               {entry.sinceMs > 0 ? (
                 <>
-                  <Row label="Usage" value={`${entry.ops.toLocaleString()} ops`} />
-                  <Row label="Since" value={new Date(entry.sinceMs).toLocaleDateString()} />
+                  <Row label={t('statsCards.indexStats.labels.usage')} value={t('statsCards.indexStats.opsCount', { ops: entry.ops.toLocaleString() })} />
+                  <Row label={t('statsCards.indexStats.labels.since')} value={new Date(entry.sinceMs).toLocaleDateString()} />
                 </>
               ) : entry.ops === 0 ? (
-                <Row label="Usage" value="n/a (no data since restart)" />
+                <Row label={t('statsCards.indexStats.labels.usage')} value={t('statsCards.indexStats.usageNoData')} />
               ) : (
-                <Row label="Usage" value={`${entry.ops.toLocaleString()} ops`} />
+                <Row label={t('statsCards.indexStats.labels.usage')} value={t('statsCards.indexStats.opsCount', { ops: entry.ops.toLocaleString() })} />
               )}
             </>
           )}

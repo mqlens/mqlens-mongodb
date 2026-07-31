@@ -22,28 +22,60 @@ exports[`locale catalogs > keeps a snapshot of which values carry significant le
 ]
 `;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 8`] = `[]`;
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 8`] = `
+[
+  "clusterHealthCard.connectionPrefix",
+  "clusterHealthCard.memberStatus.onlinePrefix",
+  "clusterHealthCard.replicaSetClausePrefix",
+  "monitoringView.accessRequired.bodyPrefix",
+  "monitoringView.accessRequired.bodySuffix",
+  "monitoringView.cluster.summaryReplicaSetPrefix",
+  "monitoringView.cluster.summaryVersionClause",
+  "monitoringView.cluster.summaryYouClause",
+  "monitoringView.status.replSetClause",
+  "monitoringView.status.uptimeClause",
+  "monitoringView.tabs.opsCount",
+]
+`;
 
 exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 9`] = `[]`;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 10`] = `
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 10`] = `[]`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 11`] = `
 [
   "ssh.hostKeyNoteSuffix",
 ]
 `;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 11`] = `[]`;
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 12`] = `[]`;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 12`] = `
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 13`] = `
 [
   "tree.offlineSuffix",
 ]
 `;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 13`] = `[]`;
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 14`] = `[]`;
 
-exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 14`] = `
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 15`] = `
 [
   "generateView.confirm.insertMessageExistingClause",
+]
+`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 16`] = `
+[
+  "clusterHealthCard.connectionPrefix",
+  "clusterHealthCard.memberStatus.onlinePrefix",
+  "clusterHealthCard.replicaSetClausePrefix",
+  "monitoringView.accessRequired.bodyPrefix",
+  "monitoringView.accessRequired.bodySuffix",
+  "monitoringView.cluster.summaryReplicaSetPrefix",
+  "monitoringView.cluster.summaryVersionClause",
+  "monitoringView.cluster.summaryYouClause",
+  "monitoringView.status.replSetClause",
+  "monitoringView.status.uptimeClause",
+  "monitoringView.tabs.opsCount",
 ]
 `;

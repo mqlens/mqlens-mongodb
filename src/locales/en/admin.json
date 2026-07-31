@@ -1,0 +1,469 @@
+{
+  "monitoringView": {
+    "title": "Monitoring",
+    "tabs": {
+      "ops": "Current operations",
+      "opsCount": " ({{count}})",
+      "profiler": "Profiler",
+      "cluster": "Cluster"
+    },
+    "status": {
+      "hostVersion": "{{host}} · MongoDB {{version}}",
+      "replSetClause": " · {{replSet}}",
+      "uptimeClause": " · up {{hours}}h"
+    },
+    "actions": {
+      "refreshNow": "Refresh now",
+      "refreshPlaceholder": "Refresh",
+      "killOperation": "Kill operation",
+      "profilerRefresh": "Refresh"
+    },
+    "confirm": {
+      "killOperation": "Kill operation {{opid}} on {{ns}}?"
+    },
+    "labels": {
+      "serverFallback": "server",
+      "running": "running",
+      "client": "client",
+      "command": "command",
+      "commandHeading": "Command",
+      "secs": "secs",
+      "millis": "millis",
+      "plan": "plan",
+      "duration": "duration",
+      "time": "time"
+    },
+    "refreshOptions": {
+      "5s": "5s",
+      "10s": "10s",
+      "30s": "30s",
+      "1m": "1m",
+      "off": "Off"
+    },
+    "detail": {
+      "opTitle": "Operation details",
+      "profileTitle": "Profiled operation"
+    },
+    "accessRequired": {
+      "title": "Access required",
+      "bodyPrefix": "This connection's user isn't authorized to {{what}}. Grant the ",
+      "bodySuffix": " role (or equivalent privilege) to enable it.",
+      "what": {
+        "serverMetrics": "read server metrics (serverStatus)",
+        "currentOps": "inspect current operations ($currentOp)",
+        "profiler": "read the profiler for this database (system.profile)"
+      }
+    },
+    "metrics": {
+      "connections": "Connections",
+      "connectionsAvail": "{{count}} avail",
+      "opsPerSec": "Ops / sec",
+      "residentMem": "Resident mem",
+      "residentVirt": "{{mb}} MB virt",
+      "cache": "Cache",
+      "cacheNotAvailable": "n/a",
+      "network": "Network",
+      "networkPerSecond": "{{value}}/s",
+      "networkTotal": "{{value}} total"
+    },
+    "filters": {
+      "opsPlaceholder": "Filter ns, client, command…",
+      "profilerPlaceholder": "Filter ns, plan, command…",
+      "opTypePlaceholder": "Op type",
+      "allOps": "All ops",
+      "databasePlaceholder": "Database",
+      "allDatabases": "All databases",
+      "minSecsAriaLabel": "Minimum seconds running",
+      "minMsAriaLabel": "Minimum duration in milliseconds",
+      "secSuffix": "sec",
+      "msSuffix": "ms"
+    },
+    "table": {
+      "secs": "secs",
+      "client": "client",
+      "command": "command",
+      "millis": "millis",
+      "plan": "plan"
+    },
+    "empty": {
+      "noActiveOps": "No active operations.",
+      "noOpsMatchFilter": "No operations match the filter.",
+      "noEntriesMatchFilter": "No entries match the filter.",
+      "noProfiledOps": "No profiled operations yet.",
+      "profilingOff": "Profiling is off for this database. Set level 1 (slow ops) or 2 (all ops) to collect entries."
+    },
+    "profiler": {
+      "levelLabel": "Level:",
+      "slowThreshold": "slow ≥ {{slowMs}}ms"
+    },
+    "cluster": {
+      "shardedNotice": "Sharded cluster — member-level health isn't available through mongos. Connect directly to a shard's replica set to inspect its members.",
+      "notReplsetNotice": "This connection is a standalone MongoDB server — replica-set health does not apply here.",
+      "summaryReplicaSetPrefix": "Replica set ",
+      "summaryMembersCount": "{{count}} members",
+      "summaryVersionClause": " · MongoDB {{version}}",
+      "summaryYouClause": " · you: {{state}}",
+      "youBadge": "(you)",
+      "table": {
+        "member": "Member",
+        "state": "State",
+        "uptime": "Uptime",
+        "ping": "Ping",
+        "syncSource": "Sync source",
+        "lag": "Lag"
+      },
+      "optimeTooltip": "optime: {{date}}",
+      "pingMs": "{{ms}}ms",
+      "loading": "Loading replica-set status…"
+    }
+  },
+  "userManagementView": {
+    "title": "User Management",
+    "actions": {
+      "refresh": "Refresh",
+      "createUser": "Create User",
+      "editUser": "Edit User",
+      "dropUser": "Drop User"
+    },
+    "labels": {
+      "databaseScope": "Database scope",
+      "allDatabases": "All databases",
+      "columnUser": "User",
+      "columnDatabase": "Database",
+      "columnAuthMechanism": "Auth Mechanism",
+      "noRolesGranted": "No roles granted"
+    },
+    "hint": {
+      "notAuthorizedAllDbs": "Not authorized to list users across all databases — showing users from databases you can access."
+    },
+    "loading": "Loading users…",
+    "empty": {
+      "noUsers": "No users found.",
+      "noUsersInScope": "No users found in {{scope}}."
+    },
+    "confirm": {
+      "dropTitle": "Drop User",
+      "dropMessage": "Drop user \"{{user}}\" on database \"{{database}}\"? This cannot be undone.",
+      "dropConfirmLabel": "Drop User"
+    },
+    "editor": {
+      "titleEdit": "Edit User — {{user}}",
+      "titleNew": "New User",
+      "closeAriaLabel": "Close modal",
+      "labels": {
+        "username": "Username",
+        "newPassword": "New Password",
+        "password": "Password",
+        "authDatabase": "Authentication Database",
+        "roles": "Roles"
+      },
+      "placeholders": {
+        "username": "e.g. app_user",
+        "passwordKeepCurrent": "Leave blank to keep current password",
+        "password": "Password",
+        "selectRole": "Select role…"
+      },
+      "hints": {
+        "passwordRequired": "The password must be set.",
+        "authDatabaseExplain": "The database the user authenticates against.",
+        "savingReplacesRoles": "Saving replaces the user's role set with the list above."
+      },
+      "actions": {
+        "revokeRole": "Revoke role",
+        "grantRole": "Grant Role",
+        "cancel": "Cancel",
+        "saving": "Saving…",
+        "saveChanges": "Save Changes",
+        "addUser": "Add User"
+      },
+      "errors": {
+        "usernameRequired": "Username is required",
+        "passwordRequired": "Password is required",
+        "roleAndDbRequired": "Select a role and a database for every granted role"
+      }
+    }
+  },
+  "indexViewer": {
+    "loading": "Loading index definition…",
+    "errors": {
+      "notFound": "Index \"{{indexName}}\" was not found on {{namespace}}."
+    },
+    "badges": {
+      "index": "Index",
+      "unused": "Unused"
+    },
+    "actions": {
+      "editIndex": "Edit Index",
+      "deleteIndex": "Delete Index",
+      "copyToClipboard": "Copy to Clipboard",
+      "copied": "Copied!",
+      "copyJson": "Copy JSON"
+    },
+    "confirm": {
+      "deleteTitle": "Delete index",
+      "deleteMessage": "Are you sure you want to delete index \"{{indexName}}\"?",
+      "deleteConfirmLabel": "Delete"
+    },
+    "type": {
+      "compound": "Compound",
+      "singleField": "Single Field"
+    },
+    "labels": {
+      "unknownFields": "(unknown fields)"
+    },
+    "descriptions": {
+      "systemPrimaryKey": "System primary key index. Automatically created by MongoDB.",
+      "userCreated": "User-created index on {{fields}}."
+    },
+    "cards": {
+      "definition": "Definition",
+      "constraints": "Constraints",
+      "keyFields": "Key Fields",
+      "size": "Size",
+      "usage": "Usage"
+    },
+    "direction": {
+      "desc": "DESC (-1)",
+      "asc": "ASC (1)"
+    },
+    "constraints": {
+      "unique": "Unique",
+      "nonUnique": "Non-Unique",
+      "sparseIndex": "Sparse index",
+      "nonSparse": "Non-sparse (indexes all documents)",
+      "singleFieldIndex": "Single-field index",
+      "fieldsCompound_one": "{{count}} field (compound)",
+      "fieldsCompound_other": "{{count}} fields (compound)"
+    },
+    "size": {
+      "onDiskIndexSize": "On-disk index size"
+    },
+    "usage": {
+      "opsCount": "{{ops}} ops",
+      "indexAccessesSinceRestart": "Index accesses since last restart"
+    },
+    "properties": {
+      "title": "Properties & Details",
+      "indexName": "Index Name",
+      "uniqueConstraint": "Unique Constraint",
+      "sparseConstraint": "Sparse Constraint",
+      "operationalStatus": "Operational Status",
+      "active": "Active",
+      "nonSparseBadge": "Non-Sparse",
+      "descriptionAndGuidelines": "Description & Guidelines"
+    },
+    "raw": {
+      "title": "Raw Specification (BSON Metadata)"
+    }
+  },
+  "indexModal": {
+    "titleEdit": "Edit Index definition",
+    "titleCreate": "Create New Index",
+    "closeAriaLabel": "Close modal",
+    "labels": {
+      "indexName": "Index Name",
+      "indexKeyDefinition": "Index Key Definition",
+      "constraints": "Constraints"
+    },
+    "placeholders": {
+      "indexName": "e.g. email_1_status_-1"
+    },
+    "hints": {
+      "autoGenerated": "Auto-generated from the keys (Mongo convention) — type to override."
+    },
+    "tabs": {
+      "keyBuilder": "Key Builder",
+      "rawJson": "Raw JSON"
+    },
+    "actions": {
+      "list": "List",
+      "removeKey": "Remove Key",
+      "addIndexKey": "Add Index Key",
+      "cancel": "Cancel",
+      "saveChanges": "Save Changes",
+      "createIndex": "Create Index"
+    },
+    "options": {
+      "customField": "Custom field…",
+      "ascending": "Ascending (1)",
+      "descending": "Descending (-1)"
+    },
+    "constraintLabels": {
+      "unique": "Unique",
+      "uniqueHint": "prevent duplicates",
+      "sparse": "Sparse",
+      "sparseHint": "ignore missing keys"
+    },
+    "errors": {
+      "keysMustBeObject": "Index keys must be a JSON object (e.g. { \"field\": 1 })",
+      "invalidDirection": "Index direction for \"{{field}}\" must be 1 (Ascending) or -1 (Descending)",
+      "invalidJsonSyntax": "Invalid JSON syntax",
+      "allFieldsNeedName": "All index key fields must have a name",
+      "specifyAtLeastOneKey": "Please specify at least one index key",
+      "nameRequired": "Index name is required"
+    }
+  },
+  "validationRulesView": {
+    "title": "Validation Rules — {{collection}}",
+    "loading": "Loading validation rules…",
+    "labels": {
+      "validator": "Validator (JSON Schema)",
+      "validationLevel": "Validation Level",
+      "validationAction": "Validation Action",
+      "defaultPlaceholder": "(default)",
+      "defaultOption": "(default)"
+    },
+    "hints": {
+      "leaveEmptyToClear": "Leave empty and apply to clear validation for this collection."
+    },
+    "errors": {
+      "invalidValidatorJson": "Invalid validator JSON: {{message}}",
+      "syntaxErrorFallback": "syntax error",
+      "mustBeObject": "Validator must be a JSON object."
+    },
+    "success": {
+      "applied": "Validation rules applied."
+    },
+    "actions": {
+      "applying": "Applying…",
+      "apply": "Apply"
+    }
+  },
+  "createViewView": {
+    "title": "Create View — {{database}}",
+    "labels": {
+      "viewName": "View Name",
+      "sourceCollection": "Source Collection",
+      "pipeline": "Aggregation Pipeline (JSON array)"
+    },
+    "loading": "Loading collections…",
+    "options": {
+      "noCollectionsPlaceholder": "(no collections)",
+      "noCollections": "(no collections)"
+    },
+    "errors": {
+      "nameRequired": "View name is required.",
+      "selectSource": "Select a source collection.",
+      "pipelineMustBeArray": "Pipeline must be a JSON array of stages.",
+      "invalidPipelineJson": "Invalid pipeline JSON: {{message}}",
+      "syntaxErrorFallback": "syntax error"
+    },
+    "actions": {
+      "creating": "Creating…",
+      "createView": "Create View"
+    }
+  },
+  "statsCards": {
+    "actions": {
+      "refresh": "Refresh"
+    },
+    "dbStats": {
+      "loading": "Loading database stats…",
+      "database": "Database:",
+      "labels": {
+        "collections": "Collections",
+        "views": "Views",
+        "objects": "Objects",
+        "avgObjectSize": "Avg. object size",
+        "dataSize": "Data size",
+        "storageSize": "Storage size",
+        "indexes": "Indexes",
+        "totalIndexSize": "Total index size"
+      }
+    },
+    "collStats": {
+      "loading": "Loading collection stats…",
+      "collection": "Collection:",
+      "labels": {
+        "documents": "Documents",
+        "avgObjectSize": "Avg. object size",
+        "dataSize": "Data size",
+        "storageSize": "Storage size",
+        "indexes": "Indexes",
+        "totalIndexSize": "Total index size",
+        "capped": "Capped"
+      },
+      "yes": "yes"
+    },
+    "indexStats": {
+      "loading": "Loading index stats…",
+      "index": "Index:",
+      "indexOnNamespace": "{{indexName}} on {{namespace}}",
+      "labels": {
+        "size": "Size",
+        "usage": "Usage",
+        "since": "Since"
+      },
+      "opsCount": "{{ops}} ops",
+      "usageNoData": "n/a (no data since restart)",
+      "noStatsForIndex": "No stats for this index."
+    }
+  },
+  "clusterHealthCard": {
+    "loading": "Loading cluster health…",
+    "connectionPrefix": "Connection: ",
+    "replicaSetClausePrefix": " [replica set: ",
+    "userLine": "User: {{user}}",
+    "shardedNotice": "Sharded cluster (mongos).",
+    "standaloneNotice": "Standalone server — no replica set.",
+    "serversLabel": "Server(s):",
+    "memberStatus": {
+      "offline": "— Offline [(not reachable/healthy)]",
+      "onlinePrimary": "— Online [PRIMARY]",
+      "onlinePrefix": "— Online [{{state}}] · ",
+      "lagLabel": "lag"
+    },
+    "readPreferenceLine": "Read preference mode: {{value}}",
+    "versionLine": "Server version: {{version}}",
+    "actions": {
+      "refresh": "Refresh",
+      "openMonitoring": "Open Monitoring →"
+    }
+  },
+  "gridfsView": {
+    "loading": "Loading GridFS files…",
+    "labels": {
+      "fileCount": "{{count}} file(s)",
+      "theseFiles": "These files",
+      "thisFile": "This file"
+    },
+    "actions": {
+      "upload": "Upload",
+      "uploadFiles": "Upload files",
+      "download": "Download",
+      "delete": "Delete"
+    },
+    "progress": {
+      "uploading": "Uploading",
+      "downloading": "Downloading"
+    },
+    "empty": {
+      "noFiles": "No files in this bucket."
+    },
+    "table": {
+      "filename": "filename",
+      "size": "size",
+      "uploaded": "uploaded",
+      "chunkSize": "chunk size"
+    },
+    "metadataDialog": {
+      "title": "GridFS metadata",
+      "message": "{{batchLabel}}: add optional metadata?",
+      "choiceSkip": "Skip metadata",
+      "choiceAdd": "Add metadata JSON",
+      "promptMessage": "Metadata JSON object (stored on the file document):"
+    },
+    "uploadFilenameDialog": {
+      "titleMultiple": "Upload file {{index}} of {{total}}",
+      "titleSingle": "Upload to GridFS",
+      "messageMultiple": "Filename in the bucket for {{name}}:",
+      "messageSingle": "Filename in the bucket:",
+      "filenameRequired": "Filename is required"
+    },
+    "deleteDialog": {
+      "title": "Delete GridFS file",
+      "message": "Delete \"{{filename}}\" from {{namespace}}? This cannot be undone.",
+      "confirmLabel": "Delete"
+    }
+  }
+}

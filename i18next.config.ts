@@ -39,6 +39,11 @@ import { defineConfig } from 'i18next-cli';
  * its literal value directly and never calls `t()`) are read through
  * ImportView.tsx via `` t(`importView.columnTypes.${colType}`) ``. None of
  * these are string literals the extractor's static analysis can see.
+ *
+ * The `admin:monitoringView.refreshOptions.*` keys are read through
+ * MonitoringView.tsx's `REFRESH_OPTIONS` via `` t(`monitoringView.refreshOptions.${o.labelKey}`) ``
+ * — a template literal keyed off each option's `labelKey`, not a string
+ * literal the extractor's static analysis can see.
  */
 export default defineConfig({
   locales: ['en'],
@@ -140,6 +145,11 @@ export default defineConfig({
       'transfer:importView.columnTypes.number',
       'transfer:importView.columnTypes.boolean',
       'transfer:importView.columnTypes.date',
+      'admin:monitoringView.refreshOptions.5s',
+      'admin:monitoringView.refreshOptions.10s',
+      'admin:monitoringView.refreshOptions.30s',
+      'admin:monitoringView.refreshOptions.1m',
+      'admin:monitoringView.refreshOptions.off',
     ],
   },
 });

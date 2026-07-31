@@ -122,6 +122,30 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   // Kept as the English loanword on purpose: "Editor" would collide with the
   // Raw tab, which is the pane that actually hosts the code editor.
   'transfer:generateView.tabs.builder', // Builder
+  // admin namespace (Task 3): loanwords, product names, technical unit
+  // abbreviations and pure-interpolation fragments, identical spelling in
+  // both languages.
+  'admin:monitoringView.title', // Monitoring — established German loanword for ops/infra monitoring
+  'admin:monitoringView.tabs.opsCount', // " ({{count}})" — punctuation + interpolation only
+  'admin:monitoringView.tabs.profiler', // Profiler — established loanword
+  'admin:monitoringView.tabs.cluster', // Cluster — explicitly a kept loanword per the terminology brief
+  'admin:monitoringView.status.hostVersion', // "{{host}} · MongoDB {{version}}" — product name + interpolation only
+  'admin:monitoringView.status.replSetClause', // " · {{replSet}}" — pure interpolation, matches sidebar:tree.offlineSuffix pattern
+  'admin:monitoringView.refreshOptions.5s', // time-unit abbreviation, identical in German
+  'admin:monitoringView.refreshOptions.10s', // time-unit abbreviation, identical in German
+  'admin:monitoringView.refreshOptions.30s', // time-unit abbreviation, identical in German
+  'admin:monitoringView.refreshOptions.1m', // time-unit abbreviation, identical in German
+  'admin:monitoringView.metrics.cache', // Cache — established loanword
+  'admin:monitoringView.metrics.networkPerSecond', // "{{value}}/s" — unit suffix + interpolation only
+  'admin:monitoringView.filters.msSuffix', // ms — SI unit abbreviation, identical in German
+  'admin:monitoringView.cluster.summaryVersionClause', // " · MongoDB {{version}}" — product name + interpolation only
+  'admin:monitoringView.cluster.table.ping', // Ping — established loanword
+  'admin:indexViewer.badges.index', // Index — established capitalized loanword (see #234's "indizes" bug)
+  'admin:indexViewer.cards.definition', // Definition — identical spelling in German
+  'admin:indexModal.constraintLabels.sparse', // Sparse — kept MongoDB technical term, same rationale as Cluster/Bucket
+  'admin:statsCards.indexStats.index', // Index: — established loanword + colon, matches connections:profile.status
+  'admin:clusterHealthCard.memberStatus.onlinePrimary', // "— Online [PRIMARY]" — Online loanword + raw replica-set state identifier
+  'admin:clusterHealthCard.memberStatus.onlinePrefix', // "— Online [{{state}}] · " — Online loanword + raw interpolation, nothing to translate
 ]);
 
 describe('locale catalogs', () => {

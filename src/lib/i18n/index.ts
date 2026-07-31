@@ -16,6 +16,8 @@ import enDocuments from '../../locales/en/documents.json';
 import deDocuments from '../../locales/de/documents.json';
 import enTransfer from '../../locales/en/transfer.json';
 import deTransfer from '../../locales/de/transfer.json';
+import enAdmin from '../../locales/en/admin.json';
+import deAdmin from '../../locales/de/admin.json';
 
 /** Namespaces mirror the UI surfaces so a translator can take one file at a
  *  time. Every namespace must exist for every locale (enforced by the catalog
@@ -23,11 +25,11 @@ import deTransfer from '../../locales/de/transfer.json';
 // Exported (only) so the catalog test suite can assert this object's locale
 // keys stay in lockstep with SUPPORTED_LOCALES — nothing else should import it.
 export const resources = {
-  en: { common: enCommon, settings: enSettings, connections: enConnections, errors: enErrors, sidebar: enSidebar, documents: enDocuments, transfer: enTransfer },
-  de: { common: deCommon, settings: deSettings, connections: deConnections, errors: deErrors, sidebar: deSidebar, documents: deDocuments, transfer: deTransfer },
+  en: { common: enCommon, settings: enSettings, connections: enConnections, errors: enErrors, sidebar: enSidebar, documents: enDocuments, transfer: enTransfer, admin: enAdmin },
+  de: { common: deCommon, settings: deSettings, connections: deConnections, errors: deErrors, sidebar: deSidebar, documents: deDocuments, transfer: deTransfer, admin: deAdmin },
 } as const;
 
-export const NAMESPACES = ['common', 'settings', 'connections', 'errors', 'sidebar', 'documents', 'transfer'] as const;
+export const NAMESPACES = ['common', 'settings', 'connections', 'errors', 'sidebar', 'documents', 'transfer', 'admin'] as const;
 
 export async function initI18n(locale: Locale = DEFAULT_LOCALE): Promise<void> {
   if (i18next.isInitialized) {
