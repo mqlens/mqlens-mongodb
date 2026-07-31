@@ -264,15 +264,22 @@
       "bulkAllWarning_one": "\n\n⚠ Dies betrifft ALLE {{count}} Dokument in der Sammlung.",
       "bulkAllWarning_other": "\n\n⚠ Dies betrifft ALLE {{count}} Dokumente in der Sammlung.",
       "copyErrorMessage": "Fehlermeldung kopieren",
+      "deleteDocument": {
+        "body": "Dieses Dokument löschen? Dies kann nicht rückgängig gemacht werden.",
+        "confirmLabel": "Löschen"
+      },
       "deleteMany": {
         "body_one": "Lösche {{count}} Dokument, das folgendem Kriterium entspricht:\n{{filter}}",
         "body_other": "Lösche {{count}} Dokumente, die folgendem Kriterium entsprechen:\n{{filter}}",
+        "confirmLabel": "Löschen",
         "title": "Mehrere löschen"
       },
       "typeCollectionNameSuffix": "\n\nGib den Namen der Sammlung ein, um zu bestätigen.",
       "updateMany": {
         "body_one": "Wende dieses Update auf {{count}} Dokument an, das folgendem Kriterium entspricht:\n{{filter}}",
         "body_other": "Wende dieses Update auf {{count}} Dokumente an, die folgendem Kriterium entsprechen:\n{{filter}}",
+        "confirmLabel": "Aktualisieren",
+        "promptMessage": "Dokument aktualisieren (Operatoren, z. B. {\"$set\": {...}}):",
         "title": "Mehrere aktualisieren"
       }
     },

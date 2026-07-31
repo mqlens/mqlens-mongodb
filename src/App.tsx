@@ -2592,7 +2592,7 @@ function Workspace() {
           message: writeStage.target
             ? t('documents:documentViewer.dialogs.runAggregate.messageWithTarget', { target: writeStage.target })
             : t('documents:documentViewer.dialogs.runAggregate.messageUnknownTarget'),
-        });
+        }, t);
         if (!ok) return;
         confirmed = true;
       }
@@ -2993,7 +2993,7 @@ function Workspace() {
         const profiles = await invoke<ConnectionProfile[]>('load_connection_profiles');
         const profile = profiles.find((p) => p.id === profileId);
         if (!profile) {
-          patchReconnectState(profileId, { busy: false, error: 'Connection profile no longer exists' });
+          patchReconnectState(profileId, { busy: false, error: t('shell:reconnectBanner.profileMissing') });
           return;
         }
 
@@ -3252,8 +3252,8 @@ function Workspace() {
     if (
       !(await confirm({
         title: t('documents:dataGrid.actions.deleteDocument'),
-        message: 'Delete this document? This cannot be undone.',
-        confirmLabel: 'Delete',
+        message: t('documents:dataGrid.dialogs.deleteDocument.body'),
+        confirmLabel: t('documents:dataGrid.dialogs.deleteDocument.confirmLabel'),
         destructive: true,
       }))
     )
@@ -3322,14 +3322,14 @@ function Workspace() {
           // typed input by confirmByTypedName, never a translated string.
           expectedName: tab.collection,
           message: `${bulkConfirmMessage('delete', count, filter)}${t('documents:dataGrid.dialogs.typeCollectionNameSuffix')}`,
-        });
+        }, t);
         if (!ok) return;
         confirmed = true;
       } else if (
         !(await confirm({
           title: t('documents:dataGrid.dialogs.deleteMany.title'),
           message: bulkConfirmMessage('delete', count, filter),
-          confirmLabel: 'Delete',
+          confirmLabel: t('documents:dataGrid.dialogs.deleteMany.confirmLabel'),
           destructive: true,
         }))
       ) {
@@ -3354,7 +3354,7 @@ function Workspace() {
     const filter = bulkFilter(tab);
     const update = await prompt({
       title: t('documents:dataGrid.dialogs.updateMany.title'),
-      message: 'Update document (operators, e.g. {"$set": {...}}):',
+      message: t('documents:dataGrid.dialogs.updateMany.promptMessage'),
       defaultValue: '{ "$set": {} }',
       validate: (v) => {
         let parsed: any;
@@ -3391,14 +3391,14 @@ function Workspace() {
           // typed input by confirmByTypedName, never a translated string.
           expectedName: tab.collection,
           message: `${bulkConfirmMessage('update', count, filter)}${t('documents:dataGrid.dialogs.typeCollectionNameSuffix')}`,
-        });
+        }, t);
         if (!ok) return;
         confirmed = true;
       } else if (
         !(await confirm({
           title: t('documents:dataGrid.dialogs.updateMany.title'),
           message: bulkConfirmMessage('update', count, filter),
-          confirmLabel: 'Update',
+          confirmLabel: t('documents:dataGrid.dialogs.updateMany.confirmLabel'),
           destructive: true,
         }))
       ) {

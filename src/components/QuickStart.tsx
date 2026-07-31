@@ -307,12 +307,12 @@ export const QuickStart: React.FC<QuickStartProps> = ({
                   <CardTitle className="text-sm">{t('quickStart.sidebar.shortcutsTitle')}</CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3 pt-0">
-                  {shortcuts.map(({ id, keys, label }) => (
+                  {shortcuts.map(({ id, keys, labelKey }) => (
                     <div key={id} className="flex items-start gap-2.5 text-xs text-muted-foreground">
                       <kbd className="mt-0.5 shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-[10px] text-foreground">
                         {keys}
                       </kbd>
-                      <span className="min-w-0 flex-1 leading-snug">{label}</span>
+                      <span className="min-w-0 flex-1 leading-snug">{t(labelKey)}</span>
                     </div>
                   ))}
                   <button

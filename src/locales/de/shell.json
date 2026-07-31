@@ -168,7 +168,28 @@
     "description": "Globale Tastenkürzel für Navigation, Abfragen, die Sidebar, Zoom und die Befehlspalette.",
     "searchPlaceholder": "Tastenkürzel durchsuchen…",
     "searchAriaLabel": "Tastenkürzel durchsuchen",
-    "empty": "Keine Tastenkürzel entsprechen deiner Suche."
+    "empty": "Keine Tastenkürzel entsprechen deiner Suche.",
+    "groups": {
+      "navigation": "Navigation",
+      "query-editor": "Abfrage-Editor",
+      "sidebar": "Sidebar",
+      "zoom": "Zoom",
+      "command-palette": "Befehlspalette"
+    },
+    "items": {
+      "close-dialog": "Den obersten Dialog oder das Modal schließen",
+      "run-query": "Die aktuelle Abfrage ausführen",
+      "submit-dialog": "Einen mehrzeiligen Dialog absenden (URI-Import, Eingabeaufforderungen)",
+      "sidebar-search": "Sidebar-Baumsuche fokussieren",
+      "zoom-in": "Oberfläche vergrößern",
+      "zoom-out": "Oberfläche verkleinern",
+      "zoom-in-out": "Oberfläche vergrößern oder verkleinern",
+      "zoom-reset": "Oberflächenzoom auf 100 % zurücksetzen",
+      "palette-open": "Befehlspalette öffnen oder schließen",
+      "palette-navigate": "Durch die Palettenergebnisse navigieren",
+      "palette-run": "Die ausgewählte Palettenaktion ausführen",
+      "palette-close": "Befehlspalette schließen"
+    }
   },
   "mongoShell": {
     "help": {
@@ -279,7 +300,11 @@
     }
   },
   "reconnectBanner": {
-    "disconnected": "Getrennt"
+    "bodyGeneric": "Dieser Tab wurde aus deiner letzten Sitzung wiederhergestellt. Verbinde dich erneut mit {{profile}}, um ihn zu laden.",
+    "bodyWithNamespace": "{{namespace}} wurde aus deiner letzten Sitzung wiederhergestellt. Verbinde dich erneut mit {{profile}}, um es zu laden.",
+    "disconnected": "Getrennt",
+    "profileMissing": "Verbindungsprofil existiert nicht mehr",
+    "reconnectButton": "Erneut mit {{profile}} verbinden"
   },
   "statusBar": {
     "engineOnline": "MQLens-Engine online",

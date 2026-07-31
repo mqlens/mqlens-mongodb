@@ -97,7 +97,9 @@
     "displayNameRequired": "Anzeigename ist erforderlich",
     "fileReadFailed": "Ausgewählte Datei konnte nicht gelesen werden.",
     "folderNameExists": "Ein Ordner mit diesem Namen existiert bereits",
-    "folderNameRequired": "Ordnername ist erforderlich"
+    "folderNameRequired": "Ordnername ist erforderlich",
+    "importFileEmpty": "Die Datei ist leer",
+    "importNoUriFound": "Keine mongodb:// oder mongodb+srv://-URI in der Datei gefunden"
   },
   "export": {
     "allDescription_one": "Exportiere {{count}} gespeicherte Verbindung als JSON (einschließlich Ordnerstruktur). Kompatibel mit dem MQLens-Import und Studio-3T-artigen Verbindungsdateien.",

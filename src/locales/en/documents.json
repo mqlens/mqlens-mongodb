@@ -74,15 +74,22 @@
       "bulkAllWarning_one": "\n\n⚠ This affects ALL {{count}} documents in the collection.",
       "bulkAllWarning_other": "\n\n⚠ This affects ALL {{count}} documents in the collection.",
       "copyErrorMessage": "Copy error message",
+      "deleteDocument": {
+        "body": "Delete this document? This cannot be undone.",
+        "confirmLabel": "Delete"
+      },
       "deleteMany": {
         "body_one": "Delete {{count}} document(s) matching:\n{{filter}}",
         "body_other": "Delete {{count}} document(s) matching:\n{{filter}}",
+        "confirmLabel": "Delete",
         "title": "Delete many"
       },
       "typeCollectionNameSuffix": "\n\nType the collection name to confirm.",
       "updateMany": {
         "body_one": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
         "body_other": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
+        "confirmLabel": "Update",
+        "promptMessage": "Update document (operators, e.g. {\"$set\": {...}}):",
         "title": "Update many"
       }
     },

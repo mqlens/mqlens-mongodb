@@ -166,6 +166,27 @@
   "keyboardShortcuts": {
     "description": "Global shortcuts for navigation, queries, the sidebar, zoom, and the command palette.",
     "empty": "No shortcuts match your search.",
+    "groups": {
+      "command-palette": "Command palette",
+      "navigation": "Navigation",
+      "query-editor": "Query editor",
+      "sidebar": "Sidebar",
+      "zoom": "Zoom"
+    },
+    "items": {
+      "close-dialog": "Close the topmost dialog or modal",
+      "palette-close": "Close command palette",
+      "palette-navigate": "Navigate palette results",
+      "palette-open": "Open or close command palette",
+      "palette-run": "Run the selected palette action",
+      "run-query": "Run the current query",
+      "sidebar-search": "Focus sidebar tree search",
+      "submit-dialog": "Submit a multi-line dialog (import URI, prompts)",
+      "zoom-in": "Zoom interface in",
+      "zoom-in-out": "Zoom interface in or out",
+      "zoom-out": "Zoom interface out",
+      "zoom-reset": "Reset interface zoom to 100%"
+    },
     "searchAriaLabel": "Search keyboard shortcuts",
     "searchPlaceholder": "Search shortcuts…",
     "title": "Keyboard shortcuts"
@@ -279,7 +300,11 @@
     }
   },
   "reconnectBanner": {
-    "disconnected": "Disconnected"
+    "bodyGeneric": "This tab was restored from your last session. Reconnect to {{profile}} to load it.",
+    "bodyWithNamespace": "{{namespace}} was restored from your last session. Reconnect to {{profile}} to load it.",
+    "disconnected": "Disconnected",
+    "profileMissing": "Connection profile no longer exists",
+    "reconnectButton": "Reconnect {{profile}}"
   },
   "statusBar": {
     "appVersion": "MQLens {{version}}",

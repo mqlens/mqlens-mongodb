@@ -49,7 +49,7 @@
     "removeFromFavorites": "Aus Favoriten entfernen",
     "renameCollection": "Sammlung umbenennen",
     "renameDatabase": "Datenbank umbenennen",
-    "restore": "Restore (mongorestore)…",
+    "restore": "Wiederherstellung (mongorestore)…",
     "settings": "Einstellungen",
     "unpin": "Anheftung aufheben",
     "unpinFromSidebar": "Anheftung an Seitenleiste aufheben",

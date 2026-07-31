@@ -155,6 +155,12 @@
     "manualCheckTitle": "Manuelle Prüfung",
     "noCheckYet": "Noch keine Updateprüfung erfasst.",
     "result": "Ergebnis: {{result}}",
+    "resultValues": {
+      "available": "Update verfügbar",
+      "checkFailed": "Serverfehler",
+      "offline": "Offline",
+      "uptodate": "Aktuell"
+    },
     "stable": "Stabil",
     "tabDescription": "Release-Kanal und manuelle Updateprüfungen.",
     "tabLabel": "Updates"

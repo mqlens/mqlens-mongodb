@@ -7,7 +7,7 @@ import {
   filterKeyboardShortcuts,
   formatShortcut,
   groupKeyboardShortcuts,
-  SHORTCUT_GROUP_LABELS,
+  SHORTCUT_GROUP_LABEL_KEYS,
   SHORTCUT_GROUP_ORDER,
 } from '@/lib/shortcuts';
 
@@ -50,7 +50,7 @@ export const KeyboardShortcutsSettings: React.FC = () => {
               return (
                 <section key={group} data-testid={`shortcuts-group-${group}`}>
                   <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {SHORTCUT_GROUP_LABELS[group]}
+                    {t(SHORTCUT_GROUP_LABEL_KEYS[group])}
                   </h3>
                   <ul className="divide-y divide-border rounded-lg border border-border">
                     {items.map((shortcut) => (
@@ -59,7 +59,7 @@ export const KeyboardShortcutsSettings: React.FC = () => {
                         className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
                         data-testid={`shortcut-row-${shortcut.id}`}
                       >
-                        <span className="text-sm text-foreground">{shortcut.label}</span>
+                        <span className="text-sm text-foreground">{t(shortcut.labelKey)}</span>
                         <kbd className="shrink-0 rounded-md border border-border bg-muted px-2 py-1 font-mono text-[11px] text-foreground">
                           {formatShortcut(shortcut)}
                         </kbd>

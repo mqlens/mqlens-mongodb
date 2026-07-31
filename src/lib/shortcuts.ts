@@ -5,12 +5,17 @@ export type ShortcutGroup =
   | 'zoom'
   | 'command-palette';
 
-export const SHORTCUT_GROUP_LABELS: Record<ShortcutGroup, string> = {
-  navigation: 'Navigation',
-  'query-editor': 'Query editor',
-  sidebar: 'Sidebar',
-  zoom: 'Zoom',
-  'command-palette': 'Command palette',
+// Values are keys into shell:keyboardShortcuts.groups — translated at the
+// call site (KeyboardShortcutsSettings.tsx / QuickStart.tsx via
+// filterKeyboardShortcuts's haystack) since this is a module-level constant
+// and cannot call the useTranslation hook. Matches the TOOL_LABEL_KEYS
+// pattern in ToolSetupDialog.tsx.
+export const SHORTCUT_GROUP_LABEL_KEYS: Record<ShortcutGroup, string> = {
+  navigation: 'keyboardShortcuts.groups.navigation',
+  'query-editor': 'keyboardShortcuts.groups.query-editor',
+  sidebar: 'keyboardShortcuts.groups.sidebar',
+  zoom: 'keyboardShortcuts.groups.zoom',
+  'command-palette': 'keyboardShortcuts.groups.command-palette',
 };
 
 export const SHORTCUT_GROUP_ORDER: ShortcutGroup[] = [
@@ -30,7 +35,10 @@ export interface ShortcutChord {
 export interface KeyboardShortcut {
   id: string;
   group: ShortcutGroup;
-  label: string;
+  /** Key into shell:keyboardShortcuts.items — translated at the call site
+   *  (this is a module-level constant and cannot call the useTranslation
+   *  hook), same pattern as SHORTCUT_GROUP_LABEL_KEYS above. */
+  labelKey: string;
   keywords?: string;
   chords: ShortcutChord[];
 }
@@ -69,77 +77,77 @@ export const KEYBOARD_SHORTCUTS: KeyboardShortcut[] = [
   {
     id: 'close-dialog',
     group: 'navigation',
-    label: 'Close the topmost dialog or modal',
+    labelKey: 'keyboardShortcuts.items.close-dialog',
     chords: [{ key: 'Escape' }],
     keywords: 'dismiss cancel overlay',
   },
   {
     id: 'run-query',
     group: 'query-editor',
-    label: 'Run the current query',
+    labelKey: 'keyboardShortcuts.items.run-query',
     chords: [{ mod: true, key: 'Enter' }],
     keywords: 'execute mongosh shell builder',
   },
   {
     id: 'submit-dialog',
     group: 'query-editor',
-    label: 'Submit a multi-line dialog (import URI, prompts)',
+    labelKey: 'keyboardShortcuts.items.submit-dialog',
     chords: [{ mod: true, key: 'Enter' }],
     keywords: 'connection import prompt',
   },
   {
     id: 'sidebar-search',
     group: 'sidebar',
-    label: 'Focus sidebar tree search',
+    labelKey: 'keyboardShortcuts.items.sidebar-search',
     chords: [{ mod: true, key: 'F' }],
     keywords: 'filter find tree',
   },
   {
     id: 'zoom-in',
     group: 'zoom',
-    label: 'Zoom interface in',
+    labelKey: 'keyboardShortcuts.items.zoom-in',
     chords: [{ mod: true, key: '+' }],
     keywords: 'magnify dpi scale',
   },
   {
     id: 'zoom-out',
     group: 'zoom',
-    label: 'Zoom interface out',
+    labelKey: 'keyboardShortcuts.items.zoom-out',
     chords: [{ mod: true, key: '−' }],
     keywords: 'shrink dpi scale',
   },
   {
     id: 'zoom-reset',
     group: 'zoom',
-    label: 'Reset interface zoom to 100%',
+    labelKey: 'keyboardShortcuts.items.zoom-reset',
     chords: [{ mod: true, key: '0' }],
     keywords: 'default dpi scale status bar',
   },
   {
     id: 'palette-open',
     group: 'command-palette',
-    label: 'Open or close command palette',
+    labelKey: 'keyboardShortcuts.items.palette-open',
     chords: [{ mod: true, key: 'K' }],
     keywords: 'search commands collections queries',
   },
   {
     id: 'palette-navigate',
     group: 'command-palette',
-    label: 'Navigate palette results',
+    labelKey: 'keyboardShortcuts.items.palette-navigate',
     chords: [{ key: '↑' }, { key: '↓' }],
     keywords: 'arrow up down move',
   },
   {
     id: 'palette-run',
     group: 'command-palette',
-    label: 'Run the selected palette action',
+    labelKey: 'keyboardShortcuts.items.palette-run',
     chords: [{ key: 'Enter' }],
     keywords: 'select execute',
   },
   {
     id: 'palette-close',
     group: 'command-palette',
-    label: 'Close command palette',
+    labelKey: 'keyboardShortcuts.items.palette-close',
     chords: [{ key: 'Escape' }],
     keywords: 'dismiss cancel',
   },
@@ -153,6 +161,9 @@ export const QUICK_START_SHORTCUT_IDS = [
   'zoom-out',
 ] as const;
 
+/** Each row's `labelKey` is a key into shell:keyboardShortcuts.items —
+ *  translated at the call site (QuickStart.tsx), since this is a plain
+ *  function and cannot call the useTranslation hook. */
 export function quickStartShortcutRows(platform = navigator.platform) {
   const zoomIn = KEYBOARD_SHORTCUTS.find((s) => s.id === 'zoom-in')!;
   const zoomOut = KEYBOARD_SHORTCUTS.find((s) => s.id === 'zoom-out')!;
@@ -162,13 +173,13 @@ export function quickStartShortcutRows(platform = navigator.platform) {
       return {
         id,
         keys: `${formatShortcutChord(zoomIn.chords[0], platform)} / ${formatShortcutChord(zoomOut.chords[0], platform)}`,
-        label: 'Zoom interface in or out',
+        labelKey: 'keyboardShortcuts.items.zoom-in-out',
       };
     }
     return {
       id,
       keys: formatShortcut(shortcut, platform),
-      label: shortcut.label,
+      labelKey: shortcut.labelKey,
     };
   });
   return rows;
@@ -193,10 +204,14 @@ export function filterKeyboardShortcuts(
   const q = query.trim().toLowerCase();
   if (!q) return shortcuts;
   return shortcuts.filter((shortcut) => {
+    // Matches against the untranslated id/key text (English), same as
+    // `keywords` below — search always operates in English regardless of UI
+    // locale, there is no translated copy available to a plain function like
+    // this one (see labelKey's doc comment).
     const haystack = [
-      shortcut.label,
+      shortcut.labelKey,
       shortcut.keywords ?? '',
-      SHORTCUT_GROUP_LABELS[shortcut.group],
+      SHORTCUT_GROUP_LABEL_KEYS[shortcut.group],
       formatShortcut(shortcut, platform),
     ]
       .join(' ')

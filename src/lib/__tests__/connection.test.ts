@@ -158,16 +158,18 @@ describe('resolveImportUri', () => {
   });
 
   it('rejects non-mongodb input', () => {
+    // `error` is a code (translated at the call site in ConnectionManager.tsx,
+    // see connections:errors.importNoUriFound), not display text.
     expect(resolveImportUri('postgres://localhost')).toEqual({
       ok: false,
-      error: 'No mongodb:// or mongodb+srv:// URI found in file',
+      error: 'noUriFound',
     });
   });
 
   it('rejects empty input', () => {
     expect(resolveImportUri('   ')).toEqual({
       ok: false,
-      error: 'File is empty',
+      error: 'empty',
     });
   });
 });

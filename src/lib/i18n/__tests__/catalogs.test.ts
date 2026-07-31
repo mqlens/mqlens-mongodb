@@ -37,12 +37,14 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'common:appName', // MQLens
   'settings:tools.dbToolsTitle', // MongoDB Database Tools
   // Established German loanwords (identical spelling in both languages)
+  'common:ok', // OK — universal loanword, never translated in German software UI
   'settings:appearance.system', // System
   'settings:language.system', // System
   'sidebar:tree.systemLabel', // System
   'settings:appearance.themeFallback', // Theme
   'sidebar:footer.themeLabel', // Theme
   'settings:mcp.port', // Port
+  'settings:updates.resultValues.offline', // Offline — established loanword, matches shell:updatePrompt.toast.offline's "offline" usage
   'settings:tools.tabLabel', // Tools
   'settings:updates.tabLabel', // Updates
   'connections:connectionMode.normal.label', // Normal
@@ -65,10 +67,13 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'connections:advanced.compressionZlib', // Zlib
   // Kerberos-protocol-specific term (RFC 4120), kept untranslated like "Realm"
   'connections:auth.userLabelKerberos', // Principal
-  // Feature/tab names shared with the (currently English-only, out-of-scope)
-  // Dump/Restore views — see settings:tools.dbToolsDescription
+  // Feature/tab name shared with the (currently English-only, out-of-scope)
+  // Dump view — see settings:tools.dbToolsDescription. `sidebar:ctx.restore`
+  // used to share this exemption too, but the Restore view (transfer:
+  // restoreView.title / common:tabs.restore) is translated on this branch —
+  // its German value ("Wiederherstellung (mongorestore)…") is genuinely
+  // translated now, so it no longer needs (or qualifies for) this allowlist.
   'sidebar:ctx.dump', // Dump (mongodump)…
-  'sidebar:ctx.restore', // Restore (mongorestore)…
   // Literal default value for the GridFS bucket prefix, not UI copy
   'sidebar:dialogs.gridfsBucket.bucketDefault', // fs
   // Literal default value for the initial-collection prompt, not UI copy —
@@ -172,6 +177,12 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'shell:toolSetupDialog.pathSuffix', // " — {{path}}" — punctuation + interpolation only
   'shell:connectionCard.badge.srv', // SRV — DNS record type acronym
   'shell:connectionCard.badge.ssh', // SSH — protocol acronym
+  // Task 6 (final review fixes): shell:keyboardShortcuts.groups.* — identical
+  // German cognate/loanwords per the project glossary (Sidebar/Zoom are
+  // explicitly listed loanwords; "Navigation" is spelled identically in German).
+  'shell:keyboardShortcuts.groups.navigation', // Navigation
+  'shell:keyboardShortcuts.groups.sidebar', // Sidebar
+  'shell:keyboardShortcuts.groups.zoom', // Zoom
   // Task 5: workspace tab labels that are pure interpolation of an
   // identifier (collection/db name) with no surrounding prose to translate.
   'common:tabs.export', // "Export: {{collection}}" — matches transfer:exportView.title's Export loanword

@@ -155,6 +155,12 @@
     "manualCheckTitle": "Manual check",
     "noCheckYet": "No update check recorded yet.",
     "result": "Result: {{result}}",
+    "resultValues": {
+      "available": "Update available",
+      "checkFailed": "Server error",
+      "offline": "Offline",
+      "uptodate": "Up to date"
+    },
     "stable": "Stable",
     "tabDescription": "Release channel and manual update checks.",
     "tabLabel": "Updates"

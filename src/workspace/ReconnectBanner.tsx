@@ -39,8 +39,9 @@ export const ReconnectBanner: React.FC<ReconnectBannerProps> = ({
       <div>
         <p className="text-sm font-medium text-foreground">{t('reconnectBanner.disconnected')}</p>
         <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-          {namespace ? <>{namespace} was</> : 'This tab was'} restored from your last session.
-          Reconnect to {profileName} to load it.
+          {namespace
+            ? t('reconnectBanner.bodyWithNamespace', { namespace, profile: profileName })
+            : t('reconnectBanner.bodyGeneric', { profile: profileName })}
         </p>
       </div>
       <Button onClick={onReconnect} disabled={busy} size="sm">
@@ -49,7 +50,7 @@ export const ReconnectBanner: React.FC<ReconnectBannerProps> = ({
         ) : (
           <PlugZap size={14} className="mr-1.5" />
         )}
-        Reconnect {profileName}
+        {t('reconnectBanner.reconnectButton', { profile: profileName })}
       </Button>
       {error && (
         <p className="max-w-xs text-ui-2xs text-destructive" data-testid="reconnect-error">

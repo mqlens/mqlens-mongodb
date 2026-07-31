@@ -9,6 +9,7 @@ import {
   parseConnectionImportFile,
   resolveImportUri,
   type ImportedConnection,
+  type ImportParseErrorCode,
 } from '@/lib/connection';
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
@@ -772,10 +773,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setShowEditDialog(true);
   };
 
+  // `parseConnectionImportFile`/`resolveImportUri` return an error CODE, not
+  // display text (see `ImportParseErrorCode`'s doc comment) — translate it
+  // here, at the render/state boundary.
+  const importErrorMessage = (code: ImportParseErrorCode): string =>
+    code === 'empty' ? t('errors.importFileEmpty') : t('errors.importNoUriFound');
+
   const applyImportedUri = (raw: string, name?: string) => {
     const result = resolveImportUri(raw);
     if (!result.ok) {
-      setImportError(result.error);
+      setImportError(importErrorMessage(result.error));
       return;
     }
     setImportError(null);
@@ -892,7 +899,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       }
       const result = parseConnectionImportFile(text);
       if (!result.ok) {
-        setImportError(result.error);
+        setImportError(importErrorMessage(result.error));
         return;
       }
       await importParsedConnections(result.connections);
@@ -916,7 +923,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       const text = await readTextFile(path);
       const result = parseConnectionImportFile(text);
       if (!result.ok) {
-        setImportError(result.error);
+        setImportError(importErrorMessage(result.error));
         return;
       }
       await importParsedConnections(result.connections);
@@ -935,13 +942,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       multiline: true,
       validate: (v) => {
         const result = parseConnectionImportFile(v);
-        return result.ok ? null : result.error;
+        return result.ok ? null : importErrorMessage(result.error);
       },
     });
     if (!text || !text.trim()) return;
     const result = parseConnectionImportFile(text);
     if (!result.ok) {
-      setImportError(result.error);
+      setImportError(importErrorMessage(result.error));
       return;
     }
     await importParsedConnections(result.connections);

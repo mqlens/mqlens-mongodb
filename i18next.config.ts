@@ -44,6 +44,29 @@ import { defineConfig } from 'i18next-cli';
  * MonitoringView.tsx's `REFRESH_OPTIONS` via `` t(`monitoringView.refreshOptions.${o.labelKey}`) ``
  * — a template literal keyed off each option's `labelKey`, not a string
  * literal the extractor's static analysis can see.
+ *
+ * The `shell:keyboardShortcuts.groups.*` and `shell:keyboardShortcuts.items.*`
+ * keys are read through shortcuts.ts's `SHORTCUT_GROUP_LABEL_KEYS`/
+ * `KEYBOARD_SHORTCUTS`/`quickStartShortcutRows` via `t(shortcut.labelKey)` /
+ * `t(SHORTCUT_GROUP_LABEL_KEYS[group])` in KeyboardShortcutsSettings.tsx and
+ * QuickStart.tsx — a variable, not a string literal the extractor's static
+ * analysis can see. `items.zoom-in-out` has no corresponding entry in
+ * `KEYBOARD_SHORTCUTS` (it's `quickStartShortcutRows`'s synthetic combined
+ * zoom-in/zoom-out row, QuickStart.tsx only).
+ *
+ * The `common:typedNameConfirm.messageCollection`/`messageDatabase` keys are
+ * read through typedNameConfirm.ts's `confirmByTypedName` via
+ * `t(defaultMessageKey)`, where `defaultMessageKey` is chosen by a ternary on
+ * `opts.kind` — a variable, not a string literal the extractor's static
+ * analysis can see. `common:typedNameConfirm.validationError` is read via a
+ * literal `t('common:typedNameConfirm.validationError')` call in the same
+ * file and needs no entry here.
+ *
+ * The `settings:updates.resultValues.*` keys are read through
+ * updateCheckState.ts's `updateCheckResultLabel()` via
+ * `t(updateCheckResultLabel(updateCheck.result))` in SettingsModal.tsx — the
+ * key comes from a function's return value, not a string literal the
+ * extractor's static analysis can see.
  */
 export default defineConfig({
   locales: ['en'],
@@ -150,6 +173,29 @@ export default defineConfig({
       'admin:monitoringView.refreshOptions.30s',
       'admin:monitoringView.refreshOptions.1m',
       'admin:monitoringView.refreshOptions.off',
+      'shell:keyboardShortcuts.groups.navigation',
+      'shell:keyboardShortcuts.groups.query-editor',
+      'shell:keyboardShortcuts.groups.sidebar',
+      'shell:keyboardShortcuts.groups.zoom',
+      'shell:keyboardShortcuts.groups.command-palette',
+      'shell:keyboardShortcuts.items.close-dialog',
+      'shell:keyboardShortcuts.items.run-query',
+      'shell:keyboardShortcuts.items.submit-dialog',
+      'shell:keyboardShortcuts.items.sidebar-search',
+      'shell:keyboardShortcuts.items.zoom-in',
+      'shell:keyboardShortcuts.items.zoom-out',
+      'shell:keyboardShortcuts.items.zoom-reset',
+      'shell:keyboardShortcuts.items.zoom-in-out',
+      'shell:keyboardShortcuts.items.palette-open',
+      'shell:keyboardShortcuts.items.palette-navigate',
+      'shell:keyboardShortcuts.items.palette-run',
+      'shell:keyboardShortcuts.items.palette-close',
+      'common:typedNameConfirm.messageCollection',
+      'common:typedNameConfirm.messageDatabase',
+      'settings:updates.resultValues.uptodate',
+      'settings:updates.resultValues.available',
+      'settings:updates.resultValues.offline',
+      'settings:updates.resultValues.checkFailed',
       // `shell:commandPalette.buckets.*.label` are read through CommandPalette.tsx's
       // `BUCKET_META` via `t(BUCKET_META[bucket].labelKey)` — a variable, not a
       // string literal the extractor's static analysis can see.

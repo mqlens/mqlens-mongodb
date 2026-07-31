@@ -97,7 +97,9 @@
     "displayNameRequired": "Display Name is required",
     "fileReadFailed": "Could not read the selected file.",
     "folderNameExists": "A folder with this name already exists",
-    "folderNameRequired": "Folder name is required"
+    "folderNameRequired": "Folder name is required",
+    "importFileEmpty": "File is empty",
+    "importNoUriFound": "No mongodb:// or mongodb+srv:// URI found in file"
   },
   "export": {
     "allDescription_one": "Exporting {{count}} saved connection as JSON (including folder structure). Compatible with MQLens import and Studio 3T-style connection files.",

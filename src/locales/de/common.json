@@ -2,6 +2,14 @@
   "appName": "MQLens",
   "cancel": "Abbrechen",
   "close": "Schließen",
+  "confirm": "Bestätigen",
+  "ok": "OK",
+  "passwordInput": {
+    "hide": "Ausblenden",
+    "hidePassword": "Passwort ausblenden",
+    "show": "Anzeigen",
+    "showPassword": "Passwort anzeigen"
+  },
   "save": "Speichern",
   "tabs": {
     "settings": "Einstellungen",
@@ -86,5 +94,10 @@
     "userCreated": "Benutzer {{name}} erstellt",
     "userDropped": "Benutzer {{name}} gelöscht",
     "userUpdated": "Benutzer {{name}} aktualisiert"
+  },
+  "typedNameConfirm": {
+    "messageCollection": "Gib den Namen der Sammlung ein, um zu bestätigen.",
+    "messageDatabase": "Gib den Namen der Datenbank ein, um zu bestätigen.",
+    "validationError": "Name stimmt nicht überein"
   }
 }

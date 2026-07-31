@@ -997,7 +997,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title: t('dialogs.dropCollection.title'),
           kind: 'collection',
           expectedName: collName,
-        }))
+        }, t))
       )
         return;
     } else if (
@@ -1056,7 +1056,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title: t('dialogs.renameCollection.title'),
           kind: 'collection',
           expectedName: collName,
-        }))
+        }, t))
       )
         return;
     }
@@ -1145,7 +1145,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title: t('dialogs.dropDatabase.title'),
           kind: 'database',
           expectedName: dbName,
-        }))
+        }, t))
       )
         return;
     } else if (
@@ -1243,7 +1243,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           kind: 'database',
           expectedName: dbName,
           message: t('dialogs.renameDatabase.messageTyped', { oldName: dbName, newName }),
-        }))
+        }, t))
       )
         return;
     } else if (
