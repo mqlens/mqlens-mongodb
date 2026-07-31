@@ -328,12 +328,12 @@ export const UpdatePrompt: React.FC = () => {
               t={t}
               values={{ version: update?.version, current: update.current_version }}
             >
-              MQLens <strong>{{ version: update?.version } as unknown as string}</strong> is available (you have{' '}
-              {{ current: update.current_version } as unknown as string}).
+              MQLens <strong>{update?.version}</strong> is available (you have{' '}
+              {update.current_version}).
             </Trans>
           ) : (
             <Trans i18nKey="shell:updatePrompt.dialog.versionAvailable" t={t} values={{ version: update?.version }}>
-              MQLens <strong>{{ version: update?.version } as unknown as string}</strong> is available.
+              MQLens <strong>{update?.version}</strong> is available.
             </Trans>
           )}
         </p>

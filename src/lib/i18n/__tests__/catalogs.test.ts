@@ -160,7 +160,6 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'shell:mongoShell.help.countDocumentsSyntax', // db.<coll>.countDocuments(<query>)
   'shell:mongoShell.help.getIndexesSyntax', // db.<coll>.getIndexes()
   'shell:mongoShell.gate.foundMongoshVersion', // "mongosh {{version}}" — loanword + interpolation only
-  'shell:mongoShell.toolbar.aiToggleLabel', // KI — the established German abbreviation for AI, matches documents:documentViewer.actions.aiHelper
   'shell:statusBar.cpu', // "CPU {{value}}" — acronym + interpolation only
   'shell:statusBar.ram', // "RAM {{value}}" — acronym + interpolation only
   'shell:statusBar.mongodb', // "MongoDB {{value}}" — product name + interpolation only

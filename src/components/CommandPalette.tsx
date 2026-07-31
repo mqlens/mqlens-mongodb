@@ -46,13 +46,10 @@ type ActionBucket = 'commands' | 'collections' | 'queries';
 
 // Keys into shell:commandPalette.buckets — translated at render (this is a
 // module-level constant and can't call the useTranslation hook itself).
-const BUCKET_META: Record<ActionBucket, { labelKey: string; emptyKey: string }> = {
-  commands: { labelKey: 'commandPalette.buckets.commands.label', emptyKey: 'commandPalette.buckets.commands.empty' },
-  collections: {
-    labelKey: 'commandPalette.buckets.collections.label',
-    emptyKey: 'commandPalette.buckets.collections.empty',
-  },
-  queries: { labelKey: 'commandPalette.buckets.queries.label', emptyKey: 'commandPalette.buckets.queries.empty' },
+const BUCKET_META: Record<ActionBucket, { labelKey: string }> = {
+  commands: { labelKey: 'commandPalette.buckets.commands.label' },
+  collections: { labelKey: 'commandPalette.buckets.collections.label' },
+  queries: { labelKey: 'commandPalette.buckets.queries.label' },
 };
 
 const bucketFor = (action: PaletteAction): ActionBucket => {

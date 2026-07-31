@@ -29,7 +29,7 @@
       "startingSession": "Starting mongosh session…",
       "requiresMongosh": "MongoShell requires mongosh",
       "requiresMongoshBody": "A live mongosh session is required to run queries and scripts here.",
-      "found": "Found:",
+      "found": "Found",
       "foundMongoshVersion": "mongosh {{version}}",
       "useThisBinary": "Use this binary",
       "installTools": "Install tools…",
@@ -42,7 +42,7 @@
     "toolbar": {
       "run": "Run",
       "aiToggleTitle": "AI assistant",
-      "aiToggleLabel": "KI"
+      "aiToggleLabel": "AI"
     },
     "editor": {
       "loading": "Loading editor..."
@@ -55,7 +55,7 @@
     },
     "destructiveDialog": {
       "title": "Destructive operation",
-      "body": "This script runs <strong>{{operation}}</strong>, which can permanently delete data. Review it before running.",
+      "body": "This script runs <1>{{operation}}</1>, which can permanently delete data. Review it before running.",
       "cancel": "Cancel",
       "runAnyway": "Run anyway"
     }
@@ -96,9 +96,9 @@
     "title": "Command palette",
     "searchPlaceholder": "Search commands, collections, saved queries…",
     "buckets": {
-      "commands": { "label": "Commands", "empty": "No matching commands" },
-      "collections": { "label": "Collections", "empty": "No matching collections" },
-      "queries": { "label": "Saved queries", "empty": "No matching saved queries" }
+      "commands": { "label": "Commands" },
+      "collections": { "label": "Collections" },
+      "queries": { "label": "Saved queries" }
     },
     "scopeFilterTitle": "Sidebar filter: {{scope}}",
     "scopeLabel": "Sidebar scope",

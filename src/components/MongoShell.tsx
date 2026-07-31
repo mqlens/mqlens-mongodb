@@ -759,7 +759,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               <div className="max-w-sm text-ui-2xs text-muted-foreground" data-testid="shell-install-hint">
                 <Trans i18nKey="shell:mongoShell.gate.installHint" t={t} values={{ hint: installHint }}>
                   Or install it yourself:{' '}
-                  <code className="font-mono">{{ hint: installHint } as unknown as string}</code>{' '}
+                  <code className="font-mono">{installHint}</code>{' '}
                   — see the{' '}
                   <button
                     type="button"
@@ -1010,7 +1010,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             <Trans i18nKey="shell:mongoShell.destructiveDialog.body" t={t} values={{ operation: pendingDestructive.operation }}>
-              This script runs <strong className="text-foreground">{{ operation: pendingDestructive.operation } as unknown as string}</strong>, which can permanently
+              This script runs <strong className="text-foreground">{pendingDestructive.operation}</strong>, which can permanently
               delete data. Review it before running.
             </Trans>
           </p>

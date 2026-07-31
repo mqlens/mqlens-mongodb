@@ -55,7 +55,7 @@
     },
     "destructiveDialog": {
       "title": "Destruktive Operation",
-      "body": "Dieses Skript führt <strong>{{operation}}</strong> aus, was Daten dauerhaft löschen kann. Prüfe es, bevor du es ausführst.",
+      "body": "Dieses Skript führt <1>{{operation}}</1> aus, was Daten dauerhaft löschen kann. Prüfe es, bevor du es ausführst.",
       "cancel": "Abbrechen",
       "runAnyway": "Trotzdem ausführen"
     }
@@ -96,9 +96,9 @@
     "title": "Befehlspalette",
     "searchPlaceholder": "Befehle, Sammlungen, gespeicherte Abfragen durchsuchen…",
     "buckets": {
-      "commands": { "label": "Befehle", "empty": "Keine passenden Befehle" },
-      "collections": { "label": "Sammlungen", "empty": "Keine passenden Sammlungen" },
-      "queries": { "label": "Gespeicherte Abfragen", "empty": "Keine passenden gespeicherten Abfragen" }
+      "commands": { "label": "Befehle" },
+      "collections": { "label": "Sammlungen" },
+      "queries": { "label": "Gespeicherte Abfragen" }
     },
     "scopeFilterTitle": "Sidebar-Filter: {{scope}}",
     "scopeLabel": "Sidebar-Bereich",

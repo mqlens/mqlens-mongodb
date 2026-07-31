@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MongoShell } from '../MongoShell';
 
 const mockInvoke = vi.fn();
@@ -168,6 +168,28 @@ describe('MongoShell Component', () => {
     expect((screen.getByLabelText('mongosh editor') as HTMLTextAreaElement).value).toContain(
       'db.users.aggregate('
     );
+  });
+
+  // Regression test: shell:mongoShell.toolbar.aiToggleLabel previously shipped
+  // "KI" (the German abbreviation) in the *English* catalog, so English users
+  // saw a toggle labelled "KI" instead of "AI". Locked down here under the
+  // English locale that src/test/setup.ts initialises i18next with.
+  it('renders the AI toggle button labelled "AI" under the English locale', async () => {
+    render(
+      <MongoShell
+        connectionId="c1"
+        connectionName="local"
+        connectionUri="mongodb://x"
+        databaseName="test-db"
+        collectionName="users"
+      />
+    );
+
+    await screen.findByText(/mongosh session attached/);
+
+    const toggle = screen.getByTestId('shell-ai-toggle');
+    expect(toggle).toHaveTextContent('AI');
+    expect(toggle).not.toHaveTextContent('KI');
   });
 
   it('runs a multi-statement JS script through the mongosh session', async () => {
@@ -488,11 +510,19 @@ describe('MongoShell Component', () => {
 
     // Insert & run -> the guard shows the modal instead of running.
     fireEvent.click(screen.getByTestId('chat-insert-run-btn'));
-    await screen.findByTestId('destructive-confirm');
+    const confirmDialog = await screen.findByTestId('destructive-confirm');
     expect(mockInvoke).not.toHaveBeenCalledWith(
       'run_mongosh_command',
       expect.objectContaining({ command: script })
     );
+
+    // Trans (shell:mongoShell.destructiveDialog.body) matches its JSX children
+    // to the catalog's <strong> by tag/index and substitutes {{operation}} in
+    // as the interpolated value — verify the emitted <strong> still carries
+    // the className from the source JSX rather than losing it in that swap.
+    const operationEl = within(confirmDialog).getByText('deleteMany');
+    expect(operationEl.tagName).toBe('STRONG');
+    expect(operationEl).toHaveClass('text-foreground');
 
     // Run anyway -> the script actually executes.
     fireEvent.click(screen.getByTestId('destructive-run'));
