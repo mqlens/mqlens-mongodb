@@ -325,7 +325,13 @@
   },
   "workspaceTabBar": {
     "closeTab": "Close {{label}}",
-    "closeTooltip": "Close tab"
+    "closeTooltip": "Close tab",
+    "contextMenu": {
+      "duplicateTab": "Duplicate Tab",
+      "detachToNewWindow": "Detach to New Window",
+      "moveToWindow": "Move to {{target}}",
+      "unmirroredExplanation": "Export/import tabs stay in their window"
+    }
   },
   "dialog": {
     "resizeAriaLabel": "Resize dialog",

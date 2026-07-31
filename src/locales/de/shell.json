@@ -113,31 +113,31 @@
       "close": "schließen"
     },
     "paletteActions": {
-      "newConnection": { "title": "Neue Verbindung…", "keywords": "verbinden datenbank hinzufügen server" },
-      "toggleTheme": { "title": "Hell-/Dunkelmodus umschalten", "keywords": "darstellung farbe modus" },
-      "openSettings": { "title": "Einstellungen öffnen", "keywords": "einstellungen konfiguration dichte" },
-      "openQuickstart": { "title": "Schnellstart öffnen", "keywords": "willkommen start hilfe" },
-      "refreshPaletteIndex": { "title": "Befehlspalette-Index aktualisieren", "keywords": "neu laden datenbanken sammlungen namensräume cache veraltet" },
-      "densityRoomy": { "title": "Dichte: Geräumig", "keywords": "layout abstand" },
-      "densityCozy": { "title": "Dichte: Gemütlich", "keywords": "layout abstand" },
-      "densityCompact": { "title": "Dichte: Kompakt", "keywords": "layout abstand dicht" },
-      "openShell": { "title": "mongosh-Shell öffnen", "keywords": "terminal mongosh skript" },
-      "exportCollection": { "title": "Sammlung exportieren…", "keywords": "herunterladen json csv import" },
-      "analyzeSchema": { "title": "Schema analysieren", "keywords": "felder typen" },
+      "newConnection": { "title": "Neue Verbindung…", "keywords": "verbinden datenbank hinzufügen server connect database add" },
+      "toggleTheme": { "title": "Hell-/Dunkelmodus umschalten", "keywords": "darstellung farbe modus appearance color" },
+      "openSettings": { "title": "Einstellungen öffnen", "keywords": "einstellungen konfiguration dichte preferences config density" },
+      "openQuickstart": { "title": "Schnellstart öffnen", "keywords": "willkommen start hilfe welcome home help" },
+      "refreshPaletteIndex": { "title": "Befehlspalette-Index aktualisieren", "keywords": "neu laden datenbanken sammlungen namensräume cache veraltet reload databases collections namespaces stale" },
+      "densityRoomy": { "title": "Dichte: Geräumig", "keywords": "layout abstand spacing" },
+      "densityCozy": { "title": "Dichte: Gemütlich", "keywords": "layout abstand spacing" },
+      "densityCompact": { "title": "Dichte: Kompakt", "keywords": "layout abstand dicht spacing dense" },
+      "openShell": { "title": "mongosh-Shell öffnen", "keywords": "terminal mongosh skript script" },
+      "exportCollection": { "title": "Sammlung exportieren…", "keywords": "herunterladen json csv import download" },
+      "analyzeSchema": { "title": "Schema analysieren", "keywords": "felder typen fields types" },
       "closeTab": { "title": "Tab schließen", "keywords": "tab" },
-      "nextTab": { "title": "Nächster Tab", "keywords": "tab wechseln" },
-      "prevTab": { "title": "Vorheriger Tab", "keywords": "tab wechseln" },
-      "splitRight": { "title": "Rechts teilen", "keywords": "arbeitsbereich bereich layout" },
-      "splitDown": { "title": "Unten teilen", "keywords": "arbeitsbereich bereich layout" },
-      "focusNextPane": { "title": "Nächsten Bereich fokussieren", "keywords": "arbeitsbereich bereich layout wechseln" },
-      "openMonitoring": { "title": "Monitoring öffnen: {{name}}", "keywords": "monitoring metriken server status profiler" },
-      "manageUsers": { "title": "Benutzer verwalten: {{name}}", "keywords": "benutzer rollen zugriff berechtigungen authentifizierung administration" },
-      "checkUpdates": { "title": "Nach Updates suchen", "keywords": "version aktualisierung release" }
+      "nextTab": { "title": "Nächster Tab", "keywords": "tab wechseln switch" },
+      "prevTab": { "title": "Vorheriger Tab", "keywords": "tab wechseln switch" },
+      "splitRight": { "title": "Rechts teilen", "keywords": "arbeitsbereich bereich layout workspace pane" },
+      "splitDown": { "title": "Unten teilen", "keywords": "arbeitsbereich bereich layout workspace pane" },
+      "focusNextPane": { "title": "Nächsten Bereich fokussieren", "keywords": "arbeitsbereich bereich layout wechseln workspace pane switch" },
+      "openMonitoring": { "title": "Monitoring öffnen: {{name}}", "keywords": "monitoring metriken server status profiler metrics" },
+      "manageUsers": { "title": "Benutzer verwalten: {{name}}", "keywords": "benutzer rollen zugriff berechtigungen authentifizierung administration users roles access permissions authentication admin" },
+      "checkUpdates": { "title": "Nach Updates suchen", "keywords": "version aktualisierung release upgrade" }
     },
     "dynamic": {
       "savedQueryTitle": "Gespeicherte Abfrage: {{name}}",
-      "savedQueryKeywords": "gespeicherte abfrage {{collection}} {{db}}",
-      "collectionKeywords": "sammlung {{db}} {{connectionName}}"
+      "savedQueryKeywords": "gespeicherte abfrage {{collection}} {{db}} saved query",
+      "collectionKeywords": "sammlung {{db}} {{connectionName}} collection"
     }
   },
   "quickStart": {
@@ -325,7 +325,13 @@
   },
   "workspaceTabBar": {
     "closeTab": "{{label}} schließen",
-    "closeTooltip": "Tab schließen"
+    "closeTooltip": "Tab schließen",
+    "contextMenu": {
+      "duplicateTab": "Tab duplizieren",
+      "detachToNewWindow": "In neues Fenster abdocken",
+      "moveToWindow": "Verschieben nach {{target}}",
+      "unmirroredExplanation": "Export-/Import-Tabs bleiben in ihrem Fenster"
+    }
   },
   "dialog": {
     "resizeAriaLabel": "Dialog in der Größe ändern",

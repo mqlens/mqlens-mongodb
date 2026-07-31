@@ -4013,10 +4013,13 @@ describe('App Component', () => {
     it('translates workspace tab labels', async () => {
       const { i18next } = await import('@/lib/i18n');
       await i18next.changeLanguage('de');
-      const t = i18next.getFixedT('de', 'common');
-      const label = tabLabelFor({ type: 'settings' } as QueryTab, () => 'conn', t);
-      expect(label).toBe('Einstellungen');
-      await i18next.changeLanguage('en');
+      try {
+        const t = i18next.getFixedT('de', 'common');
+        const label = tabLabelFor({ type: 'settings' } as QueryTab, () => 'conn', t);
+        expect(label).toBe('Einstellungen');
+      } finally {
+        await i18next.changeLanguage('en');
+      }
     });
 
     it('finds a command palette action by its GERMAN title (Task 4 gap: PaletteAction.title was still English)', async () => {
@@ -4032,6 +4035,52 @@ describe('App Component', () => {
           target: { value: 'Einstellungen' },
         });
         expect(await screen.findByText('Einstellungen öffnen')).toBeInTheDocument();
+      } finally {
+        await i18next.changeLanguage('en');
+      }
+    });
+
+    it('renders the tab context menu in German (Fix round 1 gap: Duplicate/Detach/Move to were still English)', async () => {
+      const { i18next } = await import('@/lib/i18n');
+      await i18next.changeLanguage('de');
+      try {
+        const { fireEvent, within, act } = await import('@testing-library/react');
+        renderWithProviders(<App />);
+        await screen.findByTestId('mock-sidebar');
+
+        // Seed a second open window (win-1, active tab "orders") so the
+        // menu's "Move to <window>" entry is populated — same technique as
+        // the "tab context menu — detach/move" describe block's
+        // seedForeignWindow helper (not reachable from this describe block's
+        // closure, so inlined here).
+        await act(async () => {
+          fireMockEvent('workspace-changed', {
+            revision: 1,
+            origin: 'win-1',
+            crossWindow: false,
+            workspace: {
+              revision: 1,
+              windows: [
+                { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['quickstart'], activeTabId: 'quickstart' } },
+                { id: 'win-1', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['conn-1.sales_db.orders'], activeTabId: 'conn-1.sales_db.orders' } },
+              ],
+              tabs: [
+                { id: 'quickstart', type: 'quickstart', profileId: '', profileName: '', db: '', collection: '' },
+                { id: 'conn-1.sales_db.orders', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'orders' },
+              ],
+            },
+          });
+        });
+
+        fireEvent.click(screen.getByTestId('select-collection-btn'));
+        const tabStrip = screen.getByTestId('workspace-tab-strip');
+        const customersTab = await within(tabStrip).findByText('customers');
+        fireEvent.contextMenu(customersTab.closest('div')!);
+
+        expect(await screen.findByTestId('context-menu')).toBeInTheDocument();
+        expect(screen.getByText('Tab duplizieren')).toBeInTheDocument();
+        expect(screen.getByText('In neues Fenster abdocken')).toBeInTheDocument();
+        expect(screen.getByText('Verschieben nach win-1 (orders)')).toBeInTheDocument();
       } finally {
         await i18next.changeLanguage('en');
       }

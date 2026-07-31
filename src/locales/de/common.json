@@ -12,7 +12,7 @@
     "schema": "Schema: {{collection}}",
     "createView": "Neue Ansicht: {{db}}",
     "gridfs": "GridFS: {{collection}}",
-    "monitor": "Überwachung: {{name}}",
+    "monitor": "Monitoring: {{name}}",
     "users": "Benutzer: {{name}}",
     "dump": "Dump: {{name}}",
     "restore": "Wiederherstellung: {{name}}",

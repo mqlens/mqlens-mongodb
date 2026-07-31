@@ -362,13 +362,13 @@ const CONNECTION_TAB_TYPES = new Set<QueryTab['type']>([
  * isn't in the flat `tabs[]` list — e.g. a not-yet-mirrored write race);
  * callers fall back to the bare window id in that case.
  */
-function activeTabHintFor(win: PersistedWindow, allTabs: PersistedTab[]): string | null {
+function activeTabHintFor(win: PersistedWindow, allTabs: PersistedTab[], t: TFunction): string | null {
   const pane = findPane(win.splitTree, win.focusedPaneId);
   const activeId = pane?.activeTabId;
   if (!activeId) return null;
   const tab = allTabs.find((t) => t.id === activeId);
   if (!tab) return null;
-  if (tab.type === 'quickstart') return 'Quick Start';
+  if (tab.type === 'quickstart') return t('tabs.quickStart');
   return tab.collection || tab.type;
 }
 
@@ -2310,7 +2310,7 @@ function Workspace() {
   // by a single disabled, explanatory entry.
   const buildTabContextMenuItems = (tabId: string): ContextMenuItem[] => {
     if (unmirroredTabIdsRef.current.has(tabId)) {
-      const explanation = 'Export/import tabs stay in their window';
+      const explanation = tShell('workspaceTabBar.contextMenu.unmirroredExplanation');
       return [{ label: explanation, onClick: () => {}, disabled: true, title: explanation }];
     }
 
@@ -2319,7 +2319,7 @@ function Workspace() {
     const dupSource = tabs.find((t) => t.id === tabId && t.type === 'collection');
     if (dupSource) {
       items.push({
-        label: 'Duplicate Tab',
+        label: tShell('workspaceTabBar.contextMenu.duplicateTab'),
         icon: <Copy />,
         onClick: () => handleDuplicateTab(tabId),
       });
@@ -2327,7 +2327,7 @@ function Workspace() {
 
     if (allTabIds(layout).length > 1) {
       items.push({
-        label: 'Detach to New Window',
+        label: tShell('workspaceTabBar.contextMenu.detachToNewWindow'),
         icon: <ExternalLink />,
         separatorBefore: items.length > 0,
         onClick: () => handleDetachTab(tabId),
@@ -2341,9 +2341,10 @@ function Workspace() {
     // first "Move to" entry would render an orphan divider line at the very
     // top of the menu.
     otherWindows.forEach((w, i) => {
-      const hint = activeTabHintFor(w, allTabs);
+      const hint = activeTabHintFor(w, allTabs, t);
+      const target = hint ? `${w.id} (${hint})` : w.id;
       items.push({
-        label: `Move to ${hint ? `${w.id} (${hint})` : w.id}`,
+        label: tShell('workspaceTabBar.contextMenu.moveToWindow', { target }),
         icon: <MoveRight />,
         separatorBefore: i === 0 && items.length > 0,
         onClick: () => handleMoveTab(tabId, w.id),
