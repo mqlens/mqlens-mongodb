@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Keyboard } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,6 +12,7 @@ import {
 } from '@/lib/shortcuts';
 
 export const KeyboardShortcutsSettings: React.FC = () => {
+  const { t } = useTranslation('shell');
   const [filter, setFilter] = useState('');
   const filtered = useMemo(() => filterKeyboardShortcuts(filter), [filter]);
   const grouped = useMemo(() => groupKeyboardShortcuts(filtered), [filtered]);
@@ -20,10 +22,10 @@ export const KeyboardShortcutsSettings: React.FC = () => {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Keyboard className="h-4 w-4 text-primary" />
-          Keyboard shortcuts
+          {t('keyboardShortcuts.title')}
         </CardTitle>
         <CardDescription>
-          Global shortcuts for navigation, queries, the sidebar, zoom, and the command palette.
+          {t('keyboardShortcuts.description')}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -31,14 +33,14 @@ export const KeyboardShortcutsSettings: React.FC = () => {
           type="search"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Search shortcuts…"
+          placeholder={t('keyboardShortcuts.searchPlaceholder')}
           data-testid="shortcuts-filter"
-          aria-label="Search keyboard shortcuts"
+          aria-label={t('keyboardShortcuts.searchAriaLabel')}
         />
 
         {filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground" data-testid="shortcuts-empty">
-            No shortcuts match your search.
+            {t('keyboardShortcuts.empty')}
           </p>
         ) : (
           <div className="space-y-6">

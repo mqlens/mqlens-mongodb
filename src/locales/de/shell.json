@@ -1,0 +1,307 @@
+{
+  "mongoShell": {
+    "help": {
+      "title": "Shell-Hilfe",
+      "showDbs": "  show dbs                 Datenbanken auflisten",
+      "showCollections": "  show collections         Sammlungen der aktuellen Datenbank auflisten",
+      "useDb": "  use <db>                 aktuelle Datenbank wechseln",
+      "collectionMethodsHeader": "Sammlungsmethoden (werden in der Datenansicht angezeigt)",
+      "findSyntax": "  db.<coll>.find(<query>).sort(<sort>).skip(n).limit(n)",
+      "findOneSyntax": "  db.<coll>.findOne(<query>)",
+      "aggregateSyntax": "  db.<coll>.aggregate([{ $match }, { $sort }, { $skip }, { $limit }])",
+      "countDocumentsSyntax": "  db.<coll>.countDocuments(<query>)",
+      "getIndexesSyntax": "  db.<coll>.getIndexes()",
+      "jsHeader": "JavaScript-Skripte (über mongosh ausgeführt)",
+      "jsMultiline": "  Mehrzeiliges JS schreiben: Variablen, Schleifen, Funktionen, try/catch.",
+      "printjson": "  printjson(db.<coll>.find().toArray())   Ergebnisse ausgeben",
+      "load": "  load(\"script.js\")                       eine .js-Datei ausführen",
+      "clsClear": "  cls / clear              diese Konsole leeren"
+    },
+    "notes": {
+      "sessionAttached": "mongosh-Sitzung verbunden",
+      "sessionUnavailable": "mongosh-Sitzung nicht verfügbar: {{detail}}",
+      "switchedToDb": "zur Datenbank {{db}} gewechselt",
+      "destructiveCancelled": "Destruktiver Befehl abgebrochen.",
+      "resultToDataViewer_one": "{{count}} Dokument -> Datenansicht",
+      "resultToDataViewer_other": "{{count}} Dokumente -> Datenansicht"
+    },
+    "gate": {
+      "startingSession": "mongosh-Sitzung wird gestartet…",
+      "requiresMongosh": "MongoShell benötigt mongosh",
+      "requiresMongoshBody": "Für Abfragen und Skripte hier ist eine aktive mongosh-Sitzung erforderlich.",
+      "found": "Gefunden:",
+      "foundMongoshVersion": "mongosh {{version}}",
+      "useThisBinary": "Diese Binärdatei verwenden",
+      "installTools": "Tools installieren…",
+      "browseForBinary": "Nach Binärdatei suchen…",
+      "browseDialogTitle": "mongosh-Binärdatei suchen",
+      "openSettings": "Einstellungen öffnen",
+      "retry": "Erneut versuchen",
+      "installHint": "Oder installiere es selbst: <2>{{hint}}</2> — siehe die <6>mongosh-Installationsanleitung</6>."
+    },
+    "toolbar": {
+      "run": "Ausführen",
+      "aiToggleTitle": "KI-Assistent",
+      "aiToggleLabel": "KI"
+    },
+    "editor": {
+      "loading": "Editor wird geladen..."
+    },
+    "console": {
+      "tabLabel": "Konsole",
+      "dataViewerTabLabel": "Datenansicht",
+      "clearTitle": "Konsole leeren",
+      "cleared": "Konsole geleert - führe oben einen Befehl aus."
+    },
+    "destructiveDialog": {
+      "title": "Destruktive Operation",
+      "body": "Dieses Skript führt <strong>{{operation}}</strong> aus, was Daten dauerhaft löschen kann. Prüfe es, bevor du es ausführst.",
+      "cancel": "Abbrechen",
+      "runAnyway": "Trotzdem ausführen"
+    }
+  },
+  "taskManager": {
+    "ariaLabel": "Aufgabenverwaltung",
+    "header": {
+      "title": "Aufgaben",
+      "runningBadge": "{{count}} laufend"
+    },
+    "actions": {
+      "refreshTasks": "Aufgaben aktualisieren",
+      "clearFinishedTasks": "Abgeschlossene Aufgaben löschen",
+      "cancel": "Abbrechen",
+      "cancelling": "Wird abgebrochen…"
+    },
+    "empty": {
+      "noTasks": "Noch keine Hintergrundaufgaben."
+    },
+    "status": {
+      "running": "läuft",
+      "completed": "abgeschlossen",
+      "failed": "fehlgeschlagen",
+      "cancelled": "abgebrochen"
+    },
+    "row": {
+      "itemsProgressSuffix": " · {{processed}}/{{total}} Sammlungen",
+      "summary": {
+        "copied": "{{count}} kopiert",
+        "skippedSuffix": ", {{count}} übersprungen",
+        "indexesSuffix": ", {{count}} Indizes",
+        "failedSuffix": " · {{count}} fehlgeschlagen",
+        "skippedTitlePrefix": "Übersprungen: {{list}}"
+      }
+    }
+  },
+  "commandPalette": {
+    "title": "Befehlspalette",
+    "searchPlaceholder": "Befehle, Sammlungen, gespeicherte Abfragen durchsuchen…",
+    "buckets": {
+      "commands": { "label": "Befehle", "empty": "Keine passenden Befehle" },
+      "collections": { "label": "Sammlungen", "empty": "Keine passenden Sammlungen" },
+      "queries": { "label": "Gespeicherte Abfragen", "empty": "Keine passenden gespeicherten Abfragen" }
+    },
+    "scopeFilterTitle": "Sidebar-Filter: {{scope}}",
+    "scopeLabel": "Sidebar-Bereich",
+    "noMatchingResults": "Keine passenden Ergebnisse",
+    "typeMoreHint": "Mindestens 2 Zeichen eingeben, um Sammlungen zu durchsuchen",
+    "results_one": "{{count}} Ergebnis",
+    "results_other": "{{count}} Ergebnisse",
+    "noResults": "Keine Ergebnisse",
+    "hints": {
+      "navigate": "navigieren",
+      "run": "ausführen",
+      "close": "schließen"
+    }
+  },
+  "quickStart": {
+    "header": {
+      "eyebrow": "Schnellstart",
+      "title": "Willkommen bei MQLens",
+      "subtitle": "Deine lokale MongoDB-IDE — verbinde dich mit einem Cluster, erkunde Sammlungen und führe Abfragen aus, ohne deinen Rechner zu verlassen."
+    },
+    "stats": {
+      "savedConnections": "Gespeicherte Verbindungen",
+      "activeNow": "Aktuell aktiv"
+    },
+    "actions": {
+      "newConnection": "Neue Verbindung",
+      "loadSampleData": "Beispieldaten laden",
+      "settings": "Einstellungen",
+      "manageConnections": "Verbindungen verwalten",
+      "addConnection": "Verbindung hinzufügen",
+      "configure": "Konfigurieren",
+      "documentation": "Dokumentation",
+      "viewAllShortcuts": "Alle Tastenkürzel in den Einstellungen ansehen"
+    },
+    "savedSection": {
+      "title": "Gespeicherte Verbindungen",
+      "subtitleEmpty": "Füge deinen ersten Cluster hinzu oder probiere den integrierten Beispieldatensatz.",
+      "subtitleFilled": "Klicke auf eine Verbindung, um sie im Arbeitsbereich zu öffnen."
+    },
+    "empty": {
+      "title": "Noch keine gespeicherten Verbindungen",
+      "body": "Füge einen MongoDB-Cluster von Atlas oder localhost hinzu oder lade den Beispieldatensatz, um MQLens mit Demo-Sammlungen zu erkunden."
+    },
+    "newTile": {
+      "subtitle": "Einen weiteren MongoDB-Cluster hinzufügen"
+    },
+    "sidebar": {
+      "quickActionsTitle": "Schnellaktionen",
+      "quickActionsDescription": "Häufige Aufgaben vom Startbildschirm aus.",
+      "shortcutsTitle": "Tastenkürzel",
+      "shortcutsHint": "Öffne eine Sammlung für Indizes & Explain-Pläne",
+      "localStorageTitle": "Lokaler Speicher",
+      "localStorageDescription": "Alles bleibt auf deinem Rechner.",
+      "dataDirectory": "Datenverzeichnis"
+    }
+  },
+  "updatePrompt": {
+    "toast": {
+      "checking": "Suche nach Updates…",
+      "uptodate": "Du bist auf der neuesten Version.",
+      "offline": "Du bist offline. Verbinde dich mit dem Internet und versuche es erneut.",
+      "checkFailed": "Update-Server nicht erreichbar. Versuche es später erneut.",
+      "dismiss": "Verwerfen"
+    },
+    "dialog": {
+      "title": "Update verfügbar",
+      "versionAvailable": "MQLens <strong>{{version}}</strong> ist verfügbar.",
+      "versionAvailableWithCurrent": "MQLens <strong>{{version}}</strong> ist verfügbar (du hast {{current}}).",
+      "downloading": "{{pct}}% — wird heruntergeladen, die App startet nach Abschluss neu…",
+      "later": "Später",
+      "updateNow": "Jetzt aktualisieren"
+    }
+  },
+  "vaultGate": {
+    "loading": "Wird geladen…",
+    "errors": {
+      "passwordRequired": "Master-Passwort ist erforderlich",
+      "passwordMismatch": "Passwörter stimmen nicht überein"
+    },
+    "confirmReset": "Zurücksetzen löscht ALLE gespeicherten Verbindungen und API-Schlüssel. Fortfahren?",
+    "titles": {
+      "setup": "Master-Passwort erstellen",
+      "unlock": "MQLens entsperren"
+    },
+    "descriptions": {
+      "setup": "Deine gespeicherten Verbindungen und API-Schlüssel werden mit diesem Passwort verschlüsselt. Es gibt keine Wiederherstellung, wenn du es vergisst.",
+      "unlock": "Gib dein Master-Passwort ein, um deine gespeicherten Zugangsdaten zu entschlüsseln."
+    },
+    "placeholders": {
+      "masterPassword": "Master-Passwort",
+      "confirmPassword": "Passwort bestätigen"
+    },
+    "actions": {
+      "setup": "Erstellen & entsperren",
+      "unlock": "Entsperren",
+      "resetLink": "Passwort vergessen? Zurücksetzen (löscht alle gespeicherten Zugangsdaten)"
+    },
+    "biometry": {
+      "touchId": "Touch ID verwenden",
+      "faceId": "Face ID verwenden",
+      "generic": "Biometrie verwenden"
+    }
+  },
+  "statusBar": {
+    "engineOnline": "MQLens-Engine online",
+    "cpu": "CPU {{value}}",
+    "ram": "RAM {{value}}",
+    "mongodb": "MongoDB {{value}}",
+    "resetZoom": "Zoom zurücksetzen ({{shortcut}})",
+    "tasks": "Aufgaben",
+    "runningTasks": "{{count}} laufende Aufgabe(n)",
+    "backgroundTasks": "Hintergrundaufgaben",
+    "appVersion": "MQLens {{version}}"
+  },
+  "toastStack": {
+    "defaultTitle": {
+      "success": "Erfolg",
+      "error": "Fehler",
+      "info": "Hinweis"
+    },
+    "dismissAriaLabel": "Benachrichtigung verwerfen"
+  },
+  "aiChatPanel": {
+    "header": {
+      "title": "KI-Abfrageassistent",
+      "closeTitle": "KI-Assistent schließen"
+    },
+    "empty": {
+      "body": "Formuliere eine Abfrage in normaler Sprache — z. B. <i>„aktive Nutzer über 30, sortiert nach Alter“</i> oder<i> „durchschnittlicher Bestellwert pro Kunde“</i>. Ich erkläre, was ich tue, und du kannst das Ergebnis einfügen."
+    },
+    "roles": {
+      "you": "Du",
+      "assistant": "Assistent"
+    },
+    "queryType": {
+      "aggregate": "Aggregations-Pipeline",
+      "script": "Shell-Skript",
+      "find": "Find-Abfrage"
+    },
+    "actions": {
+      "copy": "Kopieren",
+      "insert": "Einfügen",
+      "insertAndRun": "Einfügen & ausführen"
+    },
+    "thinking": "Denke nach…",
+    "composer": {
+      "placeholder": "Beschreibe eine Abfrage… (Enter zum Senden, Umschalt+Enter für Zeilenumbruch)",
+      "send": "Senden"
+    },
+    "fallbackExplanation": "Hier ist eine Abfrage."
+  },
+  "toolSetupDialog": {
+    "title": "MongoDB-Tools einrichten",
+    "checkingTools": "Installierte Tools werden geprüft…",
+    "intro": "MQLens benötigt diese Kommandozeilen-Tools für Dump, Restore, Import und Export. Wähle aus, welche installiert oder neu installiert werden sollen.",
+    "toolLabels": {
+      "databaseTools": "Database Tools (mongodump, mongorestore)",
+      "mongosh": "mongosh"
+    },
+    "installedBadge": "Installiert",
+    "pathSuffix": " — {{path}}",
+    "reinstallWarning": "Wird neu installiert: bereits installierte, angehakte Tools werden erneut heruntergeladen und ersetzt.",
+    "sizeNote": "Downloads sind pro Tool etwa 50–100 MB groß und werden im Datenverzeichnis der App zwischengespeichert.",
+    "licenseNote": "Offizielle Apache-2.0-Builds, heruntergeladen von mongodb.com",
+    "cancelled": "Abgebrochen",
+    "actions": {
+      "install": "Installieren",
+      "starting": "Wird gestartet…",
+      "retry": "Erneut versuchen",
+      "dismiss": "Verwerfen",
+      "done": "Fertig"
+    }
+  },
+  "connectionCard": {
+    "tooltip": {
+      "alreadyConnected": "Bereits verbunden",
+      "connectTo": "Mit {{name}} verbinden"
+    },
+    "ariaLabel": {
+      "alreadyConnected": "{{name}} – bereits verbunden"
+    },
+    "badge": {
+      "srvTooltip": "MongoDB-SRV-Eintrag",
+      "srv": "SRV",
+      "ssh": "SSH",
+      "connected": "Verbunden"
+    },
+    "connecting": "Verbinde…",
+    "connect": "Verbinden"
+  },
+  "keyboardShortcuts": {
+    "title": "Tastenkürzel",
+    "description": "Globale Tastenkürzel für Navigation, Abfragen, die Sidebar, Zoom und die Befehlspalette.",
+    "searchPlaceholder": "Tastenkürzel durchsuchen…",
+    "searchAriaLabel": "Tastenkürzel durchsuchen",
+    "empty": "Keine Tastenkürzel entsprechen deiner Suche."
+  },
+  "workspaceTabBar": {
+    "closeTab": "{{label}} schließen",
+    "closeTooltip": "Tab schließen"
+  },
+  "dialog": {
+    "resizeAriaLabel": "Dialog in der Größe ändern",
+    "resizeTitle": "Zum Ändern der Größe ziehen"
+  }
+}

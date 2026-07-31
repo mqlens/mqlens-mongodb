@@ -1,0 +1,307 @@
+{
+  "mongoShell": {
+    "help": {
+      "title": "Shell helpers",
+      "showDbs": "  show dbs                 list databases",
+      "showCollections": "  show collections         list collections in current db",
+      "useDb": "  use <db>                 switch current database",
+      "collectionMethodsHeader": "Collection methods (rendered in the Data Viewer)",
+      "findSyntax": "  db.<coll>.find(<query>).sort(<sort>).skip(n).limit(n)",
+      "findOneSyntax": "  db.<coll>.findOne(<query>)",
+      "aggregateSyntax": "  db.<coll>.aggregate([{ $match }, { $sort }, { $skip }, { $limit }])",
+      "countDocumentsSyntax": "  db.<coll>.countDocuments(<query>)",
+      "getIndexesSyntax": "  db.<coll>.getIndexes()",
+      "jsHeader": "JavaScript scripts (run via mongosh)",
+      "jsMultiline": "  Write multi-line JS: variables, loops, functions, try/catch.",
+      "printjson": "  printjson(db.<coll>.find().toArray())   print results",
+      "load": "  load(\"script.js\")                       run a .js file",
+      "clsClear": "  cls / clear              clear this console"
+    },
+    "notes": {
+      "sessionAttached": "mongosh session attached",
+      "sessionUnavailable": "mongosh session unavailable: {{detail}}",
+      "switchedToDb": "switched to db {{db}}",
+      "destructiveCancelled": "Destructive command cancelled.",
+      "resultToDataViewer_one": "{{count}} document -> Data Viewer",
+      "resultToDataViewer_other": "{{count}} documents -> Data Viewer"
+    },
+    "gate": {
+      "startingSession": "Starting mongosh session…",
+      "requiresMongosh": "MongoShell requires mongosh",
+      "requiresMongoshBody": "A live mongosh session is required to run queries and scripts here.",
+      "found": "Found:",
+      "foundMongoshVersion": "mongosh {{version}}",
+      "useThisBinary": "Use this binary",
+      "installTools": "Install tools…",
+      "browseForBinary": "Browse for binary…",
+      "browseDialogTitle": "Locate the mongosh binary",
+      "openSettings": "Open Settings",
+      "retry": "Retry",
+      "installHint": "Or install it yourself: <2>{{hint}}</2> — see the <6>mongosh install docs</6>."
+    },
+    "toolbar": {
+      "run": "Run",
+      "aiToggleTitle": "AI assistant",
+      "aiToggleLabel": "KI"
+    },
+    "editor": {
+      "loading": "Loading editor..."
+    },
+    "console": {
+      "tabLabel": "Console",
+      "dataViewerTabLabel": "Data Viewer",
+      "clearTitle": "Clear console",
+      "cleared": "Console cleared - run a command above."
+    },
+    "destructiveDialog": {
+      "title": "Destructive operation",
+      "body": "This script runs <strong>{{operation}}</strong>, which can permanently delete data. Review it before running.",
+      "cancel": "Cancel",
+      "runAnyway": "Run anyway"
+    }
+  },
+  "taskManager": {
+    "ariaLabel": "Task manager",
+    "header": {
+      "title": "Tasks",
+      "runningBadge": "{{count}} running"
+    },
+    "actions": {
+      "refreshTasks": "Refresh tasks",
+      "clearFinishedTasks": "Clear finished tasks",
+      "cancel": "Cancel",
+      "cancelling": "Cancelling…"
+    },
+    "empty": {
+      "noTasks": "No background tasks yet."
+    },
+    "status": {
+      "running": "running",
+      "completed": "completed",
+      "failed": "failed",
+      "cancelled": "cancelled"
+    },
+    "row": {
+      "itemsProgressSuffix": " · {{processed}}/{{total}} collections",
+      "summary": {
+        "copied": "{{count}} copied",
+        "skippedSuffix": ", {{count}} skipped",
+        "indexesSuffix": ", {{count}} indexes",
+        "failedSuffix": " · {{count}} failed",
+        "skippedTitlePrefix": "Skipped: {{list}}"
+      }
+    }
+  },
+  "commandPalette": {
+    "title": "Command palette",
+    "searchPlaceholder": "Search commands, collections, saved queries…",
+    "buckets": {
+      "commands": { "label": "Commands", "empty": "No matching commands" },
+      "collections": { "label": "Collections", "empty": "No matching collections" },
+      "queries": { "label": "Saved queries", "empty": "No matching saved queries" }
+    },
+    "scopeFilterTitle": "Sidebar filter: {{scope}}",
+    "scopeLabel": "Sidebar scope",
+    "noMatchingResults": "No matching results",
+    "typeMoreHint": "Type at least 2 characters to search collections",
+    "results_one": "{{count}} result",
+    "results_other": "{{count}} results",
+    "noResults": "No results",
+    "hints": {
+      "navigate": "navigate",
+      "run": "run",
+      "close": "close"
+    }
+  },
+  "quickStart": {
+    "header": {
+      "eyebrow": "Quick start",
+      "title": "Welcome to MQLens",
+      "subtitle": "Your local MongoDB IDE — connect to a cluster, explore collections, and run queries without leaving your machine."
+    },
+    "stats": {
+      "savedConnections": "Saved connections",
+      "activeNow": "Active now"
+    },
+    "actions": {
+      "newConnection": "New connection",
+      "loadSampleData": "Load sample data",
+      "settings": "Settings",
+      "manageConnections": "Manage connections",
+      "addConnection": "Add connection",
+      "configure": "Configure",
+      "documentation": "Documentation",
+      "viewAllShortcuts": "View all shortcuts in Settings"
+    },
+    "savedSection": {
+      "title": "Saved connections",
+      "subtitleEmpty": "Add your first cluster or try the built-in sample dataset.",
+      "subtitleFilled": "Click a connection to open it in the workspace."
+    },
+    "empty": {
+      "title": "No saved connections yet",
+      "body": "Add a MongoDB cluster from Atlas or localhost, or load the sample dataset to explore MQLens with demo collections."
+    },
+    "newTile": {
+      "subtitle": "Add another MongoDB cluster"
+    },
+    "sidebar": {
+      "quickActionsTitle": "Quick actions",
+      "quickActionsDescription": "Common tasks from the home screen.",
+      "shortcutsTitle": "Keyboard shortcuts",
+      "shortcutsHint": "Open a collection for indexes & explain plans",
+      "localStorageTitle": "Local storage",
+      "localStorageDescription": "Everything stays on your machine.",
+      "dataDirectory": "Data directory"
+    }
+  },
+  "updatePrompt": {
+    "toast": {
+      "checking": "Checking for updates…",
+      "uptodate": "You’re on the latest version.",
+      "offline": "You’re offline. Connect to the internet and try again.",
+      "checkFailed": "Couldn’t reach the update server. Try again later.",
+      "dismiss": "Dismiss"
+    },
+    "dialog": {
+      "title": "Update available",
+      "versionAvailable": "MQLens <strong>{{version}}</strong> is available.",
+      "versionAvailableWithCurrent": "MQLens <strong>{{version}}</strong> is available (you have {{current}}).",
+      "downloading": "{{pct}}% — downloading, the app will restart when done…",
+      "later": "Later",
+      "updateNow": "Update now"
+    }
+  },
+  "vaultGate": {
+    "loading": "Loading…",
+    "errors": {
+      "passwordRequired": "Master password is required",
+      "passwordMismatch": "Passwords do not match"
+    },
+    "confirmReset": "Reset deletes ALL saved connections and API keys. Continue?",
+    "titles": {
+      "setup": "Create a master password",
+      "unlock": "Unlock MQLens"
+    },
+    "descriptions": {
+      "setup": "Your saved connections and API keys are encrypted with this password. There is no recovery if you forget it.",
+      "unlock": "Enter your master password to decrypt your saved credentials."
+    },
+    "placeholders": {
+      "masterPassword": "Master password",
+      "confirmPassword": "Confirm password"
+    },
+    "actions": {
+      "setup": "Create & unlock",
+      "unlock": "Unlock",
+      "resetLink": "Forgot password? Reset (deletes all saved credentials)"
+    },
+    "biometry": {
+      "touchId": "Use Touch ID",
+      "faceId": "Use Face ID",
+      "generic": "Use biometrics"
+    }
+  },
+  "statusBar": {
+    "engineOnline": "MQLens Engine Online",
+    "cpu": "CPU {{value}}",
+    "ram": "RAM {{value}}",
+    "mongodb": "MongoDB {{value}}",
+    "resetZoom": "Reset zoom ({{shortcut}})",
+    "tasks": "Tasks",
+    "runningTasks": "{{count}} running task(s)",
+    "backgroundTasks": "Background tasks",
+    "appVersion": "MQLens {{version}}"
+  },
+  "toastStack": {
+    "defaultTitle": {
+      "success": "Success",
+      "error": "Error",
+      "info": "Notice"
+    },
+    "dismissAriaLabel": "Dismiss notification"
+  },
+  "aiChatPanel": {
+    "header": {
+      "title": "AI Query Assistant",
+      "closeTitle": "Close AI Assistant"
+    },
+    "empty": {
+      "body": "Ask for a query in plain language — e.g. <i>“active users older than 30, sorted by age”</i> or<i> “average order total per customer”</i>. I’ll explain what I’m doing and you can insert the result."
+    },
+    "roles": {
+      "you": "You",
+      "assistant": "Assistant"
+    },
+    "queryType": {
+      "aggregate": "Aggregation pipeline",
+      "script": "Shell script",
+      "find": "Find query"
+    },
+    "actions": {
+      "copy": "Copy",
+      "insert": "Insert",
+      "insertAndRun": "Insert & run"
+    },
+    "thinking": "Thinking…",
+    "composer": {
+      "placeholder": "Describe a query… (Enter to send, Shift+Enter for newline)",
+      "send": "Send"
+    },
+    "fallbackExplanation": "Here is a query."
+  },
+  "toolSetupDialog": {
+    "title": "Set up MongoDB tools",
+    "checkingTools": "Checking installed tools…",
+    "intro": "MQLens needs these command-line tools for dump, restore, import, and export. Pick which ones to install or reinstall.",
+    "toolLabels": {
+      "databaseTools": "Database Tools (mongodump, mongorestore)",
+      "mongosh": "mongosh"
+    },
+    "installedBadge": "Installed",
+    "pathSuffix": " — {{path}}",
+    "reinstallWarning": "Will reinstall: already-installed tools you've kept checked will be downloaded again and replaced.",
+    "sizeNote": "Downloads are roughly 50–100 MB per tool and are cached in the app's data directory.",
+    "licenseNote": "Official Apache-2.0 builds downloaded from mongodb.com",
+    "cancelled": "Cancelled",
+    "actions": {
+      "install": "Install",
+      "starting": "Starting…",
+      "retry": "Retry",
+      "dismiss": "Dismiss",
+      "done": "Done"
+    }
+  },
+  "connectionCard": {
+    "tooltip": {
+      "alreadyConnected": "Already connected",
+      "connectTo": "Connect to {{name}}"
+    },
+    "ariaLabel": {
+      "alreadyConnected": "{{name}} – already connected"
+    },
+    "badge": {
+      "srvTooltip": "MongoDB SRV record",
+      "srv": "SRV",
+      "ssh": "SSH",
+      "connected": "Connected"
+    },
+    "connecting": "Connecting…",
+    "connect": "Connect"
+  },
+  "keyboardShortcuts": {
+    "title": "Keyboard shortcuts",
+    "description": "Global shortcuts for navigation, queries, the sidebar, zoom, and the command palette.",
+    "searchPlaceholder": "Search shortcuts…",
+    "searchAriaLabel": "Search keyboard shortcuts",
+    "empty": "No shortcuts match your search."
+  },
+  "workspaceTabBar": {
+    "closeTab": "Close {{label}}",
+    "closeTooltip": "Close tab"
+  },
+  "dialog": {
+    "resizeAriaLabel": "Resize dialog",
+    "resizeTitle": "Drag to resize"
+  }
+}

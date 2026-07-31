@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { Sparkles, User, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -44,6 +45,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   onInsertAndRunQuery,
   embedded = false,
 }) => {
+  const { t } = useTranslation('shell');
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -128,7 +130,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         {
           id: nextChatId(),
           role: 'assistant',
-          text: parsed.explanation ?? 'Here is a query.',
+          text: parsed.explanation ?? t('aiChatPanel.fallbackExplanation'),
           query,
         },
       ]);
@@ -154,7 +156,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
             <Sparkles size={11} className="text-primary" />
-            <span>AI Query Assistant</span>
+            <span>{t('aiChatPanel.header.title')}</span>
           </div>
           <Button
             type="button"
@@ -162,7 +164,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
             size="icon"
             className="h-6 w-6"
             onClick={onClose}
-            title="Close AI Assistant"
+            title={t('aiChatPanel.header.closeTitle')}
           >
             <X size={12} />
           </Button>
@@ -172,8 +174,14 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
           <div className="flex flex-col gap-3 p-3" data-testid="ai-chat-messages">
             {chatMessages.length === 0 && !isChatLoading && (
               <div className="text-[11px] leading-relaxed text-muted-foreground">
-                Ask for a query in plain language — e.g. <em>“active users older than 30, sorted by age”</em> or
-                <em> “average order total per customer”</em>. I’ll explain what I’m doing and you can insert the result.
+                {/* <em> in the original copy is rendered here as <i> — both render
+                    italic and neither carries interactive behavior, but only <i>
+                    is in Trans's default kept-tag list; <em> would otherwise be
+                    escaped to literal text. */}
+                <Trans i18nKey="shell:aiChatPanel.empty.body" t={t}>
+                  Ask for a query in plain language — e.g. <i>“active users older than 30, sorted by age”</i> or
+                  <i> “average order total per customer”</i>. I’ll explain what I’m doing and you can insert the result.
+                </Trans>
               </div>
             )}
 
@@ -185,7 +193,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
               >
                 <div className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-muted-foreground">
                   {m.role === 'user' ? <User size={9} /> : <Sparkles size={9} />}
-                  <span>{m.role === 'user' ? 'You' : 'Assistant'}</span>
+                  <span>{m.role === 'user' ? t('aiChatPanel.roles.you') : t('aiChatPanel.roles.assistant')}</span>
                 </div>
                 <div
                   className={cn(
@@ -201,10 +209,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   <div className="mt-0.5 flex w-[92%] flex-col gap-1" data-testid="chat-query-card">
                     <span className="font-mono text-[9px] uppercase text-primary">
                       {m.query.queryType === 'aggregate'
-                        ? 'Aggregation pipeline'
+                        ? t('aiChatPanel.queryType.aggregate')
                         : m.query.queryType === 'script'
-                          ? 'Shell script'
-                          : 'Find query'}
+                          ? t('aiChatPanel.queryType.script')
+                          : t('aiChatPanel.queryType.find')}
                     </span>
                     <pre
                       data-testid={variant === 'shell' ? 'chat-runnable-cmd' : 'chat-query-json'}
@@ -238,7 +246,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                           }
                           data-testid="chat-copy-btn"
                         >
-                          Copy
+                          {t('aiChatPanel.actions.copy')}
                         </Button>
                       )}
                       <Button
@@ -249,7 +257,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                         onClick={() => onInsertQuery(m.query!)}
                         data-testid="chat-insert-btn"
                       >
-                        Insert
+                        {t('aiChatPanel.actions.insert')}
                       </Button>
                       <Button
                         type="button"
@@ -258,7 +266,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                         onClick={() => onInsertAndRunQuery(m.query!)}
                         data-testid="chat-insert-run-btn"
                       >
-                        Insert &amp; run
+                        {t('aiChatPanel.actions.insertAndRun')}
                       </Button>
                     </div>
                   </div>
@@ -269,7 +277,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
             {isChatLoading && (
               <div className="flex items-center gap-2 text-[11px] text-muted-foreground" data-testid="chat-thinking">
                 <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-primary" />
-                <span>Thinking…</span>
+                <span>{t('aiChatPanel.thinking')}</span>
               </div>
             )}
           </div>
@@ -278,7 +286,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         <div className="flex flex-shrink-0 flex-col gap-2 border-t border-border p-2">
           <textarea
             className={composerClassName}
-            placeholder="Describe a query… (Enter to send, Shift+Enter for newline)"
+            placeholder={t('aiChatPanel.composer.placeholder')}
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             onKeyDown={(e) => {
@@ -298,7 +306,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
             data-testid="chat-send-btn"
           >
             <Sparkles size={11} />
-            {isChatLoading ? 'Thinking…' : 'Send'}
+            {isChatLoading ? t('aiChatPanel.thinking') : t('aiChatPanel.composer.send')}
           </Button>
         </div>
     </>

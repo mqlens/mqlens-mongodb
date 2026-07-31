@@ -150,6 +150,26 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   // Bucket, Shell, mongosh, GridFS) — kept as the loanword rather than
   // translated to a native German word.
   'admin:statsCards.collStats.labels.capped', // Capped
+  // shell namespace (Task 4): loanwords, product names, literal mongosh
+  // command syntax and pure-interpolation fragments, identical in both languages.
+  // These are the actual mongosh method-call syntax lines in the shell's
+  // "help" console output — code the user types verbatim, not prose.
+  'shell:mongoShell.help.findSyntax', // db.<coll>.find(<query>).sort(<sort>).skip(n).limit(n)
+  'shell:mongoShell.help.findOneSyntax', // db.<coll>.findOne(<query>)
+  'shell:mongoShell.help.aggregateSyntax', // db.<coll>.aggregate([...])
+  'shell:mongoShell.help.countDocumentsSyntax', // db.<coll>.countDocuments(<query>)
+  'shell:mongoShell.help.getIndexesSyntax', // db.<coll>.getIndexes()
+  'shell:mongoShell.gate.foundMongoshVersion', // "mongosh {{version}}" — loanword + interpolation only
+  'shell:mongoShell.toolbar.aiToggleLabel', // KI — the established German abbreviation for AI, matches documents:documentViewer.actions.aiHelper
+  'shell:statusBar.cpu', // "CPU {{value}}" — acronym + interpolation only
+  'shell:statusBar.ram', // "RAM {{value}}" — acronym + interpolation only
+  'shell:statusBar.mongodb', // "MongoDB {{value}}" — product name + interpolation only
+  'shell:statusBar.appVersion', // "MQLens {{version}}" — product name + interpolation only
+  'shell:toolSetupDialog.toolLabels.databaseTools', // Database Tools (mongodump, mongorestore) — product name + literal binary names
+  'shell:toolSetupDialog.toolLabels.mongosh', // mongosh — established loanword
+  'shell:toolSetupDialog.pathSuffix', // " — {{path}}" — punctuation + interpolation only
+  'shell:connectionCard.badge.srv', // SRV — DNS record type acronym
+  'shell:connectionCard.badge.ssh', // SSH — protocol acronym
 ]);
 
 describe('locale catalogs', () => {
