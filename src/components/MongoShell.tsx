@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
@@ -14,13 +14,18 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AIChatPanel } from './AIChatPanel';
+import { AIChatPanel, type ChatMessage } from './AIChatPanel';
 import { buildRunnableCommand, guardScriptRun, type GeneratedQuery } from '../lib/mongoCommand';
 import { DataGrid } from './DataGrid';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { registerMqlensMonacoThemes } from '../lib/monacoAppTheme';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
+import {
+  aiChatSessionKey,
+  loadAiChatSession,
+  saveAiChatSession,
+} from '../lib/aiChatSession';
 
 type ShellTab = 'console' | 'viewer';
 
@@ -225,7 +230,42 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const [command, setCommand] = useState(defaultCommand);
   const monacoTheme = useMonacoTheme();
   const monacoFontSize = useMonacoFontSize(13);
-  const [isAIOpen, setIsAIOpen] = useState(false);
+  const aiSessionKey = useMemo(
+    () =>
+      aiChatSessionKey({
+        connectionName,
+        database: databaseName,
+        collection: collectionName ?? 'collection',
+        variant: 'shell',
+      }),
+    [connectionName, databaseName, collectionName]
+  );
+  const [isAIOpen, setIsAIOpenState] = useState(
+    () => loadAiChatSession(aiSessionKey)?.isOpen ?? false
+  );
+  const [aiChatMessages, setAiChatMessages] = useState<ChatMessage[]>(
+    () => (loadAiChatSession(aiSessionKey)?.messages as ChatMessage[] | undefined) ?? []
+  );
+  const aiOpenRef = useRef(isAIOpen);
+  aiOpenRef.current = isAIOpen;
+  const aiMessagesRef = useRef(aiChatMessages);
+  aiMessagesRef.current = aiChatMessages;
+  const setIsAIOpen = useCallback(
+    (open: boolean) => {
+      setIsAIOpenState(open);
+      aiOpenRef.current = open;
+      saveAiChatSession(aiSessionKey, { isOpen: open, messages: aiMessagesRef.current });
+    },
+    [aiSessionKey]
+  );
+  const handleAiChatMessagesChange = useCallback(
+    (messages: ChatMessage[]) => {
+      setAiChatMessages(messages);
+      aiMessagesRef.current = messages;
+      saveAiChatSession(aiSessionKey, { isOpen: aiOpenRef.current, messages });
+    },
+    [aiSessionKey]
+  );
   const [pendingDestructive, setPendingDestructive] =
     useState<{ command: string; operation: string } | null>(null);
   const [entries, setEntries] = useState<ShellEntry[]>([
@@ -782,7 +822,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setIsAIOpen((v) => !v)}
+            onClick={() => setIsAIOpen(!isAIOpen)}
             data-testid="shell-ai-toggle"
             title="AI assistant"
           >
@@ -964,12 +1004,16 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     <AIChatPanel
       variant="shell"
       connectionId={connectionId}
+      connectionName={connectionName}
       databaseName={currentDb}
       collectionName={aiCollection}
       isOpen={isAIOpen}
       onClose={() => setIsAIOpen(false)}
       onInsertQuery={handleAIInsert}
       onInsertAndRunQuery={handleAIInsertAndRun}
+      initialMessages={aiChatMessages}
+      onMessagesChange={handleAiChatMessagesChange}
+      sessionKey={aiSessionKey}
     />
     {pendingDestructive && (
       <Dialog open onOpenChange={() => {}}>

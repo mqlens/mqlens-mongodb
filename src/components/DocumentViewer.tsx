@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AIChatPanel } from './AIChatPanel';
+import { AIChatPanel, type ChatMessage } from './AIChatPanel';
 import { QueryEditor } from './QueryEditor';
 import { FindQueryBar } from './FindQueryBar';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
@@ -21,6 +21,11 @@ import {
   FAVORITES_CHANGED_EVENT,
   type FavoriteItem,
 } from '../lib/favoriteItems';
+import {
+  aiChatSessionKey,
+  loadAiChatSession,
+  saveAiChatSession,
+} from '../lib/aiChatSession';
 import { useDialogs } from './dialogs/DialogProvider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -586,8 +591,43 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     });
   }, [queryMode, filterQuery, sortQuery, projectionQuery, limit, skip, stages, optionsOpen, onBuilderStateChange]);
 
-  // AI chat assistant — open/close only; the panel owns its own chat state.
-  const [isAIHelperOpen, setIsAIHelperOpen] = useState(false);
+  // AI chat assistant — open/close + transcript persist across tab remounts
+  // and app restarts (localStorage session keyed by connection/db/collection).
+  const aiSessionKey = useMemo(
+    () =>
+      aiChatSessionKey({
+        connectionName,
+        database: databaseName,
+        collection: collectionName,
+        variant: 'editor',
+      }),
+    [connectionName, databaseName, collectionName]
+  );
+  const [isAIHelperOpen, setIsAIHelperOpenState] = useState(
+    () => loadAiChatSession(aiSessionKey)?.isOpen ?? false
+  );
+  const [aiChatMessages, setAiChatMessages] = useState<ChatMessage[]>(
+    () => (loadAiChatSession(aiSessionKey)?.messages as ChatMessage[] | undefined) ?? []
+  );
+  const aiOpenRef = useRef(isAIHelperOpen);
+  aiOpenRef.current = isAIHelperOpen;
+  const aiMessagesRef = useRef(aiChatMessages);
+  aiMessagesRef.current = aiChatMessages;
+
+  const setIsAIHelperOpen = (open: boolean) => {
+    setIsAIHelperOpenState(open);
+    aiOpenRef.current = open;
+    saveAiChatSession(aiSessionKey, { isOpen: open, messages: aiMessagesRef.current });
+  };
+
+  const handleAiChatMessagesChange = useCallback(
+    (messages: ChatMessage[]) => {
+      setAiChatMessages(messages);
+      aiMessagesRef.current = messages;
+      saveAiChatSession(aiSessionKey, { isOpen: aiOpenRef.current, messages });
+    },
+    [aiSessionKey]
+  );
 
   // Pipeline undo/redo: every stage mutation goes through commitStages, which
   // snapshots the previous list. Keystroke-level content edits coalesce via a
@@ -2259,6 +2299,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               <AIChatPanel
                 variant="editor"
                 embedded
+                connectionName={connectionName}
                 databaseName={databaseName}
                 collectionName={collectionName}
                 fields={availableFields}
@@ -2266,6 +2307,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 onClose={() => setIsAIHelperOpen(false)}
                 onInsertQuery={handleInsertQuery}
                 onInsertAndRunQuery={handleInsertAndRunQuery}
+                initialMessages={aiChatMessages}
+                onMessagesChange={handleAiChatMessagesChange}
+                sessionKey={aiSessionKey}
               />
             </ResizablePanel>
           </>

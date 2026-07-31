@@ -49,6 +49,10 @@ fn default_anthropic_model() -> String {
 fn default_ai_provider() -> String {
     "anthropic".to_string()
 }
+
+fn default_ai_history_retention_months() -> u8 {
+    3
+}
 fn default_openai_model() -> String {
     "gpt-4o".to_string()
 }
@@ -150,6 +154,9 @@ pub struct AppSettings {
     // Extra instructions appended to the generated system prompt for any provider.
     #[serde(default)]
     pub ai_custom_instructions: String,
+    /// How long to keep AI Helper chat/prompt history (1–12 months).
+    #[serde(default = "default_ai_history_retention_months")]
+    pub ai_history_retention_months: u8,
     // Auto-update channel: "stable" (default) or "dev".
     #[serde(default = "default_update_channel")]
     pub update_channel: String,
@@ -172,6 +179,7 @@ impl Default for AppSettings {
             gemini_model: default_gemini_model(),
             local_commands: std::collections::HashMap::new(),
             ai_custom_instructions: String::new(),
+            ai_history_retention_months: default_ai_history_retention_months(),
             update_channel: default_update_channel(),
             appearance: AppearanceSettings::default(),
         }

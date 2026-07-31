@@ -14,7 +14,12 @@
     "notDetected": "✗ Not detected on PATH — install it or set an absolute path below.",
     "providerDescription": "Choose a cloud API or a local agent CLI for the query assistant.",
     "providerTitle": "Provider",
-    "tabDescription": "Cloud API keys, local agents, and custom query instructions.",
+    "historyRetentionTitle": "AI Helper history",
+    "historyRetentionDescription": "How long to keep chat transcripts and prompt History for each collection. Older entries are removed automatically.",
+    "historyRetentionLabel": "Keep history for",
+    "historyRetentionMonths_one": "{{count}} month",
+    "historyRetentionMonths_other": "{{count}} months",
+    "tabDescription": "Cloud API keys, local agents, custom query instructions, and AI Helper history retention.",
     "tabLabel": "AI Assistant"
   },
   "appearance": {

@@ -2675,6 +2675,7 @@ mod tests {
         assert_eq!(legacy.openai_model, "gpt-4o");
         assert_eq!(legacy.gemini_model, "gemini-1.5-flash");
         assert_eq!(legacy.ai_custom_instructions, "");
+        assert_eq!(legacy.ai_history_retention_months, 3);
 
         // resolve_local_command falls back to built-in defaults when unset.
         assert_eq!(

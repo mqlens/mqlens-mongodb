@@ -14,7 +14,12 @@
     "notDetected": "✗ Nicht im PATH gefunden — installiere es oder gib unten einen absoluten Pfad an.",
     "providerDescription": "Wähle eine Cloud-API oder eine lokale Agenten-CLI für den Abfrageassistenten.",
     "providerTitle": "Anbieter",
-    "tabDescription": "Cloud-API-Schlüssel, lokale Agenten und individuelle Abfrageanweisungen.",
+    "historyRetentionTitle": "KI-Helfer-Verlauf",
+    "historyRetentionDescription": "Wie lange Chat-Verläufe und Prompt-Historie pro Collection behalten werden. Ältere Einträge werden automatisch entfernt.",
+    "historyRetentionLabel": "Verlauf behalten für",
+    "historyRetentionMonths_one": "{{count}} Monat",
+    "historyRetentionMonths_other": "{{count}} Monate",
+    "tabDescription": "Cloud-API-Schlüssel, lokale Agenten, individuelle Abfrageanweisungen und KI-Helfer-Verlaufsdauer.",
     "tabLabel": "KI-Assistent"
   },
   "appearance": {

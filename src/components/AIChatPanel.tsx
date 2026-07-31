@@ -1,13 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Sparkles, User, X } from 'lucide-react';
+import { History, Sparkles, User, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { buildRunnableCommand, type GeneratedQuery } from '../lib/mongoCommand';
+import {
+  clearAiChatPrompts,
+  loadAiChatSession,
+  recordAiChatPrompt,
+  type AiChatSessionPrompt,
+} from '../lib/aiChatSession';
 
 export type { GeneratedQuery };
 
-interface ChatMessage {
+export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
@@ -17,6 +30,8 @@ interface ChatMessage {
 
 interface AIChatPanelProps {
   connectionId?: string;
+  /** Connection display name — scopes History + session with db/collection. */
+  connectionName?: string;
   databaseName?: string;
   collectionName: string;
   fields?: string[];
@@ -27,7 +42,25 @@ interface AIChatPanelProps {
   onInsertAndRunQuery: (query: GeneratedQuery) => void;
   /** When true, render inside a parent ResizablePanel (no own width/resizer). */
   embedded?: boolean;
+  /** Restored conversation (e.g. from localStorage session). */
+  initialMessages?: ChatMessage[];
+  onMessagesChange?: (messages: ChatMessage[]) => void;
+  /**
+   * Stable per-collection session key (`aiChatSessionKey(...)`). Prompt History
+   * is stored on this session so each AI helper window only sees its own collection.
+   */
+  sessionKey: string;
 }
+
+/** Highest numeric suffix among `mN` message ids, or -1 if none. */
+const maxChatIdNum = (messages: ChatMessage[]): number => {
+  let max = -1;
+  for (const m of messages) {
+    const match = /^m(\d+)$/.exec(m.id);
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return max;
+};
 
 const composerClassName = cn(
   'min-h-[52px] w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 text-xs shadow-sm transition-colors',
@@ -43,15 +76,29 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   onInsertQuery,
   onInsertAndRunQuery,
   embedded = false,
+  initialMessages = [],
+  onMessagesChange,
+  sessionKey,
 }) => {
   const [chatInput, setChatInput] = useState('');
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialMessages);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [aiHelperWidth, setAIHelperWidth] = useState(340);
   const [isResizingAIHelper, setIsResizingAIHelper] = useState(false);
+  const [sendHistory, setSendHistory] = useState<AiChatSessionPrompt[]>(
+    () => loadAiChatSession(sessionKey)?.prompts ?? []
+  );
   const chatScrollRef = React.useRef<HTMLDivElement>(null);
-  const chatIdRef = React.useRef(0);
+  const chatIdRef = React.useRef(maxChatIdNum(initialMessages) + 1);
   const nextChatId = () => `m${chatIdRef.current++}`;
+
+  useEffect(() => {
+    onMessagesChange?.(chatMessages);
+  }, [chatMessages, onMessagesChange]);
+
+  useEffect(() => {
+    setSendHistory(loadAiChatSession(sessionKey)?.prompts ?? []);
+  }, [sessionKey]);
 
   const startResizingAIHelper = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -90,6 +137,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     const userMsg: ChatMessage = { id: nextChatId(), role: 'user', text };
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput('');
+    setSendHistory(recordAiChatPrompt(sessionKey, text));
     setIsChatLoading(true);
 
     try {
@@ -156,16 +204,67 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
             <Sparkles size={11} className="text-primary" />
             <span>AI Query Assistant</span>
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            onClick={onClose}
-            title="Close AI Assistant"
-          >
-            <X size={12} />
-          </Button>
+          <div className="flex items-center gap-0.5">
+            <DropdownMenu
+              onOpenChange={(open) => {
+                if (open) setSendHistory(loadAiChatSession(sessionKey)?.prompts ?? []);
+              }}
+            >
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  title="Prompt history for this collection"
+                  data-testid="ai-chat-history-btn"
+                >
+                  <History size={12} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[240px] max-w-[320px]" data-testid="ai-chat-history-dropdown">
+                {sendHistory.length === 0 ? (
+                  <DropdownMenuItem disabled>No prompts sent yet for this collection</DropdownMenuItem>
+                ) : (
+                  sendHistory.map((entry, i) => (
+                    <DropdownMenuItem
+                      key={entry.id}
+                      data-testid={`ai-chat-history-item-${i}`}
+                      onClick={() => setChatInput(entry.text)}
+                    >
+                      <span className="w-full truncate text-xs">{entry.text}</span>
+                    </DropdownMenuItem>
+                  ))
+                )}
+                {sendHistory.length > 0 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      data-testid="ai-chat-history-clear"
+                      onClick={() => {
+                        clearAiChatPrompts(sessionKey);
+                        setSendHistory([]);
+                      }}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      Clear history
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={onClose}
+              title="Close AI Assistant"
+              data-testid="ai-helper-close-btn"
+            >
+              <X size={12} />
+            </Button>
+          </div>
         </div>
 
         <div ref={chatScrollRef} className="flex-1 overflow-y-auto">
