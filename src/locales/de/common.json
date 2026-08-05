@@ -72,7 +72,7 @@
     "filesFailedToUpload_other": "{{count}} Dateien konnten nicht hochgeladen werden.",
     "fileUploaded": "{{filename}} hochgeladen",
     "filterCleared": "Filterparameter zurückgesetzt",
-    "generateFailedToStart": "Generierung fehlgeschlagen: {{detail}}",
+    "generateFailedToStart": "Generierung konnte nicht gestartet werden: {{detail}}",
     "importFailedToStart": "Import konnte nicht gestartet werden: {{detail}}",
     "insertedTitle": "Eingefügt",
     "modifiedDocuments_one": "{{count}} Dokument geändert",

@@ -11,7 +11,7 @@
     "export": "Exportieren…",
     "exportAllUris": "Alle URIs exportieren",
     "exportUri": "URI exportieren",
-    "hidePassword": "Passwort verbergen",
+    "hidePassword": "Passwort ausblenden",
     "import": "Importieren",
     "importAll": "Alle importieren",
     "importUri": "URI importieren",
@@ -29,8 +29,7 @@
   },
   "auth": {
     "authDatabase": "Authentifizierungsdatenbank",
-    "externalNotePrefix": "Authentifiziert gegen die",
-    "externalNoteSuffix": "Datenbank.",
+    "externalNote": "Die Authentifizierung erfolgt gegen die Datenbank <1>$external</1>.",
     "method": "Authentifizierungsmethode",
     "methodAws": "MONGODB-AWS (IAM)",
     "methodKerberos": "GSSAPI (Kerberos)",
@@ -62,7 +61,7 @@
   },
   "connectionMode": {
     "confirmDestructive": {
-      "description": "Destruktive Vorgänge erfordern eine getippte Bestätigung",
+      "description": "Destruktive Vorgänge erfordern eine Bestätigung durch Eintippen des Namens",
       "label": "Destruktive Vorgänge bestätigen"
     },
     "normal": {
@@ -95,7 +94,7 @@
     "editTitle": "Verbindung bearbeiten",
     "newTitle": "Neue Verbindung",
     "subtitle": "Server, Authentifizierung, TLS und erweiterte Optionen konfigurieren",
-    "tabsAria": "Verbindungseinstellungsbereiche"
+    "tabsAria": "Bereiche der Verbindungseinstellungen"
   },
   "empty": {
     "message": "Wähle eine Verbindung aus der Seitenleiste oder klicke in der Symbolleiste auf \"Neu…\", um eine zu erstellen."
@@ -117,7 +116,7 @@
     "allTitle": "Alle Verbindungs-URIs exportieren",
     "copyToClipboard": "In Zwischenablage kopieren",
     "includePassword": "Passwort einschließen",
-    "includePasswordDescription": "Aus entfernt das Auth-Passwort sowie Proxy-/Token-Geheimnisse, sodass die URI sicher geteilt werden kann.",
+    "includePasswordDescription": "Wenn deaktiviert, werden das Auth-Passwort sowie Proxy- und Token-Zugangsdaten entfernt, sodass die URI gefahrlos geteilt werden kann.",
     "includeSettings": "Verbindungseinstellungen einschließen",
     "includeSettingsDescription": "TLS-Dateien, Replikatset, Authentifizierungsmechanismus, appName, Proxy und Timeouts.",
     "saveAllTitle": "Verbindungs-URIs speichern",
@@ -138,7 +137,7 @@
   "folder": {
     "closeDialogAria": "Ordnerdialog schließen",
     "nameLabel": "Ordnername",
-    "root": "(Stammverzeichnis)"
+    "root": "(kein Ordner)"
   },
   "form": {
     "colorTag": "Farbmarkierung",

@@ -67,7 +67,7 @@
     },
     "filtered": {
       "title": "Gefilterte Ergebnisse",
-      "hintAggregate": "Bearbeite die Aggregations-Pipeline und exportiere anschließend jedes Ergebnisdokument.",
+      "hintAggregate": "Bearbeite die Aggregationspipeline und exportiere anschließend jedes Ergebnisdokument.",
       "hintFind": "Bearbeite die Abfrage (aus der Dokumentenansicht übernommen) und exportiere anschließend jeden Treffer.",
       "pipeline": "Pipeline",
       "countNotRun": "Noch nicht gezählt",
@@ -77,7 +77,7 @@
     },
     "preview": {
       "title": "Vorschau",
-      "hint": "Zeige eine Stichprobe der exportierten Ausgabe vor der Ausführung.",
+      "hint": "Zeigt eine Stichprobe der exportierten Ausgabe vor der Ausführung.",
       "failed": "Vorschau fehlgeschlagen: {{error}}"
     },
     "footer": {
@@ -227,9 +227,9 @@
     "preview": {
       "title": "Vorschau",
       "captionChoose": "Wähle eine Quelle zur Vorschau",
-      "captionCount_one": "Vorschau der ersten {{count}} Dokument",
+      "captionCount_one": "Vorschau des ersten Dokuments",
       "captionCount_other": "Vorschau der ersten {{count}} Dokumente",
-      "captionCountWithTotal_one": "Vorschau der ersten {{count}} Dokument von ~{{total}}",
+      "captionCountWithTotal_one": "Vorschau des ersten Dokuments von ~{{total}}",
       "captionCountWithTotal_other": "Vorschau der ersten {{count}} Dokumente von ~{{total}}"
     },
     "duplicates": {
@@ -353,7 +353,7 @@
         "bypassDocumentValidation": "Dokumentvalidierung umgehen",
         "restoreDbUsersAndRoles": "Benutzer und Rollen wiederherstellen"
       },
-      "oplogReplay": "Oplog für zeitpunktgenaue Konsistenz wiedergeben (nur bei vollständigem Dump)"
+      "oplogReplay": "Oplog für Point-in-Time-Konsistenz wiedergeben (nur bei vollständigem Dump)"
     },
     "run": {
       "title": "Ausführen",

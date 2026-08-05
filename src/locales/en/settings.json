@@ -24,6 +24,7 @@
     "dark": "Dark",
     "exportTheme": "Export theme",
     "fontSize": "Font size",
+    "importFailed": "Could not import that theme file. Check that it is valid MQLens theme JSON.",
     "importTheme": "Import theme",
     "interfaceZoom": "Interface zoom",
     "light": "Light",
@@ -42,12 +43,10 @@
         "name": "High Contrast"
       },
       "mqlensDark": {
-        "description": "Default brand theme — deep blue-charcoal with electric blue accent",
-        "name": "MQLens Dark"
+        "description": "Default brand theme — deep blue-charcoal with electric blue accent"
       },
       "mqlensLight": {
-        "description": "Cool off-white surfaces with deep text",
-        "name": "MQLens Light"
+        "description": "Cool off-white surfaces with deep text"
       },
       "nord": {
         "description": "Arctic, north-bluish color palette"

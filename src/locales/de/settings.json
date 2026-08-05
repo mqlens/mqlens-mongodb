@@ -20,7 +20,7 @@
   "appearance": {
     "colorMode": "Farbmodus",
     "compact": "Kompakt",
-    "cozy": "Gemütlich",
+    "cozy": "Standard",
     "dark": "Dunkel",
     "exportTheme": "Theme exportieren",
     "fontSize": "Schriftgröße",
@@ -35,9 +35,9 @@
     "previewSuccess": "Erfolg",
     "previewWarning": "Warnung",
     "queryBarHeight": "Höhe der Abfragezeile",
-    "queryBarHeightHint": "Bestimmt die Größe des Abfragefelds und seines Texts. Projection, Sort, Skip und Limit bleiben kompakt.",
+    "queryBarHeightHint": "Bestimmt die Größe des Abfragefelds und seines Texts. Projektion, Sortierung, Skip und Limit bleiben kompakt.",
     "resetOverrides": "Überschreibungen zurücksetzen",
-    "roomy": "Geräumig",
+    "roomy": "Weit",
     "saveAppearance": "Erscheinungsbild speichern",
     "spacingDensity": "Abstandsdichte",
     "system": "System",
@@ -50,11 +50,9 @@
     "zoomShortcutHint": "Tastenkürzel: {{shortcut}} zum Zurücksetzen",
     "presets": {
       "mqlensDark": {
-        "name": "MQLens Dunkel",
         "description": "Standard-Markendesign — tiefes Blaugrau mit elektrisch blauem Akzent"
       },
       "mqlensLight": {
-        "name": "MQLens Hell",
         "description": "Kühle cremeweiße Flächen mit dunkler Schrift"
       },
       "highContrast": {
@@ -76,7 +74,8 @@
       "githubLight": {
         "description": "Farben des hellen GitHub-Designs"
       }
-    }
+    },
+    "importFailed": "Diese Theme-Datei konnte nicht importiert werden. Prüfe, ob es sich um gültiges MQLens-Theme-JSON handelt."
   },
   "footer": {
     "saveChanges": "Änderungen speichern",
@@ -102,8 +101,8 @@
     "description": "Stelle deine Verbindungen Claude Code, Cursor und anderen Agenten als Model-Context-Protocol-Tools zur Verfügung. Nur Lesezugriffe und bestätigungspflichtige Schreibzugriffe; standardmäßig deaktiviert.",
     "disabled": "Deaktiviert",
     "enabled": "Aktiviert",
-    "err": "FEHLER",
-    "hide": "Verbergen",
+    "err": "ERR",
+    "hide": "Ausblenden",
     "manageInConnectionManager": "Im Verbindungsmanager verwalten.",
     "port": "Port",
     "portHint": "Wird beim nächsten Aktivieren des Servers angewendet. Muss zwischen {{min}} und {{max}} liegen.",
@@ -132,7 +131,7 @@
     "confirmPassword": "Bestätigen",
     "currentPassword": "Aktuelles Passwort",
     "currentPasswordRequired": "Aktuelles Passwort ist erforderlich",
-    "dangerZoneDescription": "Löscht dauerhaft alle gespeicherten Verbindungen und Geheimnisse.",
+    "dangerZoneDescription": "Löscht dauerhaft alle gespeicherten Verbindungen und Zugangsdaten.",
     "dangerZoneTitle": "Gefahrenzone",
     "masterPassword": "Master-Passwort",
     "masterPasswordDescription": "Verschlüsselt gespeicherte Verbindungen und API-Schlüssel im Tresor.",
@@ -153,7 +152,7 @@
   },
   "tools": {
     "checkingInstalled": "Installierte Tools werden geprüft…",
-    "dbToolsDescription": "Verzeichnis mit den mongodump/mongorestore-Binärdateien, verwendet von den Tabs „Dump“ und „Restore“.",
+    "dbToolsDescription": "Verzeichnis mit den mongodump/mongorestore-Binärdateien, verwendet von den Tabs „Dump“ und „Wiederherstellung“.",
     "dbToolsTitle": "MongoDB Database Tools",
     "dirHint": "Verzeichnis mit mongodump/mongorestore. Leer lassen, um PATH zu verwenden.",
     "dirLabel": "Tools-Verzeichnis",
@@ -174,7 +173,7 @@
   "updates": {
     "channelDescription": "MQLens prüft beim Start auf Updates und installiert sie erst nach deiner Bestätigung.",
     "channelGroupAriaLabel": "Update-Kanal",
-    "channelHint": "Dev erhält Vorabversionen. Der Wechsel zu Dev lädt neuere Dev-Builds; der Wechsel zurück zu Stabil führt kein automatisches Downgrade durch. Zum Anwenden auf Speichern klicken.",
+    "channelHint": "Dev erhält Vorabversionen. Der Wechsel zu Dev lädt neuere Dev-Builds; der Wechsel zurück zu Stable führt kein automatisches Downgrade durch. Zum Anwenden auf Speichern klicken.",
     "channelLabel": "Kanal",
     "channelTitle": "Release-Kanal",
     "checkForUpdatesBtn": "Nach Updates suchen",
@@ -190,7 +189,7 @@
       "offline": "Offline",
       "uptodate": "Aktuell"
     },
-    "stable": "Stabil",
+    "stable": "Stable",
     "tabDescription": "Release-Kanal und manuelle Updateprüfungen.",
     "tabLabel": "Updates"
   }

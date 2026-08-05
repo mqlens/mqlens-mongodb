@@ -29,8 +29,7 @@
   },
   "auth": {
     "authDatabase": "Authentication Database",
-    "externalNotePrefix": "Authenticates against the",
-    "externalNoteSuffix": "database.",
+    "externalNote": "Authenticates against the <1>$external</1> database.",
     "method": "Authentication Method",
     "methodAws": "MONGODB-AWS (IAM)",
     "methodKerberos": "GSSAPI (Kerberos)",

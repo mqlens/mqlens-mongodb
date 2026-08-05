@@ -88,14 +88,14 @@ const lightBase: Record<TokenName, string> = {
 export const THEME_PRESETS: ThemePreset[] = [
   {
     id: "mqlens-dark",
-    nameKey: "appearance.presets.mqlensDark.name",
+    name: "MQLens Dark",
     descriptionKey: "appearance.presets.mqlensDark.description",
     mode: "dark",
     tokens: darkBase,
   },
   {
     id: "mqlens-light",
-    nameKey: "appearance.presets.mqlensLight.name",
+    name: "MQLens Light",
     descriptionKey: "appearance.presets.mqlensLight.description",
     mode: "light",
     tokens: lightBase,

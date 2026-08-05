@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Download, Upload, RotateCcw, Check } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ import { formatZoomShortcutHint } from "@/lib/shortcuts";
 
 export function AppearanceSettings() {
   const { t } = useTranslation("settings");
+  const [importError, setImportError] = useState<string | null>(null);
   const {
     config,
     presets,
@@ -64,9 +66,19 @@ export function AppearanceSettings() {
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
-      const text = await file.text();
-      importTheme(text);
-      await saveAppearance();
+      // `importTheme` -> `applyTheme` throws on a malformed or hand-edited
+      // theme file. This runs inside an async `onchange` handler, so an
+      // uncaught throw becomes an unhandled rejection with no ErrorBoundary
+      // anywhere in src to catch it: the user picked a file and got no
+      // feedback whatsoever. Surface it instead.
+      setImportError(null);
+      try {
+        const text = await file.text();
+        importTheme(text);
+        await saveAppearance();
+      } catch {
+        setImportError(t("appearance.importFailed"));
+      }
     };
     input.click();
   };
@@ -250,6 +262,11 @@ export function AppearanceSettings() {
               <Upload className="h-4 w-4" />
               {t("appearance.importTheme")}
             </Button>
+            {importError && (
+              <p role="alert" className="w-full text-xs text-destructive" data-testid="theme-import-error">
+                {importError}
+              </p>
+            )}
             <Button variant="outline" size="sm" onClick={clearOverrides}>
               <RotateCcw className="h-4 w-4" />
               {t("appearance.resetOverrides")}

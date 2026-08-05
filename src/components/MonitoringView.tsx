@@ -843,7 +843,19 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                   label={t('monitoringView.metrics.connections')}
                   icon={<Network size={12} />}
                   value={status ? String(status.connections.current) : '—'}
-                  sub={status ? t('monitoringView.metrics.connectionsAvail', { count: status.connections.available.toLocaleString() }) : undefined}
+                  // `count` MUST stay numeric: i18next skips plural resolution
+                  // entirely when it is a string, and this key only exists as
+                  // _one/_other, so a pre-formatted count made the lookup miss
+                  // and render the raw key path to the user. The thousands
+                  // separator now travels in its own placeholder.
+                  sub={
+                    status
+                      ? t('monitoringView.metrics.connectionsAvail', {
+                          count: status.connections.available,
+                          formatted: status.connections.available.toLocaleString(),
+                        })
+                      : undefined
+                  }
                   series={series.conns}
                   color="hsl(var(--primary))"
                 />

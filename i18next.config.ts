@@ -240,9 +240,7 @@ export default defineConfig({
       // ThemePicker.tsx — again a variable, never a literal. Only the three
       // DESCRIPTIVE presets have a `.name` key; the other five carry a
       // verbatim proper name (Nord, Solarized…) and no key at all.
-      'settings:appearance.presets.mqlensDark.name',
       'settings:appearance.presets.mqlensDark.description',
-      'settings:appearance.presets.mqlensLight.name',
       'settings:appearance.presets.mqlensLight.description',
       'settings:appearance.presets.highContrast.name',
       'settings:appearance.presets.highContrast.description',

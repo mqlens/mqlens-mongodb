@@ -1,3 +1,5 @@
+import type { TFunction } from 'i18next';
+
 export type ShortcutGroup =
   | 'navigation'
   | 'query-editor'
@@ -5,17 +7,22 @@ export type ShortcutGroup =
   | 'zoom'
   | 'command-palette';
 
-// Values are keys into shell:keyboardShortcuts.groups — translated at the
-// call site (KeyboardShortcutsSettings.tsx / QuickStart.tsx via
-// filterKeyboardShortcuts's haystack) since this is a module-level constant
-// and cannot call the useTranslation hook. Matches the TOOL_LABEL_KEYS
-// pattern in ToolSetupDialog.tsx.
+// Keys into shell:keyboardShortcuts.groups — resolved at the call site
+// (KeyboardShortcutsSettings.tsx, and filterKeyboardShortcuts's haystack)
+// because this is a module-level constant and cannot call the useTranslation
+// hook. Matches the TOOL_LABEL_KEYS pattern in ToolSetupDialog.tsx.
+//
+// Namespace-qualified on purpose. This module has no `useTranslation('shell')`
+// context, so once `filterKeyboardShortcuts` started resolving these keys the
+// extractor statically read the map and filed all five under the DEFAULT
+// namespace (`common`), where they do not exist. An explicit `shell:` prefix
+// resolves identically at the existing call site and pins the extraction.
 export const SHORTCUT_GROUP_LABEL_KEYS: Record<ShortcutGroup, string> = {
-  navigation: 'keyboardShortcuts.groups.navigation',
-  'query-editor': 'keyboardShortcuts.groups.query-editor',
-  sidebar: 'keyboardShortcuts.groups.sidebar',
-  zoom: 'keyboardShortcuts.groups.zoom',
-  'command-palette': 'keyboardShortcuts.groups.command-palette',
+  navigation: 'shell:keyboardShortcuts.groups.navigation',
+  'query-editor': 'shell:keyboardShortcuts.groups.query-editor',
+  sidebar: 'shell:keyboardShortcuts.groups.sidebar',
+  zoom: 'shell:keyboardShortcuts.groups.zoom',
+  'command-palette': 'shell:keyboardShortcuts.groups.command-palette',
 };
 
 export const SHORTCUT_GROUP_ORDER: ShortcutGroup[] = [
@@ -205,18 +212,25 @@ export function filterKeyboardShortcuts(
   query: string,
   shortcuts: KeyboardShortcut[] = KEYBOARD_SHORTCUTS,
   platform = navigator.platform,
+  t?: TFunction,
 ): KeyboardShortcut[] {
   const q = query.trim().toLowerCase();
   if (!q) return shortcuts;
   return shortcuts.filter((shortcut) => {
-    // Matches against the untranslated id/key text (English), same as
-    // `keywords` below — search always operates in English regardless of UI
-    // locale, there is no translated copy available to a plain function like
-    // this one (see labelKey's doc comment).
+    // Search the RESOLVED labels, not the catalog key paths. Matching on
+    // `labelKey` made every visible word unsearchable ("interface", "focus",
+    // "modal" returned nothing) while making key fragments match everything
+    // ("keyboard" hit all 11 rows, since every key contains
+    // `keyboardShortcuts.items.`). `t` is optional so the function stays
+    // callable from a plain module; without it we fall back to the key text,
+    // which is at least stable. `keywords` stays in the haystack so English
+    // technical terms keep working in a German UI.
     const haystack = [
-      shortcut.labelKey,
+      t ? t(shortcut.labelKey) : shortcut.labelKey,
       shortcut.keywords ?? '',
-      SHORTCUT_GROUP_LABEL_KEYS[shortcut.group],
+      t
+        ? t(SHORTCUT_GROUP_LABEL_KEYS[shortcut.group])
+        : SHORTCUT_GROUP_LABEL_KEYS[shortcut.group],
       formatShortcut(shortcut, platform),
     ]
       .join(' ')

@@ -323,9 +323,9 @@
     },
     "preview": {
       "captionChoose": "Choose a source to preview",
-      "captionCount_one": "Previewing first {{count}} document",
+      "captionCount_one": "Previewing the first document",
       "captionCount_other": "Previewing first {{count}} documents",
-      "captionCountWithTotal_one": "Previewing first {{count}} document of ~{{total}}",
+      "captionCountWithTotal_one": "Previewing the first document of ~{{total}}",
       "captionCountWithTotal_other": "Previewing first {{count}} documents of ~{{total}}",
       "title": "Preview"
     },

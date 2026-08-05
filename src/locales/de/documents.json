@@ -7,8 +7,8 @@
       "addStage": "Stufe hinzufügen",
       "aiHelper": "KI-Helfer",
       "apply": "Anwenden",
-      "clearAll": "Alle löschen",
-      "clearDefault": "Standard löschen",
+      "clearAll": "Alle zurücksetzen",
+      "clearDefault": "Standard zurücksetzen",
       "export": "Export",
       "import": "Import",
       "listShortcut": "Liste",
@@ -24,7 +24,7 @@
       "saveAsNew": "Als neue Abfrage speichern...",
       "saveQuery": "Abfrage speichern",
       "setDefaultQuery": "Standardabfrage festlegen",
-      "visualQueryBuilder": "Visueller Abfrage-Editor"
+      "visualQueryBuilder": "Visueller Abfrage-Builder"
     },
     "breadcrumbs": {
       "authenticatedAs": "Authentifiziert als {{user}}",
@@ -39,10 +39,10 @@
       "customField": "Benutzerdefiniertes Feld...",
       "descOption": "Absteigend ({{n}})",
       "excludeOption": "Ausschließen ({{n}})",
-      "fieldPathPlaceholder": "Feldpfad",
+      "fieldPathPlaceholder": "field.path",
       "includeOption": "Einschließen ({{n}})",
-      "matchAll": "Alle abgleichen ({{op}})",
-      "matchAny": "Beliebige abgleichen ({{op}})",
+      "matchAll": "Alle erfüllen ({{op}})",
+      "matchAny": "Eine erfüllen ({{op}})",
       "operators": {
         "in": "in",
         "notIn": "nicht in",
@@ -94,7 +94,7 @@
     },
     "tabs": {
       "aggregation": "Aggregation",
-      "find": "Suche"
+      "find": "Find"
     },
     "tooltips": {
       "addToFavorites": "Zu Favoriten hinzufügen",
@@ -131,9 +131,9 @@
       "invalidJson": "Ungültiges JSON"
     },
     "tooltips": {
-      "clearFilter": "Filter leeren",
-      "clearProjection": "Projektion leeren",
-      "clearSort": "Sortierung leeren",
+      "clearFilter": "Filter zurücksetzen",
+      "clearProjection": "Projektion zurücksetzen",
+      "clearSort": "Sortierung zurücksetzen",
       "fewerOptions": "Weniger Optionen",
       "hideOptions": "Projektion, Sortierung, Skip und Limit ausblenden",
       "moreOptions": "Mehr Optionen",
@@ -195,10 +195,10 @@
       "exportPng": "PNG"
     },
     "chartTypes": {
-      "area": "Fläche",
-      "bar": "Balken",
-      "line": "Linie",
-      "pie": "Kreis",
+      "area": "Flächendiagramm",
+      "bar": "Balkendiagramm",
+      "line": "Liniendiagramm",
+      "pie": "Kreisdiagramm",
       "scatter": "Streudiagramm"
     },
     "empty": {
@@ -262,7 +262,7 @@
       "updateMany": "Mehrere aktualisieren"
     },
     "dialogs": {
-      "bulkAllWarning_one": "\n\n⚠ Dies betrifft ALLE {{count}} Dokument in der Sammlung.",
+      "bulkAllWarning_one": "\n\n⚠ Dies betrifft das einzige Dokument in der Sammlung.",
       "bulkAllWarning_other": "\n\n⚠ Dies betrifft ALLE {{count}} Dokumente in der Sammlung.",
       "copyErrorMessage": "Fehlermeldung kopieren",
       "deleteDocument": {
@@ -270,15 +270,15 @@
         "confirmLabel": "Löschen"
       },
       "deleteMany": {
-        "body_one": "Lösche {{count}} Dokument, das folgendem Kriterium entspricht:\n{{filter}}",
-        "body_other": "Lösche {{count}} Dokumente, die folgendem Kriterium entsprechen:\n{{filter}}",
+        "body_one": "{{count}} Dokument löschen, das folgendem Filter entspricht?\n{{filter}}",
+        "body_other": "{{count}} Dokumente löschen, die folgendem Filter entsprechen?\n{{filter}}",
         "confirmLabel": "Löschen",
         "title": "Mehrere löschen"
       },
       "typeCollectionNameSuffix": "\n\nGib den Namen der Sammlung ein, um zu bestätigen.",
       "updateMany": {
-        "body_one": "Wende dieses Update auf {{count}} Dokument an, das folgendem Kriterium entspricht:\n{{filter}}",
-        "body_other": "Wende dieses Update auf {{count}} Dokumente an, die folgendem Kriterium entsprechen:\n{{filter}}",
+        "body_one": "Diese Aktualisierung auf {{count}} Dokument anwenden, das folgendem Filter entspricht?\n{{filter}}",
+        "body_other": "Diese Aktualisierung auf {{count}} Dokumente anwenden, die folgendem Filter entsprechen?\n{{filter}}",
         "confirmLabel": "Aktualisieren",
         "promptMessage": "Dokument aktualisieren (Operatoren, z. B. {\"$set\": {...}}):",
         "title": "Mehrere aktualisieren",
@@ -290,7 +290,7 @@
       }
     },
     "empty": {
-      "explainHint": "Um einen zu erstellen, öffne das <strong>Ausführen</strong>-Dropdown-Menü in der Symbolleiste des Abfrageeditors und wähle <strong>Explain ausführen</strong>.",
+      "explainHint": "Um einen zu erstellen, öffne das <strong>Ausführen</strong>-Dropdown-Menü in der Symbolleiste des Abfrage-Editors und wähle <strong>Explain ausführen</strong>.",
       "noDocuments": "Keine Dokumente gefunden, die den Kriterien entsprechen.",
       "noExplainPlan": "Noch kein Explain-Plan erstellt.",
       "noQueryRun": "Es wurde noch keine Abfrage ausgeführt."
@@ -362,10 +362,10 @@
     "viewModes": {
       "chart": "Diagramm",
       "json": "JSON",
-      "rawJson": "Rohes JSON",
+      "rawJson": "Roh-JSON",
       "table": "Tabelle",
       "tree": "Baum",
-      "visualTree": "Baumansicht"
+      "visualTree": "Grafischer Baum"
     }
   },
   "schemaView": {

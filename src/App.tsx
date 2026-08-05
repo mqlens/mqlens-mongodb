@@ -3830,7 +3830,7 @@ function Workspace() {
             <header className="mb-3">
               <h2 className="text-sm font-semibold text-foreground">{tShell('taskManager.header.title')}</h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Background copy and export jobs.
+                {tShell('taskManager.header.subtitle')}
               </p>
             </header>
             <TaskManager
@@ -3919,12 +3919,12 @@ function Workspace() {
       </div>
       <h1 className="text-2xl font-semibold text-foreground">MQLens</h1>
       <p className="max-w-md text-sm text-muted-foreground">
-        No active connection. Connect to a MongoDB cluster to browse collections and run queries.
+        {tShell('emptyWorkspace.noConnection')}
       </p>
 
       <Button onClick={() => setIsConnectionModalOpen(true)}>
         <Play size={14} className="mr-1.5" fill="currentColor" />
-        Connect to Database...
+        {tShell('emptyWorkspace.connectButton')}
       </Button>
     </div>
   );

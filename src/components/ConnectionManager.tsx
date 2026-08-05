@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
@@ -1866,7 +1866,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       )}
                       {isExternal && (
                         <p className="m-0 text-[10px] text-muted-foreground">
-                          {t('auth.externalNotePrefix')} <code>$external</code> {t('auth.externalNoteSuffix')}
+                          {/* One key, not a prefix/suffix pair around the <code>:
+                              German puts the database NAME after the noun
+                              ("gegen die Datenbank $external"), which a split
+                              that hard-codes English word order cannot express
+                              without stranding the final period after a space. */}
+                          <Trans i18nKey="connections:auth.externalNote" t={t}>
+                            Authenticates against the <code>$external</code> database.
+                          </Trans>
                         </p>
                       )}
                     </div>

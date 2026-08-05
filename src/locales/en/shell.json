@@ -169,6 +169,10 @@
     "resizeAriaLabel": "Resize dialog",
     "resizeTitle": "Drag to resize"
   },
+  "emptyWorkspace": {
+    "connectButton": "Connect to Database…",
+    "noConnection": "No active connection. Connect to a MongoDB cluster to browse collections and run queries."
+  },
   "keyboardShortcuts": {
     "description": "Global shortcuts for navigation, queries, the sidebar, zoom, and the command palette.",
     "empty": "No shortcuts match your search.",
@@ -343,6 +347,7 @@
     "header": {
       "runningBadge_one": "{{count}} running",
       "runningBadge_other": "{{count}} running",
+      "subtitle": "Background copy and export jobs.",
       "title": "Tasks"
     },
     "row": {

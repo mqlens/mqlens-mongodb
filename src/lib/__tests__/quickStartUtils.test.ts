@@ -44,7 +44,11 @@ describe('topology', () => {
     const t = await tFor('de');
     expect(topology('mongodb+srv://c.x9k2.mongodb.net/db', t)).toBe('SRV-Cluster');
     expect(topology('mongodb://h1:27017,h2:27017,h3:27017/db', t)).toBe('Replikatset · 3 Knoten');
-    expect(topology('mongodb://localhost:27017', t)).toBe('Eigenständig');
+    // "Standalone" deliberately stays English in German: it is the same term
+    // the user picks in the connection editor (connections:form.topologyStandalone
+    // = "Standalone / Direkt"), and reporting it back translated meant the card
+    // never matched the choice.
+    expect(topology('mongodb://localhost:27017', t)).toBe('Standalone');
   });
 });
 

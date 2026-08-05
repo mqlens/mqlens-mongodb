@@ -52,7 +52,7 @@
     "restore": "Wiederherstellung (mongorestore)…",
     "settings": "Einstellungen",
     "unpin": "Anheftung aufheben",
-    "unpinFromSidebar": "Anheftung an Seitenleiste aufheben",
+    "unpinFromSidebar": "Von Seitenleiste lösen",
     "validationRules": "Validierungsregeln"
   },
   "dialogs": {
@@ -107,7 +107,7 @@
   "empty": {
     "connectAriaLabel": "Mit Datenbank verbinden",
     "connectButton": "Mit Datenbank verbinden...",
-    "favoritesHint": "Rechtsklick auf Elemente im Baum, oder favorisiere eine gespeicherte Abfrage aus einem Sammlungstab",
+    "favoritesHint": "Mach einen Rechtsklick auf Elemente im Baum oder favorisiere eine gespeicherte Abfrage aus einem Sammlungstab",
     "foldersHint": "Speichere Verbindungen im Verbindungsmanager",
     "noConnections": "Mit einem MongoDB-Server verbinden, um die Datenbankstruktur zu durchsuchen.",
     "pinnedHint": "Rechtsklick auf eine Verbindung, Datenbank oder Sammlung → An Seitenleiste anheften"
@@ -130,8 +130,8 @@
   "help": {
     "documentation": "Dokumentation",
     "reportBug": "Fehler melden",
-    "requestFeature": "Feature anfragen",
-    "starOnGithub": "Auf GitHub mit Stern versehen"
+    "requestFeature": "Feature vorschlagen",
+    "starOnGithub": "GitHub-Stern vergeben"
   },
   "search": {
     "ariaLabel": "Seitenleiste durchsuchen",
@@ -142,14 +142,14 @@
     "connections": "VERBINDUNGEN",
     "favorites": "FAVORITEN",
     "folders": "ORDNER",
-    "pinned": "ANGEPINNT"
+    "pinned": "ANGEHEFTET"
   },
   "toasts": {
     "addedToFavorites": "Zu Favoriten hinzugefügt",
     "connectingTo": "Verbinde mit {{name}}…",
     "couldNotConnect": "Verbindung zu {{name}} fehlgeschlagen",
     "couldNotUpdateFavorites": "Favoriten konnten nicht aktualisiert werden",
-    "couldNotUpdatePinned": "Angepinnte Elemente konnten nicht aktualisiert werden",
+    "couldNotUpdatePinned": "Angeheftete Elemente konnten nicht aktualisiert werden",
     "createCollectionFailed": "Sammlung konnte nicht erstellt werden: {{error}}",
     "createDatabaseFailed": "Datenbank konnte nicht erstellt werden: {{error}}",
     "dropCollectionFailed": "Sammlung konnte nicht gelöscht werden: {{error}}",
@@ -173,7 +173,7 @@
     "newBucketInline": "Neuer Bucket…",
     "newCollectionAriaLabel": "Neue Sammlung",
     "offlineSuffix": " · offline",
-    "rootLabel": "Stammverzeichnis",
+    "rootLabel": "Stamm",
     "systemLabel": "System",
     "timeseriesAriaLabel": "Time-Series-Sammlung",
     "viewsLabel": "Ansichten"

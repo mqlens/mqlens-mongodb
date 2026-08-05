@@ -15,23 +15,29 @@ import { join } from 'node:path';
  * a JSX-text-only regex cannot see.
  *
  * This gate is deliberately broader. In addition to JSX text nodes, it scans:
- *   - `title=`, `placeholder=`, `aria-label=`, `alt=`, `label=` JSX attributes
- *     with a string-literal value, including ones behind a ternary/`??`
- *     expression (`aria-label={show ? 'Hide password' : 'Show password'}`)
+ *   - label-ish JSX attributes with a string-literal value — `placeholder=`,
+ *     `aria-label=`, `alt=`, `description=`, `message=`, `tooltip=` and
+ *     anything ending in `label`/`title`/`text`, so `confirmLabel=` counts —
+ *     including values behind a ternary/`??` expression
+ *     (`aria-label={show ? 'Hide password' : 'Show password'}`)
  *   - template literals that contain prose (not just `${}` interpolation of
  *     an identifier)
- *   - string literals assigned to label-ish object properties (`label:`,
- *     `title:`, `name:`, `description:`, `hint:`, `subtitle:`, `placeholder:`),
- *     including camelCase-prefixed variants of `label`/`title`
- *     (`confirmLabel:`, `cancelLabel:`)
+ *   - string literals assigned to label-ish object properties, same name set
+ *     as the attributes above (`label:`, `confirmLabel:`, `emptyText:`, …)
  *   - JSX text nodes that mix prose with a `{}` interpolation
  *     (`<p>Not connected to {profileName}.</p>`), not just plain text runs
  *   - `identifier ?? 'Fallback prose'` nullish-coalescing default values
  *   - `window.confirm(...)`, `window.alert(...)`, `window.prompt(...)` arguments
- *
+ *   - the first argument of this project's own copy-bearing helpers —
+ *     `toast(...)`, `notify(...)`, `setError(...)`, `setHint(...)`
  *   - bare `return 'prose'` / `throw new Error('prose')` string literals, the
  *     shape user-facing validation messages take in plain `.ts` modules
  *     (`validateMongoUri()`)
+ *
+ * KEEP THIS LIST HONEST. An earlier revision described five detectors that had
+ * never been implemented — every regex was unchanged — so the gate read green
+ * while asserting far less than its own documentation claimed. If you add a
+ * bullet here, add the regex; if you change a regex, change the bullet.
  *
  * The plan-era gate also only walked `.tsx`, leaving every plain `.ts` module
  * (`src/lib/**`, `src/workspace/*.ts`, …) structurally invisible to it — a
@@ -39,9 +45,11 @@ import { join } from 'node:path';
  * `?? 'Saved query'` fallback label lived there, undetected, until this
  * revision. It now walks `.ts` too (see `isScannableFile` below).
  *
- * It is still a heuristic, not an AST parser — it can be fooled by comments,
- * regex literals containing backticks, and Tailwind class strings assigned to
- * an unluckily-named property (`label: 'text-primary'`). Every hit below was
+ * It is still a heuristic, not an AST parser. Comments are blanked before
+ * scanning (see `blankComments`), but it can still be fooled by regex literals
+ * containing backticks, by a loose `>…<` run straddling a generic, and by
+ * Tailwind class strings assigned to an unluckily-named property
+ * (`label: 'text-primary'`). Every hit below was
  * manually triaged; each exemption below carries the reason it survived
  * triage instead of being translated. See
  * .superpowers/sdd/task-6-report.md for the full triage log.
@@ -91,6 +99,8 @@ const EXEMPT_HITS: Record<string, string[]> = {
   // Connection form example values (Global Constraint 2) — the exact
   // hostnames/paths/ports a user would type, not translatable prose.
   'src/components/ConnectionManager.tsx': [
+    // <Trans> fallback children for auth.externalNote — never rendered.
+    '> Authenticates against the <',
     'placeholder="mongodb://localhost:27017"',
     'placeholder="rs0"',
     'placeholder="admin"',
@@ -118,6 +128,10 @@ const EXEMPT_HITS: Record<string, string[]> = {
     'placeholder=\'[{ "',
   ],
   'src/components/DataGrid.tsx': [
+    // <Trans> fallback children for dataGrid.empty.explainHint — never
+    // rendered; the catalog value is used in both locales.
+    '> To generate one, open the <',
+    '> dropdown split menu in the query editor toolbar and select <',
     // EJSON/BSON type constructor names rendered as mongosh-style syntax
     // (e.g. `ObjectId("...")`), matching real mongosh/EJSON output — MongoDB
     // type identifiers, not prose (Global Constraint 2).
@@ -188,6 +202,9 @@ const EXEMPT_HITS: Record<string, string[]> = {
     'placeholder=\'{ "',
   ],
   'src/components/MongoShell.tsx': [
+    // <Trans> fallback children for destructiveDialog.body — never rendered.
+    '> This script runs <',
+    '>, which can permanently delete data. Review it before running. <',
     // Reproduces mongosh's own startup banner verbatim (see the source
     // comment at buildStartupLines) — real mongosh output is English-only
     // regardless of the host OS locale, so translating it would misrepresent
@@ -225,6 +242,18 @@ const EXEMPT_HITS: Record<string, string[]> = {
     "label: 'text-destructive'",
     "label: 'text-primary'",
   ],
+  // ── <Trans> fallback children ────────────────────────────────────────────
+  // The English text inside a <Trans i18nKey="…"> is a FALLBACK that react-i18next
+  // never renders once the key resolves — the catalog value wins, in both
+  // locales. These surfaced only after the JSX detector was widened to span
+  // lines; each one's key is present and translated in de. (Same rationale as
+  // the pre-existing DataGrid '>Run Explain<' entry below.)
+  'src/components/AIChatPanel.tsx': [
+    '> Ask for a query in plain language — e.g. <',
+    '>. I’ll explain what I’m doing and you can insert the result. <',
+  ],
+  'src/components/UpdatePrompt.tsx': ['> is available. <'],
+
   // ── Developer-contract errors ────────────────────────────────────────────
   // `useX must be used within its Provider` fires only when a developer wires
   // a component up wrong; it can never reach an end user in a shipped build,
@@ -232,6 +261,10 @@ const EXEMPT_HITS: Record<string, string[]> = {
   // the `console.*` exclusion the template detector already applies.
   'src/components/dialogs/DialogProvider.tsx': [
     "throw new Error('useDialogs must be used within a <DialogProvider>'",
+    // Detector false positive: `new Promise<…>` — the loose `>…<` text match
+    // straddles a generic. "new" is a stopword and "Promise" is Title-Case, so
+    // it clears the prose bar despite being pure code.
+    '> new Promise<',
   ],
   'src/components/i18n/I18nProvider.tsx': [
     "throw new Error('useLocale must be used inside I18nProvider'",
@@ -240,8 +273,13 @@ const EXEMPT_HITS: Record<string, string[]> = {
     'throw new Error("useTheme must be used within ThemeProvider"',
   ],
   'src/lib/themes/apply-theme.ts': [
-    // Thrown when a hand-edited/corrupt theme config fails its schema check —
-    // caught and replaced with a translated toast at the call site.
+    // Thrown when a hand-edited/corrupt theme config fails its schema check.
+    // The `message` never reaches a user: AppearanceSettings.handleImport
+    // catches it and renders its OWN translated string
+    // (settings:appearance.importFailed) rather than the thrown text. Until
+    // the final review this comment claimed the call site caught it, which was
+    // simply untrue — handleImport had no try/catch at all, so a malformed
+    // theme file threw into an async onchange and the user got no feedback.
     'throw new Error("Invalid theme configuration"',
   ],
   'src/workspace/workspaceStore.ts': [
@@ -260,6 +298,13 @@ const EXEMPT_HITS: Record<string, string[]> = {
     "name: 'name'",
   ],
   'src/lib/mongoCompletions.ts': [
+    // Monaco completion `insertText` payloads: the literal characters typed
+    // into the editor (sort/projection values, an object opener), matched
+    // only because the property detector now covers `…Text:` names.
+    "insertText: '1'",
+    "insertText: '0'",
+    "insertText: '-1'",
+    'insertText: \'{"',
     // Query/projection/sort syntax tokens offered by the editor's completion
     // list — MongoDB syntax, not prose (Global Constraint 2).
     "label: '_id'",
@@ -284,10 +329,14 @@ const EXEMPT_HITS: Record<string, string[]> = {
     "name: 'Local resources'",
   ],
   'src/lib/themes/presets.ts': [
-    // Proper names of third-party palettes, kept verbatim like the product
-    // names exempted in SettingsModal.tsx. The three DESCRIPTIVE preset names
-    // (MQLens Dark/Light, High Contrast) are NOT here — they carry a `nameKey`
-    // and are translated; only these five are names rather than copy.
+    // Proper names kept verbatim, like the product names exempted in
+    // SettingsModal.tsx. MQLens Dark/Light were briefly given a `nameKey` and
+    // translated ("MQLens Dunkel"/"MQLens Hell"), which made the German picker
+    // read half-translated — those two render beside five siblings whose names
+    // are untranslated proper nouns. Only `High Contrast` keeps a `nameKey`,
+    // because it is a description rather than a name.
+    'name: "MQLens Dark"',
+    'name: "MQLens Light"',
     'name: "Nord"',
     'name: "Solarized Dark"',
     'name: "Solarized Light"',
@@ -336,7 +385,15 @@ function hasProse(text: string): boolean {
  *  so `` `Move to ${target}` `` is prose but `` `${a}${b}` `` is not. */
 const templateHasProse = (raw: string) => hasProse(raw.replace(/\$\{[^}]*\}/g, ' '));
 
-const JSX_TEXT_RE = />[A-Z][a-z][^<>{}]{2,60}</g;
+/** Plain JSX text nodes. The original `>[A-Z][a-z]…<` required a Title-Case
+ *  word IMMEDIATELY after the `>`, which the final review showed missed most
+ *  of what a developer actually writes: lowercase openings ("no documents
+ *  matched"), acronyms ("URI is not valid"), one-letter words ("A newer
+ *  version"), and — most commonly — any node prettier wrapped onto its own
+ *  line. Now it accepts any run without `<>{}`, across newlines, and leans on
+ *  `hasProse` to decide. `[^<>{}]` still excludes interpolations; JSX_MIXED_RE
+ *  below handles those. */
+const JSX_TEXT_RE = />([^<>{}]{4,200})</g;
 /** JSX text nodes that MIX prose with a `{}` interpolation
  *  (`<p>Not connected to {profileName}.</p>`). JSX_TEXT_RE above excludes
  *  `{}` outright, so those nodes were invisible to it. Judged on the text with
@@ -348,19 +405,29 @@ const JSX_TEXT_RE = />[A-Z][a-z][^<>{}]{2,60}</g;
  *  stops a generic's closing `>` from pairing with the NEXT line's `Record<`
  *  and swallowing the code in between. A real JSX text node is one line. */
 const JSX_MIXED_RE = /(?<![=\-!<>])>([^<>\n]{2,160})</g;
-const ATTR_RE = /\b(?:title|placeholder|aria-label|alt|label)=\{?["']([^"']{2,120})["']\}?/g;
+/** Label-ish JSX attributes. The name pattern mirrors PROP_RE's: a camelCase
+ *  prefix is allowed, so `confirmLabel=` / `emptyTitle=` match, not just
+ *  `label=`. The old five-name list also let `description=`, `message=`,
+ *  `heading=`, `tooltip=` and `emptyText=` through untouched. */
+const ATTR_NAMES = String.raw`(?:[A-Za-z]*(?:[lL]abel|[tT]itle|[tT]ext)|aria-label|placeholder|alt|description|message|heading|tooltip|hint|subtitle)`;
+const ATTR_RE = new RegExp(String.raw`\b${ATTR_NAMES}=\{?["']([^"']{2,160})["']\}?`, 'g');
+/** The project's own toast/notify helpers take their user-facing copy as the
+ *  FIRST positional argument, which no attribute or property detector can see:
+ *  `toast('Failed to connect to the profile.', 'error')`. */
+const CALL_ARG_RE =
+  /\b(?:toast|notify|setError|setHint|setStatus)\(\s*(['"])([^'"]{4,200})\1/g;
 /** Label-ish attributes whose value is an expression rather than a bare
  *  literal — a ternary or `??` chain
  *  (`aria-label={show ? 'Hide password' : 'Show password'}`). Every quoted
  *  literal inside the braces is then judged individually. */
-const ATTR_EXPR_RE = /\b(?:title|placeholder|aria-label|alt|label)=\{([^{}]{2,200})\}/g;
+const ATTR_EXPR_RE = new RegExp(String.raw`\b${ATTR_NAMES}=\{([^{}]{2,200})\}`, 'g');
 /** `label:`/`title:` and their camelCase-prefixed variants (`confirmLabel:`,
  *  `cancelLabel:`, `ariaLabel:`) plus the other label-ish property names. The
  *  old `\b(?:label|title|…)` could not match `confirmLabel:` at all: there is
  *  no word boundary in the middle of `confirmLabel`, so every dialog's
  *  confirm/cancel button copy escaped the gate. */
 const PROP_RE =
-  /\b(?:[A-Za-z]*(?:[lL]abel|[tT]itle)|name|description|hint|subtitle|placeholder):\s*['"]([^'"]{1,120})['"]/g;
+  /\b(?:[A-Za-z]*(?:[lL]abel|[tT]itle|[tT]ext)|name|description|hint|subtitle|placeholder|message|tooltip|body|heading):\s*['"]([^'"]{1,160})['"]/g;
 const TEMPLATE_RE = /`([^`]*)`/g;
 const WINDOW_DIALOG_RE = /window\.(?:confirm|alert|prompt)\(\s*(`[^`]*`|"[^"]*"|'[^']*')/g;
 /** `identifier ?? 'Fallback prose'` default values (`item.label ?? 'Saved
@@ -376,11 +443,58 @@ const RETURN_THROW_RE =
 /** Extracts the individual quoted literals out of an attribute expression. */
 const QUOTED_RE = /(['"])([^'"]{2,200})\1/g;
 
-function findHits(file: string, src: string): string[] {
+/**
+ * Replace every comment body with spaces, preserving length and newlines so
+ * all downstream match indices still line up with the original source.
+ *
+ * The file header used to warn that the gate "can be fooled by comments", and
+ * it was: a backtick-quoted `new URL` in a JSDoc block earned a permanent
+ * exemption, and once JSX text nodes were allowed to span lines, ordinary
+ * prose inside `{/* … *\/}` blocks started reporting too.
+ *
+ * String-aware on purpose. A naive strip would treat the `//` inside
+ * `placeholder="mongodb://localhost:27017"` as a comment and eat the rest of
+ * the line, silently breaking the triaged exemptions keyed on that exact text.
+ */
+function blankComments(src: string): string {
+  const out = src.split('');
+  let i = 0;
+  let quote: string | null = null;
+  while (i < src.length) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (quote) {
+      if (c === '\\') i += 2;
+      else if (c === quote) (quote = null), i++;
+      else i++;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') (quote = c), i++;
+    else if (c === '/' && next === '/') {
+      while (i < src.length && src[i] !== '\n') (out[i] = ' '), i++;
+    } else if (c === '/' && next === '*') {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end === -1 ? src.length : end + 2;
+      for (; i < stop; i++) if (src[i] !== '\n') out[i] = ' ';
+    } else i++;
+  }
+  return out.join('');
+}
+
+/** Code punctuation that effectively never appears in a UI text node but is
+ *  everywhere in the generics and call expressions a loose `>…<` match would
+ *  otherwise straddle (`useState<Foo>(null);`, `Promise<T> = [];`). */
+const looksLikeCode = (s: string) => /[;=(){}[\]`]/.test(s);
+
+function findHits(file: string, rawSrc: string): string[] {
+  const src = blankComments(rawSrc);
   const hits: string[] = [];
 
-  for (const m of src.matchAll(JSX_TEXT_RE)) hits.push(m[0]);
+  for (const m of src.matchAll(JSX_TEXT_RE)) {
+    if (!looksLikeCode(m[1]) && hasProse(m[1])) hits.push(m[0].replace(/\s+/g, ' '));
+  }
   for (const m of src.matchAll(ATTR_RE)) hits.push(m[0]);
+  for (const m of src.matchAll(CALL_ARG_RE)) if (hasProse(m[2])) hits.push(m[0]);
   for (const m of src.matchAll(PROP_RE)) hits.push(m[0]);
   for (const m of src.matchAll(WINDOW_DIALOG_RE)) hits.push(m[0]);
   for (const m of src.matchAll(NULLISH_FALLBACK_RE)) if (hasProse(m[2])) hits.push(m[0]);
@@ -397,15 +511,17 @@ function findHits(file: string, src: string): string[] {
   }
 
   for (const m of src.matchAll(ATTR_EXPR_RE)) {
-    // An attribute whose expression is already a translation call is, by
-    // definition, translated; its argument is a key, not copy. Keys fail the
-    // prose bar anyway (no space), but such a call's optional default-value
-    // argument would not, so skip the whole expression rather than report an
-    // already-translated default. (Written without a literal example call:
-    // i18next-cli extracts one even from inside a comment, which would add a
-    // phantom key to en/common.json on every `npm run i18n:check`.)
-    if (/\bt\(/.test(m[1])) continue;
-    for (const q of m[1].matchAll(QUOTED_RE)) if (hasProse(q[2])) hits.push(q[0]);
+    // Strip translation calls and judge whatever literals REMAIN. Skipping the
+    // whole expression on sight of a translation call — the previous
+    // behaviour — made the commonest half-migrated shape invisible: a ternary
+    // with one branch translated and the other still English literal prose.
+    // Removing just the calls keeps their key arguments (and any default-value
+    // argument, which is translated by definition) out of the scan while
+    // leaving the untranslated branch exposed. (Written without a literal
+    // example call: i18next-cli extracts one even from inside a comment, which
+    // would add a phantom key to en/common.json on every `npm run i18n:check`.)
+    const withoutCalls = m[1].replace(/\bt\([^()]*\)/g, ' ');
+    for (const q of withoutCalls.matchAll(QUOTED_RE)) if (hasProse(q[2])) hits.push(q[0]);
   }
 
   // Neutralize a lone backtick quoted as `'`'`/`"`"` (e.g. a shell
@@ -463,5 +579,51 @@ describe('i18n coverage', () => {
     }
 
     expect(offenders, `Untranslated user-facing strings found:\n${offenders.join('\n')}`).toEqual([]);
+  });
+
+  it('never passes a pre-formatted (string) count to a t() call', () => {
+    // i18next skips plural resolution entirely when `count` is not a number
+    // (`needsPluralHandling = count !== undefined && !isString(count)`). A key
+    // that exists only as `_one`/`_other` then misses the bare lookup and
+    // i18next returns THE KEY PATH, which renders to the user as literal text.
+    //
+    // That shipped: MonitoringView passed
+    // `count: status.connections.available.toLocaleString()`, so the
+    // Connections tile read "monitoringView.metrics.connectionsAvail" in every
+    // locale. Pass the number as `count` and send the formatted text in its
+    // own placeholder.
+    const STRINGY_COUNT = /\bcount:\s*([^,}\n]+)/g;
+    const looksStringy = (expr: string) =>
+      /\.toLocaleString\(|\.toString\(|\bString\(|^['"`]/.test(expr.trim());
+
+    const files: string[] = [];
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) {
+          if (!EXCLUDED_DIR_NAMES.has(e.name)) walk(p);
+        } else if (isScannableFile(e.name)) {
+          files.push(p.split('\\').join('/'));
+        }
+      }
+    };
+    walk(SCAN_DIR);
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8');
+      for (const m of src.matchAll(STRINGY_COUNT)) {
+        if (!looksStringy(m[1])) continue;
+        // Only care when it is an argument to a translation call.
+        const before = src.slice(Math.max(0, m.index! - 200), m.index!);
+        if (!/\bt\(|<Trans\b/.test(before)) continue;
+        offenders.push(`${file}: ${m[0].trim()}`);
+      }
+    }
+
+    expect(
+      offenders,
+      `t() called with a non-numeric count — plural lookup will miss and render the raw key:\n${offenders.join('\n')}`,
+    ).toEqual([]);
   });
 });

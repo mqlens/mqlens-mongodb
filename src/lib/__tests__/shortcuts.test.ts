@@ -31,6 +31,39 @@ describe('shortcuts', () => {
     expect(filterKeyboardShortcuts('nope', undefined, 'Win32')).toEqual([]);
   });
 
+  it('searches the RESOLVED labels, not the catalog key paths', async () => {
+    // Regression: the haystack was switched from `shortcut.label` to
+    // `shortcut.labelKey`, so every word the user could actually SEE became
+    // unsearchable ("interface", "focus", "modal" returned nothing) while key
+    // fragments matched everything ("keyboard" hit all 11 rows, because every
+    // key contains `keyboardShortcuts.items.`). The old assertions above kept
+    // passing because 'sidebar'/'zoom' happen to appear in both the key and
+    // the label.
+    const { i18next } = await import('@/lib/i18n');
+    const t = i18next.getFixedT('en', 'shell');
+
+    expect(filterKeyboardShortcuts('interface', undefined, 'Win32', t).map((s) => s.id)).toEqual([
+      'zoom-in',
+      'zoom-out',
+      'zoom-reset',
+    ]);
+    expect(filterKeyboardShortcuts('topmost', undefined, 'Win32', t).map((s) => s.id)).toEqual([
+      'close-dialog',
+    ]);
+    // A key-path fragment must NOT match every row any more.
+    expect(filterKeyboardShortcuts('items', undefined, 'Win32', t)).toEqual([]);
+  });
+
+  it('searches German labels under a German locale', async () => {
+    const { i18next } = await import('@/lib/i18n');
+    const t = i18next.getFixedT('de', 'shell');
+    // "Oberfläche" is the German for the zoom shortcuts' label text; no German
+    // word could ever match while the haystack held key paths.
+    expect(filterKeyboardShortcuts('oberfläche', undefined, 'Win32', t).length).toBeGreaterThan(0);
+    // English technical terms still work in a German UI via `keywords`.
+    expect(filterKeyboardShortcuts('zoom', undefined, 'Win32', t).length).toBeGreaterThan(0);
+  });
+
   it('groups shortcuts in stable section order', () => {
     const grouped = groupKeyboardShortcuts(filterKeyboardShortcuts(''));
     expect(grouped.navigation[0]?.id).toBe('close-dialog');

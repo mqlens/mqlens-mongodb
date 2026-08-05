@@ -203,6 +203,39 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   // set-membership operator keyword in the filter-builder's operator
   // dropdown (mirrors SQL's untranslated "IN"), identical spelling in German.
   'documents:documentViewer.builder.operators.in', // in
+  // Final whole-branch review: terms an independent German reviewer flagged as
+  // wrongly translated. Each was German and is now deliberately English.
+  //
+  // Index/sort direction keywords. The German build shipped invented
+  // abbreviations ("AUFST." / "ABST.") that no German DBA would recognise;
+  // ASC/DESC are language-neutral. The spelled-out forms elsewhere
+  // (indexModal.options.ascending = "Aufsteigend (1)") stay German — it is the
+  // abbreviated keyword form that must not be localised.
+  'admin:indexViewer.direction.asc', // ASC (1)
+  'admin:indexViewer.direction.desc', // DESC (-1)
+  // Not labels: a syntax demonstration of dot notation, rendered in a
+  // font-mono input. "Feldpfad" removed the only hint that nested paths work.
+  'documents:documentViewer.builder.fieldPathPlaceholder', // field.path
+  'admin:indexModal.placeholders.fieldPath', // field.path
+  // Literal $currentOp / system.profile document keys, shown beside the raw
+  // values MongoDB returns. `ns` and `opid` were already left alone; these
+  // three were translated, which broke the mapping to the server's own output.
+  'admin:monitoringView.labels.op', // op
+  'admin:monitoringView.labels.desc', // desc
+  'admin:monitoringView.labels.running', // running
+  // Log-level token in a fixed-width mono log row, next to "ok".
+  'settings:mcp.err', // ERR
+  // Update-channel identifiers, as used by the update feed itself. "Dev" was
+  // already English; "Stabil" made the pair inconsistent.
+  'settings:updates.stable', // Stable
+  // MongoDB command name, sitting next to the "Aggregation" tab which is
+  // likewise untranslated. "Suche" also collided with the sidebar/palette
+  // search vocabulary.
+  'documents:documentViewer.tabs.find', // Find
+  // Topology term the user picks in the connection editor
+  // (connections:form.topologyStandalone = "Standalone / Direkt"); reporting it
+  // back as "Eigenständig" meant the label never matched the choice.
+  'shell:connectionCard.topology.standalone', // Standalone
 ]);
 
 describe('locale catalogs', () => {
@@ -268,7 +301,15 @@ describe('locale catalogs', () => {
     // are NOT matched, since a sentence can legitimately open with "Sie" in the
     // "they" sense. Add an entry below if a false positive ever appears.
     const ALLOWED_FORMAL = new Set<string>([]);
-    const FORMAL = /(?<![.!?]\s)(?<!^)\b(?:Sie|Ihre?[nmrs]?|Ihnen)\b/m;
+    // Capitalised Sie/Ihr…/Ihnen anywhere in the value. An earlier version
+    // excluded value-initial and post-punctuation positions to avoid mistaking
+    // a sentence-opening "Sie" ("they") for the formal address — but those are
+    // exactly where formal address appears in toast and confirm copy
+    // ("Sie können diese Aktion nicht rückgängig machen.", "Achtung! Ihre
+    // Daten gehen verloren."), so the guard missed its own target shapes.
+    // Lowercase `sie`/`ihre` ("they"/"her") are still correctly ignored; a
+    // genuine "Sie"-as-they false positive goes on ALLOWED_FORMAL above.
+    const FORMAL = /\b(?:Sie|Ihre?[nmrs]?|Ihnen)\b/;
     const offenders: string[] = [];
     for (const ns of NAMESPACES) {
       const de = await load('de', ns);
@@ -293,6 +334,25 @@ describe('locale catalogs', () => {
     // wiring its catalogs into `resources` renders 100% English with every
     // other check here still green.
     expect(resourceCodes).toEqual(supportedCodes);
+  });
+
+  it('wires each locale to its OWN catalogs, not another locale’s', async () => {
+    // The check above compares only the KEY NAMES of `resources`, which made it
+    // near-vacuous: pointing `resources.de.admin` at the English admin catalog
+    // — every Monitoring, Index Viewer and Cluster Health string silently
+    // English in the German build — passed all of these tests and tsc, because
+    // every other check here reads the JSON off disk and never looks at what
+    // i18next was actually handed. Compare the registered object to the file it
+    // is supposed to be.
+    for (const { code } of SUPPORTED_LOCALES) {
+      for (const ns of NAMESPACES) {
+        const registered = (resources as Record<string, Record<string, unknown>>)[code][ns];
+        expect(
+          registered,
+          `resources.${code}.${ns} is not wired to src/locales/${code}/${ns}.json`,
+        ).toEqual(await load(code, ns));
+      }
+    }
   });
 
   it('keeps {{placeholder}} tokens identical between en and every other locale', async () => {

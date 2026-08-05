@@ -71,7 +71,7 @@
       "updateMany": "Update Many"
     },
     "dialogs": {
-      "bulkAllWarning_one": "\n\n⚠ This affects ALL {{count}} documents in the collection.",
+      "bulkAllWarning_one": "\n\n⚠ This affects the only document in the collection.",
       "bulkAllWarning_other": "\n\n⚠ This affects ALL {{count}} documents in the collection.",
       "copyErrorMessage": "Copy error message",
       "deleteDocument": {

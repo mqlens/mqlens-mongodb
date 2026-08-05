@@ -14,7 +14,10 @@ import {
 export const KeyboardShortcutsSettings: React.FC = () => {
   const { t } = useTranslation('shell');
   const [filter, setFilter] = useState('');
-  const filtered = useMemo(() => filterKeyboardShortcuts(filter), [filter]);
+  const filtered = useMemo(
+    () => filterKeyboardShortcuts(filter, undefined, undefined, t),
+    [filter, t],
+  );
   const grouped = useMemo(() => groupKeyboardShortcuts(filtered), [filtered]);
 
   return (
