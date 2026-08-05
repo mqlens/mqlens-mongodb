@@ -157,6 +157,12 @@
     "tooltip": {
       "alreadyConnected": "Already connected",
       "connectTo": "Connect to {{name}}"
+    },
+    "topology": {
+      "replicaSet_one": "Replica set · {{count}} node",
+      "replicaSet_other": "Replica set · {{count}} nodes",
+      "srvCluster": "SRV cluster",
+      "standalone": "Standalone"
     }
   },
   "dialog": {
@@ -218,6 +224,11 @@
       "found": "Found",
       "foundMongoshVersion": "mongosh {{version}}",
       "installHint": "Or install it yourself: <2>{{hint}}</2> — see the <6>mongosh install docs</6>.",
+      "installNote": {
+        "generic": "install mongosh from mongodb.com",
+        "linux": "or your distro’s package",
+        "windows": "or the MSI from mongodb.com"
+      },
       "installTools": "Install tools…",
       "openSettings": "Open Settings",
       "requiresMongosh": "MongoShell requires mongosh",

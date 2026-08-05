@@ -460,14 +460,16 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     }
   };
 
-  // OS-specific manual install hint for the gate card.
+  // OS-specific manual install hint for the gate card. The commands themselves
+  // are literal shell input the user copies verbatim, so only the parenthetical
+  // notes around them are translated (Global Constraint 2).
   const installHint = useMemo(() => {
     const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
     if (/mac/i.test(ua)) return 'brew install mongosh';
-    if (/win/i.test(ua)) return 'winget install MongoDB.Shell (or the MSI from mongodb.com)';
-    if (/linux/i.test(ua)) return 'sudo apt install mongodb-mongosh (or your distro’s package)';
-    return 'install mongosh from mongodb.com';
-  }, []);
+    if (/win/i.test(ua)) return `winget install MongoDB.Shell (${t('mongoShell.gate.installNote.windows')})`;
+    if (/linux/i.test(ua)) return `sudo apt install mongodb-mongosh (${t('mongoShell.gate.installNote.linux')})`;
+    return t('mongoShell.gate.installNote.generic');
+  }, [t]);
 
   const executeFind = async (
     collName: string,

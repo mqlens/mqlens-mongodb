@@ -68,6 +68,10 @@
     "metadataDialog": {
       "choiceAdd": "Add metadata JSON",
       "choiceSkip": "Skip metadata",
+      "errors": {
+        "invalidJson": "Invalid JSON",
+        "mustBeObject": "Metadata must be a JSON object"
+      },
       "message": "{{batchLabel}}: add optional metadata?",
       "promptMessage": "Metadata JSON object (stored on the file document):",
       "title": "GridFS metadata"

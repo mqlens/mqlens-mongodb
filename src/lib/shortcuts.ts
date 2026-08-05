@@ -185,11 +185,16 @@ export function quickStartShortcutRows(platform = navigator.platform) {
   return rows;
 }
 
+/** The three zoom chords, joined. The trailing "to reset" that used to live
+ *  here was English baked into a value interpolated INTO a translated string
+ *  (`settings:appearance.zoomShortcutHint`), so a German user read
+ *  "Tastenkürzel: ⌘+ / ⌘- / ⌘0 to reset". The wording now lives in the catalog
+ *  entry and this function returns chords only. */
 export function formatZoomShortcutHint(platform = navigator.platform): string {
   const zoomIn = shortcutById('zoom-in')!;
   const zoomOut = shortcutById('zoom-out')!;
   const zoomReset = shortcutById('zoom-reset')!;
-  return `${formatShortcutChord(zoomIn.chords[0], platform)} / ${formatShortcutChord(zoomOut.chords[0], platform)} / ${formatShortcutChord(zoomReset.chords[0], platform)} to reset`;
+  return `${formatShortcutChord(zoomIn.chords[0], platform)} / ${formatShortcutChord(zoomOut.chords[0], platform)} / ${formatShortcutChord(zoomReset.chords[0], platform)}`;
 }
 
 export function shortcutById(id: string): KeyboardShortcut | undefined {

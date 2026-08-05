@@ -112,6 +112,10 @@
     "noConnections": "Connect to MongoDB server to browse database tree structures.",
     "pinnedHint": "Right-click a connection, database, or collection → Pin to sidebar"
   },
+  "favorites": {
+    "connectionSubtitle": "connection",
+    "untitledQuery": "Saved query"
+  },
   "folders": {
     "manageConnectionsButton": "Manage connections"
   },

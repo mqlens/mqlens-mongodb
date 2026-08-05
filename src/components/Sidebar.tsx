@@ -2440,8 +2440,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex flex-col gap-0.5 pb-1">
                 {favoriteItems.map((fav) => {
                     const connected = Boolean(connectionIdForName(fav.connectionName));
-                    const label = favoriteItemLabel(fav);
-                    const subtitle = favoriteItemSubtitle(fav);
+                    const label = favoriteItemLabel(fav, t);
+                    const subtitle = favoriteItemSubtitle(fav, t);
                     const FavIcon =
                       fav.kind === 'query'
                         ? Heart

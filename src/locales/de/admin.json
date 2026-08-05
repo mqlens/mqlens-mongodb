@@ -455,7 +455,11 @@
       "message": "{{batchLabel}}: optionale Metadaten hinzufügen?",
       "choiceSkip": "Metadaten überspringen",
       "choiceAdd": "Metadaten-JSON hinzufügen",
-      "promptMessage": "Metadaten-JSON-Objekt (wird im Dateidokument gespeichert):"
+      "promptMessage": "Metadaten-JSON-Objekt (wird im Dateidokument gespeichert):",
+      "errors": {
+        "mustBeObject": "Metadaten müssen ein JSON-Objekt sein",
+        "invalidJson": "Ungültiges JSON"
+      }
     },
     "uploadFilenameDialog": {
       "titleMultiple": "Datei {{index}} von {{total}} hochladen",

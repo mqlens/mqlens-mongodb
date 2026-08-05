@@ -14,7 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
-import { FONT_OPTIONS } from "@/lib/themes/presets";
+import { FONT_OPTIONS, presetName } from "@/lib/themes/presets";
 import type { SpacingDensity, ThemeMode } from "@/lib/themes/schema";
 import {
   clampUiZoom,
@@ -106,9 +106,9 @@ export function AppearanceSettings() {
                     borderColor: `hsl(${preset.tokens.primary})`,
                   }}
                 />
-                <div className="text-sm font-medium leading-tight">{preset.name}</div>
+                <div className="text-sm font-medium leading-tight">{presetName(preset, t)}</div>
                 <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground line-clamp-2">
-                  {preset.description}
+                  {t(preset.descriptionKey)}
                 </div>
               </button>
             ))}
@@ -270,7 +270,8 @@ export function AppearanceSettings() {
               <span className="h-2.5 w-2.5 rounded-full bg-warning/80" />
               <span className="h-2.5 w-2.5 rounded-full bg-success/80" />
               <span className="ml-2 truncate text-[10px] text-muted-foreground">
-                {activePreset?.name ?? t("appearance.themeFallback")} · {resolvedMode}
+                {activePreset ? presetName(activePreset, t) : t("appearance.themeFallback")} ·{' '}
+                {resolvedMode === 'dark' ? t('appearance.dark') : t('appearance.light')}
               </span>
             </div>
             <CardContent className="space-y-3 p-4">

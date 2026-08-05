@@ -65,8 +65,14 @@ export interface ThemeConfig {
 
 export interface ThemePreset {
   id: string;
-  name: string;
-  description: string;
+  /** Proper name of a third-party palette (Nord, Solarized, GitHub), rendered
+   *  verbatim in every language — exactly like the product names on the
+   *  catalogs allowlist. Mutually exclusive with `nameKey`; read both through
+   *  `presetName()` rather than touching either field directly. */
+  name?: string;
+  /** Catalog key for a name that IS descriptive copy ("High Contrast"). */
+  nameKey?: string;
+  descriptionKey: string;
   mode: "dark" | "light";
   tokens: Record<TokenName, string>;
 }

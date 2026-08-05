@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
-import { THEME_PRESETS } from "@/lib/themes/presets";
+import { useTranslation } from "react-i18next";
+import { THEME_PRESETS, presetName } from "@/lib/themes/presets";
 
 interface ThemePickerProps {
   className?: string;
@@ -8,6 +9,7 @@ interface ThemePickerProps {
 
 export function ThemePicker({ className }: ThemePickerProps) {
   const { config, setPreset } = useTheme();
+  const { t } = useTranslation("settings");
 
   return (
     <div className={cn("flex flex-wrap gap-1", className)}>
@@ -15,7 +17,7 @@ export function ThemePicker({ className }: ThemePickerProps) {
         <button
           key={preset.id}
           type="button"
-          title={preset.name}
+          title={presetName(preset, t)}
           onClick={() => setPreset(preset.id)}
           className={cn(
             "h-5 w-5 rounded-full border-2 cursor-pointer transition-transform hover:scale-110",

@@ -3361,13 +3361,13 @@ function Workspace() {
         try {
           parsed = JSON.parse(v);
         } catch {
-          return 'Invalid JSON';
+          return t('documents:dataGrid.dialogs.updateMany.validation.invalidJson');
         }
         if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          return 'Update must be a JSON object';
+          return t('documents:dataGrid.dialogs.updateMany.validation.mustBeObject');
         }
         if (Object.keys(parsed).length === 0 || !Object.keys(parsed).every((k) => k.startsWith('$'))) {
-          return 'Update must use operators like $set';
+          return t('documents:dataGrid.dialogs.updateMany.validation.mustUseOperators');
         }
         return null;
       },
@@ -3439,7 +3439,9 @@ function Workspace() {
 
     const target = documentModal.targetDoc;
     if (!target || target._id === undefined) {
-      throw new Error('Cannot update: this document has no _id.');
+      // DocumentEditModal catches this and renders `err.message` straight into
+      // its error banner, so the text is user-facing copy, not a dev invariant.
+      throw new Error(t('documents:editModal.errors.noId'));
     }
     await invoke('update_document', {
       id: tab.connectionId,
@@ -3570,7 +3572,7 @@ function Workspace() {
               <div className="flex min-h-0 flex-1 flex-col min-w-0 overflow-hidden">
                 {tab.error && (
                   <div className="p-3 bg-destructive/10 border-b border-border text-destructive font-mono text-xs select-text flex items-start gap-2">
-                    <span className="flex-grow">Error loading dataset: {tab.error}</span>
+                    <span className="flex-grow">{t('documents:errors.loadingDataset', { detail: tab.error })}</span>
                     <Button
                       variant="outline"
                       size="sm"

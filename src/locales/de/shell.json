@@ -157,7 +157,13 @@
       "connected": "Verbunden"
     },
     "connecting": "Verbinde…",
-    "connect": "Verbinden"
+    "connect": "Verbinden",
+    "topology": {
+      "srvCluster": "SRV-Cluster",
+      "replicaSet_one": "Replikatsatz · {{count}} Knoten",
+      "replicaSet_other": "Replikatsatz · {{count}} Knoten",
+      "standalone": "Eigenständig"
+    }
   },
   "dialog": {
     "resizeAriaLabel": "Dialog in der Größe ändern",
@@ -234,7 +240,12 @@
       "browseDialogTitle": "mongosh-Binärdatei suchen",
       "openSettings": "Einstellungen öffnen",
       "retry": "Erneut versuchen",
-      "installHint": "Oder installiere es selbst: <2>{{hint}}</2> — siehe die <6>mongosh-Installationsanleitung</6>."
+      "installHint": "Oder installiere es selbst: <2>{{hint}}</2> — siehe die <6>mongosh-Installationsanleitung</6>.",
+      "installNote": {
+        "windows": "oder die MSI von mongodb.com",
+        "linux": "oder das Paket Ihrer Distribution",
+        "generic": "mongosh von mongodb.com installieren"
+      }
     },
     "toolbar": {
       "run": "Ausführen",

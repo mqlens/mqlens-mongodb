@@ -1523,8 +1523,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       key={swatch.id}
                       type="button"
                       data-testid={`color-swatch-${swatch.id}`}
-                      title={swatch.label}
-                      aria-label={swatch.label}
+                      title={t(swatch.labelKey)}
+                      aria-label={t(swatch.labelKey)}
                       aria-pressed={editorState.colorTag === swatch.value}
                       className={cn(
                         'h-5 w-5 rounded-full transition-[box-shadow]',

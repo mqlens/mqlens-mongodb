@@ -180,7 +180,8 @@
       "empty": "Dokument ist leer.",
       "invalid": "Ungültiges Dokument: {{message}}",
       "mustBeObject": "Ein Dokument muss ein Objekt sein (z. B. { \"field\": value }).",
-      "syntaxError": "Syntaxfehler"
+      "syntaxError": "Syntaxfehler",
+      "noId": "Aktualisierung nicht möglich: Dieses Dokument hat keine _id."
     },
     "hints": {
       "shellTypes": "Shell-Typen werden unterstützt (z. B. {{example}}). Beim Bearbeiten wird das gesamte Dokument ersetzt."
@@ -280,7 +281,12 @@
         "body_other": "Wende dieses Update auf {{count}} Dokumente an, die folgendem Kriterium entsprechen:\n{{filter}}",
         "confirmLabel": "Aktualisieren",
         "promptMessage": "Dokument aktualisieren (Operatoren, z. B. {\"$set\": {...}}):",
-        "title": "Mehrere aktualisieren"
+        "title": "Mehrere aktualisieren",
+        "validation": {
+          "invalidJson": "Ungültiges JSON",
+          "mustBeObject": "Die Aktualisierung muss ein JSON-Objekt sein",
+          "mustUseOperators": "Die Aktualisierung muss Operatoren wie $set verwenden"
+        }
       }
     },
     "empty": {
@@ -383,5 +389,8 @@
       "fieldAnalysis": "Feldanalyse",
       "validationRules": "Validierungsregeln"
     }
+  },
+  "errors": {
+    "loadingDataset": "Fehler beim Laden des Datensatzes: {{detail}}"
   }
 }

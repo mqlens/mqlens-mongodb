@@ -101,14 +101,30 @@ describe('findMongoUriInText', () => {
 });
 
 describe('validateMongoUri', () => {
-  it('accepts mongodb and mongodb+srv URIs', () => {
-    expect(validateMongoUri('mongodb://localhost:27017')).toBeNull();
-    expect(validateMongoUri('mongodb+srv://cluster.example.net')).toBeNull();
+  // The real catalog rather than a stub `t`, so a missing or renamed key fails
+  // here instead of silently rendering the raw key in the UI.
+  const tFor = async (lng: 'en' | 'de') => {
+    const { i18next } = await import('@/lib/i18n');
+    return i18next.getFixedT(lng, 'connections');
+  };
+
+  it('accepts mongodb and mongodb+srv URIs', async () => {
+    const t = await tFor('en');
+    expect(validateMongoUri('mongodb://localhost:27017', t)).toBeNull();
+    expect(validateMongoUri('mongodb+srv://cluster.example.net', t)).toBeNull();
   });
 
-  it('rejects empty and non-mongodb strings', () => {
-    expect(validateMongoUri('')).toMatch(/enter a mongodb/i);
-    expect(validateMongoUri('postgres://localhost')).toMatch(/enter a mongodb/i);
+  it('rejects empty and non-mongodb strings', async () => {
+    const t = await tFor('en');
+    expect(validateMongoUri('', t)).toMatch(/enter a mongodb/i);
+    expect(validateMongoUri('postgres://localhost', t)).toMatch(/enter a mongodb/i);
+  });
+
+  it('returns the German message under a German locale', async () => {
+    const t = await tFor('de');
+    expect(validateMongoUri('postgres://localhost', t)).toBe(
+      'Geben Sie eine mongodb:// oder mongodb+srv:// URI ein',
+    );
   });
 });
 

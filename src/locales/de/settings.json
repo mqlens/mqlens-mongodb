@@ -47,7 +47,36 @@
     "themeFilesDescription": "Eigene Token-Überschreibungen exportieren, importieren oder zurücksetzen.",
     "themeFilesTitle": "Theme-Dateien",
     "uiFont": "UI-Schriftart",
-    "zoomShortcutHint": "Tastenkürzel: {{shortcut}}"
+    "zoomShortcutHint": "Tastenkürzel: {{shortcut}} zum Zurücksetzen",
+    "presets": {
+      "mqlensDark": {
+        "name": "MQLens Dunkel",
+        "description": "Standard-Markendesign — tiefes Blaugrau mit elektrisch blauem Akzent"
+      },
+      "mqlensLight": {
+        "name": "MQLens Hell",
+        "description": "Kühle cremeweiße Flächen mit dunkler Schrift"
+      },
+      "highContrast": {
+        "name": "Hoher Kontrast",
+        "description": "Barrierefreies Design nach WCAG AAA"
+      },
+      "nord": {
+        "description": "Arktische, nordisch-bläuliche Farbpalette"
+      },
+      "solarizedDark": {
+        "description": "Ethan Schoonovers präzise Farben für dunkle Umgebungen"
+      },
+      "solarizedLight": {
+        "description": "Solarized-Palette für helle Umgebungen"
+      },
+      "githubDark": {
+        "description": "Farben des dunklen GitHub-Designs"
+      },
+      "githubLight": {
+        "description": "Farben des hellen GitHub-Designs"
+      }
+    }
   },
   "footer": {
     "saveChanges": "Änderungen speichern",

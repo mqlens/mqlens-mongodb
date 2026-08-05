@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next';
 import type { SshConfig } from '../components/ConnectionManager';
 
 /** Mirrors backend `connections::ConnectionMode` (#188). */
@@ -93,11 +94,13 @@ export const buildExportUri = (uri: string, opts: ExportUriOptions): string => {
   return out;
 };
 
-/** Validation message for import flows; `null` when the string is a MongoDB URI. */
-export function validateMongoUri(text: string): string | null {
+/** Validation message for import flows; `null` when the string is a MongoDB URI.
+ *  Takes `t` as a parameter rather than calling a hook, so this module stays
+ *  pure and framework-free (same pattern as `tabLabelFor` in App.tsx). */
+export function validateMongoUri(text: string, t: TFunction): string | null {
   const trimmed = text.trim();
-  if (!trimmed) return 'Enter a mongodb:// or mongodb+srv:// URI';
-  if (!MONGO_URI_RE.test(trimmed)) return 'Enter a mongodb:// or mongodb+srv:// URI';
+  if (!trimmed) return t('connections:import.errors.notAMongoUri');
+  if (!MONGO_URI_RE.test(trimmed)) return t('connections:import.errors.notAMongoUri');
   return null;
 }
 

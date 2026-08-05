@@ -105,7 +105,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
       message: t('gridfsView.metadataDialog.promptMessage'),
       defaultValue: '{\n  \n}',
       multiline: true,
-      validate: validateGridfsMetadataJson,
+      validate: (value) => validateGridfsMetadataJson(value, t),
     });
     if (raw === null) return null;
     return gridfsMetadataForUpload(raw);

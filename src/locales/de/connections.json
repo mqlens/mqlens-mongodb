@@ -50,6 +50,16 @@
     "userLabelX509": "Benutzername (optional — aus dem Zertifikat abgeleitet)",
     "x509Note": "Erfordert TLS mit einem Clientzertifikat (Tab TLS)."
   },
+  "colorTags": {
+    "amber": "Bernstein",
+    "blue": "Blau",
+    "green": "Grün",
+    "orange": "Orange",
+    "pink": "Pink",
+    "red": "Rot",
+    "slate": "Schiefer",
+    "violet": "Violett"
+  },
   "connectionMode": {
     "confirmDestructive": {
       "description": "Destruktive Vorgänge erfordern eine getippte Bestätigung",
@@ -158,6 +168,9 @@
     "uriBadge": "URI"
   },
   "import": {
+    "errors": {
+      "notAMongoUri": "Geben Sie eine mongodb:// oder mongodb+srv:// URI ein"
+    },
     "fromClipboard": "Aus Zwischenablage",
     "fromFile": "Aus einer Datei…",
     "pasteManually": "Manuell einfügen…"

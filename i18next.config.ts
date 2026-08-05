@@ -222,6 +222,35 @@ export default defineConfig({
       'documents:documentViewer.pipeline.stageGroups.windows',
       'documents:documentViewer.pipeline.stageGroups.geospatial',
       'documents:documentViewer.pipeline.stageGroups.sourcesOutput',
+      // `connections:colorTags.*` are read through connectionColors.ts's
+      // `CONNECTION_COLOR_PALETTE` via `t(swatch.labelKey)` in
+      // ConnectionManager.tsx — a variable, not a string literal the
+      // extractor's static analysis can see.
+      'connections:colorTags.red',
+      'connections:colorTags.orange',
+      'connections:colorTags.amber',
+      'connections:colorTags.green',
+      'connections:colorTags.blue',
+      'connections:colorTags.violet',
+      'connections:colorTags.pink',
+      'connections:colorTags.slate',
+      // `settings:appearance.presets.*` are read through themes/presets.ts's
+      // `THEME_PRESETS` via `presetName(preset, t)` and
+      // `t(preset.descriptionKey)` in AppearanceSettings.tsx and
+      // ThemePicker.tsx — again a variable, never a literal. Only the three
+      // DESCRIPTIVE presets have a `.name` key; the other five carry a
+      // verbatim proper name (Nord, Solarized…) and no key at all.
+      'settings:appearance.presets.mqlensDark.name',
+      'settings:appearance.presets.mqlensDark.description',
+      'settings:appearance.presets.mqlensLight.name',
+      'settings:appearance.presets.mqlensLight.description',
+      'settings:appearance.presets.highContrast.name',
+      'settings:appearance.presets.highContrast.description',
+      'settings:appearance.presets.nord.description',
+      'settings:appearance.presets.solarizedDark.description',
+      'settings:appearance.presets.solarizedLight.description',
+      'settings:appearance.presets.githubDark.description',
+      'settings:appearance.presets.githubLight.description',
     ],
   },
 });

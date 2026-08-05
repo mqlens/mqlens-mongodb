@@ -30,6 +30,35 @@
     "livePreview": "Live preview",
     "monospaceFont": "Monospace font",
     "presetDescription": "Pick a color system — mode follows each preset unless overridden below.",
+    "presets": {
+      "githubDark": {
+        "description": "GitHub's dark theme colors"
+      },
+      "githubLight": {
+        "description": "GitHub's light theme colors"
+      },
+      "highContrast": {
+        "description": "WCAG AAA accessibility theme",
+        "name": "High Contrast"
+      },
+      "mqlensDark": {
+        "description": "Default brand theme — deep blue-charcoal with electric blue accent",
+        "name": "MQLens Dark"
+      },
+      "mqlensLight": {
+        "description": "Cool off-white surfaces with deep text",
+        "name": "MQLens Light"
+      },
+      "nord": {
+        "description": "Arctic, north-bluish color palette"
+      },
+      "solarizedDark": {
+        "description": "Ethan Schoonover's precision colors for dark environments"
+      },
+      "solarizedLight": {
+        "description": "Solarized palette for bright environments"
+      }
+    },
     "presetTitle": "Theme preset",
     "previewError": "error",
     "previewSuccess": "success",
@@ -47,7 +76,7 @@
     "themeFilesDescription": "Export, import, or reset custom token overrides.",
     "themeFilesTitle": "Theme files",
     "uiFont": "UI font",
-    "zoomShortcutHint": "Shortcut: {{shortcut}}"
+    "zoomShortcutHint": "Shortcut: {{shortcut}} to reset"
   },
   "footer": {
     "saveChanges": "Save changes",

@@ -90,7 +90,12 @@
         "body_other": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
         "confirmLabel": "Update",
         "promptMessage": "Update document (operators, e.g. {\"$set\": {...}}):",
-        "title": "Update many"
+        "title": "Update many",
+        "validation": {
+          "invalidJson": "Invalid JSON",
+          "mustBeObject": "Update must be a JSON object",
+          "mustUseOperators": "Update must use operators like $set"
+        }
       }
     },
     "empty": {
@@ -323,6 +328,7 @@
       "empty": "Document is empty.",
       "invalid": "Invalid document: {{message}}",
       "mustBeObject": "A document must be an object (e.g. { \"field\": value }).",
+      "noId": "Cannot update: this document has no _id.",
       "syntaxError": "syntax error"
     },
     "hints": {
@@ -335,6 +341,9 @@
       "edit": "Edit Document",
       "insert": "Insert Document"
     }
+  },
+  "errors": {
+    "loadingDataset": "Error loading dataset: {{detail}}"
   },
   "findQueryBar": {
     "errors": {

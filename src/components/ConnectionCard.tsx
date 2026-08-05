@@ -20,7 +20,7 @@ export const ConnectionCard: React.FC<ConnectionCardProps> = ({ profile, connect
   const isSrv = /^mongodb\+srv:\/\//i.test(profile.uri);
   const hasSsh = !!profile.ssh?.enabled;
   const host = hostFromUri(profile.uri);
-  const topo = topology(profile.uri);
+  const topo = topology(profile.uri, t);
   const interactive = !connected && !connecting;
 
   return (

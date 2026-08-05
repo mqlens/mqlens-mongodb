@@ -65,6 +65,12 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'connections:auth.methodLdap', // LDAP (PLAIN)
   'connections:advanced.compressionSnappy', // Snappy
   'connections:advanced.compressionZlib', // Zlib
+  // Connection colour-tag names whose German spelling IS the English one. The
+  // other six in the same set are genuinely translated (Rot, Bernstein, Grün,
+  // Blau, Violett, Schiefer), so this is a property of these two words, not a
+  // skipped namespace.
+  'connections:colorTags.orange', // Orange
+  'connections:colorTags.pink', // Pink
   // Kerberos-protocol-specific term (RFC 4120), kept untranslated like "Realm"
   'connections:auth.userLabelKerberos', // Principal
   // Feature/tab name shared with the (currently English-only, out-of-scope)

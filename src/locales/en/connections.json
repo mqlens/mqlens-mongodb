@@ -50,6 +50,16 @@
     "userLabelX509": "Username (optional — derived from certificate)",
     "x509Note": "Requires TLS with a client certificate (TLS tab)."
   },
+  "colorTags": {
+    "amber": "Amber",
+    "blue": "Blue",
+    "green": "Green",
+    "orange": "Orange",
+    "pink": "Pink",
+    "red": "Red",
+    "slate": "Slate",
+    "violet": "Violet"
+  },
   "connectionMode": {
     "confirmDestructive": {
       "description": "Destructive ops need typed confirmation",
@@ -158,6 +168,9 @@
     "uriBadge": "URI"
   },
   "import": {
+    "errors": {
+      "notAMongoUri": "Enter a mongodb:// or mongodb+srv:// URI"
+    },
     "fromClipboard": "From clipboard",
     "fromFile": "From a file…",
     "pasteManually": "Paste manually…"

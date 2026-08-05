@@ -112,6 +112,10 @@
     "noConnections": "Mit einem MongoDB-Server verbinden, um die Datenbankstruktur zu durchsuchen.",
     "pinnedHint": "Rechtsklick auf eine Verbindung, Datenbank oder Sammlung → An Seitenleiste anheften"
   },
+  "favorites": {
+    "connectionSubtitle": "Verbindung",
+    "untitledQuery": "Gespeicherte Abfrage"
+  },
   "folders": {
     "manageConnectionsButton": "Verbindungen verwalten"
   },
