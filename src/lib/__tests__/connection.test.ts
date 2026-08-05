@@ -123,7 +123,7 @@ describe('validateMongoUri', () => {
   it('returns the German message under a German locale', async () => {
     const t = await tFor('de');
     expect(validateMongoUri('postgres://localhost', t)).toBe(
-      'Geben Sie eine mongodb:// oder mongodb+srv:// URI ein',
+      'Gib eine mongodb:// oder mongodb+srv:// URI ein',
     );
   });
 });

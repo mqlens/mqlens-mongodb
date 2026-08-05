@@ -160,8 +160,8 @@
     "connect": "Verbinden",
     "topology": {
       "srvCluster": "SRV-Cluster",
-      "replicaSet_one": "Replikatsatz · {{count}} Knoten",
-      "replicaSet_other": "Replikatsatz · {{count}} Knoten",
+      "replicaSet_one": "Replikatset · {{count}} Knoten",
+      "replicaSet_other": "Replikatset · {{count}} Knoten",
       "standalone": "Eigenständig"
     }
   },
@@ -243,7 +243,7 @@
       "installHint": "Oder installiere es selbst: <2>{{hint}}</2> — siehe die <6>mongosh-Installationsanleitung</6>.",
       "installNote": {
         "windows": "oder die MSI von mongodb.com",
-        "linux": "oder das Paket Ihrer Distribution",
+        "linux": "oder das Paket deiner Distribution",
         "generic": "mongosh von mongodb.com installieren"
       }
     },

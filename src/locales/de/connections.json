@@ -169,7 +169,7 @@
   },
   "import": {
     "errors": {
-      "notAMongoUri": "Geben Sie eine mongodb:// oder mongodb+srv:// URI ein"
+      "notAMongoUri": "Gib eine mongodb:// oder mongodb+srv:// URI ein"
     },
     "fromClipboard": "Aus Zwischenablage",
     "fromFile": "Aus einer Datei…",

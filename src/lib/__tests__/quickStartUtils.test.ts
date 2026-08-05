@@ -43,7 +43,7 @@ describe('topology', () => {
   it('labels all three topologies in German', async () => {
     const t = await tFor('de');
     expect(topology('mongodb+srv://c.x9k2.mongodb.net/db', t)).toBe('SRV-Cluster');
-    expect(topology('mongodb://h1:27017,h2:27017,h3:27017/db', t)).toBe('Replikatsatz · 3 Knoten');
+    expect(topology('mongodb://h1:27017,h2:27017,h3:27017/db', t)).toBe('Replikatset · 3 Knoten');
     expect(topology('mongodb://localhost:27017', t)).toBe('Eigenständig');
   });
 });

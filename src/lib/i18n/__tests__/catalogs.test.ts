@@ -253,6 +253,39 @@ describe('locale catalogs', () => {
     }
   });
 
+  it('addresses the German user informally (du), never formally (Sie)', async () => {
+    // The German catalog settled on informal address across every surface —
+    // destructive confirms, the vault gate, Quick Start, Settings. Nothing
+    // enforced that, so it drifted: the final whole-branch review found two
+    // formal-Sie strings ("Geben Sie eine … URI ein", "das Paket Ihrer
+    // Distribution") sitting alone among ~25 du-form ones. Mixing the two
+    // registers in one product reads as sloppy translation, and it is
+    // invisible to every other guard here — both values are non-empty, differ
+    // from English, and keep their placeholders.
+    //
+    // Heuristic, deliberately narrow: capitalised `Sie`/`Ihr…`/`Ihnen` are the
+    // formal forms. Lowercase `sie` ("they"/"she") and sentence-initial `Sie`
+    // are NOT matched, since a sentence can legitimately open with "Sie" in the
+    // "they" sense. Add an entry below if a false positive ever appears.
+    const ALLOWED_FORMAL = new Set<string>([]);
+    const FORMAL = /(?<![.!?]\s)(?<!^)\b(?:Sie|Ihre?[nmrs]?|Ihnen)\b/m;
+    const offenders: string[] = [];
+    for (const ns of NAMESPACES) {
+      const de = await load('de', ns);
+      for (const key of keysOf(de)) {
+        const val = valueAt(de, key);
+        if (typeof val !== 'string') continue;
+        if (FORMAL.test(val) && !ALLOWED_FORMAL.has(`${ns}:${key}`)) {
+          offenders.push(`${ns}:${key} — "${val}"`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      `de uses formal address (Sie/Ihr) where the rest of the catalog uses du:\n${offenders.join('\n')}`,
+    ).toEqual([]);
+  });
+
   it('registers every SUPPORTED_LOCALES code as an i18next resource, and nothing else', () => {
     const resourceCodes = Object.keys(resources).sort();
     const supportedCodes = SUPPORTED_LOCALES.map((l) => l.code).sort();
