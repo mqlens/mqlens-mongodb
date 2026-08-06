@@ -36,7 +36,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from '@/components/ui/resizable';
-import type { Layout } from 'react-resizable-panels';
+import { useDefaultLayout, type Layout } from 'react-resizable-panels';
 import { cn } from '@/lib/utils';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
@@ -1347,6 +1347,24 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     return { 'document-main': 100 };
   }, [workspaceRightPanel]);
 
+  // Switching tabs unmounts this view, so without persistence the group fell
+  // back to the fixed 70/30 above every time and the user's drag was lost.
+  // `panelIds` keys the saved layout by which right-hand panel is open, so the
+  // query builder and the AI helper remember their own widths instead of
+  // fighting over one entry.
+  const workspacePanelIds = useMemo(() => {
+    if (workspaceRightPanel === 'query-builder') return ['document-main', 'query-builder'];
+    if (workspaceRightPanel === 'ai-helper') return ['document-main', 'ai-helper'];
+    return ['document-main'];
+  }, [workspaceRightPanel]);
+
+  const { defaultLayout: savedWorkspaceLayout, onLayoutChanged: saveWorkspaceLayout } =
+    useDefaultLayout({
+      id: 'document-viewer-workspace',
+      panelIds: workspacePanelIds,
+      storage: typeof localStorage === 'undefined' ? undefined : localStorage,
+    });
+
   return (
     <div className="relative flex h-full min-h-0 flex-col min-w-0">
       
@@ -1675,7 +1693,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       <ResizablePanelGroup
         id="document-viewer-workspace"
         orientation="horizontal"
-        defaultLayout={workspaceDefaultLayout}
+        defaultLayout={savedWorkspaceLayout ?? workspaceDefaultLayout}
+        onLayoutChanged={saveWorkspaceLayout}
         className="min-h-0 min-w-0 flex-1"
       >
         <ResizablePanel id="document-main" minSize="30%" className="flex min-h-0 flex-col">
