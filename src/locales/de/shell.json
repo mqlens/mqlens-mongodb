@@ -378,7 +378,7 @@
   "toolSetupDialog": {
     "title": "MongoDB-Tools einrichten",
     "checkingTools": "Installierte Tools werden geprüft…",
-    "intro": "MQLens benötigt diese Kommandozeilen-Tools für Dump, Restore, Import und Export. Wähle aus, welche installiert oder neu installiert werden sollen.",
+    "intro": "MQLens benötigt diese Kommandozeilen-Tools für Dump, Wiederherstellung, Import und Export. Wähle aus, welche installiert oder neu installiert werden sollen.",
     "toolLabels": {
       "databaseTools": "Database Tools (mongodump, mongorestore)",
       "mongosh": "mongosh"

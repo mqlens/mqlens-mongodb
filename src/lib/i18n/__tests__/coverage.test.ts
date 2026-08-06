@@ -25,8 +25,11 @@ import ts from 'typescript';
  *     an identifier)
  *   - string literals assigned to label-ish object properties, same name set
  *     as the attributes above (`label:`, `confirmLabel:`, `emptyText:`, …)
- *   - JSX text nodes that mix prose with a `{}` interpolation
- *     (`<p>Not connected to {profileName}.</p>`), not just plain text runs
+ *   - JSX text nodes and JSX expressions, found by WALKING THE AST (`jsxHits`)
+ *     rather than matching `>…<`: plain text, text mixed with a `{}`
+ *     interpolation, and string literals inside any JSX expression — including
+ *     a ternary anywhere in a tag's children, which is how the connection-mode
+ *     banner stayed untranslated through six tasks and three reviews
  *   - `identifier ?? 'Fallback prose'` nullish-coalescing default values
  *   - `window.confirm(...)`, `window.alert(...)`, `window.prompt(...)` arguments
  *   - the first argument of this project's own copy-bearing helpers —
@@ -46,10 +49,6 @@ import ts from 'typescript';
  * `?? 'Saved query'` fallback label lived there, undetected, until this
  * revision. It now walks `.ts` too (see `isScannableFile` below).
  *
- *   - a ternary or `??` chain of string literals used as JSX CHILDREN
- *     (`<span>{readOnly ? 'Read-only' : 'Guarded'}</span>`) — the shape that
- *     kept the connection-mode banner untranslated through six tasks
- *
  * Comments are blanked before scanning by PARSING the file with TypeScript and
  * reading comment ranges off the tree (`blankComments`). A hand-rolled scanner
  * was tried first and silently erased real code: the escaped slashes in
@@ -58,10 +57,11 @@ import ts from 'typescript';
  * string state for the rest of the file. Do not replace the parser with
  * something cheaper.
  *
- * It remains a heuristic in what it looks FOR — matching is still regex over
- * (comment-free) text, so it can be fooled by a loose `>…<` run straddling a
- * generic, and by Tailwind class strings assigned to an unluckily-named
- * property (`label: 'text-primary'`). Every hit below was manually triaged;
+ * JSX is now exact (AST). What remains heuristic is everything OUTSIDE JSX —
+ * attributes, object properties, template literals and call arguments are
+ * still matched by regex over the comment-free text, so a Tailwind class on an
+ * unluckily-named property (`label: 'text-primary'`) still reports. Every hit
+ * below was manually triaged;
  * each exemption carries the reason it survived triage instead of being
  * translated. See .superpowers/sdd/task-6-report.md for the full triage log.
  */
@@ -111,7 +111,7 @@ const EXEMPT_HITS: Record<string, string[]> = {
   // hostnames/paths/ports a user would type, not translatable prose.
   'src/components/ConnectionManager.tsx': [
     // <Trans> fallback children for auth.externalNote — never rendered.
-    '> Authenticates against the <',
+    'jsx: Authenticates against the',
     'placeholder="mongodb://localhost:27017"',
     'placeholder="rs0"',
     'placeholder="admin"',
@@ -131,6 +131,14 @@ const EXEMPT_HITS: Record<string, string[]> = {
     // must never be a translated word (Global Constraint 1's "sammlung" bug).
     "name: 'New Connection'",
   ],
+  'src/components/DumpView.tsx': [
+    // <Trans> fallback children (transfer:dumpView.footer.backgroundNote).
+    'jsx: Dumps run in the background. Track their progress in the',
+  ],
+  'src/components/RestoreView.tsx': [
+    // <Trans> fallback children (transfer:restoreView.footer.backgroundNote).
+    'jsx: Restores run in the background. Track their progress in the',
+  ],
   'src/components/CreateViewView.tsx': [
     // Example view name shown as a placeholder, not an instructional hint —
     // a plausible value the user might type, like ConnectionManager's examples.
@@ -139,14 +147,16 @@ const EXEMPT_HITS: Record<string, string[]> = {
     'placeholder=\'[{ "',
   ],
   'src/components/DataGrid.tsx': [
+    // A CSS font stack passed as a style value, not copy.
+    "'JetBrains Mono, SF Mono, Consolas, monospace'",
     // <Trans> fallback children for dataGrid.empty.explainHint — never
     // rendered; the catalog value is used in both locales.
-    '> To generate one, open the <',
-    '> dropdown split menu in the query editor toolbar and select <',
+    'jsx: To generate one, open the',
+    'jsx: dropdown split menu in the query editor toolbar and select',
     // <Trans i18nKey="dataGrid.empty.explainHint"> fallback children — never
     // rendered at runtime (the catalog value is used instead); see
     // en/documents.json dataGrid.empty.explainHint for the real, translated copy.
-    '>Run Explain<',
+    'jsx: Run Explain',
     // Aggregation-pipeline stage key literal ($cursor), not a display label.
     "name: '$cursor'",
   ],
@@ -163,6 +173,9 @@ const EXEMPT_HITS: Record<string, string[]> = {
     "label: '<='",
   ],
   'src/components/ExportView.tsx': [
+    // <Trans> fallback children — never rendered; the catalog value wins in
+    // both locales (transfer:exportView.footer.backgroundNote).
+    'jsx: Filtered and full-collection exports run in the background. Track their progress in the',
     // File-format names (Global Constraint 2), matching the "JSON"/"CSV"/
     // "BSON" precedent already on the catalogs.test.ts allowlist.
     "label: 'JSON'",
@@ -182,6 +195,8 @@ const EXEMPT_HITS: Record<string, string[]> = {
     "name: '$name'",
   ],
   'src/components/ImportView.tsx': [
+    // <Trans> fallback children (transfer:importView.footer.backgroundNote).
+    'jsx: Imports run in the background. Track their progress in the',
     // File-format names, matching ExportView.tsx above.
     "label: 'JSON array'",
     "label: 'NDJSON'",
@@ -193,9 +208,14 @@ const EXEMPT_HITS: Record<string, string[]> = {
     'placeholder=\'{ "',
   ],
   'src/components/MongoShell.tsx': [
+    // A CSS font stack passed as a style value, not copy.
+    "'JetBrains Mono, SF Mono, Consolas, monospace'",
+    // <Trans> fallback children for mongoShell.gate.installHint.
+    'jsx: Or install it yourself:',
+    'jsx: — see the',
     // <Trans> fallback children for destructiveDialog.body — never rendered.
-    '> This script runs <',
-    '>, which can permanently delete data. Review it before running. <',
+    'jsx: This script runs',
+    'jsx: , which can permanently delete data. Review it before running.',
     // Reproduces mongosh's own startup banner verbatim (see the source
     // comment at buildStartupLines) — real mongosh output is English-only
     // regardless of the host OS locale, so translating it would misrepresent
@@ -207,8 +227,8 @@ const EXEMPT_HITS: Record<string, string[]> = {
   ],
   'src/components/SettingsModal.tsx': [
     // Product names, never translated (Global Constraint 2 / project glossary).
-    '>Claude Code<',
-    '>Google Gemini<',
+    'jsx: Claude Code',
+    'jsx: Google Gemini',
     // Example paths, API-key formats and model names — copy-paste examples,
     // not prose.
     'placeholder="mongosh or /usr/local/bin/mongosh"',
@@ -237,10 +257,11 @@ const EXEMPT_HITS: Record<string, string[]> = {
   // lines; each one's key is present and translated in de. (Same rationale as
   // the pre-existing DataGrid '>Run Explain<' entry below.)
   'src/components/AIChatPanel.tsx': [
-    '> Ask for a query in plain language — e.g. <',
-    '>. I’ll explain what I’m doing and you can insert the result. <',
+    'jsx: Ask for a query in plain language — e.g.',
+    'jsx: . I’ll explain what I’m doing and you can insert the result.',
   ],
-  'src/components/UpdatePrompt.tsx': ['> is available. <'],
+  // <Trans> fallback children for updatePrompt.dialog.* — never rendered.
+  'src/components/UpdatePrompt.tsx': ['jsx: is available.', 'jsx: is available (you have'],
 
   // ── Developer-contract errors ────────────────────────────────────────────
   // `useX must be used within its Provider` fires only when a developer wires
@@ -249,10 +270,6 @@ const EXEMPT_HITS: Record<string, string[]> = {
   // the `console.*` exclusion the template detector already applies.
   'src/components/dialogs/DialogProvider.tsx': [
     "throw new Error('useDialogs must be used within a <DialogProvider>'",
-    // Detector false positive: `new Promise<…>` — the loose `>…<` text match
-    // straddles a generic. "new" is a stopword and "Promise" is Title-Case, so
-    // it clears the prose bar despite being pure code.
-    '> new Promise<',
   ],
   'src/components/i18n/I18nProvider.tsx': [
     "throw new Error('useLocale must be used inside I18nProvider'",
@@ -372,26 +389,6 @@ function hasProse(text: string): boolean {
  *  so `` `Move to ${target}` `` is prose but `` `${a}${b}` `` is not. */
 const templateHasProse = (raw: string) => hasProse(raw.replace(/\$\{[^}]*\}/g, ' '));
 
-/** Plain JSX text nodes. The original `>[A-Z][a-z]…<` required a Title-Case
- *  word IMMEDIATELY after the `>`, which the final review showed missed most
- *  of what a developer actually writes: lowercase openings ("no documents
- *  matched"), acronyms ("URI is not valid"), one-letter words ("A newer
- *  version"), and — most commonly — any node prettier wrapped onto its own
- *  line. Now it accepts any run without `<>{}`, across newlines, and leans on
- *  `hasProse` to decide. `[^<>{}]` still excludes interpolations; JSX_MIXED_RE
- *  below handles those. */
-const JSX_TEXT_RE = />([^<>{}]{4,400})</g;
-/** JSX text nodes that MIX prose with a `{}` interpolation
- *  (`<p>Not connected to {profileName}.</p>`). JSX_TEXT_RE above excludes
- *  `{}` outright, so those nodes were invisible to it. Judged on the text with
- *  the interpolations stripped, exactly like a template literal.
- *
- *  The two guards keep this loose `>…<` shape from matching ordinary code once
- *  the gate started walking `.ts`: the lookbehind drops arrow functions and
- *  comparisons (`=>`, `>=`, `->`), and excluding newlines from the text run
- *  stops a generic's closing `>` from pairing with the NEXT line's `Record<`
- *  and swallowing the code in between. A real JSX text node is one line. */
-const JSX_MIXED_RE = /(?<![=\-!<>])>([^<>\n]{2,160})</g;
 /** Label-ish JSX attributes. The name pattern mirrors PROP_RE's: a camelCase
  *  prefix is allowed, so `confirmLabel=` / `emptyTitle=` match, not just
  *  `label=`. The old five-name list also let `description=`, `message=`,
@@ -402,7 +399,7 @@ const ATTR_RE = new RegExp(String.raw`\b${ATTR_NAMES}=\{?["']([^"']{2,300})["']\
  *  FIRST positional argument, which no attribute or property detector can see:
  *  `toast('Failed to connect to the profile.', 'error')`. */
 const CALL_ARG_RE =
-  /\b(?:toast|notify|setError|setHint|setStatus)\(\s*(['"])([^'"]{4,200})\1/g;
+  /\b(?:toast|notify|setError|setHint|setStatus)\(\s*(['"])([^'"]{4,400})\1/g;
 /** Label-ish attributes whose value is an expression rather than a bare
  *  literal — a ternary or `??` chain
  *  (`aria-label={show ? 'Hide password' : 'Show password'}`). Every quoted
@@ -414,7 +411,7 @@ const ATTR_EXPR_RE = new RegExp(String.raw`\b${ATTR_NAMES}=\{((?:[^{}]|\{[^{}]*\
  *  no word boundary in the middle of `confirmLabel`, so every dialog's
  *  confirm/cancel button copy escaped the gate. */
 const PROP_RE =
-  /\b(?:[A-Za-z]*(?:[lL]abel|[tT]itle|[tT]ext)|name|description|hint|subtitle|placeholder|message|tooltip|body|heading):\s*['"]([^'"]{1,160})['"]/g;
+  /\b(?:[A-Za-z]*(?:[lL]abel|[tT]itle|[tT]ext)|name|description|hint|subtitle|placeholder|message|tooltip|body|heading):\s*['"]([^'"]{1,400})['"]/g;
 const TEMPLATE_RE = /`([^`]*)`/g;
 const WINDOW_DIALOG_RE = /window\.(?:confirm|alert|prompt)\(\s*(`[^`]*`|"[^"]*"|'[^']*')/g;
 /** `identifier ?? 'Fallback prose'` default values (`item.label ?? 'Saved
@@ -426,16 +423,7 @@ const NULLISH_FALLBACK_RE = /\?\?\s*(['"])([^'"]{2,160})\1/g;
  *  `validateMongoUri()` returns its error string directly — where none of the
  *  JSX/prop detectors above can see it. */
 const RETURN_THROW_RE =
-  /(?:return|throw new [A-Za-z]*Error\()\s*(['"])([^'"]{2,200})\1/g;
-/** A ternary (or `??` chain) of string literals used as JSX CHILDREN:
- *
- *      <span>{readOnly ? 'Read-only connection' : 'Production safeguard'}</span>
- *
- *  ATTR_EXPR_RE only ever looked at attribute VALUES, so this shape had no
- *  detector at all — which is how the connection-mode banner shipped
- *  untranslated through six tasks and three reviews. Anchored on `>{` … `}<`
- *  so it cannot match an ordinary object literal. */
-const JSX_CHILD_EXPR_RE = />\s*\{((?:[^{}]|\{[^{}]*\}){4,400})\}\s*</g;
+  /(?:return|throw new [A-Za-z]*Error\()\s*(['"])([^'"]{2,400})\1/g;
 /** Extracts the individual quoted literals out of an attribute expression. */
 const QUOTED_RE = /(['"])([^'"]{2,200})\1/g;
 
@@ -491,64 +479,84 @@ function blankComments(src: string, file: string): string {
   return out.join('');
 }
 
-/** Code punctuation that effectively never appears in a UI text node but is
- *  everywhere in the generics and call expressions a loose `>…<` match would
- *  otherwise straddle (`useState<Foo>(null);`, `Promise<T> = [];`).
+/**
+ * JSX hits, found by walking the AST instead of matching `>…<` with a regex.
  *
- *  Parentheses and square brackets are deliberately NOT here. An earlier
- *  revision included them and thereby blinded the detector to ordinary
- *  parenthetical copy — "select a collection (or create one) to begin" was
- *  silently exempt. `;`, `=` and braces are enough to reject the generics and
- *  assignments this pattern really needs to skip. */
-const looksLikeCode = (s: string) => {
-  if (/[;={}`[\]]/.test(s)) return true;
-  // Parentheses appear in ordinary copy ("select a collection (or create one)")
-  // but a loose `>…<` run that straddles a call expression picks up an
-  // UNBALANCED one (`length > 0 ? (query.pipeline as Record<`). Balance is the
-  // discriminator that keeps parenthetical prose visible without readmitting
-  // the generics this pattern has to skip.
-  let depth = 0;
-  for (const ch of s) {
-    if (ch === '(') depth++;
-    else if (ch === ')' && --depth < 0) return true;
-  }
-  return depth !== 0;
-};
+ * Three consecutive review rounds each found a new hole in the regex version,
+ * and each fix opened another: requiring `[A-Z][a-z]` right after `>` missed
+ * lowercase and prettier-wrapped text; allowing newlines made a generic's `>`
+ * pair with the next line's `Record<`; rejecting any run containing `(`
+ * blinded it to parenthetical copy; and the ternary detector only fired when
+ * the expression was a tag's SOLE child, so `<p>Status: {a ? 'x' : 'y'}</p>`
+ * — the very shape it was written for — still escaped. The file is already
+ * parsed for `blankComments`, so the tree is free: `JsxText` and
+ * `JsxExpression` are exact, and none of those failure modes can recur.
+ *
+ * Hit text is keyed for EXEMPT_HITS: JSX text as `jsx: <normalised text>`,
+ * literals inside a JSX expression as the quoted literal itself.
+ */
+function jsxHits(src: string, file: string): string[] {
+  const sf = ts.createSourceFile(
+    file,
+    src,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const hits: string[] = [];
+
+  // A literal that is an argument to a translation call is a KEY (or an
+  // already-translated default value), never untranslated copy.
+  const insideTranslationCall = (node: ts.Node): boolean => {
+    for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
+      if (ts.isCallExpression(n)) {
+        const fn = n.expression;
+        const name = ts.isIdentifier(fn)
+          ? fn.text
+          : ts.isPropertyAccessExpression(fn)
+            ? fn.name.text
+            : '';
+        if (/^(t|td|tg|tShell|notify)$/.test(name)) return true;
+      }
+      if (ts.isJsxAttribute(n) && n.name.getText(sf) === 'i18nKey') return true;
+    }
+    return false;
+  };
+
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxText(node)) {
+      const text = node.text.replace(/\s+/g, ' ').trim();
+      if (text && hasProse(text)) hits.push(`jsx: ${text}`);
+    } else if (ts.isJsxExpression(node) && node.expression) {
+      const collect = (n: ts.Node) => {
+        if (
+          (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
+          hasProse(n.text) &&
+          !insideTranslationCall(n)
+        ) {
+          hits.push(`'${n.text}'`);
+        }
+        n.forEachChild(collect);
+      };
+      collect(node.expression);
+    }
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  return hits;
+}
 
 function findHits(file: string, rawSrc: string): string[] {
   const src = blankComments(rawSrc, file);
   const hits: string[] = [];
 
-  for (const m of src.matchAll(JSX_TEXT_RE)) {
-    if (!looksLikeCode(m[1]) && hasProse(m[1])) hits.push(m[0].replace(/\s+/g, ' '));
-  }
+  hits.push(...jsxHits(src, file));
   for (const m of src.matchAll(ATTR_RE)) hits.push(m[0]);
   for (const m of src.matchAll(CALL_ARG_RE)) if (hasProse(m[2])) hits.push(m[0]);
   for (const m of src.matchAll(PROP_RE)) hits.push(m[0]);
   for (const m of src.matchAll(WINDOW_DIALOG_RE)) hits.push(m[0]);
   for (const m of src.matchAll(NULLISH_FALLBACK_RE)) if (hasProse(m[2])) hits.push(m[0]);
   for (const m of src.matchAll(RETURN_THROW_RE)) if (hasProse(m[2])) hits.push(m[0]);
-
-  for (const m of src.matchAll(JSX_MIXED_RE)) {
-    const inner = m[1];
-    // Plain text runs are JSX_TEXT_RE's job; this detector exists only for
-    // the mixed prose-plus-interpolation case. Requiring a `{}` also keeps
-    // the loose `>…<` pattern from matching comparison operators and
-    // generic-type brackets in plain `.ts` modules.
-    if (!inner.includes('{')) continue;
-    if (hasProse(inner.replace(/\{[^{}]*\}/g, ' '))) hits.push(m[0]);
-  }
-
-  for (const m of src.matchAll(JSX_CHILD_EXPR_RE)) {
-    if (/\bt\(|i18nKey/.test(m[1])) {
-      // Already-translated branches contribute keys, not copy; strip the calls
-      // and judge whatever literal prose remains beside them.
-      const rest = m[1].replace(/\bt\((?:[^()]|\([^()]*\))*\)/g, ' ');
-      for (const q of rest.matchAll(QUOTED_RE)) if (hasProse(q[2])) hits.push(q[0]);
-      continue;
-    }
-    for (const q of m[1].matchAll(QUOTED_RE)) if (hasProse(q[2])) hits.push(q[0]);
-  }
 
   for (const m of src.matchAll(ATTR_EXPR_RE)) {
     // Strip translation calls and judge whatever literals REMAIN. Skipping the
@@ -621,6 +629,24 @@ describe('i18n coverage', () => {
     expect(offenders, `Untranslated user-facing strings found:\n${offenders.join('\n')}`).toEqual([]);
   });
 
+  it('has no duplicate keys in the exemption map', () => {
+    // A duplicate key in an object literal silently OVERWRITES the earlier one,
+    // so half the exemptions vanish and the gate then fails with hits that look
+    // already-triaged. This happened three times while maintaining this file.
+    // TypeScript does not flag it, because EXEMPT_HITS is typed as a Record
+    // with a string index signature. Checked against the SOURCE TEXT, since by
+    // the time the object exists the duplicates have already collapsed.
+    const source = readFileSync('src/lib/i18n/__tests__/coverage.test.ts', 'utf8');
+    const body = source.slice(
+      source.indexOf('const EXEMPT_HITS'),
+      source.indexOf('const STOPWORDS'),
+    );
+    const keys = Array.from(body.matchAll(/^  '([^']+)':/gm)).map((m) => m[1]);
+    const seen = new Set<string>();
+    const duplicates = keys.filter((k) => (seen.has(k) ? true : (seen.add(k), false)));
+    expect(duplicates, 'EXEMPT_HITS has duplicate keys (the later one wins, the earlier is silently lost)').toEqual([]);
+  });
+
   it('never passes a pre-formatted (string) count to a t() call', () => {
     // i18next skips plural resolution entirely when `count` is not a number
     // (`needsPluralHandling = count !== undefined && !isString(count)`). A key
@@ -651,7 +677,7 @@ describe('i18n coverage', () => {
 
     const offenders: string[] = [];
     for (const file of files) {
-      const src = readFileSync(file, 'utf8');
+      const src = blankComments(readFileSync(file, 'utf8'), file);
       for (const m of src.matchAll(STRINGY_COUNT)) {
         if (!looksStringy(m[1])) continue;
         // Only care when it is an argument to a translation call.

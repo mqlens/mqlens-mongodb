@@ -28,7 +28,7 @@
       "op": "op",
       "ns": "ns",
       "desc": "desc",
-      "running": "running",
+      "running": "Laufzeit",
       "client": "Client",
       "commandHeading": "Befehl",
       "plan": "Plan",
@@ -107,7 +107,7 @@
       "summaryMembersCount_other": "{{count}} Mitglieder",
       "summaryVersionClause": " · MongoDB {{version}}",
       "summaryYouClause": " · dieser Knoten: {{state}}",
-      "youBadge": "(verbunden)",
+      "youBadge": "(dieser Knoten)",
       "table": {
         "member": "Mitglied",
         "state": "Status",

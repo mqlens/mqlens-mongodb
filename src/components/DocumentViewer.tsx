@@ -1331,7 +1331,11 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         await onExplain(JSON.stringify(compiledFilter));
       }
     } catch (e: any) {
-      setError(e.message || String(e));
+      // Explain is reachable with an invalid filter — the dropdown item has no
+      // `disabled` guard, only the trigger does — so this path has to map our
+      // own parse errors to a translated message like the two above it.
+      const key = shellDocErrorKey(e);
+      setError(key ? td(key) : e.message || String(e));
     } finally {
       setExplainLoading(false);
     }
