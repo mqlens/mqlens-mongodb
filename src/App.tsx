@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar';
 import { CommandPalette, type PaletteAction } from './components/CommandPalette';
 import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
 import type { ChatMessage } from './components/AIChatPanel';
+import { clearChatRequest, renameChatRequest, resetChatRequests } from './lib/aiChatRequest';
 import { DataGrid } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
 import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
@@ -631,6 +632,9 @@ function Workspace() {
         tabChatCache.current.set(newId, chat);
         tabChatCache.current.delete(oldId);
       }
+      // The in-flight request follows the tab; dropping it here would lose a
+      // reply that is already on its way.
+      renameChatRequest(oldId, newId);
     }
 
     // Dispatched straight to the layout reducer via `dispatchLayout`,
@@ -774,6 +778,7 @@ function Workspace() {
             // pre-restore entries so a Quick Start tab id can't inherit a
             // stale transcript after hydrate reuses ids.
             tabChatCache.current.clear();
+            resetChatRequests();
             const windowTabIds = new Set(snapshot.tabs.map((t) => t.id));
             const profileNames = new Map<string, string>();
             for (const t of ws.tabs) {
@@ -2157,6 +2162,7 @@ function Workspace() {
     if (action.type === 'close_tab') {
       tabBuilderStateCache.current.delete(action.tabId);
       tabChatCache.current.delete(action.tabId);
+      clearChatRequest(action.tabId);
       // #91: forget this tab's generate-task tracking on close (running or
       // finished) — otherwise reopening "Generate Data…" on the same
       // namespace reuses the same deterministic tab id and the fresh view
@@ -2182,6 +2188,7 @@ function Workspace() {
       action.tabIds.forEach((id) => {
         generateTaskIdsRef.current.delete(id);
         tabChatCache.current.delete(id);
+        clearChatRequest(id);
       });
     }
     dispatchLayout(action);
@@ -2756,6 +2763,7 @@ function Workspace() {
           setTabs([]);
           tabBuilderStateCache.current.clear();
           tabChatCache.current.clear();
+          resetChatRequests();
           dispatchLayout({ type: 'hydrate', layout: createInitialLayout([], null) });
           return;
         }
@@ -2822,6 +2830,7 @@ function Workspace() {
           leavingIds.forEach((id) => {
             tabBuilderStateCache.current.delete(id);
             tabChatCache.current.delete(id);
+            clearChatRequest(id);
             unmirroredTabIdsRef.current.delete(id);
           });
           setTabs((prev) => prev.filter((t) => !leavingIds.has(t.id)));
@@ -2963,6 +2972,7 @@ function Workspace() {
           removedIds.forEach((id) => {
             tabBuilderStateCache.current.delete(id);
             tabChatCache.current.delete(id);
+            clearChatRequest(id);
             unmirroredTabIdsRef.current.delete(id);
           });
           setTabs((prev) => prev.filter((t) => !removedIds.has(t.id)));
@@ -3559,6 +3569,7 @@ function Workspace() {
                 ?? builderStateFromQueryTab(tab.lastQuery, tab.lastAggregate)
               }
               onBuilderStateChange={(state) => handleBuilderStateChange(tab.id, state)}
+              chatSessionKey={tab.id}
               initialChatMessages={tabChatCache.current.get(tab.id)?.messages ?? []}
               onChatMessagesChange={(messages) => handleChatMessagesChange(tab.id, messages)}
               initialAIHelperOpen={tabChatCache.current.get(tab.id)?.isOpen ?? false}

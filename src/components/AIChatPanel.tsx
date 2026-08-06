@@ -4,6 +4,12 @@ import { Sparkles, User, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { buildRunnableCommand, type GeneratedQuery } from '../lib/mongoCommand';
+import {
+  getPendingChatRequest,
+  startChatRequest,
+  takeSettledChatRequest,
+  type PendingChatReply,
+} from '../lib/aiChatRequest';
 
 export type { GeneratedQuery };
 
@@ -30,6 +36,10 @@ interface AIChatPanelProps {
   /** Restored when remounting this tab's chat (see App tabChatCache). */
   initialMessages?: ChatMessage[];
   onMessagesChange?: (messages: ChatMessage[]) => void;
+  /** Identifies this chat across unmounts so an in-flight request can be
+   *  re-attached on remount (see lib/aiChatRequest). Without it a request
+   *  started here is still lost when the tab is switched away. */
+  sessionKey?: string;
 }
 
 /** Highest numeric suffix among `mN` message ids, or -1 if none. */
@@ -41,6 +51,8 @@ const maxChatIdNum = (messages: ChatMessage[]): number => {
   }
   return max;
 };
+
+const AI_HELPER_WIDTH_KEY = 'mqlens-ai-helper-width';
 
 const composerClassName = cn(
   'min-h-[52px] w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 text-xs shadow-sm transition-colors',
@@ -58,14 +70,29 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   embedded = false,
   initialMessages = [],
   onMessagesChange,
+  sessionKey,
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialMessages);
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const [aiHelperWidth, setAIHelperWidth] = useState(340);
+  // Persisted, not per-tab: a panel width is a UI preference, and remounting
+  // on every tab switch used to snap it back to the default. Mirrors
+  // DataGrid's `mqlens-treekey-width`. Range matches the resizer clamp below.
+  const [aiHelperWidth, setAIHelperWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(AI_HELPER_WIDTH_KEY));
+    return saved >= 240 && saved <= 600 ? saved : 340;
+  });
+  useEffect(() => {
+    localStorage.setItem(AI_HELPER_WIDTH_KEY, String(aiHelperWidth));
+  }, [aiHelperWidth]);
   const [isResizingAIHelper, setIsResizingAIHelper] = useState(false);
   const chatScrollRef = React.useRef<HTMLDivElement>(null);
   const chatIdRef = React.useRef(maxChatIdNum(initialMessages) + 1);
+  // A promise continuation is not cancelled by unmount, so the instance that
+  // started a request still resumes after the tab is switched away. It must not
+  // consume the settled reply in that case — the next mount needs to find it.
+  const mountedRef = React.useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const nextChatId = () => `m${chatIdRef.current++}`;
 
   useEffect(() => {
@@ -94,6 +121,49 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     };
   }, [isResizingAIHelper]);
 
+  /** Append an assistant reply, assigning its id here because the id counter
+   *  is panel-local and the reply may have been produced while unmounted. */
+  const appendReply = (reply: PendingChatReply) => {
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: nextChatId(),
+        role: 'assistant',
+        text: reply.text,
+        ...(reply.error ? { error: true } : { query: reply.query as GeneratedQuery | undefined }),
+      },
+    ]);
+  };
+
+  // Re-attach to a request that was started before this panel last unmounted:
+  // either it already settled while we were away, or it is still running and we
+  // show the spinner and wait for it. Without this the reply is lost whenever
+  // the user switches tabs mid-request.
+  useEffect(() => {
+    if (!sessionKey) return;
+    const settled = takeSettledChatRequest(sessionKey);
+    if (settled) {
+      appendReply(settled);
+      return;
+    }
+    const inFlight = getPendingChatRequest(sessionKey);
+    if (!inFlight) return;
+    let active = true;
+    setIsChatLoading(true);
+    void inFlight.then((reply) => {
+      if (!active) return;
+      takeSettledChatRequest(sessionKey);
+      appendReply(reply);
+      setIsChatLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+    // Runs once per mount for this session; appendReply is stable enough here
+    // because it only closes over setState functions and the id ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionKey]);
+
   const handleSendChat = async () => {
     const text = chatInput.trim();
     if (!text || isChatLoading) return;
@@ -111,7 +181,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setChatInput('');
     setIsChatLoading(true);
 
-    try {
+    const run = async (): Promise<PendingChatReply> => {
       const raw = await invoke<string>('generate_mql_query', {
         prompt: text,
         collection: collectionName,
@@ -142,20 +212,21 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         pipeline: Array.isArray(parsed.pipeline) ? parsed.pipeline : [],
         script: typeof parsed.script === 'string' ? parsed.script : '',
       };
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: nextChatId(),
-          role: 'assistant',
-          text: parsed.explanation ?? 'Here is a query.',
-          query,
-        },
-      ]);
-    } catch (err) {
-      setChatMessages((prev) => [
-        ...prev,
-        { id: nextChatId(), role: 'assistant', text: String(err), error: true },
-      ]);
+      return { text: parsed.explanation ?? 'Here is a query.', query };
+    };
+
+    try {
+      // Held outside the tree so switching tabs mid-request does not discard
+      // the answer; `startChatRequest` also turns a rejection into an
+      // `error: true` reply, so there is a single completion path.
+      const reply = sessionKey
+        ? await startChatRequest(sessionKey, run)
+        : await run().catch((err): PendingChatReply => ({ text: String(err), error: true }));
+      // Unmounted mid-request: leave the reply in the registry so the panel
+      // picks it up when the user comes back to this tab.
+      if (!mountedRef.current) return;
+      if (sessionKey) takeSettledChatRequest(sessionKey);
+      appendReply(reply)
     } finally {
       setIsChatLoading(false);
     }

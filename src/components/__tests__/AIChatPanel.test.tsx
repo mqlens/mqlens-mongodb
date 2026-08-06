@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AIChatPanel } from '../AIChatPanel';
+import { resetChatRequests } from '../../lib/aiChatRequest';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
@@ -26,6 +27,8 @@ describe('AIChatPanel', () => {
     );
 
   beforeEach(() => {
+    resetChatRequests();
+    localStorage.clear();
     invokeMock.mockReset();
     onInsertQuery.mockReset();
     onInsertAndRunQuery.mockReset();
@@ -197,5 +200,76 @@ describe('AIChatPanel', () => {
     // Ids continue past the restored m0/m1 range.
     expect(lastCall[2].id).toBe('m2');
     expect(lastCall[3].id).toBe('m3');
+  });
+
+  it('keeps an in-flight reply when the tab is switched away mid-request (#221 follow-up)', async () => {
+    // Switching tabs unmounts the panel (PaneView renders only the active tab).
+    // The request used to die with it: the user's question was cached, the
+    // assistant's answer was silently dropped, and the tab came back showing a
+    // question with no reply, no spinner and no error.
+    let resolveInvoke: (v: string) => void = () => {};
+    invokeMock.mockImplementation(() => new Promise<string>((res) => { resolveInvoke = res; }));
+
+    const first = render(
+      <AIChatPanel
+        connectionId="c1" databaseName="test-db" collectionName="users" fields={[]}
+        variant="editor" isOpen sessionKey="tab-1"
+        onClose={onClose} onInsertQuery={onInsertQuery} onInsertAndRunQuery={onInsertAndRunQuery}
+      />
+    );
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'adults please' } });
+    fireEvent.click(screen.getByTestId('chat-send-btn'));
+    await waitFor(() => expect(screen.getByTestId('chat-thinking')).toBeInTheDocument());
+
+    first.unmount();                                   // user switches tab
+    resolveInvoke(JSON.stringify({ explanation: 'Finds adults.', queryType: 'find', filter: {} }));
+    await new Promise((r) => setTimeout(r, 0));
+
+    render(                                            // user switches back
+      <AIChatPanel
+        connectionId="c1" databaseName="test-db" collectionName="users" fields={[]}
+        variant="editor" isOpen sessionKey="tab-1"
+        initialMessages={[{ id: 'm0', role: 'user', text: 'adults please' }]}
+        onClose={onClose} onInsertQuery={onInsertQuery} onInsertAndRunQuery={onInsertAndRunQuery}
+      />
+    );
+    expect(await screen.findByText('Finds adults.')).toBeInTheDocument();
+  });
+
+  it('shows the spinner again when returning while the request is still running', async () => {
+    let resolveInvoke: (v: string) => void = () => {};
+    invokeMock.mockImplementation(() => new Promise<string>((res) => { resolveInvoke = res; }));
+
+    const first = render(
+      <AIChatPanel
+        connectionId="c1" databaseName="test-db" collectionName="users" fields={[]}
+        variant="editor" isOpen sessionKey="tab-2"
+        onClose={onClose} onInsertQuery={onInsertQuery} onInsertAndRunQuery={onInsertAndRunQuery}
+      />
+    );
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'still running' } });
+    fireEvent.click(screen.getByTestId('chat-send-btn'));
+    await waitFor(() => expect(screen.getByTestId('chat-thinking')).toBeInTheDocument());
+    first.unmount();
+
+    render(                                            // back while still pending
+      <AIChatPanel
+        connectionId="c1" databaseName="test-db" collectionName="users" fields={[]}
+        variant="editor" isOpen sessionKey="tab-2"
+        initialMessages={[{ id: 'm0', role: 'user', text: 'still running' }]}
+        onClose={onClose} onInsertQuery={onInsertQuery} onInsertAndRunQuery={onInsertAndRunQuery}
+      />
+    );
+    expect(screen.getByTestId('chat-thinking')).toBeInTheDocument();
+
+    resolveInvoke(JSON.stringify({ explanation: 'Late but delivered.', queryType: 'find', filter: {} }));
+    expect(await screen.findByText('Late but delivered.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('chat-thinking')).not.toBeInTheDocument());
+  });
+
+  it('remembers the panel width across remounts', async () => {
+    localStorage.setItem('mqlens-ai-helper-width', '420');
+    renderPanel('editor');
+    expect(screen.getByTestId('ai-helper-panel')).toHaveStyle({ width: '420px' });
   });
 });

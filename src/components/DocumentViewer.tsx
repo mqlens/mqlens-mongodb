@@ -209,6 +209,9 @@ interface DocumentViewerProps {
   /** Restored when remounting this tab's viewer (see App tab cache). */
   initialBuilderState?: BuilderState;
   onBuilderStateChange?: (state: BuilderState) => void;
+  /** Identifies this tab's chat so an in-flight AI request survives the
+   *  unmount that happens when the user switches tabs. */
+  chatSessionKey?: string;
   /** Restored when remounting this tab's AI helper (see App tabChatCache). */
   initialChatMessages?: ChatMessage[];
   onChatMessagesChange?: (messages: ChatMessage[]) => void;
@@ -525,6 +528,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   availableFields = [],
   initialBuilderState = DEFAULT_BUILDER_STATE,
   onBuilderStateChange,
+  chatSessionKey,
   initialChatMessages = [],
   onChatMessagesChange,
   initialAIHelperOpen = false,
@@ -2267,6 +2271,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             <ResizableHandle withHandle data-testid="ai-helper-resizer" />
             <ResizablePanel id="ai-helper" minSize="18%" maxSize="50%" className="flex min-h-0 flex-col">
               <AIChatPanel
+                sessionKey={chatSessionKey}
                 variant="editor"
                 embedded
                 databaseName={databaseName}
