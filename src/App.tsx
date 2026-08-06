@@ -3902,8 +3902,8 @@ function Workspace() {
           {bannerIsReadOnly ? <Lock size={12} className="shrink-0" /> : <ShieldAlert size={12} className="shrink-0" />}
           <span>
             {bannerIsReadOnly
-              ? 'Read-only connection — writes are blocked'
-              : 'Production safeguard — destructive operations require confirmation'}
+              ? tShell('connectionModeBanner.readOnly')
+              : tShell('connectionModeBanner.guarded')}
           </span>
         </div>
         <div className="min-h-0 flex-1">{body}</div>

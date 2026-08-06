@@ -229,7 +229,7 @@
       "captionChoose": "Wähle eine Quelle zur Vorschau",
       "captionCount_one": "Vorschau des ersten Dokuments",
       "captionCount_other": "Vorschau der ersten {{count}} Dokumente",
-      "captionCountWithTotal_one": "Vorschau des ersten Dokuments von ~{{total}}",
+      "captionCountWithTotal_one": "Vorschau des ersten von ~{{total}} Dokumenten",
       "captionCountWithTotal_other": "Vorschau der ersten {{count}} Dokumente von ~{{total}}"
     },
     "duplicates": {

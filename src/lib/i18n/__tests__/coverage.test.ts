@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import ts from 'typescript';
 
 /**
  * i18n coverage gate.
@@ -45,14 +46,24 @@ import { join } from 'node:path';
  * `?? 'Saved query'` fallback label lived there, undetected, until this
  * revision. It now walks `.ts` too (see `isScannableFile` below).
  *
- * It is still a heuristic, not an AST parser. Comments are blanked before
- * scanning (see `blankComments`), but it can still be fooled by regex literals
- * containing backticks, by a loose `>…<` run straddling a generic, and by
- * Tailwind class strings assigned to an unluckily-named property
- * (`label: 'text-primary'`). Every hit below was
- * manually triaged; each exemption below carries the reason it survived
- * triage instead of being translated. See
- * .superpowers/sdd/task-6-report.md for the full triage log.
+ *   - a ternary or `??` chain of string literals used as JSX CHILDREN
+ *     (`<span>{readOnly ? 'Read-only' : 'Guarded'}</span>`) — the shape that
+ *     kept the connection-mode banner untranslated through six tasks
+ *
+ * Comments are blanked before scanning by PARSING the file with TypeScript and
+ * reading comment ranges off the tree (`blankComments`). A hand-rolled scanner
+ * was tried first and silently erased real code: the escaped slashes in
+ * `/^mongodb\+srv:\/\//` read as a line comment, an apostrophe in JSX text
+ * desynced quote state, and a backtick inside a regex character class inverted
+ * string state for the rest of the file. Do not replace the parser with
+ * something cheaper.
+ *
+ * It remains a heuristic in what it looks FOR — matching is still regex over
+ * (comment-free) text, so it can be fooled by a loose `>…<` run straddling a
+ * generic, and by Tailwind class strings assigned to an unluckily-named
+ * property (`label: 'text-primary'`). Every hit below was manually triaged;
+ * each exemption carries the reason it survived triage instead of being
+ * translated. See .superpowers/sdd/task-6-report.md for the full triage log.
  */
 
 // Scans the whole `src` tree (not just `src/components`) — the gate used to
@@ -132,32 +143,12 @@ const EXEMPT_HITS: Record<string, string[]> = {
     // rendered; the catalog value is used in both locales.
     '> To generate one, open the <',
     '> dropdown split menu in the query editor toolbar and select <',
-    // EJSON/BSON type constructor names rendered as mongosh-style syntax
-    // (e.g. `ObjectId("...")`), matching real mongosh/EJSON output — MongoDB
-    // type identifiers, not prose (Global Constraint 2).
-    '>ObjectId<',
-    '>NumberLong<',
-    '>NumberDecimal<',
-    '>NumberInt<',
-    '>Double<',
-    '>BinData<',
-    '>Timestamp<',
     // <Trans i18nKey="dataGrid.empty.explainHint"> fallback children — never
     // rendered at runtime (the catalog value is used instead); see
     // en/documents.json dataGrid.empty.explainHint for the real, translated copy.
     '>Run Explain<',
     // Aggregation-pipeline stage key literal ($cursor), not a display label.
     "name: '$cursor'",
-  ],
-  'src/components/DocumentDiffModal.tsx': [
-    // Same EJSON/BSON type constructor names as DataGrid.tsx above.
-    '>ObjectId<',
-    '>Timestamp<',
-    '>NumberLong<',
-    '>NumberDecimal<',
-    '>NumberInt<',
-    '>Double<',
-    '>BinData<',
   ],
   'src/components/DocumentViewer.tsx': [
     // Comparison-operator symbols in the filter-builder dropdown — not
@@ -217,9 +208,6 @@ const EXEMPT_HITS: Record<string, string[]> = {
   'src/components/SettingsModal.tsx': [
     // Product names, never translated (Global Constraint 2 / project glossary).
     '>Claude Code<',
-    '>Cursor<',
-    '>Anthropic<',
-    '>OpenAI<',
     '>Google Gemini<',
     // Example paths, API-key formats and model names — copy-paste examples,
     // not prose.
@@ -290,7 +278,6 @@ const EXEMPT_HITS: Record<string, string[]> = {
   'src/lib/clusterHealth.ts': [
     // A backtick-quoted `new URL` inside a JSDoc comment, read as a template
     // literal — the comment blindness this file's header warns about.
-    'new URL',
   ],
   'src/lib/generateTemplate.ts': [
     // The GEN_KIND_TOKENS DSL's own field token, matching the `$name`
@@ -393,7 +380,7 @@ const templateHasProse = (raw: string) => hasProse(raw.replace(/\$\{[^}]*\}/g, '
  *  line. Now it accepts any run without `<>{}`, across newlines, and leans on
  *  `hasProse` to decide. `[^<>{}]` still excludes interpolations; JSX_MIXED_RE
  *  below handles those. */
-const JSX_TEXT_RE = />([^<>{}]{4,200})</g;
+const JSX_TEXT_RE = />([^<>{}]{4,400})</g;
 /** JSX text nodes that MIX prose with a `{}` interpolation
  *  (`<p>Not connected to {profileName}.</p>`). JSX_TEXT_RE above excludes
  *  `{}` outright, so those nodes were invisible to it. Judged on the text with
@@ -409,8 +396,8 @@ const JSX_MIXED_RE = /(?<![=\-!<>])>([^<>\n]{2,160})</g;
  *  prefix is allowed, so `confirmLabel=` / `emptyTitle=` match, not just
  *  `label=`. The old five-name list also let `description=`, `message=`,
  *  `heading=`, `tooltip=` and `emptyText=` through untouched. */
-const ATTR_NAMES = String.raw`(?:[A-Za-z]*(?:[lL]abel|[tT]itle|[tT]ext)|aria-label|placeholder|alt|description|message|heading|tooltip|hint|subtitle)`;
-const ATTR_RE = new RegExp(String.raw`\b${ATTR_NAMES}=\{?["']([^"']{2,160})["']\}?`, 'g');
+const ATTR_NAMES = String.raw`(?:[A-Za-z]*(?:[lL]abel|[tT]itle|[tT]ext)|aria-label|placeholder|alt|description|message|heading|tooltip|hint|subtitle|body|content)`;
+const ATTR_RE = new RegExp(String.raw`\b${ATTR_NAMES}=\{?["']([^"']{2,300})["']\}?`, 'g');
 /** The project's own toast/notify helpers take their user-facing copy as the
  *  FIRST positional argument, which no attribute or property detector can see:
  *  `toast('Failed to connect to the profile.', 'error')`. */
@@ -420,7 +407,7 @@ const CALL_ARG_RE =
  *  literal — a ternary or `??` chain
  *  (`aria-label={show ? 'Hide password' : 'Show password'}`). Every quoted
  *  literal inside the braces is then judged individually. */
-const ATTR_EXPR_RE = new RegExp(String.raw`\b${ATTR_NAMES}=\{([^{}]{2,200})\}`, 'g');
+const ATTR_EXPR_RE = new RegExp(String.raw`\b${ATTR_NAMES}=\{((?:[^{}]|\{[^{}]*\}){2,300})\}`, 'g');
 /** `label:`/`title:` and their camelCase-prefixed variants (`confirmLabel:`,
  *  `cancelLabel:`, `ariaLabel:`) plus the other label-ish property names. The
  *  old `\b(?:label|title|…)` could not match `confirmLabel:` at all: there is
@@ -439,7 +426,16 @@ const NULLISH_FALLBACK_RE = /\?\?\s*(['"])([^'"]{2,160})\1/g;
  *  `validateMongoUri()` returns its error string directly — where none of the
  *  JSX/prop detectors above can see it. */
 const RETURN_THROW_RE =
-  /(?:return|throw new (?:Error|TypeError|RangeError)\()\s*(['"])([^'"]{2,200})\1/g;
+  /(?:return|throw new [A-Za-z]*Error\()\s*(['"])([^'"]{2,200})\1/g;
+/** A ternary (or `??` chain) of string literals used as JSX CHILDREN:
+ *
+ *      <span>{readOnly ? 'Read-only connection' : 'Production safeguard'}</span>
+ *
+ *  ATTR_EXPR_RE only ever looked at attribute VALUES, so this shape had no
+ *  detector at all — which is how the connection-mode banner shipped
+ *  untranslated through six tasks and three reviews. Anchored on `>{` … `}<`
+ *  so it cannot match an ordinary object literal. */
+const JSX_CHILD_EXPR_RE = />\s*\{((?:[^{}]|\{[^{}]*\}){4,400})\}\s*</g;
 /** Extracts the individual quoted literals out of an attribute expression. */
 const QUOTED_RE = /(['"])([^'"]{2,200})\1/g;
 
@@ -447,47 +443,80 @@ const QUOTED_RE = /(['"])([^'"]{2,200})\1/g;
  * Replace every comment body with spaces, preserving length and newlines so
  * all downstream match indices still line up with the original source.
  *
- * The file header used to warn that the gate "can be fooled by comments", and
- * it was: a backtick-quoted `new URL` in a JSDoc block earned a permanent
- * exemption, and once JSX text nodes were allowed to span lines, ordinary
- * prose inside `{/* … *\/}` blocks started reporting too.
+ * Uses TypeScript's own scanner rather than a hand-rolled one. The hand-rolled
+ * version tracked quote state character by character and got three things
+ * wrong, each of which HID code from the gate rather than merely adding noise:
  *
- * String-aware on purpose. A naive strip would treat the `//` inside
- * `placeholder="mongodb://localhost:27017"` as a comment and eat the rest of
- * the line, silently breaking the triaged exemptions keyed on that exact text.
+ *   - `/^mongodb\+srv:\/\//i` — the escaped slashes inside a regex literal
+ *     read as a line comment, blanking the rest of that line (5 real files).
+ *   - `<p>you don't have permission</p>` — an apostrophe in JSX TEXT is not a
+ *     string delimiter, but it opened one, desyncing every quote after it.
+ *   - a backtick inside a regex character class opened a phantom template
+ *     literal that inverted string state for the remainder of the file,
+ *     mangling a genuine `'update://progress'` literal.
+ *
+ * Parses rather than tokenises. A bare `ts.createScanner` is not enough: with
+ * no parser context it cannot tell a regex literal from division, so it still
+ * read `/^mongodb\+srv:\/\//i` as a comment. The PARSER resolves that, and
+ * comment ranges are then read off the tree as leading/trailing trivia.
  */
-function blankComments(src: string): string {
+function blankComments(src: string, file: string): string {
+  const sf = ts.createSourceFile(
+    file,
+    src,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
   const out = src.split('');
-  let i = 0;
-  let quote: string | null = null;
-  while (i < src.length) {
-    const c = src[i];
-    const next = src[i + 1];
-    if (quote) {
-      if (c === '\\') i += 2;
-      else if (c === quote) (quote = null), i++;
-      else i++;
-      continue;
+  const done = new Set<string>();
+  const blank = (ranges: ts.CommentRange[] | undefined) => {
+    for (const r of ranges ?? []) {
+      const key = `${r.pos}:${r.end}`;
+      if (done.has(key)) continue;
+      done.add(key);
+      // Newlines are preserved so line-anchored patterns still behave, and the
+      // total length is unchanged so TEMPLATE_RE's index slicing stays valid.
+      for (let i = r.pos; i < r.end; i++) if (out[i] !== '\n') out[i] = ' ';
     }
-    if (c === '"' || c === "'" || c === '`') (quote = c), i++;
-    else if (c === '/' && next === '/') {
-      while (i < src.length && src[i] !== '\n') (out[i] = ' '), i++;
-    } else if (c === '/' && next === '*') {
-      const end = src.indexOf('*/', i + 2);
-      const stop = end === -1 ? src.length : end + 2;
-      for (; i < stop; i++) if (src[i] !== '\n') out[i] = ' ';
-    } else i++;
-  }
+  };
+  const visit = (node: ts.Node) => {
+    blank(ts.getLeadingCommentRanges(src, node.getFullStart()));
+    blank(ts.getTrailingCommentRanges(src, node.getEnd()));
+    // getChildren (not forEachChild) so punctuation tokens are visited too —
+    // a comment can be leading trivia of a bare `}` or `,`.
+    node.getChildren(sf).forEach(visit);
+  };
+  sf.getChildren(sf).forEach(visit);
   return out.join('');
 }
 
 /** Code punctuation that effectively never appears in a UI text node but is
  *  everywhere in the generics and call expressions a loose `>…<` match would
- *  otherwise straddle (`useState<Foo>(null);`, `Promise<T> = [];`). */
-const looksLikeCode = (s: string) => /[;=(){}[\]`]/.test(s);
+ *  otherwise straddle (`useState<Foo>(null);`, `Promise<T> = [];`).
+ *
+ *  Parentheses and square brackets are deliberately NOT here. An earlier
+ *  revision included them and thereby blinded the detector to ordinary
+ *  parenthetical copy — "select a collection (or create one) to begin" was
+ *  silently exempt. `;`, `=` and braces are enough to reject the generics and
+ *  assignments this pattern really needs to skip. */
+const looksLikeCode = (s: string) => {
+  if (/[;={}`[\]]/.test(s)) return true;
+  // Parentheses appear in ordinary copy ("select a collection (or create one)")
+  // but a loose `>…<` run that straddles a call expression picks up an
+  // UNBALANCED one (`length > 0 ? (query.pipeline as Record<`). Balance is the
+  // discriminator that keeps parenthetical prose visible without readmitting
+  // the generics this pattern has to skip.
+  let depth = 0;
+  for (const ch of s) {
+    if (ch === '(') depth++;
+    else if (ch === ')' && --depth < 0) return true;
+  }
+  return depth !== 0;
+};
 
 function findHits(file: string, rawSrc: string): string[] {
-  const src = blankComments(rawSrc);
+  const src = blankComments(rawSrc, file);
   const hits: string[] = [];
 
   for (const m of src.matchAll(JSX_TEXT_RE)) {
@@ -510,6 +539,17 @@ function findHits(file: string, rawSrc: string): string[] {
     if (hasProse(inner.replace(/\{[^{}]*\}/g, ' '))) hits.push(m[0]);
   }
 
+  for (const m of src.matchAll(JSX_CHILD_EXPR_RE)) {
+    if (/\bt\(|i18nKey/.test(m[1])) {
+      // Already-translated branches contribute keys, not copy; strip the calls
+      // and judge whatever literal prose remains beside them.
+      const rest = m[1].replace(/\bt\((?:[^()]|\([^()]*\))*\)/g, ' ');
+      for (const q of rest.matchAll(QUOTED_RE)) if (hasProse(q[2])) hits.push(q[0]);
+      continue;
+    }
+    for (const q of m[1].matchAll(QUOTED_RE)) if (hasProse(q[2])) hits.push(q[0]);
+  }
+
   for (const m of src.matchAll(ATTR_EXPR_RE)) {
     // Strip translation calls and judge whatever literals REMAIN. Skipping the
     // whole expression on sight of a translation call — the previous
@@ -520,7 +560,7 @@ function findHits(file: string, rawSrc: string): string[] {
     // leaving the untranslated branch exposed. (Written without a literal
     // example call: i18next-cli extracts one even from inside a comment, which
     // would add a phantom key to en/common.json on every `npm run i18n:check`.)
-    const withoutCalls = m[1].replace(/\bt\([^()]*\)/g, ' ');
+    const withoutCalls = m[1].replace(/\bt\((?:[^()]|\([^()]*\))*\)/g, ' ');
     for (const q of withoutCalls.matchAll(QUOTED_RE)) if (hasProse(q[2])) hits.push(q[0]);
   }
 

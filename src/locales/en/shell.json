@@ -165,6 +165,10 @@
       "standalone": "Standalone"
     }
   },
+  "connectionModeBanner": {
+    "guarded": "Production safeguard — destructive operations require confirmation",
+    "readOnly": "Read-only connection — writes are blocked"
+  },
   "dialog": {
     "resizeAriaLabel": "Resize dialog",
     "resizeTitle": "Drag to resize"

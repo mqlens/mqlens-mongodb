@@ -76,7 +76,7 @@
         "keywords": "neu laden datenbanken sammlungen namensräume cache veraltet reload databases collections namespaces stale"
       },
       "densityRoomy": {
-        "title": "Dichte: Weit",
+        "title": "Dichte: Luftig",
         "keywords": "layout abstand spacing"
       },
       "densityCozy": {
@@ -178,7 +178,7 @@
     "groups": {
       "navigation": "Navigation",
       "query-editor": "Abfrage-Editor",
-      "sidebar": "Sidebar",
+      "sidebar": "Seitenleiste",
       "zoom": "Zoom",
       "command-palette": "Befehlspalette"
     },
@@ -272,7 +272,7 @@
     "header": {
       "eyebrow": "Schnellstart",
       "title": "Willkommen bei MQLens",
-      "subtitle": "Deine lokale MongoDB-IDE — verbinde dich mit einem Cluster, erkunde Sammlungen und führe Abfragen aus, ohne dass deine Daten den Rechner verlassen."
+      "subtitle": "Deine lokale MongoDB-IDE — verbinde dich mit einem Cluster, erkunde Sammlungen und führe Abfragen aus; alles läuft lokal auf deinem Rechner."
     },
     "stats": {
       "savedConnections": "Gespeicherte Verbindungen",
@@ -335,7 +335,7 @@
       "title": "Aufgaben",
       "runningBadge_one": "{{count}} laufend",
       "runningBadge_other": "{{count}} laufend",
-      "subtitle": "Kopier- und Exportaufträge im Hintergrund."
+      "subtitle": "Kopier- und Exportvorgänge im Hintergrund."
     },
     "actions": {
       "refreshTasks": "Aufgaben aktualisieren",
@@ -378,7 +378,7 @@
   "toolSetupDialog": {
     "title": "MongoDB-Tools einrichten",
     "checkingTools": "Installierte Tools werden geprüft…",
-    "intro": "MQLens benötigt diese Kommandozeilen-Tools für Dump, Wiederherstellung, Import und Export. Wähle aus, welche installiert oder neu installiert werden sollen.",
+    "intro": "MQLens benötigt diese Kommandozeilen-Tools für Dump, Restore, Import und Export. Wähle aus, welche installiert oder neu installiert werden sollen.",
     "toolLabels": {
       "databaseTools": "Database Tools (mongodump, mongorestore)",
       "mongosh": "mongosh"
@@ -457,5 +457,9 @@
   "emptyWorkspace": {
     "noConnection": "Keine aktive Verbindung. Verbinde dich mit einem MongoDB-Cluster, um Sammlungen zu durchsuchen und Abfragen auszuführen.",
     "connectButton": "Mit Datenbank verbinden…"
+  },
+  "connectionModeBanner": {
+    "readOnly": "Schreibgeschützte Verbindung — Schreibvorgänge sind blockiert",
+    "guarded": "Produktionsschutz — destruktive Vorgänge erfordern eine Bestätigung"
   }
 }

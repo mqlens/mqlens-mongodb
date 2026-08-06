@@ -252,7 +252,11 @@ describe('DocumentViewer Component', () => {
       // namespace, Task 1 of the i18n plan) — select on the stable
       // data-testid rather than the (now German) tooltip text.
       fireEvent.click(screen.getByTestId('query-clear-filter'));
-      expect(await screen.findByText('Filterparameter zurückgesetzt')).toBeInTheDocument();
+      // "geleert", not "zurückgesetzt": the toast has to use the same verb as
+      // the button that fires it (findQueryBar.tooltips.clearFilter = "Filter
+      // leeren"), and German needs the Clear/Reset distinction English keeps —
+      // the toolbar has separate resetSkip/resetLimit actions.
+      expect(await screen.findByText('Filterparameter geleert')).toBeInTheDocument();
     } finally {
       await i18next.changeLanguage('en');
     }

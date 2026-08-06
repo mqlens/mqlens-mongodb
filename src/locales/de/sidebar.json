@@ -52,7 +52,7 @@
     "restore": "Wiederherstellung (mongorestore)…",
     "settings": "Einstellungen",
     "unpin": "Anheftung aufheben",
-    "unpinFromSidebar": "Von Seitenleiste lösen",
+    "unpinFromSidebar": "Anheftung aufheben",
     "validationRules": "Validierungsregeln"
   },
   "dialogs": {
@@ -107,7 +107,7 @@
   "empty": {
     "connectAriaLabel": "Mit Datenbank verbinden",
     "connectButton": "Mit Datenbank verbinden...",
-    "favoritesHint": "Mach einen Rechtsklick auf Elemente im Baum oder favorisiere eine gespeicherte Abfrage aus einem Sammlungstab",
+    "favoritesHint": "Rechtsklick auf Elemente im Baum, oder füge eine gespeicherte Abfrage aus einem Sammlungstab zu den Favoriten hinzu",
     "foldersHint": "Speichere Verbindungen im Verbindungsmanager",
     "noConnections": "Mit einem MongoDB-Server verbinden, um die Datenbankstruktur zu durchsuchen.",
     "pinnedHint": "Rechtsklick auf eine Verbindung, Datenbank oder Sammlung → An Seitenleiste anheften"
@@ -131,7 +131,7 @@
     "documentation": "Dokumentation",
     "reportBug": "Fehler melden",
     "requestFeature": "Feature vorschlagen",
-    "starOnGithub": "GitHub-Stern vergeben"
+    "starOnGithub": "Auf GitHub mit Stern markieren"
   },
   "search": {
     "ariaLabel": "Seitenleiste durchsuchen",
@@ -173,7 +173,7 @@
     "newBucketInline": "Neuer Bucket…",
     "newCollectionAriaLabel": "Neue Sammlung",
     "offlineSuffix": " · offline",
-    "rootLabel": "Stamm",
+    "rootLabel": "kein Ordner",
     "systemLabel": "System",
     "timeseriesAriaLabel": "Time-Series-Sammlung",
     "viewsLabel": "Ansichten"

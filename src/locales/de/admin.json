@@ -48,7 +48,7 @@
     },
     "accessRequired": {
       "title": "Zugriff erforderlich",
-      "bodyPrefix": "Der Benutzer dieser Verbindung ist nicht berechtigt, {{what}}. Weise die Rolle ",
+      "bodyPrefix": "Der Benutzer dieser Verbindung ist nicht berechtigt, {{what}}. Vergib die Rolle ",
       "bodySuffix": " (oder eine gleichwertige Berechtigung), um dies zu ermöglichen.",
       "what": {
         "serverMetrics": "Servermetriken zu lesen (serverStatus)",
@@ -61,7 +61,7 @@
       "connectionsAvail_one": "{{formatted}} verfügbar",
       "connectionsAvail_other": "{{formatted}} verfügbar",
       "opsPerSec": "Vorgänge/s",
-      "residentMem": "Res. Speicher",
+      "residentMem": "Speicher (RSS)",
       "residentVirt": "{{mb}} MB virt.",
       "cache": "Cache",
       "cacheNotAvailable": "n. v.",
@@ -101,13 +101,13 @@
     },
     "cluster": {
       "shardedNotice": "Sharded-Cluster — Zustand auf Mitgliedsebene ist über mongos nicht verfügbar. Verbinde dich direkt mit dem Replikatset eines Shards, um dessen Mitglieder zu prüfen.",
-      "notReplsetNotice": "Diese Verbindung ist ein eigenständiger MongoDB-Server — Replikatset-Zustand ist hier nicht anwendbar.",
+      "notReplsetNotice": "Diese Verbindung ist ein Standalone-MongoDB-Server — Replikatset-Zustand ist hier nicht anwendbar.",
       "summaryReplicaSetPrefix": "Replikatset ",
       "summaryMembersCount_one": "{{count}} Mitglied",
       "summaryMembersCount_other": "{{count}} Mitglieder",
       "summaryVersionClause": " · MongoDB {{version}}",
       "summaryYouClause": " · dieser Knoten: {{state}}",
-      "youBadge": "(aktuell)",
+      "youBadge": "(verbunden)",
       "table": {
         "member": "Mitglied",
         "state": "Status",
@@ -240,7 +240,7 @@
       "fieldsCompound_other": "{{count}} Felder (Verbund)"
     },
     "size": {
-      "onDiskIndexSize": "Indexgröße auf Disk"
+      "onDiskIndexSize": "Indexgröße auf Datenträger"
     },
     "usage": {
       "opsCount": "{{ops}} Vorgänge",
@@ -249,7 +249,7 @@
     "properties": {
       "title": "Eigenschaften & Details",
       "indexName": "Indexname",
-      "uniqueConstraint": "Eindeutig",
+      "uniqueConstraint": "Eindeutigkeit",
       "sparseConstraint": "Sparse-Beschränkung",
       "operationalStatus": "Betriebsstatus",
       "active": "Aktiv",
@@ -408,7 +408,7 @@
     "replicaSetClausePrefix": " [Replikatset: ",
     "userLine": "Benutzer: {{user}}",
     "shardedNotice": "Sharded-Cluster (mongos).",
-    "standaloneNotice": "Eigenständiger Server — kein Replikatset.",
+    "standaloneNotice": "Standalone-Server — kein Replikatset.",
     "serversLabel": "Server:",
     "memberStatus": {
       "offline": "— Offline [(nicht erreichbar/funktionsfähig)]",

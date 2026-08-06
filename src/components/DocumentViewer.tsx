@@ -5,7 +5,7 @@ import { QueryEditor } from './QueryEditor';
 import { FindQueryBar } from './FindQueryBar';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
-import { parseShellJson, parseQueryObject } from '../lib/shellDoc';
+import { parseShellJson, parseQueryObject, shellDocErrorKey } from '../lib/shellDoc';
 import {
   loadCollectionQueries,
   saveQuery,
@@ -721,7 +721,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         .map(s => ({ [s.operator]: parseShellJson(s.content) }));
       onExecuteAggregate(pipeline);
     } catch (e: any) {
-      setError(td('documentViewer.errors.invalidJsonSyntax', { message: e.message }));
+      setError(
+        // Our own parse failures carry a code and get a translated message;
+        // errors from the underlying parser only have an English message.
+        shellDocErrorKey(e)
+          ? td(shellDocErrorKey(e)!)
+          : td('documentViewer.errors.invalidJsonSyntax', { message: e.message }),
+      );
     }
   };
 
@@ -1254,7 +1260,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         });
       }
     } catch (e: any) {
-      setError(td('documentViewer.errors.invalidJsonSyntax', { message: e.message }));
+      setError(
+        // Our own parse failures carry a code and get a translated message;
+        // errors from the underlying parser only have an English message.
+        shellDocErrorKey(e)
+          ? td(shellDocErrorKey(e)!)
+          : td('documentViewer.errors.invalidJsonSyntax', { message: e.message }),
+      );
     }
   };
 

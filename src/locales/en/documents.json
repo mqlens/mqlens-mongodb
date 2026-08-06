@@ -272,7 +272,9 @@
       "noSavedQueries": "No saved queries"
     },
     "errors": {
-      "invalidJsonSyntax": "Invalid JSON syntax: {{message}}"
+      "invalidJsonSyntax": "Invalid JSON syntax: {{message}}",
+      "invalidQuery": "Invalid query",
+      "queryMustBeObject": "The query must be an object"
     },
     "history": {
       "aggregateSummary_one": "aggregate · {{count}} stage",

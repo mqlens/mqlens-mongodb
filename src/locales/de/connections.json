@@ -61,7 +61,7 @@
   },
   "connectionMode": {
     "confirmDestructive": {
-      "description": "Destruktive Vorgänge erfordern eine Bestätigung durch Eintippen des Namens",
+      "description": "Destruktive Vorgänge müssen durch Eintippen bestätigt werden",
       "label": "Destruktive Vorgänge bestätigen"
     },
     "normal": {

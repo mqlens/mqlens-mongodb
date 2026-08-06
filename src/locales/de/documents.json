@@ -7,8 +7,8 @@
       "addStage": "Stufe hinzufügen",
       "aiHelper": "KI-Helfer",
       "apply": "Anwenden",
-      "clearAll": "Alle zurücksetzen",
-      "clearDefault": "Standard zurücksetzen",
+      "clearAll": "Alles zurücksetzen",
+      "clearDefault": "Standard entfernen",
       "export": "Export",
       "import": "Import",
       "listShortcut": "Liste",
@@ -41,8 +41,8 @@
       "excludeOption": "Ausschließen ({{n}})",
       "fieldPathPlaceholder": "field.path",
       "includeOption": "Einschließen ({{n}})",
-      "matchAll": "Alle erfüllen ({{op}})",
-      "matchAny": "Eine erfüllen ({{op}})",
+      "matchAll": "Alle Bedingungen ({{op}})",
+      "matchAny": "Beliebige Bedingung ({{op}})",
       "operators": {
         "in": "in",
         "notIn": "nicht in",
@@ -72,7 +72,9 @@
       "noSavedQueries": "Keine gespeicherten Abfragen"
     },
     "errors": {
-      "invalidJsonSyntax": "Ungültige JSON-Syntax: {{message}}"
+      "invalidJsonSyntax": "Ungültige JSON-Syntax: {{message}}",
+      "invalidQuery": "Ungültige Abfrage",
+      "queryMustBeObject": "Die Abfrage muss ein Objekt sein"
     },
     "history": {
       "aggregateSummary_one": "aggregate · {{count}} Stufe",
@@ -131,9 +133,9 @@
       "invalidJson": "Ungültiges JSON"
     },
     "tooltips": {
-      "clearFilter": "Filter zurücksetzen",
-      "clearProjection": "Projektion zurücksetzen",
-      "clearSort": "Sortierung zurücksetzen",
+      "clearFilter": "Filter leeren",
+      "clearProjection": "Projektion leeren",
+      "clearSort": "Sortierung leeren",
       "fewerOptions": "Weniger Optionen",
       "hideOptions": "Projektion, Sortierung, Skip und Limit ausblenden",
       "moreOptions": "Mehr Optionen",
@@ -365,7 +367,7 @@
       "rawJson": "Roh-JSON",
       "table": "Tabelle",
       "tree": "Baum",
-      "visualTree": "Grafischer Baum"
+      "visualTree": "Baumdiagramm"
     }
   },
   "schemaView": {

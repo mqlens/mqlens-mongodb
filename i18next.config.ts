@@ -249,6 +249,15 @@ export default defineConfig({
       'settings:appearance.presets.solarizedLight.description',
       'settings:appearance.presets.githubDark.description',
       'settings:appearance.presets.githubLight.description',
+      // `documents:documentViewer.errors.invalidQuery`/`queryMustBeObject` are
+      // reached through shellDoc.ts's `shellDocErrorKey(err)`, which maps a
+      // thrown error's `code` to a key — a function return value, not a string
+      // literal the extractor's static analysis can see. The codes exist so the
+      // thrown English message never reaches the user: it used to be
+      // interpolated verbatim into the translated "Ungültige JSON-Syntax: …"
+      // wrapper.
+      'documents:documentViewer.errors.invalidQuery',
+      'documents:documentViewer.errors.queryMustBeObject',
     ],
   },
 });

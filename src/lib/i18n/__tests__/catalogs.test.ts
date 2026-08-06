@@ -184,10 +184,12 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'shell:connectionCard.badge.srv', // SRV — DNS record type acronym
   'shell:connectionCard.badge.ssh', // SSH — protocol acronym
   // Task 6 (final review fixes): shell:keyboardShortcuts.groups.* — identical
-  // German cognate/loanwords per the project glossary (Sidebar/Zoom are
-  // explicitly listed loanwords; "Navigation" is spelled identically in German).
+  // German cognate/loanwords ("Navigation" and "Zoom" are spelled identically).
+  // `groups.sidebar` used to sit here as a claimed loanword, but it was the
+  // heading directly above rows that say "Seitenleiste" — the exemption was
+  // preserving the last inconsistency in a sweep that had translated everything
+  // around it. It is "Seitenleiste" now and no longer qualifies.
   'shell:keyboardShortcuts.groups.navigation', // Navigation
-  'shell:keyboardShortcuts.groups.sidebar', // Sidebar
   'shell:keyboardShortcuts.groups.zoom', // Zoom
   // Task 5: workspace tab labels that are pure interpolation of an
   // identifier (collection/db name) with no surrounding prose to translate.
