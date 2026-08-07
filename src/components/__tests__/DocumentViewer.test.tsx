@@ -1265,3 +1265,52 @@ describe('Aggregation builder: collapse, undo/redo, $lookup form (#89)', () => {
     expect(body).toContain('"as": "userOrders"');
   });
 });
+
+describe('page size resync from the pager (#218)', () => {
+  const baseProps = {
+    connectionName: 'test-conn',
+    databaseName: 'test-db',
+    collectionName: 'test-coll',
+    onExplain: vi.fn(),
+    loading: false,
+  };
+
+  it('runs with the page size the pager last executed, not the one it mounted with', () => {
+    // The pager writes straight to `tab.lastQuery.limit`, but the builder's own
+    // `limit` was seeded once at mount and never resynced — so the next Run
+    // sent the stale mount-time value and silently undid the page size the
+    // user had just chosen from the pager.
+    const onExecute = vi.fn();
+    const { rerender } = render(
+      <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={50} executedSkip={0} />
+    );
+
+    // User picks 100 in the pager: App re-runs, `tab.lastQuery.limit` is now
+    // 100, and DocumentViewer re-renders with the newly executed values.
+    rerender(
+      <DialogProvider>
+        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={100} executedSkip={0} />
+      </DialogProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+
+    expect(onExecute).toHaveBeenCalledWith(expect.objectContaining({ limit: 100 }));
+  });
+
+  it('leaves the limit alone on a re-render that did not change what was executed', () => {
+    const onExecute = vi.fn();
+    const { rerender } = render(
+      <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={50} executedSkip={0} />
+    );
+
+    rerender(
+      <DialogProvider>
+        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={50} executedSkip={0} />
+      </DialogProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(onExecute).toHaveBeenCalledWith(expect.objectContaining({ limit: 50 }));
+  });
+});

@@ -210,6 +210,12 @@ interface DocumentViewerProps {
   /** Restored when remounting this tab's viewer (see App tab cache). */
   initialBuilderState?: BuilderState;
   onBuilderStateChange?: (state: BuilderState) => void;
+  /** The limit/skip actually executed for this tab (`tab.lastQuery`). The
+   *  pager writes those straight onto the tab, while the builder's own
+   *  limit/skip are seeded once at mount — so without this the next Run sent
+   *  the stale mount-time page size and silently undid the pager. */
+  executedLimit?: number;
+  executedSkip?: number;
   /** Identifies this tab's chat so an in-flight AI request survives the
    *  unmount that happens when the user switches tabs. */
   chatSessionKey?: string;
@@ -544,6 +550,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   availableFields = [],
   initialBuilderState = DEFAULT_BUILDER_STATE,
   onBuilderStateChange,
+  executedLimit,
+  executedSkip,
   chatSessionKey,
   initialChatMessages = [],
   onChatMessagesChange,
@@ -560,6 +568,17 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [sortQuery, setSortQuery] = useState(initialBuilderState.sortQuery);
   const [limit, setLimit] = useState(initialBuilderState.limit);
   const [skip, setSkip] = useState(initialBuilderState.skip);
+
+  // One-way resync from what was actually executed. Keyed on the executed
+  // values themselves, so an unrelated re-render cannot clobber a limit the
+  // user is midway through typing — only the pager actually running a new page
+  // size moves these.
+  useEffect(() => {
+    if (executedLimit !== undefined) setLimit(String(executedLimit));
+  }, [executedLimit]);
+  useEffect(() => {
+    if (executedSkip !== undefined) setSkip(String(executedSkip));
+  }, [executedSkip]);
   const [explainLoading, setExplainLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]);

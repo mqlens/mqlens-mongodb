@@ -40,6 +40,13 @@ interface DataGridProps {
   limit?: number;
   onPageChange?: (newSkip: number) => void;
   onPageSizeChange?: (newLimit: number) => void;
+  /** Results view mode, owned by the caller so it survives this grid being
+   *  unmounted. The results pane renders `{loading ? <spinner/> : <DataGrid/>}`,
+   *  so the grid remounts on EVERY run, and switching tabs unmounts the whole
+   *  DocumentViewer subtree — local state reset to 'json' both times. Omit both
+   *  props to keep the old self-managed behaviour (MongoShell does). */
+  viewMode?: ViewMode;
+  onViewModeChange?: (mode: ViewMode) => void;
   // Fired when the user accepts the COLLSCAN suggestion banner's "Create Index" CTA.
   onCreateSuggestedIndex?: (suggestion: IndexSuggestion) => void;
   // The owning connection's write-safeguard mode (#188). 'read_only' disables
@@ -52,7 +59,7 @@ interface DataGridProps {
   connectionMode?: 'normal' | 'read_only' | 'confirm_destructive';
 }
 
-type ViewMode = 'table' | 'tree' | 'json' | 'chart';
+export type ViewMode = 'table' | 'tree' | 'json' | 'chart';
 
 interface ExplainNode {
   name: string;
@@ -494,6 +501,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   limit,
   onPageChange,
   onPageSizeChange,
+  viewMode: controlledViewMode,
+  onViewModeChange,
   onCreateSuggestedIndex,
   connectionMode,
 }) => {
@@ -588,7 +597,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return items;
   };
   const docViewerContext = useContext(DocumentViewerContext);
-  const [viewMode, setViewMode] = useState<ViewMode>('json');
+  const [uncontrolledViewMode, setUncontrolledViewMode] = useState<ViewMode>('json');
+  const viewMode = controlledViewMode ?? uncontrolledViewMode;
+  const setViewMode = (mode: ViewMode) => {
+    setUncontrolledViewMode(mode);
+    onViewModeChange?.(mode);
+  };
   const [activeTab, setActiveTab] = useState<'results' | 'explain' | 'query'>('results');
 
   // Column resize: table view keeps per-column widths (session-scoped — the

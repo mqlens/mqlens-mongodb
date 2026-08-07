@@ -10,7 +10,7 @@ import { CommandPalette, type PaletteAction } from './components/CommandPalette'
 import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
 import type { ChatMessage } from './components/AIChatPanel';
 import { clearChatRequest, renameChatRequest, resetChatRequests } from './lib/aiChatRequest';
-import { DataGrid } from './components/DataGrid';
+import { DataGrid, type ViewMode } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
 import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
 import { IndexViewer } from './components/IndexViewer';
@@ -120,6 +120,9 @@ export interface QueryTab {
   lastQuery?: { filter: string; sort: string; projection: string; limit: number; skip: number };
   // Last executed aggregation pipeline, so an aggregate view refreshes as an aggregate.
   lastAggregate?: Record<string, unknown>[];
+  // Results view mode, kept on the tab so it survives the grid remounting on
+  // every run and the tab being switched away (#218).
+  viewMode?: ViewMode;
   // Pagination count state.
   totalCount?: number;
   countLoading?: boolean;
@@ -537,6 +540,9 @@ function Workspace() {
     tabBuilderStateCache.current.set(tabId, state);
     mirrorUpdateTabState(tabId, activeConnectionsRef.current, { builderState: state });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handleViewModeChange = useCallback((tabId: string, mode: ViewMode) => {
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, viewMode: mode } : t)));
   }, []);
   const handleChatMessagesChange = useCallback((tabId: string, messages: ChatMessage[]) => {
     const prev = tabChatCache.current.get(tabId);
@@ -3600,6 +3606,8 @@ function Workspace() {
                 ?? builderStateFromQueryTab(tab.lastQuery, tab.lastAggregate)
               }
               onBuilderStateChange={(state) => handleBuilderStateChange(tab.id, state)}
+              executedLimit={tab.lastQuery?.limit}
+              executedSkip={tab.lastQuery?.skip}
               chatSessionKey={tab.id}
               initialChatMessages={tabChatCache.current.get(tab.id)?.messages ?? []}
               onChatMessagesChange={(messages) => handleChatMessagesChange(tab.id, messages)}
@@ -3657,6 +3665,8 @@ function Workspace() {
                     countLoading={tab.countLoading}
                     skip={tab.lastQuery?.skip ?? 0}
                     limit={tab.lastQuery?.limit ?? 50}
+                    viewMode={tab.viewMode ?? 'json'}
+                    onViewModeChange={(mode) => handleViewModeChange(tab.id, mode)}
                     onCreateSuggestedIndex={s => handleCreateSuggestedIndex(tab, s)}
                     {...(!tab.lastAggregate ? {
                       onPageChange: (newSkip: number) => handlePageChange(tab, newSkip),

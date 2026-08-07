@@ -627,7 +627,10 @@ describe('i18n coverage', () => {
     }
 
     expect(offenders, `Untranslated user-facing strings found:\n${offenders.join('\n')}`).toEqual([]);
-  });
+    // Parses every scannable file with the TypeScript compiler (~1s alone, but
+    // slower when the full suite runs it alongside everything else). The
+    // default 5s timeout made it fail under load while passing in isolation.
+  }, 30_000);
 
   it('has no duplicate keys in the exemption map', () => {
     // A duplicate key in an object literal silently OVERWRITES the earlier one,
@@ -691,5 +694,5 @@ describe('i18n coverage', () => {
       offenders,
       `t() called with a non-numeric count — plural lookup will miss and render the raw key:\n${offenders.join('\n')}`,
     ).toEqual([]);
-  });
+  }, 30_000);
 });
