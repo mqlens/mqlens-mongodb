@@ -10,6 +10,7 @@ import { CommandPalette, type PaletteAction } from './components/CommandPalette'
 import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
 import type { ChatMessage } from './components/AIChatPanel';
 import { clearChatRequest, renameChatRequest, resetChatRequests } from './lib/aiChatRequest';
+import { disposeAllShellSessions, disposeShellSession } from './lib/mongoshSession';
 import { DataGrid, type ViewMode } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
 import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
@@ -797,6 +798,7 @@ function Workspace() {
             // stale transcript after hydrate reuses ids.
             tabChatCache.current.clear();
             resetChatRequests();
+            void disposeAllShellSessions();
             const windowTabIds = new Set(snapshot.tabs.map((t) => t.id));
             const profileNames = new Map<string, string>();
             for (const t of ws.tabs) {
@@ -2183,6 +2185,7 @@ function Workspace() {
       tabBuilderStateCache.current.delete(action.tabId);
       tabChatCache.current.delete(action.tabId);
       clearChatRequest(action.tabId);
+      void disposeShellSession(action.tabId);
       // #91: forget this tab's generate-task tracking on close (running or
       // finished) — otherwise reopening "Generate Data…" on the same
       // namespace reuses the same deterministic tab id and the fresh view
@@ -2209,6 +2212,7 @@ function Workspace() {
         generateTaskIdsRef.current.delete(id);
         tabChatCache.current.delete(id);
         clearChatRequest(id);
+        void disposeShellSession(id);
       });
     }
     dispatchLayout(action);
@@ -2806,6 +2810,7 @@ function Workspace() {
           tabBuilderStateCache.current.clear();
           tabChatCache.current.clear();
           resetChatRequests();
+          void disposeAllShellSessions();
           dispatchLayout({ type: 'hydrate', layout: createInitialLayout([], null) });
           return;
         }
@@ -2873,6 +2878,7 @@ function Workspace() {
             tabBuilderStateCache.current.delete(id);
             tabChatCache.current.delete(id);
             clearChatRequest(id);
+            void disposeShellSession(id);
             unmirroredTabIdsRef.current.delete(id);
           });
           setTabs((prev) => prev.filter((t) => !leavingIds.has(t.id)));
@@ -3015,6 +3021,7 @@ function Workspace() {
             tabBuilderStateCache.current.delete(id);
             tabChatCache.current.delete(id);
             clearChatRequest(id);
+            void disposeShellSession(id);
             unmirroredTabIdsRef.current.delete(id);
           });
           setTabs((prev) => prev.filter((t) => !removedIds.has(t.id)));
@@ -3934,6 +3941,7 @@ function Workspace() {
               onOpenSettings={handleOpenToolsSettings}
               onInstallTools={handleOpenToolSetup}
               reconnectSignal={shellReconnectNonce}
+              sessionKey={tab.id}
             />
           );
         })()}

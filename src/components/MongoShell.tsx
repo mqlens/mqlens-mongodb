@@ -25,12 +25,11 @@ import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 
 type ShellTab = 'console' | 'viewer';
 
-type ShellEntry =
-  | { kind: 'input'; db: string; text: string }
-  | { kind: 'text'; lines: string[] }
-  | { kind: 'value'; value: unknown }
-  | { kind: 'note'; text: string }
-  | { kind: 'error'; message: string };
+import {
+  readShellSession,
+  writeShellSession,
+  type ShellEntry,
+} from '../lib/mongoshSession';
 
 interface AppSettings {
   mongosh_path?: string;
@@ -59,6 +58,10 @@ interface MongoShellProps {
   onInstallTools?: () => void;
   /** Bump this (e.g. after a tool install completes) to re-attempt the mongosh session. */
   reconnectSignal?: number;
+  /** Identifies this shell across unmounts so its mongosh process and
+   *  scrollback survive a tab switch (#240). Without it the shell falls back
+   *  to the old behaviour: a session per mount. */
+  sessionKey?: string;
 }
 
 interface ParsedCall {
@@ -226,9 +229,12 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   onOpenSettings,
   onInstallTools,
   reconnectSignal,
+  sessionKey,
 }) => {
   const { t } = useTranslation('shell');
-  const [currentDb, setCurrentDb] = useState(databaseName);
+  // Restored transcript/session for this tab, if it survived an unmount (#240).
+  const storedSession = sessionKey ? readShellSession(sessionKey) : undefined;
+  const [currentDb, setCurrentDb] = useState(storedSession?.currentDb || databaseName);
   const startupLogId = useMemo(createLogId, []);
   // Display the connection name in the startup banner, never the URI — the URI
   // can contain credentials (e.g. user:password@host) that must not be logged.
@@ -243,17 +249,30 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const [isAIOpen, setIsAIOpen] = useState(false);
   const [pendingDestructive, setPendingDestructive] =
     useState<{ command: string; operation: string } | null>(null);
-  const [entries, setEntries] = useState<ShellEntry[]>([
-    { kind: 'text', lines: buildStartupLines(startupLogId, connectionTarget) },
-  ]);
+  // Restored transcript wins over a fresh banner: returning to this tab should
+  // look like the session was never interrupted.
+  const [entries, setEntries] = useState<ShellEntry[]>(
+    storedSession?.entries.length
+      ? storedSession.entries
+      : [{ kind: 'text', lines: buildStartupLines(startupLogId, connectionTarget) }]
+  );
   const [viewer, setViewer] = useState<{ docs: Record<string, any>[]; label: string; ms: number } | null>(null);
   const [tab, setTab] = useState<ShellTab>('console');
   const [running, setRunning] = useState(false);
   const [topHeight, setTopHeight] = useState<number | null>(null);
   const [mongoshPath, setMongoshPath] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionAttempted, setSessionAttempted] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(storedSession?.sessionId ?? null);
+  const [sessionAttempted, setSessionAttempted] = useState(Boolean(storedSession?.sessionId));
+  // Which retry generation we are already attached for. Seeded to 0 when a
+  // session was restored, so the start effect reattaches instead of respawning.
+  const attachedNonce = useRef<number | null>(storedSession?.sessionId ? 0 : null);
   const [retryNonce, setRetryNonce] = useState(0);
+
+  // Mirror the pieces that must outlive an unmount into the session registry.
+  useEffect(() => {
+    if (!sessionKey) return;
+    writeShellSession(sessionKey, { entries, currentDb, sessionId });
+  }, [sessionKey, entries, currentDb, sessionId]);
   // Guided setup on session failure: a working mongosh found outside the
   // configured path (offered as one click), or null when nothing was found.
   const [detectedMongosh, setDetectedMongosh] = useState<
@@ -355,6 +374,14 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       setSessionAttempted(true);
       return;
     }
+    // A session already attached to this tab is still running — the process
+    // outlives the unmount now, so reattach instead of spawning a second one.
+    // `retryNonce` is the deliberate exception: Retry means start fresh.
+    if (sessionKey && readShellSession(sessionKey)?.sessionId && retryNonce === attachedNonce.current) {
+      return;
+    }
+    attachedNonce.current = retryNonce;
+
     let cancelled = false;
     let openedSessionId: string | null = null;
     setSessionId(null);
@@ -398,13 +425,18 @@ export const MongoShell: React.FC<MongoShellProps> = ({
 
     return () => {
       cancelled = true;
-      if (openedSessionId) {
+      // Deliberately does NOT stop the session. Unmounting means the user
+      // switched tabs, not that they are done with the shell; the process is
+      // now owned by the tab and torn down by `disposeShellSession` when the
+      // tab closes (#240). Without a `sessionKey` there is nothing to reattach
+      // to later, so keep the old behaviour and clean up.
+      if (!sessionKey && openedSessionId) {
         invoke('stop_mongosh_session', { sessionId: openedSessionId }).catch(() => undefined);
       }
     };
     // The session is started once per shell tab. currentDb is intentionally used only as startup database.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, connectionUri, mongoshPath, retryNonce]);
+  }, [connectionId, connectionUri, mongoshPath, retryNonce, sessionKey]);
 
   useEffect(() => {
     const el = scrollRef.current;

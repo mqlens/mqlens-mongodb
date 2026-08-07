@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MongoShell } from '../MongoShell';
+import { resetShellSessions } from '../../lib/mongoshSession';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -28,6 +29,7 @@ vi.mock('@monaco-editor/react', () => ({
 
 describe('MongoShell Component', () => {
   beforeEach(() => {
+    resetShellSessions();
     vi.clearAllMocks();
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === 'get_mongodb_version') {
@@ -683,6 +685,50 @@ describe('MongoShell Component', () => {
           expect.stringContaining('mongodb.com/docs/mongodb-shell')
         );
       });
+    });
+  });
+
+  describe('session survives a tab switch (#240)', () => {
+    const shellProps = {
+      connectionId: 'conn-1',
+      connectionName: 'mock',
+      connectionUri: 'mongodb://prod-replica-set',
+      databaseName: 'user_analytics',
+    };
+    const startCalls = () =>
+      mockInvoke.mock.calls.filter((c) => c[0] === 'start_mongosh_session').length;
+    const stopCalls = () =>
+      mockInvoke.mock.calls.filter((c) => c[0] === 'stop_mongosh_session').length;
+
+    it('does not kill the mongosh process when the tab is switched away', async () => {
+      const { unmount } = render(<MongoShell {...shellProps} sessionKey="tab-shell-1" />);
+      await waitFor(() => expect(startCalls()).toBe(1));
+
+      unmount(); // user switches to another tab
+
+      expect(stopCalls()).toBe(0);
+    });
+
+    it('reattaches to the running session instead of spawning a second one', async () => {
+      const first = render(<MongoShell {...shellProps} sessionKey="tab-shell-1" />);
+      await waitFor(() => expect(startCalls()).toBe(1));
+      first.unmount();
+
+      render(<MongoShell {...shellProps} sessionKey="tab-shell-1" />); // switched back
+
+      await waitFor(() => expect(startCalls()).toBe(1));
+      expect(stopCalls()).toBe(0);
+    });
+
+    it('still tears the session down on unmount when it has no tab identity', async () => {
+      // Callers that pass no sessionKey keep the old per-mount lifetime, so a
+      // shell rendered outside the tab system cannot leak a process.
+      const { unmount } = render(<MongoShell {...shellProps} />);
+      await waitFor(() => expect(startCalls()).toBe(1));
+
+      unmount();
+
+      await waitFor(() => expect(stopCalls()).toBe(1));
     });
   });
 });
