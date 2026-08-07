@@ -72,6 +72,17 @@ export async function disposeShellSession(key: string): Promise<void> {
   await invoke('stop_mongosh_session', { sessionId: session.sessionId }).catch(() => undefined);
 }
 
+/** Follow a tab that was rebound to a new id (App's rebindProfileTabs). The
+ *  session belongs to the tab, so it has to move with it — leaving it under the
+ *  dead id would strand a live mongosh process that nothing can stop, and the
+ *  rebound tab would start a second one. */
+export function renameShellSession(oldKey: string, newKey: string): void {
+  const session = sessions.get(oldKey);
+  if (!session) return;
+  sessions.delete(oldKey);
+  sessions.set(newKey, session);
+}
+
 /** Dispose every session — used when the whole workspace is torn down. */
 export async function disposeAllShellSessions(): Promise<void> {
   await Promise.all(Array.from(sessions.keys(), disposeShellSession));

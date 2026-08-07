@@ -268,11 +268,14 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const attachedNonce = useRef<number | null>(storedSession?.sessionId ? 0 : null);
   const [retryNonce, setRetryNonce] = useState(0);
 
-  // Mirror the pieces that must outlive an unmount into the session registry.
+  // Mirror the transcript and current database into the session registry.
+  // `sessionId` is deliberately NOT mirrored here: the start path sets it to
+  // null before spawning, and persisting that transient null would make a
+  // remount think there is nothing to reattach to.
   useEffect(() => {
     if (!sessionKey) return;
-    writeShellSession(sessionKey, { entries, currentDb, sessionId });
-  }, [sessionKey, entries, currentDb, sessionId]);
+    writeShellSession(sessionKey, { entries, currentDb });
+  }, [sessionKey, entries, currentDb]);
   // Guided setup on session failure: a working mongosh found outside the
   // configured path (offered as one click), or null when nothing was found.
   const [detectedMongosh, setDetectedMongosh] = useState<
@@ -397,8 +400,17 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           database: currentDb,
           mongoshPath,
         });
+        // Record it before the cancellation check: the tab owns the session, so
+        // it must be findable by `disposeShellSession` even if this mount is
+        // already gone.
+        if (sessionKey) writeShellSession(sessionKey, { sessionId: session.session_id });
         if (cancelled) {
-          await invoke('stop_mongosh_session', { sessionId: session.session_id }).catch(() => undefined);
+          // Unmounting means the user switched tabs mid-startup. With a tab
+          // identity the session survives that; without one there is nothing to
+          // reattach to later, so it has to be stopped.
+          if (!sessionKey) {
+            await invoke('stop_mongosh_session', { sessionId: session.session_id }).catch(() => undefined);
+          }
           return;
         }
         openedSessionId = session.session_id;
@@ -408,6 +420,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         }
         setEntries((prev) => [...prev, { kind: 'note', text: t('mongoShell.notes.sessionAttached') }]);
       } catch (err: any) {
+        if (sessionKey) writeShellSession(sessionKey, { sessionId: null });
         if (!cancelled) {
           setSessionId(null);
           setEntries((prev) => [

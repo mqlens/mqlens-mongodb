@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MongoShell } from '../MongoShell';
-import { resetShellSessions } from '../../lib/mongoshSession';
+import { readShellSession, resetShellSessions } from '../../lib/mongoshSession';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -739,6 +739,29 @@ describe('MongoShell Component', () => {
       await waitFor(() => expect(startCalls()).toBe(1));
 
       expect(runs()).toBe(1);
+    });
+
+    it('keeps a session that finished starting after the tab was switched away', async () => {
+      // Switching tabs mid-startup used to stop the session the moment it
+      // arrived, because the cancellation branch could not tell "the user left
+      // this tab" from "there is nobody to own this process".
+      let resolveStart: (v: unknown) => void = () => {};
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+        if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+        if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+        if (cmd === 'start_mongosh_session') return new Promise((res) => { resolveStart = res; });
+        return Promise.resolve([]);
+      });
+
+      const { unmount } = render(<MongoShell {...shellProps} sessionKey="tab-shell-3" />);
+      await waitFor(() => expect(startCalls()).toBe(1));
+      unmount();
+      resolveStart({ session_id: 'late-session', stdout: [], stderr: [] });
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(stopCalls()).toBe(0);
+      expect(readShellSession('tab-shell-3')?.sessionId).toBe('late-session');
     });
 
     it('still tears the session down on unmount when it has no tab identity', async () => {

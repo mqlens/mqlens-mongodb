@@ -10,7 +10,7 @@ import { CommandPalette, type PaletteAction } from './components/CommandPalette'
 import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
 import type { ChatMessage } from './components/AIChatPanel';
 import { clearChatRequest, renameChatRequest, resetChatRequests } from './lib/aiChatRequest';
-import { disposeAllShellSessions, disposeShellSession } from './lib/mongoshSession';
+import { disposeAllShellSessions, disposeShellSession, renameShellSession } from './lib/mongoshSession';
 import { DataGrid, type ViewMode } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
 import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
@@ -654,6 +654,9 @@ function Workspace() {
       // The in-flight request follows the tab; dropping it here would lose a
       // reply that is already on its way.
       renameChatRequest(oldId, newId);
+      // So does the shell session — it is a live process, and leaving it under
+      // the dead id would strand it while the rebound tab spawned another.
+      renameShellSession(oldId, newId);
     }
 
     // Dispatched straight to the layout reducer via `dispatchLayout`,

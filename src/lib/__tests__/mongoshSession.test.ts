@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   disposeAllShellSessions,
+  renameShellSession,
   disposeShellSession,
   readShellSession,
   resetShellSessions,
@@ -77,6 +78,20 @@ describe('mongosh session registry (#240)', () => {
     writeShellSession('tab-1', { entries: [{ kind: 'note', text: 'output' }] });
 
     expect(readShellSession('tab-1')?.autoRanCommand).toBe(true);
+  });
+
+  it('follows a tab that is rebound to a new id', () => {
+    writeShellSession('old-id', { sessionId: 'sess-1', entries: [{ kind: 'note', text: 'x' }] });
+
+    renameShellSession('old-id', 'new-id');
+
+    expect(readShellSession('old-id')).toBeUndefined();
+    expect(readShellSession('new-id')?.sessionId).toBe('sess-1');
+  });
+
+  it('renaming a tab with no session is a no-op', () => {
+    renameShellSession('nothing-here', 'new-id');
+    expect(readShellSession('new-id')).toBeUndefined();
   });
 
   it('disposes every session when the workspace is torn down', async () => {
