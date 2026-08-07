@@ -131,13 +131,21 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
     setInternalOptionsOpen(open);
     onOptionsOpenChange?.(open);
   };
+  // Only projection and sort trigger the reveal. Skip/limit are mirrored by the
+  // results pager, so they are never actually hidden — and counting them meant
+  // changing the page size popped the panel open, which is one-way and so never
+  // closed again. The initial state above still considers pagination, because a
+  // restored query arrives at mount and an unusual page size is worth showing.
+  const hasHiddenOptionValues =
+    (projection.trim() !== '' && projection.trim() !== '{}') ||
+    (sort.trim() !== '' && sort.trim() !== '{}');
   // Reveal only on the transition into having values — not on every mount, or a
   // remount would undo a deliberate collapse that the host persisted.
-  const hadOptionValues = useRef(hasOptionValues);
+  const hadOptionValues = useRef(hasHiddenOptionValues);
   useEffect(() => {
-    if (hasOptionValues && !hadOptionValues.current) setOptionsOpen(true);
-    hadOptionValues.current = hasOptionValues;
-  }, [hasOptionValues]);
+    if (hasHiddenOptionValues && !hadOptionValues.current) setOptionsOpen(true);
+    hadOptionValues.current = hasHiddenOptionValues;
+  }, [hasHiddenOptionValues]);
   // Rows are CSS-hidden rather than unmounted: Monaco keeps its model (and the
   // fields stay queryable) instead of being torn down on every toggle.
   const optionsVisible = !collapsibleOptions || optionsOpen;

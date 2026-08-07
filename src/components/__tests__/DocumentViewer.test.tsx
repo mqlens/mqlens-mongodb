@@ -1313,4 +1313,25 @@ describe('page size resync from the pager (#218)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Run' }));
     expect(onExecute).toHaveBeenCalledWith(expect.objectContaining({ limit: 50 }));
   });
+
+  it('does not pop the Options panel open when the pager changes the page size', () => {
+    // The pager lives under the results grid and shows the page size itself, so
+    // resyncing the builder from it must not trigger the disclosure's
+    // "an option holds a non-default value" reveal. That reveal exists for
+    // projection/sort, which have no other surface — and it is one-way, so a
+    // spurious open never closes again.
+    const onExecute = vi.fn();
+    const { rerender } = render(
+      <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={50} executedSkip={0} />
+    );
+    expect(screen.getByTestId('query-options-section').className).toContain('hidden');
+
+    rerender(
+      <DialogProvider>
+        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={100} executedSkip={0} />
+      </DialogProvider>
+    );
+
+    expect(screen.getByTestId('query-options-section').className).toContain('hidden');
+  });
 });
