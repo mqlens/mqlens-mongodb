@@ -29,6 +29,7 @@ describe('mongosh session registry (#240)', () => {
       sessionId: 'sess-1',
       entries: [{ kind: 'note', text: 'attached' }],
       currentDb: 'sales',
+      autoRanCommand: false,
     });
     expect(invokeMock).not.toHaveBeenCalled();
   });
@@ -41,6 +42,7 @@ describe('mongosh session registry (#240)', () => {
       sessionId: 'sess-1',
       entries: [{ kind: 'note', text: 'later' }],
       currentDb: 'sales',
+      autoRanCommand: false,
     });
   });
 
@@ -68,6 +70,13 @@ describe('mongosh session registry (#240)', () => {
 
     await expect(disposeShellSession('tab-1')).resolves.toBeUndefined();
     expect(readShellSession('tab-1')).toBeUndefined();
+  });
+
+  it('remembers that the opening command already ran, so a remount does not repeat it', () => {
+    writeShellSession('tab-1', { sessionId: 'sess-1', autoRanCommand: true });
+    writeShellSession('tab-1', { entries: [{ kind: 'note', text: 'output' }] });
+
+    expect(readShellSession('tab-1')?.autoRanCommand).toBe(true);
   });
 
   it('disposes every session when the workspace is torn down', async () => {

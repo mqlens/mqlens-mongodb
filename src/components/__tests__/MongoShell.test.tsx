@@ -720,6 +720,27 @@ describe('MongoShell Component', () => {
       expect(stopCalls()).toBe(0);
     });
 
+    it('does not re-run the opening command on every tab switch', async () => {
+      // The auto-run guard was a component ref, so it reset on each mount.
+      // Invisible while the transcript was wiped on every switch — once the
+      // transcript survived, the same command re-executed and piled up.
+      const runs = () =>
+        mockInvoke.mock.calls.filter((c) => c[0] === 'run_mongosh_command').length;
+
+      const first = render(
+        <MongoShell {...shellProps} sessionKey="tab-shell-2" initialCommand="show collections" />
+      );
+      await waitFor(() => expect(runs()).toBe(1));
+      first.unmount();
+
+      render(
+        <MongoShell {...shellProps} sessionKey="tab-shell-2" initialCommand="show collections" />
+      );
+      await waitFor(() => expect(startCalls()).toBe(1));
+
+      expect(runs()).toBe(1);
+    });
+
     it('still tears the session down on unmount when it has no tab identity', async () => {
       // Callers that pass no sessionKey keep the old per-mount lifetime, so a
       // shell rendered outside the tab system cannot leak a process.

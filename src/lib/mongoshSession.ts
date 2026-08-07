@@ -32,6 +32,11 @@ export interface ShellSession {
   entries: ShellEntry[];
   /** `use <db>` follows the session, so it has to survive with it. */
   currentDb: string;
+  /** Whether the command that opened this tab has already been auto-run. Lives
+   *  here rather than in a component ref because a ref resets on every mount:
+   *  once the transcript started surviving tab switches, the re-runs became
+   *  visible as the same command executing again on every switch. */
+  autoRanCommand: boolean;
 }
 
 const sessions = new Map<string, ShellSession>();
@@ -48,6 +53,7 @@ export function writeShellSession(key: string, patch: Partial<ShellSession>): vo
     sessionId: patch.sessionId !== undefined ? patch.sessionId : (prev?.sessionId ?? null),
     entries: patch.entries ?? prev?.entries ?? [],
     currentDb: patch.currentDb ?? prev?.currentDb ?? '',
+    autoRanCommand: patch.autoRanCommand ?? prev?.autoRanCommand ?? false,
   });
 }
 

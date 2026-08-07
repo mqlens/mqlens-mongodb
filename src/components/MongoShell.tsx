@@ -296,7 +296,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const scrollRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<() => void>(() => {});
-  const autoRunRef = useRef(false);
+  // Seeded from the tab's session: the opening command must run once per TAB,
+  // not once per mount, or switching tabs re-executes it (#240).
+  const autoRunRef = useRef(storedSession?.autoRanCommand ?? false);
   // Tracks the latest result docs so the Monaco completion provider (registered
   // once in onMount) can derive field names from the current results.
   const viewerRef = useRef<{ docs: Record<string, any>[] } | null>(null);
@@ -716,10 +718,11 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   useEffect(() => {
     if (!initialCommand || autoRunRef.current || !sessionAttempted || !sessionId) return;
     autoRunRef.current = true;
+    if (sessionKey) writeShellSession(sessionKey, { autoRanCommand: true });
     runCommand(initialCommand);
     // Run exactly once for the command that opened this shell tab.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialCommand, sessionAttempted, sessionId]);
+  }, [initialCommand, sessionAttempted, sessionId, sessionKey]);
 
   const dragging = useRef(false);
   useEffect(() => {
