@@ -1282,14 +1282,14 @@ describe('page size resync from the pager (#218)', () => {
     // user had just chosen from the pager.
     const onExecute = vi.fn();
     const { rerender } = render(
-      <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={50} executedSkip={0} />
+      <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 50, skip: 0, revision: 0 }} />
     );
 
     // User picks 100 in the pager: App re-runs, `tab.lastQuery.limit` is now
     // 100, and DocumentViewer re-renders with the newly executed values.
     rerender(
       <DialogProvider>
-        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={100} executedSkip={0} pagerRevision={1} />
+        <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 100, skip: 0, revision: 1 }} />
       </DialogProvider>
     );
 
@@ -1301,12 +1301,12 @@ describe('page size resync from the pager (#218)', () => {
   it('leaves the limit alone on a re-render that did not change what was executed', () => {
     const onExecute = vi.fn();
     const { rerender } = render(
-      <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={50} executedSkip={0} />
+      <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 50, skip: 0, revision: 0 }} />
     );
 
     rerender(
       <DialogProvider>
-        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={50} executedSkip={0} />
+        <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 50, skip: 0, revision: 0 }} />
       </DialogProvider>
     );
 
@@ -1322,13 +1322,13 @@ describe('page size resync from the pager (#218)', () => {
     // spurious open never closes again.
     const onExecute = vi.fn();
     const { rerender } = render(
-      <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={50} executedSkip={0} />
+      <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 50, skip: 0, revision: 0 }} />
     );
     expect(screen.getByTestId('query-options-section').className).toContain('hidden');
 
     rerender(
       <DialogProvider>
-        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={100} executedSkip={0} pagerRevision={1} />
+        <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 100, skip: 0, revision: 1 }} />
       </DialogProvider>
     );
 
@@ -1375,8 +1375,7 @@ describe('page size resync from the pager (#218)', () => {
           skip: '0',
           stages: [],
         }}
-        executedLimit={50}
-        executedSkip={0}
+        pagerRequest={{ limit: 50, skip: 0, revision: 3 }}
       />
     );
 
@@ -1391,22 +1390,46 @@ describe('page size resync from the pager (#218)', () => {
     // not overwrite input the user typed after pressing Run.
     const onExecute = vi.fn();
     const { rerender } = render(
-      <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={50} executedSkip={0} />
+      <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 50, skip: 0, revision: 0 }} />
     );
 
     // User runs with 100 from the builder, then types 200 while it is loading.
     const limitInput = screen.getAllByRole('spinbutton').at(-1)!;
     fireEvent.change(limitInput, { target: { value: '200' } });
 
-    // The earlier request completes: lastQuery.limit becomes 100.
+    // The earlier request completes. It was a builder Run, not a pager move, so
+    // the pager request is unchanged and must not disturb the typed value.
     rerender(
       <DialogProvider>
-        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={100} executedSkip={0} />
+        <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 50, skip: 0, revision: 0 }} />
       </DialogProvider>
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Run' }));
 
     expect(onExecute).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 }));
+  });
+
+  it('applies the pager page size even though App bumps the revision before the query lands', () => {
+    // App's real sequence is TWO renders: bumpPagerRevision setTabs first (new
+    // revision, lastQuery still old), then handleExecuteQuery resolves and
+    // updates lastQuery (new values, same revision). A revision-keyed effect
+    // reading the executed values therefore syncs to the STALE numbers and
+    // never runs again.
+    const onExecute = vi.fn();
+    const { rerender } = render(
+      <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 50, skip: 0, revision: 0 }} />
+    );
+
+    // The request and its revision arrive together, so there is no render in
+    // which the builder can see a new revision beside a stale page size.
+    rerender(
+      <DialogProvider>
+        <DocumentViewer {...baseProps} onExecute={onExecute} pagerRequest={{ limit: 100, skip: 0, revision: 1 }} />
+      </DialogProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(onExecute).toHaveBeenCalledWith(expect.objectContaining({ limit: 100 }));
   });
 });

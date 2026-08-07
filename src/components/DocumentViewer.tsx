@@ -210,15 +210,16 @@ interface DocumentViewerProps {
   /** Restored when remounting this tab's viewer (see App tab cache). */
   initialBuilderState?: BuilderState;
   onBuilderStateChange?: (state: BuilderState) => void;
-  /** The limit/skip the PAGER last executed, together with a revision that only
-   *  the pager bumps. Keyed on the revision rather than the values because the
-   *  builder must resync when — and only when — the pager moved the page:
-   *  syncing on value changes also fired on mount (discarding a restored but
-   *  unexecuted edit) and when an unrelated in-flight run landed (discarding
-   *  input typed after Run was pressed). */
-  executedLimit?: number;
-  executedSkip?: number;
-  pagerRevision?: number;
+  /** What the results pager last asked for, with a revision only it bumps.
+   *
+   *  The values travel WITH the revision on purpose. Syncing from the executed
+   *  `lastQuery` instead was wrong twice over: keyed on the values it fired on
+   *  mount (discarding a restored but unexecuted edit) and when an unrelated
+   *  in-flight run landed (discarding input typed after Run); keyed on the
+   *  revision it fired one render too early, because App bumps the revision
+   *  before the query resolves — so the builder synced to the OLD page size and
+   *  never corrected. One atomic object removes the window entirely. */
+  pagerRequest?: { limit: number; skip: number; revision: number };
   /** Identifies this tab's chat so an in-flight AI request survives the
    *  unmount that happens when the user switches tabs. */
   chatSessionKey?: string;
@@ -553,9 +554,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   availableFields = [],
   initialBuilderState = DEFAULT_BUILDER_STATE,
   onBuilderStateChange,
-  executedLimit,
-  executedSkip,
-  pagerRevision,
+  pagerRequest,
   chatSessionKey,
   initialChatMessages = [],
   onChatMessagesChange,
@@ -575,18 +574,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
   // One-way resync from the pager, and ONLY from the pager. The ref starts at
   // the revision present on mount, so mounting never applies — otherwise
-  // switching tabs would overwrite a restored-but-unrun edit with the older
-  // executed value. Any other change to the executed numbers (an in-flight
-  // builder run landing, say) leaves the fields alone because the revision has
-  // not moved.
-  const appliedPagerRevision = useRef(pagerRevision);
+  // switching tabs would overwrite a restored-but-unrun edit. Everything else
+  // that changes the executed query leaves these fields alone.
+  const appliedPagerRevision = useRef(pagerRequest?.revision);
   useEffect(() => {
-    if (pagerRevision === appliedPagerRevision.current) return;
-    appliedPagerRevision.current = pagerRevision;
-    if (executedLimit !== undefined) setLimit(String(executedLimit));
-    if (executedSkip !== undefined) setSkip(String(executedSkip));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagerRevision]);
+    if (!pagerRequest || pagerRequest.revision === appliedPagerRevision.current) return;
+    appliedPagerRevision.current = pagerRequest.revision;
+    setLimit(String(pagerRequest.limit));
+    setSkip(String(pagerRequest.skip));
+  }, [pagerRequest]);
   const [explainLoading, setExplainLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]);

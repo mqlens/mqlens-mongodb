@@ -123,10 +123,10 @@ export interface QueryTab {
   // Results view mode, kept on the tab so it survives the grid remounting on
   // every run and the tab being switched away (#218).
   viewMode?: ViewMode;
-  // Bumped only by the results pager. The builder resyncs its limit/skip on a
-  // change to this, never on the executed values alone — see DocumentViewer's
-  // pagerRevision prop.
-  pagerRevision?: number;
+  // What the results pager last asked for. The values travel with the revision
+  // so the builder can never observe a new revision beside a stale page size —
+  // see DocumentViewer's pagerRequest prop.
+  pagerRequest?: { limit: number; skip: number; revision: number };
   // Pagination count state.
   totalCount?: number;
   countLoading?: boolean;
@@ -2601,23 +2601,30 @@ function Workspace() {
     }
   };
 
-  // Marks the next executed values as pager-originated, so the query builder
-  // resyncs to them. Nothing else bumps this.
-  const bumpPagerRevision = (tabId: string) => {
+  // Records what the pager asked for so the query builder can follow it. The
+  // limit/skip are stored WITH the revision in one update: bumping a bare
+  // counter first let the builder see the new revision beside the not-yet
+  // updated lastQuery and sync to the old page size.
+  const notePagerRequest = (tabId: string, limit: number, skip: number) => {
     setTabs((prev) =>
-      prev.map((t) => (t.id === tabId ? { ...t, pagerRevision: (t.pagerRevision ?? 0) + 1 } : t))
+      prev.map((t) =>
+        t.id === tabId
+          ? { ...t, pagerRequest: { limit, skip, revision: (t.pagerRequest?.revision ?? 0) + 1 } }
+          : t
+      )
     );
   };
 
   const handlePageChange = (tab: QueryTab, newSkip: number) => {
     if (!tab.lastQuery) return;
-    bumpPagerRevision(tab.id);
-    handleExecuteQuery(tab, { ...tab.lastQuery, skip: Math.max(0, newSkip) });
+    const skip = Math.max(0, newSkip);
+    notePagerRequest(tab.id, tab.lastQuery.limit, skip);
+    handleExecuteQuery(tab, { ...tab.lastQuery, skip });
   };
 
   const handlePageSizeChange = (tab: QueryTab, newLimit: number) => {
     if (!tab.lastQuery) return;
-    bumpPagerRevision(tab.id);
+    notePagerRequest(tab.id, newLimit, 0);
     handleExecuteQuery(tab, { ...tab.lastQuery, limit: newLimit, skip: 0 });
   };
 
@@ -3620,9 +3627,7 @@ function Workspace() {
                 ?? builderStateFromQueryTab(tab.lastQuery, tab.lastAggregate)
               }
               onBuilderStateChange={(state) => handleBuilderStateChange(tab.id, state)}
-              executedLimit={tab.lastQuery?.limit}
-              executedSkip={tab.lastQuery?.skip}
-              pagerRevision={tab.pagerRevision ?? 0}
+              pagerRequest={tab.pagerRequest}
               chatSessionKey={tab.id}
               initialChatMessages={tabChatCache.current.get(tab.id)?.messages ?? []}
               onChatMessagesChange={(messages) => handleChatMessagesChange(tab.id, messages)}
