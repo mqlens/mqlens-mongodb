@@ -1334,4 +1334,22 @@ describe('page size resync from the pager (#218)', () => {
 
     expect(screen.getByTestId('query-options-section').className).toContain('hidden');
   });
+
+  it('lets the row focus ring show across the whole field, not just the label', () => {
+    // queryColClass draws the focus affordance as `ring-inset`, which is a
+    // box-shadow painted UNDER child content. The editor wrapper used to set
+    // its own opaque `bg-input`, so the ring survived only behind the
+    // semi-transparent QUERY badge — focusing the field outlined the label
+    // instead of the box. jsdom cannot compare painted pixels, so this guards
+    // the invariant that makes it work: the row owns the background, the
+    // editor wrapper must not repaint over it.
+    render(<DocumentViewer {...baseProps} onExecute={vi.fn()} />);
+
+    const editorWrapper = screen.getByTestId('query-filter-input').closest('div');
+    const row = editorWrapper?.parentElement;
+
+    expect(row?.className).toContain('focus-within:ring-1');
+    expect(row?.className).toContain('bg-input/80');
+    expect(editorWrapper?.className ?? '').not.toContain('bg-input');
+  });
 });
