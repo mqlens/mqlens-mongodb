@@ -53,9 +53,16 @@ export interface FindQueryBarProps {
 
 const queryColClass = (invalid: boolean) =>
   cn(
-    'flex min-w-0 flex-1 items-center border-r border-border bg-input/80 transition-colors last:border-r-0',
-    'focus-within:z-[1] focus-within:bg-input focus-within:ring-1 focus-within:ring-inset',
-    invalid ? 'focus-within:ring-destructive' : 'focus-within:ring-primary'
+    'relative flex min-w-0 flex-1 items-center border-r border-border bg-input/80 transition-colors last:border-r-0',
+    'focus-within:z-[1] focus-within:bg-input',
+    // The focus outline is an overlay pseudo-element, not `ring-inset`. A ring
+    // is an inset box-shadow, which paints UNDER child content — so anything in
+    // the field with a background of its own covered it and the outline
+    // survived only behind the semi-transparent label badge. Monaco paints its
+    // own layers here and wins over class-based background overrides, so the
+    // outline has to sit above the content rather than behind it.
+    "focus-within:after:pointer-events-none focus-within:after:absolute focus-within:after:inset-0 focus-within:after:content-[''] focus-within:after:border",
+    invalid ? 'focus-within:after:border-destructive' : 'focus-within:after:border-primary'
   );
 
 const fieldBadgeClass = (invalid: boolean) =>

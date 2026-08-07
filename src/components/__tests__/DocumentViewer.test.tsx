@@ -1348,7 +1348,11 @@ describe('page size resync from the pager (#218)', () => {
     const editorWrapper = screen.getByTestId('query-filter-input').closest('div');
     const row = editorWrapper?.parentElement;
 
-    expect(row?.className).toContain('focus-within:ring-1');
+    // Drawn as an overlay pseudo-element so nothing inside the field can paint
+    // over it — `ring-inset` is a box-shadow rendered under child content.
+    expect(row?.className).toContain('focus-within:after:border');
+    expect(row?.className).toContain('focus-within:after:absolute');
+    expect(row?.className).not.toContain('ring-inset');
     expect(row?.className).toContain('bg-input/80');
     expect(editorWrapper?.className ?? '').not.toContain('bg-input');
   });
