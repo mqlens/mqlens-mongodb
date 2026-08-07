@@ -123,6 +123,10 @@ export interface QueryTab {
   // Results view mode, kept on the tab so it survives the grid remounting on
   // every run and the tab being switched away (#218).
   viewMode?: ViewMode;
+  // Bumped only by the results pager. The builder resyncs its limit/skip on a
+  // change to this, never on the executed values alone — see DocumentViewer's
+  // pagerRevision prop.
+  pagerRevision?: number;
   // Pagination count state.
   totalCount?: number;
   countLoading?: boolean;
@@ -2597,13 +2601,23 @@ function Workspace() {
     }
   };
 
+  // Marks the next executed values as pager-originated, so the query builder
+  // resyncs to them. Nothing else bumps this.
+  const bumpPagerRevision = (tabId: string) => {
+    setTabs((prev) =>
+      prev.map((t) => (t.id === tabId ? { ...t, pagerRevision: (t.pagerRevision ?? 0) + 1 } : t))
+    );
+  };
+
   const handlePageChange = (tab: QueryTab, newSkip: number) => {
     if (!tab.lastQuery) return;
+    bumpPagerRevision(tab.id);
     handleExecuteQuery(tab, { ...tab.lastQuery, skip: Math.max(0, newSkip) });
   };
 
   const handlePageSizeChange = (tab: QueryTab, newLimit: number) => {
     if (!tab.lastQuery) return;
+    bumpPagerRevision(tab.id);
     handleExecuteQuery(tab, { ...tab.lastQuery, limit: newLimit, skip: 0 });
   };
 
@@ -3608,6 +3622,7 @@ function Workspace() {
               onBuilderStateChange={(state) => handleBuilderStateChange(tab.id, state)}
               executedLimit={tab.lastQuery?.limit}
               executedSkip={tab.lastQuery?.skip}
+              pagerRevision={tab.pagerRevision ?? 0}
               chatSessionKey={tab.id}
               initialChatMessages={tabChatCache.current.get(tab.id)?.messages ?? []}
               onChatMessagesChange={(messages) => handleChatMessagesChange(tab.id, messages)}

@@ -210,12 +210,15 @@ interface DocumentViewerProps {
   /** Restored when remounting this tab's viewer (see App tab cache). */
   initialBuilderState?: BuilderState;
   onBuilderStateChange?: (state: BuilderState) => void;
-  /** The limit/skip actually executed for this tab (`tab.lastQuery`). The
-   *  pager writes those straight onto the tab, while the builder's own
-   *  limit/skip are seeded once at mount — so without this the next Run sent
-   *  the stale mount-time page size and silently undid the pager. */
+  /** The limit/skip the PAGER last executed, together with a revision that only
+   *  the pager bumps. Keyed on the revision rather than the values because the
+   *  builder must resync when — and only when — the pager moved the page:
+   *  syncing on value changes also fired on mount (discarding a restored but
+   *  unexecuted edit) and when an unrelated in-flight run landed (discarding
+   *  input typed after Run was pressed). */
   executedLimit?: number;
   executedSkip?: number;
+  pagerRevision?: number;
   /** Identifies this tab's chat so an in-flight AI request survives the
    *  unmount that happens when the user switches tabs. */
   chatSessionKey?: string;
@@ -552,6 +555,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onBuilderStateChange,
   executedLimit,
   executedSkip,
+  pagerRevision,
   chatSessionKey,
   initialChatMessages = [],
   onChatMessagesChange,
@@ -569,16 +573,20 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [limit, setLimit] = useState(initialBuilderState.limit);
   const [skip, setSkip] = useState(initialBuilderState.skip);
 
-  // One-way resync from what was actually executed. Keyed on the executed
-  // values themselves, so an unrelated re-render cannot clobber a limit the
-  // user is midway through typing — only the pager actually running a new page
-  // size moves these.
+  // One-way resync from the pager, and ONLY from the pager. The ref starts at
+  // the revision present on mount, so mounting never applies — otherwise
+  // switching tabs would overwrite a restored-but-unrun edit with the older
+  // executed value. Any other change to the executed numbers (an in-flight
+  // builder run landing, say) leaves the fields alone because the revision has
+  // not moved.
+  const appliedPagerRevision = useRef(pagerRevision);
   useEffect(() => {
+    if (pagerRevision === appliedPagerRevision.current) return;
+    appliedPagerRevision.current = pagerRevision;
     if (executedLimit !== undefined) setLimit(String(executedLimit));
-  }, [executedLimit]);
-  useEffect(() => {
     if (executedSkip !== undefined) setSkip(String(executedSkip));
-  }, [executedSkip]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagerRevision]);
   const [explainLoading, setExplainLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]);

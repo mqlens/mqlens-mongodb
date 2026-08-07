@@ -1289,7 +1289,7 @@ describe('page size resync from the pager (#218)', () => {
     // 100, and DocumentViewer re-renders with the newly executed values.
     rerender(
       <DialogProvider>
-        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={100} executedSkip={0} />
+        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={100} executedSkip={0} pagerRevision={1} />
       </DialogProvider>
     );
 
@@ -1328,7 +1328,7 @@ describe('page size resync from the pager (#218)', () => {
 
     rerender(
       <DialogProvider>
-        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={100} executedSkip={0} />
+        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={100} executedSkip={0} pagerRevision={1} />
       </DialogProvider>
     );
 
@@ -1355,5 +1355,58 @@ describe('page size resync from the pager (#218)', () => {
     expect(row?.className).not.toContain('ring-inset');
     expect(row?.className).toContain('bg-input/80');
     expect(editorWrapper?.className ?? '').not.toContain('bg-input');
+  });
+
+  it('keeps an unexecuted limit edit when the tab is switched away and back (Codex P2)', () => {
+    // The builder cache restores an edit the user never ran. The resync effects
+    // also run on mount, so they immediately replaced that restored edit with
+    // the older executed value — switching tabs silently discarded it.
+    const onExecute = vi.fn();
+    render(
+      <DocumentViewer
+        {...baseProps}
+        onExecute={onExecute}
+        initialBuilderState={{
+          queryMode: 'find',
+          filterQuery: '',
+          sortQuery: '',
+          projectionQuery: '',
+          limit: '200',
+          skip: '0',
+          stages: [],
+        }}
+        executedLimit={50}
+        executedSkip={0}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+
+    expect(onExecute).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 }));
+  });
+
+  it('keeps a limit edit made while an earlier query was still running (Codex P2)', () => {
+    // The query bar stays editable during a run. When the in-flight request
+    // lands, App updates lastQuery and the executed value changes — which must
+    // not overwrite input the user typed after pressing Run.
+    const onExecute = vi.fn();
+    const { rerender } = render(
+      <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={50} executedSkip={0} />
+    );
+
+    // User runs with 100 from the builder, then types 200 while it is loading.
+    const limitInput = screen.getAllByRole('spinbutton').at(-1)!;
+    fireEvent.change(limitInput, { target: { value: '200' } });
+
+    // The earlier request completes: lastQuery.limit becomes 100.
+    rerender(
+      <DialogProvider>
+        <DocumentViewer {...baseProps} onExecute={onExecute} executedLimit={100} executedSkip={0} />
+      </DialogProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+
+    expect(onExecute).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 }));
   });
 });
