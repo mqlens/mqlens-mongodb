@@ -735,12 +735,27 @@ pub fn get_shell_tab_state_impl(
 pub fn set_shell_tab_state_impl(
     state: &AppState,
     tab_id: &str,
-    value: serde_json::Value,
+    mut value: serde_json::Value,
 ) -> Result<(), String> {
-    state
-        .shell_tab_state
-        .lock_safe()?
-        .insert(tab_id.to_string(), value);
+    let mut map = state.shell_tab_state.lock_safe()?;
+    // Ownership is NOT the writer's to set. A renderer whose tab has moved can
+    // still have a write in flight — the mirror is fire-and-forget — and it
+    // carries the window it knew about, which would put the departed window
+    // back on the entry and hide the child from its real owner's close sweep.
+    // `claim_shell_tab_state` is the only way ownership changes; an ordinary
+    // write keeps whatever is already recorded, and only a brand-new entry
+    // takes the owner its creator supplies.
+    if let Some(existing_owner) = map
+        .get(tab_id)
+        .and_then(|v| v.get("windowId"))
+        .and_then(|w| w.as_str())
+        .map(|w| w.to_string())
+    {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("windowId".to_string(), serde_json::Value::String(existing_owner));
+        }
+    }
+    map.insert(tab_id.to_string(), value);
     Ok(())
 }
 

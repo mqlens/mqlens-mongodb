@@ -4262,6 +4262,55 @@ mod shell_tab_state_tests {
     }
 
     #[test]
+    fn an_ordinary_write_cannot_take_ownership_back() {
+        // The departed renderer's mirror is fire-and-forget, so a write from it
+        // can land after the destination has claimed the tab. It carries the
+        // window IT knew about; honouring that would hide the child from its
+        // real owner's close sweep and let the old label stop a live session.
+        use crate::claim_shell_tab_state_impl;
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-1", "windowId": "win-1" }),
+        )
+        .unwrap();
+        claim_shell_tab_state_impl(&st, "tab-1", "win-2").unwrap();
+
+        // The old owner's delayed write, still naming itself.
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-1", "entries": ["late"], "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        let stored = get_shell_tab_state_impl(&st, "tab-1").unwrap().unwrap();
+        assert_eq!(stored.get("windowId").unwrap(), "win-2", "ownership was taken back");
+        assert_eq!(
+            stored.get("entries").unwrap(),
+            &serde_json::json!(["late"]),
+            "the write itself must still apply — only the owner field is protected"
+        );
+    }
+
+    #[test]
+    fn a_brand_new_entry_takes_the_owner_its_creator_supplies() {
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "fresh",
+            serde_json::json!({ "sessionId": "s", "windowId": "win-3" }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            shell_tab_ids_for_window(&st, "win-3").unwrap(),
+            vec!["fresh".to_string()]
+        );
+    }
+
+    #[test]
     fn claiming_a_tab_with_no_state_is_a_no_op() {
         use crate::claim_shell_tab_state_impl;
         assert_eq!(
