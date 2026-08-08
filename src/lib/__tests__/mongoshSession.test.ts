@@ -301,6 +301,24 @@ describe('mongosh session registry (#240)', () => {
       );
     });
 
+    it('a reopened tab does not join the closed tab\'s pending start', async () => {
+      // Deterministic ids mean the reopened tab lands on the same key. Joining
+      // the old start would hand it a child the previous mount stops moments
+      // later for failing its own epoch check — a live-looking session id
+      // pointing at nothing.
+      let calls = 0;
+      const task = () => {
+        calls += 1;
+        return new Promise<{ session_id: string }>(() => {}); // still starting
+      };
+      shareShellStart('tab-1', task);
+
+      await disposeShellSession('tab-1');
+      shareShellStart('tab-1', task); // the tab is reopened
+
+      expect(calls).toBe(2);
+    });
+
     it('a reopened tab is not silenced by the previous tab\'s disposal', async () => {
       writeShellSession('tab-1', { sessionId: 'sess-1' });
       await disposeShellSession('tab-1');

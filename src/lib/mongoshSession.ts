@@ -284,6 +284,11 @@ export async function disposeShellSession(key: string): Promise<void> {
   // flight; doing this afterwards would end the epoch of — and delete the cache
   // entry belonging to — the tab that has since taken the key over.
   endEpoch(key);
+  // Drop the shared start too. A reopened tab lands on the same deterministic
+  // key, and joining the previous tab's pending start would hand it a child the
+  // old mount is about to stop for failing ITS epoch check — leaving the
+  // reopened shell attached to a dead session id.
+  dropPendingShellStart(key);
   const cached = sessions.get(key);
   sessions.delete(key);
 

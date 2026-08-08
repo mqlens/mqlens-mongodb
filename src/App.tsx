@@ -2906,7 +2906,20 @@ function Workspace() {
           tabBuilderStateCache.current.clear();
           tabChatCache.current.clear();
           resetChatRequests();
-          void disposeShellSessionsForTabs(tabsRef.current.map((t) => t.id));
+          // Not every tab here is gone from the DOCUMENT. This branch also runs
+          // when the last tab of a secondary window is moved elsewhere — that
+          // move is why the window disappeared — and the destination is about
+          // to attach to that tab's mongosh session. Disposing it would kill
+          // the process and delete the state the other window is reaching for.
+          const survivors = new Set(
+            payload.workspace.windows
+              .flatMap((w) => allPanes(w.splitTree).flatMap((p) => p.tabIds))
+              .map((id) => toLiveSpaceId(id, connections))
+          );
+          tabsRef.current.forEach((t) => {
+            if (survivors.has(t.id)) forgetShellSession(t.id);
+            else void disposeShellSession(t.id);
+          });
           dispatchLayout({ type: 'hydrate', layout: createInitialLayout([], null) });
           return;
         }
