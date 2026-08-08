@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import type { CollectionInfo } from './Sidebar';
+import { useTranslation } from 'react-i18next';
 
 interface CreateViewViewProps {
   connectionId: string;
@@ -31,6 +32,7 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
   databaseName,
   onCreated,
 }) => {
+  const { t } = useTranslation('admin');
   const [collections, setCollections] = useState<string[]>([]);
   const [loadingColls, setLoadingColls] = useState(true);
   const [viewName, setViewName] = useState('');
@@ -68,21 +70,21 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
   const handleCreate = async () => {
     setError(null);
     if (!viewName.trim()) {
-      setError('View name is required.');
+      setError(t('createViewView.errors.nameRequired'));
       return;
     }
     if (!source) {
-      setError('Select a source collection.');
+      setError(t('createViewView.errors.selectSource'));
       return;
     }
     try {
       const parsed = JSON.parse(pipeline || '[]');
       if (!Array.isArray(parsed)) {
-        setError('Pipeline must be a JSON array of stages.');
+        setError(t('createViewView.errors.pipelineMustBeArray'));
         return;
       }
     } catch (e: any) {
-      setError(`Invalid pipeline JSON: ${e?.message || 'syntax error'}`);
+      setError(t('createViewView.errors.invalidPipelineJson', { message: e?.message || t('createViewView.errors.syntaxErrorFallback') }));
       return;
     }
 
@@ -107,12 +109,12 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
     <div className="flex h-full flex-col overflow-auto" data-testid="create-view">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-sm font-semibold text-foreground">
         <Eye size={14} className="text-success" />
-        <span>Create View — {databaseName}</span>
+        <span>{t('createViewView.title', { database: databaseName })}</span>
       </div>
 
       <div className="flex max-w-[640px] flex-col gap-4 p-4">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="view-name-input">View Name</Label>
+          <Label htmlFor="view-name-input">{t('createViewView.labels.viewName')}</Label>
           <Input
             id="view-name-input"
             type="text"
@@ -124,20 +126,20 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <Label>Source Collection</Label>
+          <Label>{t('createViewView.labels.sourceCollection')}</Label>
           {loadingColls ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 size={13} className="animate-spin" /> Loading collections…
+              <Loader2 size={13} className="animate-spin" /> {t('createViewView.loading')}
             </div>
           ) : (
             <Select value={source || '__none__'} onValueChange={(v) => setSource(v === '__none__' ? '' : v)}>
               <SelectTrigger data-testid="view-source-select">
-                <SelectValue placeholder="(no collections)" />
+                <SelectValue placeholder={t('createViewView.options.noCollections')} />
               </SelectTrigger>
               <SelectContent>
                 {collections.length === 0 && (
                   <SelectItem value="__none__" disabled>
-                    (no collections)
+                    {t('createViewView.options.noCollections')}
                   </SelectItem>
                 )}
                 {collections.map((c) => (
@@ -151,7 +153,7 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="view-pipeline-input">Aggregation Pipeline (JSON array)</Label>
+          <Label htmlFor="view-pipeline-input">{t('createViewView.labels.pipeline')}</Label>
           <textarea
             id="view-pipeline-input"
             className={textareaClassName}
@@ -181,7 +183,7 @@ export const CreateViewView: React.FC<CreateViewViewProps> = ({
             onClick={handleCreate}
             disabled={creating}
           >
-            {creating ? 'Creating…' : 'Create View'}
+            {creating ? t('createViewView.actions.creating') : t('createViewView.actions.createView')}
           </Button>
         </div>
       </div>

@@ -1791,7 +1791,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = start_mongosh_session_impl(&state, &conn_id, "mongodb://mock", "db", "")
+        let err = start_mongosh_session_impl(&state, &conn_id, "mongodb://mock", "db", "", "")
             .await
             .err()
             .expect("read-only connection must refuse a mongosh session");
@@ -1816,7 +1816,7 @@ mod tests {
             crate::connections::ConnectionMode::ConfirmDestructive,
         )
         .unwrap();
-        let err = start_mongosh_session_impl(&cd_state, &cd_id, "mongodb://mock", "db", "")
+        let err = start_mongosh_session_impl(&cd_state, &cd_id, "mongodb://mock", "db", "", "")
             .await
             .err()
             .expect("mock connections still can't run an external mongosh");
@@ -1832,7 +1832,7 @@ mod tests {
         let normal_id = connect_db_impl(&normal_state, "mongodb://mock", None)
             .await
             .expect("connect mock");
-        let err = start_mongosh_session_impl(&normal_state, &normal_id, "mongodb://mock", "db", "")
+        let err = start_mongosh_session_impl(&normal_state, &normal_id, "mongodb://mock", "db", "", "")
             .await
             .err()
             .expect("mock connections still can't run an external mongosh");
@@ -4187,4 +4187,118 @@ mod tests {
             .await
             .expect("disconnect must succeed even with no registered meta");
     }
+}
+
+#[cfg(test)]
+mod shell_tab_state_tests {
+    use crate::state::AppState;
+    use crate::{
+        clear_shell_tab_state_impl, get_shell_tab_state_impl, rename_shell_tab_state_impl,
+        set_shell_tab_state_impl, shell_tab_ids_for_window,
+    };
+
+    fn state() -> AppState {
+        AppState::new()
+    }
+
+    #[test]
+    fn a_closed_window_is_remembered_so_a_pending_start_can_abandon_itself() {
+        // Closing a window destroys the renderer that would have cancelled a
+        // `start_mongosh_session` still in flight, and that child has no
+        // session id to record until it exists — so the close sweep finds
+        // nothing to stop and the process survives until the app exits. The
+        // start consults this and stops the child it just spawned.
+        use crate::state::LockExt;
+        use crate::window_is_closed;
+        let st = state();
+
+        assert!(!window_is_closed(&st, "win-1").unwrap());
+        // No owning window recorded (an older frontend, or the main window
+        // before it has a label) must never look closed.
+        assert!(!window_is_closed(&st, "").unwrap());
+
+        st.closed_windows.lock_safe().unwrap().insert("win-1".into());
+
+        assert!(window_is_closed(&st, "win-1").unwrap());
+        assert!(!window_is_closed(&st, "win-2").unwrap());
+
+        // Labels are reused within a session, so respawning one must clear it —
+        // otherwise every start in the new window would kill its own child.
+        st.closed_windows.lock_safe().unwrap().remove("win-1");
+        assert!(!window_is_closed(&st, "win-1").unwrap());
+    }
+
+    #[test]
+    fn lists_only_the_tabs_a_given_window_owns() {
+        // Closing a secondary window with the OS X button runs no frontend
+        // code, so the backend stops that window's shells itself. It has to
+        // find them by the recorded owner: the workspace's tab ids are
+        // profile-space while these keys are live-space, so a shell rebound to
+        // a connection — the only kind with a child worth stopping — is filed
+        // under an id the workspace never mentions.
+        let st = state();
+        let owned = serde_json::json!({ "sessionId": "a", "windowId": "window-2" });
+        set_shell_tab_state_impl(&st, "live.tab-1", owned).unwrap();
+        set_shell_tab_state_impl(
+            &st,
+            "main.tab",
+            serde_json::json!({ "sessionId": "b", "windowId": "main" }),
+        )
+        .unwrap();
+        // Predates the stamp, or was written by an older build.
+        set_shell_tab_state_impl(&st, "unstamped", serde_json::json!({ "sessionId": "c" }))
+            .unwrap();
+
+        assert_eq!(
+            shell_tab_ids_for_window(&st, "window-2").unwrap(),
+            vec!["live.tab-1".to_string()]
+        );
+        assert!(shell_tab_ids_for_window(&st, "window-9").unwrap().is_empty());
+    }
+
+    #[test]
+    fn stores_and_returns_a_tabs_state() {
+        let st = state();
+        let value = serde_json::json!({ "sessionId": "sess-1", "entries": [] });
+        set_shell_tab_state_impl(&st, "tab-1", value.clone()).unwrap();
+
+        assert_eq!(get_shell_tab_state_impl(&st, "tab-1").unwrap(), Some(value));
+    }
+
+    #[test]
+    fn an_unknown_tab_has_no_state() {
+        assert_eq!(get_shell_tab_state_impl(&state(), "nope").unwrap(), None);
+    }
+
+    #[test]
+    fn clearing_one_tab_leaves_the_others() {
+        let st = state();
+        set_shell_tab_state_impl(&st, "tab-1", serde_json::json!({ "sessionId": "a" })).unwrap();
+        set_shell_tab_state_impl(&st, "tab-2", serde_json::json!({ "sessionId": "b" })).unwrap();
+
+        clear_shell_tab_state_impl(&st, "tab-1").unwrap();
+
+        assert_eq!(get_shell_tab_state_impl(&st, "tab-1").unwrap(), None);
+        assert!(get_shell_tab_state_impl(&st, "tab-2").unwrap().is_some());
+    }
+
+    #[test]
+    fn rename_moves_the_state_to_the_new_tab_id() {
+        let st = state();
+        let value = serde_json::json!({ "sessionId": "sess-1" });
+        set_shell_tab_state_impl(&st, "old", value.clone()).unwrap();
+
+        rename_shell_tab_state_impl(&st, "old", "new").unwrap();
+
+        assert_eq!(get_shell_tab_state_impl(&st, "old").unwrap(), None);
+        assert_eq!(get_shell_tab_state_impl(&st, "new").unwrap(), Some(value));
+    }
+
+    #[test]
+    fn renaming_an_unknown_tab_is_a_no_op() {
+        let st = state();
+        rename_shell_tab_state_impl(&st, "missing", "new").unwrap();
+        assert_eq!(get_shell_tab_state_impl(&st, "new").unwrap(), None);
+    }
+
 }

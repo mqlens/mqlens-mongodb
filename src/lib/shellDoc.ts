@@ -104,6 +104,36 @@ function containsLong(v: any): boolean {
 function serializeQuery(v: any): any {
   return EJSON.serialize(v, { relaxed: !containsLong(v) });
 }
+/**
+ * The two parse failures this module raises ITSELF, as stable codes.
+ *
+ * Callers interpolate `err.message` into a translated wrapper
+ * (documents:documentViewer.errors.invalidJsonSyntax), so a hard-coded English
+ * message reached German users as "Ungültige JSON-Syntax: Query must be an
+ * object". The message stays English for logs and stack traces; the UI maps
+ * `code` to a translated string instead (see `shellDocErrorKey`). Errors that
+ * come from the underlying parser carry no code and still fall back to their
+ * own message, which no amount of work here can localise.
+ */
+export type ShellDocErrorCode = 'invalidQuery' | 'queryMustBeObject';
+
+export class ShellDocError extends SyntaxError {
+  readonly code: ShellDocErrorCode;
+  constructor(code: ShellDocErrorCode, message: string) {
+    super(message);
+    this.name = 'ShellDocError';
+    this.code = code;
+  }
+}
+
+/** Catalog key for a ShellDocError, or null for anything else. */
+export function shellDocErrorKey(err: unknown): string | null {
+  const code = (err as ShellDocError | undefined)?.code;
+  if (code === 'invalidQuery') return 'documentViewer.errors.invalidQuery';
+  if (code === 'queryMustBeObject') return 'documentViewer.errors.queryMustBeObject';
+  return null;
+}
+
 export function parseShellJson(text: string): any {
   const trimmed = text.trim();
   if (!trimmed) return {};
@@ -115,7 +145,7 @@ export function parseShellJson(text: string): any {
   const attempt = (s: string) => {
     const result = parseFilter(s);
     if (result === '' && !/^(['"])\1$/.test(s.trim())) {
-      throw new SyntaxError('Invalid query');
+      throw new ShellDocError('invalidQuery', 'Invalid query');
     }
     return result;
   };
@@ -147,7 +177,7 @@ export function parseShellJson(text: string): any {
 export function parseQueryObject(text: string): any {
   const parsed = parseShellJson(text);
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new SyntaxError('Query must be an object');
+    throw new ShellDocError('queryMustBeObject', 'Query must be an object');
   }
   return parsed;
 }

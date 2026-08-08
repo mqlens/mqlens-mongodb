@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { FileJson } from 'lucide-react';
 import Editor from '@monaco-editor/react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { shellToEjson } from '../lib/shellDoc';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { useEscapeClose } from '../lib/useEscapeClose';
@@ -15,16 +17,16 @@ import { DraggableDialogContent } from '@/components/ui/draggable-dialog-content
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 
-function validateDocument(text: string): string | null {
-  if (!text.trim()) return 'Document is empty.';
+function validateDocument(text: string, t: TFunction): string | null {
+  if (!text.trim()) return t('documents:editModal.errors.empty');
   let parsed: unknown;
   try {
     parsed = JSON.parse(shellToEjson(text));
   } catch (e: any) {
-    return `Invalid document: ${e?.message || 'syntax error'}`;
+    return t('documents:editModal.errors.invalid', { message: e?.message || t('documents:editModal.errors.syntaxError') });
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return 'A document must be an object (e.g. { "field": value }).';
+    return t('documents:editModal.errors.mustBeObject');
   }
   return null;
 }
@@ -44,10 +46,11 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   onClose,
   onSave,
 }) => {
+  const { t } = useTranslation('documents');
   const [json, setJson] = useState(initialJson);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const validationError = useMemo(() => validateDocument(json), [json]);
+  const validationError = useMemo(() => validateDocument(json, t), [json, t]);
   const theme = useMonacoTheme();
   const monacoFontSize = useMonacoFontSize(12.5);
   useEscapeClose(isOpen, onClose);
@@ -97,13 +100,13 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
           <div className="flex items-center gap-2">
             <FileJson size={16} className="text-primary" />
             <DialogTitle className="text-sm">
-              {mode === 'insert' ? 'Insert Document' : 'Edit Document'}
+              {mode === 'insert' ? t('editModal.title.insert') : t('editModal.title.edit')}
             </DialogTitle>
           </div>
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden px-6 py-4">
-          <Label htmlFor="document-json-editor">Document</Label>
+          <Label htmlFor="document-json-editor">{t('editModal.labels.document')}</Label>
           <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-background">
             <Editor
               height="100%"
@@ -142,8 +145,9 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
             />
           </div>
           <DialogDescription className="text-xs">
-            Shell types are supported (e.g. {'ObjectId("..."), ISODate("..."), NumberLong("...")'}).
-            Editing replaces the entire document.
+            {t('editModal.hints.shellTypes', {
+              example: 'ObjectId("..."), ISODate("..."), NumberLong("...")',
+            })}
           </DialogDescription>
         </div>
 
@@ -158,7 +162,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
 
         <DialogFooter className="border-t border-border px-6 py-4">
           <Button type="button" variant="outline" onClick={onClose}>
-            Cancel
+            {t('editModal.actions.cancel')}
           </Button>
           <Button
             type="button"
@@ -166,7 +170,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
             disabled={saving || !!validationError}
             data-testid="document-save-btn"
           >
-            {mode === 'insert' ? 'Insert' : 'Save Changes'}
+            {mode === 'insert' ? t('editModal.actions.insert') : t('editModal.actions.saveChanges')}
           </Button>
         </DialogFooter>
       </DraggableDialogContent>

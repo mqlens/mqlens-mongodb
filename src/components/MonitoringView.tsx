@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useTranslation } from 'react-i18next';
 import {
   Activity,
   RefreshCw,
@@ -54,12 +55,12 @@ interface MonitoringViewProps {
   connectionId: string;
 }
 
-const REFRESH_OPTIONS: { label: string; ms: number }[] = [
-  { label: '5s', ms: 5000 },
-  { label: '10s', ms: 10000 },
-  { label: '30s', ms: 30000 },
-  { label: '1m', ms: 60000 },
-  { label: 'Off', ms: 0 },
+const REFRESH_OPTIONS: { labelKey: string; ms: number }[] = [
+  { labelKey: '5s', ms: 5000 },
+  { labelKey: '10s', ms: 10000 },
+  { labelKey: '30s', ms: 30000 },
+  { labelKey: '1m', ms: 60000 },
+  { labelKey: 'off', ms: 0 },
 ];
 const DEFAULT_POLL_MS = 10000;
 const MAX_SAMPLES = 30;
@@ -244,6 +245,7 @@ const MonitoringDetail: React.FC<{
   detail: { kind: 'op'; data: CurrentOp } | { kind: 'profile'; data: ProfileEntry };
   onClose: () => void;
 }> = ({ detail, onClose }) => {
+  const { t } = useTranslation('admin');
   useEscapeClose(true, onClose);
   return (
     <Dialog open onOpenChange={() => {}}>
@@ -267,9 +269,9 @@ const MonitoringDetail: React.FC<{
           className="flex shrink-0 cursor-grab flex-row items-center justify-between border-b border-border px-4 py-3 active:cursor-grabbing"
         >
           <DialogTitle className="text-sm">
-            {detail.kind === 'op' ? 'Operation details' : 'Profiled operation'}
+            {detail.kind === 'op' ? t('monitoringView.detail.opTitle') : t('monitoringView.detail.profileTitle')}
           </DialogTitle>
-          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="Close">
+          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label={t('common:close')}>
             <X size={14} />
           </Button>
         </DialogHeader>
@@ -277,24 +279,24 @@ const MonitoringDetail: React.FC<{
         <div className="px-4 py-2">
           {detail.kind === 'op' ? (
             <>
-              <DetailRow label="opid">{detail.data.opid}</DetailRow>
-              <DetailRow label="op"><OpBadge op={detail.data.op} /></DetailRow>
-              <DetailRow label="ns">{detail.data.ns}</DetailRow>
-              <DetailRow label="running">{detail.data.secsRunning}s</DetailRow>
-              <DetailRow label="client">{detail.data.client}</DetailRow>
-              <DetailRow label="desc">{detail.data.desc || '—'}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.opid')}>{detail.data.opid}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.op')}><OpBadge op={detail.data.op} /></DetailRow>
+              <DetailRow label={t('monitoringView.labels.ns')}>{detail.data.ns}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.running')}>{detail.data.secsRunning}s</DetailRow>
+              <DetailRow label={t('monitoringView.labels.client')}>{detail.data.client}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.desc')}>{detail.data.desc || '—'}</DetailRow>
             </>
           ) : (
             <>
-              <DetailRow label="op"><OpBadge op={detail.data.op} /></DetailRow>
-              <DetailRow label="ns">{detail.data.ns}</DetailRow>
-              <DetailRow label="duration">{detail.data.millis} ms</DetailRow>
-              <DetailRow label="plan">{detail.data.planSummary || '—'}</DetailRow>
-              <DetailRow label="time">{fmtTs(detail.data.tsMs)}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.op')}><OpBadge op={detail.data.op} /></DetailRow>
+              <DetailRow label={t('monitoringView.labels.ns')}>{detail.data.ns}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.duration')}>{detail.data.millis} ms</DetailRow>
+              <DetailRow label={t('monitoringView.labels.plan')}>{detail.data.planSummary || '—'}</DetailRow>
+              <DetailRow label={t('monitoringView.labels.time')}>{fmtTs(detail.data.tsMs)}</DetailRow>
             </>
           )}
         </div>
-        <div className="border-t border-border px-4 py-2 text-xs font-medium text-muted-foreground">Command</div>
+        <div className="border-t border-border px-4 py-2 text-xs font-medium text-muted-foreground">{t('monitoringView.labels.commandHeading')}</div>
         <pre
           className="mx-4 mb-4 max-h-48 overflow-auto rounded-md bg-muted/50 p-3 font-mono text-[11px] text-foreground"
           data-testid="monitoring-detail-cmd"
@@ -310,19 +312,22 @@ const MonitoringDetail: React.FC<{
 const isAuthError = (msg: string): boolean =>
   /not authorized|unauthorized|requires authentication|\(13\)|code 13/i.test(msg);
 
-const AccessNote: React.FC<{ what: string; role?: string }> = ({ what, role = 'clusterMonitor' }) => (
-  <div className="flex gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm" data-testid="access-required">
-    <Lock size={15} className="mt-0.5 flex-shrink-0 text-warning" />
-    <div>
-      <strong className="text-foreground">Access required</strong>
-      <p className="mt-1 text-xs text-muted-foreground">
-        This connection&apos;s user isn&apos;t authorized to {what}. Grant the{' '}
-        <code className="rounded bg-muted px-1 font-mono text-[11px]">{role}</code> role
-        (or equivalent privilege) to enable it.
-      </p>
+const AccessNote: React.FC<{ what: string; role?: string }> = ({ what, role = 'clusterMonitor' }) => {
+  const { t } = useTranslation('admin');
+  return (
+    <div className="flex gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm" data-testid="access-required">
+      <Lock size={15} className="mt-0.5 flex-shrink-0 text-warning" />
+      <div>
+        <strong className="text-foreground">{t('monitoringView.accessRequired.title')}</strong>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t('monitoringView.accessRequired.bodyPrefix', { what })}
+          <code className="rounded bg-muted px-1 font-mono text-[11px]">{role}</code>
+          {t('monitoringView.accessRequired.bodySuffix')}
+        </p>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const errLine = (msg: string): string => {
   const first = msg.split('\n')[0];
@@ -333,35 +338,38 @@ const OpRow = React.memo<{
   op: CurrentOp;
   onSelect: (op: CurrentOp) => void;
   onKill: (op: CurrentOp) => void;
-}>(({ op, onSelect, onKill }) => (
-  <tr
-    className="cursor-pointer border-t border-border hover:bg-accent/50"
-    data-testid={`op-row-${op.opid}`}
-    onClick={() => onSelect(op)}
-  >
-    <td className="px-3 py-1.5 tabular-nums">{op.opid}</td>
-    <td className="px-3 py-1.5"><OpBadge op={op.op} /></td>
-    <td className="max-w-[140px] truncate px-3 py-1.5 font-mono">{op.ns}</td>
-    <td className={cn('px-3 py-1.5 tabular-nums', op.secsRunning >= 5 && 'text-warning')}>{op.secsRunning}</td>
-    <td className="px-3 py-1.5">{op.client}</td>
-    <td className="max-w-[280px] truncate px-3 py-1.5 font-mono text-muted-foreground" title={op.command}>
-      {truncateCmd(op.command)}
-    </td>
-    <td className="px-3 py-1.5">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7 text-destructive hover:text-destructive"
-        title="Kill operation"
-        data-testid={`kill-op-${op.opid}`}
-        onClick={(e) => { e.stopPropagation(); onKill(op); }}
-      >
-        <Skull size={12} />
-      </Button>
-    </td>
-  </tr>
-));
+}>(({ op, onSelect, onKill }) => {
+  const { t } = useTranslation('admin');
+  return (
+    <tr
+      className="cursor-pointer border-t border-border hover:bg-accent/50"
+      data-testid={`op-row-${op.opid}`}
+      onClick={() => onSelect(op)}
+    >
+      <td className="px-3 py-1.5 tabular-nums">{op.opid}</td>
+      <td className="px-3 py-1.5"><OpBadge op={op.op} /></td>
+      <td className="max-w-[140px] truncate px-3 py-1.5 font-mono">{op.ns}</td>
+      <td className={cn('px-3 py-1.5 tabular-nums', op.secsRunning >= 5 && 'text-warning')}>{op.secsRunning}</td>
+      <td className="px-3 py-1.5">{op.client}</td>
+      <td className="max-w-[280px] truncate px-3 py-1.5 font-mono text-muted-foreground" title={op.command}>
+        {truncateCmd(op.command)}
+      </td>
+      <td className="px-3 py-1.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-destructive hover:text-destructive"
+          title={t('monitoringView.actions.killOperation')}
+          data-testid={`kill-op-${op.opid}`}
+          onClick={(e) => { e.stopPropagation(); onKill(op); }}
+        >
+          <Skull size={12} />
+        </Button>
+      </td>
+    </tr>
+  );
+});
 OpRow.displayName = 'OpRow';
 
 const ProfileRow = React.memo<{
@@ -424,56 +432,59 @@ const OpsFilterBar: React.FC<{
   onMinSecsChange,
   shown,
   total,
-}) => (
-  <div className="mb-2 flex h-8 overflow-hidden rounded-lg border border-border bg-background text-xs shadow-sm">
-    <div className="relative flex min-w-[12rem] flex-1 items-center">
-      <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
-      <Input
-        className="h-8 border-0 bg-transparent pl-8 text-xs shadow-none focus-visible:ring-0"
-        value={search}
-        onChange={(e) => onSearchChange(e.target.value)}
-        placeholder="Filter ns, client, command…"
-        data-testid="ops-search"
-      />
+}) => {
+  const { t } = useTranslation('admin');
+  return (
+    <div className="mb-2 flex h-8 overflow-hidden rounded-lg border border-border bg-background text-xs shadow-sm">
+      <div className="relative flex min-w-[12rem] flex-1 items-center">
+        <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
+        <Input
+          className="h-8 border-0 bg-transparent pl-8 text-xs shadow-none focus-visible:ring-0"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder={t('monitoringView.filters.opsPlaceholder')}
+          data-testid="ops-search"
+        />
+      </div>
+      <Select value={opType || FILTER_ALL} onValueChange={(v) => onOpTypeChange(v === FILTER_ALL ? '' : v)}>
+        <SelectTrigger className={filterBarSelectClass} data-testid="ops-type-filter">
+          <SelectValue placeholder={t('monitoringView.filters.opTypePlaceholder')} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={FILTER_ALL} className="text-xs">{t('monitoringView.filters.allOps')}</SelectItem>
+          {opTypes.map((ot) => (
+            <SelectItem key={ot} value={ot} className="text-xs font-mono uppercase">{ot}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={db || FILTER_ALL} onValueChange={(v) => onDbChange(v === FILTER_ALL ? '' : v)}>
+        <SelectTrigger className={filterBarSelectClass} data-testid="ops-db-filter">
+          <SelectValue placeholder={t('monitoringView.filters.databasePlaceholder')} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={FILTER_ALL} className="text-xs">{t('monitoringView.filters.allDatabases')}</SelectItem>
+          {dbs.map((d) => (
+            <SelectItem key={d} value={d} className="text-xs font-mono">{d}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <div className="flex h-8 shrink-0 items-center border-l border-border">
+        <span className="px-2 text-muted-foreground">≥</span>
+        <Input
+          type="number"
+          min={0}
+          className="h-8 w-11 border-0 bg-transparent px-0 text-center text-xs tabular-nums shadow-none focus-visible:ring-0"
+          value={minSecs}
+          onChange={(e) => onMinSecsChange(Number(e.target.value) || 0)}
+          data-testid="ops-min-secs"
+          aria-label={t('monitoringView.filters.minSecsAriaLabel')}
+        />
+        <span className="border-l border-border px-2 text-muted-foreground">{t('monitoringView.filters.secSuffix')}</span>
+      </div>
+      <FilterCount shown={shown} total={total} />
     </div>
-    <Select value={opType || FILTER_ALL} onValueChange={(v) => onOpTypeChange(v === FILTER_ALL ? '' : v)}>
-      <SelectTrigger className={filterBarSelectClass} data-testid="ops-type-filter">
-        <SelectValue placeholder="Op type" />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={FILTER_ALL} className="text-xs">All ops</SelectItem>
-        {opTypes.map((t) => (
-          <SelectItem key={t} value={t} className="text-xs font-mono uppercase">{t}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-    <Select value={db || FILTER_ALL} onValueChange={(v) => onDbChange(v === FILTER_ALL ? '' : v)}>
-      <SelectTrigger className={filterBarSelectClass} data-testid="ops-db-filter">
-        <SelectValue placeholder="Database" />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={FILTER_ALL} className="text-xs">All databases</SelectItem>
-        {dbs.map((d) => (
-          <SelectItem key={d} value={d} className="text-xs font-mono">{d}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-    <div className="flex h-8 shrink-0 items-center border-l border-border">
-      <span className="px-2 text-muted-foreground">≥</span>
-      <Input
-        type="number"
-        min={0}
-        className="h-8 w-11 border-0 bg-transparent px-0 text-center text-xs tabular-nums shadow-none focus-visible:ring-0"
-        value={minSecs}
-        onChange={(e) => onMinSecsChange(Number(e.target.value) || 0)}
-        data-testid="ops-min-secs"
-        aria-label="Minimum seconds running"
-      />
-      <span className="border-l border-border px-2 text-muted-foreground">sec</span>
-    </div>
-    <FilterCount shown={shown} total={total} />
-  </div>
-);
+  );
+};
 
 const ProfileFilterBar: React.FC<{
   search: string;
@@ -495,47 +506,51 @@ const ProfileFilterBar: React.FC<{
   onMinMsChange,
   shown,
   total,
-}) => (
-  <div className="mb-2 flex h-8 overflow-hidden rounded-lg border border-border bg-background text-xs shadow-sm">
-    <div className="relative flex min-w-[12rem] flex-1 items-center">
-      <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
-      <Input
-        className="h-8 border-0 bg-transparent pl-8 text-xs shadow-none focus-visible:ring-0"
-        value={search}
-        onChange={(e) => onSearchChange(e.target.value)}
-        placeholder="Filter ns, plan, command…"
-        data-testid="profiler-search"
-      />
+}) => {
+  const { t } = useTranslation('admin');
+  return (
+    <div className="mb-2 flex h-8 overflow-hidden rounded-lg border border-border bg-background text-xs shadow-sm">
+      <div className="relative flex min-w-[12rem] flex-1 items-center">
+        <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
+        <Input
+          className="h-8 border-0 bg-transparent pl-8 text-xs shadow-none focus-visible:ring-0"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder={t('monitoringView.filters.profilerPlaceholder')}
+          data-testid="profiler-search"
+        />
+      </div>
+      <Select value={op || FILTER_ALL} onValueChange={(v) => onOpChange(v === FILTER_ALL ? '' : v)}>
+        <SelectTrigger className={filterBarSelectClass} data-testid="profiler-type-filter">
+          <SelectValue placeholder={t('monitoringView.filters.opTypePlaceholder')} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={FILTER_ALL} className="text-xs">{t('monitoringView.filters.allOps')}</SelectItem>
+          {opTypes.map((ot) => (
+            <SelectItem key={ot} value={ot} className="text-xs font-mono uppercase">{ot}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <div className="flex h-8 shrink-0 items-center border-l border-border">
+        <span className="px-2 text-muted-foreground">≥</span>
+        <Input
+          type="number"
+          min={0}
+          className="h-8 w-11 border-0 bg-transparent px-0 text-center text-xs tabular-nums shadow-none focus-visible:ring-0"
+          value={minMs}
+          onChange={(e) => onMinMsChange(Number(e.target.value) || 0)}
+          data-testid="profiler-min-ms"
+          aria-label={t('monitoringView.filters.minMsAriaLabel')}
+        />
+        <span className="border-l border-border px-2 text-muted-foreground">{t('monitoringView.filters.msSuffix')}</span>
+      </div>
+      <FilterCount shown={shown} total={total} />
     </div>
-    <Select value={op || FILTER_ALL} onValueChange={(v) => onOpChange(v === FILTER_ALL ? '' : v)}>
-      <SelectTrigger className={filterBarSelectClass} data-testid="profiler-type-filter">
-        <SelectValue placeholder="Op type" />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={FILTER_ALL} className="text-xs">All ops</SelectItem>
-        {opTypes.map((t) => (
-          <SelectItem key={t} value={t} className="text-xs font-mono uppercase">{t}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-    <div className="flex h-8 shrink-0 items-center border-l border-border">
-      <span className="px-2 text-muted-foreground">≥</span>
-      <Input
-        type="number"
-        min={0}
-        className="h-8 w-11 border-0 bg-transparent px-0 text-center text-xs tabular-nums shadow-none focus-visible:ring-0"
-        value={minMs}
-        onChange={(e) => onMinMsChange(Number(e.target.value) || 0)}
-        data-testid="profiler-min-ms"
-        aria-label="Minimum duration in milliseconds"
-      />
-      <span className="border-l border-border px-2 text-muted-foreground">ms</span>
-    </div>
-    <FilterCount shown={shown} total={total} />
-  </div>
-);
+  );
+};
 
 export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) => {
+  const { t } = useTranslation('admin');
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [ops, setOps] = useState<CurrentOp[]>([]);
   const [samples, setSamples] = useState<MetricSample[]>([]);
@@ -669,14 +684,14 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
   }, [section, profilerDb, refreshProfiler]);
 
   const handleKill = useCallback(async (op: CurrentOp) => {
-    if (!window.confirm(`Kill operation ${op.opid} on ${op.ns || 'server'}?`)) return;
+    if (!window.confirm(t('monitoringView.confirm.killOperation', { opid: op.opid, ns: op.ns || t('monitoringView.labels.serverFallback') }))) return;
     try {
       await killOp(connectionId, op.opid);
       setOps(await currentOps(connectionId));
     } catch (e: unknown) {
       setOpsErr(String((e as Error)?.message || e));
     }
-  }, [connectionId]);
+  }, [connectionId, t]);
 
   const handleSetLevel = async (level: number) => {
     try {
@@ -739,15 +754,12 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <Activity size={14} className="shrink-0 text-primary" />
-          <span className="text-sm font-semibold">Monitoring</span>
+          <span className="text-sm font-semibold">{t('monitoringView.title')}</span>
           {status && (
             <span className="hidden truncate text-xs text-muted-foreground md:inline">
-              {status.host}
-              {' · '}
-              MongoDB {status.version}
-              {status.replSet ? ` · ${status.replSet}` : ''}
-              {' · '}
-              up {Math.floor(status.uptimeSeconds / 3600)}h
+              {t('monitoringView.status.hostVersion', { host: status.host, version: status.version })}
+              {status.replSet ? t('monitoringView.status.replSetClause', { replSet: status.replSet }) : ''}
+              {t('monitoringView.status.uptimeClause', { hours: Math.floor(status.uptimeSeconds / 3600) })}
             </span>
           )}
         </div>
@@ -764,7 +776,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
               data-testid="mon-tab-ops"
               onClick={() => setSection('ops')}
             >
-              Current operations{ops.length > 0 ? ` (${ops.length})` : ''}
+              {t('monitoringView.tabs.ops')}{ops.length > 0 ? t('monitoringView.tabs.opsCount', { count: ops.length }) : ''}
             </TabsTrigger>
             <TabsTrigger
               value="profiler"
@@ -772,7 +784,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
               data-testid="mon-tab-profiler"
               onClick={() => setSection('profiler')}
             >
-              Profiler
+              {t('monitoringView.tabs.profiler')}
             </TabsTrigger>
             <TabsTrigger
               value="cluster"
@@ -780,7 +792,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
               data-testid="mon-tab-cluster"
               onClick={() => setSection('cluster')}
             >
-              Cluster
+              {t('monitoringView.tabs.cluster')}
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -792,20 +804,20 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
             size="icon"
             className="h-7 w-7"
             onClick={() => void pollOnce()}
-            title="Refresh now"
-            aria-label="Refresh now"
+            title={t('monitoringView.actions.refreshNow')}
+            aria-label={t('monitoringView.actions.refreshNow')}
             data-testid="monitoring-refresh-now"
           >
             <RefreshCw size={13} />
           </Button>
           <Select value={String(pollMs)} onValueChange={(v) => setPollMs(Number(v))}>
             <SelectTrigger className="h-7 w-[108px] text-xs" data-testid="monitoring-refresh-interval">
-              <SelectValue placeholder="Refresh" />
+              <SelectValue placeholder={t('monitoringView.actions.refreshPlaceholder')} />
             </SelectTrigger>
             <SelectContent>
               {REFRESH_OPTIONS.map((o) => (
-                <SelectItem key={o.label} value={String(o.ms)} className="text-xs">
-                  {o.label === 'Off' ? 'Off' : o.label}
+                <SelectItem key={o.labelKey} value={String(o.ms)} className="text-xs">
+                  {t(`monitoringView.refreshOptions.${o.labelKey}`)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -817,7 +829,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
         <>
           {metricsErr && isAuthError(metricsErr) ? (
             <div className="shrink-0 px-3 py-2">
-              <AccessNote what="read server metrics (serverStatus)" />
+              <AccessNote what={t('monitoringView.accessRequired.what.serverMetrics')} />
             </div>
           ) : (
             <div className="shrink-0 border-b border-border px-3 py-2">
@@ -828,15 +840,27 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
               )}
               <div className="grid grid-cols-2 gap-1.5 lg:grid-cols-5">
                 <MetricTile
-                  label="Connections"
+                  label={t('monitoringView.metrics.connections')}
                   icon={<Network size={12} />}
                   value={status ? String(status.connections.current) : '—'}
-                  sub={status ? `${status.connections.available.toLocaleString()} avail` : undefined}
+                  // `count` MUST stay numeric: i18next skips plural resolution
+                  // entirely when it is a string, and this key only exists as
+                  // _one/_other, so a pre-formatted count made the lookup miss
+                  // and render the raw key path to the user. The thousands
+                  // separator now travels in its own placeholder.
+                  sub={
+                    status
+                      ? t('monitoringView.metrics.connectionsAvail', {
+                          count: status.connections.available,
+                          formatted: status.connections.available.toLocaleString(),
+                        })
+                      : undefined
+                  }
                   series={series.conns}
                   color="hsl(var(--primary))"
                 />
                 <MetricTile
-                  label="Ops / sec"
+                  label={t('monitoringView.metrics.opsPerSec')}
                   icon={<Gauge size={12} />}
                   value={status ? Math.round(latestOpsPerSec).toLocaleString() : '—'}
                   sub="opcounters"
@@ -844,26 +868,26 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                   color="#34d399"
                 />
                 <MetricTile
-                  label="Resident mem"
+                  label={t('monitoringView.metrics.residentMem')}
                   icon={<MemoryStick size={12} />}
                   value={status ? `${status.memory.residentMb.toLocaleString()} MB` : '—'}
-                  sub={status ? `${status.memory.virtualMb.toLocaleString()} MB virt` : undefined}
+                  sub={status ? t('monitoringView.metrics.residentVirt', { mb: status.memory.virtualMb.toLocaleString() }) : undefined}
                   series={series.resident}
                   color="#f59e0b"
                 />
                 <MetricTile
-                  label="Cache"
+                  label={t('monitoringView.metrics.cache')}
                   icon={<Database size={12} />}
-                  value={cachePctNow != null ? `${cachePctNow.toFixed(0)}%` : 'n/a'}
+                  value={cachePctNow != null ? `${cachePctNow.toFixed(0)}%` : t('monitoringView.metrics.cacheNotAvailable')}
                   sub={status?.cache ? `${formatBytes(status.cache.bytesInCache)} / ${formatBytes(status.cache.maxBytes)}` : undefined}
                   series={series.cachePct}
                   color="#a78bfa"
                 />
                 <MetricTile
-                  label="Network"
+                  label={t('monitoringView.metrics.network')}
                   icon={<ArrowDownUp size={12} />}
-                  value={status ? `${formatBytes(latestNetPerSec)}/s` : '—'}
-                  sub={status ? `${formatBytes(status.network.bytesIn + status.network.bytesOut)} total` : undefined}
+                  value={status ? t('monitoringView.metrics.networkPerSecond', { value: formatBytes(latestNetPerSec) }) : '—'}
+                  sub={status ? t('monitoringView.metrics.networkTotal', { value: formatBytes(status.network.bytesIn + status.network.bytesOut) }) : undefined}
                   series={series.netPerSec}
                   color="#22d3ee"
                 />
@@ -873,11 +897,11 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-2" data-testid="mon-panel-ops">
               {opsErr && isAuthError(opsErr) ? (
-                <AccessNote what="inspect current operations ($currentOp)" role="inprog / clusterMonitor" />
+                <AccessNote what={t('monitoringView.accessRequired.what.currentOps')} role="inprog / clusterMonitor" />
               ) : opsErr ? (
                 <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{errLine(opsErr)}</div>
               ) : ops.length === 0 ? (
-                <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No active operations.</div>
+                <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">{t('monitoringView.empty.noActiveOps')}</div>
               ) : (
                 <>
                   <OpsFilterBar
@@ -895,7 +919,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                     total={ops.length}
                   />
                   {filteredOps.length === 0 ? (
-                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No operations match the filter.</div>
+                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">{t('monitoringView.empty.noOpsMatchFilter')}</div>
                   ) : (
                     <ScrollArea className="min-h-0 flex-1 rounded-md border border-border">
                       <table className="w-full border-collapse text-xs" data-testid="current-ops-table">
@@ -904,9 +928,9 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                             <th className="px-3 py-2 font-medium">opid</th>
                             <th className="px-3 py-2 font-medium">op</th>
                             <th className="px-3 py-2 font-medium">ns</th>
-                            <th className="px-3 py-2 font-medium">secs</th>
-                            <th className="px-3 py-2 font-medium">client</th>
-                            <th className="px-3 py-2 font-medium">command</th>
+                            <th className="px-3 py-2 font-medium">{t('monitoringView.table.secs')}</th>
+                            <th className="px-3 py-2 font-medium">{t('monitoringView.table.client')}</th>
+                            <th className="px-3 py-2 font-medium">{t('monitoringView.table.command')}</th>
                             <th className="px-3 py-2 font-medium" />
                           </tr>
                         </thead>
@@ -929,7 +953,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
             <div className="mb-2 flex flex-wrap items-center gap-1.5">
               <Select value={profilerDb || undefined} onValueChange={setProfilerDb}>
                 <SelectTrigger className="h-7 w-[140px] text-xs" data-testid="profiler-db-select">
-                  <SelectValue placeholder="Database" />
+                  <SelectValue placeholder={t('monitoringView.filters.databasePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
                   {dbs.map((d) => (
@@ -938,7 +962,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                 </SelectContent>
               </Select>
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                Level:
+                {t('monitoringView.profiler.levelLabel')}
                 {[0, 1, 2].map((lvl) => (
                   <Button
                     key={lvl}
@@ -953,20 +977,20 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                   </Button>
                 ))}
               </span>
-              {profiling && <span className="text-xs text-muted-foreground">slow ≥ {profiling.slowMs}ms</span>}
-              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => void refreshProfiler()} title="Refresh">
+              {profiling && <span className="text-xs text-muted-foreground">{t('monitoringView.profiler.slowThreshold', { slowMs: profiling.slowMs })}</span>}
+              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => void refreshProfiler()} title={t('monitoringView.actions.profilerRefresh')}>
                 <RefreshCw size={12} className={profileLoading ? 'animate-spin' : ''} />
               </Button>
             </div>
             {profilerErr && isAuthError(profilerErr) ? (
-              <AccessNote what="read the profiler for this database (system.profile)" role="dbAdmin / read" />
+              <AccessNote what={t('monitoringView.accessRequired.what.profiler')} role="dbAdmin / read" />
             ) : profilerErr ? (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{errLine(profilerErr)}</div>
             ) : profile.length === 0 ? (
               <div className="flex flex-1 items-center justify-center text-center text-sm text-muted-foreground">
                 {profiling?.level === 0
-                  ? 'Profiling is off for this database. Set level 1 (slow ops) or 2 (all ops) to collect entries.'
-                  : 'No profiled operations yet.'}
+                  ? t('monitoringView.empty.profilingOff')
+                  : t('monitoringView.empty.noProfiledOps')}
               </div>
             ) : (
               <>
@@ -982,17 +1006,17 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                   total={profile.length}
                 />
                 {filteredProfile.length === 0 ? (
-                  <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No entries match the filter.</div>
+                  <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">{t('monitoringView.empty.noEntriesMatchFilter')}</div>
                 ) : (
                   <ScrollArea className="min-h-0 flex-1 rounded-md border border-border">
                     <table className="w-full border-collapse text-xs" data-testid="profile-table">
                       <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
                         <tr className="text-left text-muted-foreground">
-                          <th className="px-3 py-2 font-medium">millis</th>
+                          <th className="px-3 py-2 font-medium">{t('monitoringView.table.millis')}</th>
                           <th className="px-3 py-2 font-medium">op</th>
                           <th className="px-3 py-2 font-medium">ns</th>
-                          <th className="px-3 py-2 font-medium">plan</th>
-                          <th className="px-3 py-2 font-medium">command</th>
+                          <th className="px-3 py-2 font-medium">{t('monitoringView.table.plan')}</th>
+                          <th className="px-3 py-2 font-medium">{t('monitoringView.table.command')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1021,8 +1045,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
               className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground"
               data-testid="cluster-sharded"
             >
-              Sharded cluster — member-level health isn&apos;t available through mongos. Connect directly to a
-              shard&apos;s replica set to inspect its members.
+              {t('monitoringView.cluster.shardedNotice')}
             </div>
           )}
           {!clusterErr && cluster && !cluster.isReplicaSet && cluster.clusterType !== 'sharded' && (
@@ -1030,28 +1053,29 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
               className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground"
               data-testid="cluster-not-replset"
             >
-              This connection is a standalone MongoDB server — replica-set health does not apply here.
+              {t('monitoringView.cluster.notReplsetNotice')}
             </div>
           )}
           {!clusterErr && cluster && cluster.isReplicaSet && (
             <>
               <div className="text-xs text-muted-foreground" data-testid="cluster-summary">
-                Replica set <span className="font-semibold text-foreground">{cluster.set}</span>
+                {t('monitoringView.cluster.summaryReplicaSetPrefix')}
+                <span className="font-semibold text-foreground">{cluster.set}</span>
                 {' · '}
-                {cluster.members.length} members
-                {cluster.mongoVersion && <> · MongoDB {cluster.mongoVersion}</>}
-                {cluster.myStateStr && <> · you: {cluster.myStateStr}</>}
+                {t('monitoringView.cluster.summaryMembersCount', { count: cluster.members.length })}
+                {cluster.mongoVersion && t('monitoringView.cluster.summaryVersionClause', { version: cluster.mongoVersion })}
+                {cluster.myStateStr && t('monitoringView.cluster.summaryYouClause', { state: cluster.myStateStr })}
               </div>
               <div className="overflow-x-auto rounded-lg border border-border">
                 <table className="w-full text-xs" data-testid="cluster-members-table">
                   <thead className="bg-muted/50 text-left text-muted-foreground">
                     <tr>
-                      <th className="px-3 py-1.5 font-medium">Member</th>
-                      <th className="px-3 py-1.5 font-medium">State</th>
-                      <th className="px-3 py-1.5 font-medium">Uptime</th>
-                      <th className="px-3 py-1.5 font-medium">Ping</th>
-                      <th className="px-3 py-1.5 font-medium">Sync source</th>
-                      <th className="px-3 py-1.5 font-medium">Lag</th>
+                      <th className="px-3 py-1.5 font-medium">{t('monitoringView.cluster.table.member')}</th>
+                      <th className="px-3 py-1.5 font-medium">{t('monitoringView.cluster.table.state')}</th>
+                      <th className="px-3 py-1.5 font-medium">{t('monitoringView.cluster.table.uptime')}</th>
+                      <th className="px-3 py-1.5 font-medium">{t('monitoringView.cluster.table.ping')}</th>
+                      <th className="px-3 py-1.5 font-medium">{t('monitoringView.cluster.table.syncSource')}</th>
+                      <th className="px-3 py-1.5 font-medium">{t('monitoringView.cluster.table.lag')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1059,7 +1083,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                       <tr
                         key={m.name}
                         data-testid={`cluster-member-${m.name}`}
-                        title={m.optimeDateMs > 0 ? `optime: ${new Date(m.optimeDateMs).toISOString()}` : undefined}
+                        title={m.optimeDateMs > 0 ? t('monitoringView.cluster.optimeTooltip', { date: new Date(m.optimeDateMs).toISOString() }) : undefined}
                         className={cn(
                           'border-t border-border/50',
                           memberUnhealthy(m) && 'bg-destructive/10 text-destructive',
@@ -1069,12 +1093,12 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
                           <span className="flex items-center gap-1.5">
                             <span className={cn('h-2 w-2 shrink-0 rounded-full', memberDotClass(m))} />
                             <span className="font-mono">{m.name}</span>
-                            {m.self && <span className="text-ui-2xs text-muted-foreground">(you)</span>}
+                            {m.self && <span className="text-ui-2xs text-muted-foreground">{t('monitoringView.cluster.youBadge')}</span>}
                           </span>
                         </td>
                         <td className="px-3 py-1.5">{m.stateStr}</td>
                         <td className="px-3 py-1.5">{fmtMemberUptime(m.uptimeSecs)}</td>
-                        <td className="px-3 py-1.5">{m.pingMs == null ? '—' : `${m.pingMs}ms`}</td>
+                        <td className="px-3 py-1.5">{m.pingMs == null ? '—' : t('monitoringView.cluster.pingMs', { ms: m.pingMs })}</td>
                         <td className="px-3 py-1.5 font-mono">{m.syncSource || '—'}</td>
                         <td
                           className={cn('px-3 py-1.5', m.stateStr === 'PRIMARY' ? 'text-muted-foreground' : lagClass(m.lagSecs))}
@@ -1090,7 +1114,7 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
             </>
           )}
           {!clusterErr && !cluster && (
-            <div className="text-xs text-muted-foreground">Loading replica-set status…</div>
+            <div className="text-xs text-muted-foreground">{t('monitoringView.cluster.loading')}</div>
           )}
         </div>
       )}

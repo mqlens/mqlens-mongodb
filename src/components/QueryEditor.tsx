@@ -234,7 +234,12 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
     return (
       <div
         className={cn(
-          'flex min-w-0 flex-1 items-center bg-input pl-2',
+          // No background of its own: the row (FindQueryBar's queryColClass)
+          // paints it, and draws the focus ring as `ring-inset` — a box-shadow
+          // rendered UNDER child content. An opaque background here covered
+          // that ring everywhere except the semi-transparent label badge, so
+          // focusing the field outlined the badge instead of the whole box.
+          'flex min-w-0 flex-1 items-center pl-2',
           '[&_.monaco-editor]:bg-transparent [&_.monaco-editor-background]:bg-transparent',
           '[&_.margin]:bg-transparent [&_.monaco-scrollable-element]:bg-transparent',
           // Monaco paints a shadow over the top edge once the line scrolls

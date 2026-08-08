@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { replSetStatus, type ReplSetStatus } from '@/lib/monitoringApi';
 import { lagText, lagClass, memberDotClass, memberUnhealthy, uriUser, uriReadPreference } from '@/lib/clusterHealth';
 import { cn } from '@/lib/utils';
@@ -21,6 +22,7 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
   connectionUri,
   onOpenMonitoring,
 }) => {
+  const { t } = useTranslation('admin');
   const [data, setData] = useState<ReplSetStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -45,32 +47,33 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
   return (
     <div className="flex w-max min-w-72 max-w-[28rem] flex-col gap-1.5 text-xs" data-testid="cluster-health-card">
       {err && <div className="text-destructive">{err}</div>}
-      {!err && !data && <div className="text-muted-foreground">Loading cluster health…</div>}
+      {!err && !data && <div className="text-muted-foreground">{t('clusterHealthCard.loading')}</div>}
       {(data || err) && connectionName && (
         <div data-testid="cluster-card-connection">
-          Connection: <span className="font-semibold text-foreground">{connectionName}</span>
+          {t('clusterHealthCard.connectionPrefix')}
+          <span className="font-semibold text-foreground">{connectionName}</span>
           {data?.isReplicaSet && (
             <>
-              {' '}
-              [replica set: <span className="font-semibold text-foreground">{data.set}</span>]
+              {t('clusterHealthCard.replicaSetClausePrefix')}
+              <span className="font-semibold text-foreground">{data.set}</span>]
             </>
           )}
         </div>
       )}
-      {(data || err) && user && <div data-testid="cluster-card-user">User: {user}</div>}
+      {(data || err) && user && <div data-testid="cluster-card-user">{t('clusterHealthCard.userLine', { user })}</div>}
       {!err && data && !data.isReplicaSet && data.clusterType === 'sharded' && (
         <div className="text-muted-foreground" data-testid="cluster-card-sharded">
-          Sharded cluster (mongos).
+          {t('clusterHealthCard.shardedNotice')}
         </div>
       )}
       {!err && data && !data.isReplicaSet && data.clusterType !== 'sharded' && (
         <div className="text-muted-foreground" data-testid="cluster-card-standalone">
-          Standalone server — no replica set.
+          {t('clusterHealthCard.standaloneNotice')}
         </div>
       )}
       {!err && data && data.isReplicaSet && (
         <>
-          <div className="text-muted-foreground">Server(s):</div>
+          <div className="text-muted-foreground">{t('clusterHealthCard.serversLabel')}</div>
           <div className="flex flex-col gap-1">
             {data.members.map((m) => {
               const unhealthy = memberUnhealthy(m);
@@ -85,12 +88,13 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
                   <span className="whitespace-nowrap font-mono">{m.name}</span>
                   <span className="whitespace-nowrap text-muted-foreground">
                     {unhealthy ? (
-                      '— Offline [(not reachable/healthy)]'
+                      t('clusterHealthCard.memberStatus.offline')
                     ) : isPrimary ? (
-                      '— Online [PRIMARY]'
+                      t('clusterHealthCard.memberStatus.onlinePrimary')
                     ) : (
                       <>
-                        — Online [{m.stateStr}] · <span className={lagClass(m.lagSecs)}>lag {lagText(m.lagSecs)}</span>
+                        {t('clusterHealthCard.memberStatus.onlinePrefix', { state: m.stateStr })}
+                        <span className={lagClass(m.lagSecs)}>{t('clusterHealthCard.memberStatus.lagLabel')} {lagText(m.lagSecs)}</span>
                       </>
                     )}
                   </span>
@@ -99,12 +103,12 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
             })}
           </div>
           {readPref && (
-            <div data-testid="cluster-card-read-pref">Read preference mode: {capitalize(readPref)}</div>
+            <div data-testid="cluster-card-read-pref">{t('clusterHealthCard.readPreferenceLine', { value: capitalize(readPref) })}</div>
           )}
         </>
       )}
       {!err && data && data.mongoVersion && (
-        <div data-testid="cluster-card-version">Server version: {data.mongoVersion}</div>
+        <div data-testid="cluster-card-version">{t('clusterHealthCard.versionLine', { version: data.mongoVersion })}</div>
       )}
       {!err && data && data.isReplicaSet && (
         <div className="mt-0.5 flex items-center gap-2">
@@ -118,7 +122,7 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
             }}
             data-testid="cluster-card-refresh"
           >
-            Refresh
+            {t('clusterHealthCard.actions.refresh')}
           </button>
           {onOpenMonitoring && (
             <button
@@ -127,7 +131,7 @@ export const ClusterHealthCard: React.FC<ClusterHealthCardProps> = ({
               onClick={() => onOpenMonitoring(connectionId)}
               data-testid="cluster-card-open-monitoring"
             >
-              Open Monitoring →
+              {t('clusterHealthCard.actions.openMonitoring')}
             </button>
           )}
         </div>

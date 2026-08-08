@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useContext } from 'react';
+import { useTranslation, Trans } from 'react-i18next';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
 import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows } from 'lucide-react';
@@ -39,6 +40,13 @@ interface DataGridProps {
   limit?: number;
   onPageChange?: (newSkip: number) => void;
   onPageSizeChange?: (newLimit: number) => void;
+  /** Results view mode, owned by the caller so it survives this grid being
+   *  unmounted. The results pane renders `{loading ? <spinner/> : <DataGrid/>}`,
+   *  so the grid remounts on EVERY run, and switching tabs unmounts the whole
+   *  DocumentViewer subtree — local state reset to 'json' both times. Omit both
+   *  props to keep the old self-managed behaviour (MongoShell does). */
+  viewMode?: ViewMode;
+  onViewModeChange?: (mode: ViewMode) => void;
   // Fired when the user accepts the COLLSCAN suggestion banner's "Create Index" CTA.
   onCreateSuggestedIndex?: (suggestion: IndexSuggestion) => void;
   // The owning connection's write-safeguard mode (#188). 'read_only' disables
@@ -51,9 +59,7 @@ interface DataGridProps {
   connectionMode?: 'normal' | 'read_only' | 'confirm_destructive';
 }
 
-const READ_ONLY_TOOLTIP = 'Connection is read-only';
-
-type ViewMode = 'table' | 'tree' | 'json' | 'chart';
+export type ViewMode = 'table' | 'tree' | 'json' | 'chart';
 
 interface ExplainNode {
   name: string;
@@ -102,25 +108,43 @@ const CollectionIcon = () => (
   </div>
 );
 
-const getStageNameLabel = (stage: string): string => {
+// getStageNameLabel / makeParseStage / getExplainTree are pure, module-scope
+// functions (getExplainTree is exported and covered directly by a unit test
+// that calls it with a single argument — see DataGrid.test.tsx), so they
+// can't call the useTranslation hook. Instead they accept an optional `t`
+// (defaulting to a no-i18next stand-in that just resolves each call's
+// `defaultValue`, with the same {{var}} interpolation react-i18next does).
+// The component passes its real `t` in; direct callers (like the test) fall
+// back to the English defaults, so behavior is unchanged when `t` is omitted.
+type ExplainTFunc = (key: string, options?: Record<string, any>) => string;
+
+const interpolateDefault = (template: string, vars: Record<string, any>): string =>
+  template.replace(/\{\{(\w+)\}\}/g, (_, k) => (k in vars ? String(vars[k]) : `{{${k}}}`));
+
+const defaultExplainT: ExplainTFunc = (key, options) => {
+  const { defaultValue, ...vars } = options ?? {};
+  return interpolateDefault(defaultValue ?? key, vars);
+};
+
+const getStageNameLabel = (stage: string, t: ExplainTFunc = defaultExplainT): string => {
   const s = stage.toUpperCase();
-  if (s === 'COLLSCAN') return 'Collection scan';
-  if (s === 'IXSCAN') return 'Index scan';
-  if (s === 'FETCH') return 'Fetch documents';
-  if (s === 'PROJECTION_SIMPLE' || s === 'PROJECTION') return 'Projection';
-  if (s === 'SORT') return 'Sort';
-  if (s === 'SKIP') return 'Skip';
-  if (s === 'LIMIT') return 'Limit';
-  if (s === 'OR') return 'OR Merge';
-  if (s === 'AND_HASH' || s === 'AND_SORTED') return 'Index Intersection';
+  if (s === 'COLLSCAN') return t('documents:dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' });
+  if (s === 'IXSCAN') return t('documents:dataGrid.explain.stage.indexScan', { defaultValue: 'Index scan' });
+  if (s === 'FETCH') return t('documents:dataGrid.explain.stage.fetchDocuments', { defaultValue: 'Fetch documents' });
+  if (s === 'PROJECTION_SIMPLE' || s === 'PROJECTION') return t('documents:dataGrid.explain.stage.projection', { defaultValue: 'Projection' });
+  if (s === 'SORT') return t('documents:dataGrid.explain.stage.sort', { defaultValue: 'Sort' });
+  if (s === 'SKIP') return t('documents:dataGrid.explain.stage.skip', { defaultValue: 'Skip' });
+  if (s === 'LIMIT') return t('documents:dataGrid.explain.stage.limit', { defaultValue: 'Limit' });
+  if (s === 'OR') return t('documents:dataGrid.explain.stage.orMerge', { defaultValue: 'OR Merge' });
+  if (s === 'AND_HASH' || s === 'AND_SORTED') return t('documents:dataGrid.explain.stage.indexIntersection', { defaultValue: 'Index Intersection' });
   return stage.charAt(0).toUpperCase() + stage.slice(1).toLowerCase();
 };
 
 // Build a parseStage bound to a namespace (the find winningPlan walker).
-const makeParseStage = (namespace: string) => {
+const makeParseStage = (namespace: string, t: ExplainTFunc = defaultExplainT) => {
   const parseStage = (stageObj: any): ExplainNode => {
     const stageName = stageObj?.stage || "STAGE";
-    const name = getStageNameLabel(stageName);
+    const name = getStageNameLabel(stageName, t);
     const children: ExplainNode[] = [];
 
     if (stageObj?.inputStage) {
@@ -135,13 +159,19 @@ const makeParseStage = (namespace: string) => {
     if (children.length === 0) {
       if (stageName === 'IXSCAN') {
         children.push({
-          name: `Index: ${stageObj.indexName || "category_1"}`,
+          name: t('documents:dataGrid.explain.labels.indexNode', {
+            indexName: stageObj.indexName || "category_1",
+            defaultValue: 'Index: {{indexName}}',
+          }),
           type: 'index',
           detail: stageObj.keyPattern ? JSON.stringify(stageObj.keyPattern) : undefined
         });
       } else {
         children.push({
-          name: `Collection\n${namespace}`,
+          name: t('documents:dataGrid.explain.labels.collectionNode', {
+            namespace,
+            defaultValue: 'Collection\n{{namespace}}',
+          }),
           type: 'collection',
           detail: namespace
         });
@@ -158,7 +188,7 @@ const makeParseStage = (namespace: string) => {
   return parseStage;
 };
 
-export const getExplainTree = (explainStr: string): ExplainNode => {
+export const getExplainTree = (explainStr: string, t: ExplainTFunc = defaultExplainT): ExplainNode => {
   try {
     const explainJson = JSON.parse(explainStr);
 
@@ -170,17 +200,26 @@ export const getExplainTree = (explainStr: string): ExplainNode => {
       const cursorStage = stages.find((s: any) => s && s.$cursor);
       const cursorQP = cursorStage?.$cursor?.queryPlanner;
       const namespace = cursorQP?.namespace || "collection";
-      const parseStage = makeParseStage(namespace);
+      const parseStage = makeParseStage(namespace, t);
       const cursorChild: ExplainNode = cursorQP?.winningPlan
         ? parseStage(cursorQP.winningPlan)
-        : { name: `Collection\n${namespace}`, type: 'collection', detail: namespace };
+        : {
+            name: t('documents:dataGrid.explain.labels.collectionNode', { namespace, defaultValue: 'Collection\n{{namespace}}' }),
+            type: 'collection',
+            detail: namespace,
+          };
 
       let current: ExplainNode | null = null;
       stages.forEach((stageObj: any) => {
         const key = stageObj && Object.keys(stageObj)[0];
         if (!key) return;
         if (key === '$cursor') {
-          current = { name: '$cursor', type: 'stage', detail: 'Documents from collection', children: [cursorChild] };
+          current = {
+            name: '$cursor',
+            type: 'stage',
+            detail: t('documents:dataGrid.explain.labels.documentsFromCollection', { defaultValue: 'Documents from collection' }),
+            children: [cursorChild],
+          };
         } else {
           current = {
             name: key,
@@ -190,7 +229,7 @@ export const getExplainTree = (explainStr: string): ExplainNode => {
           };
         }
       });
-      return { name: "Result", type: "result", children: current ? [current] : [] };
+      return { name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }), type: "result", children: current ? [current] : [] };
     }
 
     const queryPlanner = explainJson?.queryPlanner || {};
@@ -199,16 +238,16 @@ export const getExplainTree = (explainStr: string): ExplainNode => {
 
     if (!winningPlan) {
       return {
-        name: "Result",
+        name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
         type: "result",
         children: [
           {
-            name: "Collection scan",
+            name: t('documents:dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' }),
             type: "stage",
             detail: "COLLSCAN",
             children: [
               {
-                name: `Collection\n${namespace}`,
+                name: t('documents:dataGrid.explain.labels.collectionNode', { namespace, defaultValue: 'Collection\n{{namespace}}' }),
                 type: "collection",
                 detail: namespace
               }
@@ -219,24 +258,24 @@ export const getExplainTree = (explainStr: string): ExplainNode => {
     }
 
     return {
-      name: "Result",
+      name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
       type: "result",
-      children: [makeParseStage(namespace)(winningPlan)]
+      children: [makeParseStage(namespace, t)(winningPlan)]
     };
 
   } catch (e) {
     console.error("Failed to parse explain tree", e);
     return {
-      name: "Result",
+      name: t('documents:dataGrid.explain.stage.result', { defaultValue: 'Result' }),
       type: "result",
       children: [
         {
-          name: "Collection scan",
+          name: t('documents:dataGrid.explain.stage.collectionScan', { defaultValue: 'Collection scan' }),
           type: "stage",
           detail: "COLLSCAN",
           children: [
             {
-              name: "Collection",
+              name: t('documents:dataGrid.explain.labels.collectionFallback', { defaultValue: 'Collection' }),
               type: "collection",
               detail: "collection"
             }
@@ -364,6 +403,7 @@ interface JsonRowExtra {
   renderContent: (line: JsonLine) => React.ReactNode;
   hasRowActions: boolean;
   RowActions: React.ComponentType<{ doc: Record<string, any> }>;
+  t: (key: string) => string;
 }
 
 // Virtualized row for the JSON view (one descriptor per row).
@@ -386,6 +426,7 @@ const JsonRow = ({
   renderContent,
   hasRowActions,
   RowActions,
+  t,
 }: { index: number; style: React.CSSProperties } & JsonRowExtra) => {
   const line = lines[index];
   if (!line) return null;
@@ -413,7 +454,7 @@ const JsonRow = ({
             onClick={() => toggleFold(line.foldId!)}
             className="flex cursor-pointer items-center justify-center rounded-sm hover:bg-accent hover:text-foreground"
             data-testid="json-fold-btn"
-            aria-label={folded ? 'Expand' : 'Collapse'}
+            aria-label={folded ? t('documents:dataGrid.tooltips.expand') : t('documents:dataGrid.tooltips.collapse')}
           >
             {folded ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
           </button>
@@ -460,9 +501,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
   limit,
   onPageChange,
   onPageSizeChange,
+  viewMode: controlledViewMode,
+  onViewModeChange,
   onCreateSuggestedIndex,
   connectionMode,
 }) => {
+  const { t } = useTranslation('documents');
   const themeCtx = useThemeOptional();
   const density: SpacingDensity =
     densityProp ?? themeCtx?.config.spacingDensity ?? 'cozy';
@@ -512,26 +556,26 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
   const buildCtxItems = (m: NonNullable<typeof ctxMenu>): ContextMenuItem[] => {
     const items: ContextMenuItem[] = [];
-    if (onEditDocument) items.push({ label: 'Edit document', icon: <Edit size={13} />, onClick: () => onEditDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? READ_ONLY_TOOLTIP : undefined });
-    if (onDuplicateDocument) items.push({ label: 'Duplicate document', icon: <Plus size={13} />, onClick: () => onDuplicateDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? READ_ONLY_TOOLTIP : undefined });
-    items.push({ label: 'Copy document (JSON)', icon: <Copy size={13} />, onClick: () => writeClipboard(JSON.stringify(m.doc, null, 2)) });
+    if (onEditDocument) items.push({ label: t('dataGrid.actions.editDocument'), icon: <Edit size={13} />, onClick: () => onEditDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined });
+    if (onDuplicateDocument) items.push({ label: t('dataGrid.actions.duplicateDocument'), icon: <Plus size={13} />, onClick: () => onDuplicateDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined });
+    items.push({ label: t('dataGrid.actions.copyDocumentJson'), icon: <Copy size={13} />, onClick: () => writeClipboard(JSON.stringify(m.doc, null, 2)) });
     if (!pendingCompare) {
       items.push({
-        label: 'Compare with…',
+        label: t('dataGrid.actions.compareWith'),
         icon: <GitCompareArrows size={13} />,
         separatorBefore: true,
         onClick: () => setPendingCompare(m.doc),
       });
     } else if (pendingCompare === m.doc) {
       items.push({
-        label: 'Cancel compare selection',
+        label: t('dataGrid.actions.cancelCompareSelection'),
         icon: <GitCompareArrows size={13} />,
         separatorBefore: true,
         onClick: () => setPendingCompare(null),
       });
     } else {
       items.push({
-        label: 'Compare with selected',
+        label: t('dataGrid.actions.compareWithSelected'),
         icon: <GitCompareArrows size={13} />,
         separatorBefore: true,
         onClick: () => {
@@ -540,20 +584,25 @@ export const DataGrid: React.FC<DataGridProps> = ({
         },
       });
       items.push({
-        label: 'Compare with… (replace selection)',
+        label: t('dataGrid.actions.compareWithReplaceSelection'),
         icon: <GitCompareArrows size={13} />,
         onClick: () => setPendingCompare(m.doc),
       });
     }
     if (m.field) {
-      items.push({ label: 'Copy value', icon: <Copy size={13} />, separatorBefore: true, onClick: () => writeClipboard(copyValueToText(m.value)) });
-      items.push({ label: 'Copy field name', icon: <Copy size={13} />, onClick: () => writeClipboard(m.field!) });
+      items.push({ label: t('dataGrid.actions.copyValue'), icon: <Copy size={13} />, separatorBefore: true, onClick: () => writeClipboard(copyValueToText(m.value)) });
+      items.push({ label: t('dataGrid.actions.copyFieldName'), icon: <Copy size={13} />, onClick: () => writeClipboard(m.field!) });
     }
-    if (onDeleteDocument) items.push({ label: 'Delete document', icon: <Trash2 size={13} />, danger: true, separatorBefore: true, onClick: () => onDeleteDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? READ_ONLY_TOOLTIP : undefined });
+    if (onDeleteDocument) items.push({ label: t('dataGrid.actions.deleteDocument'), icon: <Trash2 size={13} />, danger: true, separatorBefore: true, onClick: () => onDeleteDocument(m.doc), disabled: isReadOnly, title: isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined });
     return items;
   };
   const docViewerContext = useContext(DocumentViewerContext);
-  const [viewMode, setViewMode] = useState<ViewMode>('json');
+  const [uncontrolledViewMode, setUncontrolledViewMode] = useState<ViewMode>('json');
+  const viewMode = controlledViewMode ?? uncontrolledViewMode;
+  const setViewMode = (mode: ViewMode) => {
+    setUncontrolledViewMode(mode);
+    onViewModeChange?.(mode);
+  };
   const [activeTab, setActiveTab] = useState<'results' | 'explain' | 'query'>('results');
 
   // Column resize: table view keeps per-column widths (session-scoped — the
@@ -610,7 +659,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       className="absolute right-[-4px] top-0 z-[2] h-full w-2 cursor-col-resize hover:bg-primary/45 focus-visible:bg-primary/45 focus-visible:outline-none"
       role="separator"
       aria-orientation="vertical"
-      aria-label={`Resize ${label} column`}
+      aria-label={t('dataGrid.tooltips.resizeColumn', { label })}
       tabIndex={0}
       onMouseDown={(e) => startColResize(e, width, apply, min)}
       onKeyDown={(e) => {
@@ -1069,8 +1118,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const renderTreeValue = (row: TreeRow): React.ReactNode => {
     if (row.kind === 'scalar') return renderBsonValueNode(row.value);
     if (row.kind === 'array')
-      return <span className="text-muted-foreground">{`[ ${row.childCount} ${row.childCount === 1 ? 'element' : 'elements'} ]`}</span>;
-    return <span className="text-muted-foreground">{`{ ${row.childCount} ${row.childCount === 1 ? 'field' : 'fields'} }`}</span>;
+      return <span className="text-muted-foreground">{t('dataGrid.labels.elements', { count: row.childCount })}</span>;
+    return <span className="text-muted-foreground">{t('dataGrid.labels.fields', { count: row.childCount })}</span>;
   };
 
   // Every document now carries at least a copy control, so the actions
@@ -1092,8 +1141,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
       <button
         onClick={handleCopy}
         className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-primary"
-        title={copied ? 'Copied' : 'Copy document (JSON)'}
-        aria-label={copied ? 'Copied' : 'Copy document'}
+        title={copied ? t('dataGrid.tooltips.copied') : t('dataGrid.actions.copyDocumentJson')}
+        aria-label={copied ? t('dataGrid.tooltips.copied') : t('dataGrid.tooltips.copyDocument')}
         data-testid="copy-doc-btn"
       >
         {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
@@ -1114,7 +1163,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             }}
             disabled={isReadOnly}
             className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-primary disabled:pointer-events-none disabled:opacity-50"
-            title={isReadOnly ? READ_ONLY_TOOLTIP : 'Edit document'}
+            title={isReadOnly ? t('dataGrid.tooltips.readOnly') : t('dataGrid.tooltips.editDocument')}
             data-testid="edit-doc-btn"
           >
             <Edit size={12} />
@@ -1128,7 +1177,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             }}
             disabled={isReadOnly}
             className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
-            title={isReadOnly ? READ_ONLY_TOOLTIP : 'Delete document'}
+            title={isReadOnly ? t('dataGrid.tooltips.readOnly') : t('dataGrid.tooltips.deleteDocument')}
             data-testid="delete-doc-btn"
           >
             <Trash2 size={12} />
@@ -1213,7 +1262,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
               onClick={() => toggleTreeFold(row.foldId!)}
               className="mr-1 flex shrink-0 items-center text-muted-foreground hover:text-foreground"
               data-testid="tree-fold-btn"
-              aria-label={collapsed ? 'Expand' : 'Collapse'}
+              aria-label={collapsed ? t('documents:dataGrid.tooltips.expand') : t('documents:dataGrid.tooltips.collapse')}
             >
               {collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
             </button>
@@ -1249,7 +1298,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
               activeTab === 'results' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
             )}
           >
-            Results
+            {t('dataGrid.tabs.results')}
           </button>
           <button
             onClick={() => {
@@ -1264,7 +1313,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             )}
             data-testid="explain-plan-tab"
           >
-            Explain Plan
+            {t('dataGrid.tabs.explainPlan')}
           </button>
           {queryCode && (
             <button
@@ -1275,7 +1324,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
               )}
               data-testid="query-code-tab"
             >
-              Query Code
+              {t('dataGrid.tabs.queryCode')}
             </button>
           )}
         </div>
@@ -1289,11 +1338,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
               onClick={onInsertDocument}
               disabled={isReadOnly}
               className="h-7 gap-1.5 text-[11px]"
-              title={isReadOnly ? READ_ONLY_TOOLTIP : 'Insert a new document'}
+              title={isReadOnly ? t('dataGrid.tooltips.readOnly') : t('dataGrid.tooltips.insert')}
               data-testid="insert-doc-btn"
             >
               <Plus size={12} />
-              Insert
+              {t('dataGrid.actions.insert')}
             </Button>
           )}
           {activeTab === 'results' && onAnalyzeSchema && (
@@ -1303,11 +1352,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
               size="sm"
               onClick={onAnalyzeSchema}
               className="h-7 gap-1.5 text-[11px]"
-              title="Analyze the collection's field schema"
+              title={t('dataGrid.tooltips.analyzeSchema')}
               data-testid="analyze-schema-btn"
             >
               <Table2 size={12} />
-              Schema
+              {t('dataGrid.actions.schema')}
             </Button>
           )}
           {activeTab === 'results' && onUpdateMany && (
@@ -1318,11 +1367,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
               onClick={onUpdateMany}
               disabled={isReadOnly}
               className="h-7 gap-1.5 text-[11px]"
-              title={isReadOnly ? READ_ONLY_TOOLTIP : 'Update all documents matching the current filter'}
+              title={isReadOnly ? t('dataGrid.tooltips.readOnly') : t('dataGrid.tooltips.updateMany')}
               data-testid="update-many-btn"
             >
               <Edit size={12} />
-              Update Many
+              {t('dataGrid.actions.updateMany')}
             </Button>
           )}
           {activeTab === 'results' && onDeleteMany && (
@@ -1333,18 +1382,18 @@ export const DataGrid: React.FC<DataGridProps> = ({
               onClick={onDeleteMany}
               disabled={isReadOnly}
               className="h-7 gap-1.5 border-destructive/30 bg-destructive/10 text-[11px] text-destructive hover:bg-destructive/20"
-              title={isReadOnly ? READ_ONLY_TOOLTIP : 'Delete all documents matching the current filter'}
+              title={isReadOnly ? t('dataGrid.tooltips.readOnly') : t('dataGrid.tooltips.deleteMany')}
               data-testid="delete-many-btn"
             >
               <Trash2 size={12} />
-              Delete Many
+              {t('dataGrid.actions.deleteMany')}
             </Button>
           )}
           {activeTab === 'results' ? (
             <div className="flex items-center rounded-md border border-border bg-background p-0.5">
               <button
                 role="button"
-                aria-label="Table"
+                aria-label={t('dataGrid.viewModes.table')}
                 onClick={() => setViewMode('table')}
                 className={cn(
                   'flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-all',
@@ -1352,12 +1401,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 )}
               >
                 <Table size={12} />
-                <span>Table</span>
+                <span>{t('dataGrid.viewModes.table')}</span>
               </button>
 
               <button
                 role="button"
-                aria-label="Tree"
+                aria-label={t('dataGrid.viewModes.tree')}
                 onClick={() => setViewMode('tree')}
                 className={cn(
                   'flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-all',
@@ -1365,12 +1414,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 )}
               >
                 <ChevronRight size={12} />
-                <span>Tree</span>
+                <span>{t('dataGrid.viewModes.tree')}</span>
               </button>
 
               <button
                 role="button"
-                aria-label="JSON"
+                aria-label={t('dataGrid.viewModes.json')}
                 onClick={() => setViewMode('json')}
                 className={cn(
                   'flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-all',
@@ -1378,12 +1427,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 )}
               >
                 <Braces size={12} />
-                <span>JSON</span>
+                <span>{t('dataGrid.viewModes.json')}</span>
               </button>
 
               <button
                 role="button"
-                aria-label="Chart"
+                aria-label={t('dataGrid.viewModes.chart')}
                 onClick={() => setViewMode('chart')}
                 className={cn(
                   'flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-all',
@@ -1391,7 +1440,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 )}
               >
                 <BarChart3 size={12} />
-                <span>Chart</span>
+                <span>{t('dataGrid.viewModes.chart')}</span>
               </button>
             </div>
           ) : activeTab === 'explain' ? (
@@ -1401,10 +1450,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 size="sm"
                 onClick={handleCopy}
                 className="h-7 gap-1.5 text-[11px] font-semibold"
-                title="Copy Explain Plan"
+                title={t('dataGrid.tooltips.copyExplainPlan')}
               >
                 {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
-                <span>{copied ? 'Copied!' : 'Copy Plan'}</span>
+                <span>{copied ? t('dataGrid.actions.copied') : t('dataGrid.actions.copyPlan')}</span>
               </Button>
             )
           ) : (
@@ -1414,7 +1463,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   value={codeLang}
                   onChange={(e) => setCodeLang(e.target.value as CodeLanguage)}
                   className="h-7 rounded-md border border-border bg-background px-2 text-[11px] text-foreground"
-                  aria-label="Code language"
+                  aria-label={t('dataGrid.tooltips.codeLanguage')}
                   data-testid="query-code-lang"
                 >
                   {CODE_LANGUAGES.map((lang) => (
@@ -1426,11 +1475,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   size="sm"
                   onClick={handleCopyQueryCode}
                   className="h-7 gap-1.5 text-[11px] font-semibold"
-                  title="Copy query code"
+                  title={t('dataGrid.tooltips.copyQueryCode')}
                   data-testid="copy-query-code-btn"
                 >
                   {queryCopied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
-                  <span>{queryCopied ? 'Copied!' : 'Copy'}</span>
+                  <span>{queryCopied ? t('dataGrid.actions.copied') : t('dataGrid.actions.copy')}</span>
                 </Button>
               </>
             )
@@ -1443,7 +1492,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         {!documents || documents.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center p-8 text-muted-foreground">
             <ListFilter size={24} className="mb-2 text-muted-foreground" />
-            <div>No documents found matching the criteria.</div>
+            <div>{t('dataGrid.empty.noDocuments')}</div>
           </div>
         ) : viewMode === 'json' ? (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background font-mono text-xs leading-relaxed" data-testid="json-view">
@@ -1461,6 +1510,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   renderContent: renderJsonLineContent,
                   hasRowActions,
                   RowActions,
+                  t,
                 }}
                 style={{ height: '100%', width: `${jsonMaxWidthPx}px`, minWidth: '100%' }}
               />
@@ -1474,11 +1524,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
           >
             <div className="flex h-6 shrink-0 select-none items-center border-b border-border bg-sidebar text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
               <div className="relative border-r border-border" style={{ width: treeKeyWidth, paddingLeft: 6 }}>
-                Key
+                {t('dataGrid.labels.key')}
                 {renderColResizer('key', treeKeyWidth, setTreeKeyWidth, 140)}
               </div>
-              <div className="flex-1 border-r border-border px-3">Value</div>
-              <div className="w-28 shrink-0 px-3">Type</div>
+              <div className="flex-1 border-r border-border px-3">{t('dataGrid.labels.value')}</div>
+              <div className="w-28 shrink-0 px-3">{t('dataGrid.labels.type')}</div>
             </div>
             <div className="min-h-0 flex-1 min-w-0 overflow-hidden">
               <List<{}>
@@ -1521,7 +1571,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 ))}
                 {hasRowActions && (
                   <div className="px-2 flex items-center justify-center" style={{ width: '72px', flexShrink: 0 }}>
-                    Actions
+                    {t('dataGrid.labels.actions')}
                   </div>
                 )}
               </div>
@@ -1552,7 +1602,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             <div className="flex flex-1 flex-col items-center justify-center bg-background p-6 text-muted-foreground select-none" data-testid="explain-loading">
               <div className="flex flex-col items-center gap-2 select-none">
                 <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary"></div>
-                <span className="text-xs">Generating query plan...</span>
+                <span className="text-xs">{t('dataGrid.labels.generatingQueryPlan')}</span>
               </div>
             </div>
           ) : explainResult ? (
@@ -1560,7 +1610,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <div className="flex h-8 shrink-0 select-none items-center justify-between border-b border-border bg-sidebar px-3">
                 <div className="flex items-center gap-2">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-success"></span>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Query Plan Generated</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t('dataGrid.labels.queryPlanGenerated')}</span>
                 </div>
 
                 <div className="flex items-center rounded-md border border-border bg-background p-0.5">
@@ -1572,7 +1622,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                     )}
                   >
                     <Table size={11} />
-                    <span>Visual Tree</span>
+                    <span>{t('dataGrid.viewModes.visualTree')}</span>
                   </button>
 
                   <button
@@ -1583,7 +1633,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                     )}
                   >
                     <Braces size={11} />
-                    <span>Raw JSON</span>
+                    <span>{t('dataGrid.viewModes.rawJson')}</span>
                   </button>
                 </div>
               </div>
@@ -1605,10 +1655,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
                     className="h-7 shrink-0 gap-1.5 text-[11px] font-semibold"
                     onClick={() => onCreateSuggestedIndex?.(indexSuggestion)}
                     disabled={isReadOnly}
-                    title={isReadOnly ? READ_ONLY_TOOLTIP : undefined}
+                    title={isReadOnly ? t('dataGrid.tooltips.readOnly') : undefined}
                     data-testid="create-suggested-index-btn"
                   >
-                    Create Index
+                    {t('dataGrid.actions.createIndex')}
                   </Button>
                 </div>
               )}
@@ -1622,7 +1672,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   }}
                 >
                   <div className="flex w-full max-w-[640px] flex-col items-center">
-                    <RenderTreeNode node={getExplainTree(explainResult)} />
+                    <RenderTreeNode node={getExplainTree(explainResult, t)} />
                   </div>
                 </div>
               ) : (
@@ -1635,9 +1685,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
             </>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center bg-background p-6 text-muted-foreground select-none">
-              <span className="mb-2 text-xs italic text-muted-foreground">No explain plan generated yet.</span>
+              <span className="mb-2 text-xs italic text-muted-foreground">{t('dataGrid.empty.noExplainPlan')}</span>
               <span className="max-w-sm text-center text-[11px] leading-relaxed text-muted-foreground">
-                To generate one, open the <strong>Run</strong> dropdown split menu in the query editor toolbar and select <strong>Run Explain</strong>.
+                <Trans i18nKey="dataGrid.empty.explainHint" t={t}>
+                  To generate one, open the <strong>Run</strong> dropdown split menu in the query editor toolbar and select <strong>Run Explain</strong>.
+                </Trans>
               </span>
             </div>
           )}
@@ -1672,7 +1724,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             </div>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center bg-background p-6 text-muted-foreground select-none">
-              <span className="text-xs italic text-muted-foreground">No query has run yet.</span>
+              <span className="text-xs italic text-muted-foreground">{t('dataGrid.empty.noQueryRun')}</span>
             </div>
           )}
         </div>
@@ -1689,12 +1741,24 @@ export const DataGrid: React.FC<DataGridProps> = ({
         return (
           <div className="flex shrink-0 select-none items-center justify-between border-t border-border bg-sidebar px-3 py-1.5 text-[11px] text-muted-foreground" data-testid="pager">
             <div className="flex items-center gap-3">
-              <span>showing {from}{documents.length ? `–${to}` : ''}</span>
+              <span>
+                {documents.length
+                  ? t('dataGrid.labels.showingRange', { from, to })
+                  : t('dataGrid.labels.showingEmpty', { from })}
+              </span>
               <span className="font-semibold text-foreground" data-testid="pager-page">
-                Page {page}{totalPages !== undefined ? ` / ${totalPages}` : ''}
+                {totalPages !== undefined
+                  ? t('dataGrid.labels.pageOf', { page, totalPages })
+                  : t('dataGrid.labels.page', { page })}
               </span>
               <span data-testid="pager-total">
-                {countLoading ? '…' : typeof totalCount === 'number' ? `${estimated ? '~' : ''}${totalCount} docs` : '…'}
+                {countLoading
+                  ? '…'
+                  : typeof totalCount === 'number'
+                    ? estimated
+                      ? t('dataGrid.labels.docsCountEstimated', { count: totalCount })
+                      : t('dataGrid.labels.docsCountExact', { count: totalCount })
+                    : '…'}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -1705,14 +1769,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 className="h-7 rounded-md border border-border bg-background px-2 text-[11px] text-foreground"
               >
                 {[25, 50, 100, 200].map((s) => (
-                  <option key={s} value={s}>{s} / page</option>
+                  <option key={s} value={s}>{t('dataGrid.labels.perPageOption', { size: s })}</option>
                 ))}
               </select>
               <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-[11px]" data-testid="pager-prev" disabled={prevDisabled} onClick={() => onPageChange(Math.max(0, sk - lim))}>
-                &lsaquo; Prev
+                &lsaquo; {t('dataGrid.actions.prev')}
               </Button>
               <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-[11px]" data-testid="pager-next" disabled={nextDisabled} onClick={() => onPageChange(sk + lim)}>
-                Next &rsaquo;
+                {t('dataGrid.actions.next')} &rsaquo;
               </Button>
             </div>
           </div>

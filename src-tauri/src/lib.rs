@@ -612,6 +612,9 @@ pub async fn start_mongosh_session_impl(
     uri: &str,
     database: &str,
     mongosh_path: &str,
+    // The window asking for the session, so a start still in flight when that
+    // window closes can stop the child it spawned. Empty opts out.
+    window_id: &str,
 ) -> Result<MongoshSessionInfo, String> {
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
@@ -675,9 +678,27 @@ pub async fn start_mongosh_session_impl(
         sessions.insert(session_id.clone(), session.clone());
     }
 
+    // The window that asked for this may have closed while mongosh was
+    // starting. Its renderer is gone, so nothing is left to cancel the start or
+    // to record the id, and the tab-state cleanup that ran on close had no id
+    // to stop — this child would simply survive until the app exits.
+    if window_is_closed(state, window_id)? {
+        let _ = stop_mongosh_session_impl(state, &session_id).await;
+        return Err(format!("window {window_id} closed while mongosh was starting"));
+    }
+
     let startup = drain_mongosh_output(&session).await;
     if !database.trim().is_empty() {
         let _ = run_mongosh_command_on_session(&session, &format!("use {}", database.trim())).await;
+    }
+
+    // Rechecked, because the two awaits above can take seconds (the `use` alone
+    // has a 20s ceiling) and the window can close during them. Until this
+    // function returns, the id exists nowhere the close sweep can see it, and
+    // the renderer that would have handled the result is gone.
+    if window_is_closed(state, window_id)? {
+        let _ = stop_mongosh_session_impl(state, &session_id).await;
+        return Err(format!("window {window_id} closed while mongosh was starting"));
     }
 
     Ok(MongoshSessionInfo {
@@ -694,6 +715,97 @@ pub async fn run_mongosh_command_impl(
 ) -> Result<MongoshCommandOutput, String> {
     let session = get_mongosh_session(state, session_id)?;
     run_mongosh_command_on_session(&session, command).await
+}
+
+/// Per-tab shell state, held backend-side so a frontend hot reload or window
+/// refresh cannot lose the mapping from a tab to its running mongosh process.
+///
+/// Module state in the renderer did not survive either: the map came back
+/// empty, the tab concluded it had no session and started a second one, and the
+/// original mongosh child was orphaned with no id left to stop it. The backend
+/// already owns those children, so it is the honest owner of the mapping too.
+/// The payload stays opaque JSON — its shape is a frontend concern.
+pub fn get_shell_tab_state_impl(
+    state: &AppState,
+    tab_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    Ok(state.shell_tab_state.lock_safe()?.get(tab_id).cloned())
+}
+
+pub fn set_shell_tab_state_impl(
+    state: &AppState,
+    tab_id: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    state
+        .shell_tab_state
+        .lock_safe()?
+        .insert(tab_id.to_string(), value);
+    Ok(())
+}
+
+/// Forget a tab's state. Deliberately does NOT stop its mongosh session: the
+/// frontend stops that explicitly, which keeps "this tab closed" and "restart
+/// this session" distinguishable.
+pub fn clear_shell_tab_state_impl(state: &AppState, tab_id: &str) -> Result<(), String> {
+    state.shell_tab_state.lock_safe()?.remove(tab_id);
+    Ok(())
+}
+
+/// Remove a tab's state and return whatever it held, under one lock.
+///
+/// Closing a tab has to read the session id and forget the state, and doing
+/// that as two commands is a race the frontend cannot win: an inactive tab's id
+/// exists only here, so a clear that overtakes the read leaves the mongosh
+/// child running with nothing left pointing at it.
+pub fn take_shell_tab_state_impl(
+    state: &AppState,
+    tab_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    Ok(state.shell_tab_state.lock_safe()?.remove(tab_id))
+}
+
+/// Move a tab's state to a new id, for the rebind that renames a restored tab.
+pub fn rename_shell_tab_state_impl(
+    state: &AppState,
+    old_id: &str,
+    new_id: &str,
+) -> Result<(), String> {
+    let mut map = state.shell_tab_state.lock_safe()?;
+    if let Some(value) = map.remove(old_id) {
+        map.insert(new_id.to_string(), value);
+    }
+    Ok(())
+}
+
+/// Whether `window_id` has been closed, so work still in flight for it should
+/// be abandoned rather than completed. An empty id means "no owning window
+/// recorded" and is never treated as closed.
+///
+/// Split out from `start_mongosh_session_impl` so the decision is testable on
+/// its own: the surrounding path spawns a real mongosh binary, which the mock
+/// connections the suite uses cannot reach.
+pub fn window_is_closed(state: &AppState, window_id: &str) -> Result<bool, String> {
+    if window_id.is_empty() {
+        return Ok(false);
+    }
+    Ok(state.closed_windows.lock_safe()?.contains(window_id))
+}
+
+/// The tab ids whose stored shell state was written by `window_id`.
+///
+/// Ownership is read from the state the renderer stamped, not from the
+/// workspace's tab list: the workspace stores PROFILE-space ids while these
+/// keys are LIVE-space, so a shell tab that has been rebound to a connection is
+/// filed under an id the workspace never mentions.
+pub fn shell_tab_ids_for_window(state: &AppState, window_id: &str) -> Result<Vec<String>, String> {
+    Ok(state
+        .shell_tab_state
+        .lock_safe()?
+        .iter()
+        .filter(|(_, value)| value.get("windowId").and_then(|w| w.as_str()) == Some(window_id))
+        .map(|(tab_id, _)| tab_id.clone())
+        .collect())
 }
 
 pub async fn stop_mongosh_session_impl(state: &AppState, session_id: &str) -> Result<(), String> {
@@ -954,11 +1066,20 @@ async fn start_mongosh_session(
     uri: String,
     database: String,
     mongosh_path: String,
+    window_id: Option<String>,
 ) -> Result<MongoshSessionInfo, String> {
     use tauri::Manager;
     let app_data_dir = app_handle.path().app_data_dir().ok();
     let resolved_path = toolsetup::resolve_mongosh_executable(&mongosh_path, app_data_dir.as_deref());
-    start_mongosh_session_impl(&state, &connection_id, &uri, &database, &resolved_path).await
+    start_mongosh_session_impl(
+        &state,
+        &connection_id,
+        &uri,
+        &database,
+        &resolved_path,
+        window_id.as_deref().unwrap_or_default(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -968,6 +1089,55 @@ async fn run_mongosh_command(
     command: String,
 ) -> Result<MongoshCommandOutput, String> {
     run_mongosh_command_impl(&state, &session_id, &command).await
+}
+
+#[tauri::command]
+fn get_shell_tab_state(
+    state: tauri::State<'_, AppState>,
+    tab_id: String,
+) -> Result<Option<serde_json::Value>, String> {
+    get_shell_tab_state_impl(&state, &tab_id)
+}
+
+#[tauri::command]
+fn set_shell_tab_state(
+    state: tauri::State<'_, AppState>,
+    tab_id: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    set_shell_tab_state_impl(&state, &tab_id, value)
+}
+
+#[tauri::command]
+fn clear_shell_tab_state(state: tauri::State<'_, AppState>, tab_id: String) -> Result<(), String> {
+    clear_shell_tab_state_impl(&state, &tab_id)
+}
+
+/// Close a tab's shell for good: take its state and stop the child it named,
+/// so the read and the removal cannot be reordered against each other.
+#[tauri::command]
+async fn close_shell_tab_session(
+    state: tauri::State<'_, AppState>,
+    tab_id: String,
+) -> Result<(), String> {
+    let session_id = take_shell_tab_state_impl(&state, &tab_id)?.and_then(|v| {
+        v.get("sessionId")
+            .and_then(|s| s.as_str())
+            .map(|s| s.to_string())
+    });
+    if let Some(session_id) = session_id {
+        let _ = stop_mongosh_session_impl(&state, &session_id).await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn rename_shell_tab_state(
+    state: tauri::State<'_, AppState>,
+    old_id: String,
+    new_id: String,
+) -> Result<(), String> {
+    rename_shell_tab_state_impl(&state, &old_id, &new_id)
 }
 
 #[tauri::command]
@@ -2111,6 +2281,11 @@ pub fn run() {
             start_mongosh_session,
             run_mongosh_command,
             stop_mongosh_session,
+            get_shell_tab_state,
+            set_shell_tab_state,
+            clear_shell_tab_state,
+            close_shell_tab_session,
+            rename_shell_tab_state,
             disconnect_db,
             set_connection_meta,
             connection_list,

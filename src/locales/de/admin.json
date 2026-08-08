@@ -1,0 +1,477 @@
+{
+  "monitoringView": {
+    "title": "Monitoring",
+    "tabs": {
+      "ops": "Aktuelle Vorgänge",
+      "opsCount_one": " ({{count}})",
+      "opsCount_other": " ({{count}})",
+      "profiler": "Profiler",
+      "cluster": "Cluster"
+    },
+    "status": {
+      "hostVersion": "{{host}} · MongoDB {{version}}",
+      "replSetClause": " · {{replSet}}",
+      "uptimeClause": " · Betriebszeit {{hours}} Std."
+    },
+    "actions": {
+      "refreshNow": "Jetzt aktualisieren",
+      "refreshPlaceholder": "Aktualisieren",
+      "killOperation": "Vorgang beenden",
+      "profilerRefresh": "Aktualisieren"
+    },
+    "confirm": {
+      "killOperation": "Vorgang {{opid}} auf {{ns}} beenden?"
+    },
+    "labels": {
+      "serverFallback": "Server",
+      "opid": "opid",
+      "op": "op",
+      "ns": "ns",
+      "desc": "desc",
+      "running": "Laufzeit",
+      "client": "Client",
+      "commandHeading": "Befehl",
+      "plan": "Plan",
+      "duration": "Dauer",
+      "time": "Zeit"
+    },
+    "refreshOptions": {
+      "5s": "5s",
+      "10s": "10s",
+      "30s": "30s",
+      "1m": "1m",
+      "off": "Aus"
+    },
+    "detail": {
+      "opTitle": "Vorgangsdetails",
+      "profileTitle": "Profilierter Vorgang"
+    },
+    "accessRequired": {
+      "title": "Zugriff erforderlich",
+      "bodyPrefix": "Der Benutzer dieser Verbindung ist nicht berechtigt, {{what}}. Vergib die Rolle ",
+      "bodySuffix": " (oder eine gleichwertige Berechtigung), um dies zu ermöglichen.",
+      "what": {
+        "serverMetrics": "Servermetriken zu lesen (serverStatus)",
+        "currentOps": "aktuelle Vorgänge einzusehen ($currentOp)",
+        "profiler": "den Profiler dieser Datenbank zu lesen (system.profile)"
+      }
+    },
+    "metrics": {
+      "connections": "Verbindungen",
+      "connectionsAvail_one": "{{formatted}} verfügbar",
+      "connectionsAvail_other": "{{formatted}} verfügbar",
+      "opsPerSec": "Vorgänge/s",
+      "residentMem": "Speicher (RSS)",
+      "residentVirt": "{{mb}} MB virt.",
+      "cache": "Cache",
+      "cacheNotAvailable": "n. v.",
+      "network": "Netzwerk",
+      "networkPerSecond": "{{value}}/s",
+      "networkTotal": "{{value}} gesamt"
+    },
+    "filters": {
+      "opsPlaceholder": "ns, Client, Befehl filtern…",
+      "profilerPlaceholder": "ns, Plan, Befehl filtern…",
+      "opTypePlaceholder": "Vorgangstyp",
+      "allOps": "Alle Vorgänge",
+      "databasePlaceholder": "Datenbank",
+      "allDatabases": "Alle Datenbanken",
+      "minSecsAriaLabel": "Mindestlaufzeit in Sekunden",
+      "minMsAriaLabel": "Mindestdauer in Millisekunden",
+      "secSuffix": "Sek.",
+      "msSuffix": "ms"
+    },
+    "table": {
+      "secs": "Sek.",
+      "client": "Client",
+      "command": "Befehl",
+      "millis": "ms",
+      "plan": "Plan"
+    },
+    "empty": {
+      "noActiveOps": "Keine aktiven Vorgänge.",
+      "noOpsMatchFilter": "Keine Vorgänge entsprechen dem Filter.",
+      "noEntriesMatchFilter": "Keine Einträge entsprechen dem Filter.",
+      "noProfiledOps": "Noch keine profilierten Vorgänge.",
+      "profilingOff": "Profiling ist für diese Datenbank deaktiviert. Stufe 1 (langsame Vorgänge) oder 2 (alle Vorgänge) festlegen, um Einträge zu sammeln."
+    },
+    "profiler": {
+      "levelLabel": "Stufe:",
+      "slowThreshold": "langsam ≥ {{slowMs}} ms"
+    },
+    "cluster": {
+      "shardedNotice": "Sharded-Cluster — Zustand auf Mitgliedsebene ist über mongos nicht verfügbar. Verbinde dich direkt mit dem Replikatset eines Shards, um dessen Mitglieder zu prüfen.",
+      "notReplsetNotice": "Diese Verbindung ist ein Standalone-MongoDB-Server — Replikatset-Zustand ist hier nicht anwendbar.",
+      "summaryReplicaSetPrefix": "Replikatset ",
+      "summaryMembersCount_one": "{{count}} Mitglied",
+      "summaryMembersCount_other": "{{count}} Mitglieder",
+      "summaryVersionClause": " · MongoDB {{version}}",
+      "summaryYouClause": " · dieser Knoten: {{state}}",
+      "youBadge": "(dieser Knoten)",
+      "table": {
+        "member": "Mitglied",
+        "state": "Status",
+        "uptime": "Betriebszeit",
+        "ping": "Ping",
+        "syncSource": "Sync-Quelle",
+        "lag": "Verzögerung"
+      },
+      "optimeTooltip": "Optime: {{date}}",
+      "pingMs": "{{ms}} ms",
+      "loading": "Replikatset-Status wird geladen…"
+    }
+  },
+  "userManagementView": {
+    "title": "Benutzerverwaltung",
+    "actions": {
+      "refresh": "Aktualisieren",
+      "createUser": "Benutzer erstellen",
+      "editUser": "Benutzer bearbeiten",
+      "dropUser": "Benutzer löschen"
+    },
+    "labels": {
+      "databaseScope": "Datenbankbereich",
+      "allDatabases": "Alle Datenbanken",
+      "columnUser": "Benutzer",
+      "columnDatabase": "Datenbank",
+      "columnAuthMechanism": "Auth-Mechanismus",
+      "noRolesGranted": "Keine Rollen zugewiesen"
+    },
+    "hint": {
+      "notAuthorizedAllDbs": "Nicht berechtigt, Benutzer über alle Datenbanken hinweg aufzulisten — zeigt Benutzer aus Datenbanken, auf die du Zugriff hast."
+    },
+    "loading": "Benutzer werden geladen…",
+    "empty": {
+      "noUsers": "Keine Benutzer gefunden.",
+      "noUsersInScope": "Keine Benutzer in {{scope}} gefunden."
+    },
+    "confirm": {
+      "dropTitle": "Benutzer löschen",
+      "dropMessage": "Benutzer „{{user}}“ in Datenbank „{{database}}“ löschen? Dies kann nicht rückgängig gemacht werden.",
+      "dropConfirmLabel": "Benutzer löschen"
+    },
+    "editor": {
+      "titleEdit": "Benutzer bearbeiten — {{user}}",
+      "titleNew": "Neuer Benutzer",
+      "closeAriaLabel": "Modal schließen",
+      "labels": {
+        "username": "Benutzername",
+        "newPassword": "Neues Passwort",
+        "password": "Passwort",
+        "authDatabase": "Authentifizierungsdatenbank",
+        "roles": "Rollen"
+      },
+      "placeholders": {
+        "username": "z. B. app_user",
+        "passwordKeepCurrent": "Leer lassen, um das aktuelle Passwort beizubehalten",
+        "password": "Passwort",
+        "selectRole": "Rolle auswählen…"
+      },
+      "hints": {
+        "passwordRequired": "Das Passwort muss festgelegt werden.",
+        "authDatabaseExplain": "Die Datenbank, gegen die sich der Benutzer authentifiziert.",
+        "savingReplacesRoles": "Beim Speichern wird der Rollensatz des Benutzers durch die obige Liste ersetzt."
+      },
+      "actions": {
+        "revokeRole": "Rolle entziehen",
+        "grantRole": "Rolle zuweisen",
+        "cancel": "Abbrechen",
+        "saving": "Wird gespeichert…",
+        "saveChanges": "Änderungen speichern",
+        "addUser": "Benutzer hinzufügen"
+      },
+      "errors": {
+        "usernameRequired": "Benutzername ist erforderlich",
+        "passwordRequired": "Passwort ist erforderlich",
+        "roleAndDbRequired": "Wähle für jede zugewiesene Rolle eine Rolle und eine Datenbank aus"
+      }
+    }
+  },
+  "indexViewer": {
+    "loading": "Indexdefinition wird geladen…",
+    "errors": {
+      "notFound": "Index „{{indexName}}“ wurde in {{namespace}} nicht gefunden."
+    },
+    "badges": {
+      "index": "Index",
+      "unused": "Ungenutzt"
+    },
+    "actions": {
+      "editIndex": "Index bearbeiten",
+      "deleteIndex": "Index löschen",
+      "copyToClipboard": "In Zwischenablage kopieren",
+      "copied": "Kopiert!",
+      "copyJson": "JSON kopieren"
+    },
+    "confirm": {
+      "deleteTitle": "Index löschen",
+      "deleteMessage": "Möchtest du den Index „{{indexName}}“ wirklich löschen?",
+      "deleteConfirmLabel": "Löschen"
+    },
+    "type": {
+      "compound": "Verbund",
+      "singleField": "Einzelfeld"
+    },
+    "labels": {
+      "unknownFields": "(unbekannte Felder)"
+    },
+    "descriptions": {
+      "systemPrimaryKey": "Primärschlüssel-Index des Systems. Wird automatisch von MongoDB erstellt.",
+      "userCreated": "Vom Benutzer erstellter Index auf {{fields}}."
+    },
+    "cards": {
+      "definition": "Definition",
+      "constraints": "Einschränkungen",
+      "keyFields": "Schlüsselfelder",
+      "size": "Größe",
+      "usage": "Nutzung"
+    },
+    "direction": {
+      "desc": "DESC (-1)",
+      "asc": "ASC (1)"
+    },
+    "constraints": {
+      "unique": "Eindeutig",
+      "nonUnique": "Nicht eindeutig",
+      "sparseIndex": "Sparse-Index",
+      "nonSparse": "Nicht-Sparse (indiziert alle Dokumente)",
+      "singleFieldIndex": "Einzelfeld-Index",
+      "fieldsCompound_one": "{{count}} Feld (Verbund)",
+      "fieldsCompound_other": "{{count}} Felder (Verbund)"
+    },
+    "size": {
+      "onDiskIndexSize": "Indexgröße auf Datenträger"
+    },
+    "usage": {
+      "opsCount": "{{ops}} Vorgänge",
+      "indexAccessesSinceRestart": "Indexzugriffe seit dem letzten Neustart"
+    },
+    "properties": {
+      "title": "Eigenschaften & Details",
+      "indexName": "Indexname",
+      "uniqueConstraint": "Eindeutigkeit",
+      "sparseConstraint": "Sparse-Beschränkung",
+      "operationalStatus": "Betriebsstatus",
+      "active": "Aktiv",
+      "nonSparseBadge": "Nicht-Sparse",
+      "descriptionAndGuidelines": "Beschreibung & Richtlinien"
+    },
+    "raw": {
+      "title": "Rohspezifikation (BSON-Metadaten)"
+    }
+  },
+  "indexModal": {
+    "titleEdit": "Index-Definition bearbeiten",
+    "titleCreate": "Neuen Index erstellen",
+    "closeAriaLabel": "Modal schließen",
+    "labels": {
+      "indexName": "Indexname",
+      "indexKeyDefinition": "Indexschlüssel-Definition",
+      "constraints": "Einschränkungen"
+    },
+    "placeholders": {
+      "indexName": "z. B. email_1_status_-1",
+      "fieldPath": "field.path"
+    },
+    "hints": {
+      "autoGenerated": "Automatisch aus den Schlüsseln generiert (Mongo-Konvention) — zum Überschreiben tippen."
+    },
+    "tabs": {
+      "keyBuilder": "Schlüssel-Builder",
+      "rawJson": "Roh-JSON"
+    },
+    "actions": {
+      "list": "Liste",
+      "removeKey": "Schlüssel entfernen",
+      "addIndexKey": "Indexschlüssel hinzufügen",
+      "cancel": "Abbrechen",
+      "saveChanges": "Änderungen speichern",
+      "createIndex": "Index erstellen"
+    },
+    "options": {
+      "customField": "Benutzerdefiniertes Feld…",
+      "ascending": "Aufsteigend (1)",
+      "descending": "Absteigend (-1)"
+    },
+    "constraintLabels": {
+      "unique": "Eindeutig",
+      "uniqueHint": "verhindert Duplikate",
+      "sparse": "Sparse",
+      "sparseHint": "ignoriert fehlende Schlüssel"
+    },
+    "errors": {
+      "keysMustBeObject": "Indexschlüssel müssen ein JSON-Objekt sein (z. B. { \"field\": 1 })",
+      "invalidDirection": "Die Indexrichtung für „{{field}}“ muss 1 (Aufsteigend) oder -1 (Absteigend) sein",
+      "invalidJsonSyntax": "Ungültige JSON-Syntax",
+      "allFieldsNeedName": "Alle Indexschlüsselfelder müssen einen Namen haben",
+      "specifyAtLeastOneKey": "Gib mindestens einen Indexschlüssel an",
+      "nameRequired": "Indexname ist erforderlich"
+    }
+  },
+  "validationRulesView": {
+    "title": "Validierungsregeln — {{collection}}",
+    "loading": "Validierungsregeln werden geladen…",
+    "labels": {
+      "validator": "Validator (JSON-Schema)",
+      "validationLevel": "Validierungsstufe",
+      "validationAction": "Validierungsaktion",
+      "defaultOption": "(Standard)"
+    },
+    "hints": {
+      "leaveEmptyToClear": "Leer lassen und anwenden, um die Validierung für diese Sammlung zu entfernen."
+    },
+    "errors": {
+      "invalidValidatorJson": "Ungültiges Validator-JSON: {{message}}",
+      "syntaxErrorFallback": "Syntaxfehler",
+      "mustBeObject": "Der Validator muss ein JSON-Objekt sein."
+    },
+    "success": {
+      "applied": "Validierungsregeln angewendet."
+    },
+    "actions": {
+      "applying": "Wird angewendet…",
+      "apply": "Anwenden"
+    }
+  },
+  "createViewView": {
+    "title": "Ansicht erstellen — {{database}}",
+    "labels": {
+      "viewName": "Ansichtsname",
+      "sourceCollection": "Quellsammlung",
+      "pipeline": "Aggregationspipeline (JSON-Array)"
+    },
+    "loading": "Sammlungen werden geladen…",
+    "options": {
+      "noCollections": "(keine Sammlungen)"
+    },
+    "errors": {
+      "nameRequired": "Ansichtsname ist erforderlich.",
+      "selectSource": "Wähle eine Quellsammlung aus.",
+      "pipelineMustBeArray": "Pipeline muss ein JSON-Array von Stufen sein.",
+      "invalidPipelineJson": "Ungültiges Pipeline-JSON: {{message}}",
+      "syntaxErrorFallback": "Syntaxfehler"
+    },
+    "actions": {
+      "creating": "Wird erstellt…",
+      "createView": "Ansicht erstellen"
+    }
+  },
+  "statsCards": {
+    "actions": {
+      "refresh": "Aktualisieren"
+    },
+    "dbStats": {
+      "loading": "Datenbankstatistiken werden geladen…",
+      "database": "Datenbank:",
+      "labels": {
+        "collections": "Sammlungen",
+        "views": "Ansichten",
+        "objects": "Objekte",
+        "avgObjectSize": "Durchschn. Objektgröße",
+        "dataSize": "Datengröße",
+        "storageSize": "Speichergröße",
+        "indexes": "Indizes",
+        "totalIndexSize": "Gesamte Indexgröße"
+      }
+    },
+    "collStats": {
+      "loading": "Sammlungsstatistiken werden geladen…",
+      "collection": "Sammlung:",
+      "labels": {
+        "documents": "Dokumente",
+        "avgObjectSize": "Durchschn. Objektgröße",
+        "dataSize": "Datengröße",
+        "storageSize": "Speichergröße",
+        "indexes": "Indizes",
+        "totalIndexSize": "Gesamte Indexgröße",
+        "capped": "Capped"
+      },
+      "yes": "ja"
+    },
+    "indexStats": {
+      "loading": "Indexstatistiken werden geladen…",
+      "index": "Index:",
+      "indexOnNamespace": "{{indexName}} auf {{namespace}}",
+      "labels": {
+        "size": "Größe",
+        "usage": "Nutzung",
+        "since": "Seit"
+      },
+      "opsCount": "{{ops}} Vorgänge",
+      "usageNoData": "n. v. (keine Daten seit dem letzten Neustart)",
+      "noStatsForIndex": "Keine Statistiken für diesen Index."
+    }
+  },
+  "clusterHealthCard": {
+    "loading": "Cluster-Zustand wird geladen…",
+    "connectionPrefix": "Verbindung: ",
+    "replicaSetClausePrefix": " [Replikatset: ",
+    "userLine": "Benutzer: {{user}}",
+    "shardedNotice": "Sharded-Cluster (mongos).",
+    "standaloneNotice": "Standalone-Server — kein Replikatset.",
+    "serversLabel": "Server:",
+    "memberStatus": {
+      "offline": "— Offline [(nicht erreichbar/funktionsfähig)]",
+      "onlinePrimary": "— Online [PRIMARY]",
+      "onlinePrefix": "— Online [{{state}}] · ",
+      "lagLabel": "Verzögerung"
+    },
+    "readPreferenceLine": "Lesepräferenzmodus: {{value}}",
+    "versionLine": "Serverversion: {{version}}",
+    "actions": {
+      "refresh": "Aktualisieren",
+      "openMonitoring": "Monitoring öffnen →"
+    }
+  },
+  "gridfsView": {
+    "loading": "GridFS-Dateien werden geladen…",
+    "labels": {
+      "fileCount_one": "{{count}} Datei",
+      "fileCount_other": "{{count}} Dateien",
+      "theseFiles": "Diese Dateien",
+      "thisFile": "Diese Datei"
+    },
+    "actions": {
+      "upload": "Hochladen",
+      "uploadFiles": "Dateien hochladen",
+      "download": "Herunterladen",
+      "delete": "Löschen"
+    },
+    "progress": {
+      "uploading": "Wird hochgeladen",
+      "downloading": "Wird heruntergeladen"
+    },
+    "empty": {
+      "noFiles": "Keine Dateien in diesem Bucket."
+    },
+    "table": {
+      "filename": "Dateiname",
+      "size": "Größe",
+      "uploaded": "Hochgeladen",
+      "chunkSize": "Chunk-Größe"
+    },
+    "metadataDialog": {
+      "title": "GridFS-Metadaten",
+      "message": "{{batchLabel}}: optionale Metadaten hinzufügen?",
+      "choiceSkip": "Metadaten überspringen",
+      "choiceAdd": "Metadaten-JSON hinzufügen",
+      "promptMessage": "Metadaten-JSON-Objekt (wird im Dateidokument gespeichert):",
+      "errors": {
+        "mustBeObject": "Metadaten müssen ein JSON-Objekt sein",
+        "invalidJson": "Ungültiges JSON"
+      }
+    },
+    "uploadFilenameDialog": {
+      "titleMultiple": "Datei {{index}} von {{total}} hochladen",
+      "titleSingle": "In GridFS hochladen",
+      "messageMultiple": "Dateiname im Bucket für {{name}}:",
+      "messageSingle": "Dateiname im Bucket:",
+      "filenameRequired": "Dateiname ist erforderlich"
+    },
+    "deleteDialog": {
+      "title": "GridFS-Datei löschen",
+      "message": "„{{filename}}“ aus {{namespace}} löschen? Dies kann nicht rückgängig gemacht werden.",
+      "confirmLabel": "Löschen"
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Dialog,
   DialogPortal,
@@ -51,6 +52,7 @@ interface DialogModalProps {
 }
 
 export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) => {
+  const { t } = useTranslation('common');
   const [value, setValue] = useState(request.type === 'prompt' ? request.defaultValue ?? '' : '');
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
@@ -84,7 +86,7 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
     }
   };
 
-  const cancelLabel = (request as ConfirmRequest | PromptRequest | ChooseRequest).cancelLabel ?? 'Cancel';
+  const cancelLabel = (request as ConfirmRequest | PromptRequest | ChooseRequest).cancelLabel ?? t('cancel');
 
   return (
     // No backdrop-click cancel: dismiss only via the buttons or Escape.
@@ -204,7 +206,7 @@ export const DialogModal: React.FC<DialogModalProps> = ({ request, onResolve }) 
                 data-testid="dialog-confirm"
                 onClick={() => (request.type === 'prompt' ? submitPrompt() : onResolve(true))}
               >
-                {request.confirmLabel ?? (request.type === 'prompt' ? 'OK' : 'Confirm')}
+                {request.confirmLabel ?? (request.type === 'prompt' ? t('ok') : t('confirm'))}
               </Button>
             )}
           </DialogFooter>

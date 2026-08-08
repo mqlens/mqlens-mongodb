@@ -66,6 +66,7 @@
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@types/node": "^20.19.43",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/react-window": "^1.8.8",
@@ -79,9 +80,9 @@
   },
   "overrides": {
     "dompurify": "3.4.12",
-    "undici": "7.28.0",
+    "undici": "7.29.0",
     "@babel/core": "7.29.6",
     "esbuild": "0.28.1",
-    "postcss": "8.5.18"
+    "postcss": "8.5.23"
   }
 }

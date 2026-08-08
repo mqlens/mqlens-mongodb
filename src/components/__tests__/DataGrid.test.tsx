@@ -712,3 +712,36 @@ describe('DataGrid column resize', () => {
     expect(headerCell.style.width).toBe('240px');
   });
 });
+
+describe('view mode persistence (#218)', () => {
+  const docs = [{ _id: '1', name: 'Alice' }];
+
+  it('renders the view mode it is given instead of always defaulting to JSON', () => {
+    // The results pane is `{tab.loading ? <spinner/> : <DataGrid/>}`, so the
+    // grid unmounts on every run and its local viewMode reset to 'json'.
+    // Given a viewMode it must honour it, which is what survives the remount.
+    render(<DataGrid documents={docs} viewMode="table" onViewModeChange={() => {}} />);
+
+    const table = screen.getByRole('button', { name: /table/i });
+    expect(table.className).toContain('bg-accent');
+  });
+
+  it('reports a view mode change upward so the owner can store it on the tab', () => {
+    const onViewModeChange = vi.fn();
+    render(<DataGrid documents={docs} viewMode="json" onViewModeChange={onViewModeChange} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+
+    expect(onViewModeChange).toHaveBeenCalledWith('tree');
+  });
+
+  it('still switches views on its own when no owner is managing it', () => {
+    // MongoShell renders <DataGrid documents={...}/> with no view-mode props;
+    // that path has to keep working uncontrolled.
+    render(<DataGrid documents={docs} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    expect(screen.getByRole('button', { name: /table/i }).className).toContain('bg-accent');
+  });
+});

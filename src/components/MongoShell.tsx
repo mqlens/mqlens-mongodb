@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import Editor from '@monaco-editor/react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, Sparkles, Terminal } from 'lucide-react';
+import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, RotateCcw, Sparkles, Terminal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,20 +22,23 @@ import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '.
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { registerMqlensMonacoThemes } from '../lib/monacoAppTheme';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
-import {
-  aiChatSessionKey,
-  loadAiChatSession,
-  saveAiChatSession,
-} from '../lib/aiChatSession';
+import { windowLabel } from '../workspace/workspaceStore';
+import { aiChatSessionKey, loadAiChatSession, saveAiChatSession } from '../lib/aiChatSession';
 
 type ShellTab = 'console' | 'viewer';
 
-type ShellEntry =
-  | { kind: 'input'; db: string; text: string }
-  | { kind: 'text'; lines: string[] }
-  | { kind: 'value'; value: unknown }
-  | { kind: 'note'; text: string }
-  | { kind: 'error'; message: string };
+import {
+  dropPendingShellStart,
+  loadShellSession,
+  readShellSession,
+  shareShellStart,
+  shellSessionEpoch,
+  watchShellSession,
+  stopShellSessionProcess,
+  writeShellSession,
+  type ShellEntry,
+  type ShellSession,
+} from '../lib/mongoshSession';
 
 interface AppSettings {
   mongosh_path?: string;
@@ -63,6 +67,10 @@ interface MongoShellProps {
   onInstallTools?: () => void;
   /** Bump this (e.g. after a tool install completes) to re-attempt the mongosh session. */
   reconnectSignal?: number;
+  /** Identifies this shell across unmounts so its mongosh process and
+   *  scrollback survive a tab switch (#240). Without it the shell falls back
+   *  to the old behaviour: a session per mount. */
+  sessionKey?: string;
 }
 
 interface ParsedCall {
@@ -70,25 +78,28 @@ interface ParsedCall {
   argText: string;
 }
 
-const HELP_LINES = [
-  'Shell helpers',
-  '  show dbs                 list databases',
-  '  show collections         list collections in current db',
-  '  use <db>                 switch current database',
+// Keys into shell:mongoShell.help — translated at the call site (`help` command
+// handler below) rather than here, since this module-level constant can't call
+// the useTranslation hook. A blank string renders as a blank line unchanged.
+const HELP_LINE_KEYS = [
+  'help.title',
+  'help.showDbs',
+  'help.showCollections',
+  'help.useDb',
   '',
-  'Collection methods (rendered in the Data Viewer)',
-  '  db.<coll>.find(<query>).sort(<sort>).skip(n).limit(n)',
-  '  db.<coll>.findOne(<query>)',
-  '  db.<coll>.aggregate([{ $match }, { $sort }, { $skip }, { $limit }])',
-  '  db.<coll>.countDocuments(<query>)',
-  '  db.<coll>.getIndexes()',
+  'help.collectionMethodsHeader',
+  'help.findSyntax',
+  'help.findOneSyntax',
+  'help.aggregateSyntax',
+  'help.countDocumentsSyntax',
+  'help.getIndexesSyntax',
   '',
-  'JavaScript scripts (run via mongosh)',
-  '  Write multi-line JS: variables, loops, functions, try/catch.',
-  '  printjson(db.<coll>.find().toArray())   print results',
-  '  load("script.js")                       run a .js file',
+  'help.jsHeader',
+  'help.jsMultiline',
+  'help.printjson',
+  'help.load',
   '',
-  '  cls / clear              clear this console',
+  'help.clsClear',
 ];
 
 const splitCalls = (source: string): { calls: ParsedCall[]; rest: string } => {
@@ -121,7 +132,12 @@ const splitCalls = (source: string): { calls: ParsedCall[]; rest: string } => {
   return { calls, rest: source.slice(i) };
 };
 
-const parseLoose = (source: string, fallback: unknown = {}) => {
+// Pure, module-scope helper — can't call the useTranslation hook. Every call
+// site is inside the component, where the real `t` is in scope, so it's
+// threaded through as a required parameter instead; the thrown message ends
+// up in a shell `error` entry the user reads, so it must be translated like
+// any other visible copy.
+const parseLoose = (source: string, fallback: unknown, t: (key: string, opts?: any) => string) => {
   const trimmed = source.trim();
   if (!trimmed) return fallback;
   try {
@@ -134,7 +150,7 @@ const parseLoose = (source: string, fallback: unknown = {}) => {
         .replace(/,(\s*[}\]])/g, '$1');
       return JSON.parse(normalized);
     } catch {
-      throw new Error(`Invalid mongosh JSON literal: ${trimmed}`);
+      throw new Error(t('shell:mongoShell.errors.invalidJsonLiteral', { value: trimmed }));
     }
   }
 };
@@ -194,6 +210,11 @@ const extractVersion = (value: unknown) => {
   return text.match(/\d+\.\d+\.\d+(?:[-\w.]*)?/)?.[0] || text || 'unavailable';
 };
 
+// Reproduces mongosh's own startup banner verbatim (same convention as
+// HELP_LINE_KEYS' findSyntax/aggregateSyntax/etc. below: real mongosh output
+// is English-only regardless of the host OS locale, so translating this
+// would misrepresent what the actual CLI tool prints). Not UI copy — i18n
+// out of scope by design, kept as an exempt literal.
 const buildStartupLines = (
   logId: string,
   target: string,
@@ -217,8 +238,20 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   onOpenSettings,
   onInstallTools,
   reconnectSignal,
+  sessionKey,
 }) => {
-  const [currentDb, setCurrentDb] = useState(databaseName);
+  const { t } = useTranslation('shell');
+  // Restored transcript/session for this tab, if it survived an unmount (#240).
+  const storedSession = sessionKey ? readShellSession(sessionKey) : undefined;
+  // Captured once, at mount. Every write below carries it, so if this tab is
+  // closed or moved to another window while a command is still running, the
+  // completion that lands afterwards is dropped instead of resurrecting a
+  // discarded session or overwriting the destination window's newer state.
+  const epochRef = useRef(sessionKey ? shellSessionEpoch(sessionKey) : 0);
+  const persistSession = (patch: Partial<ShellSession>) => {
+    if (sessionKey) writeShellSession(sessionKey, patch, epochRef.current);
+  };
+  const [currentDb, setCurrentDb] = useState(storedSession?.currentDb || databaseName);
   const startupLogId = useMemo(createLogId, []);
   // Display the connection name in the startup banner, never the URI — the URI
   // can contain credentials (e.g. user:password@host) that must not be logged.
@@ -230,6 +263,10 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const [command, setCommand] = useState(defaultCommand);
   const monacoTheme = useMonacoTheme();
   const monacoFontSize = useMonacoFontSize(13);
+  // Per-collection key for the durable store. The shell's own AI state stays
+  // per TAB in the session registry (so a second shell on the same collection
+  // is its own conversation); this only adds the layer that survives a restart
+  // and backs the prompt History menu.
   const aiSessionKey = useMemo(
     () =>
       aiChatSessionKey({
@@ -241,44 +278,117 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     [connectionName, databaseName, collectionName]
   );
   const [isAIOpen, setIsAIOpenState] = useState(
-    () => loadAiChatSession(aiSessionKey)?.isOpen ?? false
+    () => storedSession?.aiOpen ?? loadAiChatSession(aiSessionKey)?.isOpen ?? false
   );
-  const [aiChatMessages, setAiChatMessages] = useState<ChatMessage[]>(
-    () => (loadAiChatSession(aiSessionKey)?.messages as ChatMessage[] | undefined) ?? []
-  );
-  const aiOpenRef = useRef(isAIOpen);
-  aiOpenRef.current = isAIOpen;
-  const aiMessagesRef = useRef(aiChatMessages);
-  aiMessagesRef.current = aiChatMessages;
-  const setIsAIOpen = useCallback(
-    (open: boolean) => {
-      setIsAIOpenState(open);
-      aiOpenRef.current = open;
-      saveAiChatSession(aiSessionKey, { isOpen: open, messages: aiMessagesRef.current });
-    },
-    [aiSessionKey]
-  );
-  const handleAiChatMessagesChange = useCallback(
-    (messages: ChatMessage[]) => {
-      setAiChatMessages(messages);
-      aiMessagesRef.current = messages;
-      saveAiChatSession(aiSessionKey, { isOpen: aiOpenRef.current, messages });
-    },
-    [aiSessionKey]
-  );
+  const [aiMessages, setAiMessages] = useState<ChatMessage[]>(storedSession?.aiMessages ?? []);
+  const setIsAIOpen = (open: boolean) => {
+    setIsAIOpenState(open);
+    persistSession({ aiOpen: open });
+    saveAiChatSession(aiSessionKey, { isOpen: open });
+  };
+  const handleAiMessagesChange = (messages: ChatMessage[]) => {
+    setAiMessages(messages);
+    persistSession({ aiMessages: messages });
+  };
   const [pendingDestructive, setPendingDestructive] =
     useState<{ command: string; operation: string } | null>(null);
-  const [entries, setEntries] = useState<ShellEntry[]>([
-    { kind: 'text', lines: buildStartupLines(startupLogId, connectionTarget) },
-  ]);
+  // Restored transcript wins over a fresh banner: returning to this tab should
+  // look like the session was never interrupted.
+  const [entries, setEntries] = useState<ShellEntry[]>(
+    // Presence of a stored session, NOT the length of its transcript: `clear`
+    // legitimately leaves it empty, and treating that as "nothing stored"
+    // resurrected the startup banner on the next tab switch.
+    storedSession
+      ? storedSession.entries
+      : [{ kind: 'text', lines: buildStartupLines(startupLogId, connectionTarget) }]
+  );
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
   const [viewer, setViewer] = useState<{ docs: Record<string, any>[]; label: string; ms: number } | null>(null);
   const [tab, setTab] = useState<ShellTab>('console');
   const [running, setRunning] = useState(false);
   const [topHeight, setTopHeight] = useState<number | null>(null);
   const [mongoshPath, setMongoshPath] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionAttempted, setSessionAttempted] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(storedSession?.sessionId ?? null);
+  const [sessionAttempted, setSessionAttempted] = useState(Boolean(storedSession?.sessionId));
+  // Which retry generation we are already attached for. Seeded to 0 when a
+  // session was restored, so the start effect reattaches instead of respawning.
+  const attachedNonce = useRef<number | null>(storedSession?.sessionId ? 0 : null);
+  /** Counts start attempts, so a completion can tell whether a newer attempt
+   *  has already replaced it. See the start effect. */
+  const startRunRef = useRef(0);
+
+  // After a hot reload or a window refresh the in-memory cache is empty, but the
+  // backend still holds this tab's state and its mongosh child is still running.
+  // Pull it back before the start effect can decide there is nothing to attach
+  // to and spawn a duplicate.
+  const [hydrated, setHydrated] = useState(Boolean(storedSession) || !sessionKey);
+  useEffect(() => {
+    if (hydrated || !sessionKey) return;
+    let alive = true;
+    void loadShellSession(sessionKey).then((restored) => {
+      if (!alive) return;
+      if (restored) {
+        setEntries(restored.entries);
+        if (restored.currentDb) setCurrentDb(restored.currentDb);
+        setAiMessages(restored.aiMessages);
+        setIsAIOpenState(restored.aiOpen);
+        autoRunRef.current = restored.autoRanCommand;
+        if (restored.sessionId) {
+          setSessionId(restored.sessionId);
+          setSessionAttempted(true);
+          attachedNonce.current = 0;
+        }
+      }
+      setHydrated(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [hydrated, sessionKey]);
   const [retryNonce, setRetryNonce] = useState(0);
+
+  // Restart the session without losing the scrollback: stop the process, note
+  // it in the transcript, then let the start effect attach a fresh one. Bumping
+  // `retryNonce` is what makes that effect skip its reattach shortcut.
+  const [restarting, setRestarting] = useState(false);
+  const restartSession = async () => {
+    setRestarting(true);
+    try {
+      if (sessionKey) await stopShellSessionProcess(sessionKey);
+      else if (sessionId) await invoke('stop_mongosh_session', { sessionId }).catch(() => undefined);
+      setSessionId(null);
+      setSessionAttempted(false);
+      appendEntries([{ kind: 'note', text: t('mongoShell.notes.sessionRestarting') }]);
+      setRetryNonce((n) => n + 1);
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  // Mirror the transcript and current database into the session registry.
+  // `sessionId` is deliberately NOT mirrored here: the start path sets it to
+  // null before spawning, and persisting that transient null would make a
+  // remount think there is nothing to reattach to.
+  useEffect(() => {
+    if (!sessionKey) return;
+    persistSession({ entries, currentDb });
+  }, [sessionKey, entries, currentDb]);
+
+  // ...and the other direction: pick up writes made by SOMEONE ELSE. A command
+  // that was still running when the user switched away completes against the
+  // registry, and that instance has no way to reach this one — so without this
+  // its output sat in storage, invisible until the next local append or tab
+  // switch. Assigning the same array back is a no-op for React, which is what
+  // keeps this from looping against the mirror effect above.
+  useEffect(() => {
+    if (!sessionKey) return;
+    return watchShellSession(sessionKey, (session) => {
+      setEntries((prev) => (session.entries === prev ? prev : session.entries));
+      entriesRef.current = session.entries;
+      if (session.currentDb) setCurrentDb(session.currentDb);
+    });
+  }, [sessionKey]);
   // Guided setup on session failure: a working mongosh found outside the
   // configured path (offered as one click), or null when nothing was found.
   const [detectedMongosh, setDetectedMongosh] = useState<
@@ -302,7 +412,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const scrollRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<() => void>(() => {});
-  const autoRunRef = useRef(false);
+  // Seeded from the tab's session: the opening command must run once per TAB,
+  // not once per mount, or switching tabs re-executes it (#240).
+  const autoRunRef = useRef(storedSession?.autoRanCommand ?? false);
   // Tracks the latest result docs so the Monaco completion provider (registered
   // once in onMount) can derive field names from the current results.
   const viewerRef = useRef<{ docs: Record<string, any>[] } | null>(null);
@@ -365,21 +477,96 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     };
   }, [connectionId, connectionTarget, startupLogId, retryNonce]);
 
+  // Appends that must land even if the tab was switched away mid-command.
+  // While mounted, setEntries drives the mirror effect as usual; once unmounted
+  // that effect is gone, so the transcript is written straight to the tab's
+  // session — otherwise the command runs, the backend answers, and the output
+  // is discarded because there is no component left to hold it.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const appendEntries = (added: ShellEntry[]) => {
+    if (added.length === 0) return;
+    if (!sessionKey) {
+      // No tab identity: this instance's state is the only transcript there is.
+      if (mountedRef.current) {
+        setEntries((prev) => {
+          const next = [...prev, ...added];
+          entriesRef.current = next;
+          return next;
+        });
+      }
+      return;
+    }
+    // Append against the REGISTRY, mounted or not. A slow command can still be
+    // running when the tab is switched away and back, leaving two MongoShell
+    // instances alive with two independent `entriesRef`s. Basing either one on
+    // its own snapshot means the later completion silently drops whatever the
+    // other appended — and doing it only off-screen is not enough: when the old
+    // command finishes after the remount, the mounted instance's next append
+    // (and the mirror effect behind it) would overwrite the registry with a
+    // `prev` that never saw that output.
+    const base = readShellSession(sessionKey)?.entries ?? entriesRef.current;
+    const next = [...base, ...added];
+    entriesRef.current = next;
+    // Also show it here, so the visible console reflects everything the tab has
+    // accumulated rather than only what this instance witnessed.
+    if (mountedRef.current) setEntries(next);
+    persistSession({ entries: next });
+  };
+
   const appendCommandOutput = (output: MongoshCommandOutput) => {
     const nextEntries: ShellEntry[] = [];
     if (output.stdout.length > 0) nextEntries.push({ kind: 'text', lines: output.stdout });
     if (output.stderr.length > 0) nextEntries.push({ kind: 'error', message: output.stderr.join('\n') });
-    if (nextEntries.length > 0) {
-      setEntries((prev) => [...prev, ...nextEntries]);
-    }
+    appendEntries(nextEntries);
   };
 
   useEffect(() => {
+    // Waiting on the backend lookup above: starting before it lands would spawn
+    // a second child for a tab that already has one.
+    if (!hydrated) return;
     if (mongoshPath === null) return;
     if (!connectionUri) {
       setSessionAttempted(true);
       return;
     }
+    // A session already attached to this tab is still running — the process
+    // outlives the unmount now, so reattach instead of spawning a second one.
+    // `retryNonce` is the deliberate exception: Retry means start fresh (it
+    // clears the stored id first, so `attachedSessionId` is null by then).
+    //
+    // Read live rather than from the mount-time snapshot: an instance that
+    // mounted DURING a start has `attachedNonce.current === null`, and against
+    // a snapshot the check could never match afterwards — so it started a
+    // second child even once the first had recorded its id.
+    const attachedSessionId = sessionKey ? readShellSession(sessionKey)?.sessionId : null;
+    if (attachedSessionId && (attachedNonce.current === null || retryNonce === attachedNonce.current)) {
+      attachedNonce.current = retryNonce;
+      // Adopt it: this instance may have mounted before the id existed, and
+      // would otherwise sit behind the starting gate forever.
+      setSessionId(attachedSessionId);
+      setSessionAttempted(true);
+      return;
+    }
+    attachedNonce.current = retryNonce;
+    // Retry/reconnect means start fresh: drop any in-flight start so the next
+    // call issues its own rather than joining the attempt being replaced.
+    if (sessionKey && retryNonce > 0) dropPendingShellStart(sessionKey);
+
+    // Which start attempt this is. A dependency change (a Retry, or
+    // `reconnectSignal` firing when a tool install finishes) tears this effect
+    // down and immediately starts another, so "cancelled" alone cannot tell a
+    // real unmount from a supersession — and treating a superseded attempt as
+    // an unmount retains its child, whose id the replacement then overwrites,
+    // leaving the first mongosh process untracked.
+    const thisRun = ++startRunRef.current;
+    const superseded = () => startRunRef.current !== thisRun;
+
     let cancelled = false;
     let openedSessionId: string | null = null;
     setSessionId(null);
@@ -387,14 +574,86 @@ export const MongoShell: React.FC<MongoShellProps> = ({
 
     const startSession = async () => {
       try {
-        const session = await invoke<MongoshSessionInfo>('start_mongosh_session', {
-          connectionId,
-          uri: connectionUri,
-          database: currentDb,
-          mongoshPath,
-        });
+        const runStart = () =>
+          invoke<MongoshSessionInfo>('start_mongosh_session', {
+            connectionId,
+            uri: connectionUri,
+            database: currentDb,
+            mongoshPath,
+            // So the backend can stop this child itself if the window closes
+            // before the start returns — at that point this renderer is gone and
+            // cannot cancel anything, and the id it would have recorded never
+            // reaches the tab state the close sweep reads.
+            windowId: windowLabel(),
+          });
+        // Joins the start already running for this tab, if there is one. A
+        // start is slow and records nothing until it returns, so a remount
+        // partway through used to see an unattached tab and spawn a rival
+        // child — after which the two ids overwrote each other and one process
+        // was left with nothing pointing at it.
+        const session = sessionKey ? await shareShellStart(sessionKey, runStart) : await runStart();
+        // Record it before the cancellation check: the tab owns the session, so
+        // it must be findable by `disposeShellSession` even if this mount is
+        // already gone.
+        if (superseded()) {
+          // A newer attempt is already running for this same tab. Recording
+          // this id would only get overwritten by that attempt, so stop the
+          // child here — this is the one case where a keyed session must NOT
+          // outlive its start.
+          await invoke('stop_mongosh_session', { sessionId: session.session_id }).catch(
+            () => undefined
+          );
+          return;
+        }
+        if (sessionKey) {
+          if (shellSessionEpoch(sessionKey) !== epochRef.current) {
+            // This tab stopped belonging to this renderer while mongosh was
+            // starting — closed, or moved to another window. Either way nobody
+            // is coming back for this particular child: a closed tab has
+            // nothing left to read its id, and a moved tab is served by the
+            // destination window's own session. Recording it would be worse
+            // than useless, since the write re-stamps this window as the owner
+            // and can overwrite the mapping the destination is using — so
+            // closing this window would then kill the process it is showing.
+            await invoke('stop_mongosh_session', { sessionId: session.session_id }).catch(
+              () => undefined
+            );
+            return;
+          }
+          // The backend has already drained the startup output; if this mount is
+          // gone, appending it to state would vanish, so fold it into the stored
+          // transcript instead of losing warnings and errors.
+          const startupEntries: ShellEntry[] = [];
+          if (session.stdout.length > 0) startupEntries.push({ kind: 'text', lines: session.stdout });
+          if (session.stderr.length > 0)
+            startupEntries.push({ kind: 'error', message: session.stderr.join('\n') });
+          startupEntries.push({ kind: 'note', text: t('mongoShell.notes.sessionAttached') });
+          // Past the epoch check above, so this tab is still ours; the write
+          // carries the epoch anyway, since nothing guarantees it stays ours
+          // between here and the next line.
+          writeShellSession(sessionKey, {
+            sessionId: session.session_id,
+            // Against the registry, like every other append: by the time a
+            // slow start returns, the tab may have been remounted and another
+            // completion may already have landed. Building this from
+            // `entriesRef` would erase it.
+            ...(cancelled
+              ? {
+                  entries: [
+                    ...(readShellSession(sessionKey)?.entries ?? entriesRef.current),
+                    ...startupEntries,
+                  ],
+                }
+              : {}),
+          }, epochRef.current);
+        }
         if (cancelled) {
-          await invoke('stop_mongosh_session', { sessionId: session.session_id }).catch(() => undefined);
+          // Unmounting means the user switched tabs mid-startup. With a tab
+          // identity the session survives that; without one there is nothing to
+          // reattach to later, so it has to be stopped.
+          if (!sessionKey) {
+            await invoke('stop_mongosh_session', { sessionId: session.session_id }).catch(() => undefined);
+          }
           return;
         }
         openedSessionId = session.session_id;
@@ -402,13 +661,16 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         if (session.stdout.length > 0 || session.stderr.length > 0) {
           appendCommandOutput({ stdout: session.stdout, stderr: session.stderr });
         }
-        setEntries((prev) => [...prev, { kind: 'note', text: 'mongosh session attached' }]);
+        appendEntries([{ kind: 'note', text: t('mongoShell.notes.sessionAttached') }]);
       } catch (err: any) {
+        persistSession({ sessionId: null });
         if (!cancelled) {
           setSessionId(null);
-          setEntries((prev) => [
-            ...prev,
-            { kind: 'error', message: `mongosh session unavailable: ${err.message || String(err)}` },
+          appendEntries([
+            {
+              kind: 'error',
+              message: t('mongoShell.notes.sessionUnavailable', { detail: err.message || String(err) }),
+            },
           ]);
         }
       } finally {
@@ -420,13 +682,18 @@ export const MongoShell: React.FC<MongoShellProps> = ({
 
     return () => {
       cancelled = true;
-      if (openedSessionId) {
+      // Deliberately does NOT stop the session. Unmounting means the user
+      // switched tabs, not that they are done with the shell; the process is
+      // now owned by the tab and torn down by `disposeShellSession` when the
+      // tab closes (#240). Without a `sessionKey` there is nothing to reattach
+      // to later, so keep the old behaviour and clean up.
+      if (!sessionKey && openedSessionId) {
         invoke('stop_mongosh_session', { sessionId: openedSessionId }).catch(() => undefined);
       }
     };
     // The session is started once per shell tab. currentDb is intentionally used only as startup database.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, connectionUri, mongoshPath, retryNonce]);
+  }, [connectionId, connectionUri, mongoshPath, retryNonce, sessionKey, hydrated]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -475,21 +742,23 @@ export const MongoShell: React.FC<MongoShellProps> = ({
 
   const browseForMongosh = async () => {
     try {
-      const picked = await openFileDialog({ multiple: false, title: 'Locate the mongosh binary' });
+      const picked = await openFileDialog({ multiple: false, title: t('mongoShell.gate.browseDialogTitle') });
       if (typeof picked === 'string' && picked) await saveMongoshPath(picked);
     } catch {
       /* user cancelled */
     }
   };
 
-  // OS-specific manual install hint for the gate card.
+  // OS-specific manual install hint for the gate card. The commands themselves
+  // are literal shell input the user copies verbatim, so only the parenthetical
+  // notes around them are translated (Global Constraint 2).
   const installHint = useMemo(() => {
     const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
     if (/mac/i.test(ua)) return 'brew install mongosh';
-    if (/win/i.test(ua)) return 'winget install MongoDB.Shell (or the MSI from mongodb.com)';
-    if (/linux/i.test(ua)) return 'sudo apt install mongodb-mongosh (or your distro’s package)';
-    return 'install mongosh from mongodb.com';
-  }, []);
+    if (/win/i.test(ua)) return `winget install MongoDB.Shell (${t('mongoShell.gate.installNote.windows')})`;
+    if (/linux/i.test(ua)) return `sudo apt install mongodb-mongosh (${t('mongoShell.gate.installNote.linux')})`;
+    return t('mongoShell.gate.installNote.generic');
+  }, [t]);
 
   const executeFind = async (
     collName: string,
@@ -499,8 +768,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   ) => {
     const op = calls[0];
     const call = (name: string) => calls.find((candidate) => candidate.name === name);
-    const filter = parseLoose(firstArg(op.argText), {});
-    const sort = call('sort') ? parseLoose(call('sort')!.argText, {}) : {};
+    const filter = parseLoose(firstArg(op.argText), {}, t);
+    const sort = call('sort') ? parseLoose(call('sort')!.argText, {}, t) : {};
     const skip = call('skip') ? Number.parseInt(call('skip')!.argText, 10) || 0 : 0;
     const limit = forceLimit ?? (call('limit') ? Number.parseInt(call('limit')!.argText, 10) || 50 : 50);
     const started = performance.now();
@@ -516,18 +785,17 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     const docs = result.map((doc) => JSON.parse(doc));
     setViewer({ docs, label, ms: Math.round((performance.now() - started) * 10) / 10 });
     setTab('viewer');
-    setEntries((prev) => [
-      ...prev,
+    appendEntries([
       {
         kind: 'note',
-        text: `${docs.length} document${docs.length === 1 ? '' : 's'} -> Data Viewer`,
+        text: t('mongoShell.notes.resultToDataViewer', { count: docs.length }),
       },
     ]);
   };
 
   const executeAggregate = async (collName: string, calls: ParsedCall[]) => {
-    const pipeline = parseLoose(calls[0].argText, []) as Array<Record<string, unknown>>;
-    if (!Array.isArray(pipeline)) throw new Error('aggregate() expects a pipeline array');
+    const pipeline = parseLoose(calls[0].argText, [], t) as Array<Record<string, unknown>>;
+    if (!Array.isArray(pipeline)) throw new Error(t('mongoShell.errors.aggregateExpectsPipeline'));
     // Run the real pipeline (every stage — $group, $project, $unwind, …) via the
     // driver, rather than collapsing it down to a find().
     const started = performance.now();
@@ -540,11 +808,10 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     const docs = result.map((doc) => JSON.parse(doc));
     setViewer({ docs, label: `db.${collName}.aggregate()`, ms: Math.round((performance.now() - started) * 10) / 10 });
     setTab('viewer');
-    setEntries((prev) => [
-      ...prev,
+    appendEntries([
       {
         kind: 'note',
-        text: `${docs.length} document${docs.length === 1 ? '' : 's'} -> Data Viewer`,
+        text: t('mongoShell.notes.resultToDataViewer', { count: docs.length }),
       },
     ]);
   };
@@ -590,13 +857,13 @@ export const MongoShell: React.FC<MongoShellProps> = ({
 
   const cancelDestructive = () => {
     setPendingDestructive(null);
-    setEntries((prev) => [...prev, { kind: 'note', text: 'Destructive command cancelled.' }]);
+    appendEntries([{ kind: 'note', text: t('mongoShell.notes.destructiveCancelled') }]);
   };
 
   const runCommand = async (commandOverride?: string) => {
     const raw = (commandOverride ?? command).trim().replace(/;$/, '');
     if (!raw || running) return;
-    setEntries((prev) => [...prev, { kind: 'input', db: currentDb, text: raw }]);
+    appendEntries([{ kind: 'input', db: currentDb, text: raw }]);
     setRunning(true);
     try {
       if (/^(cls|clear)$/i.test(raw)) {
@@ -605,7 +872,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         return;
       }
       if (/^help$/i.test(raw)) {
-        setEntries((prev) => [...prev, { kind: 'text', lines: HELP_LINES }]);
+        const helpLines = HELP_LINE_KEYS.map((key) => (key ? t(`mongoShell.${key}`) : ''));
+        appendEntries([{ kind: 'text', lines: helpLines }]);
         setTab('console');
         return;
       }
@@ -613,15 +881,24 @@ export const MongoShell: React.FC<MongoShellProps> = ({
 
       if (raw === 'db') {
         if (ranExternally) return;
-        setEntries((prev) => [...prev, { kind: 'text', lines: [currentDb] }]);
+        appendEntries([{ kind: 'text', lines: [currentDb] }]);
         setTab('console');
         return;
       }
       const useMatch = raw.match(/^use\s+([A-Za-z0-9_.-]+)$/);
       if (useMatch) {
         setCurrentDb(useMatch[1]);
+        // Persist directly, not just via the mirroring effect: the switch is
+        // awaited above, so the tab may already have been switched away and
+        // this instance unmounted. `setCurrentDb` would then be a no-op and the
+        // mongosh child would sit on the new database while the remounted UI
+        // restored the old one — with the prompt and the driver-backed
+        // commands aimed somewhere the raw shell commands are not.
+        persistSession({ currentDb: useMatch[1] });
         if (!ranExternally) {
-          setEntries((prev) => [...prev, { kind: 'note', text: `switched to db ${useMatch[1]}` }]);
+          appendEntries([
+            { kind: 'note', text: t('mongoShell.notes.switchedToDb', { db: useMatch[1] }) },
+          ]);
         }
         setTab('console');
         return;
@@ -629,14 +906,14 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       if (/^show\s+(dbs|databases)$/i.test(raw)) {
         if (ranExternally) return;
         const dbs = await invoke<string[]>('list_databases', { id: connectionId });
-        setEntries((prev) => [...prev, { kind: 'text', lines: dbs }]);
+        appendEntries([{ kind: 'text', lines: dbs }]);
         setTab('console');
         return;
       }
       if (/^show\s+(collections|tables)$/i.test(raw)) {
         if (ranExternally) return;
         const collections = await invoke<{ name: string }[]>('list_collections', { id: connectionId, db: currentDb });
-        setEntries((prev) => [...prev, { kind: 'text', lines: collections.map((c) => c.name) }]);
+        appendEntries([{ kind: 'text', lines: collections.map((c) => c.name) }]);
         setTab('console');
         return;
       }
@@ -668,13 +945,13 @@ export const MongoShell: React.FC<MongoShellProps> = ({
             id: connectionId,
             database: currentDb,
             collection: collName,
-            filter: JSON.stringify(parseLoose(firstArg(calls[0].argText), {})),
+            filter: JSON.stringify(parseLoose(firstArg(calls[0].argText), {}, t)),
           });
-          setEntries((prev) => [...prev, { kind: 'value', value: count }, { kind: 'note', text: `${Math.round((performance.now() - started) * 10) / 10} ms` }]);
+          appendEntries([{ kind: 'value', value: count }, { kind: 'note', text: `${Math.round((performance.now() - started) * 10) / 10} ms` }]);
           setTab('console');
         } else if (op === 'getIndexes') {
           const indexes = await invoke<string[]>('list_indexes', { id: connectionId, db: currentDb, collection: collName });
-          setEntries((prev) => [...prev, { kind: 'value', value: indexes.map((name) => ({ name })) }]);
+          appendEntries([{ kind: 'value', value: indexes.map((name) => ({ name })) }]);
           setTab('console');
         }
         return;
@@ -685,9 +962,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       // gated behind a session, so the no-session case is unreachable in practice;
       // guard defensively.
       if (ranExternally) return;
-      throw new Error('mongosh session required to run scripts');
+      throw new Error(t('mongoShell.errors.sessionRequiredForScripts'));
     } catch (err: any) {
-      setEntries((prev) => [...prev, { kind: 'error', message: err.message || String(err) }]);
+      appendEntries([{ kind: 'error', message: err.message || String(err) }]);
       setTab('console');
     } finally {
       setRunning(false);
@@ -700,10 +977,11 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   useEffect(() => {
     if (!initialCommand || autoRunRef.current || !sessionAttempted || !sessionId) return;
     autoRunRef.current = true;
+    persistSession({ autoRanCommand: true });
     runCommand(initialCommand);
     // Run exactly once for the command that opened this shell tab.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialCommand, sessionAttempted, sessionId]);
+  }, [initialCommand, sessionAttempted, sessionId, sessionKey]);
 
   const dragging = useRef(false);
   useEffect(() => {
@@ -733,14 +1011,14 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           {!sessionAttempted ? (
             <>
               <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-primary" />
-              <span className="text-sm text-muted-foreground">Starting mongosh session…</span>
+              <span className="text-sm text-muted-foreground">{t('mongoShell.gate.startingSession')}</span>
             </>
           ) : (
             <>
               <Terminal size={28} className="text-muted-foreground" />
-              <div className="text-sm font-semibold text-foreground">MongoShell requires mongosh</div>
+              <div className="text-sm font-semibold text-foreground">{t('mongoShell.gate.requiresMongosh')}</div>
               <div className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-                A live mongosh session is required to run queries and scripts here.
+                {t('mongoShell.gate.requiresMongoshBody')}
               </div>
               {detectedMongosh && (
                 <div
@@ -748,7 +1026,10 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                   data-testid="shell-detected-mongosh"
                 >
                   <div className="text-foreground">
-                    Found <span className="font-semibold">mongosh {detectedMongosh.version}</span>
+                    {t('mongoShell.gate.found')}{' '}
+                    <span className="font-semibold">
+                      {t('mongoShell.gate.foundMongoshVersion', { version: detectedMongosh.version })}
+                    </span>
                   </div>
                   <div className="truncate font-mono text-ui-2xs text-muted-foreground" title={detectedMongosh.path}>
                     {detectedMongosh.path}
@@ -759,39 +1040,43 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                     onClick={() => void saveMongoshPath(detectedMongosh.path)}
                     data-testid="shell-use-detected-btn"
                   >
-                    Use this binary
+                    {t('mongoShell.gate.useThisBinary')}
                   </Button>
                 </div>
               )}
               <div className="mt-1 flex items-center gap-2">
                 {onInstallTools && (
                   <Button onClick={onInstallTools} data-testid="shell-install-tools-btn">
-                    Install tools…
+                    {t('mongoShell.gate.installTools')}
                   </Button>
                 )}
                 <Button variant="outline" onClick={() => void browseForMongosh()} data-testid="shell-browse-mongosh-btn">
-                  Browse for binary…
+                  {t('mongoShell.gate.browseForBinary')}
                 </Button>
                 {onOpenSettings && (
                   <Button variant="outline" onClick={onOpenSettings} data-testid="gate-open-settings">
-                    Open Settings
+                    {t('mongoShell.gate.openSettings')}
                   </Button>
                 )}
                 <Button variant="outline" onClick={() => setRetryNonce((n) => n + 1)} data-testid="gate-retry">
-                  Retry
+                  {t('mongoShell.gate.retry')}
                 </Button>
               </div>
               <div className="max-w-sm text-ui-2xs text-muted-foreground" data-testid="shell-install-hint">
-                Or install it yourself: <code className="font-mono">{installHint}</code> — see the{' '}
-                <button
-                  type="button"
-                  className="text-primary underline-offset-2 hover:underline"
-                  onClick={() => void openUrl('https://www.mongodb.com/docs/mongodb-shell/install/')}
-                  data-testid="shell-mongosh-docs-link"
-                >
-                  mongosh install docs
-                </button>
-                .
+                <Trans i18nKey="shell:mongoShell.gate.installHint" t={t} values={{ hint: installHint }}>
+                  Or install it yourself:{' '}
+                  <code className="font-mono">{{ hint: installHint } as unknown as string}</code>{' '}
+                  — see the{' '}
+                  <button
+                    type="button"
+                    className="text-primary underline-offset-2 hover:underline"
+                    onClick={() => void openUrl('https://www.mongodb.com/docs/mongodb-shell/install/')}
+                    data-testid="shell-mongosh-docs-link"
+                  >
+                    mongosh install docs
+                  </button>
+                  .
+                </Trans>
               </div>
             </>
           )}
@@ -817,17 +1102,28 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           </span>
           <Button size="sm" onClick={() => runRef.current()} disabled={running}>
             <Play size={11} />
-            Run
+            {t('mongoShell.toolbar.run')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void restartSession()}
+            disabled={restarting || running}
+            data-testid="shell-restart-session"
+            title={t('mongoShell.toolbar.restartSessionTitle')}
+          >
+            <RotateCcw size={11} />
+            {t('mongoShell.toolbar.restartSession')}
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={() => setIsAIOpen(!isAIOpen)}
             data-testid="shell-ai-toggle"
-            title="AI assistant"
+            title={t('mongoShell.toolbar.aiToggleTitle')}
           >
             <Sparkles size={11} />
-            AI
+            {t('mongoShell.toolbar.aiToggleLabel')}
           </Button>
         </div>
         <div className="min-h-0 flex-1">
@@ -900,7 +1196,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
             loading={
               <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
                 <Terminal size={22} />
-                <span>Loading editor...</span>
+                <span>{t('mongoShell.editor.loading')}</span>
               </div>
             }
           />
@@ -927,7 +1223,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                 onClick={() => setTab('console')}
               >
                 <Terminal size={12} className={tab === 'console' ? 'text-success' : ''} />
-                Console
+                {t('mongoShell.console.tabLabel')}
               </TabsTrigger>
               {viewer && (
                 <TabsTrigger
@@ -936,7 +1232,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                   onClick={() => setTab('viewer')}
                 >
                   <Braces size={12} className={tab === 'viewer' ? 'text-primary' : ''} />
-                  Data Viewer
+                  {t('mongoShell.console.dataViewerTabLabel')}
                   <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">{viewer.docs.length}</Badge>
                 </TabsTrigger>
               )}
@@ -944,7 +1240,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           </Tabs>
           <span className="flex-1" />
           {tab === 'console' ? (
-            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Clear console" onClick={() => setEntries([])}>
+            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title={t('mongoShell.console.clearTitle')} onClick={() => setEntries([])}>
               <Eraser size={12} />
             </Button>
           ) : (
@@ -959,7 +1255,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         {tab === 'console' ? (
           <div className="min-h-0 flex-1 overflow-y-auto p-2 font-mono text-xs" ref={scrollRef}>
             {entries.length === 0 && (
-              <div className="py-4 text-center text-muted-foreground">Console cleared - run a command above.</div>
+              <div className="py-4 text-center text-muted-foreground">{t('mongoShell.console.cleared')}</div>
             )}
             {entries.map((entry, index) => {
               if (entry.kind === 'input') {
@@ -1011,9 +1307,10 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       onClose={() => setIsAIOpen(false)}
       onInsertQuery={handleAIInsert}
       onInsertAndRunQuery={handleAIInsertAndRun}
-      initialMessages={aiChatMessages}
-      onMessagesChange={handleAiChatMessagesChange}
-      sessionKey={aiSessionKey}
+      sessionKey={sessionKey}
+      historyKey={aiSessionKey}
+      initialMessages={aiMessages}
+      onMessagesChange={handleAiMessagesChange}
     />
     {pendingDestructive && (
       <Dialog open onOpenChange={() => {}}>
@@ -1030,23 +1327,25 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm">
               <AlertCircle size={18} className="text-destructive" />
-              Destructive operation
+              {t('mongoShell.destructiveDialog.title')}
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This script runs <strong className="text-foreground">{pendingDestructive.operation}</strong>, which can permanently
-            delete data. Review it before running.
+            <Trans i18nKey="shell:mongoShell.destructiveDialog.body" t={t} values={{ operation: pendingDestructive.operation }}>
+              This script runs <strong className="text-foreground">{{ operation: pendingDestructive.operation } as unknown as string}</strong>, which can permanently
+              delete data. Review it before running.
+            </Trans>
           </p>
           <pre className="max-h-[200px] overflow-auto rounded-md bg-muted p-3 font-mono text-xs text-foreground">
             {pendingDestructive.command}
           </pre>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={cancelDestructive} data-testid="destructive-cancel">
-              Cancel
+              {t('mongoShell.destructiveDialog.cancel')}
             </Button>
             <Button type="button" variant="destructive" onClick={confirmDestructive} data-testid="destructive-run">
               <Play size={11} />
-              Run anyway
+              {t('mongoShell.destructiveDialog.runAnyway')}
             </Button>
           </DialogFooter>
         </DialogContent>

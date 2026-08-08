@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation, Trans } from 'react-i18next';
 import { Download, Filter, ListChecks, Hash, Copy, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -102,31 +103,35 @@ interface ExportViewProps {
   ) => Promise<string>;
 }
 
+// Pure, module-scope validators — they can't call the useTranslation hook, so
+// the component passes its `t` in at each call site.
+type TFunc = (key: string) => string;
+
 /** Validate a JSON object string ('' and '{}' count as the empty object). */
-function checkJsonObject(raw: string): { ok: boolean; error?: string } {
+function checkJsonObject(raw: string, t: TFunc): { ok: boolean; error?: string } {
   const trimmed = raw.trim();
   if (trimmed === '' || trimmed === '{}') return { ok: true };
   try {
     const value = JSON.parse(trimmed);
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-      return { ok: false, error: 'Must be a JSON object' };
+      return { ok: false, error: t('transfer:exportView.errors.mustBeObject') };
     }
     return { ok: true };
   } catch {
-    return { ok: false, error: 'Invalid JSON' };
+    return { ok: false, error: t('transfer:exportView.errors.invalidJson') };
   }
 }
 
 /** Validate a JSON array string ('' and '[]' count as the empty pipeline). */
-function checkJsonArray(raw: string): { ok: boolean; error?: string } {
+function checkJsonArray(raw: string, t: TFunc): { ok: boolean; error?: string } {
   const trimmed = raw.trim();
   if (trimmed === '' || trimmed === '[]') return { ok: true };
   try {
     const value = JSON.parse(trimmed);
-    if (!Array.isArray(value)) return { ok: false, error: 'Pipeline must be a JSON array of stages' };
+    if (!Array.isArray(value)) return { ok: false, error: t('transfer:exportView.errors.pipelineMustBeArray') };
     return { ok: true };
   } catch {
-    return { ok: false, error: 'Invalid JSON' };
+    return { ok: false, error: t('transfer:exportView.errors.invalidJson') };
   }
 }
 
@@ -165,6 +170,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
   onCopyCurrent,
   onPreview,
 }) => {
+  const { t } = useTranslation('transfer');
   const hasCurrentResults = currentResultCount > 0;
   const mode: 'find' | 'aggregate' = filtered?.kind ?? 'find';
 
@@ -197,10 +203,10 @@ export const ExportView: React.FC<ExportViewProps> = ({
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewing, setPreviewing] = React.useState(false);
 
-  const filterCheck = checkJsonObject(filter);
-  const sortCheck = checkJsonObject(sort);
-  const projectionCheck = checkJsonObject(projection);
-  const pipelineCheck = checkJsonArray(pipeline);
+  const filterCheck = checkJsonObject(filter, t);
+  const sortCheck = checkJsonObject(sort, t);
+  const projectionCheck = checkJsonObject(projection, t);
+  const pipelineCheck = checkJsonArray(pipeline, t);
   const canExportFiltered =
     mode === 'aggregate'
       ? pipelineCheck.ok
@@ -232,17 +238,17 @@ export const ExportView: React.FC<ExportViewProps> = ({
     setCountError(null);
     onCountFilter(filter)
       .then((n) => setCount(n))
-      .catch(() => setCountError('Count failed'))
+      .catch(() => setCountError(t('exportView.filtered.countFailed')))
       .finally(() => setCounting(false));
   };
 
   const countLabel = (() => {
-    if (counting) return 'Counting…';
+    if (counting) return t('exportView.actions.counting');
     if (countError) return countError;
     if (typeof count === 'number') {
-      return `${count.toLocaleString()} matching document${count === 1 ? '' : 's'}`;
+      return t('exportView.filtered.matchCount', { count, formatted: count.toLocaleString() });
     }
-    return 'Count not run yet';
+    return t('exportView.filtered.countNotRun');
   })();
 
   const buildQuery = (): FilteredExportQuery =>
@@ -299,14 +305,14 @@ export const ExportView: React.FC<ExportViewProps> = ({
     <div className="flex h-full flex-col overflow-auto" data-testid="export-view">
       <header className="flex items-center justify-between gap-4 border-b border-border bg-muted/30 px-3.5 py-2">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Export</h2>
+          <h2 className="text-sm font-semibold text-foreground">{t('exportView.title')}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {connectionName} / {databaseName}.{collectionName}
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onOpenTasks}>
           <ListChecks size={12} />
-          View Tasks
+          {t('exportView.actions.viewTasks')}
         </Button>
       </header>
 
@@ -314,7 +320,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
       <div className="divide-y divide-border">
       <section className="flex flex-wrap items-center gap-x-6 gap-y-2 px-3.5 py-2.5">
         <div className="flex flex-wrap items-center gap-3" data-testid="export-format-picker">
-          <h3 className="text-sm font-medium text-foreground">Format</h3>
+          <h3 className="text-sm font-medium text-foreground">{t('exportView.labels.format')}</h3>
           <div className="inline-flex rounded-md border border-border bg-background p-0.5">
             {EXPORT_FORMATS.map((f) => (
               <Button
@@ -337,7 +343,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
         <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2" data-testid="export-options-panel">
           {(format === 'json' || format === 'ndjson') && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1" data-testid="export-options-json-mode">
-              <Label className="text-xs text-muted-foreground">JSON mode</Label>
+              <Label className="text-xs text-muted-foreground">{t('exportView.labels.jsonMode')}</Label>
               <label className={checkboxLabelClassName}>
                 <input
                   type="radio"
@@ -347,7 +353,8 @@ export const ExportView: React.FC<ExportViewProps> = ({
                   onChange={() => setOptions((o) => ({ ...o, jsonMode: 'relaxed' }))}
                 />
                 <span>
-                  Relaxed <span className="text-muted-foreground">— Human-readable</span>
+                  {t('exportView.labels.relaxed')}{' '}
+                  <span className="text-muted-foreground">— {t('exportView.labels.relaxedHint')}</span>
                 </span>
               </label>
               <label className={checkboxLabelClassName}>
@@ -359,9 +366,9 @@ export const ExportView: React.FC<ExportViewProps> = ({
                   onChange={() => setOptions((o) => ({ ...o, jsonMode: 'canonical' }))}
                 />
                 <span>
-                  Canonical{' '}
+                  {t('exportView.labels.canonical')}{' '}
                   <span className="text-muted-foreground">
-                    — mongoexport-compatible, lossless types
+                    — {t('exportView.labels.canonicalHint')}
                   </span>
                 </span>
               </label>
@@ -371,7 +378,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
           {format === 'csv' && (
             <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
                 <div className="flex flex-col gap-1">
-                  <Label className="text-xs">Delimiter</Label>
+                  <Label className="text-xs">{t('exportView.labels.delimiter')}</Label>
                   <select
                     value={delimiterChoice}
                     onChange={(e) =>
@@ -380,15 +387,15 @@ export const ExportView: React.FC<ExportViewProps> = ({
                     className={selectClassName}
                     data-testid="export-options-csv-delimiter"
                   >
-                    <option value=",">Comma (,)</option>
-                    <option value=";">Semicolon (;)</option>
-                    <option value={'\t'}>Tab</option>
-                    <option value="custom">Custom…</option>
+                    <option value=",">{t('exportView.labels.comma')}</option>
+                    <option value=";">{t('exportView.labels.semicolon')}</option>
+                    <option value={'\t'}>{t('exportView.labels.tab')}</option>
+                    <option value="custom">{t('exportView.labels.custom')}</option>
                   </select>
                 </div>
                 {delimiterChoice === 'custom' && (
                   <div className="flex flex-col gap-1">
-                    <Label className="text-xs">Custom delimiter</Label>
+                    <Label className="text-xs">{t('exportView.labels.customDelimiter')}</Label>
                     <Input
                       value={customDelimiter}
                       onChange={(e) => setCustomDelimiter(e.target.value)}
@@ -398,7 +405,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
                   </div>
                 )}
                 <div className="flex flex-col gap-1">
-                  <Label className="text-xs">Quote</Label>
+                  <Label className="text-xs">{t('exportView.labels.quote')}</Label>
                   <Input
                     value={options.csv.quote}
                     onChange={(e) =>
@@ -409,7 +416,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <Label className="text-xs">Record separator</Label>
+                  <Label className="text-xs">{t('exportView.labels.recordSeparator')}</Label>
                   <select
                     value={options.csv.recordSeparator}
                     onChange={(e) =>
@@ -421,8 +428,8 @@ export const ExportView: React.FC<ExportViewProps> = ({
                     className={selectClassName}
                     data-testid="export-options-csv-recordsep"
                   >
-                    <option value={'\n'}>LF (\n)</option>
-                    <option value={'\r\n'}>CRLF (\r\n)</option>
+                    <option value={'\n'}>{t('exportView.labels.lf')}</option>
+                    <option value={'\r\n'}>{t('exportView.labels.crlf')}</option>
                   </select>
                 </div>
               <div className="flex flex-wrap items-center gap-4 pb-2">
@@ -439,7 +446,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
                     className="rounded border-input"
                     data-testid="export-options-csv-headers"
                   />
-                  <span>Include column headers</span>
+                  <span>{t('exportView.labels.includeHeaders')}</span>
                 </label>
                 <label className={checkboxLabelClassName}>
                   <input
@@ -454,12 +461,12 @@ export const ExportView: React.FC<ExportViewProps> = ({
                     className="rounded border-input"
                     data-testid="export-options-csv-nullempty"
                   />
-                  <span>Leave null fields empty</span>
+                  <span>{t('exportView.labels.leaveNullEmpty')}</span>
                 </label>
               </div>
               {!delimiterValid && (
                 <span className="w-full text-xs text-destructive">
-                  Delimiter must be a single ASCII character.
+                  {t('transfer:exportView.errors.delimiterAscii')}
                 </span>
               )}
             </div>
@@ -480,7 +487,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
                     className="rounded border-input"
                     data-testid="export-options-xlsx-headers"
                   />
-                  <span>Include column headers</span>
+                  <span>{t('exportView.labels.includeHeaders')}</span>
                 </label>
                 <label className={checkboxLabelClassName}>
                   <input
@@ -495,7 +502,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
                     className="rounded border-input"
                     data-testid="export-options-xlsx-bold"
                   />
-                  <span>Bold header row</span>
+                  <span>{t('exportView.labels.boldHeaderRow')}</span>
                 </label>
                 <label className={checkboxLabelClassName}>
                   <input
@@ -510,10 +517,10 @@ export const ExportView: React.FC<ExportViewProps> = ({
                     className="rounded border-input"
                     data-testid="export-options-xlsx-autosize"
                   />
-                  <span>Auto-size columns</span>
+                  <span>{t('exportView.labels.autoSizeColumns')}</span>
                 </label>
               <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground">Alignment</Label>
+                <Label className="text-xs text-muted-foreground">{t('exportView.labels.alignment')}</Label>
                 <select
                   value={options.xlsx.alignment}
                   onChange={(e) =>
@@ -525,9 +532,9 @@ export const ExportView: React.FC<ExportViewProps> = ({
                   className={cn(selectClassName, 'w-32')}
                   data-testid="export-options-xlsx-align"
                 >
-                  <option value="left">Left</option>
-                  <option value="center">Center</option>
-                  <option value="right">Right</option>
+                  <option value="left">{t('exportView.labels.left')}</option>
+                  <option value="center">{t('exportView.labels.center')}</option>
+                  <option value="right">{t('exportView.labels.right')}</option>
                 </select>
               </div>
             </div>
@@ -540,10 +547,10 @@ export const ExportView: React.FC<ExportViewProps> = ({
         <div>
           <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
             <ListChecks size={14} />
-            <span>Fields</span>
+            <span>{t('exportView.fields.title')}</span>
           </h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Scan a sample of documents to choose which fields to export.
+            {t('exportView.fields.hint')}
           </p>
         </div>
         <div className="flex flex-col gap-2">
@@ -556,14 +563,14 @@ export const ExportView: React.FC<ExportViewProps> = ({
               onClick={runScanFields}
               data-testid="export-scan-fields-btn"
             >
-              {scanning ? 'Scanning…' : 'Scan fields'}
+              {scanning ? t('exportView.actions.scanning') : t('exportView.actions.scanFields')}
             </Button>
             {scannedFields.length > 0 && (
               <>
                 <Input
                   value={fieldFilterText}
                   onChange={(e) => setFieldFilterText(e.target.value)}
-                  placeholder="Filter fields"
+                  placeholder={t('exportView.fields.filterPlaceholder')}
                   className="h-8 w-40 text-xs"
                   data-testid="export-field-filter-input"
                 />
@@ -574,7 +581,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
                   onClick={() => setSelectedFields(new Set(scannedFields))}
                   data-testid="export-field-select-all"
                 >
-                  Select all
+                  {t('exportView.actions.selectAll')}
                 </Button>
                 <Button
                   type="button"
@@ -583,7 +590,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
                   onClick={() => setSelectedFields(new Set())}
                   data-testid="export-field-deselect-all"
                 >
-                  Deselect all
+                  {t('exportView.actions.deselectAll')}
                 </Button>
               </>
             )}
@@ -591,12 +598,12 @@ export const ExportView: React.FC<ExportViewProps> = ({
 
           {hasScanned && scannedFields.length === 0 ? (
             <span className="text-xs text-muted-foreground" data-testid="export-field-caption">
-              No documents to scan — exporting all fields.
+              {t('exportView.fields.noneToScan')}
             </span>
           ) : scannedFields.length > 0 ? (
             <>
               <span className="text-xs text-muted-foreground" data-testid="export-field-caption">
-                {selectedFields.size} of {scannedFields.length} selected
+                {t('exportView.fields.selectedCount', { selected: selectedFields.size, total: scannedFields.length })}
               </span>
               <div className="grid max-h-40 grid-cols-2 gap-x-4 gap-y-1 overflow-auto sm:grid-cols-3">
                 {visibleScannedFields.map((f) => (
@@ -620,7 +627,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
               className="text-xs text-muted-foreground"
               data-testid="export-field-selection-hint"
             >
-              Projection disabled — using field selection
+              {t('exportView.fields.projectionDisabled')}
             </span>
           )}
         </div>
@@ -630,10 +637,10 @@ export const ExportView: React.FC<ExportViewProps> = ({
         <div>
           <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Download size={14} />
-            <span>Current Results</span>
+            <span>{t('exportView.current.title')}</span>
           </h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {currentResultCount} loaded document{currentResultCount === 1 ? '' : 's'}
+            {t('exportView.current.loadedCount', { count: currentResultCount })}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -646,7 +653,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
             data-testid="export-current-btn"
           >
             <Download size={13} />
-            Export {format.toUpperCase()}
+            {t('exportView.actions.exportFormat', { format: format.toUpperCase() })}
           </Button>
           <Button
             type="button"
@@ -657,7 +664,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
             data-testid="export-copy-current-btn"
           >
             <Copy size={13} />
-            Copy to clipboard
+            {t('exportView.actions.copyToClipboard')}
           </Button>
         </div>
       </section>
@@ -666,10 +673,10 @@ export const ExportView: React.FC<ExportViewProps> = ({
         <div>
           <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Download size={14} />
-            <span>Full Collection</span>
+            <span>{t('exportView.full.title')}</span>
           </h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Runs in the background and writes directly to disk.
+            {t('exportView.full.hint')}
           </p>
         </div>
         <Button
@@ -680,7 +687,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
           data-testid="export-full-btn"
         >
           <Download size={13} />
-          Export {format.toUpperCase()}
+          {t('exportView.actions.exportFormat', { format: format.toUpperCase() })}
         </Button>
       </section>
 
@@ -688,18 +695,18 @@ export const ExportView: React.FC<ExportViewProps> = ({
         <div>
           <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Filter size={14} />
-            <span>Filtered Results</span>
+            <span>{t('exportView.filtered.title')}</span>
           </h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {mode === 'aggregate'
-              ? 'Edit the aggregation pipeline, then export every resulting document.'
-              : 'Edit the query (reused from the document view), then export every match.'}
+              ? t('exportView.filtered.hintAggregate')
+              : t('exportView.filtered.hintFind')}
           </p>
         </div>
         <div className="flex flex-col gap-3">
           {mode === 'aggregate' ? (
             <div className="flex flex-col gap-1">
-              <Label className="text-xs">Pipeline</Label>
+              <Label className="text-xs">{t('exportView.filtered.pipeline')}</Label>
               <div className={editorShell(pipelineCheck.ok)}>
                 <QueryEditor
                   surface="aggStage"
@@ -745,14 +752,14 @@ export const ExportView: React.FC<ExportViewProps> = ({
                   data-testid="export-filtered-count-btn"
                 >
                   <Hash size={12} />
-                  Count
+                  {t('exportView.actions.count')}
                 </Button>
                 <span data-testid="export-filtered-count" className="text-xs text-muted-foreground">
                   {countLabel}
                 </span>
               </div>
               <div className="flex flex-col gap-1">
-                <Label className="text-xs">Skip</Label>
+                <Label className="text-xs">{t('exportView.labels.skip')}</Label>
                 <Input
                   type="number"
                   min={0}
@@ -763,7 +770,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <Label className="text-xs">Limit</Label>
+                <Label className="text-xs">{t('exportView.labels.limit')}</Label>
                 <Input
                   type="number"
                   min={0}
@@ -785,7 +792,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
               data-testid="export-filtered-btn"
             >
               <Download size={13} />
-              Export {format.toUpperCase()}
+              {t('exportView.actions.exportFormat', { format: format.toUpperCase() })}
             </Button>
           </div>
         </div>
@@ -796,10 +803,10 @@ export const ExportView: React.FC<ExportViewProps> = ({
           <div>
             <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
               <Eye size={14} />
-              <span>Preview</span>
+              <span>{t('exportView.preview.title')}</span>
             </h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              See a sample of the exported output before running.
+              {t('exportView.preview.hint')}
             </p>
           </div>
           <Button
@@ -811,7 +818,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
             data-testid="export-preview-btn"
           >
             <Eye size={13} />
-            {previewing ? 'Previewing…' : 'Preview'}
+            {previewing ? t('exportView.actions.previewing') : t('exportView.actions.preview')}
           </Button>
         </div>
         {(previewOutput !== null || previewError) && (
@@ -819,18 +826,20 @@ export const ExportView: React.FC<ExportViewProps> = ({
             data-testid="export-preview-output"
             className="max-h-48 overflow-auto rounded-md border border-border bg-muted/30 p-2 text-xs"
           >
-            {previewError ? `Preview failed: ${previewError}` : previewOutput}
+            {previewError ? t('exportView.preview.failed', { error: previewError }) : previewOutput}
           </pre>
         )}
       </section>
       </div>
 
       <p className="px-3.5 py-3 text-xs text-muted-foreground">
-        Filtered and full-collection exports run in the background. Track their progress in the{' '}
-        <button type="button" className="underline hover:text-foreground" onClick={onOpenTasks}>
-          Tasks
-        </button>{' '}
-        tab.
+        <Trans i18nKey="exportView.footer.backgroundNote" t={t}>
+          Filtered and full-collection exports run in the background. Track their progress in the{' '}
+          <button type="button" className="underline hover:text-foreground" onClick={onOpenTasks}>
+            Tasks
+          </button>{' '}
+          tab.
+        </Trans>
       </p>
     </div>
   );

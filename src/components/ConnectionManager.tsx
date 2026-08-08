@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
@@ -9,6 +9,7 @@ import {
   parseConnectionImportFile,
   resolveImportUri,
   type ImportedConnection,
+  type ImportParseErrorCode,
 } from '@/lib/connection';
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
@@ -772,10 +773,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setShowEditDialog(true);
   };
 
+  // `parseConnectionImportFile`/`resolveImportUri` return an error CODE, not
+  // display text (see `ImportParseErrorCode`'s doc comment) — translate it
+  // here, at the render/state boundary.
+  const importErrorMessage = (code: ImportParseErrorCode): string =>
+    code === 'empty' ? t('errors.importFileEmpty') : t('errors.importNoUriFound');
+
   const applyImportedUri = (raw: string, name?: string) => {
     const result = resolveImportUri(raw);
     if (!result.ok) {
-      setImportError(result.error);
+      setImportError(importErrorMessage(result.error));
       return;
     }
     setImportError(null);
@@ -892,7 +899,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       }
       const result = parseConnectionImportFile(text);
       if (!result.ok) {
-        setImportError(result.error);
+        setImportError(importErrorMessage(result.error));
         return;
       }
       await importParsedConnections(result.connections);
@@ -916,7 +923,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       const text = await readTextFile(path);
       const result = parseConnectionImportFile(text);
       if (!result.ok) {
-        setImportError(result.error);
+        setImportError(importErrorMessage(result.error));
         return;
       }
       await importParsedConnections(result.connections);
@@ -935,13 +942,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       multiline: true,
       validate: (v) => {
         const result = parseConnectionImportFile(v);
-        return result.ok ? null : result.error;
+        return result.ok ? null : importErrorMessage(result.error);
       },
     });
     if (!text || !text.trim()) return;
     const result = parseConnectionImportFile(text);
     if (!result.ok) {
-      setImportError(result.error);
+      setImportError(importErrorMessage(result.error));
       return;
     }
     await importParsedConnections(result.connections);
@@ -1516,8 +1523,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       key={swatch.id}
                       type="button"
                       data-testid={`color-swatch-${swatch.id}`}
-                      title={swatch.label}
-                      aria-label={swatch.label}
+                      title={t(swatch.labelKey)}
+                      aria-label={t(swatch.labelKey)}
                       aria-pressed={editorState.colorTag === swatch.value}
                       className={cn(
                         'h-5 w-5 rounded-full transition-[box-shadow]',
@@ -1859,7 +1866,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       )}
                       {isExternal && (
                         <p className="m-0 text-[10px] text-muted-foreground">
-                          {t('auth.externalNotePrefix')} <code>$external</code> {t('auth.externalNoteSuffix')}
+                          {/* One key, not a prefix/suffix pair around the <code>:
+                              German puts the database NAME after the noun
+                              ("gegen die Datenbank $external"), which a split
+                              that hard-codes English word order cannot express
+                              without stranding the final period after a space. */}
+                          <Trans i18nKey="connections:auth.externalNote" t={t}>
+                            Authenticates against the <code>$external</code> database.
+                          </Trans>
                         </p>
                       )}
                     </div>

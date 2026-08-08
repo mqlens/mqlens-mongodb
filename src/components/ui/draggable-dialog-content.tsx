@@ -1,6 +1,7 @@
 import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { useDraggableDialog } from '@/lib/useDraggableDialog';
 import { DialogOverlay, DialogPortal } from '@/components/ui/dialog';
@@ -51,6 +52,7 @@ export const DraggableDialogContent = React.forwardRef<
     },
     ref,
   ) => {
+    const { t } = useTranslation('shell');
     const { startDrag, startResize, positionedStyle, contentRef } = useDraggableDialog({
       defaultWidth,
       defaultHeight,
@@ -78,8 +80,8 @@ export const DraggableDialogContent = React.forwardRef<
         {children}
         <div
           data-testid="dialog-resize-handle"
-          aria-label="Resize dialog"
-          title="Drag to resize"
+          aria-label={t('dialog.resizeAriaLabel')}
+          title={t('dialog.resizeTitle')}
           className="absolute bottom-0 right-0 z-20 flex h-5 w-5 cursor-se-resize items-end justify-end p-0.5 text-muted-foreground/70 hover:text-foreground"
           onPointerDown={startResize}
         >
@@ -91,7 +93,7 @@ export const DraggableDialogContent = React.forwardRef<
         {!hideClose && (
           <DialogPrimitive.Close className="absolute right-3 top-3 z-20 rounded-sm p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
             <X className="h-4 w-4" />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{t('common:close')}</span>
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Content>

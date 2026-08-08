@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Ban, CheckCircle2, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,6 +49,15 @@ const taskPercent = (task: ExportTaskInfo) => {
   return Math.min(100, Math.round((task.processed / task.total) * 100));
 };
 
+// Backend task statuses shown verbatim when unrecognized — the union type
+// allows arbitrary strings, so only these four known values get a translation.
+const STATUS_LABEL_KEYS: Record<string, string> = {
+  running: 'taskManager.status.running',
+  completed: 'taskManager.status.completed',
+  failed: 'taskManager.status.failed',
+  cancelled: 'taskManager.status.cancelled',
+};
+
 export const TaskManager: React.FC<TaskManagerProps> = ({
   tasks,
   onRefresh,
@@ -55,6 +65,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
   onCancel,
   variant = 'floating',
 }) => {
+  const { t } = useTranslation('shell');
   const running = tasks.filter((task) => task.status === 'running').length;
   // Ids whose Cancel was clicked — disables the button so a double-click
   // can't race the task's teardown and produce a spurious error.
@@ -92,14 +103,14 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
         variant === 'embedded' && 'mt-4 border-0 shadow-none bg-transparent'
       )}
       data-testid="task-manager"
-      aria-label="Task manager"
+      aria-label={t('taskManager.ariaLabel')}
     >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border py-2 px-3">
         <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-          <span>Tasks</span>
+          <span>{t('taskManager.header.title')}</span>
           {running > 0 && (
             <Badge variant="secondary" className="text-[10px]">
-              {running} running
+              {t('taskManager.header.runningBadge', { count: running })}
             </Badge>
           )}
         </CardTitle>
@@ -110,8 +121,8 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
             size="icon"
             className="h-7 w-7"
             onClick={onRefresh}
-            title="Refresh tasks"
-            aria-label="Refresh tasks"
+            title={t('taskManager.actions.refreshTasks')}
+            aria-label={t('taskManager.actions.refreshTasks')}
           >
             <RefreshCw size={12} />
           </Button>
@@ -121,8 +132,8 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
             size="icon"
             className="h-7 w-7"
             onClick={onClearFinished}
-            title="Clear finished tasks"
-            aria-label="Clear finished tasks"
+            title={t('taskManager.actions.clearFinishedTasks')}
+            aria-label={t('taskManager.actions.clearFinishedTasks')}
           >
             <Trash2 size={12} />
           </Button>
@@ -134,7 +145,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
           <div className="flex flex-col">
             {tasks.length === 0 && (
               <div className="px-3 py-6 text-center text-xs text-muted-foreground" data-testid="task-empty">
-                No background tasks yet.
+                {t('taskManager.empty.noTasks')}
               </div>
             )}
             {tasks.map((task) => {
@@ -180,7 +191,11 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
                         {task.label}
                       </span>
                       <span className="flex-shrink-0 text-[10px] uppercase text-muted-foreground">
-                        {percent === null ? task.status : `${percent}%`}
+                        {percent === null
+                          ? STATUS_LABEL_KEYS[task.status]
+                            ? t(STATUS_LABEL_KEYS[task.status])
+                            : task.status
+                          : `${percent}%`}
                       </span>
                     </div>
                     <div className="mt-0.5 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
@@ -211,7 +226,12 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
                     {task.subLabel && (
                       <div className="mt-0.5 truncate text-[10px] text-muted-foreground" title={task.subLabel}>
                         {task.subLabel}
-                        {task.itemsTotal ? ` · ${task.itemsProcessed ?? 0}/${task.itemsTotal} collections` : ''}
+                        {task.itemsTotal
+                          ? t('taskManager.row.itemsProgressSuffix', {
+                              processed: task.itemsProcessed ?? 0,
+                              total: task.itemsTotal,
+                            })
+                          : ''}
                       </div>
                     )}
                     {task.summary && (
@@ -223,16 +243,24 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
                               ? task.summary.failed.map((f) => `${f.collection}: ${f.error}`)
                               : []),
                             ...(task.summary.skipped.length > 0
-                              ? [`Skipped: ${task.summary.skipped.join(', ')}`]
+                              ? [
+                                  t('taskManager.row.summary.skippedTitlePrefix', {
+                                    list: task.summary.skipped.join(', '),
+                                  }),
+                                ]
                               : []),
                           ].join('\n') || undefined
                         }
                       >
-                        {task.summary.documentsCopied} copied
-                        {task.summary.documentsSkipped > 0 && `, ${task.summary.documentsSkipped} skipped`}
-                        {task.summary.indexesCreated > 0 && `, ${task.summary.indexesCreated} indexes`}
+                        {t('taskManager.row.summary.copied', { count: task.summary.documentsCopied })}
+                        {task.summary.documentsSkipped > 0 &&
+                          t('taskManager.row.summary.skippedSuffix', { count: task.summary.documentsSkipped })}
+                        {task.summary.indexesCreated > 0 &&
+                          t('taskManager.row.summary.indexesSuffix', { count: task.summary.indexesCreated })}
                         {task.summary.failed.length > 0 && (
-                          <span className="text-destructive"> · {task.summary.failed.length} failed</span>
+                          <span className="text-destructive">
+                            {t('taskManager.row.summary.failedSuffix', { count: task.summary.failed.length })}
+                          </span>
                         )}
                       </div>
                     )}
@@ -243,7 +271,9 @@ export const TaskManager: React.FC<TaskManagerProps> = ({
                         onClick={() => handleCancelClick(task.id)}
                         disabled={cancelling.has(task.id)}
                       >
-                        {cancelling.has(task.id) ? 'Cancelling…' : 'Cancel'}
+                        {cancelling.has(task.id)
+                          ? t('taskManager.actions.cancelling')
+                          : t('taskManager.actions.cancel')}
                       </button>
                     )}
                   </div>

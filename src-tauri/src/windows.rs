@@ -78,8 +78,31 @@
 //!   no-ops — but wasteful and not the simplest correct wiring).
 
 use crate::workspace::{self, Workspace, WorkspaceOp};
+use crate::state::LockExt;
 use crate::AppState;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+
+/// Stop the mongosh child a tab owns, if any, and forget its stored state.
+/// Best-effort: a window closing must never be blocked by shell teardown.
+fn stop_shell_session_for_tab(app: &AppHandle, tab_id: &str) {
+    let state = app.state::<AppState>();
+    let session_id = crate::get_shell_tab_state_impl(&state, tab_id)
+        .ok()
+        .flatten()
+        .and_then(|v| {
+            v.get("sessionId")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string())
+        });
+    let _ = crate::clear_shell_tab_state_impl(&state, tab_id);
+    if let Some(session_id) = session_id {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = app.state::<AppState>();
+            let _ = crate::stop_mongosh_session_impl(&state, &session_id).await;
+        });
+    }
+}
 
 const WINDOW_TITLE: &str = "MQLens";
 const DEFAULT_WIDTH: f64 = 1000.0;
@@ -125,6 +148,29 @@ pub(crate) fn window_is_known(ws: &Workspace, label: &str) -> bool {
 fn apply_window_closed_and_broadcast(app: &AppHandle, label: &str, origin: String) {
     let state = app.state::<AppState>();
     let path = workspace::workspace_path(app);
+    // End this window's mongosh children BEFORE the op removes it from the
+    // store, while its tabs can still be enumerated. Closing a secondary window
+    // with the OS X button runs no frontend code at all, so without this the
+    // sessions it owned stay alive — with their child processes and database
+    // connections — until the whole app exits.
+    //
+    // Ownership comes from the shell state itself rather than from the
+    // workspace's tab list: the workspace holds profile-space tab ids, while
+    // shell state is keyed by the live-space id a rebound tab is re-keyed to,
+    // so enumerating the workspace would miss exactly the connected shells that
+    // have a child to stop.
+    //
+    // Recorded BEFORE the sweep: a `start_mongosh_session` still in flight for
+    // this window has no session id yet, so the sweep below cannot see it and
+    // the renderer that would have cancelled it is about to be destroyed. The
+    // start itself checks this set and stops the child it spawned.
+    if let Ok(mut closed) = state.closed_windows.lock_safe() {
+        closed.insert(label.to_string());
+    }
+    let doomed_tabs = crate::shell_tab_ids_for_window(&state, label).unwrap_or_default();
+    for tab_id in doomed_tabs {
+        stop_shell_session_for_tab(app, &tab_id);
+    }
     match workspace::apply_impl(&state, &path, WorkspaceOp::WindowClosed { window_id: label.to_string() }, origin) {
         Ok(Some(payload)) => {
             let _ = app.emit("workspace-changed", payload);
@@ -187,6 +233,14 @@ pub fn wire_main_window_exit(app: &AppHandle) {
 pub fn spawn_workspace_window(app: &AppHandle, label: &str) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window(label) {
         return existing.set_focus().map_err(|e| e.to_string());
+    }
+
+    // This label is live again, so a previous close must not keep poisoning it
+    // — window ids are reused across a session (`win-1` reappears after the
+    // first one closes), and a stale entry would make every start in the new
+    // window kill its own child.
+    if let Ok(mut closed) = app.state::<AppState>().closed_windows.lock_safe() {
+        closed.remove(label);
     }
 
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))

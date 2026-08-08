@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, GitCompareArrows } from 'lucide-react';
 import { EJSON, ObjectId, Long, Decimal128, Int32, Double, Binary, Timestamp } from 'bson';
 import { Dialog, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -127,6 +128,7 @@ const DiffColumn: React.FC<{ lines: DiffLine[]; testid: string }> = ({ lines, te
 const MAX_DIFF_LINES = 4000;
 
 export const DocumentDiffModal: React.FC<DocumentDiffModalProps> = ({ isOpen, left, right, onClose }) => {
+  const { t } = useTranslation('documents');
   const diff = useMemo(() => diffDocuments(toBson(left), toBson(right)), [left, right]);
   const tooLarge = diff.left.length > MAX_DIFF_LINES;
 
@@ -152,12 +154,12 @@ export const DocumentDiffModal: React.FC<DocumentDiffModalProps> = ({ isOpen, le
             <div className="flex flex-wrap items-center gap-2">
               <DialogTitle className="flex items-center gap-2 text-sm">
                 <GitCompareArrows size={14} className="text-primary" />
-                Compare Documents
+                {t('diffModal.title')}
               </DialogTitle>
               <span className="flex items-center gap-1.5" data-testid="diff-summary">
-                <Badge variant="warning">{diff.changedCount} changed</Badge>
-                <Badge variant="success">{diff.addedCount} added</Badge>
-                <Badge variant="destructive">{diff.removedCount} removed</Badge>
+                <Badge variant="warning">{t('diffModal.summary.changed', { count: diff.changedCount })}</Badge>
+                <Badge variant="success">{t('diffModal.summary.added', { count: diff.addedCount })}</Badge>
+                <Badge variant="destructive">{t('diffModal.summary.removed', { count: diff.removedCount })}</Badge>
               </span>
             </div>
             <Button
@@ -166,7 +168,7 @@ export const DocumentDiffModal: React.FC<DocumentDiffModalProps> = ({ isOpen, le
               size="icon"
               className="h-7 w-7"
               onClick={onClose}
-              aria-label="Close modal"
+              aria-label={t('diffModal.tooltips.closeModal')}
             >
               <X size={13} />
             </Button>
@@ -177,19 +179,19 @@ export const DocumentDiffModal: React.FC<DocumentDiffModalProps> = ({ isOpen, le
               className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground"
               data-testid="diff-too-large"
             >
-              This diff is too large to display ({diff.left.length} lines)
+              {t('diffModal.errors.tooLarge', { count: diff.left.length })}
             </div>
           ) : (
             <div className="mql-diff-grid grid min-h-0 flex-1 grid-cols-2 gap-3 p-4">
               <div className="flex min-h-0 flex-col gap-1">
                 <div className="mql-diff-colhead text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                  Document A
+                  {t('diffModal.labels.documentA')}
                 </div>
                 <DiffColumn lines={diff.left} testid="diff-left" />
               </div>
               <div className="flex min-h-0 flex-col gap-1">
                 <div className="mql-diff-colhead text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                  Document B
+                  {t('diffModal.labels.documentB')}
                 </div>
                 <DiffColumn lines={diff.right} testid="diff-right" />
               </div>

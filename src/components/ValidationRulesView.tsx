@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { QueryEditor } from './QueryEditor';
+import { useTranslation } from 'react-i18next';
 
 interface ValidationRulesViewProps {
   connectionId: string;
@@ -34,6 +35,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
   collectionName,
   onApplied,
 }) => {
+  const { t } = useTranslation('admin');
   const [validator, setValidator] = useState('{}');
   const [validationLevel, setValidationLevel] = useState('');
   const [validationAction, setValidationAction] = useState('');
@@ -78,11 +80,11 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
       try {
         parsed = JSON.parse(trimmed);
       } catch (e: any) {
-        setError(`Invalid validator JSON: ${e?.message || 'syntax error'}`);
+        setError(t('validationRulesView.errors.invalidValidatorJson', { message: e?.message || t('validationRulesView.errors.syntaxErrorFallback') }));
         return;
       }
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setError('Validator must be a JSON object.');
+        setError(t('validationRulesView.errors.mustBeObject'));
         return;
       }
     }
@@ -110,17 +112,17 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
     <div className="flex h-full flex-col overflow-auto" data-testid="validation-rules-view">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-sm font-semibold text-foreground">
         <ShieldCheck size={14} className="text-success" />
-        <span>Validation Rules — {collectionName}</span>
+        <span>{t('validationRulesView.title', { collection: collectionName })}</span>
       </div>
 
       {loading ? (
         <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground">
-          <Loader2 size={13} className="animate-spin" /> Loading validation rules…
+          <Loader2 size={13} className="animate-spin" /> {t('validationRulesView.loading')}
         </div>
       ) : (
         <div className="flex max-w-[640px] flex-col gap-4 p-4">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="validation-editor">Validator (JSON Schema)</Label>
+            <Label htmlFor="validation-editor">{t('validationRulesView.labels.validator')}</Label>
             <QueryEditor
               surface="filter"
               value={validator}
@@ -133,13 +135,13 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
               data-testid="validation-editor"
             />
             <p className="text-xs text-muted-foreground">
-              Leave empty and apply to clear validation for this collection.
+              {t('validationRulesView.hints.leaveEmptyToClear')}
             </p>
           </div>
 
           <div className="flex gap-4">
             <div className="flex flex-1 flex-col gap-1.5">
-              <Label>Validation Level</Label>
+              <Label>{t('validationRulesView.labels.validationLevel')}</Label>
               <Select
                 value={validationLevel || NONE_VALUE}
                 onValueChange={(v) => {
@@ -148,10 +150,10 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
                 }}
               >
                 <SelectTrigger data-testid="validation-level-select">
-                  <SelectValue placeholder="(default)" />
+                  <SelectValue placeholder={t('validationRulesView.labels.defaultOption')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={NONE_VALUE}>(default)</SelectItem>
+                  <SelectItem value={NONE_VALUE}>{t('validationRulesView.labels.defaultOption')}</SelectItem>
                   <SelectItem value="off">off</SelectItem>
                   <SelectItem value="moderate">moderate</SelectItem>
                   <SelectItem value="strict">strict</SelectItem>
@@ -160,7 +162,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
             </div>
 
             <div className="flex flex-1 flex-col gap-1.5">
-              <Label>Validation Action</Label>
+              <Label>{t('validationRulesView.labels.validationAction')}</Label>
               <Select
                 value={validationAction || NONE_VALUE}
                 onValueChange={(v) => {
@@ -169,10 +171,10 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
                 }}
               >
                 <SelectTrigger data-testid="validation-action-select">
-                  <SelectValue placeholder="(default)" />
+                  <SelectValue placeholder={t('validationRulesView.labels.defaultOption')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={NONE_VALUE}>(default)</SelectItem>
+                  <SelectItem value={NONE_VALUE}>{t('validationRulesView.labels.defaultOption')}</SelectItem>
                   <SelectItem value="error">error</SelectItem>
                   <SelectItem value="warn">warn</SelectItem>
                 </SelectContent>
@@ -196,7 +198,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
               data-testid="validation-success"
             >
               <CheckCircle2 size={13} className="flex-shrink-0" />
-              <span>Validation rules applied.</span>
+              <span>{t('validationRulesView.success.applied')}</span>
             </div>
           )}
 
@@ -207,7 +209,7 @@ export const ValidationRulesView: React.FC<ValidationRulesViewProps> = ({
               onClick={handleApply}
               disabled={applying}
             >
-              {applying ? 'Applying…' : 'Apply'}
+              {applying ? t('validationRulesView.actions.applying') : t('validationRulesView.actions.apply')}
             </Button>
           </div>
         </div>

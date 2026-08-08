@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { appConfigDir } from '@tauri-apps/api/path';
 import {
@@ -40,14 +41,20 @@ const GITHUB_URL = 'https://github.com/mqlens/mqlens-mongodb';
 
 const QUICK_ACTIONS: {
   id: string;
-  label: string;
+  labelKey: string;
   icon: typeof Plus;
   onClickKey: 'onConnect' | 'onLoadSampleData' | 'onOpenSettings';
   emptyOnly?: boolean;
 }[] = [
-  { id: 'connect', label: 'New connection', icon: Plus, onClickKey: 'onConnect' as const },
-  { id: 'sample', label: 'Load sample data', icon: Download, onClickKey: 'onLoadSampleData' as const, emptyOnly: true },
-  { id: 'settings', label: 'Settings', icon: Settings, onClickKey: 'onOpenSettings' },
+  { id: 'connect', labelKey: 'quickStart.actions.newConnection', icon: Plus, onClickKey: 'onConnect' as const },
+  {
+    id: 'sample',
+    labelKey: 'quickStart.actions.loadSampleData',
+    icon: Download,
+    onClickKey: 'onLoadSampleData' as const,
+    emptyOnly: true,
+  },
+  { id: 'settings', labelKey: 'quickStart.actions.settings', icon: Settings, onClickKey: 'onOpenSettings' },
 ];
 
 export const QuickStart: React.FC<QuickStartProps> = ({
@@ -59,6 +66,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
   activeConnections,
   profilesRefreshKey,
 }) => {
+  const { t } = useTranslation('shell');
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [dataDir, setDataDir] = useState<string>('');
@@ -119,14 +127,13 @@ export const QuickStart: React.FC<QuickStartProps> = ({
             <div className="min-w-0">
               <div className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-primary">
                 <Sparkles className="h-3.5 w-3.5" />
-                Quick start
+                {t('quickStart.header.eyebrow')}
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-foreground lg:text-3xl">
-                Welcome to MQLens
+                {t('quickStart.header.title')}
               </h1>
               <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted-foreground lg:text-base">
-                Your local MongoDB IDE — connect to a cluster, explore collections, and run queries
-                without leaving your machine.
+                {t('quickStart.header.subtitle')}
               </p>
             </div>
           </div>
@@ -138,7 +145,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
               </span>
               <span className="flex min-w-0 flex-col">
                 <span className="text-2xl font-bold leading-none text-foreground">{sorted.length}</span>
-                <span className="text-xs text-muted-foreground">Saved connections</span>
+                <span className="text-xs text-muted-foreground">{t('quickStart.stats.savedConnections')}</span>
               </span>
             </div>
             <div className="flex min-w-[140px] flex-1 items-center gap-3 rounded-xl border border-border/80 bg-card px-4 py-3 sm:flex-none">
@@ -147,7 +154,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
               </span>
               <span className="flex min-w-0 flex-col">
                 <span className="text-2xl font-bold leading-none text-foreground">{activeCount}</span>
-                <span className="text-xs text-muted-foreground">Active now</span>
+                <span className="text-xs text-muted-foreground">{t('quickStart.stats.activeNow')}</span>
               </span>
             </div>
           </div>
@@ -156,17 +163,17 @@ export const QuickStart: React.FC<QuickStartProps> = ({
         <div className="relative mt-6 flex flex-wrap gap-2">
           <Button onClick={onConnect} className="gap-2">
             <Plus className="h-4 w-4" />
-            New connection
+            {t('quickStart.actions.newConnection')}
           </Button>
           {isEmpty && (
             <Button variant="outline" onClick={onLoadSampleData} className="gap-2">
               <Download className="h-4 w-4" />
-              Load sample data
+              {t('quickStart.actions.loadSampleData')}
             </Button>
           )}
           <Button variant="outline" onClick={onOpenSettings} className="gap-2">
             <Settings className="h-4 w-4" />
-            Settings
+            {t('quickStart.actions.settings')}
           </Button>
         </div>
       </header>
@@ -177,15 +184,15 @@ export const QuickStart: React.FC<QuickStartProps> = ({
             <section>
               <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold tracking-tight">Saved connections</h2>
+                  <h2 className="text-lg font-semibold tracking-tight">{t('quickStart.savedSection.title')}</h2>
                   <p className="mt-0.5 text-sm text-muted-foreground">
                     {isEmpty
-                      ? 'Add your first cluster or try the built-in sample dataset.'
-                      : 'Click a connection to open it in the workspace.'}
+                      ? t('quickStart.savedSection.subtitleEmpty')
+                      : t('quickStart.savedSection.subtitleFilled')}
                   </p>
                 </div>
                 <Button variant="outline" size="sm" className="gap-1.5" onClick={onConnect}>
-                  Manage connections
+                  {t('quickStart.actions.manageConnections')}
                   <ExternalLink className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -196,15 +203,14 @@ export const QuickStart: React.FC<QuickStartProps> = ({
                     <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
                       <Search className="h-6 w-6" />
                     </div>
-                    <h3 className="text-base font-semibold text-foreground">No saved connections yet</h3>
+                    <h3 className="text-base font-semibold text-foreground">{t('quickStart.empty.title')}</h3>
                     <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                      Add a MongoDB cluster from Atlas or localhost, or load the sample dataset to
-                      explore MQLens with demo collections.
+                      {t('quickStart.empty.body')}
                     </p>
                     <div className="mt-6 flex flex-wrap justify-center gap-2">
                       <Button onClick={onConnect} className="gap-2">
                         <Plus className="h-4 w-4" />
-                        Add connection
+                        {t('quickStart.actions.addConnection')}
                       </Button>
                       <Button
                         variant="outline"
@@ -213,7 +219,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
                         className="gap-2"
                       >
                         <Download className="h-4 w-4" />
-                        Load sample data
+                        {t('quickStart.actions.loadSampleData')}
                       </Button>
                     </div>
                   </CardContent>
@@ -238,13 +244,15 @@ export const QuickStart: React.FC<QuickStartProps> = ({
                       <Plus className="h-5 w-5" />
                     </span>
                     <span>
-                      <span className="block text-sm font-semibold text-foreground">New connection</span>
+                      <span className="block text-sm font-semibold text-foreground">
+                        {t('quickStart.actions.newConnection')}
+                      </span>
                       <span className="mt-0.5 block text-xs text-muted-foreground">
-                        Add another MongoDB cluster
+                        {t('quickStart.newTile.subtitle')}
                       </span>
                     </span>
                     <span className="flex items-center gap-1 text-xs font-medium text-primary">
-                      Configure <ArrowRight className="h-3.5 w-3.5" />
+                      {t('quickStart.actions.configure')} <ArrowRight className="h-3.5 w-3.5" />
                     </span>
                   </button>
                 </div>
@@ -257,11 +265,11 @@ export const QuickStart: React.FC<QuickStartProps> = ({
           <div className="flex w-full flex-col gap-5 px-5 py-6 lg:px-6 lg:py-8">
               <Card className="w-full shadow-none">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm">Quick actions</CardTitle>
-                  <CardDescription>Common tasks from the home screen.</CardDescription>
+                  <CardTitle className="text-sm">{t('quickStart.sidebar.quickActionsTitle')}</CardTitle>
+                  <CardDescription>{t('quickStart.sidebar.quickActionsDescription')}</CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-1 pt-0">
-                  {QUICK_ACTIONS.filter((a) => !a.emptyOnly || isEmpty).map(({ id, label, icon: Icon, onClickKey }) => (
+                  {QUICK_ACTIONS.filter((a) => !a.emptyOnly || isEmpty).map(({ id, labelKey, icon: Icon, onClickKey }) => (
                     <button
                       key={id}
                       type="button"
@@ -269,7 +277,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
                       onClick={actionHandlers[onClickKey]}
                     >
                       <Icon className="h-4 w-4 shrink-0 text-primary" />
-                      <span className="min-w-0 flex-1">{label}</span>
+                      <span className="min-w-0 flex-1">{t(labelKey)}</span>
                     </button>
                   ))}
                   <Separator className="my-1" />
@@ -280,7 +288,7 @@ export const QuickStart: React.FC<QuickStartProps> = ({
                     rel="noreferrer"
                   >
                     <BookOpen className="h-4 w-4 shrink-0 text-primary" />
-                    Documentation
+                    {t('quickStart.actions.documentation')}
                   </a>
                   <a
                     className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-foreground transition-colors hover:bg-accent"
@@ -296,15 +304,15 @@ export const QuickStart: React.FC<QuickStartProps> = ({
 
               <Card className="w-full shadow-none">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm">Keyboard shortcuts</CardTitle>
+                  <CardTitle className="text-sm">{t('quickStart.sidebar.shortcutsTitle')}</CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3 pt-0">
-                  {shortcuts.map(({ id, keys, label }) => (
+                  {shortcuts.map(({ id, keys, labelKey }) => (
                     <div key={id} className="flex items-start gap-2.5 text-xs text-muted-foreground">
                       <kbd className="mt-0.5 shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-[10px] text-foreground">
                         {keys}
                       </kbd>
-                      <span className="min-w-0 flex-1 leading-snug">{label}</span>
+                      <span className="min-w-0 flex-1 leading-snug">{t(labelKey)}</span>
                     </div>
                   ))}
                   <button
@@ -313,12 +321,12 @@ export const QuickStart: React.FC<QuickStartProps> = ({
                     data-testid="qs-view-all-shortcuts"
                     onClick={onOpenShortcuts ?? onOpenSettings}
                   >
-                    View all shortcuts in Settings
+                    {t('quickStart.actions.viewAllShortcuts')}
                   </button>
                   <div className="flex items-start gap-2.5 text-xs text-muted-foreground">
                     <FolderOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
                     <span className="min-w-0 flex-1 leading-snug">
-                      Open a collection for indexes &amp; explain plans
+                      {t('quickStart.sidebar.shortcutsHint')}
                     </span>
                   </div>
                 </CardContent>
@@ -326,12 +334,14 @@ export const QuickStart: React.FC<QuickStartProps> = ({
 
               <Card className="w-full shadow-none">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm">Local storage</CardTitle>
-                  <CardDescription>Everything stays on your machine.</CardDescription>
+                  <CardTitle className="text-sm">{t('quickStart.sidebar.localStorageTitle')}</CardTitle>
+                  <CardDescription>{t('quickStart.sidebar.localStorageDescription')}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3 pt-0">
                   <div className="rounded-lg border border-border bg-background/60 p-3">
-                    <div className="text-[11px] font-medium text-muted-foreground">Data directory</div>
+                    <div className="text-[11px] font-medium text-muted-foreground">
+                      {t('quickStart.sidebar.dataDirectory')}
+                    </div>
                     <div
                       className="mt-1 break-all font-mono text-[11px] leading-relaxed text-foreground"
                       title={dataDir}
@@ -340,11 +350,11 @@ export const QuickStart: React.FC<QuickStartProps> = ({
                     </div>
                   </div>
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Saved connections</span>
+                    <span className="text-muted-foreground">{t('quickStart.stats.savedConnections')}</span>
                     <span className="font-semibold text-foreground">{sorted.length}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Active now</span>
+                    <span className="text-muted-foreground">{t('quickStart.stats.activeNow')}</span>
                     <span className="font-semibold text-foreground">{activeCount}</span>
                   </div>
                 </CardContent>

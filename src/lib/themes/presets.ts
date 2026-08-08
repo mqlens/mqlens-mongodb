@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import type { ThemePreset, TokenName } from "./schema";
 
 const darkBase: Record<TokenName, string> = {
@@ -88,21 +89,21 @@ export const THEME_PRESETS: ThemePreset[] = [
   {
     id: "mqlens-dark",
     name: "MQLens Dark",
-    description: "Default brand theme — deep blue-charcoal with electric blue accent",
+    descriptionKey: "appearance.presets.mqlensDark.description",
     mode: "dark",
     tokens: darkBase,
   },
   {
     id: "mqlens-light",
     name: "MQLens Light",
-    description: "Cool off-white surfaces with deep text",
+    descriptionKey: "appearance.presets.mqlensLight.description",
     mode: "light",
     tokens: lightBase,
   },
   {
     id: "high-contrast",
-    name: "High Contrast",
-    description: "WCAG AAA accessibility theme",
+    nameKey: "appearance.presets.highContrast.name",
+    descriptionKey: "appearance.presets.highContrast.description",
     mode: "dark",
     tokens: {
       ...darkBase,
@@ -118,7 +119,7 @@ export const THEME_PRESETS: ThemePreset[] = [
   {
     id: "nord",
     name: "Nord",
-    description: "Arctic, north-bluish color palette",
+    descriptionKey: "appearance.presets.nord.description",
     mode: "dark",
     tokens: {
       ...darkBase,
@@ -136,7 +137,7 @@ export const THEME_PRESETS: ThemePreset[] = [
   {
     id: "solarized-dark",
     name: "Solarized Dark",
-    description: "Ethan Schoonover's precision colors for dark environments",
+    descriptionKey: "appearance.presets.solarizedDark.description",
     mode: "dark",
     tokens: {
       ...darkBase,
@@ -153,7 +154,7 @@ export const THEME_PRESETS: ThemePreset[] = [
   {
     id: "solarized-light",
     name: "Solarized Light",
-    description: "Solarized palette for bright environments",
+    descriptionKey: "appearance.presets.solarizedLight.description",
     mode: "light",
     tokens: {
       ...lightBase,
@@ -170,7 +171,7 @@ export const THEME_PRESETS: ThemePreset[] = [
   {
     id: "github-dark",
     name: "GitHub Dark",
-    description: "GitHub's dark theme colors",
+    descriptionKey: "appearance.presets.githubDark.description",
     mode: "dark",
     tokens: {
       ...darkBase,
@@ -187,7 +188,7 @@ export const THEME_PRESETS: ThemePreset[] = [
   {
     id: "github-light",
     name: "GitHub Light",
-    description: "GitHub's light theme colors",
+    descriptionKey: "appearance.presets.githubLight.description",
     mode: "light",
     tokens: {
       ...lightBase,
@@ -205,6 +206,14 @@ export const THEME_PRESETS: ThemePreset[] = [
 
 export function getPresetById(id: string): ThemePreset | undefined {
   return THEME_PRESETS.find((p) => p.id === id);
+}
+
+/** The display name for a preset: a translated one when the name is
+ *  descriptive copy, the verbatim proper name otherwise. `t` is injected
+ *  because this module is plain `.ts` and cannot call a translation hook
+ *  (same pattern as `tabLabelFor` in App.tsx). */
+export function presetName(preset: ThemePreset, t: TFunction): string {
+  return preset.nameKey ? t(preset.nameKey) : (preset.name ?? preset.id);
 }
 
 export const FONT_OPTIONS = {

@@ -49,7 +49,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
   onNamespaceMutated = () => {},
 }) => {
   const { toast, confirm, prompt, choose } = useDialogs();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('admin');
   const [files, setFiles] = useState<GridFsFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,21 +91,21 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
 
   const resolveUploadMetadata = async (batchLabel: string): Promise<string | null> => {
     const choice = await choose({
-      title: 'GridFS metadata',
-      message: `${batchLabel}: add optional metadata?`,
+      title: t('gridfsView.metadataDialog.title'),
+      message: t('gridfsView.metadataDialog.message', { batchLabel }),
       choices: [
-        { value: 'skip', label: 'Skip metadata' },
-        { value: 'add', label: 'Add metadata JSON' },
+        { value: 'skip', label: t('gridfsView.metadataDialog.choiceSkip') },
+        { value: 'add', label: t('gridfsView.metadataDialog.choiceAdd') },
       ],
     });
     if (choice !== 'add') return null;
 
     const raw = await prompt({
-      title: 'GridFS metadata',
-      message: 'Metadata JSON object (stored on the file document):',
+      title: t('gridfsView.metadataDialog.title'),
+      message: t('gridfsView.metadataDialog.promptMessage'),
       defaultValue: '{\n  \n}',
       multiline: true,
-      validate: validateGridfsMetadataJson,
+      validate: (value) => validateGridfsMetadataJson(value, t),
     });
     if (raw === null) return null;
     return gridfsMetadataForUpload(raw);
@@ -117,16 +117,18 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
     total: number,
   ): Promise<string | null> => {
     const defaultName = basename(sourcePath);
-    const title = total > 1 ? `Upload file ${index + 1} of ${total}` : 'Upload to GridFS';
+    const title = total > 1
+      ? t('gridfsView.uploadFilenameDialog.titleMultiple', { index: index + 1, total })
+      : t('gridfsView.uploadFilenameDialog.titleSingle');
     const message =
       total > 1
-        ? `Filename in the bucket for ${defaultName}:`
-        : 'Filename in the bucket:';
+        ? t('gridfsView.uploadFilenameDialog.messageMultiple', { name: defaultName })
+        : t('gridfsView.uploadFilenameDialog.messageSingle');
     return prompt({
       title,
       message,
       defaultValue: defaultName,
-      validate: (v) => (v.trim() ? null : 'Filename is required'),
+      validate: (v) => (v.trim() ? null : t('gridfsView.uploadFilenameDialog.filenameRequired')),
     });
   };
 
@@ -142,7 +144,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
     }
 
     const metadataJson = await resolveUploadMetadata(
-      paths.length > 1 ? 'These files' : 'This file',
+      paths.length > 1 ? t('gridfsView.labels.theseFiles') : t('gridfsView.labels.thisFile'),
     );
 
     let uploadedAny = false;
@@ -161,18 +163,18 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
           onProgress: channel,
         });
         uploadedAny = true;
-        toast(t('toast.fileUploaded', { filename }), 'success');
+        toast(t('common:toast.fileUploaded', { filename }), 'success');
       } catch (err: any) {
         // Don't abort the batch — keep uploading the remaining files and
         // report which ones failed at the end.
         failed.push(filename);
-        toast(t('toast.uploadFailedFor', { filename, detail: err?.message || err }), 'error');
+        toast(t('common:toast.uploadFailedFor', { filename, detail: err?.message || err }), 'error');
       } finally {
         setTransfer(null);
       }
     }
     if (failed.length > 1) {
-      toast(t('toast.filesFailedToUpload', { count: failed.length }), 'error');
+      toast(t('common:toast.filesFailedToUpload', { count: failed.length }), 'error');
     }
     await loadFiles();
     if (uploadedAny) {
@@ -187,7 +189,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
       const paths = Array.isArray(selected) ? selected : [selected];
       await uploadPaths(paths.filter((p): p is string => typeof p === 'string'));
     } catch (err: any) {
-      toast(t('toast.uploadFailed', { detail: err?.message || err }), 'error');
+      toast(t('common:toast.uploadFailed', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -207,12 +209,12 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
           totalBytes: file.length,
           onProgress: channel,
         });
-        toast(t('toast.fileDownloaded', { filename: file.filename }), 'success');
+        toast(t('common:toast.fileDownloaded', { filename: file.filename }), 'success');
       } finally {
         setTransfer(null);
       }
     } catch (err: any) {
-      toast(t('toast.downloadFailed', { detail: err?.message || err }), 'error');
+      toast(t('common:toast.downloadFailed', { detail: err?.message || err }), 'error');
       setTransfer(null);
     }
   };
@@ -221,9 +223,9 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
     if (transfer) return;
     if (
       !(await confirm({
-        title: 'Delete GridFS file',
-        message: `Delete "${file.filename}" from ${databaseName}.${bucket}? This cannot be undone.`,
-        confirmLabel: 'Delete',
+        title: t('gridfsView.deleteDialog.title'),
+        message: t('gridfsView.deleteDialog.message', { filename: file.filename, namespace: `${databaseName}.${bucket}` }),
+        confirmLabel: t('gridfsView.deleteDialog.confirmLabel'),
         destructive: true,
       }))
     ) {
@@ -236,11 +238,11 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
         bucket,
         fileId: file.id,
       });
-      toast(t('toast.fileDeleted', { filename: file.filename }), 'success');
+      toast(t('common:toast.fileDeleted', { filename: file.filename }), 'success');
       await loadFiles();
       onNamespaceMutated();
     } catch (err: any) {
-      toast(t('toast.fileDeleteFailed', { detail: err?.message || err }), 'error');
+      toast(t('common:toast.fileDeleteFailed', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -248,7 +250,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
     return (
       <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
         <Loader2 size={16} className="animate-spin" />
-        Loading GridFS files…
+        {t('gridfsView.loading')}
       </div>
     );
   }
@@ -279,7 +281,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="font-mono text-[11px] text-muted-foreground">{files.length} file(s)</span>
+          <span className="font-mono text-[11px] text-muted-foreground">{t('gridfsView.labels.fileCount', { count: files.length })}</span>
           <Button
             type="button"
             variant="outline"
@@ -290,7 +292,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
             onClick={() => void handleUploadClick()}
           >
             <Upload size={12} />
-            Upload
+            {t('gridfsView.actions.upload')}
           </Button>
         </div>
       </div>
@@ -299,7 +301,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
         <div className="border-b border-border bg-muted/30 px-4 py-2" data-testid="gridfs-transfer-progress">
           <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
             <span>
-              {transfer.kind === 'upload' ? 'Uploading' : 'Downloading'} {transfer.label}
+              {transfer.kind === 'upload' ? t('gridfsView.progress.uploading') : t('gridfsView.progress.downloading')} {transfer.label}
             </span>
             <span className="font-mono tabular-nums">
               {formatBytes(transfer.transferred)}
@@ -322,7 +324,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
           data-testid="gridfs-empty-state"
         >
           <HardDrive size={20} />
-          <span>No files in this bucket.</span>
+          <span>{t('gridfsView.empty.noFiles')}</span>
           <Button
             type="button"
             variant="outline"
@@ -332,7 +334,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
             onClick={() => void handleUploadClick()}
           >
             <Upload size={12} />
-            Upload files
+            {t('gridfsView.actions.uploadFiles')}
           </Button>
         </div>
       ) : (
@@ -340,10 +342,10 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
           <table className="w-full border-collapse text-xs">
             <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
               <tr className="text-left text-muted-foreground">
-                <th className="px-4 py-2 font-medium">filename</th>
-                <th className="px-4 py-2 font-medium">size</th>
-                <th className="px-4 py-2 font-medium">uploaded</th>
-                <th className="px-4 py-2 font-medium">chunk size</th>
+                <th className="px-4 py-2 font-medium">{t('gridfsView.table.filename')}</th>
+                <th className="px-4 py-2 font-medium">{t('gridfsView.table.size')}</th>
+                <th className="px-4 py-2 font-medium">{t('gridfsView.table.uploaded')}</th>
+                <th className="px-4 py-2 font-medium">{t('gridfsView.table.chunkSize')}</th>
                 <th className="px-4 py-2 font-medium" />
               </tr>
             </thead>
@@ -373,7 +375,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
                         onClick={() => void handleDownload(file)}
                       >
                         <Download size={12} />
-                        Download
+                        {t('gridfsView.actions.download')}
                       </Button>
                       <Button
                         type="button"
@@ -385,7 +387,7 @@ export const GridFsView: React.FC<GridFsViewProps> = ({
                         onClick={() => void handleDelete(file)}
                       >
                         <Trash2 size={12} />
-                        Delete
+                        {t('gridfsView.actions.delete')}
                       </Button>
                     </div>
                   </td>

@@ -36,7 +36,7 @@ mongodb = { version = "3.0.0", features = ["aws-auth", "gssapi-auth"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 uuid = { version = "1", features = ["v4", "serde"] }
-russh = "0.62.4"
+russh = "0.62.5"
 sysinfo = "0.38.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 argon2 = "0.5"

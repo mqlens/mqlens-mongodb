@@ -1,3 +1,5 @@
+import type { TFunction } from 'i18next';
+
 export type FavoriteItemKind = 'connection' | 'database' | 'collection' | 'query';
 
 export interface FavoriteItem {
@@ -73,7 +75,10 @@ export function toggleFavoriteItem(items: FavoriteItem[], entry: FavoriteItem): 
   return addFavoriteItem(items, entry);
 }
 
-export function favoriteItemLabel(item: FavoriteItem): string {
+/** `t` is injected rather than pulled from a hook so this module stays pure
+ *  (same pattern as `tabLabelFor` in App.tsx). Both strings below render in the
+ *  sidebar's Favourites list. */
+export function favoriteItemLabel(item: FavoriteItem, t: TFunction): string {
   switch (item.kind) {
     case 'connection':
       return item.connectionName;
@@ -82,14 +87,14 @@ export function favoriteItemLabel(item: FavoriteItem): string {
     case 'collection':
       return item.collection ?? '';
     case 'query':
-      return item.label ?? 'Saved query';
+      return item.label ?? t('sidebar:favorites.untitledQuery');
   }
 }
 
-export function favoriteItemSubtitle(item: FavoriteItem): string | undefined {
+export function favoriteItemSubtitle(item: FavoriteItem, t: TFunction): string | undefined {
   switch (item.kind) {
     case 'connection':
-      return 'connection';
+      return t('sidebar:favorites.connectionSubtitle');
     case 'database':
       return item.connectionName;
     case 'collection':

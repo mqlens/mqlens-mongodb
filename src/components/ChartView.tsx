@@ -4,6 +4,7 @@ import {
   PieChart, Pie, Cell, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { Download } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -30,6 +31,7 @@ const MEASURES: Measure[] = ['count', 'sum', 'avg', 'min', 'max'];
 const TYPES: ChartType[] = ['bar', 'line', 'area', 'pie', 'scatter'];
 
 export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
+  const { t } = useTranslation('documents');
   const { config, resolvedMode } = useTheme();
   const fields = useMemo<FieldInfo[]>(() => inferFields(documents, columns), [documents, columns]);
   const numericFields = useMemo(() => fields.filter((f) => f.kind === 'numeric').map((f) => f.name), [fields]);
@@ -66,7 +68,7 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
   if (!documents || documents.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-muted-foreground" data-testid="chart-view">
-        Run a query to chart its results.
+        {t('chartView.empty.noResults')}
       </div>
     );
   }
@@ -83,27 +85,27 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
           <TabsList className="h-8">
             <TabsTrigger
               value="aggregate"
-              aria-label="Aggregate"
+              aria-label={t('chartView.tabs.aggregate')}
               className="text-xs px-2 py-1"
               onClick={() => setMode('aggregate')}
             >
-              Aggregate
+              {t('chartView.tabs.aggregate')}
             </TabsTrigger>
             <TabsTrigger
               value="raw"
-              aria-label="Raw"
+              aria-label={t('chartView.tabs.raw')}
               className="text-xs px-2 py-1"
               onClick={() => setMode('raw')}
             >
-              Raw
+              {t('chartView.tabs.raw')}
             </TabsTrigger>
           </TabsList>
         </Tabs>
 
         <label className="flex items-center gap-1 text-[11px]">
-          X axis
+          {t('chartView.labels.xAxis')}
           <Select value={xField} onValueChange={setXField}>
-            <SelectTrigger className="h-7 w-[120px] text-[11px]" aria-label="X axis">
+            <SelectTrigger className="h-7 w-[120px] text-[11px]" aria-label={t('chartView.labels.xAxis')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -119,15 +121,15 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
         {mode === 'aggregate' ? (
           <>
             <label className="flex items-center gap-1 text-[11px]">
-              Measure
+              {t('chartView.labels.measure')}
               <Select value={measure} onValueChange={(v) => setMeasure(v as Measure)}>
-                <SelectTrigger className="h-7 w-[100px] text-[11px]" aria-label="Measure">
+                <SelectTrigger className="h-7 w-[100px] text-[11px]" aria-label={t('chartView.labels.measure')}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {MEASURES.map((m) => (
                     <SelectItem key={m} value={m}>
-                      {m}
+                      {t(`chartView.measures.${m}`)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -135,12 +137,12 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
             </label>
             {measure !== 'count' && (
               <label className="flex items-center gap-1 text-[11px]">
-                Field
+                {t('chartView.labels.field')}
                 <Select
                   value={measureField || '__none__'}
                   onValueChange={(v) => setMeasureField(v === '__none__' ? '' : v)}
                 >
-                  <SelectTrigger className="h-7 w-[120px] text-[11px]" aria-label="Measure field">
+                  <SelectTrigger className="h-7 w-[120px] text-[11px]" aria-label={t('chartView.tooltips.measureField')}>
                     <SelectValue placeholder="—" />
                   </SelectTrigger>
                   <SelectContent>
@@ -157,12 +159,12 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
           </>
         ) : (
           <label className="flex items-center gap-1 text-[11px]">
-            Y axis
+            {t('chartView.labels.yAxis')}
             <Select
               value={rawYField || '__none__'}
               onValueChange={(v) => setRawYField(v === '__none__' ? '' : v)}
             >
-              <SelectTrigger className="h-7 w-[120px] text-[11px]" aria-label="Y axis">
+              <SelectTrigger className="h-7 w-[120px] text-[11px]" aria-label={t('chartView.labels.yAxis')}>
                 <SelectValue placeholder="—" />
               </SelectTrigger>
               <SelectContent>
@@ -178,15 +180,15 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
         )}
 
         <label className="flex items-center gap-1 text-[11px]">
-          Type
+          {t('chartView.labels.type')}
           <Select value={chartType} onValueChange={(v) => setChartType(v as ChartType)}>
-            <SelectTrigger className="h-7 w-[90px] text-[11px]" aria-label="Chart type">
+            <SelectTrigger className="h-7 w-[90px] text-[11px]" aria-label={t('chartView.tooltips.chartType')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {TYPES.map((t) => (
-                <SelectItem key={t} value={t} disabled={mode === 'raw' && t === 'pie'}>
-                  {t}
+              {TYPES.map((ct) => (
+                <SelectItem key={ct} value={ct} disabled={mode === 'raw' && ct === 'pie'}>
+                  {t(`chartView.chartTypes.${ct}`)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -198,24 +200,24 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
           variant="outline"
           size="sm"
           className="ml-auto h-7 text-[11px]"
-          aria-label="Export PNG"
+          aria-label={t('chartView.tooltips.exportPng')}
           onClick={() => {
             const svg = chartRef.current?.querySelector('svg');
             if (svg) exportSvgToPng(svg as SVGSVGElement, 'chart.png', bgBase);
           }}
         >
-          <Download size={12} /> PNG
+          <Download size={12} /> {t('chartView.actions.exportPng')}
         </Button>
       </div>
 
       <div ref={chartRef} className="min-h-0 min-w-0 flex-1 p-3">
         {noNumericAtAll && mode === 'raw' ? (
           <div className="flex h-full items-center justify-center text-muted-foreground">
-            No numeric field in these results to plot.
+            {t('chartView.empty.noNumericField')}
           </div>
         ) : needsNumeric ? (
           <div className="flex h-full items-center justify-center text-muted-foreground">
-            Pick a numeric field to chart.
+            {t('chartView.empty.pickNumericField')}
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
@@ -225,8 +227,12 @@ export const ChartView: React.FC<ChartViewProps> = ({ documents, columns }) => {
       </div>
 
       <div className="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground">
-        Charting {data.total} loaded document{data.total === 1 ? '' : 's'} — increase the page-size limit to chart more.
-        {data.truncated > 0 && ` (+${data.truncated} more ${mode === 'aggregate' ? 'categories' : 'points'} not shown)`}
+        {t('chartView.footer.charting', { count: data.total })}
+        {data.truncated > 0 &&
+          ` ${t('chartView.footer.truncatedNote', {
+            count: data.truncated,
+            unit: mode === 'aggregate' ? t('chartView.footer.unitCategories') : t('chartView.footer.unitPoints'),
+          })}`}
       </div>
     </div>
   );
