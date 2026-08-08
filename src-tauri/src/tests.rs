@@ -4328,6 +4328,65 @@ mod shell_tab_state_tests {
     }
 
     #[test]
+    fn a_closed_window_s_write_is_not_treated_as_an_orphan_once_another_window_owns_the_tab() {
+        // The moved tab was claimed by its destination before the source
+        // window closed, so the source's queued write names a session the
+        // DESTINATION is now using. Stopping it would kill a live shell.
+        use crate::state::LockExt;
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-live", "windowId": "win-2" }),
+        )
+        .unwrap();
+        st.closed_windows.lock_safe().unwrap().insert("win-1".into());
+
+        let orphan = set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-live", "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        assert_eq!(orphan, None, "the destination's live session was stopped");
+        assert_eq!(
+            get_shell_tab_state_impl(&st, "tab-1")
+                .unwrap()
+                .unwrap()
+                .get("windowId")
+                .unwrap(),
+            "win-2"
+        );
+    }
+
+    #[test]
+    fn the_close_sweep_leaves_a_tab_another_window_has_claimed() {
+        // The sweep enumerates a window's tabs and then takes them one by one;
+        // a destination can claim one in between. Taking it anyway would delete
+        // state that now belongs to the other window and stop its child.
+        use crate::{claim_shell_tab_state_impl, take_shell_tab_state_if_owned};
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "s", "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        // Enumerated as win-1's, then claimed by win-2 before the take.
+        claim_shell_tab_state_impl(&st, "tab-1", "win-2").unwrap();
+
+        assert_eq!(take_shell_tab_state_if_owned(&st, "tab-1", "win-1").unwrap(), None);
+        assert!(
+            get_shell_tab_state_impl(&st, "tab-1").unwrap().is_some(),
+            "the new owner's state was swept away"
+        );
+        // The real owner can still take it.
+        assert!(take_shell_tab_state_if_owned(&st, "tab-1", "win-2").unwrap().is_some());
+    }
+
+    #[test]
     fn the_current_owner_keeps_writing_normally() {
         let st = state();
         set_shell_tab_state_impl(

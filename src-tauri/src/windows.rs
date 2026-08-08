@@ -84,14 +84,14 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Windo
 
 /// Stop the mongosh child a tab owns, if any, and forget its stored state.
 /// Best-effort: a window closing must never be blocked by shell teardown.
-fn stop_shell_session_for_tab(app: &AppHandle, tab_id: &str) {
+fn stop_shell_session_for_tab(app: &AppHandle, tab_id: &str, window_id: &str) {
     let state = app.state::<AppState>();
     // Taken in one lock rather than read-then-clear. A `set_shell_tab_state`
     // carrying a session id that has only just started can arrive alongside an
     // OS window close: between a separate read and clear it would either be
     // read as absent and then deleted — losing the only pointer to a live
     // child — or land after the clear and resurrect the closed window's entry.
-    let session_id = crate::take_shell_tab_state_impl(&state, tab_id)
+    let session_id = crate::take_shell_tab_state_if_owned(&state, tab_id, window_id)
         .ok()
         .flatten()
         .and_then(|v| {
@@ -173,7 +173,7 @@ fn apply_window_closed_and_broadcast(app: &AppHandle, label: &str, origin: Strin
     }
     let doomed_tabs = crate::shell_tab_ids_for_window(&state, label).unwrap_or_default();
     for tab_id in doomed_tabs {
-        stop_shell_session_for_tab(app, &tab_id);
+        stop_shell_session_for_tab(app, &tab_id, label);
     }
     match workspace::apply_impl(&state, &path, WorkspaceOp::WindowClosed { window_id: label.to_string() }, origin) {
         Ok(Some(payload)) => {

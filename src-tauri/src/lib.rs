@@ -746,10 +746,20 @@ pub fn set_shell_tab_state_impl(
     // neither.
     if let Some(writer) = value.get("windowId").and_then(|w| w.as_str()) {
         if window_is_closed(state, writer)? {
-            return Ok(value
-                .get("sessionId")
-                .and_then(|s| s.as_str())
-                .map(|s| s.to_string()));
+            // Only an id nothing else accounts for is an orphan. If the tab
+            // still HAS an entry, it was claimed by another window and that
+            // window owns the child — the closed writer is simply describing a
+            // session someone else is now using, and stopping it would kill a
+            // live shell in the window that took the tab over.
+            let untracked = state.shell_tab_state.lock_safe()?.get(tab_id).is_none();
+            return Ok(if untracked {
+                value
+                    .get("sessionId")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            });
         }
     }
     let mut map = state.shell_tab_state.lock_safe()?;
@@ -807,6 +817,27 @@ pub fn take_shell_tab_state_impl(
     tab_id: &str,
 ) -> Result<Option<serde_json::Value>, String> {
     Ok(state.shell_tab_state.lock_safe()?.remove(tab_id))
+}
+
+/// Take a tab's state only while `window_id` still owns it.
+///
+/// The close sweep enumerates a window's tabs and then takes them one by one;
+/// a destination can claim a moved tab in between, and an unconditional take
+/// would remove state that now belongs to the other window and stop its child.
+/// Checking the owner and removing has to be the same locked operation — making
+/// only the take atomic leaves the enumeration-to-take gap open.
+pub fn take_shell_tab_state_if_owned(
+    state: &AppState,
+    tab_id: &str,
+    window_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    let mut map = state.shell_tab_state.lock_safe()?;
+    let owned = map
+        .get(tab_id)
+        .and_then(|v| v.get("windowId"))
+        .and_then(|w| w.as_str())
+        .is_some_and(|owner| owner == window_id);
+    Ok(if owned { map.remove(tab_id) } else { None })
 }
 
 /// Stamp `window_id` as the owner of a tab's state and return the CURRENT
