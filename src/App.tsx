@@ -1952,7 +1952,13 @@ function Workspace() {
       .map(t => ({ oldId: t.id, newId: renameTab(t).id }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId }) => dispatchWorkspace({ type: 'rename_tab', oldId, newId }));
+    renamedPairs.forEach(({ oldId, newId }) => {
+      // A rename mints a new tab id, so the shell session has to follow it —
+      // otherwise the live mongosh child is stranded under the dead id and the
+      // renamed tab starts a second one.
+      renameShellSession(oldId, newId);
+      dispatchWorkspace({ type: 'rename_tab', oldId, newId });
+    });
     invalidatePaletteNamespaceIndex(connectionId);
   };
 
@@ -2002,7 +2008,13 @@ function Workspace() {
       .map(t => ({ oldId: t.id, newId: renameTab(t).id }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId }) => dispatchWorkspace({ type: 'rename_tab', oldId, newId }));
+    renamedPairs.forEach(({ oldId, newId }) => {
+      // A rename mints a new tab id, so the shell session has to follow it —
+      // otherwise the live mongosh child is stranded under the dead id and the
+      // renamed tab starts a second one.
+      renameShellSession(oldId, newId);
+      dispatchWorkspace({ type: 'rename_tab', oldId, newId });
+    });
     invalidatePaletteNamespaceIndex(connectionId);
   };
 
@@ -2882,11 +2894,20 @@ function Workspace() {
         );
         if (leaving.length > 0) {
           const leavingIds = new Set(leaving.map((t) => t.id));
+          // "Leaving" means gone from THIS window's tree — which includes a tab
+          // that was merely moved or detached to another window. Those are still
+          // in the document, and killing their mongosh child would either strand
+          // the destination with a dead session id or lose the REPL state it is
+          // supposed to carry across. Only dispose tabs that left the workspace
+          // entirely.
+          const stillInWorkspace = new Set(
+            payload.workspace.windows.flatMap((w) => allPanes(w.splitTree).flatMap((p) => p.tabIds))
+          );
           leavingIds.forEach((id) => {
             tabBuilderStateCache.current.delete(id);
             tabChatCache.current.delete(id);
             clearChatRequest(id);
-            void disposeShellSession(id);
+            if (!stillInWorkspace.has(id)) void disposeShellSession(id);
             unmirroredTabIdsRef.current.delete(id);
           });
           setTabs((prev) => prev.filter((t) => !leavingIds.has(t.id)));

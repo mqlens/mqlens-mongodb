@@ -263,10 +263,15 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // Restored transcript wins over a fresh banner: returning to this tab should
   // look like the session was never interrupted.
   const [entries, setEntries] = useState<ShellEntry[]>(
-    storedSession?.entries.length
+    // Presence of a stored session, NOT the length of its transcript: `clear`
+    // legitimately leaves it empty, and treating that as "nothing stored"
+    // resurrected the startup banner on the next tab switch.
+    storedSession
       ? storedSession.entries
       : [{ kind: 'text', lines: buildStartupLines(startupLogId, connectionTarget) }]
   );
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
   const [viewer, setViewer] = useState<{ docs: Record<string, any>[]; label: string; ms: number } | null>(null);
   const [tab, setTab] = useState<ShellTab>('console');
   const [running, setRunning] = useState(false);
@@ -289,7 +294,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     void loadShellSession(sessionKey).then((restored) => {
       if (!alive) return;
       if (restored) {
-        if (restored.entries.length) setEntries(restored.entries);
+        setEntries(restored.entries);
         if (restored.currentDb) setCurrentDb(restored.currentDb);
         setAiMessages(restored.aiMessages);
         setIsAIOpenState(restored.aiOpen);
@@ -422,13 +427,31 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     };
   }, [connectionId, connectionTarget, startupLogId, retryNonce]);
 
+  // Appends that must land even if the tab was switched away mid-command.
+  // While mounted, setEntries drives the mirror effect as usual; once unmounted
+  // that effect is gone, so the transcript is written straight to the tab's
+  // session — otherwise the command runs, the backend answers, and the output
+  // is discarded because there is no component left to hold it.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const appendEntries = (added: ShellEntry[]) => {
+    if (added.length === 0) return;
+    const next = [...entriesRef.current, ...added];
+    entriesRef.current = next;
+    if (mountedRef.current) setEntries(next);
+    else if (sessionKey) writeShellSession(sessionKey, { entries: next });
+  };
+
   const appendCommandOutput = (output: MongoshCommandOutput) => {
     const nextEntries: ShellEntry[] = [];
     if (output.stdout.length > 0) nextEntries.push({ kind: 'text', lines: output.stdout });
     if (output.stderr.length > 0) nextEntries.push({ kind: 'error', message: output.stderr.join('\n') });
-    if (nextEntries.length > 0) {
-      setEntries((prev) => [...prev, ...nextEntries]);
-    }
+    appendEntries(nextEntries);
   };
 
   useEffect(() => {
@@ -464,7 +487,20 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         // Record it before the cancellation check: the tab owns the session, so
         // it must be findable by `disposeShellSession` even if this mount is
         // already gone.
-        if (sessionKey) writeShellSession(sessionKey, { sessionId: session.session_id });
+        if (sessionKey) {
+          // The backend has already drained the startup output; if this mount is
+          // gone, appending it to state would vanish, so fold it into the stored
+          // transcript instead of losing warnings and errors.
+          const startupEntries: ShellEntry[] = [];
+          if (session.stdout.length > 0) startupEntries.push({ kind: 'text', lines: session.stdout });
+          if (session.stderr.length > 0)
+            startupEntries.push({ kind: 'error', message: session.stderr.join('\n') });
+          startupEntries.push({ kind: 'note', text: t('mongoShell.notes.sessionAttached') });
+          writeShellSession(sessionKey, {
+            sessionId: session.session_id,
+            ...(cancelled ? { entries: [...entriesRef.current, ...startupEntries] } : {}),
+          });
+        }
         if (cancelled) {
           // Unmounting means the user switched tabs mid-startup. With a tab
           // identity the session survives that; without one there is nothing to
@@ -779,7 +815,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       if (ranExternally) return;
       throw new Error(t('mongoShell.errors.sessionRequiredForScripts'));
     } catch (err: any) {
-      setEntries((prev) => [...prev, { kind: 'error', message: err.message || String(err) }]);
+      appendEntries([{ kind: 'error', message: err.message || String(err) }]);
       setTab('console');
     } finally {
       setRunning(false);

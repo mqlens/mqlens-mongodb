@@ -81,6 +81,28 @@ use crate::workspace::{self, Workspace, WorkspaceOp};
 use crate::AppState;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
+/// Stop the mongosh child a tab owns, if any, and forget its stored state.
+/// Best-effort: a window closing must never be blocked by shell teardown.
+fn stop_shell_session_for_tab(app: &AppHandle, tab_id: &str) {
+    let state = app.state::<AppState>();
+    let session_id = crate::get_shell_tab_state_impl(&state, tab_id)
+        .ok()
+        .flatten()
+        .and_then(|v| {
+            v.get("sessionId")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string())
+        });
+    let _ = crate::clear_shell_tab_state_impl(&state, tab_id);
+    if let Some(session_id) = session_id {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = app.state::<AppState>();
+            let _ = crate::stop_mongosh_session_impl(&state, &session_id).await;
+        });
+    }
+}
+
 const WINDOW_TITLE: &str = "MQLens";
 const DEFAULT_WIDTH: f64 = 1000.0;
 const DEFAULT_HEIGHT: f64 = 700.0;
@@ -125,6 +147,24 @@ pub(crate) fn window_is_known(ws: &Workspace, label: &str) -> bool {
 fn apply_window_closed_and_broadcast(app: &AppHandle, label: &str, origin: String) {
     let state = app.state::<AppState>();
     let path = workspace::workspace_path(app);
+    // End this window's mongosh children BEFORE the op removes it from the
+    // store, while its tabs can still be enumerated. Closing a secondary window
+    // with the OS X button runs no frontend code at all, so without this the
+    // sessions it owned stay alive — with their child processes and database
+    // connections — until the whole app exits.
+    let doomed_tabs: Vec<String> = state
+        .workspace
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .as_ref()
+                .map(|ws| workspace::window_tab_ids(ws, label))
+        })
+        .unwrap_or_default();
+    for tab_id in doomed_tabs {
+        stop_shell_session_for_tab(app, &tab_id);
+    }
     match workspace::apply_impl(&state, &path, WorkspaceOp::WindowClosed { window_id: label.to_string() }, origin) {
         Ok(Some(payload)) => {
             let _ = app.emit("workspace-changed", payload);

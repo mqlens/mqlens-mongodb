@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   disposeAllShellSessions,
+  loadShellSession,
   renameShellSession,
   stopShellSessionProcess,
   disposeShellSession,
@@ -150,5 +151,34 @@ describe('mongosh session registry (#240)', () => {
 
     expect(source).toContain('import.meta.hot?.data?.shellSessions');
     expect(source).toContain('import.meta.hot?.data) import.meta.hot.data.shellSessions = sessions');
+  });
+
+  it('rebuilds a session from the backend when the cache is empty', async () => {
+    // What a hot reload or a window refresh produces: no cache, but the child
+    // is still running and the backend still knows about it.
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'get_shell_tab_state'
+        ? Promise.resolve({ sessionId: 'sess-live', entries: [{ kind: 'note', text: 'kept' }] })
+        : Promise.resolve(undefined),
+    );
+
+    const restored = await loadShellSession('tab-1');
+
+    expect(restored?.sessionId).toBe('sess-live');
+    expect(restored?.entries).toEqual([{ kind: 'note', text: 'kept' }]);
+    // Defaults fill in for fields the stored blob predates.
+    expect(restored?.autoRanCommand).toBe(false);
+    expect(readShellSession('tab-1')?.sessionId).toBe('sess-live');
+  });
+
+  it('ignores a backend value that is not a session object', async () => {
+    // The payload crosses IPC as opaque JSON; anything merely truthy (an array,
+    // say) must not be cached and then read for fields it does not have.
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'get_shell_tab_state' ? Promise.resolve([]) : Promise.resolve(undefined),
+    );
+
+    expect(await loadShellSession('tab-1')).toBeUndefined();
+    expect(readShellSession('tab-1')).toBeUndefined();
   });
 });

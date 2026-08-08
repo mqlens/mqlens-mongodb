@@ -1046,6 +1046,17 @@ pub(crate) fn window_containing_tab<'a>(ws: &'a Workspace, tab_id: &str) -> Opti
         .map(|w| w.id.as_str())
 }
 
+/// Tab ids laid out in one window. Used when that window closes, to end the
+/// mongosh sessions its tabs owned: the OS X button runs no frontend code, so
+/// nothing else would ever stop those child processes before app exit.
+pub fn window_tab_ids(ws: &Workspace, window_id: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(win) = ws.windows.iter().find(|w| w.id == window_id) {
+        collect_tab_ids(&win.split_tree, &mut out);
+    }
+    out
+}
+
 /// Port of TS's tab-id collection helpers (`allTabIds`), used only by
 /// `validate` below — flattens every `tabIds` entry across an entire
 /// `LayoutNode` tree, panes and splits alike.

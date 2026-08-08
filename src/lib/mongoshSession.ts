@@ -80,12 +80,22 @@ function persist(key: string, session: ShellSession): void {
 export async function loadShellSession(key: string): Promise<ShellSession | undefined> {
   const cached = sessions.get(key);
   if (cached) return cached;
-  const stored = await invoke<ShellSession | null>('get_shell_tab_state', { tabId: key }).catch(
-    () => null,
-  );
-  if (!stored) return undefined;
-  sessions.set(key, stored);
-  return stored;
+  const stored = await invoke<unknown>('get_shell_tab_state', { tabId: key }).catch(() => null);
+  // Shape-check rather than trust: this crosses the IPC boundary, and a value
+  // that is merely truthy (an array, say) would otherwise be cached as a
+  // session and read for fields it does not have.
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return undefined;
+  const candidate = stored as Partial<ShellSession>;
+  const session: ShellSession = {
+    sessionId: candidate.sessionId ?? null,
+    entries: Array.isArray(candidate.entries) ? candidate.entries : [],
+    currentDb: candidate.currentDb ?? '',
+    autoRanCommand: candidate.autoRanCommand ?? false,
+    aiOpen: candidate.aiOpen ?? false,
+    aiMessages: Array.isArray(candidate.aiMessages) ? candidate.aiMessages : [],
+  };
+  sessions.set(key, session);
+  return session;
 }
 
 export function readShellSession(key: string): ShellSession | undefined {

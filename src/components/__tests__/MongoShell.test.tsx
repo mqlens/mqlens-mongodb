@@ -50,6 +50,13 @@ describe('MongoShell Component', () => {
       if (cmd === 'stop_mongosh_session') {
         return Promise.resolve();
       }
+      // The backend returns Option<Value>; unknown tabs are null, not [].
+      if (cmd === 'get_shell_tab_state') {
+        return Promise.resolve(null);
+      }
+      if (cmd === 'set_shell_tab_state' || cmd === 'clear_shell_tab_state') {
+        return Promise.resolve();
+      }
       if (cmd === 'execute_mql_query') {
         return Promise.resolve([
           JSON.stringify({ _id: '1', name: 'Alice Smith', event_type: 'page_view' }),
