@@ -2363,15 +2363,17 @@ function Workspace() {
   // backend has no record of them — so both are hidden for them, replaced
   // by a single disabled, explanatory entry.
   const buildTabContextMenuItems = (tabId: string): ContextMenuItem[] => {
-    if (unmirroredTabIdsRef.current.has(tabId)) {
-      const explanation = tShell('workspaceTabBar.contextMenu.unmirroredExplanation');
-      return [{ label: explanation, onClick: () => {}, disabled: true, title: explanation }];
-    }
-
+    // Unmirrored (export/import/generate) tabs exist only in this renderer, so
+    // anything that hands the tab to the BACKEND is unavailable to them. The
+    // close group is not in that category — closing is purely local, and
+    // `dispatchWorkspace` already strips unmirrored ids from what it mirrors,
+    // for `close_many` as well as `close_tab`. Gating the WHOLE menu on this
+    // left an export tab unable to close itself or its neighbours at all.
+    const isUnmirrored = unmirroredTabIdsRef.current.has(tabId);
     const items: ContextMenuItem[] = [];
 
     const dupSource = tabs.find((t) => t.id === tabId && t.type === 'collection');
-    if (dupSource) {
+    if (dupSource && !isUnmirrored) {
       items.push({
         label: tShell('workspaceTabBar.contextMenu.duplicateTab'),
         icon: <Copy />,
@@ -2379,7 +2381,7 @@ function Workspace() {
       });
     }
 
-    if (allTabIds(layout).length > 1) {
+    if (!isUnmirrored && allTabIds(layout).length > 1) {
       items.push({
         label: tShell('workspaceTabBar.contextMenu.detachToNewWindow'),
         icon: <ExternalLink />,
@@ -2431,7 +2433,7 @@ function Workspace() {
     // "Detach to New Window" item was actually pushed) — otherwise the
     // first "Move to" entry would render an orphan divider line at the very
     // top of the menu.
-    otherWindows.forEach((w, i) => {
+    (isUnmirrored ? [] : otherWindows).forEach((w, i) => {
       const hint = activeTabHintFor(w, allTabs, t);
       const target = hint ? `${w.id} (${hint})` : w.id;
       items.push({
@@ -2441,6 +2443,19 @@ function Workspace() {
         onClick: () => handleMoveTab(tabId, w.id),
       });
     });
+
+    // Kept as a trailing note rather than the whole menu: it now explains what
+    // is ABSENT (detach/move) instead of standing in for everything.
+    if (isUnmirrored) {
+      const explanation = tShell('workspaceTabBar.contextMenu.unmirroredExplanation');
+      items.push({
+        label: explanation,
+        onClick: () => {},
+        disabled: true,
+        title: explanation,
+        separatorBefore: items.length > 0,
+      });
+    }
 
     return items;
   };

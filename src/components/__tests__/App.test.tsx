@@ -4028,7 +4028,7 @@ describe('App Component', () => {
       expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(1);
     });
 
-    it('hides both cross-window items for an unmirrored (export/import) tab, showing a disabled explanatory entry instead', async () => {
+    it('hides both cross-window items for an unmirrored (export/import) tab, but still offers the close actions', async () => {
       mockInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
         return Promise.resolve([]);
@@ -4054,6 +4054,16 @@ describe('App Component', () => {
       const placeholder = screen.getByText('Export/import tabs stay in their window');
       expect(placeholder.closest('button')).toBeDisabled();
       expect(placeholder.closest('button')).toHaveAttribute('title', 'Export/import tabs stay in their window');
+
+      // Closing is local — `dispatchWorkspace` drops unmirrored ids from what
+      // it mirrors — so the restriction covers detach/move only. The note now
+      // explains what is missing rather than replacing the entire menu.
+      expect(screen.getByText('Close Tab')).toBeInTheDocument();
+      // Quick Start and the customers tab share this pane; only customers is
+      // bulk-closable, which is enough for the entry to appear.
+      expect(screen.getByText('Close Other Tabs')).toBeInTheDocument();
+      // Nothing sits to the right of the export tab.
+      expect(screen.queryByText('Close Tabs to the Right')).not.toBeInTheDocument();
     });
 
     it('offers only Close Tab for the sole tab when no other windows exist', async () => {
