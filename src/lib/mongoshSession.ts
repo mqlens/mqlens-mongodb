@@ -159,9 +159,17 @@ export function renameShellSession(oldKey: string, newKey: string): void {
   sessions.set(newKey, session);
 }
 
-/** Dispose every session — used when the whole workspace is torn down. */
-export async function disposeAllShellSessions(): Promise<void> {
-  await Promise.all(Array.from(sessions.keys(), disposeShellSession));
+/**
+ * Dispose the sessions belonging to a specific set of tabs.
+ *
+ * Deliberately scoped rather than global. Both callers run per-renderer — one
+ * on workspace restore, one when this window is removed by another window's op
+ * — so an app-wide clear would erase the recovery mapping for live shells owned
+ * by OTHER windows without stopping their children, leaving processes that can
+ * no longer be reattached or killed.
+ */
+export async function disposeShellSessionsForTabs(tabIds: string[]): Promise<void> {
+  await Promise.all(tabIds.map(disposeShellSession));
 }
 
 /** Test seam: forget everything without touching the backend. */

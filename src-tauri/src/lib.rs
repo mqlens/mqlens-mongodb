@@ -744,11 +744,6 @@ pub fn rename_shell_tab_state_impl(
     Ok(())
 }
 
-pub fn clear_all_shell_tab_state_impl(state: &AppState) -> Result<(), String> {
-    state.shell_tab_state.lock_safe()?.clear();
-    Ok(())
-}
-
 pub async fn stop_mongosh_session_impl(state: &AppState, session_id: &str) -> Result<(), String> {
     let session = {
         let mut sessions = state.mongosh_sessions.lock_safe()?;
@@ -1052,11 +1047,6 @@ fn rename_shell_tab_state(
     new_id: String,
 ) -> Result<(), String> {
     rename_shell_tab_state_impl(&state, &old_id, &new_id)
-}
-
-#[tauri::command]
-fn clear_all_shell_tab_state(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    clear_all_shell_tab_state_impl(&state)
 }
 
 #[tauri::command]
@@ -2204,7 +2194,6 @@ pub fn run() {
             set_shell_tab_state,
             clear_shell_tab_state,
             rename_shell_tab_state,
-            clear_all_shell_tab_state,
             disconnect_db,
             set_connection_meta,
             connection_list,

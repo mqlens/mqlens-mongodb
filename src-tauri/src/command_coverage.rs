@@ -82,7 +82,6 @@ const LOCAL_COMMANDS: &[&str] = &[
     "set_shell_tab_state",
     "clear_shell_tab_state",
     "rename_shell_tab_state",
-    "clear_all_shell_tab_state",
     "disconnect_db",
     "set_connection_meta", // renderer-callable with an arbitrary mode — see its own doc comment
     "connection_list",

@@ -4192,8 +4192,8 @@ mod tests {
 mod shell_tab_state_tests {
     use crate::state::AppState;
     use crate::{
-        clear_all_shell_tab_state_impl, clear_shell_tab_state_impl, get_shell_tab_state_impl,
-        rename_shell_tab_state_impl, set_shell_tab_state_impl,
+        clear_shell_tab_state_impl, get_shell_tab_state_impl, rename_shell_tab_state_impl,
+        set_shell_tab_state_impl,
     };
 
     fn state() -> AppState {
@@ -4245,15 +4245,4 @@ mod shell_tab_state_tests {
         assert_eq!(get_shell_tab_state_impl(&st, "new").unwrap(), None);
     }
 
-    #[test]
-    fn clear_all_empties_every_tab() {
-        let st = state();
-        set_shell_tab_state_impl(&st, "tab-1", serde_json::json!({})).unwrap();
-        set_shell_tab_state_impl(&st, "tab-2", serde_json::json!({})).unwrap();
-
-        clear_all_shell_tab_state_impl(&st).unwrap();
-
-        assert_eq!(get_shell_tab_state_impl(&st, "tab-1").unwrap(), None);
-        assert_eq!(get_shell_tab_state_impl(&st, "tab-2").unwrap(), None);
-    }
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
-  disposeAllShellSessions,
+  disposeShellSessionsForTabs,
   loadShellSession,
   renameShellSession,
   stopShellSessionProcess,
@@ -127,17 +127,22 @@ describe('mongosh session registry (#240)', () => {
     expect(after?.currentDb).toBe('sales');
   });
 
-  it('disposes every session when the workspace is torn down', async () => {
-    writeShellSession('tab-1', { sessionId: 'sess-1', entries: [], currentDb: 'a' });
-    writeShellSession('tab-2', { sessionId: 'sess-2', entries: [], currentDb: 'b' });
+  it('disposes only the tabs it is given, leaving other windows alone', async () => {
+    // A global clear here would strip a live shell owned by ANOTHER window of
+    // its recovery mapping without stopping the child — unreattachable and
+    // unkillable.
+    writeShellSession('mine-1', { sessionId: 'sess-1' });
+    writeShellSession('mine-2', { sessionId: 'sess-2' });
+    writeShellSession('other-window', { sessionId: 'sess-other' });
 
-    await disposeAllShellSessions();
+    await disposeShellSessionsForTabs(['mine-1', 'mine-2']);
 
-    expect(invokeMock.mock.calls.map((c) => c[1])).toEqual(
-      expect.arrayContaining([{ sessionId: 'sess-1' }, { sessionId: 'sess-2' }]),
-    );
-    expect(readShellSession('tab-1')).toBeUndefined();
-    expect(readShellSession('tab-2')).toBeUndefined();
+    const stopped = invokeMock.mock.calls
+      .filter((c) => c[0] === 'stop_mongosh_session')
+      .map((c) => (c[1] as { sessionId: string }).sessionId);
+    expect(stopped).toEqual(expect.arrayContaining(['sess-1', 'sess-2']));
+    expect(stopped).not.toContain('sess-other');
+    expect(readShellSession('other-window')?.sessionId).toBe('sess-other');
   });
 
   it('keeps its sessions in a store that survives hot module replacement', async () => {

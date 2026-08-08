@@ -11,9 +11,8 @@ import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './c
 import type { ChatMessage } from './components/AIChatPanel';
 import { clearChatRequest, renameChatRequest, resetChatRequests } from './lib/aiChatRequest';
 import {
-  disposeAllShellSessions,
-  disposeAllShellTabState,
   disposeShellSession,
+  disposeShellSessionsForTabs,
   renameShellSession,
 } from './lib/mongoshSession';
 import { DataGrid, type ViewMode } from './components/DataGrid';
@@ -806,7 +805,9 @@ function Workspace() {
             // stale transcript after hydrate reuses ids.
             tabChatCache.current.clear();
             resetChatRequests();
-            void disposeAllShellSessions().then(disposeAllShellTabState);
+            // Scoped to the ids this window is about to hydrate: a global clear
+            // would strip other windows' live shells of their recovery mapping.
+            void disposeShellSessionsForTabs(snapshot.tabs.map((t) => t.id));
             const windowTabIds = new Set(snapshot.tabs.map((t) => t.id));
             const profileNames = new Map<string, string>();
             for (const t of ws.tabs) {
@@ -2830,7 +2831,7 @@ function Workspace() {
           tabBuilderStateCache.current.clear();
           tabChatCache.current.clear();
           resetChatRequests();
-          void disposeAllShellSessions().then(disposeAllShellTabState);
+          void disposeShellSessionsForTabs(tabsRef.current.map((t) => t.id));
           dispatchLayout({ type: 'hydrate', layout: createInitialLayout([], null) });
           return;
         }
