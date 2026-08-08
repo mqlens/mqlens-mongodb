@@ -132,7 +132,7 @@ describe('mongosh session registry (#240)', () => {
     // The tab has not mounted since a refresh, so nothing has hydrated the
     // cache — but the child is running and must still be stoppable.
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'get_shell_tab_state'
+      cmd === 'claim_shell_tab_state'
         ? Promise.resolve({ sessionId: 'sess-orphan' })
         : Promise.resolve(undefined),
     );
@@ -172,7 +172,7 @@ describe('mongosh session registry (#240)', () => {
     // then find nothing — leaving mongosh attached to a database the rename
     // has already dropped.
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'get_shell_tab_state'
+      cmd === 'claim_shell_tab_state'
         ? Promise.resolve({ sessionId: 'sess-old', currentDb: 'before', entries: [] })
         : Promise.resolve(undefined),
     );
@@ -439,7 +439,7 @@ describe('mongosh session registry (#240)', () => {
     // What a hot reload or a window refresh produces: no cache, but the child
     // is still running and the backend still knows about it.
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'get_shell_tab_state'
+      cmd === 'claim_shell_tab_state'
         ? Promise.resolve({ sessionId: 'sess-live', entries: [{ kind: 'note', text: 'kept' }] })
         : Promise.resolve(undefined),
     );
@@ -457,23 +457,29 @@ describe('mongosh session registry (#240)', () => {
     // A moved tab's stored state still names the window it left. Hydrating
     // without restamping hides the child from the new owner's close sweep, and
     // lets a window reusing the old label stop a session it does not have.
-    invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'get_shell_tab_state'
-        ? Promise.resolve({ sessionId: 'sess-moved', windowId: 'win-9' })
+    invokeMock.mockImplementation((cmd: string, args: any) =>
+      cmd === 'claim_shell_tab_state'
+        ? Promise.resolve({ sessionId: 'sess-moved', windowId: args.windowId })
         : Promise.resolve(undefined),
     );
 
-    await loadShellSession('tab-1');
+    const restored = await loadShellSession('tab-1');
 
-    const write = invokeMock.mock.calls.find((c) => c[0] === 'set_shell_tab_state');
-    expect((write?.[1] as { value: { windowId?: string } }).value.windowId).toBe('main');
+    // One atomic call, not a read followed by a write of what was read — that
+    // pair would replay a stale snapshot over the old renderer's final write.
+    expect(invokeMock).toHaveBeenCalledWith('claim_shell_tab_state', {
+      tabId: 'tab-1',
+      windowId: 'main',
+    });
+    expect(invokeMock).not.toHaveBeenCalledWith('get_shell_tab_state', expect.anything());
+    expect(restored?.sessionId).toBe('sess-moved');
   });
 
   it('ignores a backend value that is not a session object', async () => {
     // The payload crosses IPC as opaque JSON; anything merely truthy (an array,
     // say) must not be cached and then read for fields it does not have.
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'get_shell_tab_state' ? Promise.resolve([]) : Promise.resolve(undefined),
+      cmd === 'claim_shell_tab_state' ? Promise.resolve([]) : Promise.resolve(undefined),
     );
 
     expect(await loadShellSession('tab-1')).toBeUndefined();

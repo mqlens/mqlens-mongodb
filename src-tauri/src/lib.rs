@@ -765,6 +765,34 @@ pub fn take_shell_tab_state_impl(
     Ok(state.shell_tab_state.lock_safe()?.remove(tab_id))
 }
 
+/// Stamp `window_id` as the owner of a tab's state and return the CURRENT
+/// value, under one lock.
+///
+/// The renderer that hydrates a session is the one about to display it, so it
+/// has to take ownership — otherwise a moved tab's entry still names the window
+/// it left, hiding the child from the new owner's close sweep. Doing that as a
+/// read followed by a write would race the old renderer's final write and
+/// replay a stale snapshot over it, because `set_shell_tab_state` replaces the
+/// whole value. Only the owner field is touched here, and the caller caches
+/// what is actually stored rather than what it fetched.
+pub fn claim_shell_tab_state_impl(
+    state: &AppState,
+    tab_id: &str,
+    window_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    let mut map = state.shell_tab_state.lock_safe()?;
+    let Some(value) = map.get_mut(tab_id) else {
+        return Ok(None);
+    };
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "windowId".to_string(),
+            serde_json::Value::String(window_id.to_string()),
+        );
+    }
+    Ok(Some(value.clone()))
+}
+
 /// Move a tab's state to a new id, for the rebind that renames a restored tab.
 pub fn rename_shell_tab_state_impl(
     state: &AppState,
@@ -1111,6 +1139,15 @@ fn set_shell_tab_state(
 #[tauri::command]
 fn clear_shell_tab_state(state: tauri::State<'_, AppState>, tab_id: String) -> Result<(), String> {
     clear_shell_tab_state_impl(&state, &tab_id)
+}
+
+#[tauri::command]
+fn claim_shell_tab_state(
+    state: tauri::State<'_, AppState>,
+    tab_id: String,
+    window_id: String,
+) -> Result<Option<serde_json::Value>, String> {
+    claim_shell_tab_state_impl(&state, &tab_id, &window_id)
 }
 
 /// Close a tab's shell for good: take its state and stop the child it named,
@@ -2284,6 +2321,7 @@ pub fn run() {
             get_shell_tab_state,
             set_shell_tab_state,
             clear_shell_tab_state,
+            claim_shell_tab_state,
             close_shell_tab_session,
             rename_shell_tab_state,
             disconnect_db,

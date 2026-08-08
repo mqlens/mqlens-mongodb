@@ -187,8 +187,7 @@ function notifyWatchers(key: string, session: ShellSession): void {
 /** Read a tab's stored state from the backend WITHOUT caching it. Used by
  *  disposal, which must not resurrect an entry for a key it has just deleted —
  *  or, worse, overwrite the entry a reopened tab has since created. */
-async function fetchStoredSession(key: string): Promise<ShellSession | undefined> {
-  const stored = await invoke<unknown>('get_shell_tab_state', { tabId: key }).catch(() => null);
+function normalizeStoredSession(stored: unknown): ShellSession | undefined {
   // Shape-check rather than trust: this crosses the IPC boundary, and a value
   // that is merely truthy (an array, say) would otherwise be read for fields it
   // does not have.
@@ -230,15 +229,20 @@ function persist(key: string, session: ShellSession): void {
 export async function loadShellSession(key: string): Promise<ShellSession | undefined> {
   const cached = sessions.get(key);
   if (cached) return cached;
-  const session = await fetchStoredSession(key);
+  // Claims ownership and returns the CURRENT value in one backend call.
+  // Whoever hydrates a session is the renderer about to display it, and the
+  // stored entry still names whichever window wrote it last — after a tab
+  // moves, that is the window it LEFT, which would hide the child from the new
+  // owner's close sweep. Fetching and then writing the fetched value back would
+  // race the old renderer's final write and replay a stale snapshot over it,
+  // since a normal write replaces the whole entry.
+  const stored = await invoke<unknown>('claim_shell_tab_state', {
+    tabId: key,
+    windowId: windowLabel(),
+  }).catch(() => null);
+  const session = normalizeStoredSession(stored);
   if (!session) return undefined;
   sessions.set(key, session);
-  // Claim it. Whoever hydrates a session is the renderer about to display it,
-  // and the stored entry still names whichever window wrote it last — after a
-  // tab moves, that is the window it LEFT. Leaving the stamp alone would hide
-  // the child from the new owner's close sweep, and let the old label's window
-  // stop a session it no longer has.
-  persist(key, session);
   return session;
 }
 

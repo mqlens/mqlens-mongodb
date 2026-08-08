@@ -4228,6 +4228,49 @@ mod shell_tab_state_tests {
     }
 
     #[test]
+    fn claiming_stamps_the_new_owner_and_returns_what_is_actually_stored() {
+        // The claim exists because a moved tab's entry still names the window
+        // it left. It touches only the owner field and hands back the current
+        // value, so the caller never replays a snapshot of its own over a write
+        // the previous owner made in the meantime.
+        use crate::claim_shell_tab_state_impl;
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-1", "windowId": "win-1", "entries": ["kept"] }),
+        )
+        .unwrap();
+
+        let claimed = claim_shell_tab_state_impl(&st, "tab-1", "win-2")
+            .unwrap()
+            .expect("an existing tab is claimable");
+
+        assert_eq!(claimed.get("windowId").unwrap(), "win-2");
+        assert_eq!(claimed.get("sessionId").unwrap(), "sess-1");
+        assert_eq!(
+            claimed.get("entries").unwrap(),
+            &serde_json::json!(["kept"]),
+            "claiming must not drop the rest of the value"
+        );
+        // ...and the change stuck, so the close sweep can find it.
+        assert_eq!(
+            shell_tab_ids_for_window(&st, "win-2").unwrap(),
+            vec!["tab-1".to_string()]
+        );
+        assert!(shell_tab_ids_for_window(&st, "win-1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn claiming_a_tab_with_no_state_is_a_no_op() {
+        use crate::claim_shell_tab_state_impl;
+        assert_eq!(
+            claim_shell_tab_state_impl(&state(), "nope", "win-2").unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn lists_only_the_tabs_a_given_window_owns() {
         // Closing a secondary window with the OS X button runs no frontend
         // code, so the backend stops that window's shells itself. It has to
