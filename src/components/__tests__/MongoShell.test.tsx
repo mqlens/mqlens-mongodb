@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MongoShell } from '../MongoShell';
-import { readShellSession, resetShellSessions } from '../../lib/mongoshSession';
+import { readShellSession, resetShellSessions, writeShellSession } from '../../lib/mongoshSession';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -793,6 +793,75 @@ describe('MongoShell Component', () => {
       await waitFor(() => expect(stopCalls()).toBe(1));
       await waitFor(() => expect(startCalls()).toBe(2));
       expect(screen.getByText(/Current Mongosh Log ID/)).toBeInTheDocument();
+    });
+
+    it('does not clobber output another instance appended off-screen', async () => {
+      // Two instances exist whenever a command is still running as the user
+      // switches away and back. The mounted one used to append against its own
+      // React `prev`, so its next write — and the mirror effect behind it —
+      // erased whatever the other instance had finished off-screen. Driven
+      // through the registry rather than a second mount, because the registry
+      // IS the shared transcript the two instances race over.
+      render(<MongoShell {...shellProps} sessionKey="tab-shell-merge" />);
+      await screen.findByText(/mongosh session attached/);
+
+      // What the other instance's completion does.
+      const stored = readShellSession('tab-shell-merge');
+      writeShellSession('tab-shell-merge', {
+        entries: [...(stored?.entries ?? []), { kind: 'text', lines: ['off-screen result'] }],
+      });
+
+      // Now this instance appends.
+      fireEvent.change(screen.getByLabelText('mongosh editor'), {
+        target: { value: 'db.events.countDocuments({})' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+
+      await waitFor(() => {
+        const entries = readShellSession('tab-shell-merge')?.entries ?? [];
+        // The other instance's output is still there...
+        expect(
+          entries.some((e) => e.kind === 'text' && e.lines.includes('off-screen result'))
+        ).toBe(true);
+        // ...and this instance's own input landed after it.
+        expect(entries.some((e) => e.kind === 'input')).toBe(true);
+      });
+    });
+
+    it('stops a start that a retry has already superseded', async () => {
+      // Retry tears the effect down and starts another attempt immediately.
+      // Treating that like an unmount retained the first child, whose id the
+      // second attempt then overwrote — leaving one mongosh process untracked.
+      const starts: ((v: unknown) => void)[] = [];
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+        if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+        if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+        if (cmd === 'start_mongosh_session') return new Promise((res) => { starts.push(res); });
+        return Promise.resolve([]);
+      });
+
+      const { rerender } = render(
+        <MongoShell {...shellProps} sessionKey="tab-shell-retry" reconnectSignal={0} />
+      );
+      await waitFor(() => expect(starts).toHaveLength(1));
+
+      // What a finished tool install does: bump the signal while the first
+      // start is still pending.
+      rerender(<MongoShell {...shellProps} sessionKey="tab-shell-retry" reconnectSignal={1} />);
+      await waitFor(() => expect(starts).toHaveLength(2));
+
+      // The first attempt only now returns — it has been replaced.
+      starts[0]({ session_id: 'superseded', stdout: [], stderr: [] });
+      await waitFor(() =>
+        expect(
+          mockInvoke.mock.calls.some(
+            (c) => c[0] === 'stop_mongosh_session' && c[1]?.sessionId === 'superseded'
+          )
+        ).toBe(true)
+      );
+      // ...and it must not be the id the tab remembers.
+      expect(readShellSession('tab-shell-retry')?.sessionId).not.toBe('superseded');
     });
 
     it('still tears the session down on unmount when it has no tab identity', async () => {

@@ -239,6 +239,12 @@ export function renameShellSession(oldKey: string, newKey: string): Promise<void
   const moved = invoke('rename_shell_tab_state', { oldId: oldKey, newId: newKey })
     .then(() => undefined)
     .catch(() => undefined);
+  // The rename remounts the shell under `newKey`, so anything the old instance
+  // is still running belongs to a key nothing will read again. Without ending
+  // the old epoch its completion would recreate the obsolete entry — stranding
+  // a session mapping that the renamed tab's close will never clear — and the
+  // output would land there instead of in the tab the user is looking at.
+  endEpoch(oldKey);
   const session = sessions.get(oldKey);
   if (session) {
     sessions.delete(oldKey);

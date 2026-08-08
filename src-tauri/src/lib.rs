@@ -612,6 +612,9 @@ pub async fn start_mongosh_session_impl(
     uri: &str,
     database: &str,
     mongosh_path: &str,
+    // The window asking for the session, so a start still in flight when that
+    // window closes can stop the child it spawned. Empty opts out.
+    window_id: &str,
 ) -> Result<MongoshSessionInfo, String> {
     if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
     {
@@ -673,6 +676,15 @@ pub async fn start_mongosh_session_impl(
     {
         let mut sessions = state.mongosh_sessions.lock_safe()?;
         sessions.insert(session_id.clone(), session.clone());
+    }
+
+    // The window that asked for this may have closed while mongosh was
+    // starting. Its renderer is gone, so nothing is left to cancel the start or
+    // to record the id, and the tab-state cleanup that ran on close had no id
+    // to stop — this child would simply survive until the app exits.
+    if window_is_closed(state, window_id)? {
+        let _ = stop_mongosh_session_impl(state, &session_id).await;
+        return Err(format!("window {window_id} closed while mongosh was starting"));
     }
 
     let startup = drain_mongosh_output(&session).await;
@@ -742,6 +754,20 @@ pub fn rename_shell_tab_state_impl(
         map.insert(new_id.to_string(), value);
     }
     Ok(())
+}
+
+/// Whether `window_id` has been closed, so work still in flight for it should
+/// be abandoned rather than completed. An empty id means "no owning window
+/// recorded" and is never treated as closed.
+///
+/// Split out from `start_mongosh_session_impl` so the decision is testable on
+/// its own: the surrounding path spawns a real mongosh binary, which the mock
+/// connections the suite uses cannot reach.
+pub fn window_is_closed(state: &AppState, window_id: &str) -> Result<bool, String> {
+    if window_id.is_empty() {
+        return Ok(false);
+    }
+    Ok(state.closed_windows.lock_safe()?.contains(window_id))
 }
 
 /// The tab ids whose stored shell state was written by `window_id`.
@@ -1018,11 +1044,20 @@ async fn start_mongosh_session(
     uri: String,
     database: String,
     mongosh_path: String,
+    window_id: Option<String>,
 ) -> Result<MongoshSessionInfo, String> {
     use tauri::Manager;
     let app_data_dir = app_handle.path().app_data_dir().ok();
     let resolved_path = toolsetup::resolve_mongosh_executable(&mongosh_path, app_data_dir.as_deref());
-    start_mongosh_session_impl(&state, &connection_id, &uri, &database, &resolved_path).await
+    start_mongosh_session_impl(
+        &state,
+        &connection_id,
+        &uri,
+        &database,
+        &resolved_path,
+        window_id.as_deref().unwrap_or_default(),
+    )
+    .await
 }
 
 #[tauri::command]

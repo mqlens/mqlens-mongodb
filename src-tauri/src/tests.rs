@@ -1791,7 +1791,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = start_mongosh_session_impl(&state, &conn_id, "mongodb://mock", "db", "")
+        let err = start_mongosh_session_impl(&state, &conn_id, "mongodb://mock", "db", "", "")
             .await
             .err()
             .expect("read-only connection must refuse a mongosh session");
@@ -1816,7 +1816,7 @@ mod tests {
             crate::connections::ConnectionMode::ConfirmDestructive,
         )
         .unwrap();
-        let err = start_mongosh_session_impl(&cd_state, &cd_id, "mongodb://mock", "db", "")
+        let err = start_mongosh_session_impl(&cd_state, &cd_id, "mongodb://mock", "db", "", "")
             .await
             .err()
             .expect("mock connections still can't run an external mongosh");
@@ -1832,7 +1832,7 @@ mod tests {
         let normal_id = connect_db_impl(&normal_state, "mongodb://mock", None)
             .await
             .expect("connect mock");
-        let err = start_mongosh_session_impl(&normal_state, &normal_id, "mongodb://mock", "db", "")
+        let err = start_mongosh_session_impl(&normal_state, &normal_id, "mongodb://mock", "db", "", "")
             .await
             .err()
             .expect("mock connections still can't run an external mongosh");
@@ -4198,6 +4198,33 @@ mod shell_tab_state_tests {
 
     fn state() -> AppState {
         AppState::new()
+    }
+
+    #[test]
+    fn a_closed_window_is_remembered_so_a_pending_start_can_abandon_itself() {
+        // Closing a window destroys the renderer that would have cancelled a
+        // `start_mongosh_session` still in flight, and that child has no
+        // session id to record until it exists — so the close sweep finds
+        // nothing to stop and the process survives until the app exits. The
+        // start consults this and stops the child it just spawned.
+        use crate::state::LockExt;
+        use crate::window_is_closed;
+        let st = state();
+
+        assert!(!window_is_closed(&st, "win-1").unwrap());
+        // No owning window recorded (an older frontend, or the main window
+        // before it has a label) must never look closed.
+        assert!(!window_is_closed(&st, "").unwrap());
+
+        st.closed_windows.lock_safe().unwrap().insert("win-1".into());
+
+        assert!(window_is_closed(&st, "win-1").unwrap());
+        assert!(!window_is_closed(&st, "win-2").unwrap());
+
+        // Labels are reused within a session, so respawning one must clear it —
+        // otherwise every start in the new window would kill its own child.
+        st.closed_windows.lock_safe().unwrap().remove("win-1");
+        assert!(!window_is_closed(&st, "win-1").unwrap());
     }
 
     #[test]

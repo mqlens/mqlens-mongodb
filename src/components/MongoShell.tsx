@@ -22,6 +22,7 @@ import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '.
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { registerMqlensMonacoThemes } from '../lib/monacoAppTheme';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
+import { windowLabel } from '../workspace/workspaceStore';
 
 type ShellTab = 'console' | 'viewer';
 
@@ -293,6 +294,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // Which retry generation we are already attached for. Seeded to 0 when a
   // session was restored, so the start effect reattaches instead of respawning.
   const attachedNonce = useRef<number | null>(storedSession?.sessionId ? 0 : null);
+  /** Counts start attempts, so a completion can tell whether a newer attempt
+   *  has already replaced it. See the start effect. */
+  const startRunRef = useRef(0);
 
   // After a hot reload or a window refresh the in-memory cache is empty, but the
   // backend still holds this tab's state and its mongosh child is still running.
@@ -335,7 +339,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       else if (sessionId) await invoke('stop_mongosh_session', { sessionId }).catch(() => undefined);
       setSessionId(null);
       setSessionAttempted(false);
-      setEntries((prev) => [...prev, { kind: 'note', text: t('mongoShell.notes.sessionRestarting') }]);
+      appendEntries([{ kind: 'note', text: t('mongoShell.notes.sessionRestarting') }]);
       setRetryNonce((n) => n + 1);
     } finally {
       setRestarting(false);
@@ -452,24 +456,31 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   }, []);
   const appendEntries = (added: ShellEntry[]) => {
     if (added.length === 0) return;
-    if (mountedRef.current) {
-      setEntries((prev) => {
-        const next = [...prev, ...added];
-        entriesRef.current = next;
-        return next;
-      });
+    if (!sessionKey) {
+      // No tab identity: this instance's state is the only transcript there is.
+      if (mountedRef.current) {
+        setEntries((prev) => {
+          const next = [...prev, ...added];
+          entriesRef.current = next;
+          return next;
+        });
+      }
       return;
     }
-    if (!sessionKey) return;
-    // Off-screen, append against the REGISTRY rather than this instance's
-    // snapshot. A slow command can still be running when the tab is switched
-    // away and back, which leaves two MongoShell instances alive with two
-    // independent `entriesRef`s; each would write a full replacement array
-    // built from its own stale view, and the later completion would silently
-    // drop whatever the other one had appended.
+    // Append against the REGISTRY, mounted or not. A slow command can still be
+    // running when the tab is switched away and back, leaving two MongoShell
+    // instances alive with two independent `entriesRef`s. Basing either one on
+    // its own snapshot means the later completion silently drops whatever the
+    // other appended — and doing it only off-screen is not enough: when the old
+    // command finishes after the remount, the mounted instance's next append
+    // (and the mirror effect behind it) would overwrite the registry with a
+    // `prev` that never saw that output.
     const base = readShellSession(sessionKey)?.entries ?? entriesRef.current;
     const next = [...base, ...added];
     entriesRef.current = next;
+    // Also show it here, so the visible console reflects everything the tab has
+    // accumulated rather than only what this instance witnessed.
+    if (mountedRef.current) setEntries(next);
     persistSession({ entries: next });
   };
 
@@ -497,6 +508,15 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     }
     attachedNonce.current = retryNonce;
 
+    // Which start attempt this is. A dependency change (a Retry, or
+    // `reconnectSignal` firing when a tool install finishes) tears this effect
+    // down and immediately starts another, so "cancelled" alone cannot tell a
+    // real unmount from a supersession — and treating a superseded attempt as
+    // an unmount retains its child, whose id the replacement then overwrites,
+    // leaving the first mongosh process untracked.
+    const thisRun = ++startRunRef.current;
+    const superseded = () => startRunRef.current !== thisRun;
+
     let cancelled = false;
     let openedSessionId: string | null = null;
     setSessionId(null);
@@ -509,10 +529,25 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           uri: connectionUri,
           database: currentDb,
           mongoshPath,
+          // So the backend can stop this child itself if the window closes
+          // before the start returns — at that point this renderer is gone and
+          // cannot cancel anything, and the id it would have recorded never
+          // reaches the tab state the close sweep reads.
+          windowId: windowLabel(),
         });
         // Record it before the cancellation check: the tab owns the session, so
         // it must be findable by `disposeShellSession` even if this mount is
         // already gone.
+        if (superseded()) {
+          // A newer attempt is already running for this same tab. Recording
+          // this id would only get overwritten by that attempt, so stop the
+          // child here — this is the one case where a keyed session must NOT
+          // outlive its start.
+          await invoke('stop_mongosh_session', { sessionId: session.session_id }).catch(
+            () => undefined
+          );
+          return;
+        }
         if (sessionKey) {
           if (wasDisposedSince(sessionKey, epochRef.current)) {
             // The tab was CLOSED while mongosh was starting, so its disposal
@@ -540,7 +575,18 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           const stillOurs = shellSessionEpoch(sessionKey) === epochRef.current;
           writeShellSession(sessionKey, {
             sessionId: session.session_id,
-            ...(cancelled && stillOurs ? { entries: [...entriesRef.current, ...startupEntries] } : {}),
+            // Against the registry, like every other append: by the time a
+            // slow start returns, the tab may have been remounted and another
+            // completion may already have landed. Building this from
+            // `entriesRef` would erase it.
+            ...(cancelled && stillOurs
+              ? {
+                  entries: [
+                    ...(readShellSession(sessionKey)?.entries ?? entriesRef.current),
+                    ...startupEntries,
+                  ],
+                }
+              : {}),
           });
         }
         if (cancelled) {
@@ -557,13 +603,12 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         if (session.stdout.length > 0 || session.stderr.length > 0) {
           appendCommandOutput({ stdout: session.stdout, stderr: session.stderr });
         }
-        setEntries((prev) => [...prev, { kind: 'note', text: t('mongoShell.notes.sessionAttached') }]);
+        appendEntries([{ kind: 'note', text: t('mongoShell.notes.sessionAttached') }]);
       } catch (err: any) {
         persistSession({ sessionId: null });
         if (!cancelled) {
           setSessionId(null);
-          setEntries((prev) => [
-            ...prev,
+          appendEntries([
             {
               kind: 'error',
               message: t('mongoShell.notes.sessionUnavailable', { detail: err.message || String(err) }),
@@ -682,8 +727,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     const docs = result.map((doc) => JSON.parse(doc));
     setViewer({ docs, label, ms: Math.round((performance.now() - started) * 10) / 10 });
     setTab('viewer');
-    setEntries((prev) => [
-      ...prev,
+    appendEntries([
       {
         kind: 'note',
         text: t('mongoShell.notes.resultToDataViewer', { count: docs.length }),
@@ -706,8 +750,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     const docs = result.map((doc) => JSON.parse(doc));
     setViewer({ docs, label: `db.${collName}.aggregate()`, ms: Math.round((performance.now() - started) * 10) / 10 });
     setTab('viewer');
-    setEntries((prev) => [
-      ...prev,
+    appendEntries([
       {
         kind: 'note',
         text: t('mongoShell.notes.resultToDataViewer', { count: docs.length }),
@@ -756,13 +799,13 @@ export const MongoShell: React.FC<MongoShellProps> = ({
 
   const cancelDestructive = () => {
     setPendingDestructive(null);
-    setEntries((prev) => [...prev, { kind: 'note', text: t('mongoShell.notes.destructiveCancelled') }]);
+    appendEntries([{ kind: 'note', text: t('mongoShell.notes.destructiveCancelled') }]);
   };
 
   const runCommand = async (commandOverride?: string) => {
     const raw = (commandOverride ?? command).trim().replace(/;$/, '');
     if (!raw || running) return;
-    setEntries((prev) => [...prev, { kind: 'input', db: currentDb, text: raw }]);
+    appendEntries([{ kind: 'input', db: currentDb, text: raw }]);
     setRunning(true);
     try {
       if (/^(cls|clear)$/i.test(raw)) {
@@ -772,7 +815,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       }
       if (/^help$/i.test(raw)) {
         const helpLines = HELP_LINE_KEYS.map((key) => (key ? t(`mongoShell.${key}`) : ''));
-        setEntries((prev) => [...prev, { kind: 'text', lines: helpLines }]);
+        appendEntries([{ kind: 'text', lines: helpLines }]);
         setTab('console');
         return;
       }
@@ -780,7 +823,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
 
       if (raw === 'db') {
         if (ranExternally) return;
-        setEntries((prev) => [...prev, { kind: 'text', lines: [currentDb] }]);
+        appendEntries([{ kind: 'text', lines: [currentDb] }]);
         setTab('console');
         return;
       }
@@ -795,8 +838,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         // commands aimed somewhere the raw shell commands are not.
         persistSession({ currentDb: useMatch[1] });
         if (!ranExternally) {
-          setEntries((prev) => [
-            ...prev,
+          appendEntries([
             { kind: 'note', text: t('mongoShell.notes.switchedToDb', { db: useMatch[1] }) },
           ]);
         }
@@ -806,14 +848,14 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       if (/^show\s+(dbs|databases)$/i.test(raw)) {
         if (ranExternally) return;
         const dbs = await invoke<string[]>('list_databases', { id: connectionId });
-        setEntries((prev) => [...prev, { kind: 'text', lines: dbs }]);
+        appendEntries([{ kind: 'text', lines: dbs }]);
         setTab('console');
         return;
       }
       if (/^show\s+(collections|tables)$/i.test(raw)) {
         if (ranExternally) return;
         const collections = await invoke<{ name: string }[]>('list_collections', { id: connectionId, db: currentDb });
-        setEntries((prev) => [...prev, { kind: 'text', lines: collections.map((c) => c.name) }]);
+        appendEntries([{ kind: 'text', lines: collections.map((c) => c.name) }]);
         setTab('console');
         return;
       }
@@ -847,11 +889,11 @@ export const MongoShell: React.FC<MongoShellProps> = ({
             collection: collName,
             filter: JSON.stringify(parseLoose(firstArg(calls[0].argText), {}, t)),
           });
-          setEntries((prev) => [...prev, { kind: 'value', value: count }, { kind: 'note', text: `${Math.round((performance.now() - started) * 10) / 10} ms` }]);
+          appendEntries([{ kind: 'value', value: count }, { kind: 'note', text: `${Math.round((performance.now() - started) * 10) / 10} ms` }]);
           setTab('console');
         } else if (op === 'getIndexes') {
           const indexes = await invoke<string[]>('list_indexes', { id: connectionId, db: currentDb, collection: collName });
-          setEntries((prev) => [...prev, { kind: 'value', value: indexes.map((name) => ({ name })) }]);
+          appendEntries([{ kind: 'value', value: indexes.map((name) => ({ name })) }]);
           setTab('console');
         }
         return;

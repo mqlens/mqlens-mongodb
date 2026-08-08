@@ -3,7 +3,7 @@
 use crate::{mcp, ssh_tunnel, workspace, IndexInfo, MongoshSession, TaskInfo};
 use mongodb::Client;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -91,6 +91,15 @@ pub struct AppState {
     /// The backend already owns those processes, so it is the honest owner of
     /// the mapping to them too. Opaque JSON keeps the shape a frontend concern.
     pub shell_tab_state: Mutex<HashMap<String, serde_json::Value>>,
+    /// Windows that have been closed, so a mongosh start still in flight for
+    /// one of them can stop the child it just spawned.
+    ///
+    /// Closing a window destroys its renderer, which is what would otherwise
+    /// have cancelled the start; and the child has no session id to record
+    /// until it exists, so the tab-state cleanup that runs on close finds
+    /// nothing to stop. Without this the process survives until app exit.
+    /// Cleared when a window with the same label is spawned again.
+    pub closed_windows: Mutex<HashSet<String>>,
     pub tasks: Arc<Mutex<HashMap<String, TaskInfo>>>,
     /// Per-task cancel flags for cancellable copy tasks (copy-only).
     pub cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
@@ -146,6 +155,7 @@ impl AppState {
             mock_indexes: Mutex::new(HashMap::new()),
             mongosh_sessions: Mutex::new(HashMap::new()),
             shell_tab_state: Mutex::new(HashMap::new()),
+            closed_windows: Mutex::new(HashSet::new()),
             tasks: Arc::new(Mutex::new(HashMap::new())),
             cancels: Arc::new(Mutex::new(HashMap::new())),
             ssh_tunnels: Mutex::new(HashMap::new()),

@@ -273,6 +273,21 @@ describe('mongosh session registry (#240)', () => {
       expect(wasDisposedSince('moved', movedEpoch)).toBe(false);
     });
 
+    it('drops a completion that lands after its tab was renamed', () => {
+      // A rename remounts the shell under the new key, so the old instance is
+      // finishing work for a key nothing will read again. Persisting to it
+      // would recreate the obsolete entry — a session mapping the renamed
+      // tab's close never clears — and lose the output from the visible tab.
+      writeShellSession('old-id', { sessionId: 'sess-1' });
+      const epoch = shellSessionEpoch('old-id');
+
+      renameShellSession('old-id', 'new-id');
+      writeShellSession('old-id', { entries: [{ kind: 'note', text: 'late' }] }, epoch);
+
+      expect(readShellSession('old-id')).toBeUndefined();
+      expect(readShellSession('new-id')?.sessionId).toBe('sess-1');
+    });
+
     it('a reopened tab is not silenced by the previous tab\'s disposal', async () => {
       writeShellSession('tab-1', { sessionId: 'sess-1' });
       await disposeShellSession('tab-1');

@@ -78,6 +78,7 @@
 //!   no-ops — but wasteful and not the simplest correct wiring).
 
 use crate::workspace::{self, Workspace, WorkspaceOp};
+use crate::state::LockExt;
 use crate::AppState;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
@@ -158,6 +159,14 @@ fn apply_window_closed_and_broadcast(app: &AppHandle, label: &str, origin: Strin
     // shell state is keyed by the live-space id a rebound tab is re-keyed to,
     // so enumerating the workspace would miss exactly the connected shells that
     // have a child to stop.
+    //
+    // Recorded BEFORE the sweep: a `start_mongosh_session` still in flight for
+    // this window has no session id yet, so the sweep below cannot see it and
+    // the renderer that would have cancelled it is about to be destroyed. The
+    // start itself checks this set and stops the child it spawned.
+    if let Ok(mut closed) = state.closed_windows.lock_safe() {
+        closed.insert(label.to_string());
+    }
     let doomed_tabs = crate::shell_tab_ids_for_window(&state, label).unwrap_or_default();
     for tab_id in doomed_tabs {
         stop_shell_session_for_tab(app, &tab_id);
@@ -224,6 +233,14 @@ pub fn wire_main_window_exit(app: &AppHandle) {
 pub fn spawn_workspace_window(app: &AppHandle, label: &str) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window(label) {
         return existing.set_focus().map_err(|e| e.to_string());
+    }
+
+    // This label is live again, so a previous close must not keep poisoning it
+    // — window ids are reused across a session (`win-1` reappears after the
+    // first one closes), and a stale entry would make every start in the new
+    // window kill its own child.
+    if let Ok(mut closed) = app.state::<AppState>().closed_windows.lock_safe() {
+        closed.remove(label);
     }
 
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
