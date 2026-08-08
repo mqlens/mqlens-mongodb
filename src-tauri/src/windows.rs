@@ -168,8 +168,16 @@ fn apply_window_closed_and_broadcast(app: &AppHandle, label: &str, origin: Strin
     // this window has no session id yet, so the sweep below cannot see it and
     // the renderer that would have cancelled it is about to be destroyed. The
     // start itself checks this set and stops the child it spawned.
-    if let Ok(mut closed) = state.closed_windows.lock_safe() {
-        closed.insert(label.to_string());
+    {
+        // Marked under the shell-state lock, which `set_shell_tab_state_impl`
+        // also holds across its own closed-window check. Without that overlap a
+        // write could see the window as open, pause, and land after the sweep
+        // below — recreating an entry nothing would ever clean up. Lock order
+        // is shell state then closed windows, matching every other site.
+        let _state_guard = state.shell_tab_state.lock_safe();
+        if let Ok(mut closed) = state.closed_windows.lock_safe() {
+            closed.insert(label.to_string());
+        }
     }
     let doomed_tabs = crate::shell_tab_ids_for_window(&state, label).unwrap_or_default();
     for tab_id in doomed_tabs {

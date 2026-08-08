@@ -739,30 +739,36 @@ pub fn set_shell_tab_state_impl(
     tab_id: &str,
     value: serde_json::Value,
 ) -> Result<Option<String>, String> {
-    // A write from a window that is already gone must not recreate its entry:
-    // the close sweep has run, so nothing would ever stop the child it names.
-    // Rejecting alone would strand that child, so the id comes back for the
-    // caller to stop — this function is sync and holds a lock, and stopping is
-    // neither.
+    // The shell-state lock is taken FIRST and held across the closed-window
+    // check, the ownership check and the insert. Checking whether the window
+    // was closed and then inserting as two steps let a write begin just before
+    // `CloseRequested`, see the window as open, and land after the sweep had
+    // already run — recreating an entry for a window nothing will ever clean up
+    // again. The close path marks the window closed under this same lock, so
+    // the two orderings are now the only ones possible: either the write lands
+    // first and the sweep collects it, or the mark lands first and the write is
+    // refused here. (Lock order is shell state, then closed windows —
+    // everywhere, so the pair cannot deadlock.)
+    let mut map = state.shell_tab_state.lock_safe()?;
+    let submitted_session = value
+        .get("sessionId")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string());
     if let Some(writer) = value.get("windowId").and_then(|w| w.as_str()) {
-        if window_is_closed(state, writer)? {
-            // Only an id nothing else accounts for is an orphan. If the tab
-            // still HAS an entry, it was claimed by another window and that
-            // window owns the child — the closed writer is simply describing a
-            // session someone else is now using, and stopping it would kill a
-            // live shell in the window that took the tab over.
-            let untracked = state.shell_tab_state.lock_safe()?.get(tab_id).is_none();
-            return Ok(if untracked {
-                value
-                    .get("sessionId")
-                    .and_then(|s| s.as_str())
-                    .map(|s| s.to_string())
-            } else {
-                None
-            });
+        if state.closed_windows.lock_safe()?.contains(writer) {
+            // Refuse it — and hand back the session it names unless the stored
+            // entry already accounts for that exact id. A tab commonly holds a
+            // placeholder with a null or older id, so "an entry exists" is not
+            // evidence that anyone is tracking the child this write describes.
+            let accounted_for = map
+                .get(tab_id)
+                .and_then(|v| v.get("sessionId"))
+                .and_then(|s| s.as_str())
+                .map(|s| Some(s.to_string()) == submitted_session)
+                .unwrap_or(false);
+            return Ok(if accounted_for { None } else { submitted_session });
         }
     }
-    let mut map = state.shell_tab_state.lock_safe()?;
     let recorded_owner = map
         .get(tab_id)
         .and_then(|v| v.get("windowId"))

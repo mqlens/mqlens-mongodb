@@ -4387,6 +4387,56 @@ mod shell_tab_state_tests {
     }
 
     #[test]
+    fn a_placeholder_entry_does_not_hide_a_newly_started_child() {
+        // A tab usually holds a placeholder with a null id while its session
+        // starts. If the write carrying the real id arrives after the window is
+        // marked closed, "an entry exists" is not evidence anyone is tracking
+        // that child — the sweep would stop the null (i.e. nothing) and the new
+        // mongosh process would survive to app exit.
+        use crate::state::LockExt;
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": serde_json::Value::Null, "windowId": "win-9" }),
+        )
+        .unwrap();
+        st.closed_windows.lock_safe().unwrap().insert("win-9".into());
+
+        let orphan = set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-new", "windowId": "win-9" }),
+        )
+        .unwrap();
+
+        assert_eq!(orphan.as_deref(), Some("sess-new"));
+    }
+
+    #[test]
+    fn a_closed_window_write_naming_the_recorded_session_is_not_stopped_twice() {
+        use crate::state::LockExt;
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-1", "windowId": "win-9" }),
+        )
+        .unwrap();
+        st.closed_windows.lock_safe().unwrap().insert("win-9".into());
+
+        // The sweep will take this entry and stop sess-1 itself.
+        let orphan = set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-1", "windowId": "win-9" }),
+        )
+        .unwrap();
+
+        assert_eq!(orphan, None);
+    }
+
+    #[test]
     fn the_current_owner_keeps_writing_normally() {
         let st = state();
         set_shell_tab_state_impl(
