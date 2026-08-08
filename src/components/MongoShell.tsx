@@ -28,9 +28,12 @@ type ShellTab = 'console' | 'viewer';
 import {
   loadShellSession,
   readShellSession,
+  shellSessionEpoch,
   stopShellSessionProcess,
+  wasDisposedSince,
   writeShellSession,
   type ShellEntry,
+  type ShellSession,
 } from '../lib/mongoshSession';
 
 interface AppSettings {
@@ -236,6 +239,14 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const { t } = useTranslation('shell');
   // Restored transcript/session for this tab, if it survived an unmount (#240).
   const storedSession = sessionKey ? readShellSession(sessionKey) : undefined;
+  // Captured once, at mount. Every write below carries it, so if this tab is
+  // closed or moved to another window while a command is still running, the
+  // completion that lands afterwards is dropped instead of resurrecting a
+  // discarded session or overwriting the destination window's newer state.
+  const epochRef = useRef(sessionKey ? shellSessionEpoch(sessionKey) : 0);
+  const persistSession = (patch: Partial<ShellSession>) => {
+    if (sessionKey) writeShellSession(sessionKey, patch, epochRef.current);
+  };
   const [currentDb, setCurrentDb] = useState(storedSession?.currentDb || databaseName);
   const startupLogId = useMemo(createLogId, []);
   // Display the connection name in the startup banner, never the URI — the URI
@@ -252,11 +263,11 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const [aiMessages, setAiMessages] = useState<ChatMessage[]>(storedSession?.aiMessages ?? []);
   const setIsAIOpen = (open: boolean) => {
     setIsAIOpenState(open);
-    if (sessionKey) writeShellSession(sessionKey, { aiOpen: open });
+    persistSession({ aiOpen: open });
   };
   const handleAiMessagesChange = (messages: ChatMessage[]) => {
     setAiMessages(messages);
-    if (sessionKey) writeShellSession(sessionKey, { aiMessages: messages });
+    persistSession({ aiMessages: messages });
   };
   const [pendingDestructive, setPendingDestructive] =
     useState<{ command: string; operation: string } | null>(null);
@@ -337,7 +348,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // remount think there is nothing to reattach to.
   useEffect(() => {
     if (!sessionKey) return;
-    writeShellSession(sessionKey, { entries, currentDb });
+    persistSession({ entries, currentDb });
   }, [sessionKey, entries, currentDb]);
   // Guided setup on session failure: a working mongosh found outside the
   // configured path (offered as one click), or null when nothing was found.
@@ -459,7 +470,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     const base = readShellSession(sessionKey)?.entries ?? entriesRef.current;
     const next = [...base, ...added];
     entriesRef.current = next;
-    writeShellSession(sessionKey, { entries: next });
+    persistSession({ entries: next });
   };
 
   const appendCommandOutput = (output: MongoshCommandOutput) => {
@@ -503,6 +514,18 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         // it must be findable by `disposeShellSession` even if this mount is
         // already gone.
         if (sessionKey) {
+          if (wasDisposedSince(sessionKey, epochRef.current)) {
+            // The tab was CLOSED while mongosh was starting, so its disposal
+            // ran before there was a session id to stop. Nothing will ever read
+            // this state or reach this child again — record it and it leaks, so
+            // stop it here instead. Deliberately narrower than "the epoch
+            // moved": a tab that was MOVED still needs the id recorded below,
+            // because the destination window reattaches to this very process.
+            await invoke('stop_mongosh_session', { sessionId: session.session_id }).catch(
+              () => undefined
+            );
+            return;
+          }
           // The backend has already drained the startup output; if this mount is
           // gone, appending it to state would vanish, so fold it into the stored
           // transcript instead of losing warnings and errors.
@@ -511,9 +534,13 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           if (session.stderr.length > 0)
             startupEntries.push({ kind: 'error', message: session.stderr.join('\n') });
           startupEntries.push({ kind: 'note', text: t('mongoShell.notes.sessionAttached') });
+          // The id itself is written unconditionally — a moved tab's new window
+          // must be able to find this process. The transcript is not: it would
+          // overwrite whatever that window has since appended.
+          const stillOurs = shellSessionEpoch(sessionKey) === epochRef.current;
           writeShellSession(sessionKey, {
             sessionId: session.session_id,
-            ...(cancelled ? { entries: [...entriesRef.current, ...startupEntries] } : {}),
+            ...(cancelled && stillOurs ? { entries: [...entriesRef.current, ...startupEntries] } : {}),
           });
         }
         if (cancelled) {
@@ -532,7 +559,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         }
         setEntries((prev) => [...prev, { kind: 'note', text: t('mongoShell.notes.sessionAttached') }]);
       } catch (err: any) {
-        if (sessionKey) writeShellSession(sessionKey, { sessionId: null });
+        persistSession({ sessionId: null });
         if (!cancelled) {
           setSessionId(null);
           setEntries((prev) => [
@@ -766,7 +793,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         // mongosh child would sit on the new database while the remounted UI
         // restored the old one — with the prompt and the driver-backed
         // commands aimed somewhere the raw shell commands are not.
-        if (sessionKey) writeShellSession(sessionKey, { currentDb: useMatch[1] });
+        persistSession({ currentDb: useMatch[1] });
         if (!ranExternally) {
           setEntries((prev) => [
             ...prev,
@@ -850,7 +877,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   useEffect(() => {
     if (!initialCommand || autoRunRef.current || !sessionAttempted || !sessionId) return;
     autoRunRef.current = true;
-    if (sessionKey) writeShellSession(sessionKey, { autoRanCommand: true });
+    persistSession({ autoRanCommand: true });
     runCommand(initialCommand);
     // Run exactly once for the command that opened this shell tab.
     // eslint-disable-next-line react-hooks/exhaustive-deps

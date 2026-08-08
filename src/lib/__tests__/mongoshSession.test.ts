@@ -3,9 +3,12 @@ import {
   disposeShellSessionsForTabs,
   loadShellSession,
   renameShellSession,
+  shellSessionEpoch,
   retargetShellSessionDatabase,
   stopShellSessionProcess,
+  wasDisposedSince,
   disposeShellSession,
+  forgetShellSession,
   readShellSession,
   resetShellSessions,
   writeShellSession,
@@ -212,6 +215,75 @@ describe('mongosh session registry (#240)', () => {
     expect(stopped).toEqual(expect.arrayContaining(['sess-1', 'sess-2']));
     expect(stopped).not.toContain('sess-other');
     expect(readShellSession('other-window')?.sessionId).toBe('sess-other');
+  });
+
+  describe('writes that outlive ownership', () => {
+    it('drops a completion that lands after its tab was closed', async () => {
+      // Tab ids are deterministic, so reopening the same shell lands on the
+      // same key: a late write would hand the new tab the old transcript and a
+      // set `autoRanCommand`, which also suppresses its opening command.
+      writeShellSession('tab-1', { sessionId: 'sess-1', autoRanCommand: true });
+      const epoch = shellSessionEpoch('tab-1');
+
+      await disposeShellSession('tab-1');
+      writeShellSession('tab-1', { entries: [{ kind: 'note', text: 'late output' }] }, epoch);
+
+      expect(readShellSession('tab-1')).toBeUndefined();
+    });
+
+    it('drops a completion that lands after its tab moved to another window', () => {
+      // The destination owns the state now. A stale mirror from here would
+      // overwrite what that window has since appended — and because every write
+      // stamps the owning window, it would also steal ownership back, so
+      // closing THIS window would kill a process the other one is showing.
+      writeShellSession('tab-1', { sessionId: 'sess-1', entries: [] });
+      const epoch = shellSessionEpoch('tab-1');
+
+      forgetShellSession('tab-1');
+      invokeMock.mockClear();
+      writeShellSession('tab-1', { entries: [{ kind: 'note', text: 'stale' }] }, epoch);
+
+      expect(readShellSession('tab-1')).toBeUndefined();
+      expect(invokeMock).not.toHaveBeenCalledWith('set_shell_tab_state', expect.anything());
+    });
+
+    it('forgetting keeps the backend session alive — only disposing ends it', async () => {
+      writeShellSession('tab-1', { sessionId: 'sess-1' });
+      invokeMock.mockClear();
+
+      forgetShellSession('tab-1');
+
+      expect(invokeMock).not.toHaveBeenCalledWith('stop_mongosh_session', expect.anything());
+      expect(invokeMock).not.toHaveBeenCalledWith('clear_shell_tab_state', expect.anything());
+    });
+
+    it('tells a closed tab apart from a moved one', async () => {
+      writeShellSession('closed', { sessionId: 'a' });
+      writeShellSession('moved', { sessionId: 'b' });
+      const closedEpoch = shellSessionEpoch('closed');
+      const movedEpoch = shellSessionEpoch('moved');
+
+      await disposeShellSession('closed');
+      forgetShellSession('moved');
+
+      // The async start path uses this to decide whether the child it just
+      // spawned should be stopped (closed) or recorded (moved, so the
+      // destination window can reattach to it).
+      expect(wasDisposedSince('closed', closedEpoch)).toBe(true);
+      expect(wasDisposedSince('moved', movedEpoch)).toBe(false);
+    });
+
+    it('a reopened tab is not silenced by the previous tab\'s disposal', async () => {
+      writeShellSession('tab-1', { sessionId: 'sess-1' });
+      await disposeShellSession('tab-1');
+
+      // What a fresh mount under the same deterministic id captures.
+      const epoch = shellSessionEpoch('tab-1');
+      writeShellSession('tab-1', { sessionId: 'sess-2' }, epoch);
+
+      expect(readShellSession('tab-1')?.sessionId).toBe('sess-2');
+      expect(wasDisposedSince('tab-1', epoch)).toBe(false);
+    });
   });
 
   it('keeps its sessions in a store that survives hot module replacement', async () => {

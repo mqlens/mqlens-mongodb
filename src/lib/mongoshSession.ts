@@ -65,6 +65,58 @@ const sessions: Map<string, ShellSession> =
 // not even need the backend round trip during development.
 if (import.meta.hot?.data) import.meta.hot.data.shellSessions = sessions;
 
+/**
+ * Per-key write epoch: how many times THIS renderer has stopped owning a key.
+ *
+ * A command can still be in flight when its tab is closed or moved to another
+ * window, and the unmounted component goes on to persist the result — writing a
+ * transcript built from its own stale snapshot. After a close that resurrects
+ * the session the tab just discarded (deterministic tab ids mean reopening
+ * lands on the same key, inheriting the old scrollback and `autoRanCommand`);
+ * after a move it clobbers the destination window's newer state and, because
+ * every write stamps the owning window, quietly steals ownership back — so
+ * closing the source window would then kill a process the destination is
+ * showing.
+ *
+ * A component captures the epoch when it mounts and passes it with every write.
+ * `disposeShellSession` and `forgetShellSession` bump it, which silences that
+ * component for good without disturbing whoever legitimately owns the key now.
+ */
+const epochs: Map<string, number> = import.meta.hot?.data?.shellEpochs ?? new Map<string, number>();
+if (import.meta.hot?.data) import.meta.hot.data.shellEpochs = epochs;
+
+/** The current write epoch for `key`. Capture this at mount; pass it to
+ *  {@link writeShellSession} so writes that outlive ownership are dropped. */
+export function shellSessionEpoch(key: string): number {
+  return epochs.get(key) ?? 0;
+}
+
+function endEpoch(key: string): number {
+  const next = shellSessionEpoch(key) + 1;
+  epochs.set(key, next);
+  return next;
+}
+
+/**
+ * The epoch at which a key was last DISPOSED, as opposed to merely forgotten.
+ *
+ * Both end an epoch, but they mean opposite things for the mongosh child: a
+ * disposed tab's child should die, a moved tab's child belongs to another
+ * window now and must not be touched. Only the async start path needs to tell
+ * them apart — see {@link wasDisposedSince}.
+ */
+const disposedAt: Map<string, number> =
+  import.meta.hot?.data?.shellDisposedAt ?? new Map<string, number>();
+if (import.meta.hot?.data) import.meta.hot.data.shellDisposedAt = disposedAt;
+
+/** Whether this key was closed outright after `epoch` — i.e. whether a caller
+ *  holding `epoch` is finishing work for a tab that no longer exists. False for
+ *  a tab that merely moved to another window. */
+export function wasDisposedSince(key: string, epoch: number): boolean {
+  const at = disposedAt.get(key);
+  return at !== undefined && at > epoch;
+}
+
 /** Write-through to the backend. Fire-and-forget: the cache is already updated,
  *  and a failed mirror must never break the shell. */
 function persist(key: string, session: ShellSession): void {
@@ -113,9 +165,22 @@ export function readShellSession(key: string): ShellSession | undefined {
   return sessions.get(key);
 }
 
-/** Create or update the stored session. Merges, so a caller can persist one
- *  field without knowing the rest. */
-export function writeShellSession(key: string, patch: Partial<ShellSession>): void {
+/**
+ * Create or update the stored session. Merges, so a caller can persist one
+ * field without knowing the rest.
+ *
+ * `epoch` is the value {@link shellSessionEpoch} returned when the writer
+ * mounted. A mismatch means the writer no longer owns this key — its tab was
+ * closed or moved to another window while a command was in flight — and the
+ * write is dropped. Omitting it writes unconditionally, which is what the
+ * registry's own helpers do.
+ */
+export function writeShellSession(
+  key: string,
+  patch: Partial<ShellSession>,
+  epoch?: number
+): void {
+  if (epoch !== undefined && epoch !== shellSessionEpoch(key)) return;
   const prev = sessions.get(key);
   const next: ShellSession = {
     sessionId: patch.sessionId !== undefined ? patch.sessionId : (prev?.sessionId ?? null),
@@ -139,6 +204,7 @@ export function writeShellSession(key: string, patch: Partial<ShellSession>): vo
  */
 export async function disposeShellSession(key: string): Promise<void> {
   const session = sessions.get(key) ?? (await loadShellSession(key));
+  disposedAt.set(key, endEpoch(key));
   sessions.delete(key);
   void invoke('clear_shell_tab_state', { tabId: key }).catch(() => undefined);
   if (!session?.sessionId) return;
@@ -233,9 +299,27 @@ export async function disposeShellSessionsForTabs(tabIds: string[]): Promise<voi
   await Promise.all(tabIds.map(disposeShellSession));
 }
 
+/**
+ * Drop this renderer's copy of a tab's state WITHOUT ending the session.
+ *
+ * For a tab that moved to another window: the mongosh child and the backend
+ * entry belong to the destination now, so they must survive, but keeping the
+ * cached object here is actively wrong. If the tab ever comes back, this
+ * renderer would seed from a snapshot that predates everything the other window
+ * did — showing the wrong database after a `use` there, and mirroring its stale
+ * transcript over the newer one. Bumping the epoch also silences any command
+ * this renderer still has in flight for the key.
+ */
+export function forgetShellSession(key: string): void {
+  endEpoch(key);
+  sessions.delete(key);
+}
+
 /** Test seam: forget everything without touching the backend. */
 export function resetShellSessions(): void {
   sessions.clear();
+  epochs.clear();
+  disposedAt.clear();
 }
 
 /** Forget every tab, in the cache and the backend. */

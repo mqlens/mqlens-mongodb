@@ -13,6 +13,7 @@ import { clearChatRequest, renameChatRequest, resetChatRequests } from './lib/ai
 import {
   disposeShellSession,
   disposeShellSessionsForTabs,
+  forgetShellSession,
   renameShellSession,
   retargetShellSessionDatabase,
 } from './lib/mongoshSession';
@@ -2927,7 +2928,14 @@ function Workspace() {
             tabBuilderStateCache.current.delete(id);
             tabChatCache.current.delete(id);
             clearChatRequest(id);
-            if (!stillInWorkspace.has(id)) void disposeShellSession(id);
+            // Gone from the document: end the session. Merely moved to another
+            // window: that window owns the child now, so it must keep running —
+            // but this renderer's cached copy has to go, or moving the tab back
+            // would seed it from a snapshot predating everything the other
+            // window did, and a command still in flight here would mirror its
+            // stale transcript over the newer one.
+            if (stillInWorkspace.has(id)) forgetShellSession(id);
+            else void disposeShellSession(id);
             unmirroredTabIdsRef.current.delete(id);
           });
           setTabs((prev) => prev.filter((t) => !leavingIds.has(t.id)));

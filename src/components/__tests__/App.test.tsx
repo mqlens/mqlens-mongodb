@@ -2726,6 +2726,13 @@ describe('App Component', () => {
         expect(screen.queryAllByTestId('reconnect-banner')).toHaveLength(0);
       });
 
+      // A live session for the tab that is about to move.
+      const { writeShellSession, readShellSession } = await import('../../lib/mongoshSession');
+      writeShellSession('new-conn-1.sales_db.customers', {
+        sessionId: 'sess-live',
+        currentDb: 'sales_db',
+      });
+
       calls.length = 0;
 
       // `customers` has moved to win-1; main keeps only `orders`.
@@ -2769,6 +2776,12 @@ describe('App Component', () => {
         (c) => c.cmd === 'clear_shell_tab_state' && c.args?.tabId === 'new-conn-1.sales_db.customers'
       );
       expect(cleared).toEqual([]);
+      expect(calls.filter((c) => c.cmd === 'stop_mongosh_session')).toEqual([]);
+
+      // The backend session lives on for the destination window, but THIS
+      // renderer forgets its copy: moving the tab back must re-read the state
+      // the other window has been updating, not this stale snapshot.
+      expect(readShellSession('new-conn-1.sales_db.customers')).toBeUndefined();
     });
   });
 
