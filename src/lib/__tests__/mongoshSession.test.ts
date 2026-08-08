@@ -137,6 +137,30 @@ describe('mongosh session registry (#240)', () => {
     expect(invokeMock).toHaveBeenCalledWith('stop_mongosh_session', { sessionId: 'sess-orphan' });
   });
 
+  it('retargets a CACHED session synchronously, before a remount can seed the old database', async () => {
+    // The rename re-keys the tab in the same discrete event, so React remounts
+    // MongoShell before any microtask here runs, and the component reads the
+    // registry once at mount. Anything deferred is therefore invisible to the
+    // instance that matters: it would keep the dropped database and a session
+    // id about to be killed, and restarting it would recreate that database.
+    writeShellSession('tab-1', {
+      sessionId: 'sess-old',
+      currentDb: 'before',
+      entries: [{ kind: 'note', text: 'kept' }],
+    });
+
+    const done = retargetShellSessionDatabase('tab-1', 'after', Promise.resolve());
+
+    // Read with no await at all — this is exactly what the remount sees.
+    const atMount = readShellSession('tab-1');
+    expect(atMount?.currentDb).toBe('after');
+    expect(atMount?.sessionId).toBeNull();
+    expect(atMount?.entries).toEqual([{ kind: 'note', text: 'kept' }]);
+
+    await done;
+    expect(invokeMock).toHaveBeenCalledWith('stop_mongosh_session', { sessionId: 'sess-old' });
+  });
+
   it('retargets a renamed database and stops the child that is still on the old one', async () => {
     // Straight from the backend again: writing `currentDb` without hydrating
     // would create a cache entry with a null session id, and the stop would
@@ -148,7 +172,7 @@ describe('mongosh session registry (#240)', () => {
         : Promise.resolve(undefined),
     );
 
-    await retargetShellSessionDatabase('tab-1', 'after');
+    await retargetShellSessionDatabase('tab-1', 'after', Promise.resolve());
 
     expect(invokeMock).toHaveBeenCalledWith('stop_mongosh_session', { sessionId: 'sess-old' });
     const after = readShellSession('tab-1');

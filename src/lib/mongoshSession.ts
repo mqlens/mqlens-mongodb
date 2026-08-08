@@ -185,15 +185,39 @@ export function renameShellSession(oldKey: string, newKey: string): Promise<void
  * Point a retained session at a renamed database and end its process, so the
  * next mount opens a fresh one against the new name with its scrollback intact.
  *
- * Hydrates first, deliberately. If the tab has not mounted since a refresh its
- * state exists only in the backend, and writing `currentDb` straight in would
- * mint a cache entry with a null session id — after which the stop below finds
- * nothing to do and the original child stays attached to the dropped database.
+ * `renamed` is the backend move this follows, and is awaited ONLY on a cache
+ * miss — see below for why the cached path must not await anything.
  */
-export async function retargetShellSessionDatabase(key: string, db: string): Promise<void> {
-  await loadShellSession(key);
-  writeShellSession(key, { currentDb: db });
-  await stopShellSessionProcess(key);
+export function retargetShellSessionDatabase(
+  key: string,
+  db: string,
+  renamed: Promise<void>
+): Promise<void> {
+  const cached = sessions.get(key);
+  if (cached) {
+    const { sessionId } = cached;
+    // Applied synchronously, before returning to the caller. The rename's
+    // `setTabs` re-keys the tab in the same discrete event, so React remounts
+    // MongoShell before any await here could resolve — and the component seeds
+    // itself from the registry once, at mount, without subscribing to later
+    // writes. Deferring this by even a microtask therefore hands the fresh
+    // instance the old database and a session id that is about to be killed:
+    // it would sit on a dead process, and restarting it would `use` the
+    // database the rename just dropped, recreating it on the next write.
+    writeShellSession(key, { currentDb: db, sessionId: null });
+    if (!sessionId) return Promise.resolve();
+    return invoke('stop_mongosh_session', { sessionId })
+      .then(() => undefined)
+      .catch(() => undefined);
+  }
+  // Not cached: the tab has not mounted since a refresh, so its state lives
+  // only in the backend and can only be read back once the rename has landed.
+  // Nothing is mounted under this key, so there is no remount to race.
+  return renamed.then(async () => {
+    await loadShellSession(key);
+    writeShellSession(key, { currentDb: db });
+    await stopShellSessionProcess(key);
+  });
 }
 
 /**

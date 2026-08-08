@@ -2020,9 +2020,12 @@ function Workspace() {
         // the retained mongosh child is still `use`-d into the old name, and
         // Sidebar renames with `dropSource: true`, so a write from this
         // apparently-renamed tab would recreate the database the rename just
-        // dropped. Awaited, because the retarget reads the state back under the
-        // new key — which only exists once the rename above has landed.
-        void moved.then(() => retargetShellSessionDatabase(newId, newName));
+        // dropped. Called synchronously, not off `moved`: the `setTabs` above
+        // re-keys this tab, so React remounts the shell before any awaited
+        // continuation would run and the new instance would seed itself from a
+        // registry entry still naming the old database. The retarget only falls
+        // back to awaiting the rename when nothing is cached to remount from.
+        void retargetShellSessionDatabase(newId, newName, moved);
       }
       dispatchWorkspace({ type: 'rename_tab', oldId, newId });
     });
