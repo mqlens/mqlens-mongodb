@@ -764,6 +764,30 @@ describe('MongoShell Component', () => {
       expect(readShellSession('tab-shell-3')?.sessionId).toBe('late-session');
     });
 
+    it('keeps the AI helper open with its transcript across a tab switch', async () => {
+      const first = render(<MongoShell {...shellProps} sessionKey="tab-shell-ai" />);
+      await waitFor(() => expect(startCalls()).toBe(1));
+      fireEvent.click(screen.getByTestId('shell-ai-toggle'));
+      await screen.findByTestId('ai-helper-panel');
+      first.unmount();
+
+      render(<MongoShell {...shellProps} sessionKey="tab-shell-ai" />); // switched back
+
+      expect(await screen.findByTestId('ai-helper-panel')).toBeInTheDocument();
+    });
+
+    it('restarts the session on demand without losing the scrollback', async () => {
+      render(<MongoShell {...shellProps} sessionKey="tab-shell-restart" />);
+      await waitFor(() => expect(startCalls()).toBe(1));
+
+      fireEvent.click(screen.getByTestId('shell-restart-session'));
+
+      // Old process stopped, a new session started, banner still on screen.
+      await waitFor(() => expect(stopCalls()).toBe(1));
+      await waitFor(() => expect(startCalls()).toBe(2));
+      expect(screen.getByText(/Current Mongosh Log ID/)).toBeInTheDocument();
+    });
+
     it('still tears the session down on unmount when it has no tab identity', async () => {
       // Callers that pass no sessionKey keep the old per-mount lifetime, so a
       // shell rendered outside the tab system cannot leak a process.

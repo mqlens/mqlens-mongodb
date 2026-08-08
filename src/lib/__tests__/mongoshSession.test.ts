@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   disposeAllShellSessions,
   renameShellSession,
+  stopShellSessionProcess,
   disposeShellSession,
   readShellSession,
   resetShellSessions,
@@ -31,6 +32,8 @@ describe('mongosh session registry (#240)', () => {
       entries: [{ kind: 'note', text: 'attached' }],
       currentDb: 'sales',
       autoRanCommand: false,
+      aiOpen: false,
+      aiMessages: [],
     });
     expect(invokeMock).not.toHaveBeenCalled();
   });
@@ -44,6 +47,8 @@ describe('mongosh session registry (#240)', () => {
       entries: [{ kind: 'note', text: 'later' }],
       currentDb: 'sales',
       autoRanCommand: false,
+      aiOpen: false,
+      aiMessages: [],
     });
   });
 
@@ -92,6 +97,22 @@ describe('mongosh session registry (#240)', () => {
   it('renaming a tab with no session is a no-op', () => {
     renameShellSession('nothing-here', 'new-id');
     expect(readShellSession('new-id')).toBeUndefined();
+  });
+
+  it('stops the process for a restart but keeps the transcript', async () => {
+    writeShellSession('tab-1', {
+      sessionId: 'sess-1',
+      entries: [{ kind: 'note', text: 'earlier output' }],
+      currentDb: 'sales',
+    });
+
+    await stopShellSessionProcess('tab-1');
+
+    expect(invokeMock).toHaveBeenCalledWith('stop_mongosh_session', { sessionId: 'sess-1' });
+    const after = readShellSession('tab-1');
+    expect(after?.sessionId).toBeNull();
+    expect(after?.entries).toEqual([{ kind: 'note', text: 'earlier output' }]);
+    expect(after?.currentDb).toBe('sales');
   });
 
   it('disposes every session when the workspace is torn down', async () => {

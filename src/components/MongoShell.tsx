@@ -4,7 +4,7 @@ import Editor from '@monaco-editor/react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, Sparkles, Terminal } from 'lucide-react';
+import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, RotateCcw, Sparkles, Terminal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AIChatPanel } from './AIChatPanel';
+import { AIChatPanel, type ChatMessage } from './AIChatPanel';
 import { buildRunnableCommand, guardScriptRun, type GeneratedQuery } from '../lib/mongoCommand';
 import { DataGrid } from './DataGrid';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
@@ -27,6 +27,7 @@ type ShellTab = 'console' | 'viewer';
 
 import {
   readShellSession,
+  stopShellSessionProcess,
   writeShellSession,
   type ShellEntry,
 } from '../lib/mongoshSession';
@@ -246,7 +247,16 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const [command, setCommand] = useState(defaultCommand);
   const monacoTheme = useMonacoTheme();
   const monacoFontSize = useMonacoFontSize(13);
-  const [isAIOpen, setIsAIOpen] = useState(false);
+  const [isAIOpen, setIsAIOpenState] = useState(storedSession?.aiOpen ?? false);
+  const [aiMessages, setAiMessages] = useState<ChatMessage[]>(storedSession?.aiMessages ?? []);
+  const setIsAIOpen = (open: boolean) => {
+    setIsAIOpenState(open);
+    if (sessionKey) writeShellSession(sessionKey, { aiOpen: open });
+  };
+  const handleAiMessagesChange = (messages: ChatMessage[]) => {
+    setAiMessages(messages);
+    if (sessionKey) writeShellSession(sessionKey, { aiMessages: messages });
+  };
   const [pendingDestructive, setPendingDestructive] =
     useState<{ command: string; operation: string } | null>(null);
   // Restored transcript wins over a fresh banner: returning to this tab should
@@ -267,6 +277,24 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // session was restored, so the start effect reattaches instead of respawning.
   const attachedNonce = useRef<number | null>(storedSession?.sessionId ? 0 : null);
   const [retryNonce, setRetryNonce] = useState(0);
+
+  // Restart the session without losing the scrollback: stop the process, note
+  // it in the transcript, then let the start effect attach a fresh one. Bumping
+  // `retryNonce` is what makes that effect skip its reattach shortcut.
+  const [restarting, setRestarting] = useState(false);
+  const restartSession = async () => {
+    setRestarting(true);
+    try {
+      if (sessionKey) await stopShellSessionProcess(sessionKey);
+      else if (sessionId) await invoke('stop_mongosh_session', { sessionId }).catch(() => undefined);
+      setSessionId(null);
+      setSessionAttempted(false);
+      setEntries((prev) => [...prev, { kind: 'note', text: t('mongoShell.notes.sessionRestarting') }]);
+      setRetryNonce((n) => n + 1);
+    } finally {
+      setRestarting(false);
+    }
+  };
 
   // Mirror the transcript and current database into the session registry.
   // `sessionId` is deliberately NOT mirrored here: the start path sets it to
@@ -861,7 +889,18 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setIsAIOpen((v) => !v)}
+            onClick={() => void restartSession()}
+            disabled={restarting || running}
+            data-testid="shell-restart-session"
+            title={t('mongoShell.toolbar.restartSessionTitle')}
+          >
+            <RotateCcw size={11} />
+            {t('mongoShell.toolbar.restartSession')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsAIOpen(!isAIOpen)}
             data-testid="shell-ai-toggle"
             title={t('mongoShell.toolbar.aiToggleTitle')}
           >
@@ -1049,6 +1088,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       onClose={() => setIsAIOpen(false)}
       onInsertQuery={handleAIInsert}
       onInsertAndRunQuery={handleAIInsertAndRun}
+      sessionKey={sessionKey}
+      initialMessages={aiMessages}
+      onMessagesChange={handleAiMessagesChange}
     />
     {pendingDestructive && (
       <Dialog open onOpenChange={() => {}}>

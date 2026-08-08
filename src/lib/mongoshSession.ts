@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { ChatMessage } from '../components/AIChatPanel';
 
 /**
  * Live mongosh sessions and their transcripts, held outside the React tree.
@@ -37,6 +38,11 @@ export interface ShellSession {
    *  once the transcript started surviving tab switches, the re-runs became
    *  visible as the same command executing again on every switch. */
   autoRanCommand: boolean;
+  /** The shell's AI helper, which unmounts with the tab exactly like the chat
+   *  in DocumentViewer does — it just never got the same treatment, so the
+   *  panel collapsed and its transcript vanished on every tab switch. */
+  aiOpen: boolean;
+  aiMessages: ChatMessage[];
 }
 
 const sessions = new Map<string, ShellSession>();
@@ -54,6 +60,8 @@ export function writeShellSession(key: string, patch: Partial<ShellSession>): vo
     entries: patch.entries ?? prev?.entries ?? [],
     currentDb: patch.currentDb ?? prev?.currentDb ?? '',
     autoRanCommand: patch.autoRanCommand ?? prev?.autoRanCommand ?? false,
+    aiOpen: patch.aiOpen ?? prev?.aiOpen ?? false,
+    aiMessages: patch.aiMessages ?? prev?.aiMessages ?? [],
   });
 }
 
@@ -70,6 +78,19 @@ export async function disposeShellSession(key: string): Promise<void> {
   sessions.delete(key);
   if (!session?.sessionId) return;
   await invoke('stop_mongosh_session', { sessionId: session.sessionId }).catch(() => undefined);
+}
+
+/**
+ * Stop the running process but KEEP the tab's transcript and settings, so the
+ * shell can start a fresh session without losing the scrollback. This is what
+ * the Restart control uses; `disposeShellSession` is for a tab going away.
+ */
+export async function stopShellSessionProcess(key: string): Promise<void> {
+  const session = sessions.get(key);
+  if (!session?.sessionId) return;
+  const { sessionId } = session;
+  writeShellSession(key, { sessionId: null });
+  await invoke('stop_mongosh_session', { sessionId }).catch(() => undefined);
 }
 
 /** Follow a tab that was rebound to a new id (App's rebindProfileTabs). The

@@ -221,7 +221,8 @@
       "switchedToDb": "zur Datenbank {{db}} gewechselt",
       "destructiveCancelled": "Destruktiver Befehl abgebrochen.",
       "resultToDataViewer_one": "{{count}} Dokument -> Datenansicht",
-      "resultToDataViewer_other": "{{count}} Dokumente -> Datenansicht"
+      "resultToDataViewer_other": "{{count}} Dokumente -> Datenansicht",
+      "sessionRestarting": "mongosh-Sitzung wird neu gestartet…"
     },
     "errors": {
       "invalidJsonLiteral": "Ungültiges mongosh-JSON-Literal: {{value}}",
@@ -250,7 +251,9 @@
     "toolbar": {
       "run": "Ausführen",
       "aiToggleTitle": "KI-Assistent",
-      "aiToggleLabel": "KI"
+      "aiToggleLabel": "KI",
+      "restartSession": "Neu starten",
+      "restartSessionTitle": "Diese mongosh-Sitzung beenden und eine neue starten"
     },
     "editor": {
       "loading": "Editor wird geladen..."
