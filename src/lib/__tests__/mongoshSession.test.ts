@@ -475,6 +475,29 @@ describe('mongosh session registry (#240)', () => {
     expect(restored?.sessionId).toBe('sess-moved');
   });
 
+  it('disowns a claim it issued before learning the tab had moved', async () => {
+    // The hydrate began, the tab moved away from this renderer, and the claim
+    // lands after the destination's — stamping this window back over it.
+    let releaseClaim: (v: unknown) => void = () => {};
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'claim_shell_tab_state'
+        ? new Promise((res) => { releaseClaim = res; })
+        : Promise.resolve(undefined),
+    );
+
+    const loading = loadShellSession('tab-1');
+    await Promise.resolve();
+    forgetShellSession('tab-1'); // the crossWindow event says the tab left
+    releaseClaim({ sessionId: 'sess-1' });
+
+    expect(await loading).toBeUndefined();
+    expect(invokeMock).toHaveBeenCalledWith('disown_shell_tab_state', {
+      tabId: 'tab-1',
+      windowId: 'main',
+    });
+    expect(readShellSession('tab-1')).toBeUndefined();
+  });
+
   it('ignores a backend value that is not a session object', async () => {
     // The payload crosses IPC as opaque JSON; anything merely truthy (an array,
     // say) must not be cached and then read for fields it does not have.

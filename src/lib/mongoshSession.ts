@@ -236,10 +236,22 @@ export async function loadShellSession(key: string): Promise<ShellSession | unde
   // owner's close sweep. Fetching and then writing the fetched value back would
   // race the old renderer's final write and replay a stale snapshot over it,
   // since a normal write replaces the whole entry.
+  // The epoch before the round trip. If it has moved by the time the claim
+  // lands, this renderer has since been told the tab left it — the claim was
+  // issued before the move and would otherwise stamp this window back over the
+  // destination's. Disown instead; whoever really has the tab takes it again on
+  // its next write.
+  const epochAtClaim = shellSessionEpoch(key);
   const stored = await invoke<unknown>('claim_shell_tab_state', {
     tabId: key,
     windowId: windowLabel(),
   }).catch(() => null);
+  if (shellSessionEpoch(key) !== epochAtClaim) {
+    void invoke('disown_shell_tab_state', { tabId: key, windowId: windowLabel() }).catch(
+      () => undefined
+    );
+    return undefined;
+  }
   const session = normalizeStoredSession(stored);
   if (!session) return undefined;
   sessions.set(key, session);

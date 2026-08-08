@@ -4443,6 +4443,32 @@ mod shell_tab_state_tests {
     }
 
     #[test]
+    fn disowning_only_gives_up_a_claim_you_still_hold() {
+        use crate::{claim_shell_tab_state_impl, disown_shell_tab_state_impl};
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "s", "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        // Someone else has taken it since; the late disown must not strip them.
+        claim_shell_tab_state_impl(&st, "tab-1", "win-2").unwrap();
+        disown_shell_tab_state_impl(&st, "tab-1", "win-1").unwrap();
+        assert_eq!(
+            shell_tab_ids_for_window(&st, "win-2").unwrap(),
+            vec!["tab-1".to_string()]
+        );
+
+        // The real owner giving it up leaves it unowned, ready to be re-taken.
+        disown_shell_tab_state_impl(&st, "tab-1", "win-2").unwrap();
+        assert!(shell_tab_ids_for_window(&st, "win-2").unwrap().is_empty());
+        let stored = get_shell_tab_state_impl(&st, "tab-1").unwrap().unwrap();
+        assert_eq!(stored.get("sessionId").unwrap(), "s", "the rest of the value survived");
+    }
+
+    #[test]
     fn claiming_a_tab_with_no_state_is_a_no_op() {
         use crate::claim_shell_tab_state_impl;
         assert_eq!(

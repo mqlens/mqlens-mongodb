@@ -895,6 +895,35 @@ pub fn window_is_closed(state: &AppState, window_id: &str) -> Result<bool, Strin
     Ok(state.closed_windows.lock_safe()?.contains(window_id))
 }
 
+/// Give up ownership of a tab, but only if `window_id` still holds it.
+///
+/// A renderer can start hydrating a tab and learn only afterwards that the tab
+/// has moved away from it — its claim is then in flight and lands after the
+/// destination's, stamping the wrong window back. It disowns itself when it
+/// finds out; the tab is left with no owner, and whoever actually has it takes
+/// it again on its next write. Conditional so a renderer cannot disown a tab
+/// that has since been claimed by someone else.
+pub fn disown_shell_tab_state_impl(
+    state: &AppState,
+    tab_id: &str,
+    window_id: &str,
+) -> Result<(), String> {
+    let mut map = state.shell_tab_state.lock_safe()?;
+    let Some(value) = map.get_mut(tab_id) else {
+        return Ok(());
+    };
+    let is_ours = value
+        .get("windowId")
+        .and_then(|w| w.as_str())
+        .is_some_and(|owner| owner == window_id);
+    if is_ours {
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("windowId");
+        }
+    }
+    Ok(())
+}
+
 /// The tab ids whose stored shell state was written by `window_id`.
 ///
 /// Ownership is read from the state the renderer stamped, not from the
@@ -1226,6 +1255,15 @@ fn claim_shell_tab_state(
     window_id: String,
 ) -> Result<Option<serde_json::Value>, String> {
     claim_shell_tab_state_impl(&state, &tab_id, &window_id)
+}
+
+#[tauri::command]
+fn disown_shell_tab_state(
+    state: tauri::State<'_, AppState>,
+    tab_id: String,
+    window_id: String,
+) -> Result<(), String> {
+    disown_shell_tab_state_impl(&state, &tab_id, &window_id)
 }
 
 /// Close a tab's shell for good: take its state and stop the child it named,
@@ -2400,6 +2438,7 @@ pub fn run() {
             set_shell_tab_state,
             clear_shell_tab_state,
             claim_shell_tab_state,
+            disown_shell_tab_state,
             close_shell_tab_session,
             rename_shell_tab_state,
             disconnect_db,
