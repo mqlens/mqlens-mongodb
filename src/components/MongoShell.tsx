@@ -26,6 +26,7 @@ import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 type ShellTab = 'console' | 'viewer';
 
 import {
+  loadShellSession,
   readShellSession,
   stopShellSessionProcess,
   writeShellSession,
@@ -276,6 +277,35 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // Which retry generation we are already attached for. Seeded to 0 when a
   // session was restored, so the start effect reattaches instead of respawning.
   const attachedNonce = useRef<number | null>(storedSession?.sessionId ? 0 : null);
+
+  // After a hot reload or a window refresh the in-memory cache is empty, but the
+  // backend still holds this tab's state and its mongosh child is still running.
+  // Pull it back before the start effect can decide there is nothing to attach
+  // to and spawn a duplicate.
+  const [hydrated, setHydrated] = useState(Boolean(storedSession) || !sessionKey);
+  useEffect(() => {
+    if (hydrated || !sessionKey) return;
+    let alive = true;
+    void loadShellSession(sessionKey).then((restored) => {
+      if (!alive) return;
+      if (restored) {
+        if (restored.entries.length) setEntries(restored.entries);
+        if (restored.currentDb) setCurrentDb(restored.currentDb);
+        setAiMessages(restored.aiMessages);
+        setIsAIOpenState(restored.aiOpen);
+        autoRunRef.current = restored.autoRanCommand;
+        if (restored.sessionId) {
+          setSessionId(restored.sessionId);
+          setSessionAttempted(true);
+          attachedNonce.current = 0;
+        }
+      }
+      setHydrated(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [hydrated, sessionKey]);
   const [retryNonce, setRetryNonce] = useState(0);
 
   // Restart the session without losing the scrollback: stop the process, note
@@ -402,6 +432,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   };
 
   useEffect(() => {
+    // Waiting on the backend lookup above: starting before it lands would spawn
+    // a second child for a tab that already has one.
+    if (!hydrated) return;
     if (mongoshPath === null) return;
     if (!connectionUri) {
       setSessionAttempted(true);
@@ -479,7 +512,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     };
     // The session is started once per shell tab. currentDb is intentionally used only as startup database.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, connectionUri, mongoshPath, retryNonce, sessionKey]);
+  }, [connectionId, connectionUri, mongoshPath, retryNonce, sessionKey, hydrated]);
 
   useEffect(() => {
     const el = scrollRef.current;

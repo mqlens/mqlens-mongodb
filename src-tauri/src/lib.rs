@@ -696,6 +696,59 @@ pub async fn run_mongosh_command_impl(
     run_mongosh_command_on_session(&session, command).await
 }
 
+/// Per-tab shell state, held backend-side so a frontend hot reload or window
+/// refresh cannot lose the mapping from a tab to its running mongosh process.
+///
+/// Module state in the renderer did not survive either: the map came back
+/// empty, the tab concluded it had no session and started a second one, and the
+/// original mongosh child was orphaned with no id left to stop it. The backend
+/// already owns those children, so it is the honest owner of the mapping too.
+/// The payload stays opaque JSON — its shape is a frontend concern.
+pub fn get_shell_tab_state_impl(
+    state: &AppState,
+    tab_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    Ok(state.shell_tab_state.lock_safe()?.get(tab_id).cloned())
+}
+
+pub fn set_shell_tab_state_impl(
+    state: &AppState,
+    tab_id: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    state
+        .shell_tab_state
+        .lock_safe()?
+        .insert(tab_id.to_string(), value);
+    Ok(())
+}
+
+/// Forget a tab's state. Deliberately does NOT stop its mongosh session: the
+/// frontend stops that explicitly, which keeps "this tab closed" and "restart
+/// this session" distinguishable.
+pub fn clear_shell_tab_state_impl(state: &AppState, tab_id: &str) -> Result<(), String> {
+    state.shell_tab_state.lock_safe()?.remove(tab_id);
+    Ok(())
+}
+
+/// Move a tab's state to a new id, for the rebind that renames a restored tab.
+pub fn rename_shell_tab_state_impl(
+    state: &AppState,
+    old_id: &str,
+    new_id: &str,
+) -> Result<(), String> {
+    let mut map = state.shell_tab_state.lock_safe()?;
+    if let Some(value) = map.remove(old_id) {
+        map.insert(new_id.to_string(), value);
+    }
+    Ok(())
+}
+
+pub fn clear_all_shell_tab_state_impl(state: &AppState) -> Result<(), String> {
+    state.shell_tab_state.lock_safe()?.clear();
+    Ok(())
+}
+
 pub async fn stop_mongosh_session_impl(state: &AppState, session_id: &str) -> Result<(), String> {
     let session = {
         let mut sessions = state.mongosh_sessions.lock_safe()?;
@@ -968,6 +1021,42 @@ async fn run_mongosh_command(
     command: String,
 ) -> Result<MongoshCommandOutput, String> {
     run_mongosh_command_impl(&state, &session_id, &command).await
+}
+
+#[tauri::command]
+fn get_shell_tab_state(
+    state: tauri::State<'_, AppState>,
+    tab_id: String,
+) -> Result<Option<serde_json::Value>, String> {
+    get_shell_tab_state_impl(&state, &tab_id)
+}
+
+#[tauri::command]
+fn set_shell_tab_state(
+    state: tauri::State<'_, AppState>,
+    tab_id: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    set_shell_tab_state_impl(&state, &tab_id, value)
+}
+
+#[tauri::command]
+fn clear_shell_tab_state(state: tauri::State<'_, AppState>, tab_id: String) -> Result<(), String> {
+    clear_shell_tab_state_impl(&state, &tab_id)
+}
+
+#[tauri::command]
+fn rename_shell_tab_state(
+    state: tauri::State<'_, AppState>,
+    old_id: String,
+    new_id: String,
+) -> Result<(), String> {
+    rename_shell_tab_state_impl(&state, &old_id, &new_id)
+}
+
+#[tauri::command]
+fn clear_all_shell_tab_state(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    clear_all_shell_tab_state_impl(&state)
 }
 
 #[tauri::command]
@@ -2111,6 +2200,11 @@ pub fn run() {
             start_mongosh_session,
             run_mongosh_command,
             stop_mongosh_session,
+            get_shell_tab_state,
+            set_shell_tab_state,
+            clear_shell_tab_state,
+            rename_shell_tab_state,
+            clear_all_shell_tab_state,
             disconnect_db,
             set_connection_meta,
             connection_list,

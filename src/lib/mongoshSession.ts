@@ -46,23 +46,47 @@ export interface ShellSession {
 }
 
 /**
- * Survives Vite hot module replacement.
+ * In-memory cache over the BACKEND's per-tab store.
  *
- * In dev, editing anything in this module's graph replaces the module and a
- * plain `new Map()` would start empty — the tab then finds no stored session,
- * starts a second one, and the ORIGINAL mongosh process is orphaned, because
- * the id that could have stopped it lived only in the map that was just
- * discarded. That shows up as the shell suddenly demanding mongosh again after
- * a code change, with stray processes accumulating behind it.
+ * The backend is the source of truth (`get/set_shell_tab_state`), because
+ * renderer state does not survive a Vite hot reload or a window refresh: the
+ * map came back empty, the tab concluded it had no session and started a second
+ * one, and the original mongosh child was orphaned with no id left to stop it.
+ * The backend already owns those children.
  *
- * Reusing the same Map instance across replacements keeps sessions attached and
- * keeps every process reachable by `disposeShellSession`. No effect on a
- * packaged build, where `import.meta.hot` is undefined.
+ * This cache exists only so the common case stays synchronous — a mounted
+ * component can seed itself without waiting on IPC. After a hot reload it is
+ * empty and `loadShellSession` refills it from the backend.
  */
 const sessions: Map<string, ShellSession> =
   import.meta.hot?.data?.shellSessions ?? new Map<string, ShellSession>();
-// `data` is absent under vitest, where `import.meta.hot` exists but is inert.
+// Reuse the same instance across hot replacements too, so the common path does
+// not even need the backend round trip during development.
 if (import.meta.hot?.data) import.meta.hot.data.shellSessions = sessions;
+
+/** Write-through to the backend. Fire-and-forget: the cache is already updated,
+ *  and a failed mirror must never break the shell. */
+function persist(key: string, session: ShellSession): void {
+  void invoke('set_shell_tab_state', { tabId: key, value: session }).catch(() => undefined);
+}
+
+/**
+ * Read a tab's state from the backend, populating the cache.
+ *
+ * Callers use this when {@link readShellSession} misses — after a hot reload or
+ * a refresh, when the cache is empty but a mongosh child is still running and
+ * must be reattached rather than duplicated.
+ */
+export async function loadShellSession(key: string): Promise<ShellSession | undefined> {
+  const cached = sessions.get(key);
+  if (cached) return cached;
+  const stored = await invoke<ShellSession | null>('get_shell_tab_state', { tabId: key }).catch(
+    () => null,
+  );
+  if (!stored) return undefined;
+  sessions.set(key, stored);
+  return stored;
+}
 
 export function readShellSession(key: string): ShellSession | undefined {
   return sessions.get(key);
@@ -72,14 +96,16 @@ export function readShellSession(key: string): ShellSession | undefined {
  *  field without knowing the rest. */
 export function writeShellSession(key: string, patch: Partial<ShellSession>): void {
   const prev = sessions.get(key);
-  sessions.set(key, {
+  const next: ShellSession = {
     sessionId: patch.sessionId !== undefined ? patch.sessionId : (prev?.sessionId ?? null),
     entries: patch.entries ?? prev?.entries ?? [],
     currentDb: patch.currentDb ?? prev?.currentDb ?? '',
     autoRanCommand: patch.autoRanCommand ?? prev?.autoRanCommand ?? false,
     aiOpen: patch.aiOpen ?? prev?.aiOpen ?? false,
     aiMessages: patch.aiMessages ?? prev?.aiMessages ?? [],
-  });
+  };
+  sessions.set(key, next);
+  persist(key, next);
 }
 
 /**
@@ -91,8 +117,9 @@ export function writeShellSession(key: string, patch: Partial<ShellSession>): vo
  * tab teardown must not be able to throw.
  */
 export async function disposeShellSession(key: string): Promise<void> {
-  const session = sessions.get(key);
+  const session = sessions.get(key) ?? (await loadShellSession(key));
   sessions.delete(key);
+  void invoke('clear_shell_tab_state', { tabId: key }).catch(() => undefined);
   if (!session?.sessionId) return;
   await invoke('stop_mongosh_session', { sessionId: session.sessionId }).catch(() => undefined);
 }
@@ -115,6 +142,7 @@ export async function stopShellSessionProcess(key: string): Promise<void> {
  *  dead id would strand a live mongosh process that nothing can stop, and the
  *  rebound tab would start a second one. */
 export function renameShellSession(oldKey: string, newKey: string): void {
+  void invoke('rename_shell_tab_state', { oldId: oldKey, newId: newKey }).catch(() => undefined);
   const session = sessions.get(oldKey);
   if (!session) return;
   sessions.delete(oldKey);
@@ -129,4 +157,10 @@ export async function disposeAllShellSessions(): Promise<void> {
 /** Test seam: forget everything without touching the backend. */
 export function resetShellSessions(): void {
   sessions.clear();
+}
+
+/** Forget every tab, in the cache and the backend. */
+export async function disposeAllShellTabState(): Promise<void> {
+  sessions.clear();
+  await invoke('clear_all_shell_tab_state').catch(() => undefined);
 }

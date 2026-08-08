@@ -81,6 +81,16 @@ pub struct AppState {
     pub mocks: Mutex<HashMap<String, bool>>,
     pub mock_indexes: Mutex<HashMap<String, Vec<IndexInfo>>>,
     pub mongosh_sessions: Mutex<HashMap<String, Arc<MongoshSession>>>,
+    /// Per-tab shell state (session id, scrollback, AI transcript), keyed by
+    /// frontend tab id and stored as an opaque JSON blob.
+    ///
+    /// It lives here rather than in a frontend module because module state does
+    /// not survive a Vite hot reload or a window refresh: the map came back
+    /// empty, the tab concluded it had no session and started a second one, and
+    /// the original mongosh process was orphaned with no id left to stop it.
+    /// The backend already owns those processes, so it is the honest owner of
+    /// the mapping to them too. Opaque JSON keeps the shape a frontend concern.
+    pub shell_tab_state: Mutex<HashMap<String, serde_json::Value>>,
     pub tasks: Arc<Mutex<HashMap<String, TaskInfo>>>,
     /// Per-task cancel flags for cancellable copy tasks (copy-only).
     pub cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
@@ -135,6 +145,7 @@ impl AppState {
             mocks: Mutex::new(HashMap::new()),
             mock_indexes: Mutex::new(HashMap::new()),
             mongosh_sessions: Mutex::new(HashMap::new()),
+            shell_tab_state: Mutex::new(HashMap::new()),
             tasks: Arc::new(Mutex::new(HashMap::new())),
             cancels: Arc::new(Mutex::new(HashMap::new())),
             ssh_tunnels: Mutex::new(HashMap::new()),

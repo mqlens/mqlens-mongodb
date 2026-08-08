@@ -4187,3 +4187,73 @@ mod tests {
             .expect("disconnect must succeed even with no registered meta");
     }
 }
+
+#[cfg(test)]
+mod shell_tab_state_tests {
+    use crate::state::AppState;
+    use crate::{
+        clear_all_shell_tab_state_impl, clear_shell_tab_state_impl, get_shell_tab_state_impl,
+        rename_shell_tab_state_impl, set_shell_tab_state_impl,
+    };
+
+    fn state() -> AppState {
+        AppState::new()
+    }
+
+    #[test]
+    fn stores_and_returns_a_tabs_state() {
+        let st = state();
+        let value = serde_json::json!({ "sessionId": "sess-1", "entries": [] });
+        set_shell_tab_state_impl(&st, "tab-1", value.clone()).unwrap();
+
+        assert_eq!(get_shell_tab_state_impl(&st, "tab-1").unwrap(), Some(value));
+    }
+
+    #[test]
+    fn an_unknown_tab_has_no_state() {
+        assert_eq!(get_shell_tab_state_impl(&state(), "nope").unwrap(), None);
+    }
+
+    #[test]
+    fn clearing_one_tab_leaves_the_others() {
+        let st = state();
+        set_shell_tab_state_impl(&st, "tab-1", serde_json::json!({ "sessionId": "a" })).unwrap();
+        set_shell_tab_state_impl(&st, "tab-2", serde_json::json!({ "sessionId": "b" })).unwrap();
+
+        clear_shell_tab_state_impl(&st, "tab-1").unwrap();
+
+        assert_eq!(get_shell_tab_state_impl(&st, "tab-1").unwrap(), None);
+        assert!(get_shell_tab_state_impl(&st, "tab-2").unwrap().is_some());
+    }
+
+    #[test]
+    fn rename_moves_the_state_to_the_new_tab_id() {
+        let st = state();
+        let value = serde_json::json!({ "sessionId": "sess-1" });
+        set_shell_tab_state_impl(&st, "old", value.clone()).unwrap();
+
+        rename_shell_tab_state_impl(&st, "old", "new").unwrap();
+
+        assert_eq!(get_shell_tab_state_impl(&st, "old").unwrap(), None);
+        assert_eq!(get_shell_tab_state_impl(&st, "new").unwrap(), Some(value));
+    }
+
+    #[test]
+    fn renaming_an_unknown_tab_is_a_no_op() {
+        let st = state();
+        rename_shell_tab_state_impl(&st, "missing", "new").unwrap();
+        assert_eq!(get_shell_tab_state_impl(&st, "new").unwrap(), None);
+    }
+
+    #[test]
+    fn clear_all_empties_every_tab() {
+        let st = state();
+        set_shell_tab_state_impl(&st, "tab-1", serde_json::json!({})).unwrap();
+        set_shell_tab_state_impl(&st, "tab-2", serde_json::json!({})).unwrap();
+
+        clear_all_shell_tab_state_impl(&st).unwrap();
+
+        assert_eq!(get_shell_tab_state_impl(&st, "tab-1").unwrap(), None);
+        assert_eq!(get_shell_tab_state_impl(&st, "tab-2").unwrap(), None);
+    }
+}

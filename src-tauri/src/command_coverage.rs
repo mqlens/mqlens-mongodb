@@ -76,6 +76,13 @@ const LOCAL_COMMANDS: &[&str] = &[
     "generate_mql_query",
     "detect_local_agents",
     "stop_mongosh_session", // kills the local child process, no DB write
+    // Per-tab shell state (session id, scrollback). In-process only — no DB
+    // access, and clearing a tab's entry deliberately does not stop its child.
+    "get_shell_tab_state",
+    "set_shell_tab_state",
+    "clear_shell_tab_state",
+    "rename_shell_tab_state",
+    "clear_all_shell_tab_state",
     "disconnect_db",
     "set_connection_meta", // renderer-callable with an arbitrary mode — see its own doc comment
     "connection_list",

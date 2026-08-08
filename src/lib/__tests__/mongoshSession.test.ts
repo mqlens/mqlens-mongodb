@@ -35,7 +35,9 @@ describe('mongosh session registry (#240)', () => {
       aiOpen: false,
       aiMessages: [],
     });
-    expect(invokeMock).not.toHaveBeenCalled();
+    // Writes now mirror to the backend; what must NOT happen is the child being
+    // killed just because the component went away.
+    expect(invokeMock).not.toHaveBeenCalledWith('stop_mongosh_session', expect.anything());
   });
 
   it('merges partial writes so one field can be persisted without the others', () => {
@@ -66,7 +68,7 @@ describe('mongosh session registry (#240)', () => {
 
     await disposeShellSession('tab-1');
 
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith('stop_mongosh_session', expect.anything());
     expect(readShellSession('tab-1')).toBeUndefined();
   });
 
@@ -83,6 +85,15 @@ describe('mongosh session registry (#240)', () => {
     writeShellSession('tab-1', { entries: [{ kind: 'note', text: 'output' }] });
 
     expect(readShellSession('tab-1')?.autoRanCommand).toBe(true);
+  });
+
+  it('mirrors every write to the backend, which owns the state across reloads', () => {
+    writeShellSession('tab-1', { sessionId: 'sess-1', currentDb: 'sales' });
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'set_shell_tab_state',
+      expect.objectContaining({ tabId: 'tab-1' }),
+    );
   });
 
   it('follows a tab that is rebound to a new id', () => {

@@ -10,7 +10,12 @@ import { CommandPalette, type PaletteAction } from './components/CommandPalette'
 import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
 import type { ChatMessage } from './components/AIChatPanel';
 import { clearChatRequest, renameChatRequest, resetChatRequests } from './lib/aiChatRequest';
-import { disposeAllShellSessions, disposeShellSession, renameShellSession } from './lib/mongoshSession';
+import {
+  disposeAllShellSessions,
+  disposeAllShellTabState,
+  disposeShellSession,
+  renameShellSession,
+} from './lib/mongoshSession';
 import { DataGrid, type ViewMode } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
 import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
@@ -801,7 +806,7 @@ function Workspace() {
             // stale transcript after hydrate reuses ids.
             tabChatCache.current.clear();
             resetChatRequests();
-            void disposeAllShellSessions();
+            void disposeAllShellSessions().then(disposeAllShellTabState);
             const windowTabIds = new Set(snapshot.tabs.map((t) => t.id));
             const profileNames = new Map<string, string>();
             for (const t of ws.tabs) {
@@ -2813,7 +2818,7 @@ function Workspace() {
           tabBuilderStateCache.current.clear();
           tabChatCache.current.clear();
           resetChatRequests();
-          void disposeAllShellSessions();
+          void disposeAllShellSessions().then(disposeAllShellTabState);
           dispatchLayout({ type: 'hydrate', layout: createInitialLayout([], null) });
           return;
         }
