@@ -408,6 +408,35 @@ JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
     expect(asked.messages.map((m: any) => m.text)).toEqual(['the question', 'the answer']);
   });
 
+  it('refuses to open a conversation another panel is holding', async () => {
+    // Switching to it anyway means two panels editing one transcript, each
+    // saving a complete snapshot over the other's.
+    chatStore = [
+      {
+        id: 'chat-busy',
+        title: 'someone else has this',
+        messages: [{ id: 'm0', role: 'user', text: 'someone else has this' }],
+        connectionName: 'Local',
+        database: 'test-db',
+        collection: 'users',
+        variant: 'editor',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ];
+    chatClaims['chat-busy'] = 'some-other-panel';
+
+    renderPanel('editor', { chatId: 'mine' });
+    fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
+    await waitFor(() => expect(screen.getByTestId('ai-chat-history-item-0')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('ai-chat-history-item-0'));
+
+    // Not switched to, and the panel says why rather than doing nothing.
+    await screen.findByTestId('ai-chat-history-busy');
+    expect(screen.queryByTestId('chat-msg-user')).toBeNull();
+  });
+
   it('a second tab does not adopt the conversation another tab is holding', async () => {
     // Per-tab isolation, which is why the transcript is addressed by chat id
     // rather than by collection: without this both panels would render the same

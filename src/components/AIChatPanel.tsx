@@ -175,9 +175,17 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const ownerRef = React.useRef(newPanelOwner());
   const createdAtRef = React.useRef(new Date().toISOString());
   const [activeChatId, setActiveChatIdState] = useState(activeChatIdRef.current);
-  const setActiveChatId = (id: string, createdAt = new Date().toISOString()) => {
-    releaseOpenChat(activeChatIdRef.current, ownerRef.current);
-    void claimOpenChat(id, ownerRef.current);
+  const setActiveChatId = (
+    id: string,
+    createdAt = new Date().toISOString(),
+    // `openChat` has already taken the new id and released the old one; doing
+    // it again here would release the claim it just won.
+    reclaim = true
+  ) => {
+    if (reclaim) {
+      releaseOpenChat(activeChatIdRef.current, ownerRef.current);
+      void claimOpenChat(id, ownerRef.current);
+    }
     activeChatIdRef.current = id;
     createdAtRef.current = createdAt;
     setActiveChatIdState(id);
@@ -250,10 +258,20 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     chatIdRef.current = 0;
   };
 
+  const [claimFailed, setClaimFailed] = useState(false);
   const openChat = async (id: string) => {
+    // Take it BEFORE switching. Another tab — or another window — may already
+    // have this conversation open, and both panels editing it means each saves
+    // a complete snapshot over the other's.
+    if (!(await claimOpenChat(id, ownerRef.current))) {
+      setClaimFailed(true);
+      return;
+    }
+    setClaimFailed(false);
     const stored = await loadChat(id);
     if (!stored) return;
-    setActiveChatId(stored.id, stored.createdAt);
+    releaseOpenChat(activeChatIdRef.current, ownerRef.current);
+    setActiveChatId(stored.id, stored.createdAt, false);
     setChatMessages(stored.messages);
     chatIdRef.current = maxChatIdNum(stored.messages) + 1;
   };
@@ -491,6 +509,11 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   {t('aiChatPanel.history.thisCollectionOnly')}
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuSeparator />
+                {claimFailed && (
+                  <DropdownMenuItem disabled data-testid="ai-chat-history-busy">
+                    {t('aiChatPanel.history.openElsewhere')}
+                  </DropdownMenuItem>
+                )}
                 {chats.length === 0 ? (
                   <DropdownMenuItem disabled>{t('aiChatPanel.history.empty')}</DropdownMenuItem>
                 ) : (

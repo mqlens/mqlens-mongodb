@@ -24,6 +24,7 @@
       "delete": "Delete this conversation",
       "empty": "No conversations yet",
       "newChat": "New chat",
+      "openElsewhere": "Already open in another tab",
       "thisCollectionOnly": "This collection only",
       "title": "Chat history",
       "untitled": "Untitled chat"
