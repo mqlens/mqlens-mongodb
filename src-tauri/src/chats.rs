@@ -241,6 +241,53 @@ pub async fn list_chats(
     Ok(summaries(&store.chats, scope.as_ref()))
 }
 
+/// Conversations a panel currently has open, chat id -> owner token.
+///
+/// The owner is a PANEL (`<window>#<n>`), not a window: two tabs in the same
+/// window are two panels and must not both hold one.
+///
+/// The guard has to be shared: two WINDOWS are two renderers, so a
+/// renderer-local set let both auto-adopt the same conversation, after which
+/// each saved its own transcript over the other's. Not persisted — it describes
+/// what is on screen right now, which is meaningless once the app exits.
+fn open_chats() -> MutexGuard<'static, std::collections::HashMap<String, String>> {
+    static OPEN: OnceLock<Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
+    let lock = OPEN.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Take `chat_id` for `window_id`, or report that someone else has it. Taking a
+/// chat you already hold succeeds — a remount must not lock itself out.
+#[tauri::command]
+pub async fn claim_chat(chat_id: String, owner: String) -> Result<bool, String> {
+    let mut open = open_chats();
+    match open.get(&chat_id) {
+        Some(holder) if *holder != owner => Ok(false),
+        _ => {
+            open.insert(chat_id, owner);
+            Ok(true)
+        }
+    }
+}
+
+/// Give up a claim. Ignores a claim held by someone else, so a late release
+/// from a closing panel cannot free the chat out from under its new holder.
+#[tauri::command]
+pub async fn release_chat(chat_id: String, owner: String) -> Result<(), String> {
+    let mut open = open_chats();
+    if open.get(&chat_id).is_some_and(|holder| *holder == owner) {
+        open.remove(&chat_id);
+    }
+    Ok(())
+}
+
+/// Drop every claim held by a window — called when that window closes, since
+/// its panels get no chance to release anything.
+pub fn release_window_chats(window_id: &str) {
+    let prefix = format!("{window_id}#");
+    open_chats().retain(|_, holder| !holder.starts_with(&prefix));
+}
+
 #[tauri::command]
 pub async fn load_chat(app_handle: tauri::AppHandle, id: String) -> Result<Option<Chat>, String> {
     let _guard = store_lock();

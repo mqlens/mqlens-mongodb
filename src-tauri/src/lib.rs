@@ -2358,6 +2358,8 @@ pub fn run() {
             save_app_settings,
             connections::test_mongosh_path,
             chats::list_chats,
+            chats::claim_chat,
+            chats::release_chat,
             chats::load_chat,
             chats::save_chat,
             chats::delete_chat,

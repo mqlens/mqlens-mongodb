@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { windowLabel } from '../workspace/workspaceStore';
 import type { ChatMessage } from '../components/AIChatPanel';
 
 /**
@@ -75,6 +76,13 @@ export function saveAiHistoryRetentionMonths(months: number): AiHistoryRetention
 export function retentionCutoffIso(retentionMonths: number, now = new Date()): string {
   const months = normalizeAiHistoryRetentionMonths(retentionMonths);
   const cutoff = new Date(now.getTime());
+  // Clamp the day first. `setMonth` does not shorten the date: on the 31st,
+  // going back one month lands on the 31st of a 28- or 30-day month, which
+  // overflows into the month AFTER the one intended — a one-month policy
+  // applied on 31 March would cut off at 3 March and delete four weeks of
+  // history that is still inside the configured window.
+  const target = new Date(cutoff.getFullYear(), cutoff.getMonth() - months + 1, 0).getDate();
+  cutoff.setDate(Math.min(cutoff.getDate(), target));
   cutoff.setMonth(cutoff.getMonth() - months);
   return cutoff.toISOString();
 }
@@ -101,30 +109,56 @@ export function newChatId(): string {
 }
 
 /**
- * Chats currently open in a panel in THIS renderer.
+ * Which conversations are open in a panel right now.
  *
- * A second tab on a collection must not adopt the conversation the first tab is
- * already holding: both would render it and both would save over each other. A
- * tab therefore only inherits the most recent chat if nothing else has it open,
- * and starts a fresh one otherwise.
+ * A tab must not adopt a conversation another tab is already holding: both
+ * would render it and both would then save their own transcript over the
+ * other's. The claim lives in the BACKEND because two windows are two
+ * renderers — a module-local set here would let each of them adopt the same
+ * chat, which is exactly the case it is meant to prevent.
+ *
+ * The local set is only a fast path for release and for reasoning about our own
+ * claims; the backend is the authority.
  */
-const openChats = new Set<string>();
+const locallyHeld = new Set<string>();
 
-export function claimOpenChat(id: string): void {
-  openChats.add(id);
+/**
+ * A token identifying one PANEL, not one window.
+ *
+ * Two tabs in the same window are two panels and must not both hold a chat, so
+ * a window label alone is too coarse; the window prefix is still there because
+ * a closing window has to be able to drop everything its panels held.
+ */
+let panelSeq = 0;
+export function newPanelOwner(): string {
+  panelSeq += 1;
+  return `${windowLabel()}#${panelSeq}`;
 }
 
-export function releaseOpenChat(id: string): void {
-  openChats.delete(id);
+/** Take a conversation, or find out that another panel has it. */
+export async function claimOpenChat(id: string, owner: string): Promise<boolean> {
+  const won = await invoke<boolean>('claim_chat', { chatId: id, owner }).catch(
+    // A backend that cannot answer must not stop the panel working; the worst
+    // case is the collision this guards against, which is what it was before.
+    () => true
+  );
+  if (won !== false) locallyHeld.add(id);
+  return won !== false;
 }
 
-export function isChatOpenElsewhere(id: string): boolean {
-  return openChats.has(id);
+export function releaseOpenChat(id: string, owner: string): void {
+  locallyHeld.delete(id);
+  void invoke('release_chat', { chatId: id, owner }).catch(() => undefined);
+}
+
+export function isHeldLocally(id: string): boolean {
+  return locallyHeld.has(id);
 }
 
 /** Test seam. */
 export function resetOpenChats(): void {
-  openChats.clear();
+  locallyHeld.clear();
+  panelSeq = 0;
 }
 
 /**

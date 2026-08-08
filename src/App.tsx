@@ -1941,6 +1941,19 @@ function Workspace() {
     dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
+  /** Carry a tab's chat state to its new id. A rename mints a new tab id, so
+   *  without this the renamed tab opens with no remembered conversation and an
+   *  in-flight reply is left addressed to a key nothing will mount under
+   *  again. `rebindProfileTabs` already does this for the same reason. */
+  const moveTabChatState = useCallback((oldId: string, newId: string) => {
+    const chat = tabChatCache.current.get(oldId);
+    if (chat) {
+      tabChatCache.current.set(newId, chat);
+      tabChatCache.current.delete(oldId);
+    }
+    renameChatRequest(oldId, newId);
+  }, []);
+
   const handleCollectionRenamed = (
     connectionId: string,
     dbName: string,
@@ -1972,6 +1985,7 @@ function Workspace() {
       // otherwise the live mongosh child is stranded under the dead id and the
       // renamed tab starts a second one.
       renameShellSession(oldId, newId);
+      moveTabChatState(oldId, newId);
       dispatchWorkspace({ type: 'rename_tab', oldId, newId });
     });
     invalidatePaletteNamespaceIndex(connectionId);
@@ -2040,6 +2054,7 @@ function Workspace() {
         // back to awaiting the rename when nothing is cached to remount from.
         void retargetShellSessionDatabase(newId, newName, moved);
       }
+      moveTabChatState(oldId, newId);
       dispatchWorkspace({ type: 'rename_tab', oldId, newId });
     });
     invalidatePaletteNamespaceIndex(connectionId);

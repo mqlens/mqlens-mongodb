@@ -85,6 +85,8 @@ const LOCAL_COMMANDS: &[&str] = &[
     // Local persistence only — a chat records the connection NAME it belongs
     // to, but nothing here reaches a live connection.
     "list_chats",
+    "claim_chat",
+    "release_chat",
     "load_chat",
     "save_chat",
     "delete_chat",

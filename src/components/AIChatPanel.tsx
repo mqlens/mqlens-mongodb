@@ -21,9 +21,9 @@ import {
 } from '../lib/aiChatRequest';
 import {
   claimOpenChat,
+  newPanelOwner,
   clearChats,
   deleteChat,
-  isChatOpenElsewhere,
   releaseOpenChat,
   listChats,
   loadChat,
@@ -170,11 +170,14 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // now rather than at first message, so the id is stable for the whole
   // conversation and the tab can be told about it once.
   const activeChatIdRef = React.useRef(chatId ?? newChatId());
+  // Identifies THIS panel to the shared open-chat claim: two tabs in one window
+  // are two panels, so the window label alone would let both hold a chat.
+  const ownerRef = React.useRef(newPanelOwner());
   const createdAtRef = React.useRef(new Date().toISOString());
   const [activeChatId, setActiveChatIdState] = useState(activeChatIdRef.current);
   const setActiveChatId = (id: string, createdAt = new Date().toISOString()) => {
-    releaseOpenChat(activeChatIdRef.current);
-    claimOpenChat(id);
+    releaseOpenChat(activeChatIdRef.current, ownerRef.current);
+    void claimOpenChat(id, ownerRef.current);
     activeChatIdRef.current = id;
     createdAtRef.current = createdAt;
     setActiveChatIdState(id);
@@ -184,9 +187,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // Held for as long as this panel is showing the chat, so a second tab on the
   // same collection knows not to adopt it.
   useEffect(() => {
-    claimOpenChat(activeChatIdRef.current);
     const held = activeChatIdRef.current;
-    return () => releaseOpenChat(held);
+    const owner = ownerRef.current;
+    void claimOpenChat(held, owner);
+    return () => releaseOpenChat(held, owner);
   }, [activeChatId]);
 
   useEffect(() => {
@@ -215,10 +219,12 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     let active = true;
     void (async () => {
       const [recent] = await listChats(scope);
-      // Not if another tab is already showing it: both panels would render the
-      // same conversation and then save over each other. That tab is welcome to
-      // it; this one starts fresh.
-      if (!active || !recent || isChatOpenElsewhere(recent.id)) return;
+      if (!active || !recent) return;
+      // Only if nothing else has it. Both panels would otherwise render the
+      // same conversation and then save over each other — including panels in
+      // ANOTHER window, which is why the claim is backend-side. Whoever holds
+      // it is welcome to it; this tab starts fresh.
+      if (!(await claimOpenChat(recent.id, ownerRef.current))) return;
       const stored = await loadChat(recent.id);
       if (!active || !stored || stored.messages.length === 0) return;
       setActiveChatId(stored.id, stored.createdAt);

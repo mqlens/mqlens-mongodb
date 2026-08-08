@@ -83,9 +83,20 @@ vi.mock('@/components/ui/dropdown-menu', () => {
   };
 });
 
-/** Stands in for the backend's chats.json. */
+/** Stands in for the backend's chats.json and its open-chat claims. */
 let chatStore: any[] = [];
+let chatClaims: Record<string, string> = {};
 const chatBackend = (cmd: string, args: any): unknown | undefined => {
+  if (cmd === 'claim_chat') {
+    const holder = chatClaims[args.chatId];
+    if (holder && holder !== args.owner) return false;
+    chatClaims[args.chatId] = args.owner;
+    return true;
+  }
+  if (cmd === 'release_chat') {
+    if (chatClaims[args.chatId] === args.owner) delete chatClaims[args.chatId];
+    return undefined;
+  }
   if (cmd === 'list_chats') {
     const scope = args?.scope;
     return chatStore
@@ -156,6 +167,7 @@ describe('AIChatPanel', () => {
     resetChatRequests();
     resetOpenChats();
     chatStore = [];
+    chatClaims = {};
     localStorage.clear();
     invokeMock.mockReset();
     mockBackend();

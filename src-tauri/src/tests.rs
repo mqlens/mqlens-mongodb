@@ -4302,6 +4302,60 @@ mod shell_tab_state_tests {
     }
 
 
+mod chat_claim_tests {
+    use crate::chats::{claim_chat, release_chat, release_window_chats};
+
+    #[tokio::test]
+    async fn one_panel_at_a_time_holds_a_conversation() {
+        // Two tabs in the SAME window are two panels, so the owner token is
+        // per-panel: keying this on the window would let both adopt one chat
+        // and then save their own transcript over the other's.
+        assert!(claim_chat("c1".into(), "main#1".into()).await.unwrap());
+        assert!(!claim_chat("c1".into(), "main#2".into()).await.unwrap());
+        // ...including a panel in another window.
+        assert!(!claim_chat("c1".into(), "win-2#1".into()).await.unwrap());
+        // Re-claiming your own is fine — a remount must not lock itself out.
+        assert!(claim_chat("c1".into(), "main#1".into()).await.unwrap());
+
+        release_chat("c1".into(), "main#1".into()).await.unwrap();
+        assert!(claim_chat("c1".into(), "main#2".into()).await.unwrap());
+        release_chat("c1".into(), "main#2".into()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_late_release_cannot_free_someone_else_s_chat() {
+        claim_chat("c2".into(), "main#1".into()).await.unwrap();
+        release_chat("c2".into(), "main#1".into()).await.unwrap();
+        claim_chat("c2".into(), "main#2".into()).await.unwrap();
+
+        // The first panel finishing its teardown after the second took over.
+        release_chat("c2".into(), "main#1".into()).await.unwrap();
+
+        assert!(
+            !claim_chat("c2".into(), "main#3".into()).await.unwrap(),
+            "the new holder lost its claim to a stale release"
+        );
+        release_chat("c2".into(), "main#2".into()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn closing_a_window_frees_every_chat_its_panels_held() {
+        // Those panels get no chance to release anything themselves.
+        claim_chat("c3".into(), "win-9#1".into()).await.unwrap();
+        claim_chat("c4".into(), "win-9#2".into()).await.unwrap();
+        claim_chat("c5".into(), "main#1".into()).await.unwrap();
+
+        release_window_chats("win-9");
+
+        assert!(claim_chat("c3".into(), "main#7".into()).await.unwrap());
+        assert!(claim_chat("c4".into(), "main#7".into()).await.unwrap());
+        assert!(
+            !claim_chat("c5".into(), "main#8".into()).await.unwrap(),
+            "another window's claim was collateral"
+        );
+    }
+}
+
 mod chat_store_tests {
     use crate::chats::{
         prune_expired, save_store_to_file, summaries, upsert_chat, Chat, ChatMessage, ChatScope,
