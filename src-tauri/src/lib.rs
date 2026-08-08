@@ -735,24 +735,38 @@ pub fn get_shell_tab_state_impl(
 pub fn set_shell_tab_state_impl(
     state: &AppState,
     tab_id: &str,
-    mut value: serde_json::Value,
+    value: serde_json::Value,
 ) -> Result<(), String> {
     let mut map = state.shell_tab_state.lock_safe()?;
-    // Ownership is NOT the writer's to set. A renderer whose tab has moved can
-    // still have a write in flight — the mirror is fire-and-forget — and it
-    // carries the window it knew about, which would put the departed window
-    // back on the entry and hide the child from its real owner's close sweep.
-    // `claim_shell_tab_state` is the only way ownership changes; an ordinary
-    // write keeps whatever is already recorded, and only a brand-new entry
-    // takes the owner its creator supplies.
-    if let Some(existing_owner) = map
+    let recorded_owner = map
         .get(tab_id)
         .and_then(|v| v.get("windowId"))
         .and_then(|w| w.as_str())
-        .map(|w| w.to_string())
-    {
+        .map(|w| w.to_string());
+    let writer = value
+        .get("windowId")
+        .and_then(|w| w.as_str())
+        .map(|w| w.to_string());
+
+    // A write from a renderer that no longer owns this tab is DROPPED, not
+    // merged. The mirror is fire-and-forget, so a window whose tab has moved
+    // can still have one in flight; it carries a whole snapshot taken before
+    // the move, and applying it would put back that window as owner and
+    // overwrite whatever the new owner has since recorded — its transcript, its
+    // database, even a session id that is no longer live.
+    //
+    // A write that names no window at all is trusted and keeps the recorded
+    // owner: that is how a caller with nothing to say about ownership behaves,
+    // and it must not be able to lose its own data.
+    if let (Some(owner), Some(writer)) = (recorded_owner.as_deref(), writer.as_deref()) {
+        if writer != owner {
+            return Ok(());
+        }
+    }
+    let mut value = value;
+    if let (Some(owner), None) = (recorded_owner, writer) {
         if let Some(obj) = value.as_object_mut() {
-            obj.insert("windowId".to_string(), serde_json::Value::String(existing_owner));
+            obj.insert("windowId".to_string(), serde_json::Value::String(owner));
         }
     }
     map.insert(tab_id.to_string(), value);
