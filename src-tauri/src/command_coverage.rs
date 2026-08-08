@@ -81,6 +81,9 @@ const LOCAL_COMMANDS: &[&str] = &[
     "get_shell_tab_state",
     "set_shell_tab_state",
     "clear_shell_tab_state",
+    // Takes a tab's entry and stops the child it named, atomically — same
+    // local-only footprint as the two above plus `stop_mongosh_session`.
+    "close_shell_tab_session",
     "rename_shell_tab_state",
     "disconnect_db",
     "set_connection_meta", // renderer-callable with an arbitrary mode — see its own doc comment

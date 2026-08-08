@@ -27,9 +27,12 @@ import { windowLabel } from '../workspace/workspaceStore';
 type ShellTab = 'console' | 'viewer';
 
 import {
+  dropPendingShellStart,
   loadShellSession,
   readShellSession,
+  shareShellStart,
   shellSessionEpoch,
+  watchShellSession,
   stopShellSessionProcess,
   writeShellSession,
   type ShellEntry,
@@ -353,6 +356,21 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     if (!sessionKey) return;
     persistSession({ entries, currentDb });
   }, [sessionKey, entries, currentDb]);
+
+  // ...and the other direction: pick up writes made by SOMEONE ELSE. A command
+  // that was still running when the user switched away completes against the
+  // registry, and that instance has no way to reach this one — so without this
+  // its output sat in storage, invisible until the next local append or tab
+  // switch. Assigning the same array back is a no-op for React, which is what
+  // keeps this from looping against the mirror effect above.
+  useEffect(() => {
+    if (!sessionKey) return;
+    return watchShellSession(sessionKey, (session) => {
+      setEntries((prev) => (session.entries === prev ? prev : session.entries));
+      entriesRef.current = session.entries;
+      if (session.currentDb) setCurrentDb(session.currentDb);
+    });
+  }, [sessionKey]);
   // Guided setup on session failure: a working mongosh found outside the
   // configured path (offered as one click), or null when nothing was found.
   const [detectedMongosh, setDetectedMongosh] = useState<
@@ -501,11 +519,26 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     }
     // A session already attached to this tab is still running — the process
     // outlives the unmount now, so reattach instead of spawning a second one.
-    // `retryNonce` is the deliberate exception: Retry means start fresh.
-    if (sessionKey && readShellSession(sessionKey)?.sessionId && retryNonce === attachedNonce.current) {
+    // `retryNonce` is the deliberate exception: Retry means start fresh (it
+    // clears the stored id first, so `attachedSessionId` is null by then).
+    //
+    // Read live rather than from the mount-time snapshot: an instance that
+    // mounted DURING a start has `attachedNonce.current === null`, and against
+    // a snapshot the check could never match afterwards — so it started a
+    // second child even once the first had recorded its id.
+    const attachedSessionId = sessionKey ? readShellSession(sessionKey)?.sessionId : null;
+    if (attachedSessionId && (attachedNonce.current === null || retryNonce === attachedNonce.current)) {
+      attachedNonce.current = retryNonce;
+      // Adopt it: this instance may have mounted before the id existed, and
+      // would otherwise sit behind the starting gate forever.
+      setSessionId(attachedSessionId);
+      setSessionAttempted(true);
       return;
     }
     attachedNonce.current = retryNonce;
+    // Retry/reconnect means start fresh: drop any in-flight start so the next
+    // call issues its own rather than joining the attempt being replaced.
+    if (sessionKey && retryNonce > 0) dropPendingShellStart(sessionKey);
 
     // Which start attempt this is. A dependency change (a Retry, or
     // `reconnectSignal` firing when a tool install finishes) tears this effect
@@ -523,17 +556,24 @@ export const MongoShell: React.FC<MongoShellProps> = ({
 
     const startSession = async () => {
       try {
-        const session = await invoke<MongoshSessionInfo>('start_mongosh_session', {
-          connectionId,
-          uri: connectionUri,
-          database: currentDb,
-          mongoshPath,
-          // So the backend can stop this child itself if the window closes
-          // before the start returns — at that point this renderer is gone and
-          // cannot cancel anything, and the id it would have recorded never
-          // reaches the tab state the close sweep reads.
-          windowId: windowLabel(),
-        });
+        const runStart = () =>
+          invoke<MongoshSessionInfo>('start_mongosh_session', {
+            connectionId,
+            uri: connectionUri,
+            database: currentDb,
+            mongoshPath,
+            // So the backend can stop this child itself if the window closes
+            // before the start returns — at that point this renderer is gone and
+            // cannot cancel anything, and the id it would have recorded never
+            // reaches the tab state the close sweep reads.
+            windowId: windowLabel(),
+          });
+        // Joins the start already running for this tab, if there is one. A
+        // start is slow and records nothing until it returns, so a remount
+        // partway through used to see an unattached tab and spawn a rival
+        // child — after which the two ids overwrote each other and one process
+        // was left with nothing pointing at it.
+        const session = sessionKey ? await shareShellStart(sessionKey, runStart) : await runStart();
         // Record it before the cancellation check: the tab owns the session, so
         // it must be findable by `disposeShellSession` even if this mount is
         // already gone.

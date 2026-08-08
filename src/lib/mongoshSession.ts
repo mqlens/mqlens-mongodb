@@ -97,6 +97,93 @@ function endEpoch(key: string): number {
   return next;
 }
 
+/**
+ * Starts that have been issued but have not returned yet, keyed by tab.
+ *
+ * A start is slow (spawn, drain, `use <db>`), and until it returns there is no
+ * session id anywhere — so a component remounting in the middle of one saw an
+ * unattached tab and issued a SECOND start. Both children then wrote their id
+ * over each other, leaving one process with nothing pointing at it and making
+ * the tab's eventual close stop whichever happened to be recorded.
+ *
+ * Keyed on the tab rather than held in the component, because the whole point
+ * is that the second component is a different instance. Survives HMR for the
+ * same reason the sessions map does.
+ */
+const pendingStarts: Map<string, Promise<unknown>> =
+  import.meta.hot?.data?.shellPendingStarts ?? new Map<string, Promise<unknown>>();
+if (import.meta.hot?.data) import.meta.hot.data.shellPendingStarts = pendingStarts;
+
+/**
+ * Run `task` as this tab's start, or join the one already running.
+ *
+ * The joiner gets the same result the original will, so a remount attaches to
+ * the child that is already coming rather than spawning a rival.
+ */
+export function shareShellStart<T extends { session_id: string }>(
+  key: string,
+  task: () => Promise<T>
+): Promise<T> {
+  const existing = pendingStarts.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+  const startedEpoch = shellSessionEpoch(key);
+  const started = task();
+  pendingStarts.set(key, started);
+  const clear = () => {
+    // Only our own entry: a retry may have replaced it by now.
+    if (pendingStarts.get(key) === started) pendingStarts.delete(key);
+  };
+  // The id is recorded BEFORE the slot is released, and both happen before
+  // anything awaiting `started` resumes. Otherwise there is an instant where
+  // neither the pending map nor the registry says this tab has a session, and
+  // a component re-rendering in that instant starts another child.
+  started.then((result) => {
+    // Still the current attempt, and the tab still ours. A retry calls
+    // `dropPendingShellStart`, which replaces this slot — recording the id then
+    // would hand the tab a child the retrying component is about to stop.
+    const stillCurrent = pendingStarts.get(key) === started;
+    if (stillCurrent && shellSessionEpoch(key) === startedEpoch) {
+      writeShellSession(key, { sessionId: result.session_id });
+    }
+    clear();
+  }, clear);
+  return started;
+}
+
+/** Forget a tab's in-flight start, so the next attempt really starts one. Used
+ *  by Retry, which means "start fresh" rather than "join what is running". */
+export function dropPendingShellStart(key: string): void {
+  pendingStarts.delete(key);
+}
+
+/**
+ * Components watching a key, so a write made by SOMEONE ELSE reaches the
+ * instance currently on screen.
+ *
+ * Without this, output from a command that completes off-screen lands in the
+ * registry and stays invisible until the mounted instance happens to append
+ * something of its own or the tab is switched again.
+ */
+const watchers: Map<string, Set<(session: ShellSession) => void>> = new Map();
+
+/** Subscribe to changes for `key`; returns an unsubscribe. */
+export function watchShellSession(key: string, fn: (session: ShellSession) => void): () => void {
+  const forKey = watchers.get(key) ?? new Set();
+  forKey.add(fn);
+  watchers.set(key, forKey);
+  return () => {
+    forKey.delete(fn);
+    if (forKey.size === 0) watchers.delete(key);
+  };
+}
+
+function notifyWatchers(key: string, session: ShellSession): void {
+  const forKey = watchers.get(key);
+  if (!forKey) return;
+  // Copied first: a watcher may unsubscribe itself while being notified.
+  for (const fn of [...forKey]) fn(session);
+}
+
 /** Read a tab's stored state from the backend WITHOUT caching it. Used by
  *  disposal, which must not resurrect an entry for a key it has just deleted —
  *  or, worse, overwrite the entry a reopened tab has since created. */
@@ -180,6 +267,7 @@ export function writeShellSession(
   };
   sessions.set(key, next);
   persist(key, next);
+  notifyWatchers(key, next);
 }
 
 /**
@@ -198,13 +286,19 @@ export async function disposeShellSession(key: string): Promise<void> {
   endEpoch(key);
   const cached = sessions.get(key);
   sessions.delete(key);
-  void invoke('clear_shell_tab_state', { tabId: key }).catch(() => undefined);
 
-  // Only now, and never back into the cache: an inactive tab's state can live
-  // solely in the backend, so its id has to be read to be stopped.
-  const sessionId = cached?.sessionId ?? (await fetchStoredSession(key))?.sessionId;
-  if (!sessionId) return;
-  await invoke('stop_mongosh_session', { sessionId }).catch(() => undefined);
+  // One backend call takes the entry and stops the child it names. Reading the
+  // id and clearing the entry as two commands is a race the frontend cannot
+  // win — an inactive tab's id exists only in the backend, so a clear that
+  // overtook the read would leave the child running with nothing pointing at
+  // it. The cached id is stopped too, since the mirror is fire-and-forget and
+  // an id written moments ago may not have landed there yet; stopping an
+  // already-stopped session is a no-op.
+  const closing = invoke('close_shell_tab_session', { tabId: key }).catch(() => undefined);
+  if (cached?.sessionId) {
+    await invoke('stop_mongosh_session', { sessionId: cached.sessionId }).catch(() => undefined);
+  }
+  await closing;
 }
 
 /**
@@ -321,6 +415,8 @@ export function forgetShellSession(key: string): void {
 export function resetShellSessions(): void {
   sessions.clear();
   epochs.clear();
+  pendingStarts.clear();
+  watchers.clear();
 }
 
 /** Forget every tab, in the cache and the backend. */

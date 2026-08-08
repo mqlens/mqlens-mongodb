@@ -692,6 +692,15 @@ pub async fn start_mongosh_session_impl(
         let _ = run_mongosh_command_on_session(&session, &format!("use {}", database.trim())).await;
     }
 
+    // Rechecked, because the two awaits above can take seconds (the `use` alone
+    // has a 20s ceiling) and the window can close during them. Until this
+    // function returns, the id exists nowhere the close sweep can see it, and
+    // the renderer that would have handled the result is gone.
+    if window_is_closed(state, window_id)? {
+        let _ = stop_mongosh_session_impl(state, &session_id).await;
+        return Err(format!("window {window_id} closed while mongosh was starting"));
+    }
+
     Ok(MongoshSessionInfo {
         session_id,
         stdout: startup.stdout,
@@ -741,6 +750,19 @@ pub fn set_shell_tab_state_impl(
 pub fn clear_shell_tab_state_impl(state: &AppState, tab_id: &str) -> Result<(), String> {
     state.shell_tab_state.lock_safe()?.remove(tab_id);
     Ok(())
+}
+
+/// Remove a tab's state and return whatever it held, under one lock.
+///
+/// Closing a tab has to read the session id and forget the state, and doing
+/// that as two commands is a race the frontend cannot win: an inactive tab's id
+/// exists only here, so a clear that overtakes the read leaves the mongosh
+/// child running with nothing left pointing at it.
+pub fn take_shell_tab_state_impl(
+    state: &AppState,
+    tab_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    Ok(state.shell_tab_state.lock_safe()?.remove(tab_id))
 }
 
 /// Move a tab's state to a new id, for the rebind that renames a restored tab.
@@ -1089,6 +1111,24 @@ fn set_shell_tab_state(
 #[tauri::command]
 fn clear_shell_tab_state(state: tauri::State<'_, AppState>, tab_id: String) -> Result<(), String> {
     clear_shell_tab_state_impl(&state, &tab_id)
+}
+
+/// Close a tab's shell for good: take its state and stop the child it named,
+/// so the read and the removal cannot be reordered against each other.
+#[tauri::command]
+async fn close_shell_tab_session(
+    state: tauri::State<'_, AppState>,
+    tab_id: String,
+) -> Result<(), String> {
+    let session_id = take_shell_tab_state_impl(&state, &tab_id)?.and_then(|v| {
+        v.get("sessionId")
+            .and_then(|s| s.as_str())
+            .map(|s| s.to_string())
+    });
+    if let Some(session_id) = session_id {
+        let _ = stop_mongosh_session_impl(&state, &session_id).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2244,6 +2284,7 @@ pub fn run() {
             get_shell_tab_state,
             set_shell_tab_state,
             clear_shell_tab_state,
+            close_shell_tab_session,
             rename_shell_tab_state,
             disconnect_db,
             set_connection_meta,

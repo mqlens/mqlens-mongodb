@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   disposeShellSessionsForTabs,
+  dropPendingShellStart,
+  shareShellStart,
+  watchShellSession,
   loadShellSession,
   renameShellSession,
   shellSessionEpoch,
@@ -256,31 +259,46 @@ describe('mongosh session registry (#240)', () => {
       expect(invokeMock).not.toHaveBeenCalledWith('clear_shell_tab_state', expect.anything());
     });
 
-    it('ends the epoch synchronously, before any backend lookup', async () => {
-      // The state of an inactive tab lives only in the backend, so disposal has
-      // to read it — but tab ids are deterministic, so the same key can be
-      // reopened while that read is in flight. Doing the bookkeeping after the
-      // await would end the REOPENED tab's epoch and delete its cache entry.
-      let releaseLookup: (v: unknown) => void = () => {};
+    it('ends the epoch synchronously, before the close round trip', async () => {
+      // The state of an inactive tab lives only in the backend, so closing it
+      // has to go there — but tab ids are deterministic, so the same key can be
+      // reopened while that call is in flight. Doing the bookkeeping afterwards
+      // would end the REOPENED tab's epoch and delete its cache entry.
+      let releaseClose: (v: unknown) => void = () => {};
       invokeMock.mockImplementation((cmd: string) =>
-        cmd === 'get_shell_tab_state'
-          ? new Promise((res) => { releaseLookup = res; })
+        cmd === 'close_shell_tab_session'
+          ? new Promise((res) => { releaseClose = res; })
           : Promise.resolve(undefined),
       );
 
       const disposal = disposeShellSession('tab-1');
       await Promise.resolve();
 
-      // A fresh mount takes the key over while the lookup is still pending.
+      // A fresh mount takes the key over while the close is still pending.
       const reopenedEpoch = shellSessionEpoch('tab-1');
       writeShellSession('tab-1', { sessionId: 'sess-new' }, reopenedEpoch);
 
-      releaseLookup({ sessionId: 'sess-old' });
+      releaseClose(undefined);
       await disposal;
 
-      // The old child is stopped, the reopened tab is untouched.
-      expect(invokeMock).toHaveBeenCalledWith('stop_mongosh_session', { sessionId: 'sess-old' });
+      expect(invokeMock).toHaveBeenCalledWith('close_shell_tab_session', { tabId: 'tab-1' });
       expect(readShellSession('tab-1')?.sessionId).toBe('sess-new');
+    });
+
+    it('takes the backend entry and stops its child in ONE call', async () => {
+      // Reading the id and clearing the entry as two commands is a race the
+      // frontend cannot win: an inactive tab's id exists only in the backend,
+      // so a clear that overtook the read would strand the mongosh child with
+      // nothing left pointing at it.
+      await disposeShellSession('tab-only-in-backend');
+
+      expect(invokeMock).toHaveBeenCalledWith('close_shell_tab_session', {
+        tabId: 'tab-only-in-backend',
+      });
+      expect(invokeMock).not.toHaveBeenCalledWith(
+        'clear_shell_tab_state',
+        expect.anything(),
+      );
     });
 
     it('a reopened tab is not silenced by the previous tab\'s disposal', async () => {
@@ -295,6 +313,94 @@ describe('mongosh session registry (#240)', () => {
       // ...and the previous tab's writes, holding the older epoch, still are.
       writeShellSession('tab-1', { sessionId: 'ghost' }, epoch - 1);
       expect(readShellSession('tab-1')?.sessionId).toBe('sess-2');
+    });
+  });
+
+  describe('a start that outlives one mount', () => {
+    it('joins the start already running instead of spawning a rival', async () => {
+      // A start records nothing until it returns, so a remount partway through
+      // saw an unattached tab and issued a second one; the two ids then
+      // overwrote each other and one child was left untracked.
+      let calls = 0;
+      const task = () => {
+        calls += 1;
+        return new Promise<{ session_id: string }>((res) => setTimeout(() => res({ session_id: 'sess-1' }), 5));
+      };
+
+      const first = shareShellStart('tab-1', task);
+      const second = shareShellStart('tab-1', task); // the remount
+
+      expect(calls).toBe(1);
+      expect((await first).session_id).toBe('sess-1');
+      expect((await second).session_id).toBe('sess-1');
+    });
+
+    it('starts fresh once the previous attempt has settled', async () => {
+      let calls = 0;
+      const task = () => {
+        calls += 1;
+        return Promise.resolve({ session_id: 'sess' });
+      };
+
+      await shareShellStart('tab-1', task);
+      await shareShellStart('tab-1', task);
+
+      expect(calls).toBe(2);
+    });
+
+    it('lets Retry replace an attempt rather than join it', async () => {
+      let calls = 0;
+      const task = () => {
+        calls += 1;
+        return new Promise<{ session_id: string }>(() => {}); // never settles
+      };
+
+      shareShellStart('tab-1', task);
+      dropPendingShellStart('tab-1');
+      shareShellStart('tab-1', task);
+
+      expect(calls).toBe(2);
+    });
+
+    it('a failed start does not wedge the tab', async () => {
+      const boom = () => Promise.reject(new Error('no mongosh'));
+      await expect(shareShellStart('tab-1', boom)).rejects.toThrow('no mongosh');
+
+      // The entry is gone, so the next attempt is a real one.
+      let called = false;
+      await shareShellStart('tab-1', () => {
+        called = true;
+        return Promise.resolve({ session_id: 'sess' });
+      });
+      expect(called).toBe(true);
+    });
+  });
+
+  describe('watchers', () => {
+    it('tells the mounted instance about a write made by another one', () => {
+      // The off-screen completion writes to the registry; without this the
+      // visible instance would not know until its own next append.
+      const seen: string[] = [];
+      const stop = watchShellSession('tab-1', (s) => seen.push(s.currentDb));
+
+      writeShellSession('tab-1', { currentDb: 'from-elsewhere' });
+
+      expect(seen).toEqual(['from-elsewhere']);
+      stop();
+      writeShellSession('tab-1', { currentDb: 'after-unsubscribe' });
+      expect(seen).toEqual(['from-elsewhere']);
+    });
+
+    it('does not notify for a write that was dropped as stale', () => {
+      writeShellSession('tab-1', { sessionId: 'sess-1' });
+      const epoch = shellSessionEpoch('tab-1');
+      const seen: unknown[] = [];
+      watchShellSession('tab-1', (s) => seen.push(s));
+
+      forgetShellSession('tab-1');
+      writeShellSession('tab-1', { currentDb: 'ghost' }, epoch);
+
+      expect(seen).toEqual([]);
     });
   });
 

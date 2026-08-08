@@ -828,6 +828,57 @@ describe('MongoShell Component', () => {
       });
     });
 
+    it('shows output that another instance finished off-screen, without waiting for a local append', async () => {
+      // The old instance's completion writes to the registry and has no way to
+      // reach this one. Before the subscription the output simply sat there,
+      // invisible until this instance appended something of its own.
+      render(<MongoShell {...shellProps} sessionKey="tab-shell-live" />);
+      await screen.findByText(/mongosh session attached/);
+
+      const stored = readShellSession('tab-shell-live');
+      writeShellSession('tab-shell-live', {
+        entries: [...(stored?.entries ?? []), { kind: 'text', lines: ['late arrival'] }],
+      });
+
+      expect(await screen.findByText('late arrival')).toBeInTheDocument();
+    });
+
+    it('a remount around a pending start ends up attached to exactly one child', async () => {
+      // A start records nothing until it returns, so a remount partway through
+      // saw an unattached tab and issued its own; the two ids then overwrote
+      // each other and one child was left with nothing pointing at it.
+      //
+      // Which of the two guards this exercises depends on where the remount
+      // lands relative to the start settling — before it, the shared pending
+      // start dedupes; after it, the reattach check has to read the registry
+      // live rather than the mount-time snapshot. The dedupe itself is pinned
+      // deterministically in the registry suite; this covers the invariant the
+      // user actually sees.
+      let resolveStart: (v: unknown) => void = () => {};
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+        if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+        if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+        if (cmd === 'start_mongosh_session') return new Promise((res) => { resolveStart = res; });
+        if (cmd === 'get_shell_tab_state') return Promise.resolve(null);
+        return Promise.resolve([]);
+      });
+
+      const first = render(<MongoShell {...shellProps} sessionKey="tab-shell-join" />);
+      await waitFor(() => expect(startCalls()).toBe(1));
+      first.unmount();                                    // switched away
+      render(<MongoShell {...shellProps} sessionKey="tab-shell-join" />); // and back
+
+      // Still one start, and both instances are served by it.
+      await waitFor(() => expect(startCalls()).toBe(1));
+      resolveStart({ session_id: 'the-only-child', stdout: [], stderr: [] });
+
+      await waitFor(() =>
+        expect(readShellSession('tab-shell-join')?.sessionId).toBe('the-only-child')
+      );
+      expect(startCalls()).toBe(1);
+    });
+
     it('stops a start that a retry has already superseded', async () => {
       // Retry tears the effect down and starts another attempt immediately.
       // Treating that like an unmount retained the first child, whose id the
