@@ -4304,6 +4304,30 @@ mod shell_tab_state_tests {
     }
 
     #[test]
+    fn a_write_from_a_closed_window_is_refused_and_hands_back_its_child() {
+        // The close sweep has already run, so recreating the entry would leave
+        // the mongosh child it names with nothing pointing at it. The id comes
+        // back so the caller can stop it.
+        use crate::state::LockExt;
+        let st = state();
+        st.closed_windows.lock_safe().unwrap().insert("win-9".into());
+
+        let orphan = set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-late", "windowId": "win-9" }),
+        )
+        .unwrap();
+
+        assert_eq!(orphan.as_deref(), Some("sess-late"));
+        assert_eq!(
+            get_shell_tab_state_impl(&st, "tab-1").unwrap(),
+            None,
+            "a closed window's write recreated its entry"
+        );
+    }
+
+    #[test]
     fn the_current_owner_keeps_writing_normally() {
         let st = state();
         set_shell_tab_state_impl(

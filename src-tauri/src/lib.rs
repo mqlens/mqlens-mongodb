@@ -732,11 +732,26 @@ pub fn get_shell_tab_state_impl(
     Ok(state.shell_tab_state.lock_safe()?.get(tab_id).cloned())
 }
 
+/// Applies a tab-state write, returning a session id the CALLER must stop when
+/// the write came from a window that has already closed — see below.
 pub fn set_shell_tab_state_impl(
     state: &AppState,
     tab_id: &str,
     value: serde_json::Value,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
+    // A write from a window that is already gone must not recreate its entry:
+    // the close sweep has run, so nothing would ever stop the child it names.
+    // Rejecting alone would strand that child, so the id comes back for the
+    // caller to stop — this function is sync and holds a lock, and stopping is
+    // neither.
+    if let Some(writer) = value.get("windowId").and_then(|w| w.as_str()) {
+        if window_is_closed(state, writer)? {
+            return Ok(value
+                .get("sessionId")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string()));
+        }
+    }
     let mut map = state.shell_tab_state.lock_safe()?;
     let recorded_owner = map
         .get(tab_id)
@@ -760,7 +775,7 @@ pub fn set_shell_tab_state_impl(
     // and it must not be able to lose its own data.
     if let (Some(owner), Some(writer)) = (recorded_owner.as_deref(), writer.as_deref()) {
         if writer != owner {
-            return Ok(());
+            return Ok(None);
         }
     }
     let mut value = value;
@@ -770,7 +785,7 @@ pub fn set_shell_tab_state_impl(
         }
     }
     map.insert(tab_id.to_string(), value);
-    Ok(())
+    Ok(None)
 }
 
 /// Forget a tab's state. Deliberately does NOT stop its mongosh session: the
@@ -1157,12 +1172,15 @@ fn get_shell_tab_state(
 }
 
 #[tauri::command]
-fn set_shell_tab_state(
+async fn set_shell_tab_state(
     state: tauri::State<'_, AppState>,
     tab_id: String,
     value: serde_json::Value,
 ) -> Result<(), String> {
-    set_shell_tab_state_impl(&state, &tab_id, value)
+    if let Some(orphan) = set_shell_tab_state_impl(&state, &tab_id, value)? {
+        let _ = stop_mongosh_session_impl(&state, &orphan).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]
