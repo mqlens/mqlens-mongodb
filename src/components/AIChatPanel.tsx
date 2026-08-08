@@ -94,7 +94,17 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // started a request still resumes after the tab is switched away. It must not
   // consume the settled reply in that case — the next mount needs to find it.
   const mountedRef = React.useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // Must SET the flag, not only clear it on cleanup. StrictMode double-invokes
+  // effects in development — run, clean up, run again — so a cleanup-only
+  // version latched the flag to false on mount and every reply was then
+  // discarded by the guard below: no answer, and no spinner either, because
+  // the `finally` still cleared the loading state.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const nextChatId = () => `m${chatIdRef.current++}`;
 
   useEffect(() => {

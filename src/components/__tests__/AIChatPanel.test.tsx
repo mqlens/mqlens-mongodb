@@ -1,3 +1,4 @@
+import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AIChatPanel } from '../AIChatPanel';
@@ -271,5 +272,29 @@ describe('AIChatPanel', () => {
     localStorage.setItem('mqlens-ai-helper-width', '420');
     renderPanel('editor');
     expect(screen.getByTestId('ai-helper-panel')).toHaveStyle({ width: '420px' });
+  });
+
+  it('delivers the reply under StrictMode, which double-invokes effects', async () => {
+    // The mounted guard was cleanup-only, so StrictMode's mount/cleanup/mount
+    // left it false and every reply was dropped — messages sent, nothing back,
+    // not even a spinner.
+    invokeMock.mockResolvedValue(
+      JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter: {} })
+    );
+
+    render(
+      <React.StrictMode>
+        <AIChatPanel
+          connectionId="c1" databaseName="test-db" collectionName="users" fields={[]}
+          variant="editor" isOpen sessionKey="strict-tab"
+          onClose={onClose} onInsertQuery={onInsertQuery} onInsertAndRunQuery={onInsertAndRunQuery}
+        />
+      </React.StrictMode>
+    );
+
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'show me users' } });
+    fireEvent.click(screen.getByTestId('chat-send-btn'));
+
+    expect(await screen.findByText('Here are the results.')).toBeInTheDocument();
   });
 });
