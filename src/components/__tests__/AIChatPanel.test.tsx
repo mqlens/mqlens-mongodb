@@ -274,6 +274,64 @@ describe('AIChatPanel', () => {
     expect(screen.queryByText('users prompt')).toBeNull();
   });
 
+  it('keeps two tabs on one collection as separate conversations, sharing only the stored history', async () => {
+    // The reconciliation between the per-tab state dev owns (#241) and this
+    // branch's per-collection store: `sessionKey` is the tab, `historyKey` the
+    // collection. Collapsing them would make a second tab on the same
+    // collection show the first tab's conversation.
+    invokeMock.mockResolvedValue(
+      JSON.stringify({ explanation: 'ok', queryType: 'find', filter: {}, sort: {} })
+    );
+
+    const tabA = render(
+      <AIChatPanel
+        connectionId="c1"
+        connectionName="Local"
+        databaseName="test-db"
+        collectionName="users"
+        variant="editor"
+        isOpen
+        onClose={onClose}
+        onInsertQuery={onInsertQuery}
+        onInsertAndRunQuery={onInsertAndRunQuery}
+        sessionKey="tab-a"
+        historyKey={USERS_SESSION}
+      />
+    );
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'from tab A' } });
+    fireEvent.click(screen.getByTestId('chat-send-btn'));
+    await waitFor(() => expect(screen.getByText('ok')).toBeInTheDocument());
+    tabA.unmount();
+
+    // A SECOND tab on the same collection, with its own (empty) per-tab state.
+    // It has no conversation of its own yet, so it seeds from the store — but
+    // once a tab owns messages, `initialMessages` wins over the stored copy.
+    render(
+      <AIChatPanel
+        connectionId="c1"
+        connectionName="Local"
+        databaseName="test-db"
+        collectionName="users"
+        variant="editor"
+        isOpen
+        onClose={onClose}
+        onInsertQuery={onInsertQuery}
+        onInsertAndRunQuery={onInsertAndRunQuery}
+        sessionKey="tab-b"
+        initialMessages={[{ id: 'm0', role: 'user', text: 'tab B has its own' }]}
+        historyKey={USERS_SESSION}
+      />
+    );
+
+    expect(screen.getByText('tab B has its own')).toBeInTheDocument();
+    expect(screen.queryByText('from tab A')).toBeNull();
+
+    // The History menu, though, is the collection's — both tabs see it.
+    fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
+    await waitFor(() => expect(screen.getByTestId('ai-chat-history-item-0')).toBeInTheDocument());
+    expect(screen.getByTestId('ai-chat-history-item-0')).toHaveTextContent('from tab A');
+  });
+
   it('seeds the conversation from initialMessages', () => {
     render(
       <AIChatPanel
