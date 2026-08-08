@@ -31,7 +31,13 @@ interface PendingChat {
   settled?: PendingChatReply;
 }
 
-const pending = new Map<string, PendingChat>();
+// Survives Vite hot module replacement for the same reason the shell session
+// registry does: a fresh Map would strand an in-flight request, and the reply
+// would have nowhere to land. No effect in a packaged build.
+const pending: Map<string, PendingChat> =
+  import.meta.hot?.data?.pendingChat ?? new Map<string, PendingChat>();
+// `data` is absent under vitest, where `import.meta.hot` exists but is inert.
+if (import.meta.hot?.data) import.meta.hot.data.pendingChat = pending;
 
 /**
  * Run `task` as the pending request for `key`. The returned promise never

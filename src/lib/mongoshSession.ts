@@ -45,7 +45,24 @@ export interface ShellSession {
   aiMessages: ChatMessage[];
 }
 
-const sessions = new Map<string, ShellSession>();
+/**
+ * Survives Vite hot module replacement.
+ *
+ * In dev, editing anything in this module's graph replaces the module and a
+ * plain `new Map()` would start empty — the tab then finds no stored session,
+ * starts a second one, and the ORIGINAL mongosh process is orphaned, because
+ * the id that could have stopped it lived only in the map that was just
+ * discarded. That shows up as the shell suddenly demanding mongosh again after
+ * a code change, with stray processes accumulating behind it.
+ *
+ * Reusing the same Map instance across replacements keeps sessions attached and
+ * keeps every process reachable by `disposeShellSession`. No effect on a
+ * packaged build, where `import.meta.hot` is undefined.
+ */
+const sessions: Map<string, ShellSession> =
+  import.meta.hot?.data?.shellSessions ?? new Map<string, ShellSession>();
+// `data` is absent under vitest, where `import.meta.hot` exists but is inert.
+if (import.meta.hot?.data) import.meta.hot.data.shellSessions = sessions;
 
 export function readShellSession(key: string): ShellSession | undefined {
   return sessions.get(key);

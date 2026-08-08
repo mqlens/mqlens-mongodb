@@ -127,4 +127,17 @@ describe('mongosh session registry (#240)', () => {
     expect(readShellSession('tab-1')).toBeUndefined();
     expect(readShellSession('tab-2')).toBeUndefined();
   });
+
+  it('keeps its sessions in a store that survives hot module replacement', async () => {
+    // Regression guard for a dev-only failure that looked exactly like a bug in
+    // the feature: editing any file in this module's graph replaced the module,
+    // a plain `new Map()` came back empty, the tab started a second session and
+    // the first mongosh process was orphaned with no id left to stop it.
+    const source = await import('node:fs').then((fs) =>
+      fs.readFileSync('src/lib/mongoshSession.ts', 'utf8'),
+    );
+
+    expect(source).toContain('import.meta.hot?.data?.shellSessions');
+    expect(source).toContain('import.meta.hot?.data) import.meta.hot.data.shellSessions = sessions');
+  });
 });
