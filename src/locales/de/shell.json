@@ -18,9 +18,15 @@
       "closeTitle": "KI-Assistent schließen"
     },
     "history": {
-      "clear": "Verlauf löschen",
-      "empty": "Für diese Collection wurden noch keine Prompts gesendet",
-      "title": "Prompt-Verlauf für diese Collection"
+      "clearAll": "Alle Unterhaltungen löschen",
+      "clearScope": "Unterhaltungen dieser Collection löschen",
+      "current": "geöffnet",
+      "delete": "Diese Unterhaltung löschen",
+      "empty": "Noch keine Unterhaltungen",
+      "newChat": "Neuer Chat",
+      "thisCollectionOnly": "Nur diese Collection",
+      "title": "Chat-Verlauf",
+      "untitled": "Unbenannter Chat"
     },
     "queryType": {
       "aggregate": "Aggregationspipeline",

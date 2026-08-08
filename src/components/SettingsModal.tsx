@@ -59,7 +59,7 @@ import {
   normalizeAiHistoryRetentionMonths,
   saveAiHistoryRetentionMonths,
   type AiHistoryRetentionMonths,
-} from '@/lib/aiChatSession';
+} from '@/lib/aiChatStore';
 
 interface AppSettings {
   mongosh_path: string;

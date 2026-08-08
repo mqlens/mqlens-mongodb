@@ -21,11 +21,6 @@ import {
   FAVORITES_CHANGED_EVENT,
   type FavoriteItem,
 } from '../lib/favoriteItems';
-import {
-  aiChatSessionKey,
-  loadAiChatSession,
-  saveAiChatSession,
-} from '../lib/aiChatSession';
 import { useDialogs } from './dialogs/DialogProvider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -228,10 +223,17 @@ interface DocumentViewerProps {
   /** Identifies this tab's chat so an in-flight AI request survives the
    *  unmount that happens when the user switches tabs. */
   chatSessionKey?: string;
+  /** Which stored conversation this tab has open, and the way back to App so
+   *  the choice survives a tab switch. */
+  aiChatId?: string;
+  onAIChatIdChange?: (chatId: string) => void;
   /** Restored when remounting this tab's AI helper (see App tabChatCache). */
   initialChatMessages?: ChatMessage[];
   onChatMessagesChange?: (messages: ChatMessage[]) => void;
   /** Whether the AI helper panel was open when this tab was last shown. */
+  /** The TAB's remembered open state, or undefined when the tab has none yet —
+   *  a real `false` and "no answer" mean different things here, see the mount
+   *  default below. */
   initialAIHelperOpen?: boolean;
   onAIHelperOpenChange?: (isOpen: boolean) => void;
   children?: React.ReactNode;
@@ -561,9 +563,11 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onBuilderStateChange,
   pagerRequest,
   chatSessionKey,
+  aiChatId,
+  onAIChatIdChange,
   initialChatMessages = [],
   onChatMessagesChange,
-  initialAIHelperOpen = false,
+  initialAIHelperOpen,
   onAIHelperOpenChange,
   children
 }) => {
@@ -649,23 +653,24 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // the per-collection store, which is what makes the panel come back open
   // after an app restart. The transcript itself is handled the same way inside
   // AIChatPanel; see its `historyKey` prop.
-  const aiSessionKey = useMemo(
-    () =>
-      aiChatSessionKey({
-        connectionName,
-        database: databaseName,
-        collection: collectionName,
-        variant: 'editor',
-      }),
-    [connectionName, databaseName, collectionName]
-  );
+  const aiOpenPrefKey = `mqlens-ai-open::editor::${connectionName}::${databaseName}::${collectionName}`;
   const [isAIHelperOpen, setIsAIHelperOpenState] = useState(
-    () => initialAIHelperOpen ?? loadAiChatSession(aiSessionKey)?.isOpen ?? false
+    // `initialAIHelperOpen` is the TAB's answer and wins when it has one. On the
+    // first mount after a restart the tab cache is empty and the prop is
+    // undefined — not `false` — so the remembered preference can still apply.
+    () => initialAIHelperOpen ?? localStorage.getItem(aiOpenPrefKey) === 'true'
   );
   const setIsAIHelperOpen = (open: boolean) => {
     setIsAIHelperOpenState(open);
     onAIHelperOpenChange?.(open);
-    saveAiChatSession(aiSessionKey, { isOpen: open });
+    // Whether the panel is showing is a UI preference, like its width — kept
+    // next to it in localStorage rather than in the conversation store, which
+    // holds conversations.
+    try {
+      localStorage.setItem(aiOpenPrefKey, String(open));
+    } catch {
+      /* best-effort */
+    }
   };
 
   // Pipeline undo/redo: every stage mutation goes through commitStages, which
@@ -2384,7 +2389,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 initialMessages={initialChatMessages}
                 onMessagesChange={onChatMessagesChange}
                 sessionKey={chatSessionKey}
-                historyKey={aiSessionKey}
+                chatId={aiChatId}
+                onChatIdChange={onAIChatIdChange}
               />
             </ResizablePanel>
           </>

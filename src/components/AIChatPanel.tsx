@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { History, Sparkles, User, X } from 'lucide-react';
+import { History, Plus, Sparkles, Trash2, User, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -19,12 +20,19 @@ import {
   type PendingChatReply,
 } from '../lib/aiChatRequest';
 import {
-  clearAiChatPrompts,
-  loadAiChatSession,
-  recordAiChatPrompt,
-  saveAiChatSession,
-  type AiChatSessionPrompt,
-} from '../lib/aiChatSession';
+  claimOpenChat,
+  clearChats,
+  deleteChat,
+  isChatOpenElsewhere,
+  releaseOpenChat,
+  listChats,
+  loadChat,
+  newChatId,
+  saveChat,
+  titleFromMessages,
+  type ChatScope,
+  type ChatSummary,
+} from '../lib/aiChatStore';
 
 export type { GeneratedQuery };
 
@@ -60,15 +68,16 @@ interface AIChatPanelProps {
    *  started here is still lost when the tab is switched away. */
   sessionKey?: string;
   /**
-   * Stable per-COLLECTION key (`aiChatSessionKey(...)`) for the durable store:
-   * prompt History, and the transcript that survives an app restart.
+   * Which stored conversation this tab has open, and how to tell the tab when
+   * that changes (New chat, or picking one from the history).
    *
-   * Deliberately separate from `sessionKey`. Two tabs on one collection are two
-   * conversations — that is what the per-tab state above is for — but they
-   * share one History and one stored transcript, because those are properties
-   * of the collection, not of a tab that happens to be open.
+   * The transcript itself lives in the backend (`lib/aiChatStore`); the tab
+   * only remembers WHICH chat it is looking at. That is what lets two tabs on
+   * one collection hold different conversations while both can reach every
+   * conversation the collection has ever had.
    */
-  historyKey?: string;
+  chatId?: string;
+  onChatIdChange?: (chatId: string) => void;
 }
 
 /** Highest numeric suffix among `mN` message ids, or -1 if none. */
@@ -89,6 +98,8 @@ const composerClassName = cn(
 );
 
 export const AIChatPanel: React.FC<AIChatPanelProps> = ({
+  connectionName,
+  databaseName,
   collectionName,
   fields = [],
   variant,
@@ -100,18 +111,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   initialMessages = [],
   onMessagesChange,
   sessionKey,
-  historyKey,
+  chatId,
+  onChatIdChange,
 }) => {
   const { t } = useTranslation('shell');
   const [chatInput, setChatInput] = useState('');
-  // The tab's own transcript wins; the stored one is the fallback for a tab
-  // opened fresh on a collection that has been talked to before (including in
-  // an earlier run of the app).
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() =>
-    initialMessages.length > 0
-      ? initialMessages
-      : (historyKey ? loadAiChatSession(historyKey)?.messages ?? [] : [])
-  );
+  // Seeded from the tab so a tab switch is instant and needs no IPC. A tab
+  // with nothing of its own adopts the collection's most recent conversation
+  // instead, in the effect below — that read has to be awaited, and gating the
+  // first render on it would flash an empty panel.
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialMessages);
   const [isChatLoading, setIsChatLoading] = useState(false);
   // Persisted, not per-tab: a panel width is a UI preference, and remounting
   // on every tab switch used to snap it back to the default. Mirrors
@@ -124,9 +133,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     localStorage.setItem(AI_HELPER_WIDTH_KEY, String(aiHelperWidth));
   }, [aiHelperWidth]);
   const [isResizingAIHelper, setIsResizingAIHelper] = useState(false);
-  const [sendHistory, setSendHistory] = useState<AiChatSessionPrompt[]>(
-    () => (historyKey ? loadAiChatSession(historyKey)?.prompts ?? [] : [])
-  );
+  const [chats, setChats] = useState<ChatSummary[]>([]);
+  // The history list defaults to this collection, which is what a user reaching
+  // for it almost always wants; unticking widens it to every conversation.
+  const [scopedOnly, setScopedOnly] = useState(true);
   const chatScrollRef = React.useRef<HTMLDivElement>(null);
   const chatIdRef = React.useRef(maxChatIdNum(initialMessages) + 1);
   // A promise continuation is not cancelled by unmount, so the instance that
@@ -146,17 +156,109 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   }, []);
   const nextChatId = () => `m${chatIdRef.current++}`;
 
+  const scope: ChatScope = useMemo(
+    () => ({
+      connectionName: connectionName ?? '',
+      database: databaseName ?? '',
+      collection: collectionName,
+      variant,
+    }),
+    [connectionName, databaseName, collectionName, variant]
+  );
+
+  // The chat this panel is writing to. A tab that has never had one gets an id
+  // now rather than at first message, so the id is stable for the whole
+  // conversation and the tab can be told about it once.
+  const activeChatIdRef = React.useRef(chatId ?? newChatId());
+  const createdAtRef = React.useRef(new Date().toISOString());
+  const [activeChatId, setActiveChatIdState] = useState(activeChatIdRef.current);
+  const setActiveChatId = (id: string, createdAt = new Date().toISOString()) => {
+    releaseOpenChat(activeChatIdRef.current);
+    claimOpenChat(id);
+    activeChatIdRef.current = id;
+    createdAtRef.current = createdAt;
+    setActiveChatIdState(id);
+    onChatIdChange?.(id);
+  };
+
+  // Held for as long as this panel is showing the chat, so a second tab on the
+  // same collection knows not to adopt it.
   useEffect(() => {
-    onMessagesChange?.(chatMessages);
-    // Mirrored to the durable per-collection store as well, so the conversation
-    // is still there after a restart. The per-tab owner above stays the
-    // authority for what this tab shows.
-    if (historyKey) saveAiChatSession(historyKey, { messages: chatMessages });
-  }, [chatMessages, onMessagesChange, historyKey]);
+    claimOpenChat(activeChatIdRef.current);
+    const held = activeChatIdRef.current;
+    return () => releaseOpenChat(held);
+  }, [activeChatId]);
 
   useEffect(() => {
-    setSendHistory(historyKey ? loadAiChatSession(historyKey)?.prompts ?? [] : []);
-  }, [historyKey]);
+    onMessagesChange?.(chatMessages);
+  }, [chatMessages, onMessagesChange]);
+
+  // Persist the conversation. Skipped while empty so opening the panel and
+  // closing it again does not litter the history with blank chats.
+  useEffect(() => {
+    if (chatMessages.length === 0) return;
+    void saveChat({
+      ...scope,
+      id: activeChatIdRef.current,
+      title: titleFromMessages(chatMessages, t('aiChatPanel.history.untitled')),
+      messages: chatMessages,
+      createdAt: createdAtRef.current,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [chatMessages, scope, t]);
+
+  // Adopt the collection's most recent conversation when this tab has none of
+  // its own — the case that makes the history feel continuous across restarts.
+  // A tab that already has messages is left alone: it is mid-conversation.
+  useEffect(() => {
+    if (chatId || initialMessages.length > 0) return;
+    let active = true;
+    void (async () => {
+      const [recent] = await listChats(scope);
+      // Not if another tab is already showing it: both panels would render the
+      // same conversation and then save over each other. That tab is welcome to
+      // it; this one starts fresh.
+      if (!active || !recent || isChatOpenElsewhere(recent.id)) return;
+      const stored = await loadChat(recent.id);
+      if (!active || !stored || stored.messages.length === 0) return;
+      setActiveChatId(stored.id, stored.createdAt);
+      setChatMessages(stored.messages);
+      // From the messages actually adopted, not from `initialMessages`: seeding
+      // the counter from an empty array would hand the next message an id the
+      // restored transcript already uses.
+      chatIdRef.current = maxChatIdNum(stored.messages) + 1;
+    })();
+    return () => {
+      active = false;
+    };
+    // Runs once for this scope; a later scope change means a different panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
+
+  const refreshChats = async () => setChats(await listChats(scopedOnly ? scope : undefined));
+
+  const startNewChat = () => {
+    setActiveChatId(newChatId());
+    setChatMessages([]);
+    setChatInput('');
+    chatIdRef.current = 0;
+  };
+
+  const openChat = async (id: string) => {
+    const stored = await loadChat(id);
+    if (!stored) return;
+    setActiveChatId(stored.id, stored.createdAt);
+    setChatMessages(stored.messages);
+    chatIdRef.current = maxChatIdNum(stored.messages) + 1;
+  };
+
+  const removeChat = async (id: string) => {
+    await deleteChat(id);
+    // Deleting the open conversation leaves the panel on a fresh one rather
+    // than showing a transcript that no longer exists anywhere.
+    if (id === activeChatIdRef.current) startNewChat();
+    await refreshChats();
+  };
 
 
   const startResizingAIHelper = (e: React.MouseEvent) => {
@@ -239,7 +341,6 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     const userMsg: ChatMessage = { id: nextChatId(), role: 'user', text };
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput('');
-    if (historyKey) setSendHistory(recordAiChatPrompt(historyKey, text));
     setIsChatLoading(true);
 
     const run = async (): Promise<PendingChatReply> => {
@@ -310,56 +411,107 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
             <span>{t('aiChatPanel.header.title')}</span>
           </div>
           <div className="flex items-center gap-0.5">
-            {historyKey && (
-              <DropdownMenu
-                onOpenChange={(open) => {
-                  if (open) setSendHistory(loadAiChatSession(historyKey)?.prompts ?? []);
-                }}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={startNewChat}
+              title={t('aiChatPanel.history.newChat')}
+              data-testid="ai-chat-new-btn"
+            >
+              <Plus size={12} />
+            </Button>
+            <DropdownMenu
+              onOpenChange={(open) => {
+                if (open) void refreshChats();
+              }}
+            >
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  title={t('aiChatPanel.history.title')}
+                  data-testid="ai-chat-history-btn"
+                >
+                  <History size={12} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="min-w-[280px] max-w-[360px]"
+                data-testid="ai-chat-history-dropdown"
               >
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    title={t('aiChatPanel.history.title')}
-                    data-testid="ai-chat-history-btn"
-                  >
-                    <History size={12} />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[240px] max-w-[320px]" data-testid="ai-chat-history-dropdown">
-                  {sendHistory.length === 0 ? (
-                    <DropdownMenuItem disabled>{t('aiChatPanel.history.empty')}</DropdownMenuItem>
-                  ) : (
-                    sendHistory.map((entry, i) => (
-                      <DropdownMenuItem
-                        key={entry.id}
-                        data-testid={`ai-chat-history-item-${i}`}
-                        onClick={() => setChatInput(entry.text)}
-                      >
-                        <span className="w-full truncate text-xs">{entry.text}</span>
-                      </DropdownMenuItem>
-                    ))
-                  )}
-                  {sendHistory.length > 0 && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        data-testid="ai-chat-history-clear"
-                        onClick={() => {
-                          clearAiChatPrompts(historyKey);
-                          setSendHistory([]);
+                <DropdownMenuCheckboxItem
+                  checked={scopedOnly}
+                  data-testid="ai-chat-history-scope-toggle"
+                  onCheckedChange={(checked) => {
+                    const next = Boolean(checked);
+                    setScopedOnly(next);
+                    void listChats(next ? scope : undefined).then(setChats);
+                  }}
+                >
+                  {t('aiChatPanel.history.thisCollectionOnly')}
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+                {chats.length === 0 ? (
+                  <DropdownMenuItem disabled>{t('aiChatPanel.history.empty')}</DropdownMenuItem>
+                ) : (
+                  chats.map((entry, i) => (
+                    <DropdownMenuItem
+                      key={entry.id}
+                      data-testid={`ai-chat-history-item-${i}`}
+                      onClick={() => void openChat(entry.id)}
+                      className="flex items-start gap-2"
+                    >
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-xs">{entry.title}</span>
+                        {/* The scope line is what makes the unscoped list
+                            readable — two chats can share a title. */}
+                        <span className="truncate text-[10px] text-muted-foreground">
+                          {`${entry.database}.${entry.collection}`}
+                          {entry.id === activeChatId ? ` · ${t('aiChatPanel.history.current')}` : ''}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        title={t('aiChatPanel.history.delete')}
+                        data-testid={`ai-chat-history-delete-${i}`}
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => {
+                          // The row itself opens the chat; deleting must not.
+                          e.stopPropagation();
+                          void removeChat(entry.id);
                         }}
-                        className="text-destructive focus:text-destructive"
                       >
-                        {t('aiChatPanel.history.clear')}
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+                        <Trash2 size={11} />
+                      </button>
+                    </DropdownMenuItem>
+                  ))
+                )}
+                {chats.length > 0 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      data-testid="ai-chat-history-clear"
+                      onClick={() => {
+                        void clearChats(scopedOnly ? scope : undefined).then(() => {
+                          startNewChat();
+                          return refreshChats();
+                        });
+                      }}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      {scopedOnly
+                        ? t('aiChatPanel.history.clearScope')
+                        : t('aiChatPanel.history.clearAll')}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               type="button"
               variant="ghost"

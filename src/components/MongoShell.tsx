@@ -23,7 +23,6 @@ import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { registerMqlensMonacoThemes } from '../lib/monacoAppTheme';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import { windowLabel } from '../workspace/workspaceStore';
-import { aiChatSessionKey, loadAiChatSession, saveAiChatSession } from '../lib/aiChatSession';
 
 type ShellTab = 'console' | 'viewer';
 
@@ -263,33 +262,19 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const [command, setCommand] = useState(defaultCommand);
   const monacoTheme = useMonacoTheme();
   const monacoFontSize = useMonacoFontSize(13);
-  // Per-collection key for the durable store. The shell's own AI state stays
-  // per TAB in the session registry (so a second shell on the same collection
-  // is its own conversation); this only adds the layer that survives a restart
-  // and backs the prompt History menu.
-  const aiSessionKey = useMemo(
-    () =>
-      aiChatSessionKey({
-        connectionName,
-        database: databaseName,
-        collection: collectionName ?? 'collection',
-        variant: 'shell',
-      }),
-    [connectionName, databaseName, collectionName]
-  );
-  const [isAIOpen, setIsAIOpenState] = useState(
-    () => storedSession?.aiOpen ?? loadAiChatSession(aiSessionKey)?.isOpen ?? false
-  );
+  const [isAIOpen, setIsAIOpenState] = useState(storedSession?.aiOpen ?? false);
   const [aiMessages, setAiMessages] = useState<ChatMessage[]>(storedSession?.aiMessages ?? []);
   const setIsAIOpen = (open: boolean) => {
     setIsAIOpenState(open);
     persistSession({ aiOpen: open });
-    saveAiChatSession(aiSessionKey, { isOpen: open });
   };
   const handleAiMessagesChange = (messages: ChatMessage[]) => {
     setAiMessages(messages);
     persistSession({ aiMessages: messages });
   };
+  // Which stored conversation this shell tab has open. The transcript lives in
+  // the backend chat store; the tab only remembers which one it is looking at.
+  const handleAiChatIdChange = (id: string) => persistSession({ aiChatId: id });
   const [pendingDestructive, setPendingDestructive] =
     useState<{ command: string; operation: string } | null>(null);
   // Restored transcript wins over a fresh banner: returning to this tab should
@@ -1308,7 +1293,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       onInsertQuery={handleAIInsert}
       onInsertAndRunQuery={handleAIInsertAndRun}
       sessionKey={sessionKey}
-      historyKey={aiSessionKey}
+      chatId={storedSession?.aiChatId}
+      onChatIdChange={handleAiChatIdChange}
       initialMessages={aiMessages}
       onMessagesChange={handleAiMessagesChange}
     />

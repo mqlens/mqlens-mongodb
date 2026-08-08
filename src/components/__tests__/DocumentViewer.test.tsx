@@ -72,8 +72,26 @@ vi.mock('@/components/ui/dropdown-menu', () => {
         {children}
       </div>
     ),
-    // Used by the AI Helper's prompt-History menu.
+    // Used by the AI Helper's chat-history menu.
     DropdownMenuSeparator: () => <hr />,
+    DropdownMenuCheckboxItem: ({
+      children,
+      onCheckedChange,
+      checked,
+      ...props
+    }: React.HTMLAttributes<HTMLDivElement> & {
+      checked?: boolean;
+      onCheckedChange?: (checked: boolean) => void;
+    }) => (
+      <div
+        role="menuitemcheckbox"
+        aria-checked={checked}
+        onClick={() => onCheckedChange?.(!checked)}
+        {...props}
+      >
+        {children}
+      </div>
+    ),
   };
 });
 

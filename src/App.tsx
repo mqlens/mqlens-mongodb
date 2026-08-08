@@ -452,7 +452,9 @@ function Workspace() {
   // so both must live here — same pattern as `tabBuilderStateCache` (#120).
   // Open state survives tab switches; only the panel close control (or opening
   // the query builder) turns it off.
-  const tabChatCache = useRef(new Map<string, { messages: ChatMessage[]; isOpen: boolean }>());
+  const tabChatCache = useRef(
+    new Map<string, { messages: ChatMessage[]; isOpen: boolean; chatId?: string }>()
+  );
   // Workspace-store mirroring plumbing (Phase 2 Task 5). Mirroring starts
   // DISABLED — the restore effect below is the only thing allowed to turn it
   // on, once workspace_get has resolved (snapshot applied or none found).
@@ -557,11 +559,21 @@ function Workspace() {
   }, []);
   const handleChatMessagesChange = useCallback((tabId: string, messages: ChatMessage[]) => {
     const prev = tabChatCache.current.get(tabId);
-    tabChatCache.current.set(tabId, { messages, isOpen: prev?.isOpen ?? false });
+    tabChatCache.current.set(tabId, { ...prev, messages, isOpen: prev?.isOpen ?? false });
   }, []);
   const handleAIHelperOpenChange = useCallback((tabId: string, isOpen: boolean) => {
     const prev = tabChatCache.current.get(tabId);
-    tabChatCache.current.set(tabId, { messages: prev?.messages ?? [], isOpen });
+    tabChatCache.current.set(tabId, { ...prev, messages: prev?.messages ?? [], isOpen });
+  }, []);
+  /** Which stored conversation a tab has open — the transcript itself lives in
+   *  the backend chat store, not here. */
+  const handleAIChatIdChange = useCallback((tabId: string, chatId: string) => {
+    const prev = tabChatCache.current.get(tabId);
+    tabChatCache.current.set(tabId, {
+      messages: prev?.messages ?? [],
+      isOpen: prev?.isOpen ?? false,
+      chatId,
+    });
   }, []);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
@@ -3756,8 +3768,10 @@ function Workspace() {
               chatSessionKey={tab.id}
               initialChatMessages={tabChatCache.current.get(tab.id)?.messages ?? []}
               onChatMessagesChange={(messages) => handleChatMessagesChange(tab.id, messages)}
-              initialAIHelperOpen={tabChatCache.current.get(tab.id)?.isOpen ?? false}
+              initialAIHelperOpen={tabChatCache.current.get(tab.id)?.isOpen}
               onAIHelperOpenChange={(isOpen) => handleAIHelperOpenChange(tab.id, isOpen)}
+              aiChatId={tabChatCache.current.get(tab.id)?.chatId}
+              onAIChatIdChange={(chatId) => handleAIChatIdChange(tab.id, chatId)}
               onExecute={q => handleExecuteQuery(tab, q)}
               onExecuteAggregate={pipeline => handleExecuteAggregate(tab, pipeline)}
               onExplain={filter => handleExplainQuery(tab, filter)}

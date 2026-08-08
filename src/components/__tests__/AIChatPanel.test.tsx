@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AIChatPanel } from '../AIChatPanel';
 import { resetChatRequests } from '../../lib/aiChatRequest';
+import { resetOpenChats } from '../../lib/aiChatStore';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
@@ -61,11 +62,69 @@ vi.mock('@/components/ui/dropdown-menu', () => {
       </div>
     ),
     DropdownMenuSeparator: () => <hr />,
+    DropdownMenuCheckboxItem: ({
+      children,
+      checked,
+      onCheckedChange,
+      ...props
+    }: React.HTMLAttributes<HTMLDivElement> & {
+      checked?: boolean;
+      onCheckedChange?: (checked: boolean) => void;
+    }) => (
+      <div
+        role="menuitemcheckbox"
+        aria-checked={checked}
+        onClick={() => onCheckedChange?.(!checked)}
+        {...props}
+      >
+        {children}
+      </div>
+    ),
   };
 });
 
-const USERS_SESSION = 'editor::Local::test-db::users';
-const ORDERS_SESSION = 'editor::Local::test-db::orders';
+/** Stands in for the backend's chats.json. */
+let chatStore: any[] = [];
+const chatBackend = (cmd: string, args: any): unknown | undefined => {
+  if (cmd === 'list_chats') {
+    const scope = args?.scope;
+    return chatStore
+      .filter(
+        (c) =>
+          !scope ||
+          (c.connectionName === scope.connectionName &&
+            c.database === scope.database &&
+            c.collection === scope.collection &&
+            c.variant === scope.variant)
+      )
+      .map(({ messages, ...rest }) => ({ ...rest, messageCount: messages.length }))
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  }
+  if (cmd === 'load_chat') return chatStore.find((c) => c.id === args.id) ?? null;
+  if (cmd === 'save_chat') {
+    chatStore = [args.chat, ...chatStore.filter((c) => c.id !== args.chat.id)];
+    return undefined;
+  }
+  if (cmd === 'delete_chat') {
+    chatStore = chatStore.filter((c) => c.id !== args.id);
+    return undefined;
+  }
+  if (cmd === 'clear_chats') {
+    chatStore = [];
+    return undefined;
+  }
+  return undefined;
+};
+
+/** Route the chat-store commands, and answer everything else with `generate`.
+ *  Every test needs the store to work — the panel lists chats on open — so no
+ *  test may replace the implementation without keeping this. */
+const mockBackend = (generate?: unknown) =>
+  invokeMock.mockImplementation((cmd: string, args: any) =>
+    cmd.endsWith('_chat') || cmd.endsWith('_chats')
+      ? Promise.resolve(chatBackend(cmd, args))
+      : Promise.resolve(generate)
+  );
 
 describe('AIChatPanel', () => {
   const onInsertQuery = vi.fn();
@@ -74,7 +133,7 @@ describe('AIChatPanel', () => {
 
   const renderPanel = (
     variant: 'editor' | 'shell' = 'shell',
-    opts?: { collectionName?: string; historyKey?: string }
+    opts?: { collectionName?: string; chatId?: string }
   ) =>
     render(
       <AIChatPanel
@@ -89,23 +148,24 @@ describe('AIChatPanel', () => {
         onInsertQuery={onInsertQuery}
         onInsertAndRunQuery={onInsertAndRunQuery}
         sessionKey={`tab-${variant}-${opts?.collectionName ?? 'users'}`}
-        historyKey={
-          opts?.historyKey ?? (variant === 'shell' ? 'shell::Local::test-db::users' : USERS_SESSION)
-        }
+        chatId={opts?.chatId}
       />
     );
 
   beforeEach(() => {
     resetChatRequests();
+    resetOpenChats();
+    chatStore = [];
     localStorage.clear();
     invokeMock.mockReset();
+    mockBackend();
     onInsertQuery.mockReset();
     onInsertAndRunQuery.mockReset();
   });
 
   it('sends a prompt, shows explanation + runnable command, and wires Insert / Insert & run', async () => {
-    invokeMock.mockResolvedValue(
-      JSON.stringify({
+    mockBackend(
+JSON.stringify({
         explanation: 'Finds adults.',
         queryType: 'find',
         filter: { age: { $gt: 30 } },
@@ -136,8 +196,8 @@ describe('AIChatPanel', () => {
   });
 
   it('editor variant shows the JSON query (no runnable command, no Copy)', async () => {
-    invokeMock.mockResolvedValue(
-      JSON.stringify({
+    mockBackend(
+JSON.stringify({
         explanation: 'Adults.',
         queryType: 'find',
         filter: { age: { $gt: 30 } },
@@ -162,8 +222,8 @@ describe('AIChatPanel', () => {
   });
 
   it('shell variant requests target shell and renders a generated script', async () => {
-    invokeMock.mockResolvedValue(
-      JSON.stringify({
+    mockBackend(
+JSON.stringify({
         explanation: 'Activates all users.',
         queryType: 'script',
         script: 'db.users.updateMany({}, { $set: { active: true } });',
@@ -197,8 +257,8 @@ describe('AIChatPanel', () => {
   });
 
   it('editor variant requests target editor', async () => {
-    invokeMock.mockResolvedValue(
-      JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
+    mockBackend(
+JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
     );
 
     renderPanel('editor');
@@ -224,112 +284,111 @@ describe('AIChatPanel', () => {
         onClose={onClose}
         onInsertQuery={onInsertQuery}
         onInsertAndRunQuery={onInsertAndRunQuery}
-        sessionKey={USERS_SESSION}
+        sessionKey="tab-closed"
       />
     );
     expect(container.querySelector('[data-testid="ai-helper-panel"]')).toBeNull();
   });
 
-  it('records sends in History and restores a prompt into the input', async () => {
-    invokeMock.mockResolvedValue(
-      JSON.stringify({ explanation: 'ok', queryType: 'find', filter: {}, sort: {} })
-    );
+  it('lists past conversations and opens the one you pick', async () => {
+    chatStore = [
+      {
+        id: 'chat-old',
+        title: 'active users over 30',
+        messages: [
+          { id: 'm0', role: 'user', text: 'active users over 30' },
+          { id: 'm1', role: 'assistant', text: 'here they are' },
+        ],
+        connectionName: 'Local',
+        database: 'test-db',
+        collection: 'users',
+        variant: 'editor',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ];
 
-    renderPanel('editor');
+    renderPanel('editor', { chatId: 'held-by-this-tab' });
 
-    fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
-    await waitFor(() =>
-      expect(screen.getByText('No prompts sent yet for this collection')).toBeInTheDocument()
-    );
-    // Close the mock menu (toggle).
-    fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
-
-    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'active users' } });
-    fireEvent.click(screen.getByTestId('chat-send-btn'));
-    await waitFor(() => expect(screen.getByText('ok')).toBeInTheDocument());
-
-    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: '' } });
     fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
     await waitFor(() => expect(screen.getByTestId('ai-chat-history-item-0')).toBeInTheDocument());
+    expect(screen.getByTestId('ai-chat-history-item-0')).toHaveTextContent('active users over 30');
+
     fireEvent.click(screen.getByTestId('ai-chat-history-item-0'));
-    expect(screen.getByTestId('chat-input')).toHaveValue('active users');
+
+    expect(await screen.findByText('here they are')).toBeInTheDocument();
   });
 
-  it('keeps History isolated per collection session', async () => {
-    invokeMock.mockResolvedValue(
-      JSON.stringify({ explanation: 'ok', queryType: 'find', filter: {}, sort: {} })
-    );
+  it('narrows the list to this collection, and widens it on request', async () => {
+    const base = {
+      messages: [{ id: 'm0', role: 'user', text: 'x' }],
+      connectionName: 'Local',
+      database: 'test-db',
+      variant: 'editor',
+      createdAt: '2026-01-01T00:00:00Z',
+    };
+    chatStore = [
+      { ...base, id: 'c-users', title: 'about users', collection: 'users', updatedAt: '2026-01-02T00:00:00Z' },
+      { ...base, id: 'c-orders', title: 'about orders', collection: 'orders', updatedAt: '2026-01-01T00:00:00Z' },
+    ];
 
-    const { unmount } = renderPanel('editor', { collectionName: 'users', historyKey: USERS_SESSION });
-    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'users prompt' } });
-    fireEvent.click(screen.getByTestId('chat-send-btn'));
-    await waitFor(() => expect(screen.getByText('ok')).toBeInTheDocument());
-    unmount();
-
-    renderPanel('editor', { collectionName: 'orders', historyKey: ORDERS_SESSION });
+    renderPanel('editor', { collectionName: 'users', chatId: 'held' });
     fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
-    await waitFor(() =>
-      expect(screen.getByText('No prompts sent yet for this collection')).toBeInTheDocument()
-    );
-    expect(screen.queryByText('users prompt')).toBeNull();
+
+    await waitFor(() => expect(screen.getByText('about users')).toBeInTheDocument());
+    expect(screen.queryByText('about orders')).toBeNull();
+
+    // Unticking "This collection only" shows every conversation.
+    fireEvent.click(screen.getByTestId('ai-chat-history-scope-toggle'));
+
+    expect(await screen.findByText('about orders')).toBeInTheDocument();
+    expect(screen.getByText('about users')).toBeInTheDocument();
   });
 
-  it('keeps two tabs on one collection as separate conversations, sharing only the stored history', async () => {
-    // The reconciliation between the per-tab state dev owns (#241) and this
-    // branch's per-collection store: `sessionKey` is the tab, `historyKey` the
-    // collection. Collapsing them would make a second tab on the same
-    // collection show the first tab's conversation.
-    invokeMock.mockResolvedValue(
-      JSON.stringify({ explanation: 'ok', queryType: 'find', filter: {}, sort: {} })
-    );
+  it('starts an empty conversation on New chat', async () => {
+    mockBackend(JSON.stringify({ explanation: 'ok', queryType: 'find', filter: {}, sort: {} }));
 
-    const tabA = render(
-      <AIChatPanel
-        connectionId="c1"
-        connectionName="Local"
-        databaseName="test-db"
-        collectionName="users"
-        variant="editor"
-        isOpen
-        onClose={onClose}
-        onInsertQuery={onInsertQuery}
-        onInsertAndRunQuery={onInsertAndRunQuery}
-        sessionKey="tab-a"
-        historyKey={USERS_SESSION}
-      />
-    );
-    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'from tab A' } });
+    renderPanel('editor', { chatId: 'chat-1' });
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'first question' } });
     fireEvent.click(screen.getByTestId('chat-send-btn'));
     await waitFor(() => expect(screen.getByText('ok')).toBeInTheDocument());
-    tabA.unmount();
 
-    // A SECOND tab on the same collection, with its own (empty) per-tab state.
-    // It has no conversation of its own yet, so it seeds from the store — but
-    // once a tab owns messages, `initialMessages` wins over the stored copy.
-    render(
-      <AIChatPanel
-        connectionId="c1"
-        connectionName="Local"
-        databaseName="test-db"
-        collectionName="users"
-        variant="editor"
-        isOpen
-        onClose={onClose}
-        onInsertQuery={onInsertQuery}
-        onInsertAndRunQuery={onInsertAndRunQuery}
-        sessionKey="tab-b"
-        initialMessages={[{ id: 'm0', role: 'user', text: 'tab B has its own' }]}
-        historyKey={USERS_SESSION}
-      />
-    );
+    fireEvent.click(screen.getByTestId('ai-chat-new-btn'));
 
-    expect(screen.getByText('tab B has its own')).toBeInTheDocument();
-    expect(screen.queryByText('from tab A')).toBeNull();
-
-    // The History menu, though, is the collection's — both tabs see it.
+    expect(screen.queryByText('first question')).toBeNull();
+    expect(screen.queryByText('ok')).toBeNull();
+    // ...and the old conversation is still in the history, not lost.
     fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
-    await waitFor(() => expect(screen.getByTestId('ai-chat-history-item-0')).toBeInTheDocument());
-    expect(screen.getByTestId('ai-chat-history-item-0')).toHaveTextContent('from tab A');
+    await waitFor(() => expect(screen.getByText('first question')).toBeInTheDocument());
+  });
+
+  it('a second tab does not adopt the conversation another tab is holding', async () => {
+    // Per-tab isolation, which is why the transcript is addressed by chat id
+    // rather than by collection: without this both panels would render the same
+    // conversation and then save over each other.
+    chatStore = [
+      {
+        id: 'chat-open-elsewhere',
+        title: 'tab one is using this',
+        messages: [{ id: 'm0', role: 'user', text: 'tab one is using this' }],
+        connectionName: 'Local',
+        database: 'test-db',
+        collection: 'users',
+        variant: 'editor',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ];
+
+    // Tab one adopts it.
+    renderPanel('editor');
+    expect(await screen.findByText('tab one is using this')).toBeInTheDocument();
+
+    // Tab two, same collection, no conversation of its own.
+    renderPanel('editor');
+    await waitFor(() => expect(screen.getAllByTestId('ai-chat-messages')).toHaveLength(2));
+    // Exactly one panel shows it — the one that claimed it.
+    expect(screen.getAllByText('tab one is using this')).toHaveLength(1);
   });
 
   it('seeds the conversation from initialMessages', () => {
@@ -341,7 +400,6 @@ describe('AIChatPanel', () => {
         onClose={onClose}
         onInsertQuery={onInsertQuery}
         onInsertAndRunQuery={onInsertAndRunQuery}
-        historyKey={USERS_SESSION}
         initialMessages={[
           { id: 'm0', role: 'user', text: 'prior prompt' },
           { id: 'm1', role: 'assistant', text: 'prior answer' },
@@ -358,8 +416,8 @@ describe('AIChatPanel', () => {
       { id: 'm0', role: 'user' as const, text: 'list adults' },
       { id: 'm1', role: 'assistant' as const, text: 'Here you go.' },
     ];
-    invokeMock.mockResolvedValue(
-      JSON.stringify({ explanation: 'Again.', queryType: 'find', filter: {}, sort: {} })
+    mockBackend(
+JSON.stringify({ explanation: 'Again.', queryType: 'find', filter: {}, sort: {} })
     );
 
     render(
@@ -400,7 +458,13 @@ describe('AIChatPanel', () => {
     // assistant's answer was silently dropped, and the tab came back showing a
     // question with no reply, no spinner and no error.
     let resolveInvoke: (v: string) => void = () => {};
-    invokeMock.mockImplementation(() => new Promise<string>((res) => { resolveInvoke = res; }));
+    invokeMock.mockImplementation((cmd: string, args: any) =>
+      cmd.endsWith('_chat') || cmd.endsWith('_chats')
+        ? Promise.resolve(chatBackend(cmd, args))
+        : new Promise<string>((res) => {
+            resolveInvoke = res;
+          })
+    );
 
     const first = render(
       <AIChatPanel
@@ -430,7 +494,13 @@ describe('AIChatPanel', () => {
 
   it('shows the spinner again when returning while the request is still running', async () => {
     let resolveInvoke: (v: string) => void = () => {};
-    invokeMock.mockImplementation(() => new Promise<string>((res) => { resolveInvoke = res; }));
+    invokeMock.mockImplementation((cmd: string, args: any) =>
+      cmd.endsWith('_chat') || cmd.endsWith('_chats')
+        ? Promise.resolve(chatBackend(cmd, args))
+        : new Promise<string>((res) => {
+            resolveInvoke = res;
+          })
+    );
 
     const first = render(
       <AIChatPanel
@@ -469,8 +539,8 @@ describe('AIChatPanel', () => {
     // The mounted guard was cleanup-only, so StrictMode's mount/cleanup/mount
     // left it false and every reply was dropped — messages sent, nothing back,
     // not even a spinner.
-    invokeMock.mockResolvedValue(
-      JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter: {} })
+    mockBackend(
+JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter: {} })
     );
 
     render(
