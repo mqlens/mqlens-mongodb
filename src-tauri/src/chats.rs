@@ -20,7 +20,23 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use tauri::Manager;
+
+/// Serialises every read-modify-write of the store.
+///
+/// Each command loads the whole document, changes one chat and writes it back.
+/// Two of those interleaving — two tabs saving at once, or two windows — means
+/// the second write is built on a snapshot taken before the first, and silently
+/// drops it. The critical sections are pure synchronous file work with no
+/// awaits inside, so a plain mutex is the right tool.
+fn store_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let lock = LOCK.get_or_init(|| Mutex::new(()));
+    // A panic elsewhere must not wedge the assistant: the data the guard
+    // protects is the file itself, and every writer rewrites it wholesale.
+    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// One bubble. `query` is the frontend's GeneratedQuery shape as raw JSON —
 /// this module never interprets it.
@@ -199,7 +215,9 @@ pub fn load_store_from_file(path: &Path) -> ChatStore {
 pub fn save_store_to_file(path: &Path, store: &ChatStore) -> Result<(), String> {
     let content = serde_json::to_string_pretty(store)
         .map_err(|e| format!("Failed to serialize chats: {}", e))?;
-    let tmp = path.with_extension("json.tmp");
+    // Includes the pid, so a second instance of the app writing at the same
+    // moment cannot rename its half-written file over this one.
+    let tmp = path.with_extension(format!("{}.json.tmp", std::process::id()));
     fs::write(&tmp, content).map_err(|e| format!("Failed to write chats file: {}", e))?;
     fs::rename(&tmp, path).map_err(|e| format!("Failed to replace chats file: {}", e))
 }
@@ -210,6 +228,7 @@ pub async fn list_chats(
     scope: Option<ChatScope>,
     cutoff_iso: Option<String>,
 ) -> Result<Vec<ChatSummary>, String> {
+    let _guard = store_lock();
     let path = get_chats_path(&app_handle);
     let mut store = load_store_from_file(&path);
     let before = store.chats.len();
@@ -224,6 +243,7 @@ pub async fn list_chats(
 
 #[tauri::command]
 pub async fn load_chat(app_handle: tauri::AppHandle, id: String) -> Result<Option<Chat>, String> {
+    let _guard = store_lock();
     let path = get_chats_path(&app_handle);
     let store = load_store_from_file(&path);
     Ok(store.chats.into_iter().find(|c| c.id == id))
@@ -235,6 +255,7 @@ pub async fn save_chat(
     chat: Chat,
     cutoff_iso: Option<String>,
 ) -> Result<(), String> {
+    let _guard = store_lock();
     let path = get_chats_path(&app_handle);
     let mut store = load_store_from_file(&path);
     store.chats = prune_expired(store.chats, cutoff_iso.as_deref().unwrap_or_default());
@@ -244,6 +265,7 @@ pub async fn save_chat(
 
 #[tauri::command]
 pub async fn delete_chat(app_handle: tauri::AppHandle, id: String) -> Result<(), String> {
+    let _guard = store_lock();
     let path = get_chats_path(&app_handle);
     let mut store = load_store_from_file(&path);
     store.chats.retain(|c| c.id != id);
@@ -256,6 +278,7 @@ pub async fn clear_chats(
     app_handle: tauri::AppHandle,
     scope: Option<ChatScope>,
 ) -> Result<(), String> {
+    let _guard = store_lock();
     let path = get_chats_path(&app_handle);
     let mut store = load_store_from_file(&path);
     match scope {

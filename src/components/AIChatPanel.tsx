@@ -283,6 +283,24 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     };
   }, [isResizingAIHelper]);
 
+  /** Put a reply into a conversation that is no longer on screen, by way of
+   *  the store — the panel's own state belongs to a different chat now. */
+  const appendToStoredChat = async (id: string, reply: PendingChatReply) => {
+    const stored = await loadChat(id);
+    if (!stored) return;
+    const message: ChatMessage = {
+      id: `m${maxChatIdNum(stored.messages) + 1}`,
+      role: 'assistant',
+      text: reply.text,
+      ...(reply.error ? { error: true } : { query: reply.query as GeneratedQuery | undefined }),
+    };
+    await saveChat({
+      ...stored,
+      messages: [...stored.messages, message],
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
   /** Append an assistant reply, assigning its id here because the id counter
    *  is panel-local and the reply may have been produced while unmounted. */
   const appendReply = (reply: PendingChatReply) => {
@@ -342,6 +360,11 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput('');
     setIsChatLoading(true);
+    // The conversation this question belongs to. New chat, opening a history
+    // item, deleting or clearing all move `activeChatIdRef` on, and an answer
+    // must not land in whichever conversation happens to be open when it
+    // arrives — it would be shown there AND persisted under that chat's id.
+    const askedIn = activeChatIdRef.current;
 
     const run = async (): Promise<PendingChatReply> => {
       const raw = await invoke<string>('generate_mql_query', {
@@ -390,6 +413,12 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       // picks it up when the user comes back to this tab.
       if (!mountedRef.current) return;
       if (sessionKey) takeSettledChatRequest(sessionKey);
+      if (activeChatIdRef.current !== askedIn) {
+        // The user moved to a different conversation while this was running.
+        // File the answer with its question rather than dropping it.
+        void appendToStoredChat(askedIn, reply);
+        return;
+      }
       appendReply(reply);
     } finally {
       setIsChatLoading(false);

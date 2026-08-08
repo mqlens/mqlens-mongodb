@@ -362,6 +362,40 @@ JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
     await waitFor(() => expect(screen.getByText('first question')).toBeInTheDocument());
   });
 
+  it('files a reply with the conversation it was asked in, not the one now open', async () => {
+    // New chat (and opening a history item, and deleting) move the panel on
+    // while a request is still running. The answer must not appear in — and be
+    // saved under — whichever conversation happens to be open when it lands.
+    let resolveGenerate: (v: string) => void = () => {};
+    invokeMock.mockImplementation((cmd: string, args: any) =>
+      cmd.endsWith('_chat') || cmd.endsWith('_chats')
+        ? Promise.resolve(chatBackend(cmd, args))
+        : new Promise<string>((res) => {
+            resolveGenerate = res;
+          })
+    );
+
+    renderPanel('editor', { chatId: 'chat-one' });
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'the question' } });
+    fireEvent.click(screen.getByTestId('chat-send-btn'));
+    await screen.findByText('the question');
+
+    // Switch away mid-request.
+    fireEvent.click(screen.getByTestId('ai-chat-new-btn'));
+    expect(screen.queryByText('the question')).toBeNull();
+
+    resolveGenerate(
+      JSON.stringify({ explanation: 'the answer', queryType: 'find', filter: {}, sort: {} })
+    );
+
+    // Not shown in the new, empty conversation...
+    await waitFor(() => expect(chatStore.find((c) => c.id === 'chat-one')).toBeTruthy());
+    expect(screen.queryByText('the answer')).toBeNull();
+    // ...and stored with the question instead.
+    const asked = chatStore.find((c) => c.id === 'chat-one');
+    expect(asked.messages.map((m: any) => m.text)).toEqual(['the question', 'the answer']);
+  });
+
   it('a second tab does not adopt the conversation another tab is holding', async () => {
     // Per-tab isolation, which is why the transcript is addressed by chat id
     // rather than by collection: without this both panels would render the same
