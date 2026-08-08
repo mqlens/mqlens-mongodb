@@ -451,7 +451,10 @@
       "duplicateTab": "Tab duplizieren",
       "detachToNewWindow": "In neues Fenster abdocken",
       "moveToWindow": "Verschieben nach {{target}}",
-      "unmirroredExplanation": "Export-/Import-Tabs bleiben in ihrem Fenster"
+      "unmirroredExplanation": "Export-/Import-Tabs bleiben in ihrem Fenster",
+      "closeTab": "Tab schließen",
+      "closeOthers": "Andere Tabs schließen",
+      "closeToTheRight": "Tabs rechts schließen"
     }
   },
   "emptyWorkspace": {

@@ -100,7 +100,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert } from 'lucide-react';
+import { FolderCode, KeyRound, X, ChevronsRight, XSquare, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 export interface QueryTab {
@@ -2205,11 +2205,20 @@ function Workspace() {
       // connect, so any stale entries either of those leaves behind
       // permanently fall outside the tab-id space any future tab could
       // ever resolve — harmless, not reachable again. No fix needed there.
+      const closing = new Set(action.tabIds);
       action.tabIds.forEach((id) => {
         generateTaskIdsRef.current.delete(id);
+        tabBuilderStateCache.current.delete(id);
         tabChatCache.current.delete(id);
         clearChatRequest(id);
       });
+      // Prune `tabs[]` here rather than leaving it to the caller. Every
+      // pre-existing call site happened to do its own `setTabs` first, so the
+      // gap was invisible until a new one did not — and the symptom is a
+      // layout/tabs mismatch ("tabs[] contains ids missing from workspace
+      // layout") rather than anything that points at the cause. Filtering twice
+      // is harmless; forgetting to filter is not. `close_tab` already does this.
+      setTabs((prev) => prev.filter((t) => !closing.has(t.id)));
     }
     dispatchLayout(action);
 
@@ -2376,6 +2385,43 @@ function Workspace() {
         icon: <ExternalLink />,
         separatorBefore: items.length > 0,
         onClick: () => handleDetachTab(tabId),
+      });
+    }
+
+    // Close group. Scoped to the pane holding this tab, which is what "others"
+    // and "to the right" mean on a tab strip — a second pane's tabs are a
+    // different strip and are left alone. `close_many` is one op rather than a
+    // loop of `close_tab`, so the pane folds once and the backend sees a single
+    // mirrored action.
+    const paneTabIds = paneOfTab(layout.root, tabId)?.tabIds ?? [];
+    const tabIndex = paneTabIds.indexOf(tabId);
+    // Quick Start is the workspace's home tab, not a document: a bulk close
+    // aimed at query tabs should not sweep it away as collateral. Closing it
+    // deliberately still works — its own X, and Close Tab when it is the tab
+    // that was right-clicked.
+    const isBulkClosable = (id: string) =>
+      id !== tabId && tabs.find((t) => t.id === id)?.type !== 'quickstart';
+    const otherTabIds = paneTabIds.filter(isBulkClosable);
+    const rightTabIds = (tabIndex >= 0 ? paneTabIds.slice(tabIndex + 1) : []).filter(isBulkClosable);
+
+    items.push({
+      label: tShell('workspaceTabBar.contextMenu.closeTab'),
+      icon: <X />,
+      separatorBefore: items.length > 0,
+      onClick: () => closeTabById(tabId),
+    });
+    if (otherTabIds.length > 0) {
+      items.push({
+        label: tShell('workspaceTabBar.contextMenu.closeOthers'),
+        icon: <XSquare />,
+        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: otherTabIds }),
+      });
+    }
+    if (rightTabIds.length > 0) {
+      items.push({
+        label: tShell('workspaceTabBar.contextMenu.closeToTheRight'),
+        icon: <ChevronsRight />,
+        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: rightTabIds }),
       });
     }
 

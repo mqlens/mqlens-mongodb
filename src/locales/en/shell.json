@@ -456,6 +456,9 @@
     "closeTab": "Close {{label}}",
     "closeTooltip": "Close tab",
     "contextMenu": {
+      "closeOthers": "Close Other Tabs",
+      "closeTab": "Close Tab",
+      "closeToTheRight": "Close Tabs to the Right",
       "detachToNewWindow": "Detach to New Window",
       "duplicateTab": "Duplicate Tab",
       "moveToWindow": "Move to {{target}}",
