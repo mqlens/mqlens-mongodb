@@ -441,10 +441,25 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   }, []);
   const appendEntries = (added: ShellEntry[]) => {
     if (added.length === 0) return;
-    const next = [...entriesRef.current, ...added];
+    if (mountedRef.current) {
+      setEntries((prev) => {
+        const next = [...prev, ...added];
+        entriesRef.current = next;
+        return next;
+      });
+      return;
+    }
+    if (!sessionKey) return;
+    // Off-screen, append against the REGISTRY rather than this instance's
+    // snapshot. A slow command can still be running when the tab is switched
+    // away and back, which leaves two MongoShell instances alive with two
+    // independent `entriesRef`s; each would write a full replacement array
+    // built from its own stale view, and the later completion would silently
+    // drop whatever the other one had appended.
+    const base = readShellSession(sessionKey)?.entries ?? entriesRef.current;
+    const next = [...base, ...added];
     entriesRef.current = next;
-    if (mountedRef.current) setEntries(next);
-    else if (sessionKey) writeShellSession(sessionKey, { entries: next });
+    writeShellSession(sessionKey, { entries: next });
   };
 
   const appendCommandOutput = (output: MongoshCommandOutput) => {
@@ -745,6 +760,13 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       const useMatch = raw.match(/^use\s+([A-Za-z0-9_.-]+)$/);
       if (useMatch) {
         setCurrentDb(useMatch[1]);
+        // Persist directly, not just via the mirroring effect: the switch is
+        // awaited above, so the tab may already have been switched away and
+        // this instance unmounted. `setCurrentDb` would then be a no-op and the
+        // mongosh child would sit on the new database while the remounted UI
+        // restored the old one — with the prompt and the driver-backed
+        // commands aimed somewhere the raw shell commands are not.
+        if (sessionKey) writeShellSession(sessionKey, { currentDb: useMatch[1] });
         if (!ranExternally) {
           setEntries((prev) => [
             ...prev,

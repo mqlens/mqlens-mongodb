@@ -744,6 +744,22 @@ pub fn rename_shell_tab_state_impl(
     Ok(())
 }
 
+/// The tab ids whose stored shell state was written by `window_id`.
+///
+/// Ownership is read from the state the renderer stamped, not from the
+/// workspace's tab list: the workspace stores PROFILE-space ids while these
+/// keys are LIVE-space, so a shell tab that has been rebound to a connection is
+/// filed under an id the workspace never mentions.
+pub fn shell_tab_ids_for_window(state: &AppState, window_id: &str) -> Result<Vec<String>, String> {
+    Ok(state
+        .shell_tab_state
+        .lock_safe()?
+        .iter()
+        .filter(|(_, value)| value.get("windowId").and_then(|w| w.as_str()) == Some(window_id))
+        .map(|(tab_id, _)| tab_id.clone())
+        .collect())
+}
+
 pub async fn stop_mongosh_session_impl(state: &AppState, session_id: &str) -> Result<(), String> {
     let session = {
         let mut sessions = state.mongosh_sessions.lock_safe()?;

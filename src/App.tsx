@@ -14,6 +14,8 @@ import {
   disposeShellSession,
   disposeShellSessionsForTabs,
   renameShellSession,
+  stopShellSessionProcess,
+  writeShellSession,
 } from './lib/mongoshSession';
 import { DataGrid, type ViewMode } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
@@ -2006,14 +2008,24 @@ function Workspace() {
     };
 
     const renamedPairs = tabs
-      .map(t => ({ oldId: t.id, newId: renameTab(t).id }))
+      .map(t => ({ oldId: t.id, newId: renameTab(t).id, isShell: t.type === 'shell' }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId }) => {
+    renamedPairs.forEach(({ oldId, newId, isShell }) => {
       // A rename mints a new tab id, so the shell session has to follow it —
       // otherwise the live mongosh child is stranded under the dead id and the
       // renamed tab starts a second one.
       renameShellSession(oldId, newId);
+      if (isShell) {
+        // Moving the session is not enough when the DATABASE is what changed:
+        // the retained mongosh child is still `use`-d into the old name, and
+        // Sidebar renames with `dropSource: true`, so a write from this
+        // apparently-renamed tab would recreate the database the rename just
+        // dropped. Retarget the stored context and end the process — the
+        // remount opens a fresh session against `newName`, scrollback intact.
+        writeShellSession(newId, { currentDb: newName });
+        void stopShellSessionProcess(newId);
+      }
       dispatchWorkspace({ type: 'rename_tab', oldId, newId });
     });
     invalidatePaletteNamespaceIndex(connectionId);

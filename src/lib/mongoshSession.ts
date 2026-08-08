@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { windowLabel } from '../workspace/workspaceStore';
 import type { ChatMessage } from '../components/AIChatPanel';
 
 /**
@@ -67,7 +68,17 @@ if (import.meta.hot?.data) import.meta.hot.data.shellSessions = sessions;
 /** Write-through to the backend. Fire-and-forget: the cache is already updated,
  *  and a failed mirror must never break the shell. */
 function persist(key: string, session: ShellSession): void {
-  void invoke('set_shell_tab_state', { tabId: key, value: session }).catch(() => undefined);
+  void invoke('set_shell_tab_state', {
+    tabId: key,
+    // Stamp the owning window. Closing a secondary window with its OS button
+    // runs no frontend code, so the backend has to clean up that window's
+    // shells itself — and it cannot do that by looking up the workspace's tab
+    // ids, which are PROFILE-space while these keys are LIVE-space (a tab
+    // rebound to a connection is re-keyed by `renameShellSession`, so the
+    // lookup misses and the child survives the window). Recording ownership
+    // here sidesteps the id-space mismatch entirely.
+    value: { ...session, windowId: windowLabel() },
+  }).catch(() => undefined);
 }
 
 /**

@@ -152,16 +152,13 @@ fn apply_window_closed_and_broadcast(app: &AppHandle, label: &str, origin: Strin
     // with the OS X button runs no frontend code at all, so without this the
     // sessions it owned stay alive — with their child processes and database
     // connections — until the whole app exits.
-    let doomed_tabs: Vec<String> = state
-        .workspace
-        .lock()
-        .ok()
-        .and_then(|guard| {
-            guard
-                .as_ref()
-                .map(|ws| workspace::window_tab_ids(ws, label))
-        })
-        .unwrap_or_default();
+    //
+    // Ownership comes from the shell state itself rather than from the
+    // workspace's tab list: the workspace holds profile-space tab ids, while
+    // shell state is keyed by the live-space id a rebound tab is re-keyed to,
+    // so enumerating the workspace would miss exactly the connected shells that
+    // have a child to stop.
+    let doomed_tabs = crate::shell_tab_ids_for_window(&state, label).unwrap_or_default();
     for tab_id in doomed_tabs {
         stop_shell_session_for_tab(app, &tab_id);
     }

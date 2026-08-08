@@ -4193,11 +4193,39 @@ mod shell_tab_state_tests {
     use crate::state::AppState;
     use crate::{
         clear_shell_tab_state_impl, get_shell_tab_state_impl, rename_shell_tab_state_impl,
-        set_shell_tab_state_impl,
+        set_shell_tab_state_impl, shell_tab_ids_for_window,
     };
 
     fn state() -> AppState {
         AppState::new()
+    }
+
+    #[test]
+    fn lists_only_the_tabs_a_given_window_owns() {
+        // Closing a secondary window with the OS X button runs no frontend
+        // code, so the backend stops that window's shells itself. It has to
+        // find them by the recorded owner: the workspace's tab ids are
+        // profile-space while these keys are live-space, so a shell rebound to
+        // a connection — the only kind with a child worth stopping — is filed
+        // under an id the workspace never mentions.
+        let st = state();
+        let owned = serde_json::json!({ "sessionId": "a", "windowId": "window-2" });
+        set_shell_tab_state_impl(&st, "live.tab-1", owned).unwrap();
+        set_shell_tab_state_impl(
+            &st,
+            "main.tab",
+            serde_json::json!({ "sessionId": "b", "windowId": "main" }),
+        )
+        .unwrap();
+        // Predates the stamp, or was written by an older build.
+        set_shell_tab_state_impl(&st, "unstamped", serde_json::json!({ "sessionId": "c" }))
+            .unwrap();
+
+        assert_eq!(
+            shell_tab_ids_for_window(&st, "window-2").unwrap(),
+            vec!["live.tab-1".to_string()]
+        );
+        assert!(shell_tab_ids_for_window(&st, "window-9").unwrap().is_empty());
     }
 
     #[test]

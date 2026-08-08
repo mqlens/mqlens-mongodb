@@ -97,6 +97,17 @@ describe('mongosh session registry (#240)', () => {
     );
   });
 
+  it('stamps the owning window on every persisted session', () => {
+    // How the backend finds a window's shells when it is closed with the OS X
+    // button. It cannot go via the workspace: those tab ids are profile-space
+    // while these keys are live-space, so a rebound shell — the only kind with
+    // a child worth stopping — would never be matched.
+    writeShellSession('tab-1', { sessionId: 'sess-1' });
+
+    const call = invokeMock.mock.calls.find((c) => c[0] === 'set_shell_tab_state');
+    expect((call?.[1] as { value: { windowId?: string } }).value.windowId).toBe('main');
+  });
+
   it('follows a tab that is rebound to a new id', () => {
     writeShellSession('old-id', { sessionId: 'sess-1', entries: [{ kind: 'note', text: 'x' }] });
 
