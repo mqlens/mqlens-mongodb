@@ -6,7 +6,6 @@ import {
   shellSessionEpoch,
   retargetShellSessionDatabase,
   stopShellSessionProcess,
-  wasDisposedSince,
   disposeShellSession,
   forgetShellSession,
   readShellSession,
@@ -257,35 +256,31 @@ describe('mongosh session registry (#240)', () => {
       expect(invokeMock).not.toHaveBeenCalledWith('clear_shell_tab_state', expect.anything());
     });
 
-    it('tells a closed tab apart from a moved one', async () => {
-      writeShellSession('closed', { sessionId: 'a' });
-      writeShellSession('moved', { sessionId: 'b' });
-      const closedEpoch = shellSessionEpoch('closed');
-      const movedEpoch = shellSessionEpoch('moved');
+    it('ends the epoch synchronously, before any backend lookup', async () => {
+      // The state of an inactive tab lives only in the backend, so disposal has
+      // to read it — but tab ids are deterministic, so the same key can be
+      // reopened while that read is in flight. Doing the bookkeeping after the
+      // await would end the REOPENED tab's epoch and delete its cache entry.
+      let releaseLookup: (v: unknown) => void = () => {};
+      invokeMock.mockImplementation((cmd: string) =>
+        cmd === 'get_shell_tab_state'
+          ? new Promise((res) => { releaseLookup = res; })
+          : Promise.resolve(undefined),
+      );
 
-      await disposeShellSession('closed');
-      forgetShellSession('moved');
+      const disposal = disposeShellSession('tab-1');
+      await Promise.resolve();
 
-      // The async start path uses this to decide whether the child it just
-      // spawned should be stopped (closed) or recorded (moved, so the
-      // destination window can reattach to it).
-      expect(wasDisposedSince('closed', closedEpoch)).toBe(true);
-      expect(wasDisposedSince('moved', movedEpoch)).toBe(false);
-    });
+      // A fresh mount takes the key over while the lookup is still pending.
+      const reopenedEpoch = shellSessionEpoch('tab-1');
+      writeShellSession('tab-1', { sessionId: 'sess-new' }, reopenedEpoch);
 
-    it('drops a completion that lands after its tab was renamed', () => {
-      // A rename remounts the shell under the new key, so the old instance is
-      // finishing work for a key nothing will read again. Persisting to it
-      // would recreate the obsolete entry — a session mapping the renamed
-      // tab's close never clears — and lose the output from the visible tab.
-      writeShellSession('old-id', { sessionId: 'sess-1' });
-      const epoch = shellSessionEpoch('old-id');
+      releaseLookup({ sessionId: 'sess-old' });
+      await disposal;
 
-      renameShellSession('old-id', 'new-id');
-      writeShellSession('old-id', { entries: [{ kind: 'note', text: 'late' }] }, epoch);
-
-      expect(readShellSession('old-id')).toBeUndefined();
-      expect(readShellSession('new-id')?.sessionId).toBe('sess-1');
+      // The old child is stopped, the reopened tab is untouched.
+      expect(invokeMock).toHaveBeenCalledWith('stop_mongosh_session', { sessionId: 'sess-old' });
+      expect(readShellSession('tab-1')?.sessionId).toBe('sess-new');
     });
 
     it('a reopened tab is not silenced by the previous tab\'s disposal', async () => {
@@ -297,7 +292,9 @@ describe('mongosh session registry (#240)', () => {
       writeShellSession('tab-1', { sessionId: 'sess-2' }, epoch);
 
       expect(readShellSession('tab-1')?.sessionId).toBe('sess-2');
-      expect(wasDisposedSince('tab-1', epoch)).toBe(false);
+      // ...and the previous tab's writes, holding the older epoch, still are.
+      writeShellSession('tab-1', { sessionId: 'ghost' }, epoch - 1);
+      expect(readShellSession('tab-1')?.sessionId).toBe('sess-2');
     });
   });
 

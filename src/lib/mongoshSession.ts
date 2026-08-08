@@ -97,24 +97,24 @@ function endEpoch(key: string): number {
   return next;
 }
 
-/**
- * The epoch at which a key was last DISPOSED, as opposed to merely forgotten.
- *
- * Both end an epoch, but they mean opposite things for the mongosh child: a
- * disposed tab's child should die, a moved tab's child belongs to another
- * window now and must not be touched. Only the async start path needs to tell
- * them apart — see {@link wasDisposedSince}.
- */
-const disposedAt: Map<string, number> =
-  import.meta.hot?.data?.shellDisposedAt ?? new Map<string, number>();
-if (import.meta.hot?.data) import.meta.hot.data.shellDisposedAt = disposedAt;
-
-/** Whether this key was closed outright after `epoch` — i.e. whether a caller
- *  holding `epoch` is finishing work for a tab that no longer exists. False for
- *  a tab that merely moved to another window. */
-export function wasDisposedSince(key: string, epoch: number): boolean {
-  const at = disposedAt.get(key);
-  return at !== undefined && at > epoch;
+/** Read a tab's stored state from the backend WITHOUT caching it. Used by
+ *  disposal, which must not resurrect an entry for a key it has just deleted —
+ *  or, worse, overwrite the entry a reopened tab has since created. */
+async function fetchStoredSession(key: string): Promise<ShellSession | undefined> {
+  const stored = await invoke<unknown>('get_shell_tab_state', { tabId: key }).catch(() => null);
+  // Shape-check rather than trust: this crosses the IPC boundary, and a value
+  // that is merely truthy (an array, say) would otherwise be read for fields it
+  // does not have.
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return undefined;
+  const candidate = stored as Partial<ShellSession>;
+  return {
+    sessionId: candidate.sessionId ?? null,
+    entries: Array.isArray(candidate.entries) ? candidate.entries : [],
+    currentDb: candidate.currentDb ?? '',
+    autoRanCommand: candidate.autoRanCommand ?? false,
+    aiOpen: candidate.aiOpen ?? false,
+    aiMessages: Array.isArray(candidate.aiMessages) ? candidate.aiMessages : [],
+  };
 }
 
 /** Write-through to the backend. Fire-and-forget: the cache is already updated,
@@ -143,20 +143,8 @@ function persist(key: string, session: ShellSession): void {
 export async function loadShellSession(key: string): Promise<ShellSession | undefined> {
   const cached = sessions.get(key);
   if (cached) return cached;
-  const stored = await invoke<unknown>('get_shell_tab_state', { tabId: key }).catch(() => null);
-  // Shape-check rather than trust: this crosses the IPC boundary, and a value
-  // that is merely truthy (an array, say) would otherwise be cached as a
-  // session and read for fields it does not have.
-  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return undefined;
-  const candidate = stored as Partial<ShellSession>;
-  const session: ShellSession = {
-    sessionId: candidate.sessionId ?? null,
-    entries: Array.isArray(candidate.entries) ? candidate.entries : [],
-    currentDb: candidate.currentDb ?? '',
-    autoRanCommand: candidate.autoRanCommand ?? false,
-    aiOpen: candidate.aiOpen ?? false,
-    aiMessages: Array.isArray(candidate.aiMessages) ? candidate.aiMessages : [],
-  };
+  const session = await fetchStoredSession(key);
+  if (!session) return undefined;
   sessions.set(key, session);
   return session;
 }
@@ -203,12 +191,20 @@ export function writeShellSession(
  * tab teardown must not be able to throw.
  */
 export async function disposeShellSession(key: string): Promise<void> {
-  const session = sessions.get(key) ?? (await loadShellSession(key));
-  disposedAt.set(key, endEpoch(key));
+  // Everything that touches shared state happens BEFORE the first await. Tab
+  // ids are deterministic, so the same key can be reopened while a lookup is in
+  // flight; doing this afterwards would end the epoch of — and delete the cache
+  // entry belonging to — the tab that has since taken the key over.
+  endEpoch(key);
+  const cached = sessions.get(key);
   sessions.delete(key);
   void invoke('clear_shell_tab_state', { tabId: key }).catch(() => undefined);
-  if (!session?.sessionId) return;
-  await invoke('stop_mongosh_session', { sessionId: session.sessionId }).catch(() => undefined);
+
+  // Only now, and never back into the cache: an inactive tab's state can live
+  // solely in the backend, so its id has to be read to be stopped.
+  const sessionId = cached?.sessionId ?? (await fetchStoredSession(key))?.sessionId;
+  if (!sessionId) return;
+  await invoke('stop_mongosh_session', { sessionId }).catch(() => undefined);
 }
 
 /**
@@ -325,7 +321,6 @@ export function forgetShellSession(key: string): void {
 export function resetShellSessions(): void {
   sessions.clear();
   epochs.clear();
-  disposedAt.clear();
 }
 
 /** Forget every tab, in the cache and the backend. */

@@ -31,7 +31,6 @@ import {
   readShellSession,
   shellSessionEpoch,
   stopShellSessionProcess,
-  wasDisposedSince,
   writeShellSession,
   type ShellEntry,
   type ShellSession,
@@ -549,13 +548,15 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           return;
         }
         if (sessionKey) {
-          if (wasDisposedSince(sessionKey, epochRef.current)) {
-            // The tab was CLOSED while mongosh was starting, so its disposal
-            // ran before there was a session id to stop. Nothing will ever read
-            // this state or reach this child again — record it and it leaks, so
-            // stop it here instead. Deliberately narrower than "the epoch
-            // moved": a tab that was MOVED still needs the id recorded below,
-            // because the destination window reattaches to this very process.
+          if (shellSessionEpoch(sessionKey) !== epochRef.current) {
+            // This tab stopped belonging to this renderer while mongosh was
+            // starting — closed, or moved to another window. Either way nobody
+            // is coming back for this particular child: a closed tab has
+            // nothing left to read its id, and a moved tab is served by the
+            // destination window's own session. Recording it would be worse
+            // than useless, since the write re-stamps this window as the owner
+            // and can overwrite the mapping the destination is using — so
+            // closing this window would then kill the process it is showing.
             await invoke('stop_mongosh_session', { sessionId: session.session_id }).catch(
               () => undefined
             );
@@ -569,17 +570,16 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           if (session.stderr.length > 0)
             startupEntries.push({ kind: 'error', message: session.stderr.join('\n') });
           startupEntries.push({ kind: 'note', text: t('mongoShell.notes.sessionAttached') });
-          // The id itself is written unconditionally — a moved tab's new window
-          // must be able to find this process. The transcript is not: it would
-          // overwrite whatever that window has since appended.
-          const stillOurs = shellSessionEpoch(sessionKey) === epochRef.current;
+          // Past the epoch check above, so this tab is still ours; the write
+          // carries the epoch anyway, since nothing guarantees it stays ours
+          // between here and the next line.
           writeShellSession(sessionKey, {
             sessionId: session.session_id,
             // Against the registry, like every other append: by the time a
             // slow start returns, the tab may have been remounted and another
             // completion may already have landed. Building this from
             // `entriesRef` would erase it.
-            ...(cancelled && stillOurs
+            ...(cancelled
               ? {
                   entries: [
                     ...(readShellSession(sessionKey)?.entries ?? entriesRef.current),
@@ -587,7 +587,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
                   ],
                 }
               : {}),
-          });
+          }, epochRef.current);
         }
         if (cancelled) {
           // Unmounting means the user switched tabs mid-startup. With a tab
