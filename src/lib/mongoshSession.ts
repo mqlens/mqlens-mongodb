@@ -151,7 +151,10 @@ export async function disposeShellSession(key: string): Promise<void> {
  * the Restart control uses; `disposeShellSession` is for a tab going away.
  */
 export async function stopShellSessionProcess(key: string): Promise<void> {
-  const session = sessions.get(key);
+  // Hydrate on a miss, like `disposeShellSession`: after a renderer refresh the
+  // tab may not have mounted yet, so its running child is known only to the
+  // backend and a cache-only check would quietly decline to stop it.
+  const session = sessions.get(key) ?? (await loadShellSession(key));
   if (!session?.sessionId) return;
   const { sessionId } = session;
   writeShellSession(key, { sessionId: null });
@@ -162,12 +165,35 @@ export async function stopShellSessionProcess(key: string): Promise<void> {
  *  session belongs to the tab, so it has to move with it — leaving it under the
  *  dead id would strand a live mongosh process that nothing can stop, and the
  *  rebound tab would start a second one. */
-export function renameShellSession(oldKey: string, newKey: string): void {
-  void invoke('rename_shell_tab_state', { oldId: oldKey, newId: newKey }).catch(() => undefined);
+export function renameShellSession(oldKey: string, newKey: string): Promise<void> {
+  // Returns the backend move so a caller that must then READ the new key can
+  // await it. Nothing guarantees a later `get_shell_tab_state` is served after
+  // an unawaited rename, and losing that race would look like an absent
+  // session — i.e. a live mongosh child nothing goes on to stop.
+  const moved = invoke('rename_shell_tab_state', { oldId: oldKey, newId: newKey })
+    .then(() => undefined)
+    .catch(() => undefined);
   const session = sessions.get(oldKey);
-  if (!session) return;
-  sessions.delete(oldKey);
-  sessions.set(newKey, session);
+  if (session) {
+    sessions.delete(oldKey);
+    sessions.set(newKey, session);
+  }
+  return moved;
+}
+
+/**
+ * Point a retained session at a renamed database and end its process, so the
+ * next mount opens a fresh one against the new name with its scrollback intact.
+ *
+ * Hydrates first, deliberately. If the tab has not mounted since a refresh its
+ * state exists only in the backend, and writing `currentDb` straight in would
+ * mint a cache entry with a null session id — after which the stop below finds
+ * nothing to do and the original child stays attached to the dropped database.
+ */
+export async function retargetShellSessionDatabase(key: string, db: string): Promise<void> {
+  await loadShellSession(key);
+  writeShellSession(key, { currentDb: db });
+  await stopShellSessionProcess(key);
 }
 
 /**

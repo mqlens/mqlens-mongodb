@@ -3,6 +3,7 @@ import {
   disposeShellSessionsForTabs,
   loadShellSession,
   renameShellSession,
+  retargetShellSessionDatabase,
   stopShellSessionProcess,
   disposeShellSession,
   readShellSession,
@@ -120,6 +121,39 @@ describe('mongosh session registry (#240)', () => {
   it('renaming a tab with no session is a no-op', () => {
     renameShellSession('nothing-here', 'new-id');
     expect(readShellSession('new-id')).toBeUndefined();
+  });
+
+  it('stops a process it only learns about from the backend', async () => {
+    // The tab has not mounted since a refresh, so nothing has hydrated the
+    // cache — but the child is running and must still be stoppable.
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'get_shell_tab_state'
+        ? Promise.resolve({ sessionId: 'sess-orphan' })
+        : Promise.resolve(undefined),
+    );
+
+    await stopShellSessionProcess('tab-1');
+
+    expect(invokeMock).toHaveBeenCalledWith('stop_mongosh_session', { sessionId: 'sess-orphan' });
+  });
+
+  it('retargets a renamed database and stops the child that is still on the old one', async () => {
+    // Straight from the backend again: writing `currentDb` without hydrating
+    // would create a cache entry with a null session id, and the stop would
+    // then find nothing — leaving mongosh attached to a database the rename
+    // has already dropped.
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'get_shell_tab_state'
+        ? Promise.resolve({ sessionId: 'sess-old', currentDb: 'before', entries: [] })
+        : Promise.resolve(undefined),
+    );
+
+    await retargetShellSessionDatabase('tab-1', 'after');
+
+    expect(invokeMock).toHaveBeenCalledWith('stop_mongosh_session', { sessionId: 'sess-old' });
+    const after = readShellSession('tab-1');
+    expect(after?.currentDb).toBe('after');
+    expect(after?.sessionId).toBeNull();
   });
 
   it('stops the process for a restart but keeps the transcript', async () => {

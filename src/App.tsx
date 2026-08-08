@@ -14,8 +14,7 @@ import {
   disposeShellSession,
   disposeShellSessionsForTabs,
   renameShellSession,
-  stopShellSessionProcess,
-  writeShellSession,
+  retargetShellSessionDatabase,
 } from './lib/mongoshSession';
 import { DataGrid, type ViewMode } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
@@ -2015,16 +2014,15 @@ function Workspace() {
       // A rename mints a new tab id, so the shell session has to follow it —
       // otherwise the live mongosh child is stranded under the dead id and the
       // renamed tab starts a second one.
-      renameShellSession(oldId, newId);
+      const moved = renameShellSession(oldId, newId);
       if (isShell) {
         // Moving the session is not enough when the DATABASE is what changed:
         // the retained mongosh child is still `use`-d into the old name, and
         // Sidebar renames with `dropSource: true`, so a write from this
         // apparently-renamed tab would recreate the database the rename just
-        // dropped. Retarget the stored context and end the process — the
-        // remount opens a fresh session against `newName`, scrollback intact.
-        writeShellSession(newId, { currentDb: newName });
-        void stopShellSessionProcess(newId);
+        // dropped. Awaited, because the retarget reads the state back under the
+        // new key — which only exists once the rename above has landed.
+        void moved.then(() => retargetShellSessionDatabase(newId, newName));
       }
       dispatchWorkspace({ type: 'rename_tab', oldId, newId });
     });
@@ -2913,8 +2911,14 @@ function Workspace() {
           // the destination with a dead session id or lose the REPL state it is
           // supposed to carry across. Only dispose tabs that left the workspace
           // entirely.
+          // Translated to live space, exactly like `foreignLiveIds` above: the
+          // workspace stores profile-space ids, `leavingIds` holds live ones, so
+          // an untranslated comparison would report every rebound tab as gone
+          // from the document and kill the session the move was meant to carry.
           const stillInWorkspace = new Set(
-            payload.workspace.windows.flatMap((w) => allPanes(w.splitTree).flatMap((p) => p.tabIds))
+            payload.workspace.windows
+              .flatMap((w) => allPanes(w.splitTree).flatMap((p) => p.tabIds))
+              .map((id) => toLiveSpaceId(id, connections))
           );
           leavingIds.forEach((id) => {
             tabBuilderStateCache.current.delete(id);
