@@ -453,6 +453,22 @@ describe('mongosh session registry (#240)', () => {
     expect(readShellSession('tab-1')?.sessionId).toBe('sess-live');
   });
 
+  it('claims a session it hydrates, so the new window owns it', async () => {
+    // A moved tab's stored state still names the window it left. Hydrating
+    // without restamping hides the child from the new owner's close sweep, and
+    // lets a window reusing the old label stop a session it does not have.
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'get_shell_tab_state'
+        ? Promise.resolve({ sessionId: 'sess-moved', windowId: 'win-9' })
+        : Promise.resolve(undefined),
+    );
+
+    await loadShellSession('tab-1');
+
+    const write = invokeMock.mock.calls.find((c) => c[0] === 'set_shell_tab_state');
+    expect((write?.[1] as { value: { windowId?: string } }).value.windowId).toBe('main');
+  });
+
   it('ignores a backend value that is not a session object', async () => {
     // The payload crosses IPC as opaque JSON; anything merely truthy (an array,
     // say) must not be cached and then read for fields it does not have.

@@ -233,6 +233,12 @@ export async function loadShellSession(key: string): Promise<ShellSession | unde
   const session = await fetchStoredSession(key);
   if (!session) return undefined;
   sessions.set(key, session);
+  // Claim it. Whoever hydrates a session is the renderer about to display it,
+  // and the stored entry still names whichever window wrote it last — after a
+  // tab moves, that is the window it LEFT. Leaving the stamp alone would hide
+  // the child from the new owner's close sweep, and let the old label's window
+  // stop a session it no longer has.
+  persist(key, session);
   return session;
 }
 
