@@ -132,7 +132,7 @@ describe('mongosh session registry (#240)', () => {
     // The tab has not mounted since a refresh, so nothing has hydrated the
     // cache — but the child is running and must still be stoppable.
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'get_shell_tab_state'
+      cmd === 'claim_shell_tab_state'
         ? Promise.resolve({ sessionId: 'sess-orphan' })
         : Promise.resolve(undefined),
     );
@@ -172,7 +172,7 @@ describe('mongosh session registry (#240)', () => {
     // then find nothing — leaving mongosh attached to a database the rename
     // has already dropped.
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'get_shell_tab_state'
+      cmd === 'claim_shell_tab_state'
         ? Promise.resolve({ sessionId: 'sess-old', currentDb: 'before', entries: [] })
         : Promise.resolve(undefined),
     );
@@ -301,6 +301,24 @@ describe('mongosh session registry (#240)', () => {
       );
     });
 
+    it('a reopened tab does not join the closed tab\'s pending start', async () => {
+      // Deterministic ids mean the reopened tab lands on the same key. Joining
+      // the old start would hand it a child the previous mount stops moments
+      // later for failing its own epoch check — a live-looking session id
+      // pointing at nothing.
+      let calls = 0;
+      const task = () => {
+        calls += 1;
+        return new Promise<{ session_id: string }>(() => {}); // still starting
+      };
+      shareShellStart('tab-1', task);
+
+      await disposeShellSession('tab-1');
+      shareShellStart('tab-1', task); // the tab is reopened
+
+      expect(calls).toBe(2);
+    });
+
     it('a reopened tab is not silenced by the previous tab\'s disposal', async () => {
       writeShellSession('tab-1', { sessionId: 'sess-1' });
       await disposeShellSession('tab-1');
@@ -421,7 +439,7 @@ describe('mongosh session registry (#240)', () => {
     // What a hot reload or a window refresh produces: no cache, but the child
     // is still running and the backend still knows about it.
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'get_shell_tab_state'
+      cmd === 'claim_shell_tab_state'
         ? Promise.resolve({ sessionId: 'sess-live', entries: [{ kind: 'note', text: 'kept' }] })
         : Promise.resolve(undefined),
     );
@@ -435,11 +453,56 @@ describe('mongosh session registry (#240)', () => {
     expect(readShellSession('tab-1')?.sessionId).toBe('sess-live');
   });
 
+  it('claims a session it hydrates, so the new window owns it', async () => {
+    // A moved tab's stored state still names the window it left. Hydrating
+    // without restamping hides the child from the new owner's close sweep, and
+    // lets a window reusing the old label stop a session it does not have.
+    invokeMock.mockImplementation((cmd: string, args: any) =>
+      cmd === 'claim_shell_tab_state'
+        ? Promise.resolve({ sessionId: 'sess-moved', windowId: args.windowId })
+        : Promise.resolve(undefined),
+    );
+
+    const restored = await loadShellSession('tab-1');
+
+    // One atomic call, not a read followed by a write of what was read — that
+    // pair would replay a stale snapshot over the old renderer's final write.
+    expect(invokeMock).toHaveBeenCalledWith('claim_shell_tab_state', {
+      tabId: 'tab-1',
+      windowId: 'main',
+    });
+    expect(invokeMock).not.toHaveBeenCalledWith('get_shell_tab_state', expect.anything());
+    expect(restored?.sessionId).toBe('sess-moved');
+  });
+
+  it('disowns a claim it issued before learning the tab had moved', async () => {
+    // The hydrate began, the tab moved away from this renderer, and the claim
+    // lands after the destination's — stamping this window back over it.
+    let releaseClaim: (v: unknown) => void = () => {};
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'claim_shell_tab_state'
+        ? new Promise((res) => { releaseClaim = res; })
+        : Promise.resolve(undefined),
+    );
+
+    const loading = loadShellSession('tab-1');
+    await Promise.resolve();
+    forgetShellSession('tab-1'); // the crossWindow event says the tab left
+    releaseClaim({ sessionId: 'sess-1' });
+
+    expect(await loading).toBeUndefined();
+    expect(invokeMock).toHaveBeenCalledWith('disown_shell_tab_state', {
+      tabId: 'tab-1',
+      windowId: 'main',
+    });
+    expect(readShellSession('tab-1')).toBeUndefined();
+  });
+
   it('ignores a backend value that is not a session object', async () => {
     // The payload crosses IPC as opaque JSON; anything merely truthy (an array,
     // say) must not be cached and then read for fields it does not have.
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'get_shell_tab_state' ? Promise.resolve([]) : Promise.resolve(undefined),
+      cmd === 'claim_shell_tab_state' ? Promise.resolve([]) : Promise.resolve(undefined),
     );
 
     expect(await loadShellSession('tab-1')).toBeUndefined();

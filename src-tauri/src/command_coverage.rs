@@ -81,9 +81,13 @@ const LOCAL_COMMANDS: &[&str] = &[
     "get_shell_tab_state",
     "set_shell_tab_state",
     "clear_shell_tab_state",
+    "claim_shell_tab_state",
+    "disown_shell_tab_state",
     // Durable AI Helper conversations (chats.json under the app config dir).
     // Local persistence only — a chat records the connection NAME it belongs
-    // to, but nothing here reaches a live connection.
+    // to, but nothing here reaches a live connection. `claim_chat`/
+    // `release_chat` are the in-memory "which panel has this conversation
+    // open" guard.
     "list_chats",
     "claim_chat",
     "release_chat",

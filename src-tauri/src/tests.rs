@@ -4229,6 +4229,306 @@ mod shell_tab_state_tests {
     }
 
     #[test]
+    fn claiming_stamps_the_new_owner_and_returns_what_is_actually_stored() {
+        // The claim exists because a moved tab's entry still names the window
+        // it left. It touches only the owner field and hands back the current
+        // value, so the caller never replays a snapshot of its own over a write
+        // the previous owner made in the meantime.
+        use crate::claim_shell_tab_state_impl;
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-1", "windowId": "win-1", "entries": ["kept"] }),
+        )
+        .unwrap();
+
+        let claimed = claim_shell_tab_state_impl(&st, "tab-1", "win-2")
+            .unwrap()
+            .expect("an existing tab is claimable");
+
+        assert_eq!(claimed.get("windowId").unwrap(), "win-2");
+        assert_eq!(claimed.get("sessionId").unwrap(), "sess-1");
+        assert_eq!(
+            claimed.get("entries").unwrap(),
+            &serde_json::json!(["kept"]),
+            "claiming must not drop the rest of the value"
+        );
+        // ...and the change stuck, so the close sweep can find it.
+        assert_eq!(
+            shell_tab_ids_for_window(&st, "win-2").unwrap(),
+            vec!["tab-1".to_string()]
+        );
+        assert!(shell_tab_ids_for_window(&st, "win-1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_write_from_the_previous_owner_is_dropped_whole() {
+        // The departed renderer's mirror is fire-and-forget, so a write from it
+        // can land after the destination has claimed the tab. It carries a
+        // snapshot taken BEFORE the move: merging it would restore the old
+        // window as owner, and overwrite the transcript, database and session
+        // id the new owner has recorded since.
+        use crate::claim_shell_tab_state_impl;
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-1", "windowId": "win-1" }),
+        )
+        .unwrap();
+        claim_shell_tab_state_impl(&st, "tab-1", "win-2").unwrap();
+        // What the new owner has recorded since taking it.
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-2", "entries": ["new"], "windowId": "win-2" }),
+        )
+        .unwrap();
+
+        // The old owner's delayed write, still naming itself.
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-1", "entries": ["stale"], "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        let stored = get_shell_tab_state_impl(&st, "tab-1").unwrap().unwrap();
+        assert_eq!(stored.get("windowId").unwrap(), "win-2");
+        assert_eq!(stored.get("sessionId").unwrap(), "sess-2");
+        assert_eq!(
+            stored.get("entries").unwrap(),
+            &serde_json::json!(["new"]),
+            "the stale snapshot overwrote the new owner's transcript"
+        );
+    }
+
+    #[test]
+    fn a_write_from_a_closed_window_is_refused_and_hands_back_its_child() {
+        // The close sweep has already run, so recreating the entry would leave
+        // the mongosh child it names with nothing pointing at it. The id comes
+        // back so the caller can stop it.
+        use crate::state::LockExt;
+        let st = state();
+        st.closed_windows.lock_safe().unwrap().insert("win-9".into());
+
+        let orphan = set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-late", "windowId": "win-9" }),
+        )
+        .unwrap();
+
+        assert_eq!(orphan.as_deref(), Some("sess-late"));
+        assert_eq!(
+            get_shell_tab_state_impl(&st, "tab-1").unwrap(),
+            None,
+            "a closed window's write recreated its entry"
+        );
+    }
+
+    #[test]
+    fn a_closed_window_s_write_is_not_treated_as_an_orphan_once_another_window_owns_the_tab() {
+        // The moved tab was claimed by its destination before the source
+        // window closed, so the source's queued write names a session the
+        // DESTINATION is now using. Stopping it would kill a live shell.
+        use crate::state::LockExt;
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-live", "windowId": "win-2" }),
+        )
+        .unwrap();
+        st.closed_windows.lock_safe().unwrap().insert("win-1".into());
+
+        let orphan = set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-live", "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        assert_eq!(orphan, None, "the destination's live session was stopped");
+        assert_eq!(
+            get_shell_tab_state_impl(&st, "tab-1")
+                .unwrap()
+                .unwrap()
+                .get("windowId")
+                .unwrap(),
+            "win-2"
+        );
+    }
+
+    #[test]
+    fn the_close_sweep_leaves_a_tab_another_window_has_claimed() {
+        // The sweep enumerates a window's tabs and then takes them one by one;
+        // a destination can claim one in between. Taking it anyway would delete
+        // state that now belongs to the other window and stop its child.
+        use crate::{claim_shell_tab_state_impl, take_shell_tab_state_if_owned};
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "s", "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        // Enumerated as win-1's, then claimed by win-2 before the take.
+        claim_shell_tab_state_impl(&st, "tab-1", "win-2").unwrap();
+
+        assert_eq!(take_shell_tab_state_if_owned(&st, "tab-1", "win-1").unwrap(), None);
+        assert!(
+            get_shell_tab_state_impl(&st, "tab-1").unwrap().is_some(),
+            "the new owner's state was swept away"
+        );
+        // The real owner can still take it.
+        assert!(take_shell_tab_state_if_owned(&st, "tab-1", "win-2").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_placeholder_entry_does_not_hide_a_newly_started_child() {
+        // A tab usually holds a placeholder with a null id while its session
+        // starts. If the write carrying the real id arrives after the window is
+        // marked closed, "an entry exists" is not evidence anyone is tracking
+        // that child — the sweep would stop the null (i.e. nothing) and the new
+        // mongosh process would survive to app exit.
+        use crate::state::LockExt;
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": serde_json::Value::Null, "windowId": "win-9" }),
+        )
+        .unwrap();
+        st.closed_windows.lock_safe().unwrap().insert("win-9".into());
+
+        let orphan = set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-new", "windowId": "win-9" }),
+        )
+        .unwrap();
+
+        assert_eq!(orphan.as_deref(), Some("sess-new"));
+    }
+
+    #[test]
+    fn a_closed_window_write_naming_the_recorded_session_is_not_stopped_twice() {
+        use crate::state::LockExt;
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-1", "windowId": "win-9" }),
+        )
+        .unwrap();
+        st.closed_windows.lock_safe().unwrap().insert("win-9".into());
+
+        // The sweep will take this entry and stop sess-1 itself.
+        let orphan = set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "sess-1", "windowId": "win-9" }),
+        )
+        .unwrap();
+
+        assert_eq!(orphan, None);
+    }
+
+    #[test]
+    fn the_current_owner_keeps_writing_normally() {
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "s", "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "s", "entries": ["mine"], "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        let stored = get_shell_tab_state_impl(&st, "tab-1").unwrap().unwrap();
+        assert_eq!(stored.get("entries").unwrap(), &serde_json::json!(["mine"]));
+    }
+
+    #[test]
+    fn a_write_that_names_no_window_keeps_the_recorded_owner() {
+        // How a caller with nothing to say about ownership behaves. It must not
+        // be able to lose its own data to this guard.
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "s", "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        set_shell_tab_state_impl(&st, "tab-1", serde_json::json!({ "entries": ["anon"] })).unwrap();
+
+        let stored = get_shell_tab_state_impl(&st, "tab-1").unwrap().unwrap();
+        assert_eq!(stored.get("entries").unwrap(), &serde_json::json!(["anon"]));
+        assert_eq!(stored.get("windowId").unwrap(), "win-1");
+    }
+
+    #[test]
+    fn a_brand_new_entry_takes_the_owner_its_creator_supplies() {
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "fresh",
+            serde_json::json!({ "sessionId": "s", "windowId": "win-3" }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            shell_tab_ids_for_window(&st, "win-3").unwrap(),
+            vec!["fresh".to_string()]
+        );
+    }
+
+    #[test]
+    fn disowning_only_gives_up_a_claim_you_still_hold() {
+        use crate::{claim_shell_tab_state_impl, disown_shell_tab_state_impl};
+        let st = state();
+        set_shell_tab_state_impl(
+            &st,
+            "tab-1",
+            serde_json::json!({ "sessionId": "s", "windowId": "win-1" }),
+        )
+        .unwrap();
+
+        // Someone else has taken it since; the late disown must not strip them.
+        claim_shell_tab_state_impl(&st, "tab-1", "win-2").unwrap();
+        disown_shell_tab_state_impl(&st, "tab-1", "win-1").unwrap();
+        assert_eq!(
+            shell_tab_ids_for_window(&st, "win-2").unwrap(),
+            vec!["tab-1".to_string()]
+        );
+
+        // The real owner giving it up leaves it unowned, ready to be re-taken.
+        disown_shell_tab_state_impl(&st, "tab-1", "win-2").unwrap();
+        assert!(shell_tab_ids_for_window(&st, "win-2").unwrap().is_empty());
+        let stored = get_shell_tab_state_impl(&st, "tab-1").unwrap().unwrap();
+        assert_eq!(stored.get("sessionId").unwrap(), "s", "the rest of the value survived");
+    }
+
+    #[test]
+    fn claiming_a_tab_with_no_state_is_a_no_op() {
+        use crate::claim_shell_tab_state_impl;
+        assert_eq!(
+            claim_shell_tab_state_impl(&state(), "nope", "win-2").unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn lists_only_the_tabs_a_given_window_owns() {
         // Closing a secondary window with the OS X button runs no frontend
         // code, so the backend stops that window's shells itself. It has to

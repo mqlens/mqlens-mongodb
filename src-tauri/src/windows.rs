@@ -84,9 +84,14 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Windo
 
 /// Stop the mongosh child a tab owns, if any, and forget its stored state.
 /// Best-effort: a window closing must never be blocked by shell teardown.
-fn stop_shell_session_for_tab(app: &AppHandle, tab_id: &str) {
+fn stop_shell_session_for_tab(app: &AppHandle, tab_id: &str, window_id: &str) {
     let state = app.state::<AppState>();
-    let session_id = crate::get_shell_tab_state_impl(&state, tab_id)
+    // Taken in one lock rather than read-then-clear. A `set_shell_tab_state`
+    // carrying a session id that has only just started can arrive alongside an
+    // OS window close: between a separate read and clear it would either be
+    // read as absent and then deleted — losing the only pointer to a live
+    // child — or land after the clear and resurrect the closed window's entry.
+    let session_id = crate::take_shell_tab_state_if_owned(&state, tab_id, window_id)
         .ok()
         .flatten()
         .and_then(|v| {
@@ -94,7 +99,6 @@ fn stop_shell_session_for_tab(app: &AppHandle, tab_id: &str) {
                 .and_then(|s| s.as_str())
                 .map(|s| s.to_string())
         });
-    let _ = crate::clear_shell_tab_state_impl(&state, tab_id);
     if let Some(session_id) = session_id {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
@@ -164,14 +168,22 @@ fn apply_window_closed_and_broadcast(app: &AppHandle, label: &str, origin: Strin
     // this window has no session id yet, so the sweep below cannot see it and
     // the renderer that would have cancelled it is about to be destroyed. The
     // start itself checks this set and stops the child it spawned.
-    if let Ok(mut closed) = state.closed_windows.lock_safe() {
-        closed.insert(label.to_string());
+    {
+        // Marked under the shell-state lock, which `set_shell_tab_state_impl`
+        // also holds across its own closed-window check. Without that overlap a
+        // write could see the window as open, pause, and land after the sweep
+        // below — recreating an entry nothing would ever clean up. Lock order
+        // is shell state then closed windows, matching every other site.
+        let _state_guard = state.shell_tab_state.lock_safe();
+        if let Ok(mut closed) = state.closed_windows.lock_safe() {
+            closed.insert(label.to_string());
+        }
     }
     // Its panels get no chance to release the conversations they held.
     crate::chats::release_window_chats(label);
     let doomed_tabs = crate::shell_tab_ids_for_window(&state, label).unwrap_or_default();
     for tab_id in doomed_tabs {
-        stop_shell_session_for_tab(app, &tab_id);
+        stop_shell_session_for_tab(app, &tab_id, label);
     }
     match workspace::apply_impl(&state, &path, WorkspaceOp::WindowClosed { window_id: label.to_string() }, origin) {
         Ok(Some(payload)) => {

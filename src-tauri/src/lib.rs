@@ -733,16 +733,76 @@ pub fn get_shell_tab_state_impl(
     Ok(state.shell_tab_state.lock_safe()?.get(tab_id).cloned())
 }
 
+/// Applies a tab-state write, returning a session id the CALLER must stop when
+/// the write came from a window that has already closed — see below.
 pub fn set_shell_tab_state_impl(
     state: &AppState,
     tab_id: &str,
     value: serde_json::Value,
-) -> Result<(), String> {
-    state
-        .shell_tab_state
-        .lock_safe()?
-        .insert(tab_id.to_string(), value);
-    Ok(())
+) -> Result<Option<String>, String> {
+    // The shell-state lock is taken FIRST and held across the closed-window
+    // check, the ownership check and the insert. Checking whether the window
+    // was closed and then inserting as two steps let a write begin just before
+    // `CloseRequested`, see the window as open, and land after the sweep had
+    // already run — recreating an entry for a window nothing will ever clean up
+    // again. The close path marks the window closed under this same lock, so
+    // the two orderings are now the only ones possible: either the write lands
+    // first and the sweep collects it, or the mark lands first and the write is
+    // refused here. (Lock order is shell state, then closed windows —
+    // everywhere, so the pair cannot deadlock.)
+    let mut map = state.shell_tab_state.lock_safe()?;
+    let submitted_session = value
+        .get("sessionId")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string());
+    if let Some(writer) = value.get("windowId").and_then(|w| w.as_str()) {
+        if state.closed_windows.lock_safe()?.contains(writer) {
+            // Refuse it — and hand back the session it names unless the stored
+            // entry already accounts for that exact id. A tab commonly holds a
+            // placeholder with a null or older id, so "an entry exists" is not
+            // evidence that anyone is tracking the child this write describes.
+            let accounted_for = map
+                .get(tab_id)
+                .and_then(|v| v.get("sessionId"))
+                .and_then(|s| s.as_str())
+                .map(|s| Some(s.to_string()) == submitted_session)
+                .unwrap_or(false);
+            return Ok(if accounted_for { None } else { submitted_session });
+        }
+    }
+    let recorded_owner = map
+        .get(tab_id)
+        .and_then(|v| v.get("windowId"))
+        .and_then(|w| w.as_str())
+        .map(|w| w.to_string());
+    let writer = value
+        .get("windowId")
+        .and_then(|w| w.as_str())
+        .map(|w| w.to_string());
+
+    // A write from a renderer that no longer owns this tab is DROPPED, not
+    // merged. The mirror is fire-and-forget, so a window whose tab has moved
+    // can still have one in flight; it carries a whole snapshot taken before
+    // the move, and applying it would put back that window as owner and
+    // overwrite whatever the new owner has since recorded — its transcript, its
+    // database, even a session id that is no longer live.
+    //
+    // A write that names no window at all is trusted and keeps the recorded
+    // owner: that is how a caller with nothing to say about ownership behaves,
+    // and it must not be able to lose its own data.
+    if let (Some(owner), Some(writer)) = (recorded_owner.as_deref(), writer.as_deref()) {
+        if writer != owner {
+            return Ok(None);
+        }
+    }
+    let mut value = value;
+    if let (Some(owner), None) = (recorded_owner, writer) {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("windowId".to_string(), serde_json::Value::String(owner));
+        }
+    }
+    map.insert(tab_id.to_string(), value);
+    Ok(None)
 }
 
 /// Forget a tab's state. Deliberately does NOT stop its mongosh session: the
@@ -764,6 +824,55 @@ pub fn take_shell_tab_state_impl(
     tab_id: &str,
 ) -> Result<Option<serde_json::Value>, String> {
     Ok(state.shell_tab_state.lock_safe()?.remove(tab_id))
+}
+
+/// Take a tab's state only while `window_id` still owns it.
+///
+/// The close sweep enumerates a window's tabs and then takes them one by one;
+/// a destination can claim a moved tab in between, and an unconditional take
+/// would remove state that now belongs to the other window and stop its child.
+/// Checking the owner and removing has to be the same locked operation — making
+/// only the take atomic leaves the enumeration-to-take gap open.
+pub fn take_shell_tab_state_if_owned(
+    state: &AppState,
+    tab_id: &str,
+    window_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    let mut map = state.shell_tab_state.lock_safe()?;
+    let owned = map
+        .get(tab_id)
+        .and_then(|v| v.get("windowId"))
+        .and_then(|w| w.as_str())
+        .is_some_and(|owner| owner == window_id);
+    Ok(if owned { map.remove(tab_id) } else { None })
+}
+
+/// Stamp `window_id` as the owner of a tab's state and return the CURRENT
+/// value, under one lock.
+///
+/// The renderer that hydrates a session is the one about to display it, so it
+/// has to take ownership — otherwise a moved tab's entry still names the window
+/// it left, hiding the child from the new owner's close sweep. Doing that as a
+/// read followed by a write would race the old renderer's final write and
+/// replay a stale snapshot over it, because `set_shell_tab_state` replaces the
+/// whole value. Only the owner field is touched here, and the caller caches
+/// what is actually stored rather than what it fetched.
+pub fn claim_shell_tab_state_impl(
+    state: &AppState,
+    tab_id: &str,
+    window_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    let mut map = state.shell_tab_state.lock_safe()?;
+    let Some(value) = map.get_mut(tab_id) else {
+        return Ok(None);
+    };
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "windowId".to_string(),
+            serde_json::Value::String(window_id.to_string()),
+        );
+    }
+    Ok(Some(value.clone()))
 }
 
 /// Move a tab's state to a new id, for the rebind that renames a restored tab.
@@ -791,6 +900,35 @@ pub fn window_is_closed(state: &AppState, window_id: &str) -> Result<bool, Strin
         return Ok(false);
     }
     Ok(state.closed_windows.lock_safe()?.contains(window_id))
+}
+
+/// Give up ownership of a tab, but only if `window_id` still holds it.
+///
+/// A renderer can start hydrating a tab and learn only afterwards that the tab
+/// has moved away from it — its claim is then in flight and lands after the
+/// destination's, stamping the wrong window back. It disowns itself when it
+/// finds out; the tab is left with no owner, and whoever actually has it takes
+/// it again on its next write. Conditional so a renderer cannot disown a tab
+/// that has since been claimed by someone else.
+pub fn disown_shell_tab_state_impl(
+    state: &AppState,
+    tab_id: &str,
+    window_id: &str,
+) -> Result<(), String> {
+    let mut map = state.shell_tab_state.lock_safe()?;
+    let Some(value) = map.get_mut(tab_id) else {
+        return Ok(());
+    };
+    let is_ours = value
+        .get("windowId")
+        .and_then(|w| w.as_str())
+        .is_some_and(|owner| owner == window_id);
+    if is_ours {
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("windowId");
+        }
+    }
+    Ok(())
 }
 
 /// The tab ids whose stored shell state was written by `window_id`.
@@ -1101,17 +1239,38 @@ fn get_shell_tab_state(
 }
 
 #[tauri::command]
-fn set_shell_tab_state(
+async fn set_shell_tab_state(
     state: tauri::State<'_, AppState>,
     tab_id: String,
     value: serde_json::Value,
 ) -> Result<(), String> {
-    set_shell_tab_state_impl(&state, &tab_id, value)
+    if let Some(orphan) = set_shell_tab_state_impl(&state, &tab_id, value)? {
+        let _ = stop_mongosh_session_impl(&state, &orphan).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]
 fn clear_shell_tab_state(state: tauri::State<'_, AppState>, tab_id: String) -> Result<(), String> {
     clear_shell_tab_state_impl(&state, &tab_id)
+}
+
+#[tauri::command]
+fn claim_shell_tab_state(
+    state: tauri::State<'_, AppState>,
+    tab_id: String,
+    window_id: String,
+) -> Result<Option<serde_json::Value>, String> {
+    claim_shell_tab_state_impl(&state, &tab_id, &window_id)
+}
+
+#[tauri::command]
+fn disown_shell_tab_state(
+    state: tauri::State<'_, AppState>,
+    tab_id: String,
+    window_id: String,
+) -> Result<(), String> {
+    disown_shell_tab_state_impl(&state, &tab_id, &window_id)
 }
 
 /// Close a tab's shell for good: take its state and stop the child it named,
@@ -2285,6 +2444,8 @@ pub fn run() {
             get_shell_tab_state,
             set_shell_tab_state,
             clear_shell_tab_state,
+            claim_shell_tab_state,
+            disown_shell_tab_state,
             close_shell_tab_session,
             rename_shell_tab_state,
             disconnect_db,

@@ -168,4 +168,69 @@ describe('App as a secondary window (windowLabel() === "win-2") — Phase 3 Task
       expect(closeCalls[0].args).toEqual({ label: 'win-2', origin: 'win-2' });
     });
   });
+
+  it('moving this window\'s last tab away keeps that tab\'s shell session alive', async () => {
+    // The window disappears BECAUSE the tab moved, so its tabs are still in the
+    // document — and the destination is about to attach to this very session.
+    // Disposing everything this window listed would kill the mongosh child and
+    // delete the state the other window is reaching for.
+    const { writeShellSession, readShellSession, resetShellSessions } = await import(
+      '../../lib/mongoshSession'
+    );
+    resetShellSessions();
+
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'load_app_settings') return Promise.resolve({});
+      if (cmd === 'workspace_get') {
+        return Promise.resolve({
+          revision: 1,
+          windows: [
+            { id: 'main', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: [], activeTabId: null } },
+            { id: 'win-2', focusedPaneId: 'pane-1', splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['conn-1.sales_db.customers'], activeTabId: 'conn-1.sales_db.customers' } },
+          ],
+          tabs: [
+            { id: 'conn-1.sales_db.customers', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'customers' },
+          ],
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    const { act, within } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    await within(screen.getByTestId('workspace-tab-strip')).findByText('customers');
+
+    writeShellSession('conn-1.sales_db.customers', { sessionId: 'sess-moved' });
+    calls.length = 0;
+
+    // win-2 is gone, but its tab now lives in main.
+    await act(async () => {
+      fireMockEvent('workspace-changed', {
+        revision: 2,
+        origin: 'main',
+        crossWindow: true,
+        workspace: {
+          revision: 2,
+          windows: [
+            {
+              id: 'main',
+              focusedPaneId: 'pane-1',
+              splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['conn-1.sales_db.customers'], activeTabId: 'conn-1.sales_db.customers' },
+            },
+          ],
+          tabs: [
+            { id: 'conn-1.sales_db.customers', type: 'collection', profileId: '', profileName: '', db: 'sales_db', collection: 'customers' },
+          ],
+        },
+      });
+    });
+
+    expect(calls.filter((c) => c.cmd === 'close_shell_tab_session')).toEqual([]);
+    expect(calls.filter((c) => c.cmd === 'stop_mongosh_session')).toEqual([]);
+    // Forgotten here, though: the destination window owns it now.
+    expect(readShellSession('conn-1.sales_db.customers')).toBeUndefined();
+  });
 });

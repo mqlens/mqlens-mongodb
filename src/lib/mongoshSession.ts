@@ -190,8 +190,7 @@ function notifyWatchers(key: string, session: ShellSession): void {
 /** Read a tab's stored state from the backend WITHOUT caching it. Used by
  *  disposal, which must not resurrect an entry for a key it has just deleted —
  *  or, worse, overwrite the entry a reopened tab has since created. */
-async function fetchStoredSession(key: string): Promise<ShellSession | undefined> {
-  const stored = await invoke<unknown>('get_shell_tab_state', { tabId: key }).catch(() => null);
+function normalizeStoredSession(stored: unknown): ShellSession | undefined {
   // Shape-check rather than trust: this crosses the IPC boundary, and a value
   // that is merely truthy (an array, say) would otherwise be read for fields it
   // does not have.
@@ -234,7 +233,30 @@ function persist(key: string, session: ShellSession): void {
 export async function loadShellSession(key: string): Promise<ShellSession | undefined> {
   const cached = sessions.get(key);
   if (cached) return cached;
-  const session = await fetchStoredSession(key);
+  // Claims ownership and returns the CURRENT value in one backend call.
+  // Whoever hydrates a session is the renderer about to display it, and the
+  // stored entry still names whichever window wrote it last — after a tab
+  // moves, that is the window it LEFT, which would hide the child from the new
+  // owner's close sweep. Fetching and then writing the fetched value back would
+  // race the old renderer's final write and replay a stale snapshot over it,
+  // since a normal write replaces the whole entry.
+  // The epoch before the round trip. If it has moved by the time the claim
+  // lands, this renderer has since been told the tab left it — the claim was
+  // issued before the move and would otherwise stamp this window back over the
+  // destination's. Disown instead; whoever really has the tab takes it again on
+  // its next write.
+  const epochAtClaim = shellSessionEpoch(key);
+  const stored = await invoke<unknown>('claim_shell_tab_state', {
+    tabId: key,
+    windowId: windowLabel(),
+  }).catch(() => null);
+  if (shellSessionEpoch(key) !== epochAtClaim) {
+    void invoke('disown_shell_tab_state', { tabId: key, windowId: windowLabel() }).catch(
+      () => undefined
+    );
+    return undefined;
+  }
+  const session = normalizeStoredSession(stored);
   if (!session) return undefined;
   sessions.set(key, session);
   return session;
@@ -289,6 +311,11 @@ export async function disposeShellSession(key: string): Promise<void> {
   // flight; doing this afterwards would end the epoch of — and delete the cache
   // entry belonging to — the tab that has since taken the key over.
   endEpoch(key);
+  // Drop the shared start too. A reopened tab lands on the same deterministic
+  // key, and joining the previous tab's pending start would hand it a child the
+  // old mount is about to stop for failing ITS epoch check — leaving the
+  // reopened shell attached to a dead session id.
+  dropPendingShellStart(key);
   const cached = sessions.get(key);
   sessions.delete(key);
 
