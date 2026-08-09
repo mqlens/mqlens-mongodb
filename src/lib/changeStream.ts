@@ -34,7 +34,19 @@ export interface ChangeEvent {
   /** Where a rename sent the collection; rename events carry no document. */
   renamedTo?: string;
   atMs: number;
+  /** Roughly what this event's bodies weigh, measured by the backend so the
+   *  view can stay bounded by memory and not only by row count. */
+  bytes?: number;
 }
+
+/**
+ * What the VIEW holds, in bytes.
+ *
+ * Smaller than the backend's buffer on purpose: the backend keeps events so a
+ * poll cannot miss them, while this is what a WebView carries around for as
+ * long as the tab is open.
+ */
+export const VIEW_BYTES = 8 * 1024 * 1024;
 
 export type StreamStatus = 'starting' | 'running' | 'paused' | 'unsupported' | 'ended' | 'error';
 
@@ -130,17 +142,23 @@ export async function stopChangeStream(streamId: string): Promise<void> {
 }
 
 /**
- * Merge a poll into what is on screen, keeping the newest `cap`.
+ * Merge a poll into what is on screen, keeping the newest events.
  *
  * The backend caps its own buffer, but a tab left open for hours accumulates
  * far more than the backend ever held at once, so the view needs its own bound.
  * Pure, because "the list stays bounded and in order" is the one behaviour a
  * tail viewer cannot get wrong.
+ *
+ * Bounded by BYTES as well as by count, for the same reason the backend is: a
+ * MongoDB document can approach 16 MiB, so a thousand large inserts is
+ * gigabytes — and holding that in a WebView is worse than holding it in the
+ * host process. Whichever limit is reached first evicts.
  */
 export function mergeEvents(
   current: ChangeEvent[],
   incoming: ChangeEvent[],
-  cap: number
+  cap: number,
+  maxBytes = VIEW_BYTES
 ): ChangeEvent[] {
   if (incoming.length === 0) return current;
   // Deduplicated by sequence. Polls are serialized at the call site, but a
@@ -152,7 +170,15 @@ export function mergeEvents(
   // Newest first: a tail is read from the top, and prepending keeps the thing
   // the user is watching where their eyes already are.
   const next = fresh.sort((a, b) => b.seq - a.seq).concat(current);
-  return next.length > cap ? next.slice(0, cap) : next;
+  let bytes = 0;
+  for (let i = 0; i < next.length; i += 1) {
+    bytes += next[i].bytes ?? 0;
+    // Past either limit, everything older goes. The newest event always
+    // survives, even alone over budget — dropping what just arrived would make
+    // a large-document collection look idle.
+    if (i > 0 && (i + 1 > cap || bytes > maxBytes)) return next.slice(0, i);
+  }
+  return next;
 }
 
 /** The document's `_id` as text, when the event carries one. */

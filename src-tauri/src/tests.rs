@@ -4942,8 +4942,8 @@ mod chat_store_tests {
 mod change_stream_tests {
     use crate::change_streams::{
         build_pipeline, describe_stream_error, events_after, push_event, push_event_bounded,
-        retire_reader, seed_resume_token, ChangeEvent, LiveStream, StreamBuffer, StreamStatus,
-        BUFFER_CAP,
+        measure_event, record_resume_token, retire_reader, ChangeEvent, LiveStream, ResumePoint, StreamBuffer,
+        StreamStatus, BUFFER_CAP,
     };
     use mongodb::bson::{doc, Bson};
     use mongodb::change_stream::event::ResumeToken;
@@ -4962,7 +4962,8 @@ mod change_stream_tests {
             status: Mutex::new(StreamStatus::Running),
             error: Mutex::new(None),
             generation: Arc::new(AtomicU64::new(0)),
-            resume_token: Mutex::new(None),
+            retired: Arc::new(tokio::sync::Notify::new()),
+            resume_token: Mutex::new(ResumePoint::default()),
             connection_id: "c1".to_string(),
             database: Some("sales".to_string()),
             collection: Some("orders".to_string()),
@@ -5167,20 +5168,59 @@ mod change_stream_tests {
         // Pausing a watch that has not seen a change yet used to leave it with
         // no token, so resuming opened at the current time and every change
         // made during the pause was skipped — silently, which is worse than
-        // showing nothing at all.
-        let mut current = None;
-        seed_resume_token(&mut current, Some(token("opened")));
-        assert_eq!(current, Some(token("opened")));
+        // showing nothing at all. The cursor has a position from the moment it
+        // opens, whether or not anything has come through it.
+        let mut point = ResumePoint::default();
+        record_resume_token(&mut point, 1, Some(token("opened")));
+        assert_eq!(point.token, Some(token("opened")));
     }
 
     #[test]
-    fn a_carried_over_resume_point_wins_over_the_new_cursors() {
-        // A filter change rebuilds the cursor but inherits the old token,
-        // which points further back than the new cursor's "now". Overwriting
-        // it would skip everything between the two.
-        let mut current = Some(token("inherited"));
-        seed_resume_token(&mut current, Some(token("opened")));
-        assert_eq!(current, Some(token("inherited")));
+    fn a_resume_point_follows_the_cursor_forward() {
+        // A cursor advances through batches carrying nothing this stream was
+        // watching for. Recording only event tokens left the resume point
+        // drifting further behind the oplog until resuming failed outright.
+        let mut point = ResumePoint::default();
+        record_resume_token(&mut point, 1, Some(token("opened")));
+        record_resume_token(&mut point, 1, Some(token("after an empty batch")));
+        assert_eq!(point.token, Some(token("after an empty batch")));
+    }
+
+    #[test]
+    fn a_straggler_cannot_drag_the_resume_point_backwards() {
+        // A retired reader can surface minutes later still holding a cursor
+        // whose position predates its replacement's. Taking it would replay
+        // changes the view has already shown, under fresh sequence numbers
+        // that no deduplication can match up.
+        let mut point = ResumePoint::default();
+        record_resume_token(&mut point, 2, Some(token("replacement")));
+        record_resume_token(&mut point, 1, Some(token("straggler")));
+        assert_eq!(point.token, Some(token("replacement")));
+    }
+
+    #[test]
+    fn a_cursor_with_no_position_yet_does_not_erase_one() {
+        let mut point = ResumePoint::default();
+        record_resume_token(&mut point, 1, Some(token("somewhere")));
+        record_resume_token(&mut point, 2, None);
+        assert_eq!(point.token, Some(token("somewhere")));
+    }
+
+    #[test]
+    fn an_unset_heavy_update_is_measured_by_what_it_removes() {
+        // Its whole change is the list of field names — no document, no
+        // updated fields. Measuring only the bodies reported nearly zero, so a
+        // thousand of them sat in a buffer that believed it was empty.
+        let unset = ChangeEvent {
+            operation_type: "update".to_string(),
+            removed_fields: Some(vec!["a".repeat(200), "b".repeat(200)]),
+            ..event("update")
+        };
+        assert!(
+            measure_event(&unset) > 400,
+            "removed fields should count towards the byte bound, got {}",
+            measure_event(&unset)
+        );
     }
 
     #[test]

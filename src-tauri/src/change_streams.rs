@@ -59,9 +59,13 @@ pub struct ChangeEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub renamed_to: Option<String>,
     pub at_ms: u64,
-    /// Rough size of the bodies this event carries, for the byte bound. Not
-    /// sent to the frontend — it is bookkeeping, not information.
-    #[serde(skip)]
+    /// Rough size of the bodies this event carries, for the byte bound.
+    ///
+    /// Sent to the frontend as well: the view keeps its own bounded history,
+    /// and a count alone is not a memory bound there either — a thousand
+    /// multi-megabyte documents held in a WebView is the same problem in a
+    /// worse place. Measuring once here beats every poll re-measuring.
+    #[serde(default)]
     pub bytes: usize,
 }
 
@@ -93,6 +97,18 @@ pub struct StreamBuffer {
     pub buffered_bytes: usize,
 }
 
+/// Where a stream would restart, and who put it there.
+///
+/// The generation is what stops a straggler from dragging the point backwards:
+/// a reader retired minutes ago can still be holding a cursor whose position
+/// predates its replacement's, and writing that would replay changes the view
+/// has already shown under fresh sequence numbers.
+#[derive(Default, Debug)]
+pub struct ResumePoint {
+    pub generation: u64,
+    pub token: Option<ResumeToken>,
+}
+
 pub struct LiveStream {
     pub buffer: Mutex<StreamBuffer>,
     pub status: Mutex<StreamStatus>,
@@ -106,7 +122,14 @@ pub struct LiveStream {
     /// value it started with and retires the moment it stops matching, so a
     /// straggler can neither push nor keep reading.
     pub generation: Arc<AtomicU64>,
-    pub resume_token: Mutex<Option<ResumeToken>>,
+    /// Wakes a reader parked in `next().await` so retirement is immediate.
+    ///
+    /// The generation alone retires a reader only in principle: a quiet or
+    /// narrowly filtered stream can sit in that await for minutes, holding a
+    /// server-side cursor and a clone of the client the whole time. Pause,
+    /// resume, filter, pause again and those pile up.
+    pub retired: Arc<tokio::sync::Notify>,
+    pub resume_token: Mutex<ResumePoint>,
     pub connection_id: String,
     /// `None` watches the whole deployment (`client.watch()`), which is how a
     /// cluster-level tail differs from a database one.
@@ -247,12 +270,7 @@ pub fn flatten_event(event: ChangeStreamEvent<Document>, database: &str) -> Chan
     });
     let document_key = to_json(event.document_key);
     let full_document = event.full_document.and_then(|d| serde_json::to_value(d).ok());
-    let approx_bytes = |v: &Option<serde_json::Value>| {
-        v.as_ref().map(|j| j.to_string().len()).unwrap_or(0)
-    };
-    let bytes = approx_bytes(&full_document) + approx_bytes(&updated_fields) + approx_bytes(&document_key);
-
-    ChangeEvent {
+    let mut flat = ChangeEvent {
         // Assigned by `push_event`, which owns the sequence.
         seq: 0,
         operation_type: format!("{:?}", event.operation_type).to_lowercase(),
@@ -268,8 +286,30 @@ pub fn flatten_event(event: ChangeStreamEvent<Document>, database: &str) -> Chan
         removed_fields,
         renamed_to,
         at_ms,
-        bytes,
-    }
+        bytes: 0,
+    };
+    flat.bytes = measure_event(&flat);
+    flat
+}
+
+/// Roughly how much memory one event's bodies occupy, for the byte bound.
+///
+/// Measured once, here, and carried on the event: both the backend buffer and
+/// the view are bounded by it, and re-measuring a thousand documents on every
+/// poll would cost more than the bound saves.
+///
+/// Removed fields count. An `$unset`-heavy update carries its whole change in
+/// that list of names and nothing in the other bodies, so leaving them out
+/// gave a byte bound that did not bound the one shape of event most likely to
+/// pile up unnoticed.
+pub fn measure_event(event: &ChangeEvent) -> usize {
+    let json = |v: &Option<serde_json::Value>| v.as_ref().map(|j| j.to_string().len()).unwrap_or(0);
+    let removed: usize = event
+        .removed_fields
+        .as_ref()
+        .map(|fields| fields.iter().map(|name| name.len() + 3).sum())
+        .unwrap_or(0);
+    json(&event.full_document) + json(&event.updated_fields) + json(&event.document_key) + removed
 }
 
 fn get_stream(state: &AppState, stream_id: &str) -> Result<Arc<LiveStream>, String> {
@@ -293,18 +333,23 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
         .resume_token
         .lock()
         .ok()
-        .and_then(|t| t.clone());
+        .and_then(|p| p.token.clone());
+    // Every reader records through this, so the rule about stragglers lives in
+    // one place.
+    let remember = |token: Option<ResumeToken>| {
+        if let Ok(mut point) = state_streams.resume_token.lock() {
+            record_resume_token(&mut point, my_generation, token);
+        }
+    };
 
     // Three levels, one cursor shape: a collection, a database, or the whole
     // deployment. The driver exposes `watch()` at each of those, so the only
     // difference here is which handle it is called on.
     //
-    // The cursor's own resume token is taken BEFORE boxing, which erases the
-    // `ChangeStream` type that carries it. A freshly opened cursor already has
-    // one — the post-batch token for "here, now" — and without it a watch
-    // paused before its first event has no resume point at all, so resuming
-    // would open at the current time and skip everything that happened while
-    // it was paused.
+    // Deliberately NOT boxed. All three are the same `ChangeStream` type, and
+    // it is the type that carries `resume_token()` — the cursor's own position,
+    // which is the only way to learn that it has advanced past batches holding
+    // nothing this stream was watching for.
     let started = match (&state_streams.database, &state_streams.collection) {
         (Some(database), Some(collection)) => {
             let coll = client
@@ -314,7 +359,7 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
             if let Some(token) = resume {
                 action = action.resume_after(token);
             }
-            action.await.map(|s| (s.resume_token(), s.boxed()))
+            action.await
         }
         (Some(database), None) => {
             let db = client.database(database);
@@ -322,7 +367,7 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
             if let Some(token) = resume {
                 action = action.resume_after(token);
             }
-            action.await.map(|s| (s.resume_token(), s.boxed()))
+            action.await
         }
         // Deployment-wide. Every namespace the user can read, so the event's own
         // `ns` is the only thing that says where a change came from.
@@ -331,11 +376,11 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
             if let Some(token) = resume {
                 action = action.resume_after(token);
             }
-            action.await.map(|s| (s.resume_token(), s.boxed()))
+            action.await
         }
     };
 
-    let (opened_at, mut stream) = match started {
+    let mut stream = match started {
         Ok(stream) => stream,
         Err(err) => {
             // Only if this reader is still the live one. Opening a cursor is
@@ -364,17 +409,39 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
     if state_streams.generation.load(Ordering::SeqCst) != my_generation {
         return;
     }
-    if let Ok(mut token) = state_streams.resume_token.lock() {
-        seed_resume_token(&mut token, opened_at);
-    }
+    // A resume point before the first event ever arrives. Without it a watch
+    // paused while idle had nothing to come back to, so resuming opened at the
+    // current time and skipped the entire pause.
+    remember(stream.resume_token());
     if let Ok(mut s) = state_streams.status.lock() {
         if *s == StreamStatus::Starting {
             *s = StreamStatus::Running;
         }
     }
 
-    while state_streams.generation.load(Ordering::SeqCst) == my_generation {
-        match stream.next().await {
+    loop {
+        // Registered BEFORE the generation is checked, so a retirement landing
+        // between the two still wakes this rather than leaving it parked until
+        // the collection happens to change.
+        let retired = state_streams.retired.notified();
+        tokio::pin!(retired);
+        retired.as_mut().enable();
+        if state_streams.generation.load(Ordering::SeqCst) != my_generation {
+            remember(stream.resume_token());
+            return;
+        }
+        // Dropping the half-finished `next()` is safe here in a way it would
+        // not be mid-stream: this reader is being abandoned along with its
+        // cursor, and its replacement resumes from the point recorded above.
+        let next = tokio::select! {
+            biased;
+            _ = &mut retired => {
+                remember(stream.resume_token());
+                return;
+            }
+            next = stream.next() => next,
+        };
+        match next {
             Some(Ok(event)) => {
                 let token = event.id.clone();
                 let flat = flatten_event(event, state_streams.database.as_deref().unwrap_or(""));
@@ -393,8 +460,8 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
                 if state_streams.generation.load(Ordering::SeqCst) != my_generation {
                     return;
                 }
-                if let Ok(mut resume_token) = state_streams.resume_token.lock() {
-                    *resume_token = Some(token);
+                if let Ok(mut point) = state_streams.resume_token.lock() {
+                    record_resume_token(&mut point, my_generation, Some(token));
                 }
                 push_event(&mut buffer, flat, BUFFER_CAP);
             }
@@ -431,20 +498,23 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
     }
 }
 
-/// Give a stream a resume point from the moment its cursor opened.
+/// Remember where a stream would restart.
 ///
-/// A watch paused before it ever delivered an event had no token at all, so
-/// resuming opened a cursor at the current time and everything that happened
-/// during the pause was skipped — the one thing pause is supposed to prevent.
-/// A freshly opened cursor carries a post-batch token, which is exactly that
-/// missing "here, now".
+/// Taken from the CURSOR rather than from the last event, and taken again
+/// whenever a reader hands control back. A cursor advances through batches
+/// that carry no matching event — a narrow operation filter on a busy
+/// deployment does little else — and its post-batch token moves with them, so
+/// a stream that only recorded event tokens kept a resume point that aged
+/// further and further behind the oplog until resuming it failed outright.
 ///
-/// Only when there is nothing better: a token inherited across a filter change
-/// points further back, and replacing it with "now" would reintroduce the gap.
-pub fn seed_resume_token(current: &mut Option<ResumeToken>, opened_at: Option<ResumeToken>) {
-    if current.is_none() {
-        *current = opened_at;
+/// Refused from a reader older than the one that wrote last: retirement does
+/// not stop a straggler from surfacing later with a stale cursor position.
+pub fn record_resume_token(point: &mut ResumePoint, generation: u64, token: Option<ResumeToken>) {
+    if token.is_none() || generation < point.generation {
+        return;
     }
+    point.generation = generation;
+    point.token = token;
 }
 
 /// Retire whoever is reading and claim the next generation.
@@ -455,8 +525,14 @@ pub fn seed_resume_token(current: &mut Option<ResumeToken>, opened_at: Option<Re
 /// retired here, and still append an event that its replacement then reads
 /// again from the older resume token.
 pub fn retire_reader(stream: &LiveStream) -> u64 {
-    let _publish = stream.buffer.lock();
-    stream.generation.fetch_add(1, Ordering::SeqCst) + 1
+    let claimed = {
+        let _publish = stream.buffer.lock();
+        stream.generation.fetch_add(1, Ordering::SeqCst) + 1
+    };
+    // Wake whoever is parked in `next().await` so it lets go of its cursor now
+    // rather than whenever the collection next changes.
+    stream.retired.notify_waiters();
+    claimed
 }
 
 fn spawn_reader(state: &AppState, stream: Arc<LiveStream>) -> Result<(), String> {
@@ -506,7 +582,7 @@ pub async fn start_change_stream(
     let inherited_token = existing
         .as_ref()
         .filter(|e| e.connection_id == connection_id && e.database == database)
-        .and_then(|e| e.resume_token.lock().ok().and_then(|t| t.clone()));
+        .and_then(|e| e.resume_token.lock().ok().and_then(|p| p.token.clone()));
     let inherited_status = existing
         .as_ref()
         .and_then(|e| e.status.lock().ok().map(|s| s.clone()));
@@ -528,7 +604,11 @@ pub async fn start_change_stream(
         }),
         error: Mutex::new(None),
         generation: Arc::new(AtomicU64::new(0)),
-        resume_token: Mutex::new(inherited_token),
+        retired: Arc::new(tokio::sync::Notify::new()),
+        resume_token: Mutex::new(ResumePoint {
+            generation: 0,
+            token: inherited_token,
+        }),
         connection_id,
         database,
         collection,

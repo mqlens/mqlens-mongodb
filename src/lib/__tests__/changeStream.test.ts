@@ -41,6 +41,27 @@ describe('change stream client', () => {
       expect(merged.map((e) => e.seq)).toEqual([3, 2]);
     });
 
+    it('stays bounded by bytes too, not just by row count', () => {
+      // A MongoDB document can approach 16 MiB, so a thousand large inserts is
+      // gigabytes held in a WebView — a count-only cap is not a memory bound.
+      const big = (seq: number) => event(seq, { bytes: 4_000 });
+      const merged = mergeEvents([big(2), big(1)], [big(3)], 100, 9_000);
+      expect(merged.map((e) => e.seq)).toEqual([3, 2]);
+    });
+
+    it('keeps the newest event even when it alone is over budget', () => {
+      // Dropping what just arrived would make a large-document collection look
+      // idle, which is worse than briefly exceeding the budget.
+      const merged = mergeEvents([], [event(1, { bytes: 50_000 })], 100, 1_000);
+      expect(merged.map((e) => e.seq)).toEqual([1]);
+    });
+
+    it('does not evict on size when the backend sent no measurements', () => {
+      // Older backends, and any event whose bodies were all absent.
+      const merged = mergeEvents([event(2), event(1)], [event(3)], 100, 10);
+      expect(merged.map((e) => e.seq)).toEqual([3, 2, 1]);
+    });
+
     it('drops events it already has, rather than duplicating rows', () => {
       // Two polls can overlap on the same `afterSeq`, and duplicate keys make
       // React reconcile the wrong rows.
