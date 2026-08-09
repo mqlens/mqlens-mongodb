@@ -651,9 +651,22 @@ JSON.stringify({ explanation: 'Again.', queryType: 'find', filter: {}, sort: {} 
     fireEvent.click(screen.getByTestId('chat-send-btn'));
 
     await waitFor(() => expect(screen.getByText('Again.')).toBeInTheDocument());
-    const calls = onMessagesChange.mock.calls;
-    const lastCall = calls[calls.length - 1][0] as Array<{ id: string; text: string }>;
-    expect(lastCall.map((m) => m.text)).toEqual(['list adults', 'Here you go.', 'again', 'Again.']);
+    // Waited on the report, not just on the reply being on screen. The reply is
+    // painted by the commit that sets it, while `onMessagesChange` runs from a
+    // passive effect a macrotask later — so reading the mock the moment the text
+    // appears can still see the call before it. Locally the gap closes on its
+    // own; under CI's coverage run it does not.
+    let lastCall: Array<{ id: string; text: string }> = [];
+    await waitFor(() => {
+      const calls = onMessagesChange.mock.calls;
+      lastCall = calls[calls.length - 1][0] as Array<{ id: string; text: string }>;
+      expect(lastCall.map((m) => m.text)).toEqual([
+        'list adults',
+        'Here you go.',
+        'again',
+        'Again.',
+      ]);
+    });
     // Ids continue past the restored m0/m1 range.
     expect(lastCall[2].id).toBe('m2');
     expect(lastCall[3].id).toBe('m3');
