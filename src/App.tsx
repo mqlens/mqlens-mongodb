@@ -1435,9 +1435,9 @@ function Workspace() {
 
   /** Open a live tail. One tab per target, so re-opening focuses rather than
    *  starting a second cursor on the same collection. */
-  const handleOpenWatch = (connectionId: string, dbName: string, collName = '') => {
-    if (!connectionId || !dbName) return;
-    const tabId = `watch.${connectionId}.${dbName}.${collName || 'database'}`;
+  const handleOpenWatch = (connectionId: string, dbName = '', collName = '') => {
+    if (!connectionId) return;
+    const tabId = `watch.${connectionId}.${dbName || 'deployment'}.${collName || 'database'}`;
     if (!tabs.some((t) => t.id === tabId)) {
       const newTab: QueryTab = {
         id: tabId,

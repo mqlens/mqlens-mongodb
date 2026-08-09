@@ -476,11 +476,19 @@
       "pause": "Stream pausieren",
       "resume": "Dort fortsetzen, wo pausiert wurde"
     },
+    "deployment": "Gesamtes Deployment",
     "dropped_one": "{{count}} älteres Ereignis verworfen, um den Puffer einzuhalten",
     "dropped_other": "{{count}} ältere Ereignisse verworfen, um den Puffer einzuhalten",
+    "eventCount_one": "{{count}} Ereignis",
+    "eventCount_other": "{{count}} Ereignisse",
+    "filterAll": "Alle",
+    "filterLabel": "Zeigen",
     "operations": {
       "delete": "Löschen",
+      "drop": "Verwerfen",
       "insert": "Einfügen",
+      "invalidate": "Ungültig",
+      "rename": "Umbenennen",
       "replace": "Ersetzen",
       "update": "Aktualisieren"
     },

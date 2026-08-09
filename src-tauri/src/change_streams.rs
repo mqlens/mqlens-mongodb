@@ -79,7 +79,9 @@ pub struct LiveStream {
     pub cancel: Arc<AtomicBool>,
     pub resume_token: Mutex<Option<ResumeToken>>,
     pub connection_id: String,
-    pub database: String,
+    /// `None` watches the whole deployment (`client.watch()`), which is how a
+    /// cluster-level tail differs from a database one.
+    pub database: Option<String>,
     pub collection: Option<String>,
     pub operation_types: Vec<String>,
 }
@@ -226,18 +228,32 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client) {
         .ok()
         .and_then(|t| t.clone());
 
-    let db = client.database(&state_streams.database);
-    let started = match &state_streams.collection {
-        Some(collection) => {
-            let coll = db.collection::<Document>(collection);
+    // Three levels, one cursor shape: a collection, a database, or the whole
+    // deployment. The driver exposes `watch()` at each of those, so the only
+    // difference here is which handle it is called on.
+    let started = match (&state_streams.database, &state_streams.collection) {
+        (Some(database), Some(collection)) => {
+            let coll = client
+                .database(database)
+                .collection::<Document>(collection);
             let mut action = coll.watch().pipeline(pipeline);
             if let Some(token) = resume {
                 action = action.resume_after(token);
             }
             action.await.map(|s| s.boxed())
         }
-        None => {
+        (Some(database), None) => {
+            let db = client.database(database);
             let mut action = db.watch().pipeline(pipeline);
+            if let Some(token) = resume {
+                action = action.resume_after(token);
+            }
+            action.await.map(|s| s.boxed())
+        }
+        // Deployment-wide. Every namespace the user can read, so the event's own
+        // `ns` is the only thing that says where a change came from.
+        (None, _) => {
+            let mut action = client.watch().pipeline(pipeline);
             if let Some(token) = resume {
                 action = action.resume_after(token);
             }
@@ -269,7 +285,7 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client) {
                 if let Ok(mut token) = state_streams.resume_token.lock() {
                     *token = Some(event.id.clone());
                 }
-                let flat = flatten_event(event, &state_streams.database);
+                let flat = flatten_event(event, state_streams.database.as_deref().unwrap_or(""));
                 if let Ok(mut buffer) = state_streams.buffer.lock() {
                     push_event(&mut buffer, flat, BUFFER_CAP);
                 }
@@ -309,7 +325,7 @@ pub async fn start_change_stream(
     state: tauri::State<'_, AppState>,
     stream_id: String,
     connection_id: String,
-    database: String,
+    database: Option<String>,
     collection: Option<String>,
     operation_types: Vec<String>,
 ) -> Result<(), String> {

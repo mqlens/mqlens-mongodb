@@ -182,8 +182,9 @@ interface SidebarProps {
   onCreateIndex?: (connectionId: string, dbName: string, collName: string) => void;
   onDeleteIndex?: (connectionId: string, dbName: string, collName: string, indexName: string) => void;
   onOpenShell?: (connectionId: string, dbName: string, collName?: string, initialCommand?: string) => void;
-  /** Open a live change-stream tail for a collection (#190). */
-  onWatchCollection?: (connectionId: string, dbName: string, collName?: string) => void;
+  /** Open a live change-stream tail (#190). Omit the collection to watch a
+   *  whole database, and the database too to watch the deployment. */
+  onWatchCollection?: (connectionId: string, dbName?: string, collName?: string) => void;
   onOpenMonitoring?: (connectionId: string) => void;
   onOpenUsers?: (connectionId: string, db?: string) => void;
   onAnalyzeSchema?: (connectionId: string, dbName: string, collName: string) => void;
@@ -1876,6 +1877,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <span>{t('ctx.restore')}</span>
                     </ContextMenuItem>
                   )}
+                  <ContextMenuItem
+                    className={ctxItemClass}
+                    data-testid={`ctx-watch-deployment-${conn.id}`}
+                    onClick={() => onWatchCollection?.(conn.id)}
+                  >
+                    <Radio />
+                    <span>{t('ctx.watchDeployment')}</span>
+                  </ContextMenuItem>
                   <ContextMenuSeparator />
                   <ContextMenuItem
                     className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
@@ -2012,6 +2021,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             >
                               <Archive />
                               <span>{t('ctx.newBucket')}</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              className={ctxItemClass}
+                              data-testid={`ctx-watch-database-${conn.id}-${dbName}`}
+                              onClick={() => onWatchCollection?.(conn.id, dbName)}
+                            >
+                              <Radio />
+                              <span>{t('ctx.watchDatabase')}</span>
                             </ContextMenuItem>
                             <ContextMenuItem
                               className={ctxItemClass}

@@ -77,18 +77,46 @@ describe('change stream client', () => {
     });
   });
 
-  it('watches a whole database when no collection is given', async () => {
-    await startChangeStream({
-      streamId: 's1',
-      connectionId: 'c1',
-      database: 'sales',
-      operationTypes: ['insert'],
+  describe('the three levels', () => {
+    it('watches one collection', async () => {
+      await startChangeStream({
+        streamId: 's1',
+        connectionId: 'c1',
+        database: 'sales',
+        collection: 'orders',
+        operationTypes: [],
+      });
+
+      expect(invokeMock).toHaveBeenCalledWith(
+        'start_change_stream',
+        expect.objectContaining({ database: 'sales', collection: 'orders' }),
+      );
     });
 
-    expect(invokeMock).toHaveBeenCalledWith(
-      'start_change_stream',
-      expect.objectContaining({ database: 'sales', collection: null }),
-    );
+    it('watches a whole database when no collection is given', async () => {
+      await startChangeStream({
+        streamId: 's1',
+        connectionId: 'c1',
+        database: 'sales',
+        operationTypes: ['insert'],
+      });
+
+      expect(invokeMock).toHaveBeenCalledWith(
+        'start_change_stream',
+        expect.objectContaining({ database: 'sales', collection: null }),
+      );
+    });
+
+    it('watches the whole deployment when neither is given', async () => {
+      // Both null is what tells the backend to call `client.watch()` rather
+      // than reaching for a database that was never named.
+      await startChangeStream({ streamId: 's1', connectionId: 'c1', operationTypes: [] });
+
+      expect(invokeMock).toHaveBeenCalledWith(
+        'start_change_stream',
+        expect.objectContaining({ database: null, collection: null }),
+      );
+    });
   });
 
   describe('event summaries', () => {

@@ -54,7 +54,9 @@
     "unpin": "Unpin",
     "unpinFromSidebar": "Unpin from sidebar",
     "validationRules": "Validation Rules",
-    "watchCollection": "Watch changes…"
+    "watchCollection": "Watch changes…",
+    "watchDatabase": "Watch database changes…",
+    "watchDeployment": "Watch deployment changes…"
   },
   "dialogs": {
     "dropCollection": {

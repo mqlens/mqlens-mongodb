@@ -55,7 +55,8 @@ export const CHANGE_OPERATIONS: ChangeOperation[] = [
 export interface StartOptions {
   streamId: string;
   connectionId: string;
-  database: string;
+  /** Omit to watch the whole deployment rather than one database. */
+  database?: string;
   /** Omit to watch the whole database rather than one collection. */
   collection?: string;
   operationTypes: ChangeOperation[];
@@ -65,7 +66,7 @@ export async function startChangeStream(opts: StartOptions): Promise<void> {
   await invoke('start_change_stream', {
     streamId: opts.streamId,
     connectionId: opts.connectionId,
-    database: opts.database,
+    database: opts.database ?? null,
     collection: opts.collection ?? null,
     operationTypes: opts.operationTypes,
   });

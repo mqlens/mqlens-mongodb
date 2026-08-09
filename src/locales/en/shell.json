@@ -476,11 +476,19 @@
       "pause": "Pause the stream",
       "resume": "Resume from where it paused"
     },
+    "deployment": "Whole deployment",
     "dropped_one": "{{count}} earlier event dropped to stay within the buffer",
     "dropped_other": "{{count}} earlier events dropped to stay within the buffer",
+    "eventCount_one": "{{count}} event",
+    "eventCount_other": "{{count}} events",
+    "filterAll": "All",
+    "filterLabel": "Show",
     "operations": {
       "delete": "Delete",
+      "drop": "Drop",
       "insert": "Insert",
+      "invalidate": "Invalidate",
+      "rename": "Rename",
       "replace": "Replace",
       "update": "Update"
     },

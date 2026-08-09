@@ -81,6 +81,20 @@ export default defineConfig({
     defaultValue: '',
     preservePatterns: [
       'common:appName',
+      // WatchPanel renders an event's operation label with
+      // `t(`watch.operations.${event.operationType}`)` — the server names the
+      // operation, so the key is only ever a variable. The four the filter
+      // offers are extracted from its literals; these are the ones only a
+      // server-sent event produces.
+      'shell:watch.operations.drop',
+      'shell:watch.operations.rename',
+      'shell:watch.operations.invalidate',
+      // Same reason for the status pill: `t(`watch.status.${status}`)`.
+      'shell:watch.status.starting',
+      'shell:watch.status.running',
+      'shell:watch.status.paused',
+      'shell:watch.status.unsupported',
+      'shell:watch.status.error',
       'settings:appearance.tabLabel',
       'settings:appearance.tabDescription',
       'settings:ai.tabLabel',
