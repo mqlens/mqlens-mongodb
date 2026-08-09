@@ -218,6 +218,38 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     void claimOpenChat(activeChatIdRef.current, ownerRef.current);
   }, [activeChatId]);
 
+  // Tell the tab which conversation it is on, including the one minted here for
+  // a tab that arrived without any. Without this the tab still has no id after
+  // the first message: the next mount mints another, saves the same transcript
+  // again as a second conversation, and abandons the first claim — once per
+  // tab switch.
+  useEffect(() => {
+    if (!chatId) onChatIdChange?.(activeChatIdRef.current);
+    // Mount only: later changes go through `setActiveChatId`, which notifies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Recover which namespace the open conversation belongs to. `openScope` is
+  // component state and a tab switch unmounts the panel, so without this a
+  // chat opened from the widened history comes back looking local — and the
+  // persistence effect below would quietly move it to this collection.
+  useEffect(() => {
+    if (!chatId) return;
+    let active = true;
+    void loadChat(chatId).then((stored) => {
+      if (!active || !stored) return;
+      setOpenScope({
+        connectionName: stored.connectionName,
+        database: stored.database,
+        collection: stored.collection,
+        variant: stored.variant,
+      });
+    });
+    return () => {
+      active = false;
+    };
+  }, [chatId]);
+
   useEffect(() => {
     onMessagesChange?.(chatMessages);
   }, [chatMessages, onMessagesChange]);
@@ -372,7 +404,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
   const handleSendChat = async () => {
     const text = chatInput.trim();
-    if (!text || isChatLoading) return;
+    if (!text || isChatLoading || foreignChat) return;
 
     const history = chatMessages.map((m) => ({
       role: m.role,
@@ -716,7 +748,11 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         <div className="flex flex-shrink-0 flex-col gap-2 border-t border-border p-2">
           <textarea
             className={composerClassName}
-            placeholder={t('aiChatPanel.composer.placeholder')}
+            placeholder={
+              foreignChat
+                ? t('aiChatPanel.history.viewingOtherScopeShort')
+                : t('aiChatPanel.composer.placeholder')
+            }
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             onKeyDown={(e) => {
@@ -725,6 +761,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                 handleSendChat();
               }
             }}
+            disabled={foreignChat}
             data-testid="chat-input"
           />
           <Button
@@ -732,7 +769,8 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
             className="w-full"
             size="sm"
             onClick={handleSendChat}
-            disabled={isChatLoading || !chatInput.trim()}
+            disabled={isChatLoading || !chatInput.trim() || foreignChat}
+            title={foreignChat ? t('aiChatPanel.actions.foreignChat') : undefined}
             data-testid="chat-send-btn"
           >
             <Sparkles size={11} />

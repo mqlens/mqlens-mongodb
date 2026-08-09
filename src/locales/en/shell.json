@@ -29,7 +29,8 @@
       "thisCollectionOnly": "This collection only",
       "title": "Chat history",
       "untitled": "Untitled chat",
-      "viewingOtherScope": "Viewing a conversation from {{scope}} — read only here"
+      "viewingOtherScope": "Viewing a conversation from {{scope}} — read only here",
+      "viewingOtherScopeShort": "Open this collection to continue it"
     },
     "queryType": {
       "aggregate": "Aggregation pipeline",

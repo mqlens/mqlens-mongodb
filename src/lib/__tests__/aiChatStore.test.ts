@@ -6,7 +6,9 @@ import {
   newPanelOwner,
   releaseChatsForTab,
   tabChatOwner,
+  transferChatClaim,
   listChats,
+  loadChat,
   newChatId,
   releaseOpenChat,
   resetOpenChats,
@@ -174,6 +176,30 @@ describe('AI chat store', () => {
       const call = invokeMock.mock.calls.find((c) => c[0] === cmd);
       expect(call?.[1]?.cutoffIso, `${cmd} carried no cutoff`).toBeTruthy();
     }
+  });
+
+  it('ignores a load result that is not a chat', async () => {
+    // Crosses IPC, so anything merely truthy would otherwise be read for fields
+    // it does not have — and a bogus scope silently puts the panel read-only.
+    for (const bogus of [[], 'nope', { title: 'no id' }]) {
+      invokeMock.mockResolvedValue(bogus);
+      expect(await loadChat('c1')).toBeUndefined();
+    }
+  });
+
+  it('moves a claim when a rename mints a new tab id', async () => {
+    invokeMock.mockResolvedValue(true);
+
+    await transferChatClaim('c1', 'old-tab', 'new-tab');
+
+    expect(invokeMock).toHaveBeenCalledWith('release_chat', {
+      chatId: 'c1',
+      owner: tabChatOwner('old-tab'),
+    });
+    expect(invokeMock).toHaveBeenCalledWith('claim_chat', {
+      chatId: 'c1',
+      owner: tabChatOwner('new-tab'),
+    });
   });
 
   it('reads a backend failure as no history rather than throwing', async () => {

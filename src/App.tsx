@@ -14,8 +14,9 @@ import {
   getPendingChatRequest,
   renameChatRequest,
   resetChatRequests,
+  takeSettledChatRequest,
 } from './lib/aiChatRequest';
-import { appendReplyToChat, releaseChatsForTab } from './lib/aiChatStore';
+import { appendReplyToChat, releaseChatsForTab, transferChatClaim } from './lib/aiChatStore';
 import {
   disposeShellSession,
   disposeShellSessionsForTabs,
@@ -1956,8 +1957,33 @@ function Workspace() {
     if (chat) {
       tabChatCache.current.set(newId, chat);
       tabChatCache.current.delete(oldId);
+      // The open-chat claim is held under an owner token built from the tab id,
+      // so a rename has to move it as well. Left behind, the old owner keeps
+      // the conversation marked as open — the remounted tab claims under its
+      // new id, is refused, and nothing releases the stale claim until the
+      // whole window closes.
+      if (chat.chatId) void transferChatClaim(chat.chatId, oldId, newId);
     }
     renameChatRequest(oldId, newId);
+  }, []);
+
+  /** Hand an in-flight or already-settled reply to the stored conversation.
+   *  Used when a tab leaves this renderer: the destination is a different
+   *  window with its own request registry and cannot see ours, but the chat
+   *  store is shared. */
+  const parkPendingReply = useCallback((tabId: string) => {
+    const chatId = tabChatCache.current.get(tabId)?.chatId;
+    if (!chatId) return;
+    // A reply that settled while the tab was inactive is sitting unconsumed in
+    // the registry — `getPendingChatRequest` deliberately reports nothing for
+    // it, so it has to be taken separately or it goes out with the clear.
+    const settled = takeSettledChatRequest(tabId);
+    if (settled) {
+      void appendReplyToChat(chatId, settled);
+      return;
+    }
+    const inFlight = getPendingChatRequest(tabId);
+    if (inFlight) void inFlight.then((reply) => appendReplyToChat(chatId, reply));
   }, []);
 
   const handleCollectionRenamed = (
@@ -2940,6 +2966,10 @@ function Workspace() {
           // call for this same close (see that effect's comment).
           windowClosingRef.current = true;
           closeWorkspaceWindow();
+          // Same reasoning as the leaving branch below: this window is going
+          // away, so park anything still owed to a conversation before the
+          // registries go with it.
+          tabsRef.current.forEach((t) => parkPendingReply(t.id));
           setTabs([]);
           tabBuilderStateCache.current.clear();
           tabChatCache.current.clear();
@@ -3038,15 +3068,7 @@ function Workspace() {
           );
           leavingIds.forEach((id) => {
             tabBuilderStateCache.current.delete(id);
-            // An answer still in flight cannot follow the tab — the destination
-            // is a different renderer with its own request registry — but the
-            // conversation is backend-stored, so park the reply there and the
-            // other window sees it the moment it opens that chat.
-            const parkIn = tabChatCache.current.get(id)?.chatId;
-            const inFlight = parkIn ? getPendingChatRequest(id) : undefined;
-            if (parkIn && inFlight) {
-              void inFlight.then((reply) => appendReplyToChat(parkIn, reply));
-            }
+            parkPendingReply(id);
             tabChatCache.current.delete(id);
             clearChatRequest(id);
             releaseChatsForTab(id);

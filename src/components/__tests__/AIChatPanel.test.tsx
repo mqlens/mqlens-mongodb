@@ -466,6 +466,87 @@ JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
     await waitFor(() => expect(screen.getByText('an earlier conversation')).toBeInTheDocument());
   });
 
+  it('tells the tab which conversation it minted, so a remount does not fork it', async () => {
+    // Without this the tab still has no id after the first message: the next
+    // mount mints another, saves the same transcript again as a second
+    // conversation, and abandons the first claim — once per tab switch.
+    const onChatIdChange = vi.fn();
+    render(
+      <AIChatPanel
+        connectionId="c1"
+        connectionName="Local"
+        databaseName="test-db"
+        collectionName="users"
+        variant="editor"
+        isOpen
+        onClose={onClose}
+        onInsertQuery={onInsertQuery}
+        onInsertAndRunQuery={onInsertAndRunQuery}
+        sessionKey="tab-1"
+        onChatIdChange={onChatIdChange}
+      />
+    );
+
+    await waitFor(() => expect(onChatIdChange).toHaveBeenCalled());
+    expect(onChatIdChange.mock.calls[0][0]).toEqual(expect.any(String));
+  });
+
+  it('remembers a foreign conversation is foreign after a tab switch', async () => {
+    // `openScope` is component state and switching tabs unmounts the panel, so
+    // it has to be recovered from the chat itself — otherwise the conversation
+    // comes back looking local and the persistence effect moves it here.
+    chatStore = [
+      {
+        id: 'chat-orders',
+        title: 'about orders',
+        messages: [{ id: 'm0', role: 'user', text: 'about orders' }],
+        connectionName: 'Local',
+        database: 'test-db',
+        collection: 'orders',
+        variant: 'editor',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ];
+
+    // Mounted fresh with that chat already selected, as a remount would be.
+    renderPanel('editor', { collectionName: 'users', chatId: 'chat-orders' });
+
+    await screen.findByTestId('ai-chat-foreign-banner');
+    expect(screen.getByTestId('chat-input')).toBeDisabled();
+    // ...and it is still an orders conversation.
+    await waitFor(() =>
+      expect(chatStore.find((c) => c.id === 'chat-orders').collection).toBe('orders')
+    );
+  });
+
+  it('refuses to continue a foreign conversation rather than answering for the wrong collection', async () => {
+    // The composer would generate against THIS collection and save the answer
+    // under the other one's scope, leaving a query that runs somewhere it was
+    // never written for.
+    chatStore = [
+      {
+        id: 'chat-orders',
+        title: 'about orders',
+        messages: [{ id: 'm0', role: 'user', text: 'about orders' }],
+        connectionName: 'Local',
+        database: 'test-db',
+        collection: 'orders',
+        variant: 'editor',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ];
+
+    renderPanel('editor', { collectionName: 'users', chatId: 'chat-orders' });
+    await screen.findByTestId('ai-chat-foreign-banner');
+
+    expect(screen.getByTestId('chat-send-btn')).toBeDisabled();
+    expect(
+      invokeMock.mock.calls.filter((c) => c[0] === 'generate_mql_query')
+    ).toHaveLength(0);
+  });
+
   it('keeps a conversation from another collection read-only and stored where it belongs', async () => {
     // The history can be widened past this collection. A chat picked from there
     // must not be rewritten under the namespace that happens to be showing it,

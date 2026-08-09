@@ -29,7 +29,8 @@
       "thisCollectionOnly": "Nur diese Collection",
       "title": "Chat-Verlauf",
       "untitled": "Unbenannter Chat",
-      "viewingOtherScope": "Unterhaltung aus {{scope}} — hier nur lesbar"
+      "viewingOtherScope": "Unterhaltung aus {{scope}} — hier nur lesbar",
+      "viewingOtherScopeShort": "Zum Fortsetzen diese Collection öffnen"
     },
     "queryType": {
       "aggregate": "Aggregationspipeline",

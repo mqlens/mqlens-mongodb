@@ -184,8 +184,18 @@ export async function listChats(scope?: ChatScope): Promise<ChatSummary[]> {
 }
 
 export async function loadChat(id: string): Promise<StoredChat | undefined> {
-  const chat = await invoke<StoredChat | null>('load_chat', { id }).catch(() => null);
-  return chat ?? undefined;
+  const chat = await invoke<unknown>('load_chat', { id }).catch(() => null);
+  // Shape-checked rather than trusted: this crosses the IPC boundary, and
+  // anything merely truthy — an array, say — would otherwise be read for fields
+  // it does not have. A chat with no id is not a chat, and treating one as a
+  // scope silently puts the panel into read-only mode.
+  if (!chat || typeof chat !== 'object' || Array.isArray(chat)) return undefined;
+  const candidate = chat as Partial<StoredChat>;
+  if (typeof candidate.id !== 'string') return undefined;
+  return {
+    ...(candidate as StoredChat),
+    messages: Array.isArray(candidate.messages) ? candidate.messages : [],
+  };
 }
 
 /** Create or update a conversation. Fire-and-forget at the call sites: the
@@ -230,6 +240,17 @@ export async function appendReplyToChat(
     ],
     updatedAt: new Date().toISOString(),
   });
+}
+
+/** Move a conversation's claim to a tab's new id — renames and profile rebinds
+ *  mint new tab ids, and the owner token is built from one. */
+export async function transferChatClaim(
+  chatId: string,
+  oldTabId: string,
+  newTabId: string
+): Promise<void> {
+  await invoke('release_chat', { chatId, owner: tabChatOwner(oldTabId) }).catch(() => undefined);
+  await claimOpenChat(chatId, tabChatOwner(newTabId));
 }
 
 /** Give up every conversation a tab was holding — called when the tab closes,
