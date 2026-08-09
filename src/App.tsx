@@ -4197,7 +4197,11 @@ function Workspace() {
         {tab.type === 'watch' && (
           <WatchPanel
             connectionId={tab.connectionId}
-            databaseName={tab.db}
+            // `|| undefined`, not the raw value: a deployment watch stores an
+            // empty db on the tab, and an empty NAME is not the same as no
+            // name — it reaches the driver as `client.database("")` and the
+            // server rejects the namespace `.$cmd.aggregate`.
+            databaseName={tab.db || undefined}
             collectionName={tab.collection || undefined}
             streamId={tab.id}
           />

@@ -5032,6 +5032,18 @@ mod change_stream_tests {
     }
 
     #[test]
+    fn an_empty_namespace_is_no_namespace() {
+        // A deployment-level tab spells "no database" as an empty string.
+        // Taken literally it becomes `client.database("")`, and the server
+        // answers `Invalid namespace specified: .$cmd.aggregate`.
+        let blank = |s: &str| Some(s.to_string()).filter(|d| !d.trim().is_empty());
+
+        assert_eq!(blank(""), None);
+        assert_eq!(blank("   "), None);
+        assert_eq!(blank("sales"), Some("sales".to_string()));
+    }
+
+    #[test]
     fn no_operation_filter_means_everything_not_nothing() {
         // A filter that matched nothing would be indistinguishable from an idle
         // collection — the worst possible failure for a live tail.

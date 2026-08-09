@@ -473,16 +473,18 @@
   "watch": {
     "actions": {
       "clear": "Clear the list",
+      "closeDetail": "Close the detail pane",
       "pause": "Pause the stream",
       "resume": "Resume from where it paused"
     },
     "allCollections": "All collections",
-    "allNamespaces": "All namespaces",
     "deployment": "Whole deployment",
     "dropped_one": "{{count}} earlier event dropped to stay within the buffer",
     "dropped_other": "{{count}} earlier events dropped to stay within the buffer",
     "eventCount_one": "{{count}} event",
     "eventCount_other": "{{count}} events",
+    "fieldsChanged_one": "{{count}} field",
+    "fieldsChanged_other": "{{count}} fields",
     "filterAll": "All",
     "filterCollection": "Filter by collection",
     "filterLabel": "Show",
@@ -498,7 +500,6 @@
       "update": "Update"
     },
     "searchCollections": "Search collections…",
-    "selectPrompt": "Select an event to see its document",
     "status": {
       "error": "error",
       "paused": "paused",

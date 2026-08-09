@@ -66,8 +66,11 @@ export async function startChangeStream(opts: StartOptions): Promise<void> {
   await invoke('start_change_stream', {
     streamId: opts.streamId,
     connectionId: opts.connectionId,
-    database: opts.database ?? null,
-    collection: opts.collection ?? null,
+    // `||`, not `??`: an empty string is how a deployment-level tab spells
+    // "no database", and sending it as a name asks the driver for the
+    // namespace `.$cmd.aggregate`, which the server rejects outright.
+    database: opts.database || null,
+    collection: opts.collection || null,
     operationTypes: opts.operationTypes,
   });
 }
@@ -140,6 +143,27 @@ export function describeEvent(event: ChangeEvent): string {
   const id = eventDocumentId(event);
   const ns = event.collection ? `${event.database}.${event.collection}` : event.database;
   return id ? `${ns} · ${id}` : ns;
+}
+
+/** How many fields an update touched, for the event list. Undefined for
+ *  operations that do not describe a change (inserts carry a whole document). */
+export function changedFieldCount(event: ChangeEvent): number | undefined {
+  const updated = event.updatedFields;
+  const removed = event.removedFields?.length ?? 0;
+  const updatedCount =
+    updated && typeof updated === 'object' && !Array.isArray(updated)
+      ? Object.keys(updated).length
+      : 0;
+  const total = updatedCount + removed;
+  return total > 0 ? total : undefined;
+}
+
+/** Wall-clock time of an event as `HH:MM:SS`, which is the resolution a tail is
+ *  read at — the date is almost always today and would just be noise. */
+export function eventTime(event: ChangeEvent): string {
+  const d = new Date(event.atMs);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 /** The collections seen so far, for the filter. Derived from what has actually

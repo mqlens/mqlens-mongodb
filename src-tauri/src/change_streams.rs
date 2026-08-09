@@ -333,6 +333,12 @@ pub async fn start_change_stream(
     // cannot end up with two cursors feeding one buffer.
     let _ = stop_change_stream_impl(&state, &stream_id);
 
+    // An empty name is not a name. A caller that means "the whole deployment"
+    // may spell it either way, and `client.database("")` produces a namespace
+    // the server refuses (`Invalid namespace specified: .$cmd.aggregate`).
+    let database = database.filter(|d| !d.trim().is_empty());
+    let collection = collection.filter(|c| !c.trim().is_empty());
+
     let stream = Arc::new(LiveStream {
         buffer: Mutex::new(StreamBuffer::default()),
         status: Mutex::new(StreamStatus::Starting),

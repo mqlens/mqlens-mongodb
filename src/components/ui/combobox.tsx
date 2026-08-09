@@ -27,6 +27,12 @@ export interface ComboboxOption {
   label: string;
   /** Second line, for disambiguating options that share a label. */
   hint?: string;
+  /** Rendered before the label. Callers pass the same icon the rest of the app
+   *  uses for that kind of thing, so a list of collections looks like the
+   *  sidebar's rather than like a generic menu. */
+  icon?: React.ReactNode;
+  /** Rendered before the hint, for the same reason. */
+  hintIcon?: React.ReactNode;
 }
 
 interface ComboboxProps {
@@ -45,6 +51,7 @@ interface ComboboxProps {
    * like. Omit it for a combobox where a value must be chosen.
    */
   emptyOptionLabel?: string;
+  emptyOptionIcon?: React.ReactNode;
   className?: string;
   triggerClassName?: string;
   'data-testid'?: string;
@@ -60,6 +67,7 @@ export const Combobox: React.FC<ComboboxProps> = ({
   searchPlaceholder,
   emptyMessage,
   emptyOptionLabel,
+  emptyOptionIcon,
   className,
   triggerClassName,
   disabled,
@@ -87,6 +95,7 @@ export const Combobox: React.FC<ComboboxProps> = ({
           className={cn('h-6 justify-between gap-1.5 px-2 text-[10px] font-normal', triggerClassName)}
           data-testid={testId}
         >
+          {selected?.icon ?? emptyOptionIcon}
           <span className="truncate">{selected?.label ?? placeholder}</span>
           <ChevronsUpDown size={11} className="shrink-0 opacity-50" />
         </Button>
@@ -100,8 +109,9 @@ export const Combobox: React.FC<ComboboxProps> = ({
             </CommandEmpty>
             <CommandGroup>
               {emptyOptionLabel && (
-                <CommandItem value={emptyOptionLabel} onSelect={() => choose(null)} className="text-xs">
-                  <Check size={12} className={cn('mr-2', value === null ? 'opacity-100' : 'opacity-0')} />
+                <CommandItem value={emptyOptionLabel} onSelect={() => choose(null)} className="gap-2 text-xs">
+                  <Check size={12} className={cn('shrink-0', value === null ? 'opacity-100' : 'opacity-0')} />
+                  {emptyOptionIcon}
                   {emptyOptionLabel}
                 </CommandItem>
               )}
@@ -112,16 +122,20 @@ export const Combobox: React.FC<ComboboxProps> = ({
                   // is often only distinguishable by its database.
                   value={`${option.label} ${option.hint ?? ''}`}
                   onSelect={() => choose(option.value)}
-                  className="text-xs"
+                  className="gap-2 text-xs"
                 >
                   <Check
                     size={12}
-                    className={cn('mr-2 shrink-0', value === option.value ? 'opacity-100' : 'opacity-0')}
+                    className={cn('shrink-0', value === option.value ? 'opacity-100' : 'opacity-0')}
                   />
+                  {option.icon}
                   <span className="flex min-w-0 flex-col">
                     <span className="truncate">{option.label}</span>
                     {option.hint && (
-                      <span className="truncate text-[10px] text-muted-foreground">{option.hint}</span>
+                      <span className="flex items-center gap-1 truncate text-[10px] text-muted-foreground">
+                        {option.hintIcon}
+                        {option.hint}
+                      </span>
                     )}
                   </span>
                 </CommandItem>

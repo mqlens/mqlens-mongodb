@@ -110,6 +110,24 @@ describe('change stream client', () => {
       );
     });
 
+    it('treats an empty name as no name, not as a namespace', async () => {
+      // A deployment tab stores its database as ''. Passing that through
+      // reaches the driver as `client.database("")`, and the server rejects
+      // the namespace outright: `Invalid namespace specified: .$cmd.aggregate`.
+      await startChangeStream({
+        streamId: 's1',
+        connectionId: 'c1',
+        database: '',
+        collection: '',
+        operationTypes: [],
+      });
+
+      expect(invokeMock).toHaveBeenCalledWith(
+        'start_change_stream',
+        expect.objectContaining({ database: null, collection: null }),
+      );
+    });
+
     it('watches the whole deployment when neither is given', async () => {
       // Both null is what tells the backend to call `client.watch()` rather
       // than reaching for a database that was never named.

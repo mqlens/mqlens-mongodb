@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pause, Play, Radio, Trash2 } from 'lucide-react';
+import { Database, Layers, Pause, Play, Radio, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -9,8 +9,11 @@ import { Combobox } from '@/components/ui/combobox';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import {
   CHANGE_OPERATIONS,
+  changedFieldCount,
+  describeEvent,
   collectionsSeen,
   eventDocumentId,
+  eventTime,
   filterByNamespace,
   mergeEvents,
   pauseChangeStream,
@@ -127,6 +130,10 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   };
 
   const paused = status === 'paused';
+  // On a deployment tail the database differs from row to row, so it belongs
+  // ON the row. Below that it is the same for every event and repeating it
+  // would be noise, so it sits once at the foot of the list instead.
+  const perRowDatabase = !databaseName;
   const target = collectionName
     ? `${databaseName}.${collectionName}`
     : (databaseName ?? t('watch.deployment'));
@@ -247,7 +254,15 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
             <Combobox
               options={namespaces.map((ns) => {
                 const dot = ns.indexOf('.');
-                return { value: ns, label: ns.slice(dot + 1), hint: ns.slice(0, dot) };
+                return {
+                  value: ns,
+                  label: ns.slice(dot + 1),
+                  hint: ns.slice(0, dot),
+                  // The sidebar's own icons, so the list reads as the same
+                  // collections rather than as anonymous menu entries.
+                  icon: <Layers size={11} className="shrink-0 text-emerald-500" />,
+                  hintIcon: <Database size={9} className="shrink-0 text-amber-500" />,
+                };
               })}
               value={namespace}
               onChange={(next) => {
@@ -258,6 +273,7 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
               searchPlaceholder={t('watch.searchCollections')}
               emptyMessage={t('watch.noCollectionMatch')}
               emptyOptionLabel={t('watch.allCollections')}
+              emptyOptionIcon={<Database size={11} className="shrink-0 text-amber-500" />}
               triggerClassName="min-w-[140px] max-w-[220px]"
               data-testid="watch-filter-namespace"
               aria-label={t('watch.filterCollection')}
@@ -299,7 +315,12 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
         orientation="horizontal"
         className="flex min-h-0 flex-1"
       >
-        <ResizablePanel id="watch-events" defaultSize="45%" minSize="20%" className="flex min-h-0 flex-col">
+        <ResizablePanel
+          id="watch-events"
+          defaultSize={selected ? '45%' : '100%'}
+          minSize="20%"
+          className="flex min-h-0 flex-col"
+        >
           <div className="min-h-0 flex-1 overflow-y-auto" data-testid="watch-events">
             {shown.length === 0 ? (
               <div className="p-4 text-[11px] text-muted-foreground" data-testid="watch-empty">
@@ -313,6 +334,7 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
               shown.map((event) => {
                 const style = styleFor(event.operationType);
                 const id = eventDocumentId(event);
+                const changed = changedFieldCount(event);
                 return (
                   <button
                     key={event.seq}
@@ -325,22 +347,44 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
                     data-testid="watch-event"
                   >
                     <span className={cn('w-0.5 shrink-0', style.rail)} aria-hidden />
-                    {/* Columns rather than one run-on string: the operation, the
-                        collection and the id are three different questions, and
-                        a deployment-wide tail repeats the database on every row
-                        where only the collection differs. */}
                     <span className="flex min-w-0 flex-1 items-baseline gap-2 px-2.5 py-1.5 text-[11px]">
+                      {/* Fixed width so the collections line up in a column.
+                          INSERT and DELETE are different lengths, and ragged
+                          badges make the names impossible to scan down. */}
                       <Badge
                         variant="outline"
-                        className={cn('shrink-0 text-[9px] uppercase', style.badge)}
+                        className={cn(
+                          'w-[62px] shrink-0 justify-center px-0 text-[9px] uppercase',
+                          style.badge
+                        )}
                       >
                         {t(`watch.operations.${event.operationType}`, {
                           defaultValue: event.operationType,
                         })}
                       </Badge>
+                      {perRowDatabase && (
+                        <>
+                          <Database size={10} className="shrink-0 self-center text-amber-500" />
+                          <span
+                            className="min-w-0 shrink truncate font-mono text-muted-foreground"
+                            title={event.database}
+                          >
+                            {event.database}
+                          </span>
+                          <span className="shrink-0 text-muted-foreground/50">/</span>
+                        </>
+                      )}
+                      <Layers size={10} className="shrink-0 self-center text-emerald-500" />
                       <span className="min-w-0 shrink truncate font-mono font-medium" title={event.collection}>
                         {event.collection ?? event.database}
                       </span>
+                      {/* How much an update touched, which is the difference
+                          between a heartbeat and a real edit at a glance. */}
+                      {changed !== undefined && (
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          {t('watch.fieldsChanged', { count: changed })}
+                        </span>
+                      )}
                       {id && (
                         <span
                           className="ml-auto shrink-0 truncate font-mono text-[10px] text-muted-foreground"
@@ -349,6 +393,16 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
                           {id.length > 12 ? `…${id.slice(-10)}` : id}
                         </span>
                       )}
+                      {/* Wall-clock, at the resolution a tail is read: the date
+                          is almost always today and would just be noise. */}
+                      <span
+                        className={cn(
+                          'shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground',
+                          !id && 'ml-auto'
+                        )}
+                      >
+                        {eventTime(event)}
+                      </span>
                     </span>
                   </button>
                 );
@@ -357,25 +411,55 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
           </div>
           {/* The database is constant for every row unless this is a
               deployment tail, so it belongs here once rather than repeated. */}
-          {!collectionName && (
-            <div className="flex-shrink-0 border-t border-border px-3 py-1 text-[10px] text-muted-foreground">
-              {namespace ?? (databaseName ? databaseName : t('watch.allNamespaces'))}
+          {databaseName && !collectionName && (
+            <div className="flex flex-shrink-0 items-center gap-1.5 border-t border-border px-3 py-1 text-[10px] text-muted-foreground">
+              <Database size={9} className="shrink-0 text-amber-500" />
+              {namespace ?? databaseName}
             </div>
           )}
         </ResizablePanel>
-        <ResizableHandle withHandle data-testid="watch-resizer" />
-        <ResizablePanel id="watch-detail" minSize="25%" className="flex min-h-0 flex-col">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="watch-detail">
-            {detailDocument ? (
-              // Chromeless: a change event has no explain plan, no chart worth
-              // drawing and nothing to page through, so offering those tabs
-              // reads as broken rather than empty.
-              <DataGrid documents={[detailDocument]} density={density} chromeless />
-            ) : (
-              <div className="p-4 text-[11px] text-muted-foreground">{t('watch.selectPrompt')}</div>
-            )}
-          </div>
-        </ResizablePanel>
+        {/* Only once an event is chosen. An always-present pane spends half the
+            width on a "select an event" placeholder, and the list is the thing
+            being read — a tail is scanned far more often than it is inspected. */}
+        {selected && (
+          <>
+            <ResizableHandle withHandle data-testid="watch-resizer" />
+            <ResizablePanel id="watch-detail" minSize="25%" className="flex min-h-0 flex-col">
+              <div className="flex flex-shrink-0 items-center gap-2 border-b border-border px-3 py-1.5">
+                <Badge
+                  variant="outline"
+                  className={cn('shrink-0 text-[9px] uppercase', styleFor(selected.operationType).badge)}
+                >
+                  {t(`watch.operations.${selected.operationType}`, {
+                    defaultValue: selected.operationType,
+                  })}
+                </Badge>
+                <span className="truncate font-mono text-[11px]" title={describeEvent(selected)}>
+                  {describeEvent(selected)}
+                </span>
+                <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+                  {eventTime(selected)}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 shrink-0"
+                  onClick={() => setSelected(null)}
+                  title={t('watch.actions.closeDetail')}
+                  data-testid="watch-detail-close"
+                >
+                  <X size={11} />
+                </Button>
+              </div>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="watch-detail">
+                {/* Chromeless: a change event has no explain plan, no chart
+                    worth drawing and nothing to page through. */}
+                <DataGrid documents={[detailDocument!]} density={density} chromeless />
+              </div>
+            </ResizablePanel>
+          </>
+        )}
       </ResizablePanelGroup>
     </div>
   );
