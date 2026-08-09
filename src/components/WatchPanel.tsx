@@ -123,7 +123,11 @@ const EventRow = ({
           </span>
           {changed !== undefined && (
             <span className="shrink-0 rounded bg-muted px-1 text-[9px] text-muted-foreground">
-              {t('watch.fieldsChanged', { count: changed })}
+              {/* Namespace spelled out: this row is hoisted out of the panel so
+                  the virtualized list can own it, and takes `t` as a prop —
+                  which leaves the extractor no way to infer where the key
+                  lives, so it files it under `common`. */}
+              {t('shell:watch.fieldsChanged', { count: changed })}
             </span>
           )}
         </span>
