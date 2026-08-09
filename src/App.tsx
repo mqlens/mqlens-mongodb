@@ -3149,15 +3149,23 @@ function Workspace() {
             tabChatCache.current.delete(id);
             clearChatRequest(id);
             releaseChatsForTab(id);
-            void stopChangeStream(id);
             // Gone from the document: end the session. Merely moved to another
             // window: that window owns the child now, so it must keep running —
             // but this renderer's cached copy has to go, or moving the tab back
             // would seed it from a snapshot predating everything the other
             // window did, and a command still in flight here would mirror its
             // stale transcript over the newer one.
+            // The tail is keyed globally by tab id and belongs to the tab, not
+            // to this window. Stopping it on a move would either strand the
+            // destination — which then starts from the current oplog position
+            // and loses the buffered history — or, if it has already adopted
+            // the stream, tear the adopted one out from under it and leave it
+            // polling an id nothing is filling.
             if (stillInWorkspace.has(id)) forgetShellSession(id);
-            else void disposeShellSession(id);
+            else {
+              void disposeShellSession(id);
+              void stopChangeStream(id);
+            }
             unmirroredTabIdsRef.current.delete(id);
           });
           setTabs((prev) => prev.filter((t) => !leavingIds.has(t.id)));

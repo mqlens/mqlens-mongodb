@@ -1,0 +1,120 @@
+import React from 'react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, waitFor } from '@testing-library/react';
+import { WatchPanel } from '../WatchPanel';
+
+const invokeMock = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+
+// The virtualized list measures its container, which jsdom reports as 0 — no
+// rows render either way. These tests are about what the panel asks the
+// backend for, not about what it paints.
+vi.mock('react-window', () => ({
+  List: () => <div data-testid="watch-list" />,
+}));
+
+const callsTo = (command: string) => invokeMock.mock.calls.filter((c) => c[0] === command);
+
+const panel = (props: Partial<React.ComponentProps<typeof WatchPanel>> = {}) => (
+  <WatchPanel
+    connectionId="c1"
+    databaseName="sales"
+    collectionName="orders"
+    streamId="watch.c.c1.sales.orders"
+    {...props}
+  />
+);
+
+describe('WatchPanel', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'describe_change_stream') return Promise.resolve(null);
+      if (command === 'poll_change_stream') {
+        return Promise.resolve({ events: [], status: 'running', error: null, dropped: 0, lastSeq: 0 });
+      }
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('adopts the filter of the stream it finds already running', async () => {
+    // A watch tab is unmounted while it is inactive, so the panel's own filter
+    // state comes back empty when the user returns. Starting on that empty
+    // state sends different operation types, which the backend reads as a
+    // different stream: buffer discarded, cursor restarted, filter silently
+    // cleared. The remount has to start from what is actually running.
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'describe_change_stream') {
+        return Promise.resolve({
+          connectionId: 'c1',
+          database: 'sales',
+          collection: 'orders',
+          operationTypes: ['insert', 'delete'],
+          status: 'running',
+        });
+      }
+      if (command === 'poll_change_stream') {
+        return Promise.resolve({ events: [], status: 'running', error: null, dropped: 0, lastSeq: 0 });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(panel());
+
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(1));
+    expect(callsTo('start_change_stream')[0][1]).toMatchObject({
+      operationTypes: ['insert', 'delete'],
+    });
+  });
+
+  it('starts unfiltered when nothing is running under that id', async () => {
+    render(panel());
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(1));
+    expect(callsTo('start_change_stream')[0][1]).toMatchObject({ operationTypes: [] });
+  });
+
+  it('does not poll until the stream it is polling exists', async () => {
+    // On a filter change the previous stream is still installed under this id
+    // until the replacement takes its place. A poll that overtook the start
+    // would read the OLD buffer and push the last-seen sequence up to its
+    // count, while the replacement starts counting from zero — every event it
+    // then produced would look already-seen and the tail would sit there
+    // looking idle.
+    let releaseStart: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'describe_change_stream') return Promise.resolve(null);
+      if (command === 'start_change_stream') return started;
+      if (command === 'poll_change_stream') {
+        return Promise.resolve({ events: [], status: 'running', error: null, dropped: 0, lastSeq: 0 });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(panel());
+
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(1));
+    expect(callsTo('poll_change_stream')).toHaveLength(0);
+
+    releaseStart();
+    await waitFor(() => expect(callsTo('poll_change_stream').length).toBeGreaterThan(0));
+  });
+
+  it('watches the whole deployment when no database is given', async () => {
+    // An empty database name reaches the driver as the namespace
+    // `.$cmd.aggregate`, which the server rejects outright — a cluster-level
+    // watch has to send nothing at all.
+    render(panel({ databaseName: undefined, collectionName: undefined, streamId: 'watch.x.c1..' }));
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(1));
+    expect(callsTo('start_change_stream')[0][1]).toMatchObject({
+      database: null,
+      collection: null,
+    });
+  });
+});

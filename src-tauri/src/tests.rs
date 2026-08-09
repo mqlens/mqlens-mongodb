@@ -4942,8 +4942,33 @@ mod chat_store_tests {
 mod change_stream_tests {
     use crate::change_streams::{
         build_pipeline, describe_stream_error, events_after, push_event, push_event_bounded,
-        ChangeEvent, StreamBuffer, StreamStatus, BUFFER_CAP,
+        retire_reader, seed_resume_token, ChangeEvent, LiveStream, StreamBuffer, StreamStatus,
+        BUFFER_CAP,
     };
+    use mongodb::bson::{doc, Bson};
+    use mongodb::change_stream::event::ResumeToken;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Duration;
+
+    fn token(data: &str) -> ResumeToken {
+        mongodb::bson::from_bson(Bson::Document(doc! { "_data": data }))
+            .expect("a resume token is just its `_data`")
+    }
+
+    fn live_stream() -> Arc<LiveStream> {
+        Arc::new(LiveStream {
+            buffer: Mutex::new(StreamBuffer::default()),
+            status: Mutex::new(StreamStatus::Running),
+            error: Mutex::new(None),
+            generation: Arc::new(AtomicU64::new(0)),
+            resume_token: Mutex::new(None),
+            connection_id: "c1".to_string(),
+            database: Some("sales".to_string()),
+            collection: Some("orders".to_string()),
+            operation_types: vec![],
+        })
+    }
 
     fn event(op: &str) -> ChangeEvent {
         ChangeEvent {
@@ -5135,6 +5160,68 @@ mod change_stream_tests {
 
         assert_eq!(status, StreamStatus::Error);
         assert_eq!(message, "connection refused");
+    }
+
+    #[test]
+    fn a_stream_gets_a_resume_point_before_its_first_event() {
+        // Pausing a watch that has not seen a change yet used to leave it with
+        // no token, so resuming opened at the current time and every change
+        // made during the pause was skipped — silently, which is worse than
+        // showing nothing at all.
+        let mut current = None;
+        seed_resume_token(&mut current, Some(token("opened")));
+        assert_eq!(current, Some(token("opened")));
+    }
+
+    #[test]
+    fn a_carried_over_resume_point_wins_over_the_new_cursors() {
+        // A filter change rebuilds the cursor but inherits the old token,
+        // which points further back than the new cursor's "now". Overwriting
+        // it would skip everything between the two.
+        let mut current = Some(token("inherited"));
+        seed_resume_token(&mut current, Some(token("opened")));
+        assert_eq!(current, Some(token("inherited")));
+    }
+
+    #[test]
+    fn retiring_a_reader_claims_the_next_generation() {
+        let stream = live_stream();
+        assert_eq!(retire_reader(&stream), 1);
+        assert_eq!(retire_reader(&stream), 2);
+        assert_eq!(stream.generation.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn retirement_waits_for_a_reader_that_is_publishing() {
+        // The race this closes: a reader checks its generation, is retired,
+        // and still appends its event — which the replacement then reads again
+        // from the older resume token, buffering the same change twice under
+        // two sequence numbers that nothing downstream can reconcile.
+        //
+        // Retirement takes the buffer lock, so it cannot land in the middle of
+        // a publish. Holding that lock here stands in for a reader mid-publish.
+        let stream = live_stream();
+        let publishing = stream.buffer.lock().expect("fresh lock");
+        let (tx, rx) = mpsc::channel();
+        let other = Arc::clone(&stream);
+        let retiring = std::thread::spawn(move || {
+            let generation = retire_reader(&other);
+            let _ = tx.send(generation);
+        });
+
+        // Still mid-publish, so the generation must not have moved. A thread
+        // slow to start reads the same way, which is why this cannot fail
+        // spuriously — only miss.
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        assert_eq!(stream.generation.load(Ordering::SeqCst), 0);
+
+        drop(publishing);
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Ok(1),
+            "retirement should proceed once the publish releases the buffer"
+        );
+        retiring.join().expect("retiring thread");
     }
 }
 

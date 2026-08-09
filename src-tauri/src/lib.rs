@@ -2521,6 +2521,7 @@ pub fn run() {
             connections::test_mongosh_path,
             change_streams::start_change_stream,
             change_streams::poll_change_stream,
+            change_streams::describe_change_stream,
             change_streams::pause_change_stream,
             change_streams::resume_change_stream,
             change_streams::stop_change_stream,

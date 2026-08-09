@@ -298,6 +298,13 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
     // Three levels, one cursor shape: a collection, a database, or the whole
     // deployment. The driver exposes `watch()` at each of those, so the only
     // difference here is which handle it is called on.
+    //
+    // The cursor's own resume token is taken BEFORE boxing, which erases the
+    // `ChangeStream` type that carries it. A freshly opened cursor already has
+    // one — the post-batch token for "here, now" — and without it a watch
+    // paused before its first event has no resume point at all, so resuming
+    // would open at the current time and skip everything that happened while
+    // it was paused.
     let started = match (&state_streams.database, &state_streams.collection) {
         (Some(database), Some(collection)) => {
             let coll = client
@@ -307,7 +314,7 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
             if let Some(token) = resume {
                 action = action.resume_after(token);
             }
-            action.await.map(|s| s.boxed())
+            action.await.map(|s| (s.resume_token(), s.boxed()))
         }
         (Some(database), None) => {
             let db = client.database(database);
@@ -315,7 +322,7 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
             if let Some(token) = resume {
                 action = action.resume_after(token);
             }
-            action.await.map(|s| s.boxed())
+            action.await.map(|s| (s.resume_token(), s.boxed()))
         }
         // Deployment-wide. Every namespace the user can read, so the event's own
         // `ns` is the only thing that says where a change came from.
@@ -324,19 +331,27 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
             if let Some(token) = resume {
                 action = action.resume_after(token);
             }
-            action.await.map(|s| s.boxed())
+            action.await.map(|s| (s.resume_token(), s.boxed()))
         }
     };
 
-    let mut stream = match started {
+    let (opened_at, mut stream) = match started {
         Ok(stream) => stream,
         Err(err) => {
-            let (status, message) = describe_stream_error(&err.to_string());
-            if let Ok(mut s) = state_streams.status.lock() {
-                *s = status;
-            }
-            if let Ok(mut e) = state_streams.error.lock() {
-                *e = Some(message);
+            // Only if this reader is still the live one. Opening a cursor is
+            // not instant, and a pause-then-resume during it retires this task
+            // while its `watch()` is still in flight — reporting that failure
+            // would put the panel in Error over a cursor nobody is reading,
+            // and the replacement can never clear it because it only promotes
+            // a stream that is still `Starting`.
+            if state_streams.generation.load(Ordering::SeqCst) == my_generation {
+                let (status, message) = describe_stream_error(&err.to_string());
+                if let Ok(mut s) = state_streams.status.lock() {
+                    *s = status;
+                }
+                if let Ok(mut e) = state_streams.error.lock() {
+                    *e = Some(message);
+                }
             }
             return;
         }
@@ -349,6 +364,9 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
     if state_streams.generation.load(Ordering::SeqCst) != my_generation {
         return;
     }
+    if let Ok(mut token) = state_streams.resume_token.lock() {
+        seed_resume_token(&mut token, opened_at);
+    }
     if let Ok(mut s) = state_streams.status.lock() {
         if *s == StreamStatus::Starting {
             *s = StreamStatus::Running;
@@ -358,19 +376,27 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
     while state_streams.generation.load(Ordering::SeqCst) == my_generation {
         match stream.next().await {
             Some(Ok(event)) => {
-                // Re-checked after the await: this task may have been retired
-                // while it was blocked, and its event belongs to a cursor
-                // nobody is watching any more.
+                let token = event.id.clone();
+                let flat = flatten_event(event, state_streams.database.as_deref().unwrap_or(""));
+                // Re-checked after the await, and checked while HOLDING the
+                // buffer lock that every retirement also takes. This task may
+                // have been retired while it was blocked, and its event
+                // belongs to a cursor nobody is watching any more — but a
+                // check made before taking the lock could pass and then be
+                // overtaken by a pause and a resume, letting a retired reader
+                // append an event the replacement will read again from the
+                // older token. Two copies, two sequence numbers, and nothing
+                // downstream can tell they are the same change.
+                let Ok(mut buffer) = state_streams.buffer.lock() else {
+                    return;
+                };
                 if state_streams.generation.load(Ordering::SeqCst) != my_generation {
                     return;
                 }
-                if let Ok(mut token) = state_streams.resume_token.lock() {
-                    *token = Some(event.id.clone());
+                if let Ok(mut resume_token) = state_streams.resume_token.lock() {
+                    *resume_token = Some(token);
                 }
-                let flat = flatten_event(event, state_streams.database.as_deref().unwrap_or(""));
-                if let Ok(mut buffer) = state_streams.buffer.lock() {
-                    push_event(&mut buffer, flat, BUFFER_CAP);
-                }
+                push_event(&mut buffer, flat, BUFFER_CAP);
             }
             Some(Err(err)) => {
                 // Only if this reader is still the live one. A retired cursor
@@ -405,6 +431,34 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
     }
 }
 
+/// Give a stream a resume point from the moment its cursor opened.
+///
+/// A watch paused before it ever delivered an event had no token at all, so
+/// resuming opened a cursor at the current time and everything that happened
+/// during the pause was skipped — the one thing pause is supposed to prevent.
+/// A freshly opened cursor carries a post-batch token, which is exactly that
+/// missing "here, now".
+///
+/// Only when there is nothing better: a token inherited across a filter change
+/// points further back, and replacing it with "now" would reintroduce the gap.
+pub fn seed_resume_token(current: &mut Option<ResumeToken>, opened_at: Option<ResumeToken>) {
+    if current.is_none() {
+        *current = opened_at;
+    }
+}
+
+/// Retire whoever is reading and claim the next generation.
+///
+/// Bumped while holding the BUFFER lock, which is the same lock a reader holds
+/// while it checks its generation and publishes. Without that shared point,
+/// retirement is not atomic with buffering: a reader can pass its check, be
+/// retired here, and still append an event that its replacement then reads
+/// again from the older resume token.
+pub fn retire_reader(stream: &LiveStream) -> u64 {
+    let _publish = stream.buffer.lock();
+    stream.generation.fetch_add(1, Ordering::SeqCst) + 1
+}
+
 fn spawn_reader(state: &AppState, stream: Arc<LiveStream>) -> Result<(), String> {
     let client = state
         .connections
@@ -412,9 +466,7 @@ fn spawn_reader(state: &AppState, stream: Arc<LiveStream>) -> Result<(), String>
         .get(&stream.connection_id)
         .cloned()
         .ok_or_else(|| format!("connection {} is not open", stream.connection_id))?;
-    // Retires whatever was reading before, and claims the next generation for
-    // the task about to start.
-    let my_generation = stream.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let my_generation = retire_reader(&stream);
     tauri::async_runtime::spawn(run_stream(stream, client, my_generation));
     Ok(())
 }
@@ -535,6 +587,45 @@ pub async fn poll_change_stream(
     })
 }
 
+/// What a stream is actually watching, for a panel that has just mounted.
+///
+/// A watch tab is unmounted while it is inactive, so its component state — the
+/// operation filter above all — comes back empty when the user returns. Asking
+/// what the stream is running lets the panel adopt it instead of starting what
+/// looks like a different stream and throwing the buffer away.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamInfo {
+    pub connection_id: String,
+    pub database: Option<String>,
+    pub collection: Option<String>,
+    pub operation_types: Vec<String>,
+    pub status: StreamStatus,
+}
+
+/// `None` when nothing is watching under that id — a first mount, or a tab
+/// whose stream was stopped.
+#[tauri::command]
+pub async fn describe_change_stream(
+    state: tauri::State<'_, AppState>,
+    stream_id: String,
+) -> Result<Option<StreamInfo>, String> {
+    let Some(stream) = state.change_streams.lock_safe()?.get(&stream_id).cloned() else {
+        return Ok(None);
+    };
+    Ok(Some(StreamInfo {
+        connection_id: stream.connection_id.clone(),
+        database: stream.database.clone(),
+        collection: stream.collection.clone(),
+        operation_types: stream.operation_types.clone(),
+        status: stream
+            .status
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or(StreamStatus::Error),
+    }))
+}
+
 /// Stop the cursor but keep the buffer and the resume token.
 #[tauri::command]
 pub async fn pause_change_stream(
@@ -545,7 +636,7 @@ pub async fn pause_change_stream(
     // Retires the reader. It may be blocked in `next().await` and only notice
     // when the next event arrives — which is fine, because it checks the
     // generation before pushing anything.
-    stream.generation.fetch_add(1, Ordering::SeqCst);
+    retire_reader(&stream);
     if let Ok(mut s) = stream.status.lock() {
         *s = StreamStatus::Paused;
     }
@@ -572,7 +663,7 @@ pub async fn resume_change_stream(
 pub fn stop_change_stream_impl(state: &AppState, stream_id: &str) -> Result<(), String> {
     let removed = state.change_streams.lock_safe()?.remove(stream_id);
     if let Some(stream) = removed {
-        stream.generation.fetch_add(1, Ordering::SeqCst);
+        retire_reader(&stream);
     }
     Ok(())
 }

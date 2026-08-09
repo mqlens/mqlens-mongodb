@@ -21,6 +21,7 @@ import {
   pollChangeStream,
   resumeChangeStream,
   startChangeStream,
+  describeChangeStream,
   type ChangeEvent,
   type ChangeOperation,
   type StreamStatus,
@@ -174,6 +175,27 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   const lastSeqRef = useRef<number | undefined>(undefined);
   // Read inside the start effect, which must not re-run when it changes.
   const pausedRef = useRef(false);
+  // Whether the filter above has been reconciled with the running stream.
+  //
+  // `operations` is component state and this component is unmounted whenever
+  // its tab is inactive, so a filtered watch comes back with an empty filter.
+  // Starting on that would send different operation types, which the backend
+  // reads as a different stream — buffer discarded, cursor restarted
+  // unfiltered, and the user's filter silently cleared. So: ask what is
+  // running, adopt it, and only then start.
+  const [adopted, setAdopted] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void describeChangeStream(streamId).then((info) => {
+      if (!alive) return;
+      if (info) setOperations(info.operationTypes as ChangeOperation[]);
+      setAdopted(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [streamId]);
 
   // Started once per tab and NOT stopped on unmount. `PaneView` renders only
   // the active tab, so an inactive watch tab is unmounted while still open —
@@ -181,13 +203,16 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   // every change until the user came back. The tab's close path stops it, the
   // same way a shell session is ended.
   useEffect(() => {
+    // Nothing may start before the filter has been reconciled above, or the
+    // first start would be the unfiltered one this is here to avoid.
+    if (!adopted) return;
     let alive = true;
     // One poll at a time. The interval fires every 700ms regardless of how
     // long a poll takes, and two in flight share an `afterSeq`, so both return
     // the same events — duplicated rows and duplicated React keys.
     let polling = false;
 
-    void startChangeStream({
+    const started = startChangeStream({
       streamId,
       connectionId,
       database: databaseName,
@@ -206,6 +231,14 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
       if (polling) return;
       polling = true;
       try {
+        // After the start, always. On a filter change the previous stream is
+        // still installed under this id until the replacement takes its place,
+        // so a poll that overtook the start would read the OLD buffer and push
+        // `lastSeqRef` up to its sequence — while the replacement starts
+        // counting from zero again. Every event it then produced would look
+        // already-seen, and the tail would sit there looking idle.
+        await started;
+        if (!alive) return;
         const poll = await pollChangeStream(streamId, lastSeqRef.current);
         if (!alive || !poll) return;
         // Only when they actually move. These fire every 700ms, and setting an
@@ -229,7 +262,7 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
       alive = false;
       clearInterval(timer);
     };
-  }, [streamId, connectionId, databaseName, collectionName, operations]);
+  }, [streamId, connectionId, databaseName, collectionName, operations, adopted]);
 
   const applyOperations = (next: ChangeOperation[]) => {
     setEvents([]);

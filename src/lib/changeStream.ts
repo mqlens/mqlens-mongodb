@@ -77,6 +77,29 @@ export async function startChangeStream(opts: StartOptions): Promise<void> {
   });
 }
 
+/** What a stream is watching, as the backend has it. */
+export interface StreamInfo {
+  connectionId: string;
+  database: string | null;
+  collection: string | null;
+  operationTypes: string[];
+  status: StreamStatus;
+}
+
+/**
+ * What is running under this id, or `undefined` if nothing is.
+ *
+ * A watch tab is unmounted while inactive, so the panel's own filter state
+ * comes back empty when the user returns. Starting on that empty state would
+ * read as a different stream and discard the buffer, so the panel asks first
+ * and adopts what is already there.
+ */
+export async function describeChangeStream(streamId: string): Promise<StreamInfo | undefined> {
+  return invoke<StreamInfo | null>('describe_change_stream', { streamId })
+    .then((info) => info ?? undefined)
+    .catch(() => undefined);
+}
+
 /**
  * Ask for everything after `afterSeq`.
  *

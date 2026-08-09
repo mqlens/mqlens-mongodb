@@ -92,6 +92,7 @@ const LOCAL_COMMANDS: &[&str] = &[
     // cursor and never writes, and the buffer it fills lives in this process.
     "start_change_stream",
     "poll_change_stream",
+    "describe_change_stream",
     "pause_change_stream",
     "resume_change_stream",
     "stop_change_stream",
