@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  appendReplyToChat,
   claimOpenChat,
   isHeldLocally,
   newPanelOwner,
+  releaseChatsForTab,
+  tabChatOwner,
   listChats,
   newChatId,
   releaseOpenChat,
@@ -78,9 +81,21 @@ describe('AI chat store', () => {
       });
     });
 
-    it('gives each panel its own owner token, since two tabs share a window', () => {
+    it('keys the owner on the TAB, so a remount can re-take its own chat', () => {
+      // Inactive tabs unmount. A per-mount token would leave the tab locked out
+      // of the conversation it never stopped pointing at.
+      expect(tabChatOwner('tab-1')).toBe(tabChatOwner('tab-1'));
+      expect(tabChatOwner('tab-1')).not.toBe(tabChatOwner('tab-2'));
+      expect(tabChatOwner('tab-1').startsWith('main#')).toBe(true);
+      // A panel outside the tab system owns nothing shared.
       expect(newPanelOwner()).not.toBe(newPanelOwner());
-      expect(newPanelOwner().startsWith('main#')).toBe(true);
+    });
+
+    it('releases everything a closed tab held, without needing to know the ids', () => {
+      releaseChatsForTab('tab-1');
+      expect(invokeMock).toHaveBeenCalledWith('release_owner_chats', {
+        owner: tabChatOwner('tab-1'),
+      });
     });
 
     it('keeps working if the backend cannot answer', async () => {
@@ -88,6 +103,32 @@ describe('AI chat store', () => {
       invokeMock.mockRejectedValue(new Error('nope'));
       expect(await claimOpenChat('c1', 'main#1')).toBe(true);
     });
+  });
+
+  it('parks a reply in a conversation nobody is showing', async () => {
+    // The tab moved to another window, whose renderer cannot see this one's
+    // request registry. The store is shared, so the answer waits there.
+    const stored = {
+      id: 'c1',
+      title: 't',
+      messages: [{ id: 'm0', role: 'user' as const, text: 'q' }],
+      connectionName: 'Local',
+      database: 'db',
+      collection: 'coll',
+      variant: 'editor' as const,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    };
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'load_chat' ? Promise.resolve(stored) : Promise.resolve(undefined),
+    );
+
+    await appendReplyToChat('c1', { text: 'the answer' });
+
+    const saved = invokeMock.mock.calls.find((c) => c[0] === 'save_chat')?.[1] as any;
+    expect(saved.chat.messages.map((m: any) => m.text)).toEqual(['q', 'the answer']);
+    // A fresh id, not one the transcript already uses.
+    expect(saved.chat.messages[1].id).toBe('m1');
   });
 
   it('titles a conversation from its opening question', () => {

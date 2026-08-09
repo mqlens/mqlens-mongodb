@@ -2,6 +2,7 @@
   "aiChatPanel": {
     "actions": {
       "copy": "Kopieren",
+      "foreignChat": "Diese Unterhaltung gehört zu einer anderen Collection",
       "insert": "Einfügen",
       "insertAndRun": "Einfügen & ausführen"
     },
@@ -27,7 +28,8 @@
       "openElsewhere": "Bereits in einem anderen Tab geöffnet",
       "thisCollectionOnly": "Nur diese Collection",
       "title": "Chat-Verlauf",
-      "untitled": "Unbenannter Chat"
+      "untitled": "Unbenannter Chat",
+      "viewingOtherScope": "Unterhaltung aus {{scope}} — hier nur lesbar"
     },
     "queryType": {
       "aggregate": "Aggregationspipeline",

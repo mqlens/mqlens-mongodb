@@ -437,15 +437,17 @@ JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
     expect(screen.queryByTestId('chat-msg-user')).toBeNull();
   });
 
-  it('a second tab does not adopt the conversation another tab is holding', async () => {
-    // Per-tab isolation, which is why the transcript is addressed by chat id
-    // rather than by collection: without this both panels would render the same
-    // conversation and then save over each other.
+  it('starts its own conversation rather than adopting the collection\'s last one', async () => {
+    // The panel used to adopt the most recent chat for the collection when a
+    // tab had none of its own. Two tabs then silently landed on one transcript
+    // and saved over each other, and every guard added around that guessing
+    // needed another guard. A tab starts fresh; the history is an explicit
+    // choice.
     chatStore = [
       {
-        id: 'chat-open-elsewhere',
-        title: 'tab one is using this',
-        messages: [{ id: 'm0', role: 'user', text: 'tab one is using this' }],
+        id: 'chat-earlier',
+        title: 'an earlier conversation',
+        messages: [{ id: 'm0', role: 'user', text: 'an earlier conversation' }],
         connectionName: 'Local',
         database: 'test-db',
         collection: 'users',
@@ -455,15 +457,57 @@ JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
       },
     ];
 
-    // Tab one adopts it.
     renderPanel('editor');
-    expect(await screen.findByText('tab one is using this')).toBeInTheDocument();
 
-    // Tab two, same collection, no conversation of its own.
-    renderPanel('editor');
-    await waitFor(() => expect(screen.getAllByTestId('ai-chat-messages')).toHaveLength(2));
-    // Exactly one panel shows it — the one that claimed it.
-    expect(screen.getAllByText('tab one is using this')).toHaveLength(1);
+    await waitFor(() => expect(screen.getByTestId('ai-chat-messages')).toBeInTheDocument());
+    expect(screen.queryByText('an earlier conversation')).toBeNull();
+    // ...and it is still one click away.
+    fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
+    await waitFor(() => expect(screen.getByText('an earlier conversation')).toBeInTheDocument());
+  });
+
+  it('keeps a conversation from another collection read-only and stored where it belongs', async () => {
+    // The history can be widened past this collection. A chat picked from there
+    // must not be rewritten under the namespace that happens to be showing it,
+    // and its query cards were written against a different collection.
+    chatStore = [
+      {
+        id: 'chat-elsewhere',
+        title: 'about orders',
+        messages: [
+          { id: 'm0', role: 'user', text: 'about orders' },
+          {
+            id: 'm1',
+            role: 'assistant',
+            text: 'here',
+            query: { queryType: 'find', filter: {}, sort: {}, pipeline: [], script: '' },
+          },
+        ],
+        connectionName: 'Local',
+        database: 'test-db',
+        collection: 'orders',
+        variant: 'editor',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ];
+
+    renderPanel('editor', { collectionName: 'users' });
+    fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
+    // Widen past this collection.
+    fireEvent.click(screen.getByTestId('ai-chat-history-scope-toggle'));
+    await waitFor(() => expect(screen.getByTestId('ai-chat-history-item-0')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('ai-chat-history-item-0'));
+
+    expect(await screen.findByText('about orders')).toBeInTheDocument();
+    await screen.findByTestId('ai-chat-foreign-banner');
+    // Its query cannot be fired at the collection this tab is showing.
+    expect(screen.getByTestId('chat-insert-run-btn')).toBeDisabled();
+    expect(screen.getByTestId('chat-insert-btn')).toBeDisabled();
+    // And it stays an orders conversation.
+    await waitFor(() =>
+      expect(chatStore.find((c) => c.id === 'chat-elsewhere').collection).toBe('orders')
+    );
   });
 
   it('seeds the conversation from initialMessages', () => {

@@ -22,6 +22,7 @@ import {
 import {
   claimOpenChat,
   newPanelOwner,
+  tabChatOwner,
   clearChats,
   deleteChat,
   releaseOpenChat,
@@ -170,9 +171,25 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // now rather than at first message, so the id is stable for the whole
   // conversation and the tab can be told about it once.
   const activeChatIdRef = React.useRef(chatId ?? newChatId());
-  // Identifies THIS panel to the shared open-chat claim: two tabs in one window
-  // are two panels, so the window label alone would let both hold a chat.
-  const ownerRef = React.useRef(newPanelOwner());
+  // The scope the OPEN conversation belongs to. Normally the panel's own, but
+  // the history can be widened past this collection, and a chat picked from
+  // there still belongs where it was created.
+  const [openScope, setOpenScope] = useState<ChatScope | null>(null);
+
+  /** True when the open conversation belongs to another namespace, so its
+   *  queries were written against a different collection. Running one here
+   *  would target this collection with someone else's query. */
+  const foreignChat =
+    openScope !== null &&
+    (openScope.connectionName !== (connectionName ?? '') ||
+      openScope.database !== (databaseName ?? '') ||
+      openScope.collection !== collectionName ||
+      openScope.variant !== variant);
+
+  // Identifies this TAB to the shared open-chat claim. Not the mount: an
+  // inactive tab unmounts and must be able to re-take the conversation it never
+  // stopped pointing at.
+  const ownerRef = React.useRef(sessionKey ? tabChatOwner(sessionKey) : newPanelOwner());
   const createdAtRef = React.useRef(new Date().toISOString());
   const [activeChatId, setActiveChatIdState] = useState(activeChatIdRef.current);
   const setActiveChatId = (
@@ -192,13 +209,13 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     onChatIdChange?.(id);
   };
 
-  // Held for as long as this panel is showing the chat, so a second tab on the
-  // same collection knows not to adopt it.
+  // Claimed on mount and NOT released on unmount. An inactive tab is unmounted
+  // but still points at its conversation, so releasing here would let another
+  // tab take one that is still spoken for. The claim ends when the tab stops
+  // pointing at the chat — New chat, opening a different one, or the tab
+  // closing (App and the shell registry release it then).
   useEffect(() => {
-    const held = activeChatIdRef.current;
-    const owner = ownerRef.current;
-    void claimOpenChat(held, owner);
-    return () => releaseOpenChat(held, owner);
+    void claimOpenChat(activeChatIdRef.current, ownerRef.current);
   }, [activeChatId]);
 
   useEffect(() => {
@@ -210,7 +227,9 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   useEffect(() => {
     if (chatMessages.length === 0) return;
     void saveChat({
-      ...scope,
+      // Its own scope, not the panel's — rewriting a chat under the collection
+      // that happens to be showing it would silently move it.
+      ...(openScope ?? scope),
       id: activeChatIdRef.current,
       title: titleFromMessages(chatMessages, t('aiChatPanel.history.untitled')),
       messages: chatMessages,
@@ -219,39 +238,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     });
   }, [chatMessages, scope, t]);
 
-  // Adopt the collection's most recent conversation when this tab has none of
-  // its own — the case that makes the history feel continuous across restarts.
-  // A tab that already has messages is left alone: it is mid-conversation.
-  useEffect(() => {
-    if (chatId || initialMessages.length > 0) return;
-    let active = true;
-    void (async () => {
-      const [recent] = await listChats(scope);
-      if (!active || !recent) return;
-      // Only if nothing else has it. Both panels would otherwise render the
-      // same conversation and then save over each other — including panels in
-      // ANOTHER window, which is why the claim is backend-side. Whoever holds
-      // it is welcome to it; this tab starts fresh.
-      if (!(await claimOpenChat(recent.id, ownerRef.current))) return;
-      const stored = await loadChat(recent.id);
-      if (!active || !stored || stored.messages.length === 0) return;
-      setActiveChatId(stored.id, stored.createdAt);
-      setChatMessages(stored.messages);
-      // From the messages actually adopted, not from `initialMessages`: seeding
-      // the counter from an empty array would hand the next message an id the
-      // restored transcript already uses.
-      chatIdRef.current = maxChatIdNum(stored.messages) + 1;
-    })();
-    return () => {
-      active = false;
-    };
-    // Runs once for this scope; a later scope change means a different panel.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope]);
+  // Deliberately NO auto-adoption of the collection's most recent
+  // conversation. A tab starts its own chat and the history is an explicit
+  // choice, which removes the whole question of two tabs silently landing on
+  // one transcript and saving over each other — the panel used to guess, and
+  // every guess needed another guard around it.
 
   const refreshChats = async () => setChats(await listChats(scopedOnly ? scope : undefined));
 
   const startNewChat = () => {
+    setOpenScope(null);
     setActiveChatId(newChatId());
     setChatMessages([]);
     setChatInput('');
@@ -270,6 +266,12 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setClaimFailed(false);
     const stored = await loadChat(id);
     if (!stored) return;
+    setOpenScope({
+      connectionName: stored.connectionName,
+      database: stored.database,
+      collection: stored.collection,
+      variant: stored.variant,
+    });
     releaseOpenChat(activeChatIdRef.current, ownerRef.current);
     setActiveChatId(stored.id, stored.createdAt, false);
     setChatMessages(stored.messages);
@@ -584,6 +586,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
           </div>
         </div>
 
+        {foreignChat && openScope && (
+          <div
+            className="border-b border-border bg-muted/50 px-3 py-1.5 text-[10.5px] text-muted-foreground"
+            data-testid="ai-chat-foreign-banner"
+          >
+            {t('aiChatPanel.history.viewingOtherScope', {
+              scope: `${openScope.database}.${openScope.collection}`,
+            })}
+          </div>
+        )}
         <div ref={chatScrollRef} className="flex-1 overflow-y-auto">
           <div className="flex flex-col gap-3 p-3" data-testid="ai-chat-messages">
             {chatMessages.length === 0 && !isChatLoading && (
@@ -669,6 +681,8 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                         size="sm"
                         className="h-7 flex-1 text-xs"
                         onClick={() => onInsertQuery(m.query!)}
+                        disabled={foreignChat}
+                        title={foreignChat ? t('aiChatPanel.actions.foreignChat') : undefined}
                         data-testid="chat-insert-btn"
                       >
                         {t('aiChatPanel.actions.insert')}
@@ -678,6 +692,8 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                         size="sm"
                         className="h-7 flex-1 text-xs"
                         onClick={() => onInsertAndRunQuery(m.query!)}
+                        disabled={foreignChat}
+                        title={foreignChat ? t('aiChatPanel.actions.foreignChat') : undefined}
                         data-testid="chat-insert-run-btn"
                       >
                         {t('aiChatPanel.actions.insertAndRun')}

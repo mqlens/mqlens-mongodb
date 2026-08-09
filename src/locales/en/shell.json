@@ -2,6 +2,7 @@
   "aiChatPanel": {
     "actions": {
       "copy": "Copy",
+      "foreignChat": "This conversation belongs to another collection",
       "insert": "Insert",
       "insertAndRun": "Insert & run"
     },
@@ -27,7 +28,8 @@
       "openElsewhere": "Already open in another tab",
       "thisCollectionOnly": "This collection only",
       "title": "Chat history",
-      "untitled": "Untitled chat"
+      "untitled": "Untitled chat",
+      "viewingOtherScope": "Viewing a conversation from {{scope}} — read only here"
     },
     "queryType": {
       "aggregate": "Aggregation pipeline",

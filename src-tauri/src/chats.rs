@@ -281,6 +281,13 @@ pub async fn release_chat(chat_id: String, owner: String) -> Result<(), String> 
     Ok(())
 }
 
+/// Drop every claim held by one owner — a tab that has closed.
+#[tauri::command]
+pub async fn release_owner_chats(owner: String) -> Result<(), String> {
+    open_chats().retain(|_, holder| *holder != owner);
+    Ok(())
+}
+
 /// Drop every claim held by a window — called when that window closes, since
 /// its panels get no chance to release anything.
 pub fn release_window_chats(window_id: &str) {

@@ -91,6 +91,7 @@ const LOCAL_COMMANDS: &[&str] = &[
     "list_chats",
     "claim_chat",
     "release_chat",
+    "release_owner_chats",
     "load_chat",
     "save_chat",
     "delete_chat",

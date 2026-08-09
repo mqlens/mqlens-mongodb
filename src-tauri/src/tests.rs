@@ -4639,6 +4639,27 @@ mod chat_claim_tests {
     }
 
     #[tokio::test]
+    async fn closing_a_tab_frees_everything_that_tab_held() {
+        // Panels do not release on unmount — an inactive tab is unmounted and
+        // still owns its conversation — so the tab closing is where it ends.
+        use crate::chats::release_owner_chats;
+        claim_chat("c9".into(), "main#tab-7".into()).await.unwrap();
+        claim_chat("c10".into(), "main#tab-7".into()).await.unwrap();
+        claim_chat("c11".into(), "main#tab-8".into()).await.unwrap();
+
+        release_owner_chats("main#tab-7".into()).await.unwrap();
+
+        assert!(claim_chat("c9".into(), "main#other".into()).await.unwrap());
+        assert!(claim_chat("c10".into(), "main#other".into()).await.unwrap());
+        assert!(
+            !claim_chat("c11".into(), "main#other".into()).await.unwrap(),
+            "another tab's claim was collateral"
+        );
+        release_owner_chats("main#other".into()).await.unwrap();
+        release_owner_chats("main#tab-8".into()).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn closing_a_window_frees_every_chat_its_panels_held() {
         // Those panels get no chance to release anything themselves.
         claim_chat("c3".into(), "win-9#1".into()).await.unwrap();

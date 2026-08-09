@@ -2521,6 +2521,7 @@ pub fn run() {
             chats::list_chats,
             chats::claim_chat,
             chats::release_chat,
+            chats::release_owner_chats,
             chats::load_chat,
             chats::save_chat,
             chats::delete_chat,

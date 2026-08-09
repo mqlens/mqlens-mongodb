@@ -123,16 +123,23 @@ export function newChatId(): string {
 const locallyHeld = new Set<string>();
 
 /**
- * A token identifying one PANEL, not one window.
+ * A token identifying one TAB, not one panel instance and not one window.
  *
- * Two tabs in the same window are two panels and must not both hold a chat, so
- * a window label alone is too coarse; the window prefix is still there because
- * a closing window has to be able to drop everything its panels held.
+ * Two tabs in the same window must not both hold a conversation, so a window
+ * label alone is too coarse. Nor can it be per mount: inactive tabs unmount and
+ * a tab that comes back has to be able to re-take the chat it never stopped
+ * pointing at. The window prefix stays because a closing window drops
+ * everything its tabs held.
  */
-let panelSeq = 0;
+export function tabChatOwner(tabId: string): string {
+  return `${windowLabel()}#${tabId}`;
+}
+
+/** For a panel rendered outside the tab system, which owns nothing shared. */
+let looseSeq = 0;
 export function newPanelOwner(): string {
-  panelSeq += 1;
-  return `${windowLabel()}#${panelSeq}`;
+  looseSeq += 1;
+  return `${windowLabel()}#loose-${looseSeq}`;
 }
 
 /** Take a conversation, or find out that another panel has it. */
@@ -158,7 +165,7 @@ export function isHeldLocally(id: string): boolean {
 /** Test seam. */
 export function resetOpenChats(): void {
   locallyHeld.clear();
-  panelSeq = 0;
+  looseSeq = 0;
 }
 
 /**
@@ -189,6 +196,46 @@ export async function saveChat(chat: StoredChat): Promise<void> {
 
 export async function deleteChat(id: string): Promise<void> {
   await invoke('delete_chat', { id }).catch(() => undefined);
+}
+
+/**
+ * Append an assistant reply to a stored conversation the panel is not showing.
+ *
+ * Used when an answer arrives with nowhere local to land — the tab moved to
+ * another window, or the panel has since switched conversations. The store is
+ * shared, so parking it here is how the answer reaches wherever that
+ * conversation is next opened, rather than being dropped.
+ */
+export async function appendReplyToChat(
+  chatId: string,
+  reply: { text: string; query?: unknown; error?: boolean }
+): Promise<void> {
+  const stored = await loadChat(chatId);
+  if (!stored) return;
+  const nextNum =
+    stored.messages.reduce((max, m) => {
+      const match = /^m(\d+)$/.exec(m.id);
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, -1) + 1;
+  await saveChat({
+    ...stored,
+    messages: [
+      ...stored.messages,
+      {
+        id: `m${nextNum}`,
+        role: 'assistant',
+        text: reply.text,
+        ...(reply.error ? { error: true } : { query: reply.query as never }),
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/** Give up every conversation a tab was holding — called when the tab closes,
+ *  since nothing else will. */
+export function releaseChatsForTab(tabId: string): void {
+  void invoke('release_owner_chats', { owner: tabChatOwner(tabId) }).catch(() => undefined);
 }
 
 /** Delete every chat, or every chat in one scope. */

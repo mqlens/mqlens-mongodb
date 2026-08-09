@@ -9,7 +9,13 @@ import { Sidebar } from './components/Sidebar';
 import { CommandPalette, type PaletteAction } from './components/CommandPalette';
 import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
 import type { ChatMessage } from './components/AIChatPanel';
-import { clearChatRequest, renameChatRequest, resetChatRequests } from './lib/aiChatRequest';
+import {
+  clearChatRequest,
+  getPendingChatRequest,
+  renameChatRequest,
+  resetChatRequests,
+} from './lib/aiChatRequest';
+import { appendReplyToChat, releaseChatsForTab } from './lib/aiChatStore';
 import {
   disposeShellSession,
   disposeShellSessionsForTabs,
@@ -2247,6 +2253,10 @@ function Workspace() {
       tabBuilderStateCache.current.delete(action.tabId);
       tabChatCache.current.delete(action.tabId);
       clearChatRequest(action.tabId);
+      // The tab held its conversation for as long as it existed — panels do not
+      // release on unmount, because an inactive tab is unmounted and still owns
+      // its chat. Closing is where that ends.
+      releaseChatsForTab(action.tabId);
       void disposeShellSession(action.tabId);
       // #91: forget this tab's generate-task tracking on close (running or
       // finished) — otherwise reopening "Generate Data…" on the same
@@ -2276,6 +2286,7 @@ function Workspace() {
         tabBuilderStateCache.current.delete(id);
         tabChatCache.current.delete(id);
         clearChatRequest(id);
+        releaseChatsForTab(id);
         void disposeShellSession(id);
       });
       // Prune `tabs[]` here rather than leaving it to the caller. Every
@@ -3027,8 +3038,18 @@ function Workspace() {
           );
           leavingIds.forEach((id) => {
             tabBuilderStateCache.current.delete(id);
+            // An answer still in flight cannot follow the tab — the destination
+            // is a different renderer with its own request registry — but the
+            // conversation is backend-stored, so park the reply there and the
+            // other window sees it the moment it opens that chat.
+            const parkIn = tabChatCache.current.get(id)?.chatId;
+            const inFlight = parkIn ? getPendingChatRequest(id) : undefined;
+            if (parkIn && inFlight) {
+              void inFlight.then((reply) => appendReplyToChat(parkIn, reply));
+            }
             tabChatCache.current.delete(id);
             clearChatRequest(id);
+            releaseChatsForTab(id);
             // Gone from the document: end the session. Merely moved to another
             // window: that window owns the child now, so it must keep running —
             // but this renderer's cached copy has to go, or moving the tab back
