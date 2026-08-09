@@ -4600,6 +4600,7 @@ mod shell_tab_state_tests {
         rename_shell_tab_state_impl(&st, "missing", "new").unwrap();
         assert_eq!(get_shell_tab_state_impl(&st, "new").unwrap(), None);
     }
+}
 
 
 mod chat_claim_tests {
@@ -5073,4 +5074,3 @@ mod change_stream_tests {
     }
 }
 
-}
