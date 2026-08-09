@@ -329,7 +329,12 @@ export const tabLabelFor = (
     case 'shell':
       return `mongosh: ${tab.collection || tab.db}`;
     case 'watch':
-      return t('tabs.watch', { target: tab.collection || tab.db });
+      // Both are empty for a deployment-wide watch, which rendered as
+      // "Watch: " — and several of them, one per connection, were
+      // indistinguishable.
+      return t('tabs.watch', {
+        target: tab.collection || tab.db || connectionName(tab.connectionId),
+      });
     case 'settings':
       return t('tabs.settings');
     case 'quickstart':

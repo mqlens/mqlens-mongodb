@@ -5077,6 +5077,25 @@ mod change_stream_tests {
     }
 
     #[test]
+    fn a_retired_reader_is_told_apart_from_the_live_one() {
+        // A paused reader can stay parked in `next().await` long after its
+        // replacement is running. Whatever it eventually returns — an event or
+        // an error — belongs to a cursor nobody is watching.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let generation = AtomicU64::new(0);
+
+        let mine = generation.fetch_add(1, Ordering::SeqCst) + 1;
+        assert_eq!(generation.load(Ordering::SeqCst), mine, "the live reader matches");
+
+        // A pause and a resume, each bumping past it.
+        generation.fetch_add(1, Ordering::SeqCst);
+        let replacement = generation.fetch_add(1, Ordering::SeqCst) + 1;
+
+        assert_ne!(generation.load(Ordering::SeqCst), mine, "the retired reader must notice");
+        assert_eq!(generation.load(Ordering::SeqCst), replacement);
+    }
+
+    #[test]
     fn no_operation_filter_means_everything_not_nothing() {
         // A filter that matched nothing would be indistinguishable from an idle
         // collection — the worst possible failure for a live tail.

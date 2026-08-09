@@ -373,6 +373,13 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
                 }
             }
             Some(Err(err)) => {
+                // Only if this reader is still the live one. A retired cursor
+                // can fail long after its replacement is happily running, and
+                // writing that into the shared stream would show an error for
+                // a tail that is working.
+                if state_streams.generation.load(Ordering::SeqCst) != my_generation {
+                    return;
+                }
                 let (status, message) = describe_stream_error(&err.to_string());
                 if let Ok(mut s) = state_streams.status.lock() {
                     *s = status;
@@ -422,22 +429,54 @@ pub async fn start_change_stream(
     collection: Option<String>,
     operation_types: Vec<String>,
 ) -> Result<(), String> {
-    // Starting over an existing id replaces it, so a component that remounts
-    // cannot end up with two cursors feeding one buffer.
-    let _ = stop_change_stream_impl(&state, &stream_id);
-
-    // An empty name is not a name. A caller that means "the whole deployment"
-    // may spell it either way, and `client.database("")` produces a namespace
-    // the server refuses (`Invalid namespace specified: .$cmd.aggregate`).
     let database = database.filter(|d| !d.trim().is_empty());
     let collection = collection.filter(|c| !c.trim().is_empty());
 
+    // A remount is not a restart. An inactive tab is unmounted and mounts again
+    // when the user returns, and replacing the stream then would throw away the
+    // buffer and the resume token this whole design exists to keep. If an
+    // identical stream is already running, leave it be.
+    let existing = state.change_streams.lock_safe()?.get(&stream_id).cloned();
+    if let Some(existing) = &existing {
+        let same = existing.connection_id == connection_id
+            && existing.database == database
+            && existing.collection == collection
+            && existing.operation_types == operation_types;
+        if same {
+            return Ok(());
+        }
+    }
+
+    // Different filters, same namespace: the cursor has to be rebuilt because
+    // the `$match` lives in the pipeline, but the old resume token still points
+    // at a valid place in the oplog. Carrying it over is what stops a filter
+    // change from silently skipping everything buffered during a pause.
+    let inherited_token = existing
+        .as_ref()
+        .filter(|e| e.connection_id == connection_id && e.database == database)
+        .and_then(|e| e.resume_token.lock().ok().and_then(|t| t.clone()));
+    let inherited_status = existing
+        .as_ref()
+        .and_then(|e| e.status.lock().ok().map(|s| s.clone()));
+
+    let _ = stop_change_stream_impl(&state, &stream_id);
+
+    // A filter change on a paused tail stays paused. Rebuilding the cursor is
+    // unavoidable — the `$match` is server-side — but it must not resume the
+    // watch behind the user's back, and with the token inherited above nothing
+    // buffered during the pause is lost when they do resume.
+    let was_paused = inherited_status == Some(StreamStatus::Paused);
+
     let stream = Arc::new(LiveStream {
         buffer: Mutex::new(StreamBuffer::default()),
-        status: Mutex::new(StreamStatus::Starting),
+        status: Mutex::new(if was_paused {
+            StreamStatus::Paused
+        } else {
+            StreamStatus::Starting
+        }),
         error: Mutex::new(None),
         generation: Arc::new(AtomicU64::new(0)),
-        resume_token: Mutex::new(None),
+        resume_token: Mutex::new(inherited_token),
         connection_id,
         database,
         collection,
@@ -447,6 +486,11 @@ pub async fn start_change_stream(
         .change_streams
         .lock_safe()?
         .insert(stream_id, stream.clone());
+    // No reader while paused: it starts when the user resumes, from the token
+    // carried over above.
+    if was_paused {
+        return Ok(());
+    }
     if let Err(err) = spawn_reader(&state, stream.clone()) {
         // The panel polls for status, so a failure to start has to land THERE
         // rather than only in a rejected promise the caller drops. A mock

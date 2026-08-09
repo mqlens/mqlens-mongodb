@@ -278,12 +278,17 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   const [namespaces, setNamespaces] = useState<string[]>([]);
   useEffect(() => {
     setNamespaces((prev) => {
-      const next = collectionsSeen(events);
+      const seen = collectionsSeen(events);
+      // The selection stays offered even once its own events have aged out of
+      // the view: otherwise the combobox hides itself below two entries while
+      // the filter is still applied, leaving an empty list and no way back.
+      const next =
+        namespace && !seen.includes(namespace) ? [...seen, namespace].sort() : seen;
       // Same list, same reference — otherwise the Combobox re-renders on every
       // poll for nothing.
       return next.length === prev.length && next.every((n, i) => n === prev[i]) ? prev : next;
     });
-  }, [events]);
+  }, [events, namespace]);
   const shown = useMemo(() => filterByNamespace(events, namespace), [events, namespace]);
 
   const detailDocument = useMemo(() => {
@@ -398,7 +403,7 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
             on a single-collection tail there is nothing to choose between.
             Built from what has arrived, because a deployment-wide tail cannot
             know in advance which collections will show up. */}
-        {namespaces.length > 1 && (
+        {(namespaces.length > 1 || namespace) && (
           <>
             <span className="mx-1 h-4 w-px bg-border" aria-hidden />
             <Combobox
