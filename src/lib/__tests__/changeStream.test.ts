@@ -1,0 +1,107 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  describeEvent,
+  mergeEvents,
+  pollChangeStream,
+  startChangeStream,
+  type ChangeEvent,
+} from '../changeStream';
+
+const invokeMock = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+
+const event = (seq: number, extra: Partial<ChangeEvent> = {}): ChangeEvent => ({
+  seq,
+  operationType: 'insert',
+  database: 'sales',
+  collection: 'orders',
+  atMs: 0,
+  ...extra,
+});
+
+describe('change stream client', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+  });
+
+  describe('merging polls into the view', () => {
+    it('puts the newest first, which is where a tail is read', () => {
+      const merged = mergeEvents([event(1)], [event(2), event(3)], 100);
+      expect(merged.map((e) => e.seq)).toEqual([3, 2, 1]);
+    });
+
+    it('stays bounded, dropping the oldest', () => {
+      // The backend caps its buffer, but a tab left open for hours accumulates
+      // far more than the backend ever held at once.
+      const merged = mergeEvents([event(2), event(1)], [event(3)], 2);
+      expect(merged.map((e) => e.seq)).toEqual([3, 2]);
+    });
+
+    it('leaves the view untouched when a poll brings nothing', () => {
+      const current = [event(1)];
+      expect(mergeEvents(current, [], 10)).toBe(current);
+    });
+
+    it('orders a batch that arrives out of order', () => {
+      const merged = mergeEvents([], [event(3), event(1), event(2)], 10);
+      expect(merged.map((e) => e.seq)).toEqual([3, 2, 1]);
+    });
+  });
+
+  describe('polling', () => {
+    it('asks only for what it has not seen', async () => {
+      invokeMock.mockResolvedValue({ events: [], status: 'running', error: null, dropped: 0, lastSeq: 4 });
+
+      await pollChangeStream('s1', 4);
+
+      expect(invokeMock).toHaveBeenCalledWith('poll_change_stream', {
+        streamId: 's1',
+        afterSeq: 4,
+      });
+    });
+
+    it('takes everything on a first poll', async () => {
+      await pollChangeStream('s1');
+      expect(invokeMock).toHaveBeenCalledWith('poll_change_stream', {
+        streamId: 's1',
+        afterSeq: null,
+      });
+    });
+
+    it('does not throw when a poll fails', async () => {
+      // A tail that tears itself down over one transient failure is worse than
+      // one that waits for the next tick.
+      invokeMock.mockRejectedValue(new Error('backend gone'));
+      await expect(pollChangeStream('s1', 1)).resolves.toBeUndefined();
+    });
+  });
+
+  it('watches a whole database when no collection is given', async () => {
+    await startChangeStream({
+      streamId: 's1',
+      connectionId: 'c1',
+      database: 'sales',
+      operationTypes: ['insert'],
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'start_change_stream',
+      expect.objectContaining({ database: 'sales', collection: null }),
+    );
+  });
+
+  describe('event summaries', () => {
+    it('names the document when the key has one', () => {
+      expect(describeEvent(event(1, { documentKey: { _id: 'abc' } }))).toBe('sales.orders · abc');
+    });
+
+    it('falls back to the namespace alone', () => {
+      expect(describeEvent(event(1))).toBe('sales.orders');
+    });
+
+    it('handles a database-wide event with no collection', () => {
+      expect(describeEvent(event(1, { collection: undefined }))).toBe('sales');
+    });
+  });
+});

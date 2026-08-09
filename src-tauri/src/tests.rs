@@ -4937,4 +4937,140 @@ mod chat_store_tests {
     }
 }
 
+
+mod change_stream_tests {
+    use crate::change_streams::{
+        build_pipeline, describe_stream_error, events_after, push_event, ChangeEvent,
+        StreamBuffer, StreamStatus, BUFFER_CAP,
+    };
+
+    fn event(op: &str) -> ChangeEvent {
+        ChangeEvent {
+            seq: 0,
+            operation_type: op.to_string(),
+            database: "sales".to_string(),
+            collection: Some("orders".to_string()),
+            document_key: None,
+            full_document: None,
+            updated_fields: None,
+            removed_fields: None,
+            at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn the_buffer_stays_bounded_and_says_what_it_dropped() {
+        // A tail viewer's whole job is to stay bounded under load. Silently
+        // skipping would make a busy collection look like a quiet one.
+        let mut buffer = StreamBuffer::default();
+        for _ in 0..(BUFFER_CAP + 5) {
+            push_event(&mut buffer, event("insert"), BUFFER_CAP);
+        }
+
+        assert_eq!(buffer.events.len(), BUFFER_CAP);
+        assert_eq!(buffer.dropped, 5);
+        // The OLDEST go, so the tail keeps the newest.
+        assert_eq!(buffer.events.front().unwrap().seq, 5);
+        assert_eq!(
+            buffer.events.back().unwrap().seq,
+            (BUFFER_CAP + 4) as u64
+        );
+    }
+
+    #[test]
+    fn sequences_keep_climbing_past_an_eviction() {
+        // The frontend polls for "everything after N". Reusing a sequence after
+        // an eviction would make it skip events or replay them forever.
+        let mut buffer = StreamBuffer::default();
+        for _ in 0..3 {
+            push_event(&mut buffer, event("insert"), 2);
+        }
+
+        assert_eq!(
+            buffer.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(buffer.next_seq, 3);
+    }
+
+    #[test]
+    fn a_poll_gets_only_what_it_has_not_seen() {
+        let mut buffer = StreamBuffer::default();
+        for _ in 0..4 {
+            push_event(&mut buffer, event("insert"), BUFFER_CAP);
+        }
+
+        assert_eq!(events_after(&buffer, None).len(), 4, "a first poll takes all");
+        assert_eq!(
+            events_after(&buffer, Some(1))
+                .iter()
+                .map(|e| e.seq)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert!(events_after(&buffer, Some(3)).is_empty());
+        // Ahead of the buffer — a duplicated or reordered poll must not panic
+        // or replay.
+        assert!(events_after(&buffer, Some(99)).is_empty());
+    }
+
+    #[test]
+    fn a_caller_that_fell_behind_gets_what_is_left_rather_than_an_error() {
+        let mut buffer = StreamBuffer::default();
+        for _ in 0..5 {
+            push_event(&mut buffer, event("insert"), 2);
+        }
+
+        // It last saw seq 0, which has long been evicted.
+        let caught_up = events_after(&buffer, Some(0));
+        assert_eq!(
+            caught_up.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        assert_eq!(buffer.dropped, 3, "the gap is reported, not hidden");
+    }
+
+    #[test]
+    fn no_operation_filter_means_everything_not_nothing() {
+        // A filter that matched nothing would be indistinguishable from an idle
+        // collection — the worst possible failure for a live tail.
+        assert!(build_pipeline(&[]).is_empty());
+        assert!(build_pipeline(&["".to_string(), "  ".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn a_chosen_operation_filter_becomes_a_match_stage() {
+        let pipeline = build_pipeline(&["insert".to_string(), "delete".to_string()]);
+
+        assert_eq!(pipeline.len(), 1);
+        let json = serde_json::to_string(&pipeline[0]).unwrap();
+        assert!(json.contains("operationType"), "{json}");
+        assert!(json.contains("insert") && json.contains("delete"), "{json}");
+    }
+
+    #[test]
+    fn a_standalone_server_is_explained_rather_than_reported_raw() {
+        // The server says this as an ordinary command failure; the text is the
+        // only clue, and "$changeStream stage is only supported on replica
+        // sets" means nothing to someone who just wanted to watch a collection.
+        let (status, message) = describe_stream_error(
+            "Error: The $changeStream stage is only supported on replica sets",
+        );
+
+        assert_eq!(status, StreamStatus::Unsupported);
+        assert!(message.contains("replica set"), "{message}");
+        assert!(!message.contains("$changeStream"), "raw driver text leaked");
+    }
+
+    #[test]
+    fn any_other_failure_keeps_its_own_words() {
+        // Guessing at an unknown error helps nobody; the driver's text is what
+        // the user can search for.
+        let (status, message) = describe_stream_error("connection refused");
+
+        assert_eq!(status, StreamStatus::Error);
+        assert_eq!(message, "connection refused");
+    }
+}
+
 }

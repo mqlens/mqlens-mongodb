@@ -53,7 +53,8 @@
     "settings": "Settings",
     "unpin": "Unpin",
     "unpinFromSidebar": "Unpin from sidebar",
-    "validationRules": "Validation Rules"
+    "validationRules": "Validation Rules",
+    "watchCollection": "Watch changes…"
   },
   "dialogs": {
     "dropCollection": {

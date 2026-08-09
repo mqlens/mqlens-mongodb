@@ -470,6 +470,31 @@
       "unlock": "Unlock MQLens"
     }
   },
+  "watch": {
+    "actions": {
+      "clear": "Clear the list",
+      "pause": "Pause the stream",
+      "resume": "Resume from where it paused"
+    },
+    "dropped_one": "{{count}} earlier event dropped to stay within the buffer",
+    "dropped_other": "{{count}} earlier events dropped to stay within the buffer",
+    "operations": {
+      "delete": "Delete",
+      "insert": "Insert",
+      "replace": "Replace",
+      "update": "Update"
+    },
+    "selectPrompt": "Select an event to see its document",
+    "status": {
+      "error": "error",
+      "paused": "paused",
+      "running": "live",
+      "starting": "starting",
+      "unsupported": "unavailable"
+    },
+    "unsupported": "Change streams need a replica set or a sharded cluster. This server is a standalone.",
+    "waiting": "Watching for changes…"
+  },
   "workspaceTabBar": {
     "closeTab": "Close {{label}}",
     "closeTooltip": "Close tab",

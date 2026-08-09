@@ -25,7 +25,8 @@
     "settings": "Settings",
     "tasks": "Tasks",
     "users": "Users: {{name}}",
-    "validation": "Validation: {{collection}}"
+    "validation": "Validation: {{collection}}",
+    "watch": "Watch: {{target}}"
   },
   "toast": {
     "aggregationPipelineApplied": "Aggregation pipeline applied",

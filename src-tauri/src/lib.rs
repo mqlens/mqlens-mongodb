@@ -13,6 +13,7 @@ pub mod limits;
 pub mod ai;
 #[cfg(test)]
 mod command_coverage;
+pub mod change_streams;
 pub mod chats;
 pub mod connections;
 mod db;
@@ -2518,6 +2519,11 @@ pub fn run() {
             load_app_settings,
             save_app_settings,
             connections::test_mongosh_path,
+            change_streams::start_change_stream,
+            change_streams::poll_change_stream,
+            change_streams::pause_change_stream,
+            change_streams::resume_change_stream,
+            change_streams::stop_change_stream,
             chats::list_chats,
             chats::claim_chat,
             chats::release_chat,

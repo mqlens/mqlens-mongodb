@@ -31,6 +31,7 @@ import {
 } from './lib/mongoshSession';
 import { DataGrid, type ViewMode } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
+import { WatchPanel } from './components/WatchPanel';
 import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
 import { IndexViewer } from './components/IndexViewer';
 import { IndexModal } from './components/IndexModal';
@@ -119,12 +120,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { FolderCode, KeyRound, X, ChevronsRight, XSquare, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert } from 'lucide-react';
+import { FolderCode, KeyRound, Radio, X, ChevronsRight, XSquare, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
 export interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate' | 'watch';
   connectionId: string;
   db: string;
   collection: string;
@@ -281,6 +282,8 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
       return <KeyRound size={size} className={className} />;
     case 'shell':
       return <Terminal size={size} className={className} />;
+    case 'watch':
+      return <Radio size={size} className={className} />;
     case 'settings':
       return <Settings size={size} className={className} />;
     case 'quickstart':
@@ -324,6 +327,8 @@ export const tabLabelFor = (
       return `${tab.collection}.${tab.indexName}`;
     case 'shell':
       return `mongosh: ${tab.collection || tab.db}`;
+    case 'watch':
+      return t('tabs.watch', { target: tab.collection || tab.db });
     case 'settings':
       return t('tabs.settings');
     case 'quickstart':
@@ -1426,6 +1431,30 @@ function Workspace() {
     } else {
       dispatchWorkspace({ type: 'open_tab', tabId });
     }
+  };
+
+  /** Open a live tail. One tab per target, so re-opening focuses rather than
+   *  starting a second cursor on the same collection. */
+  const handleOpenWatch = (connectionId: string, dbName: string, collName = '') => {
+    if (!connectionId || !dbName) return;
+    const tabId = `watch.${connectionId}.${dbName}.${collName || 'database'}`;
+    if (!tabs.some((t) => t.id === tabId)) {
+      const newTab: QueryTab = {
+        id: tabId,
+        type: 'watch',
+        connectionId,
+        db: dbName,
+        collection: collName,
+        results: [],
+        loading: false,
+        error: null,
+        explainResult: null,
+      };
+      setTabs((prev) => [...prev, newTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId }, { tab: newTab });
+      return;
+    }
+    dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
   const handleOpenShell = (connectionId: string, dbName: string, collName = '', initialCommand?: string) => {
@@ -4165,6 +4194,14 @@ function Workspace() {
             />
           </div>
         )}
+        {tab.type === 'watch' && (
+          <WatchPanel
+            connectionId={tab.connectionId}
+            databaseName={tab.db}
+            collectionName={tab.collection || undefined}
+            streamId={tab.id}
+          />
+        )}
         {tab.type === 'shell' && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
           const connectionName = activeConnection ? activeConnection.name : tab.connectionId;
@@ -4265,6 +4302,7 @@ function Workspace() {
           onCreateIndex={handleOpenIndexModalForCreate}
           onDeleteIndex={handleDeleteIndex}
           onOpenShell={handleOpenShell}
+          onWatchCollection={handleOpenWatch}
           onOpenMonitoring={handleOpenMonitoringTab}
           onOpenUsers={handleOpenUsersTab}
           onAnalyzeSchema={handleOpenSchemaTab}

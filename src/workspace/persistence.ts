@@ -50,6 +50,7 @@ export type QueryTabType =
   | 'dump'
   | 'restore'
   | 'validation'
+  | 'watch'
   | 'generate';
 
 export interface PersistedTab {

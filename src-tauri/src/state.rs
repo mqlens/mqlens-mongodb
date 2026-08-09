@@ -90,6 +90,9 @@ pub struct AppState {
     /// the original mongosh process was orphaned with no id left to stop it.
     /// The backend already owns those processes, so it is the honest owner of
     /// the mapping to them too. Opaque JSON keeps the shape a frontend concern.
+    /// Live change-stream tails, keyed by the frontend's stream id. Their
+    /// buffers are polled rather than emitted — see `change_streams`.
+    pub change_streams: Mutex<HashMap<String, Arc<crate::change_streams::LiveStream>>>,
     pub shell_tab_state: Mutex<HashMap<String, serde_json::Value>>,
     /// Windows that have been closed, so a mongosh start still in flight for
     /// one of them can stop the child it just spawned.
@@ -154,6 +157,7 @@ impl AppState {
             mocks: Mutex::new(HashMap::new()),
             mock_indexes: Mutex::new(HashMap::new()),
             mongosh_sessions: Mutex::new(HashMap::new()),
+            change_streams: Mutex::new(HashMap::new()),
             shell_tab_state: Mutex::new(HashMap::new()),
             closed_windows: Mutex::new(HashSet::new()),
             tasks: Arc::new(Mutex::new(HashMap::new())),

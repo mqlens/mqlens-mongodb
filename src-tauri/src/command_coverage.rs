@@ -88,6 +88,13 @@ const LOCAL_COMMANDS: &[&str] = &[
     // to, but nothing here reaches a live connection. `claim_chat`/
     // `release_chat` are the in-memory "which panel has this conversation
     // open" guard.
+    // Live tail cursors. READ-only against the deployment: `watch()` opens a
+    // cursor and never writes, and the buffer it fills lives in this process.
+    "start_change_stream",
+    "poll_change_stream",
+    "pause_change_stream",
+    "resume_change_stream",
+    "stop_change_stream",
     "list_chats",
     "claim_chat",
     "release_chat",
