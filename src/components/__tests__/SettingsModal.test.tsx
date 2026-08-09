@@ -273,8 +273,13 @@ describe('SettingsView Component', () => {
     renderSettings();
     await openTab('settings-tab-ai');
 
+    // `waitFor` on the CONTENT, not `findBy` on the element. The trigger is
+    // rendered immediately showing the default "3 months", so waiting for the
+    // element to exist proves nothing — it is already there before the saved
+    // settings have loaded. This passed locally and failed on CI, where the
+    // load lands a beat later.
     const trigger = await screen.findByTestId('ai-history-retention-select');
-    expect(trigger).toHaveTextContent(/6 months/i);
+    await waitFor(() => expect(trigger).toHaveTextContent(/6 months/i));
 
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole('option', { name: /12 months/i }));
