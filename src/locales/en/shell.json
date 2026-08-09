@@ -478,6 +478,13 @@
       "resume": "Resume from where it paused"
     },
     "allCollections": "All collections",
+    "columns": {
+      "collection": "Collection",
+      "database": "Database",
+      "document": "Document",
+      "operation": "Op",
+      "time": "Time"
+    },
     "deployment": "Whole deployment",
     "dropped_one": "{{count}} earlier event dropped to stay within the buffer",
     "dropped_other": "{{count}} earlier events dropped to stay within the buffer",

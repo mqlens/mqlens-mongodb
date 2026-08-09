@@ -478,6 +478,13 @@
       "resume": "Dort fortsetzen, wo pausiert wurde"
     },
     "allCollections": "Alle Collections",
+    "columns": {
+      "collection": "Collection",
+      "database": "Datenbank",
+      "document": "Dokument",
+      "operation": "Typ",
+      "time": "Zeit"
+    },
     "deployment": "Gesamtes Deployment",
     "dropped_one": "{{count}} älteres Ereignis verworfen, um den Puffer einzuhalten",
     "dropped_other": "{{count}} ältere Ereignisse verworfen, um den Puffer einzuhalten",

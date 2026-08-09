@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { List, type RowComponentProps } from 'react-window';
 import { useTranslation } from 'react-i18next';
 import { Database, Layers, Pause, Play, Radio, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -54,6 +55,88 @@ const styleFor = (op: string) =>
     rail: 'bg-muted-foreground',
   };
 
+/** Height of one row, in px. Fixed so the list can be virtualized — with a
+ *  thousand events on screen, rendering them all is what made this feel slow. */
+const ROW_HEIGHT = 26;
+
+interface EventRowExtra {
+  events: ChangeEvent[];
+  selectedSeq: number | null;
+  onSelect: (event: ChangeEvent) => void;
+  perRowDatabase: boolean;
+  gridCols: string;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}
+
+/**
+ * One event row, hoisted out so the virtualized list can own it.
+ *
+ * Not memoised, and it does not need to be: virtualization already keeps the
+ * rendered set to what fits on screen, which is the cost that mattered.
+ */
+const EventRow = ({
+  index,
+  style,
+  events,
+  selectedSeq,
+  onSelect,
+  perRowDatabase,
+  gridCols,
+  t,
+}: RowComponentProps<EventRowExtra>) => {
+  const event = events[index];
+  if (!event) return null;
+  const opStyle = styleFor(event.operationType);
+  const id = eventDocumentId(event);
+  const changed = changedFieldCount(event);
+  return (
+      <button
+        type="button"
+        style={style}
+        onClick={() => onSelect(event)}
+        className={cn(
+          'grid w-full items-center gap-2 border-b border-border/40 pr-2.5 text-left text-[11px] hover:bg-accent',
+          gridCols,
+          selectedSeq === event.seq && 'bg-accent'
+        )}
+        data-testid="watch-event"
+      >
+        <span className={cn('h-full w-0.5 justify-self-start', opStyle.rail)} aria-hidden />
+        <Badge
+          variant="outline"
+          className={cn('justify-center px-0 text-[9px] uppercase', opStyle.badge)}
+        >
+          {t(`watch.operations.${event.operationType}`, { defaultValue: event.operationType })}
+        </Badge>
+        {perRowDatabase && (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <Database size={10} className="shrink-0 text-amber-500" />
+            <span className="truncate font-mono text-muted-foreground" title={event.database}>
+              {event.database}
+            </span>
+          </span>
+        )}
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Layers size={10} className="shrink-0 text-emerald-500" />
+          <span className="truncate font-mono font-medium" title={event.collection}>
+            {event.collection ?? event.database}
+          </span>
+          {changed !== undefined && (
+            <span className="shrink-0 rounded bg-muted px-1 text-[9px] text-muted-foreground">
+              {t('watch.fieldsChanged', { count: changed })}
+            </span>
+          )}
+        </span>
+        <span className="truncate font-mono text-[10px] text-muted-foreground" title={id}>
+          {id ?? '—'}
+        </span>
+        <span className="text-right font-mono text-[10px] tabular-nums text-muted-foreground">
+          {eventTime(event)}
+        </span>
+      </button>
+  );
+};
+
 interface WatchPanelProps {
   connectionId: string;
   /** Omitted to watch the whole deployment. */
@@ -102,9 +185,12 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
     const tick = async () => {
       const poll = await pollChangeStream(streamId, lastSeqRef.current);
       if (!alive || !poll) return;
-      setStatus(poll.status);
-      setError(poll.error);
-      setDropped(poll.dropped);
+      // Only when they actually move. These fire every 700ms, and setting an
+      // unchanged value still costs a render pass — on an idle tail that was a
+      // re-render a second for nothing.
+      setStatus((prev) => (prev === poll.status ? prev : poll.status));
+      setError((prev) => (prev === poll.error ? prev : poll.error));
+      setDropped((prev) => (prev === poll.dropped ? prev : poll.dropped));
       if (poll.events.length > 0) {
         lastSeqRef.current = poll.lastSeq;
         setEvents((prev) => mergeEvents(prev, poll.events, VIEW_CAP));
@@ -134,6 +220,17 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   // ON the row. Below that it is the same for every event and repeating it
   // would be noise, so it sits once at the foot of the list instead.
   const perRowDatabase = !databaseName;
+  // One template for the header and every row, which is what makes them line
+  // up. The rail is a hairline; the identifier and time are fixed so they do
+  // not shuffle as values change width.
+  // The document column is fixed, not proportional: a UUID is 36 characters
+  // and an ObjectId 24, so a share of the width cuts them mid-value — which
+  // reads as broken rather than abbreviated. 224px fits a full UUID at this
+  // size; the namespace columns take whatever is left, since a collection name
+  // truncates gracefully where an identifier does not.
+  const gridCols = perRowDatabase
+    ? 'grid-cols-[2px_66px_minmax(0,0.9fr)_minmax(0,1.3fr)_224px_56px]'
+    : 'grid-cols-[2px_66px_minmax(0,1fr)_224px_56px]';
   const target = collectionName
     ? `${databaseName}.${collectionName}`
     : (databaseName ?? t('watch.deployment'));
@@ -141,7 +238,18 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   /** The body worth showing: the document for an insert/replace, what changed
    *  for an update, and the key for a delete — falling back to the raw event so
    *  nothing is ever a blank pane. */
-  const namespaces = useMemo(() => collectionsSeen(events), [events]);
+  // Accumulated rather than recomputed: `collectionsSeen` walks every buffered
+  // event, and doing that on each 700ms poll is work proportional to the whole
+  // buffer for a dropdown that gains an entry perhaps once a minute.
+  const [namespaces, setNamespaces] = useState<string[]>([]);
+  useEffect(() => {
+    setNamespaces((prev) => {
+      const next = collectionsSeen(events);
+      // Same list, same reference — otherwise the Combobox re-renders on every
+      // poll for nothing.
+      return next.length === prev.length && next.every((n, i) => n === prev[i]) ? prev : next;
+    });
+  }, [events]);
   const shown = useMemo(() => filterByNamespace(events, namespace), [events, namespace]);
 
   const detailDocument = useMemo(() => {
@@ -321,6 +429,17 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
           minSize="20%"
           className="flex min-h-0 flex-col"
         >
+          {/* A real grid, not flex with an auto margin. Every row shares one
+              column template, so the values line up in columns instead of
+              drifting apart and leaving a gulf down the middle. */}
+          <div className={cn('grid flex-shrink-0 items-center gap-2 border-b border-border bg-muted/30 py-1 pr-2.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground', gridCols)}>
+            <span aria-hidden />
+            <span>{t('watch.columns.operation')}</span>
+            {perRowDatabase && <span>{t('watch.columns.database')}</span>}
+            <span>{t('watch.columns.collection')}</span>
+            <span>{t('watch.columns.document')}</span>
+            <span className="text-right">{t('watch.columns.time')}</span>
+          </div>
           <div className="min-h-0 flex-1 overflow-y-auto" data-testid="watch-events">
             {shown.length === 0 ? (
               <div className="p-4 text-[11px] text-muted-foreground" data-testid="watch-empty">
@@ -331,86 +450,24 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
                     : t('watch.waiting')}
               </div>
             ) : (
-              shown.map((event) => {
-                const style = styleFor(event.operationType);
-                const id = eventDocumentId(event);
-                const changed = changedFieldCount(event);
-                return (
-                  <button
-                    key={event.seq}
-                    type="button"
-                    onClick={() => setSelected(event)}
-                    className={cn(
-                      'flex w-full items-stretch gap-0 border-b border-border/50 text-left hover:bg-accent',
-                      selected?.seq === event.seq && 'bg-accent'
-                    )}
-                    data-testid="watch-event"
-                  >
-                    <span className={cn('w-0.5 shrink-0', style.rail)} aria-hidden />
-                    <span className="flex min-w-0 flex-1 items-baseline gap-2 px-2.5 py-1.5 text-[11px]">
-                      {/* Fixed width so the collections line up in a column.
-                          INSERT and DELETE are different lengths, and ragged
-                          badges make the names impossible to scan down. */}
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          'w-[62px] shrink-0 justify-center px-0 text-[9px] uppercase',
-                          style.badge
-                        )}
-                      >
-                        {t(`watch.operations.${event.operationType}`, {
-                          defaultValue: event.operationType,
-                        })}
-                      </Badge>
-                      {perRowDatabase && (
-                        <>
-                          <Database size={10} className="shrink-0 self-center text-amber-500" />
-                          <span
-                            className="min-w-0 shrink truncate font-mono text-muted-foreground"
-                            title={event.database}
-                          >
-                            {event.database}
-                          </span>
-                          <span className="shrink-0 text-muted-foreground/50">/</span>
-                        </>
-                      )}
-                      <Layers size={10} className="shrink-0 self-center text-emerald-500" />
-                      <span className="min-w-0 shrink truncate font-mono font-medium" title={event.collection}>
-                        {event.collection ?? event.database}
-                      </span>
-                      {/* How much an update touched, which is the difference
-                          between a heartbeat and a real edit at a glance. */}
-                      {changed !== undefined && (
-                        <span className="shrink-0 text-[10px] text-muted-foreground">
-                          {t('watch.fieldsChanged', { count: changed })}
-                        </span>
-                      )}
-                      {id && (
-                        <span
-                          className="ml-auto shrink-0 truncate font-mono text-[10px] text-muted-foreground"
-                          title={id}
-                        >
-                          {id.length > 12 ? `…${id.slice(-10)}` : id}
-                        </span>
-                      )}
-                      {/* Wall-clock, at the resolution a tail is read: the date
-                          is almost always today and would just be noise. */}
-                      <span
-                        className={cn(
-                          'shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground',
-                          !id && 'ml-auto'
-                        )}
-                      >
-                        {eventTime(event)}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })
+              // Virtualized: a thousand rows in the DOM, re-rendered on every
+              // 700ms poll, is what made this feel slow. Only what fits on
+              // screen is built now.
+              <List<EventRowExtra>
+                rowCount={shown.length}
+                rowHeight={ROW_HEIGHT}
+                rowComponent={EventRow}
+                rowProps={{
+                  events: shown,
+                  selectedSeq: selected?.seq ?? null,
+                  onSelect: setSelected,
+                  perRowDatabase,
+                  gridCols,
+                  t,
+                }}
+              />
             )}
           </div>
-          {/* The database is constant for every row unless this is a
-              deployment tail, so it belongs here once rather than repeated. */}
           {databaseName && !collectionName && (
             <div className="flex flex-shrink-0 items-center gap-1.5 border-t border-border px-3 py-1 text-[10px] text-muted-foreground">
               <Database size={9} className="shrink-0 text-amber-500" />

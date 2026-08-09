@@ -47,6 +47,7 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'settings:updates.resultValues.offline', // Offline — established loanword, matches shell:updatePrompt.toast.offline's "offline" usage
   'settings:tools.tabLabel', // Tools
   'shell:watch.status.running', // live — the loanword German uses for a running stream too
+  'shell:watch.columns.collection', // Collection — MongoDB's own term, left untranslated in the German UI
   'settings:updates.tabLabel', // Updates
   'connections:connectionMode.normal.label', // Normal
   'connections:filePicker.textFilter', // Text
