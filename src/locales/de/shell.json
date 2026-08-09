@@ -486,6 +486,7 @@
     "filterAll": "Alle",
     "filterCollection": "Nach Collection filtern",
     "filterLabel": "Zeigen",
+    "noCollectionMatch": "Keine passende Collection",
     "noneInCollection": "Noch keine Ereignisse für diese Collection",
     "operations": {
       "delete": "Löschen",
@@ -496,6 +497,7 @@
       "replace": "Ersetzen",
       "update": "Aktualisieren"
     },
+    "searchCollections": "Collections durchsuchen…",
     "selectPrompt": "Ereignis auswählen, um das Dokument zu sehen",
     "status": {
       "error": "Fehler",

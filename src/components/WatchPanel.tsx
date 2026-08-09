@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { DataGrid } from './DataGrid';
+import { Combobox } from '@/components/ui/combobox';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import {
   CHANGE_OPERATIONS,
@@ -243,23 +244,24 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
         {namespaces.length > 1 && (
           <>
             <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-            <select
-              className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
-              value={namespace ?? ''}
-              onChange={(e) => {
-                setNamespace(e.target.value || null);
+            <Combobox
+              options={namespaces.map((ns) => {
+                const dot = ns.indexOf('.');
+                return { value: ns, label: ns.slice(dot + 1), hint: ns.slice(0, dot) };
+              })}
+              value={namespace}
+              onChange={(next) => {
+                setNamespace(next);
                 setSelected(null);
               }}
+              placeholder={t('watch.allCollections')}
+              searchPlaceholder={t('watch.searchCollections')}
+              emptyMessage={t('watch.noCollectionMatch')}
+              emptyOptionLabel={t('watch.allCollections')}
+              triggerClassName="min-w-[140px] max-w-[220px]"
               data-testid="watch-filter-namespace"
               aria-label={t('watch.filterCollection')}
-            >
-              <option value="">{t('watch.allCollections')}</option>
-              {namespaces.map((ns) => (
-                <option key={ns} value={ns}>
-                  {ns}
-                </option>
-              ))}
-            </select>
+            />
           </>
         )}
       </div>

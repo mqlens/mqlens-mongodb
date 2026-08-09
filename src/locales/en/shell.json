@@ -486,6 +486,7 @@
     "filterAll": "All",
     "filterCollection": "Filter by collection",
     "filterLabel": "Show",
+    "noCollectionMatch": "No collection matches",
     "noneInCollection": "No events for this collection yet",
     "operations": {
       "delete": "Delete",
@@ -496,6 +497,7 @@
       "replace": "Replace",
       "update": "Update"
     },
+    "searchCollections": "Search collections…",
     "selectPrompt": "Select an event to see its document",
     "status": {
       "error": "error",
