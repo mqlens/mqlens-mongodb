@@ -5,9 +5,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { DataGrid } from './DataGrid';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import {
   CHANGE_OPERATIONS,
-  describeEvent,
+  collectionsSeen,
+  eventDocumentId,
+  filterByNamespace,
   mergeEvents,
   pauseChangeStream,
   pollChangeStream,
@@ -72,6 +75,10 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   const [dropped, setDropped] = useState(0);
   const [selected, setSelected] = useState<ChangeEvent | null>(null);
   const [operations, setOperations] = useState<ChangeOperation[]>([]);
+  // Which namespace to show. Client-side: it narrows what is already buffered,
+  // so it costs nothing and — unlike the operation filter, which lives in the
+  // server-side pipeline — does not restart the cursor.
+  const [namespace, setNamespace] = useState<string | null>(null);
   // The last sequence handed to the view. A ref because the poll loop reads it
   // on every tick and must not restart when it moves.
   const lastSeqRef = useRef<number | undefined>(undefined);
@@ -126,6 +133,9 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   /** The body worth showing: the document for an insert/replace, what changed
    *  for an update, and the key for a delete — falling back to the raw event so
    *  nothing is ever a blank pane. */
+  const namespaces = useMemo(() => collectionsSeen(events), [events]);
+  const shown = useMemo(() => filterByNamespace(events, namespace), [events, namespace]);
+
   const detailDocument = useMemo(() => {
     if (!selected) return null;
     const body =
@@ -225,6 +235,33 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
             </Button>
           );
         })}
+
+        {/* Namespace narrowing, offered only once more than one has appeared —
+            on a single-collection tail there is nothing to choose between.
+            Built from what has arrived, because a deployment-wide tail cannot
+            know in advance which collections will show up. */}
+        {namespaces.length > 1 && (
+          <>
+            <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+            <select
+              className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
+              value={namespace ?? ''}
+              onChange={(e) => {
+                setNamespace(e.target.value || null);
+                setSelected(null);
+              }}
+              data-testid="watch-filter-namespace"
+              aria-label={t('watch.filterCollection')}
+            >
+              <option value="">{t('watch.allCollections')}</option>
+              {namespaces.map((ns) => (
+                <option key={ns} value={ns}>
+                  {ns}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
       </div>
 
       {status === 'unsupported' && (
@@ -252,56 +289,92 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
-        <div className="w-2/5 min-w-[240px] overflow-y-auto border-r border-border" data-testid="watch-events">
-          {events.length === 0 ? (
-            <div className="p-4 text-[11px] text-muted-foreground" data-testid="watch-empty">
-              {status === 'unsupported' ? t('watch.unsupported') : t('watch.waiting')}
+      {/* Draggable split — the namespaces in a real deployment are long, and a
+          fixed 40% left the identifier truncated with no way to widen it. The
+          group id keeps the drag across tab switches, like the query builder's. */}
+      <ResizablePanelGroup
+        id="watch-workspace"
+        orientation="horizontal"
+        className="flex min-h-0 flex-1"
+      >
+        <ResizablePanel id="watch-events" defaultSize="45%" minSize="20%" className="flex min-h-0 flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto" data-testid="watch-events">
+            {shown.length === 0 ? (
+              <div className="p-4 text-[11px] text-muted-foreground" data-testid="watch-empty">
+                {status === 'unsupported'
+                  ? t('watch.unsupported')
+                  : namespace
+                    ? t('watch.noneInCollection')
+                    : t('watch.waiting')}
+              </div>
+            ) : (
+              shown.map((event) => {
+                const style = styleFor(event.operationType);
+                const id = eventDocumentId(event);
+                return (
+                  <button
+                    key={event.seq}
+                    type="button"
+                    onClick={() => setSelected(event)}
+                    className={cn(
+                      'flex w-full items-stretch gap-0 border-b border-border/50 text-left hover:bg-accent',
+                      selected?.seq === event.seq && 'bg-accent'
+                    )}
+                    data-testid="watch-event"
+                  >
+                    <span className={cn('w-0.5 shrink-0', style.rail)} aria-hidden />
+                    {/* Columns rather than one run-on string: the operation, the
+                        collection and the id are three different questions, and
+                        a deployment-wide tail repeats the database on every row
+                        where only the collection differs. */}
+                    <span className="flex min-w-0 flex-1 items-baseline gap-2 px-2.5 py-1.5 text-[11px]">
+                      <Badge
+                        variant="outline"
+                        className={cn('shrink-0 text-[9px] uppercase', style.badge)}
+                      >
+                        {t(`watch.operations.${event.operationType}`, {
+                          defaultValue: event.operationType,
+                        })}
+                      </Badge>
+                      <span className="min-w-0 shrink truncate font-mono font-medium" title={event.collection}>
+                        {event.collection ?? event.database}
+                      </span>
+                      {id && (
+                        <span
+                          className="ml-auto shrink-0 truncate font-mono text-[10px] text-muted-foreground"
+                          title={id}
+                        >
+                          {id.length > 12 ? `…${id.slice(-10)}` : id}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          {/* The database is constant for every row unless this is a
+              deployment tail, so it belongs here once rather than repeated. */}
+          {!collectionName && (
+            <div className="flex-shrink-0 border-t border-border px-3 py-1 text-[10px] text-muted-foreground">
+              {namespace ?? (databaseName ? databaseName : t('watch.allNamespaces'))}
             </div>
-          ) : (
-            events.map((event) => {
-              const style = styleFor(event.operationType);
-              return (
-                <button
-                  key={event.seq}
-                  type="button"
-                  onClick={() => setSelected(event)}
-                  className={cn(
-                    'flex w-full items-stretch gap-0 border-b border-border/50 text-left hover:bg-accent',
-                    selected?.seq === event.seq && 'bg-accent'
-                  )}
-                  data-testid="watch-event"
-                >
-                  {/* A colour rail down the row, so the shape of a burst is
-                      readable without reading any text. */}
-                  <span className={cn('w-0.5 shrink-0', style.rail)} aria-hidden />
-                  <span className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-[11px]">
-                    <Badge
-                      variant="outline"
-                      className={cn('shrink-0 text-[9px] uppercase', style.badge)}
-                    >
-                      {t(`watch.operations.${event.operationType}`, {
-                        defaultValue: event.operationType,
-                      })}
-                    </Badge>
-                    <span className="truncate font-mono">{describeEvent(event)}</span>
-                  </span>
-                </button>
-              );
-            })
           )}
-        </div>
-        {/* The same grid the results use, so a change event's document reads
-            exactly like a document anywhere else in the app — folding, BSON
-            colouring and the table/JSON toggle included. */}
-        <div className="flex min-w-0 flex-1 flex-col" data-testid="watch-detail">
-          {detailDocument ? (
-            <DataGrid documents={[detailDocument]} density={density} />
-          ) : (
-            <div className="p-4 text-[11px] text-muted-foreground">{t('watch.selectPrompt')}</div>
-          )}
-        </div>
-      </div>
+        </ResizablePanel>
+        <ResizableHandle withHandle data-testid="watch-resizer" />
+        <ResizablePanel id="watch-detail" minSize="25%" className="flex min-h-0 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="watch-detail">
+            {detailDocument ? (
+              // Chromeless: a change event has no explain plan, no chart worth
+              // drawing and nothing to page through, so offering those tabs
+              // reads as broken rather than empty.
+              <DataGrid documents={[detailDocument]} density={density} chromeless />
+            ) : (
+              <div className="p-4 text-[11px] text-muted-foreground">{t('watch.selectPrompt')}</div>
+            )}
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 };

@@ -476,13 +476,17 @@
       "pause": "Stream pausieren",
       "resume": "Dort fortsetzen, wo pausiert wurde"
     },
+    "allCollections": "Alle Collections",
+    "allNamespaces": "Alle Namespaces",
     "deployment": "Gesamtes Deployment",
     "dropped_one": "{{count}} älteres Ereignis verworfen, um den Puffer einzuhalten",
     "dropped_other": "{{count}} ältere Ereignisse verworfen, um den Puffer einzuhalten",
     "eventCount_one": "{{count}} Ereignis",
     "eventCount_other": "{{count}} Ereignisse",
     "filterAll": "Alle",
+    "filterCollection": "Nach Collection filtern",
     "filterLabel": "Zeigen",
+    "noneInCollection": "Noch keine Ereignisse für diese Collection",
     "operations": {
       "delete": "Löschen",
       "drop": "Verwerfen",

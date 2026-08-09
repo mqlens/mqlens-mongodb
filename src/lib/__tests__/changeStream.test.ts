@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  collectionsSeen,
   describeEvent,
+  eventDocumentId,
+  filterByNamespace,
   mergeEvents,
   pollChangeStream,
   startChangeStream,
@@ -119,9 +122,53 @@ describe('change stream client', () => {
     });
   });
 
+  describe('narrowing to a collection', () => {
+    const ev = (db: string, coll: string | undefined, seq: number) =>
+      event(seq, { database: db, collection: coll });
+
+    it('lists the namespaces actually seen, sorted', () => {
+      // A deployment-wide tail cannot know up front which collections will
+      // appear, so the filter is built from what has arrived.
+      const seen = collectionsSeen([
+        ev('sales', 'orders', 1),
+        ev('sales', 'users', 2),
+        ev('sales', 'orders', 3),
+      ]);
+      expect(seen).toEqual(['sales.orders', 'sales.users']);
+    });
+
+    it('ignores events with no collection', () => {
+      // A database-level drop has no collection of its own.
+      expect(collectionsSeen([ev('sales', undefined, 1)])).toEqual([]);
+    });
+
+    it('filters to one namespace and back', () => {
+      const all = [ev('sales', 'orders', 1), ev('sales', 'users', 2)];
+      expect(filterByNamespace(all, 'sales.users').map((e) => e.seq)).toEqual([2]);
+      expect(filterByNamespace(all, null)).toBe(all);
+    });
+
+    it('does not confuse same-named collections in different databases', () => {
+      const all = [ev('sales', 'orders', 1), ev('archive', 'orders', 2)];
+      expect(filterByNamespace(all, 'archive.orders').map((e) => e.seq)).toEqual([2]);
+    });
+  });
+
   describe('event summaries', () => {
     it('names the document when the key has one', () => {
       expect(describeEvent(event(1, { documentKey: { _id: 'abc' } }))).toBe('sales.orders · abc');
+    });
+
+    it('unwraps an ObjectId rather than showing its EJSON wrapper', () => {
+      // It crosses IPC as `{ $oid: "..." }`, and the hex is what a reader is
+      // scanning for.
+      expect(eventDocumentId(event(1, { documentKey: { _id: { $oid: 'deadbeef' } } }))).toBe(
+        'deadbeef',
+      );
+    });
+
+    it('has no id for an event that carries no key', () => {
+      expect(eventDocumentId(event(1))).toBeUndefined();
     });
 
     it('falls back to the namespace alone', () => {

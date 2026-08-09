@@ -121,10 +121,42 @@ export function mergeEvents(
   return next.length > cap ? next.slice(0, cap) : next;
 }
 
-/** A one-line summary for the event list. The full body goes to the viewer. */
-export function describeEvent(event: ChangeEvent): string {
+/** The document's `_id` as text, when the event carries one. */
+export function eventDocumentId(event: ChangeEvent): string | undefined {
   const key = event.documentKey as { _id?: unknown } | undefined;
-  const id = key && '_id' in key ? String((key as { _id: unknown })._id) : undefined;
+  if (!key || typeof key !== 'object' || !('_id' in key)) return undefined;
+  const id = (key as { _id: unknown })._id;
+  // An ObjectId crosses IPC as `{ $oid: "..." }`; showing the wrapper would be
+  // noise where the hex is the thing being scanned for.
+  if (id && typeof id === 'object' && '$oid' in (id as Record<string, unknown>)) {
+    return String((id as { $oid: unknown }).$oid);
+  }
+  return String(id);
+}
+
+/** A one-line summary. Kept for callers that want the namespace as one string;
+ *  the event list renders the parts separately so they can be scanned. */
+export function describeEvent(event: ChangeEvent): string {
+  const id = eventDocumentId(event);
   const ns = event.collection ? `${event.database}.${event.collection}` : event.database;
   return id ? `${ns} · ${id}` : ns;
+}
+
+/** The collections seen so far, for the filter. Derived from what has actually
+ *  arrived rather than listed up front — a deployment-wide tail cannot know
+ *  which collections will show up. */
+export function collectionsSeen(events: ChangeEvent[]): string[] {
+  const seen = new Set<string>();
+  for (const e of events) {
+    if (e.collection) seen.add(`${e.database}.${e.collection}`);
+  }
+  return [...seen].sort();
+}
+
+/** Narrow to one namespace. Client-side on purpose: it filters what is already
+ *  buffered, so switching it costs nothing and does not restart the cursor the
+ *  way an operation filter must. */
+export function filterByNamespace(events: ChangeEvent[], ns: string | null): ChangeEvent[] {
+  if (!ns) return events;
+  return events.filter((e) => e.collection && `${e.database}.${e.collection}` === ns);
 }

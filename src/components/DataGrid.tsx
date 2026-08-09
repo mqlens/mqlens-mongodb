@@ -47,6 +47,16 @@ interface DataGridProps {
    *  props to keep the old self-managed behaviour (MongoShell does). */
   viewMode?: ViewMode;
   onViewModeChange?: (mode: ViewMode) => void;
+  /**
+   * Drop the control bar — the Results/Explain tabs, the view-mode switcher and
+   * the row actions — and render the documents alone.
+   *
+   * For callers showing ONE document that did not come from a query: a change
+   * event has no explain plan, no chart worth drawing and nothing to page
+   * through, so offering those reads as broken rather than empty. The JSON
+   * rendering itself is the part worth sharing.
+   */
+  chromeless?: boolean;
   // Fired when the user accepts the COLLSCAN suggestion banner's "Create Index" CTA.
   onCreateSuggestedIndex?: (suggestion: IndexSuggestion) => void;
   // The owning connection's write-safeguard mode (#188). 'read_only' disables
@@ -505,6 +515,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onViewModeChange,
   onCreateSuggestedIndex,
   connectionMode,
+  chromeless = false,
 }) => {
   const { t } = useTranslation('documents');
   const themeCtx = useThemeOptional();
@@ -598,12 +609,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
   const docViewerContext = useContext(DocumentViewerContext);
   const [uncontrolledViewMode, setUncontrolledViewMode] = useState<ViewMode>('json');
-  const viewMode = controlledViewMode ?? uncontrolledViewMode;
+  // Chromeless has no switcher, so JSON is the only mode reachable — and the
+  // right one for a single document nobody queried for.
+  const viewMode = chromeless ? 'json' : (controlledViewMode ?? uncontrolledViewMode);
   const setViewMode = (mode: ViewMode) => {
     setUncontrolledViewMode(mode);
     onViewModeChange?.(mode);
   };
   const [activeTab, setActiveTab] = useState<'results' | 'explain' | 'query'>('results');
+  // Chromeless callers have no tabs to switch and no explain plan to show.
+  const effectiveTab = chromeless ? 'results' : activeTab;
 
   // Column resize: table view keeps per-column widths (session-scoped — the
   // column set changes per collection); the tree view's key column persists.
@@ -1285,7 +1300,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      {/* Control Bar */}
+      {/* Control Bar — omitted for a chromeless render, where none of these
+          controls have anything to act on. */}
+      {!chromeless && (
       <div
         className="relative z-30 flex h-9 select-none items-center justify-between overflow-visible border-b border-border bg-sidebar px-3"
       >
@@ -1486,8 +1503,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
           )}
         </div>
       </div>
+      )}
 
-      {activeTab === 'results' ? (
+      {effectiveTab === 'results' ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {!documents || documents.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center p-8 text-muted-foreground">
