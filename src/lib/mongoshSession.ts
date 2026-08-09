@@ -44,6 +44,9 @@ export interface ShellSession {
    *  panel collapsed and its transcript vanished on every tab switch. */
   aiOpen: boolean;
   aiMessages: ChatMessage[];
+  /** Which conversation in the backend chat store this tab has open. The
+   *  transcript is not stored here — only the choice of which one. */
+  aiChatId?: string;
 }
 
 /**
@@ -200,6 +203,7 @@ function normalizeStoredSession(stored: unknown): ShellSession | undefined {
     autoRanCommand: candidate.autoRanCommand ?? false,
     aiOpen: candidate.aiOpen ?? false,
     aiMessages: Array.isArray(candidate.aiMessages) ? candidate.aiMessages : [],
+    aiChatId: typeof candidate.aiChatId === 'string' ? candidate.aiChatId : undefined,
   };
 }
 
@@ -286,6 +290,7 @@ export function writeShellSession(
     autoRanCommand: patch.autoRanCommand ?? prev?.autoRanCommand ?? false,
     aiOpen: patch.aiOpen ?? prev?.aiOpen ?? false,
     aiMessages: patch.aiMessages ?? prev?.aiMessages ?? [],
+    aiChatId: patch.aiChatId ?? prev?.aiChatId,
   };
   sessions.set(key, next);
   persist(key, next);

@@ -53,6 +53,13 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import type { ManagedToolStatusUi } from './ToolSetupDialog';
+import {
+  AI_HISTORY_RETENTION_OPTIONS,
+  DEFAULT_AI_HISTORY_RETENTION_MONTHS,
+  normalizeAiHistoryRetentionMonths,
+  saveAiHistoryRetentionMonths,
+  type AiHistoryRetentionMonths,
+} from '@/lib/aiChatStore';
 
 interface AppSettings {
   mongosh_path: string;
@@ -66,6 +73,7 @@ interface AppSettings {
   gemini_model?: string;
   local_commands?: Record<string, string>;
   ai_custom_instructions?: string;
+  ai_history_retention_months?: number;
   update_channel?: string;
 }
 
@@ -555,6 +563,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   const [geminiModel, setGeminiModel] = useState('gemini-1.5-flash');
   const [localCommands, setLocalCommands] = useState<Record<string, string>>({});
   const [customInstructions, setCustomInstructions] = useState('');
+  const [historyRetentionMonths, setHistoryRetentionMonths] = useState<AiHistoryRetentionMonths>(
+    DEFAULT_AI_HISTORY_RETENTION_MONTHS
+  );
   const [updateChannel, setUpdateChannel] = useState<'stable' | 'dev'>('stable');
   const [agents, setAgents] = useState<AgentDetection[]>([]);
   const [status, setStatus] = useState<string | null>(null);
@@ -600,7 +611,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
         setGeminiModel(s.gemini_model || 'gemini-1.5-flash');
         setLocalCommands(s.local_commands || {});
         setCustomInstructions(s.ai_custom_instructions || '');
+        setHistoryRetentionMonths(
+          normalizeAiHistoryRetentionMonths(s.ai_history_retention_months)
+        );
         setUpdateChannel(s.update_channel === 'dev' ? 'dev' : 'stable');
+        // Keep the localStorage mirror in sync so AI Helper prune uses the vault value.
+        saveAiHistoryRetentionMonths(
+          normalizeAiHistoryRetentionMonths(s.ai_history_retention_months)
+        );
       })
       .catch((err) => { if (!cancelled) setError(String(err)); });
     invoke<AgentDetection[]>('detect_local_agents')
@@ -643,9 +661,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
           gemini_model: geminiModel.trim() || 'gemini-1.5-flash',
           local_commands: localCommands,
           ai_custom_instructions: customInstructions,
+          ai_history_retention_months: historyRetentionMonths,
           update_channel: updateChannel,
         },
       });
+      saveAiHistoryRetentionMonths(historyRetentionMonths);
       setStatus(t('footer.settingsSaved'));
     } catch (err) {
       setError(String(err));
@@ -1076,6 +1096,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                   placeholder={t('ai.customInstructionsPlaceholder')}
                   data-testid="ai-instructions-input"
                 />
+              </CardContent>
+            </Card>
+
+            <Card className="xl:col-span-2">
+              <CardHeader>
+                <CardTitle className="text-base">{t('ai.historyRetentionTitle')}</CardTitle>
+                <CardDescription>{t('ai.historyRetentionDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="max-w-md space-y-2">
+                  <Label htmlFor="ai-history-retention">{t('ai.historyRetentionLabel')}</Label>
+                  <Select
+                    value={String(historyRetentionMonths)}
+                    onValueChange={(v) =>
+                      setHistoryRetentionMonths(normalizeAiHistoryRetentionMonths(Number(v)))
+                    }
+                  >
+                    <SelectTrigger id="ai-history-retention" data-testid="ai-history-retention-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {AI_HISTORY_RETENTION_OPTIONS.map((months) => (
+                        <SelectItem key={months} value={String(months)}>
+                          {t('ai.historyRetentionMonths', { count: months })}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </CardContent>
             </Card>
           </div>

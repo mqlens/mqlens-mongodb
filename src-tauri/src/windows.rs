@@ -179,6 +179,8 @@ fn apply_window_closed_and_broadcast(app: &AppHandle, label: &str, origin: Strin
             closed.insert(label.to_string());
         }
     }
+    // Its panels get no chance to release the conversations they held.
+    crate::chats::release_window_chats(label);
     let doomed_tabs = crate::shell_tab_ids_for_window(&state, label).unwrap_or_default();
     for tab_id in doomed_tabs {
         stop_shell_session_for_tab(app, &tab_id, label);

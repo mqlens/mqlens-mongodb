@@ -31,6 +31,9 @@ describe('MongoShell Component', () => {
   beforeEach(() => {
     resetShellSessions();
     vi.clearAllMocks();
+    // The AI Helper persists per-collection transcripts to localStorage now, so
+    // without this a conversation from an earlier test seeds the next one.
+    localStorage.clear();
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === 'get_mongodb_version') {
         return Promise.resolve('7.0.5');

@@ -1,32 +1,44 @@
 {
   "aiChatPanel": {
-    "header": {
-      "title": "KI-Abfrageassistent",
-      "closeTitle": "KI-Assistent schließen"
+    "actions": {
+      "copy": "Kopieren",
+      "insert": "Einfügen",
+      "insertAndRun": "Einfügen & ausführen"
+    },
+    "composer": {
+      "placeholder": "Beschreibe eine Abfrage… (Enter zum Senden, Umschalt+Enter für Zeilenumbruch)",
+      "send": "Senden"
     },
     "empty": {
       "body": "Formuliere eine Abfrage in normaler Sprache — z. B. <i>„aktive Nutzer über 30, sortiert nach Alter“</i> oder<i> „durchschnittlicher Bestellwert pro Kunde“</i>. Ich erkläre, was ich tue, und du kannst das Ergebnis einfügen."
     },
-    "roles": {
-      "you": "Du",
-      "assistant": "Assistent"
+    "fallbackExplanation": "Hier ist eine Abfrage.",
+    "header": {
+      "title": "KI-Abfrageassistent",
+      "closeTitle": "KI-Assistent schließen"
+    },
+    "history": {
+      "clearAll": "Alle Unterhaltungen löschen",
+      "clearScope": "Unterhaltungen dieser Collection löschen",
+      "current": "geöffnet",
+      "delete": "Diese Unterhaltung löschen",
+      "empty": "Noch keine Unterhaltungen",
+      "newChat": "Neuer Chat",
+      "openElsewhere": "Bereits in einem anderen Tab geöffnet",
+      "thisCollectionOnly": "Nur diese Collection",
+      "title": "Chat-Verlauf",
+      "untitled": "Unbenannter Chat"
     },
     "queryType": {
       "aggregate": "Aggregationspipeline",
       "script": "Shell-Skript",
       "find": "Find-Abfrage"
     },
-    "actions": {
-      "copy": "Kopieren",
-      "insert": "Einfügen",
-      "insertAndRun": "Einfügen & ausführen"
+    "roles": {
+      "you": "Du",
+      "assistant": "Assistent"
     },
-    "thinking": "Denke nach…",
-    "composer": {
-      "placeholder": "Beschreibe eine Abfrage… (Enter zum Senden, Umschalt+Enter für Zeilenumbruch)",
-      "send": "Senden"
-    },
-    "fallbackExplanation": "Hier ist eine Abfrage."
+    "thinking": "Denke nach…"
   },
   "commandPalette": {
     "title": "Befehlspalette",

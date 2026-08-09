@@ -256,6 +256,34 @@ describe('SettingsView Component', () => {
     expect(await screen.findByTestId('agent-availability')).toHaveTextContent(/installed/i);
   });
 
+  it('loads and saves AI Helper history retention duration', async () => {
+    mockInvoke.mockImplementation((cmd: string, args?: { settings?: { ai_history_retention_months?: number } }) => {
+      if (cmd === 'load_app_settings') {
+        return Promise.resolve({ mongosh_path: '', ai_history_retention_months: 6 });
+      }
+      if (cmd === 'save_app_settings') {
+        expect(args?.settings?.ai_history_retention_months).toBe(12);
+        return Promise.resolve();
+      }
+      if (cmd === 'detect_local_agents') return Promise.resolve([]);
+      if (cmd === 'managed_tools_status') return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+
+    renderSettings();
+    await openTab('settings-tab-ai');
+
+    const trigger = await screen.findByTestId('ai-history-retention-select');
+    expect(trigger).toHaveTextContent(/6 months/i);
+
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole('option', { name: /12 months/i }));
+    fireEvent.click(screen.getByTestId('settings-save-btn'));
+
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('save_app_settings', expect.any(Object)));
+    expect(localStorage.getItem('mqlens_ai_history_retention_months')).toBe('12');
+  });
+
   it('shows last update check status on the updates tab', async () => {
     writeUpdateCheckSnapshot({
       checkedAt: '2026-06-15T12:00:00.000Z',

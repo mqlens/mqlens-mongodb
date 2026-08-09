@@ -13,6 +13,7 @@ pub mod limits;
 pub mod ai;
 #[cfg(test)]
 mod command_coverage;
+pub mod chats;
 pub mod connections;
 mod db;
 pub mod mcp;
@@ -2517,6 +2518,13 @@ pub fn run() {
             load_app_settings,
             save_app_settings,
             connections::test_mongosh_path,
+            chats::list_chats,
+            chats::claim_chat,
+            chats::release_chat,
+            chats::load_chat,
+            chats::save_chat,
+            chats::delete_chat,
+            chats::clear_chats,
             queries::load_collection_queries,
             queries::save_query,
             queries::delete_saved_query,

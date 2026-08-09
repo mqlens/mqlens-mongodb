@@ -272,6 +272,16 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     setAiMessages(messages);
     persistSession({ aiMessages: messages });
   };
+  // Which stored conversation this shell tab has open. The transcript lives in
+  // the backend chat store; the tab only remembers which one it is looking at.
+  // Held in state rather than read from `storedSession`, which is a mount-time
+  // snapshot and is empty after a renderer refresh — the tab would then forget
+  // which conversation it was on and adopt the collection's most recent.
+  const [aiChatId, setAiChatId] = useState<string | undefined>(storedSession?.aiChatId);
+  const handleAiChatIdChange = (id: string) => {
+    setAiChatId(id);
+    persistSession({ aiChatId: id });
+  };
   const [pendingDestructive, setPendingDestructive] =
     useState<{ command: string; operation: string } | null>(null);
   // Restored transcript wins over a fresh banner: returning to this tab should
@@ -315,6 +325,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         if (restored.currentDb) setCurrentDb(restored.currentDb);
         setAiMessages(restored.aiMessages);
         setIsAIOpenState(restored.aiOpen);
+        setAiChatId(restored.aiChatId);
         autoRunRef.current = restored.autoRanCommand;
         if (restored.sessionId) {
           setSessionId(restored.sessionId);
@@ -1282,6 +1293,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     <AIChatPanel
       variant="shell"
       connectionId={connectionId}
+      connectionName={connectionName}
       databaseName={currentDb}
       collectionName={aiCollection}
       isOpen={isAIOpen}
@@ -1289,6 +1301,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       onInsertQuery={handleAIInsert}
       onInsertAndRunQuery={handleAIInsertAndRun}
       sessionKey={sessionKey}
+      chatId={aiChatId}
+      onChatIdChange={handleAiChatIdChange}
       initialMessages={aiMessages}
       onMessagesChange={handleAiMessagesChange}
     />

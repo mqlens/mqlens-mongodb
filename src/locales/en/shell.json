@@ -17,6 +17,18 @@
       "closeTitle": "Close AI Assistant",
       "title": "AI Query Assistant"
     },
+    "history": {
+      "clearAll": "Delete all conversations",
+      "clearScope": "Delete this collection's conversations",
+      "current": "open",
+      "delete": "Delete this conversation",
+      "empty": "No conversations yet",
+      "newChat": "New chat",
+      "openElsewhere": "Already open in another tab",
+      "thisCollectionOnly": "This collection only",
+      "title": "Chat history",
+      "untitled": "Untitled chat"
+    },
     "queryType": {
       "aggregate": "Aggregation pipeline",
       "find": "Find query",

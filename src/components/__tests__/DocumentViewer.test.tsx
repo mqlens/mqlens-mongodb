@@ -72,6 +72,26 @@ vi.mock('@/components/ui/dropdown-menu', () => {
         {children}
       </div>
     ),
+    // Used by the AI Helper's chat-history menu.
+    DropdownMenuSeparator: () => <hr />,
+    DropdownMenuCheckboxItem: ({
+      children,
+      onCheckedChange,
+      checked,
+      ...props
+    }: React.HTMLAttributes<HTMLDivElement> & {
+      checked?: boolean;
+      onCheckedChange?: (checked: boolean) => void;
+    }) => (
+      <div
+        role="menuitemcheckbox"
+        aria-checked={checked}
+        onClick={() => onCheckedChange?.(!checked)}
+        {...props}
+      >
+        {children}
+      </div>
+    ),
   };
 });
 
@@ -83,6 +103,9 @@ describe('DocumentViewer Component', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // The AI Helper now persists per-collection transcripts to localStorage, so
+    // without this a conversation from an earlier test seeds the next one.
+    localStorage.clear();
   });
 
   it('renders breadcrumbs and query inputs correctly', () => {

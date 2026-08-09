@@ -7,6 +7,11 @@
     "customInstructionsTitle": "Custom instructions",
     "detectedInstalled": "✓ Installed",
     "detectedInstalledWithVersion": "✓ Installed — {{version}}",
+    "historyRetentionDescription": "How long to keep chat transcripts and prompt History for each collection. Older entries are removed automatically.",
+    "historyRetentionLabel": "Keep history for",
+    "historyRetentionMonths_one": "{{count}} month",
+    "historyRetentionMonths_other": "{{count}} months",
+    "historyRetentionTitle": "AI Helper history",
     "localAgentTitle": "Local agent",
     "localCommandHint": "Runs the agent locally using its own auth — no API key stored.",
     "localCommandLabel": "Command (use {prompt} for the prompt)",
@@ -14,7 +19,7 @@
     "notDetected": "✗ Not detected on PATH — install it or set an absolute path below.",
     "providerDescription": "Choose a cloud API or a local agent CLI for the query assistant.",
     "providerTitle": "Provider",
-    "tabDescription": "Cloud API keys, local agents, and custom query instructions.",
+    "tabDescription": "Cloud API keys, local agents, custom query instructions, and AI Helper history retention.",
     "tabLabel": "AI Assistant"
   },
   "appearance": {
