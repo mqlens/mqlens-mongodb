@@ -4,6 +4,7 @@
 // toDisconnectedSnapshot) whose connection hasn't been re-established yet.
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Loader2, PlugZap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -25,33 +26,37 @@ export const ReconnectBanner: React.FC<ReconnectBannerProps> = ({
   onReconnect,
   busy,
   error,
-}) => (
-  <div
-    className="flex h-full flex-col items-center justify-center gap-3 bg-background p-8 text-center"
-    data-testid="reconnect-banner"
-  >
-    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted">
-      <PlugZap size={20} className="text-muted-foreground" />
-    </div>
-    <div>
-      <p className="text-sm font-medium text-foreground">Disconnected</p>
-      <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-        {namespace ? <>{namespace} was</> : 'This tab was'} restored from your last session.
-        Reconnect to {profileName} to load it.
-      </p>
-    </div>
-    <Button onClick={onReconnect} disabled={busy} size="sm">
-      {busy ? (
-        <Loader2 size={14} className="mr-1.5 animate-spin" />
-      ) : (
-        <PlugZap size={14} className="mr-1.5" />
+}) => {
+  const { t } = useTranslation('shell');
+  return (
+    <div
+      className="flex h-full flex-col items-center justify-center gap-3 bg-background p-8 text-center"
+      data-testid="reconnect-banner"
+    >
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted">
+        <PlugZap size={20} className="text-muted-foreground" />
+      </div>
+      <div>
+        <p className="text-sm font-medium text-foreground">{t('reconnectBanner.disconnected')}</p>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          {namespace
+            ? t('reconnectBanner.bodyWithNamespace', { namespace, profile: profileName })
+            : t('reconnectBanner.bodyGeneric', { profile: profileName })}
+        </p>
+      </div>
+      <Button onClick={onReconnect} disabled={busy} size="sm">
+        {busy ? (
+          <Loader2 size={14} className="mr-1.5 animate-spin" />
+        ) : (
+          <PlugZap size={14} className="mr-1.5" />
+        )}
+        {t('reconnectBanner.reconnectButton', { profile: profileName })}
+      </Button>
+      {error && (
+        <p className="max-w-xs text-ui-2xs text-destructive" data-testid="reconnect-error">
+          {error}
+        </p>
       )}
-      Reconnect {profileName}
-    </Button>
-    {error && (
-      <p className="max-w-xs text-ui-2xs text-destructive" data-testid="reconnect-error">
-        {error}
-      </p>
-    )}
-  </div>
-);
+    </div>
+  );
+};

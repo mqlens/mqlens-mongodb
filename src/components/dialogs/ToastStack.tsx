@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -22,10 +23,12 @@ const DURATION: Record<ToastKind, number> = {
   error: 9000,
 };
 
-const DEFAULT_TITLE: Record<ToastKind, string> = {
-  success: 'Success',
-  error: 'Error',
-  info: 'Notice',
+// Keys into shell:toastStack.defaultTitle — translated in ToastItem, which can
+// call useTranslation itself (this is a plain module-level constant).
+const DEFAULT_TITLE_KEY: Record<ToastKind, string> = {
+  success: 'toastStack.defaultTitle.success',
+  error: 'toastStack.defaultTitle.error',
+  info: 'toastStack.defaultTitle.info',
 };
 
 const ICON: Record<ToastKind, React.ComponentType<{ className?: string }>> = {
@@ -62,10 +65,11 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: (id: number) => void }> = (
   toast,
   onDismiss,
 }) => {
+  const { t } = useTranslation('shell');
   const duration = DURATION[toast.kind];
   const styles = KIND_STYLES[toast.kind];
   const Icon = ICON[toast.kind];
-  const title = toast.title ?? DEFAULT_TITLE[toast.kind];
+  const title = toast.title ?? t(DEFAULT_TITLE_KEY[toast.kind]);
 
   useEffect(() => {
     const timer = setTimeout(() => onDismiss(toast.id), duration);
@@ -101,7 +105,7 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: (id: number) => void }> = (
           type="button"
           className="shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
           data-testid="dialog-toast-close"
-          aria-label="Dismiss notification"
+          aria-label={t('toastStack.dismissAriaLabel')}
           onClick={() => onDismiss(toast.id)}
         >
           <X className="size-3.5" />

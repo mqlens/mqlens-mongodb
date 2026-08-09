@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -45,6 +46,7 @@ export function WorkspaceTabBar({
   onTabStripDrop,
   onTabContextMenu,
 }: WorkspaceTabBarProps) {
+  const { t } = useTranslation('shell');
   return (
     <TooltipProvider delayDuration={400}>
       <div
@@ -99,12 +101,12 @@ export function WorkspaceTabBar({
                           e.stopPropagation();
                           onCloseTab(tab.id);
                         }}
-                        aria-label={`Close ${tab.label}`}
+                        aria-label={t('workspaceTabBar.closeTab', { label: tab.label })}
                       >
                         <X className="h-3 w-3" />
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>Close tab</TooltipContent>
+                    <TooltipContent>{t('workspaceTabBar.closeTooltip')}</TooltipContent>
                   </Tooltip>
                 </div>
               );

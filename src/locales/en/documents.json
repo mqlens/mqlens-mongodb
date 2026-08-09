@@ -1,0 +1,398 @@
+{
+  "chartView": {
+    "actions": {
+      "exportPng": "PNG"
+    },
+    "chartTypes": {
+      "area": "area",
+      "bar": "bar",
+      "line": "line",
+      "pie": "pie",
+      "scatter": "scatter"
+    },
+    "empty": {
+      "noNumericField": "No numeric field in these results to plot.",
+      "noResults": "Run a query to chart its results.",
+      "pickNumericField": "Pick a numeric field to chart."
+    },
+    "footer": {
+      "charting_one": "Charting {{count}} loaded document — increase the page-size limit to chart more.",
+      "charting_other": "Charting {{count}} loaded documents — increase the page-size limit to chart more.",
+      "truncatedNote_one": "(+{{count}} more {{unit}} not shown)",
+      "truncatedNote_other": "(+{{count}} more {{unit}} not shown)",
+      "unitCategories": "categories",
+      "unitPoints": "points"
+    },
+    "labels": {
+      "field": "Field",
+      "measure": "Measure",
+      "type": "Type",
+      "xAxis": "X axis",
+      "yAxis": "Y axis"
+    },
+    "measures": {
+      "avg": "avg",
+      "count": "count",
+      "max": "max",
+      "min": "min",
+      "sum": "sum"
+    },
+    "tabs": {
+      "aggregate": "Aggregate",
+      "raw": "Raw"
+    },
+    "tooltips": {
+      "chartType": "Chart type",
+      "exportPng": "Export PNG",
+      "measureField": "Measure field"
+    }
+  },
+  "dataGrid": {
+    "actions": {
+      "cancelCompareSelection": "Cancel compare selection",
+      "compareWith": "Compare with…",
+      "compareWithReplaceSelection": "Compare with… (replace selection)",
+      "compareWithSelected": "Compare with selected",
+      "copied": "Copied!",
+      "copy": "Copy",
+      "copyDocumentJson": "Copy document (JSON)",
+      "copyFieldName": "Copy field name",
+      "copyPlan": "Copy Plan",
+      "copyValue": "Copy value",
+      "createIndex": "Create Index",
+      "deleteDocument": "Delete document",
+      "deleteMany": "Delete Many",
+      "duplicateDocument": "Duplicate document",
+      "editDocument": "Edit document",
+      "insert": "Insert",
+      "next": "Next",
+      "prev": "Prev",
+      "schema": "Schema",
+      "updateMany": "Update Many"
+    },
+    "dialogs": {
+      "bulkAllWarning_one": "\n\n⚠ This affects the only document in the collection.",
+      "bulkAllWarning_other": "\n\n⚠ This affects ALL {{count}} documents in the collection.",
+      "copyErrorMessage": "Copy error message",
+      "deleteDocument": {
+        "body": "Delete this document? This cannot be undone.",
+        "confirmLabel": "Delete"
+      },
+      "deleteMany": {
+        "body_one": "Delete {{count}} document(s) matching:\n{{filter}}",
+        "body_other": "Delete {{count}} document(s) matching:\n{{filter}}",
+        "confirmLabel": "Delete",
+        "title": "Delete many"
+      },
+      "typeCollectionNameSuffix": "\n\nType the collection name to confirm.",
+      "updateMany": {
+        "body_one": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
+        "body_other": "Apply this update to {{count}} document(s) matching:\n{{filter}}",
+        "confirmLabel": "Update",
+        "promptMessage": "Update document (operators, e.g. {\"$set\": {...}}):",
+        "title": "Update many",
+        "validation": {
+          "invalidJson": "Invalid JSON",
+          "mustBeObject": "Update must be a JSON object",
+          "mustUseOperators": "Update must use operators like $set"
+        }
+      }
+    },
+    "empty": {
+      "explainHint": "To generate one, open the <strong>Run</strong> dropdown split menu in the query editor toolbar and select <strong>Run Explain</strong>.",
+      "noDocuments": "No documents found matching the criteria.",
+      "noExplainPlan": "No explain plan generated yet.",
+      "noQueryRun": "No query has run yet."
+    },
+    "explain": {
+      "labels": {
+        "collectionFallback": "Collection",
+        "collectionNode": "Collection\n{{namespace}}",
+        "documentsFromCollection": "Documents from collection",
+        "indexNode": "Index: {{indexName}}"
+      },
+      "stage": {
+        "collectionScan": "Collection scan",
+        "fetchDocuments": "Fetch documents",
+        "indexIntersection": "Index Intersection",
+        "indexScan": "Index scan",
+        "limit": "Limit",
+        "orMerge": "OR Merge",
+        "projection": "Projection",
+        "result": "Result",
+        "skip": "Skip",
+        "sort": "Sort"
+      }
+    },
+    "labels": {
+      "actions": "Actions",
+      "docsCountEstimated_one": "~{{count}} doc",
+      "docsCountEstimated_other": "~{{count}} docs",
+      "docsCountExact_one": "{{count}} doc",
+      "docsCountExact_other": "{{count}} docs",
+      "elements_one": "[ {{count}} element ]",
+      "elements_other": "[ {{count}} elements ]",
+      "fields_one": "{ {{count}} field }",
+      "fields_other": "{ {{count}} fields }",
+      "generatingQueryPlan": "Generating query plan...",
+      "key": "Key",
+      "page": "Page {{page}}",
+      "pageOf": "Page {{page}} / {{totalPages}}",
+      "perPageOption": "{{size}} / page",
+      "queryPlanGenerated": "Query Plan Generated",
+      "showingEmpty": "showing {{from}}",
+      "showingRange": "showing {{from}}–{{to}}",
+      "streamingDocuments": "Streaming documents asynchronously...",
+      "type": "Type",
+      "value": "Value"
+    },
+    "tabs": {
+      "explainPlan": "Explain Plan",
+      "queryCode": "Query Code",
+      "results": "Results"
+    },
+    "tooltips": {
+      "analyzeSchema": "Analyze the collection's field schema",
+      "codeLanguage": "Code language",
+      "collapse": "Collapse",
+      "copied": "Copied",
+      "copyDocument": "Copy document",
+      "copyExplainPlan": "Copy Explain Plan",
+      "copyQueryCode": "Copy query code",
+      "deleteDocument": "Delete document",
+      "deleteMany": "Delete all documents matching the current filter",
+      "editDocument": "Edit document",
+      "expand": "Expand",
+      "insert": "Insert a new document",
+      "readOnly": "Connection is read-only",
+      "resizeColumn": "Resize {{label}} column",
+      "updateMany": "Update all documents matching the current filter"
+    },
+    "viewModes": {
+      "chart": "Chart",
+      "json": "JSON",
+      "rawJson": "Raw JSON",
+      "table": "Table",
+      "tree": "Tree",
+      "visualTree": "Visual Tree"
+    }
+  },
+  "diffModal": {
+    "errors": {
+      "tooLarge_one": "This diff is too large to display ({{count}} line)",
+      "tooLarge_other": "This diff is too large to display ({{count}} lines)"
+    },
+    "labels": {
+      "documentA": "Document A",
+      "documentB": "Document B"
+    },
+    "summary": {
+      "added_one": "{{count}} added",
+      "added_other": "{{count}} added",
+      "changed_one": "{{count}} changed",
+      "changed_other": "{{count}} changed",
+      "removed_one": "{{count}} removed",
+      "removed_other": "{{count}} removed"
+    },
+    "title": "Compare Documents",
+    "tooltips": {
+      "closeModal": "Close modal"
+    }
+  },
+  "documentViewer": {
+    "actions": {
+      "addProjection": "Add Projection",
+      "addRule": "Add Rule",
+      "addSortField": "Add Sort Field",
+      "addStage": "Add Stage",
+      "aiHelper": "AI Helper",
+      "apply": "Apply",
+      "clearAll": "Clear All",
+      "clearDefault": "Clear default",
+      "export": "Export",
+      "import": "Import",
+      "listShortcut": "List",
+      "loadQuery": "Load query",
+      "openInMongosh": "Open in mongosh",
+      "openQueryIn": "Open query in...",
+      "pinAsDefault": "Pin current query as default",
+      "queryHistory": "Query history",
+      "run": "Run",
+      "runExplain": "Run Explain",
+      "runQuery": "Run Query",
+      "saveAndFavorite": "Save and add to favorites",
+      "saveAsNew": "Save as new query...",
+      "saveQuery": "Save query",
+      "setDefaultQuery": "Set default query",
+      "visualQueryBuilder": "Visual Query Builder"
+    },
+    "breadcrumbs": {
+      "authenticatedAs": "Authenticated as {{user}}",
+      "noAuth": "no auth",
+      "noAuthentication": "Connection has no authentication"
+    },
+    "builder": {
+      "ascOption": "Asc ({{n}})",
+      "clickToAddProjection": "+ Click to add projection criteria",
+      "clickToAddQueryRules": "+ Click to add query rules",
+      "clickToAddSort": "+ Click to add sort criteria",
+      "customField": "Custom field...",
+      "descOption": "Desc ({{n}})",
+      "excludeOption": "Exclude ({{n}})",
+      "fieldPathPlaceholder": "field.path",
+      "includeOption": "Include ({{n}})",
+      "matchAll": "Match All ({{op}})",
+      "matchAny": "Match Any ({{op}})",
+      "operators": {
+        "exists": "exists",
+        "in": "in",
+        "notIn": "not in",
+        "regex": "regex"
+      },
+      "projection": "Projection",
+      "query": "Query",
+      "sort": "Sort",
+      "valuePlaceholder": "value"
+    },
+    "dialogs": {
+      "runAggregate": {
+        "messageUnknownTarget": "This pipeline writes to a collection via $out/$merge on a safeguarded connection, but the target could not be determined automatically.\n\nType CONFIRM to proceed.",
+        "messageWithTarget": "This pipeline writes into \"{{target}}\" ($out/$merge) on a safeguarded connection.\n\nType the target collection name to confirm.",
+        "title": "Run aggregation"
+      },
+      "saveQuery": {
+        "message": "Enter a name for this query:",
+        "nameRequired": "Name is required",
+        "placeholder": "Query name",
+        "title": "Save query"
+      }
+    },
+    "empty": {
+      "noHistory": "No history yet",
+      "noSavedQueries": "No saved queries"
+    },
+    "errors": {
+      "invalidJsonSyntax": "Invalid JSON syntax: {{message}}",
+      "invalidQuery": "Invalid query",
+      "queryMustBeObject": "The query must be an object"
+    },
+    "history": {
+      "aggregateSummary_one": "aggregate · {{count}} stage",
+      "aggregateSummary_other": "aggregate · {{count}} stages",
+      "findSummary": "find · {{filter}}"
+    },
+    "pipeline": {
+      "stageCount_one": "{{count}} stage",
+      "stageCount_other": "{{count}} stages",
+      "stageGroups": {
+        "arraysJoins": "Arrays & joins",
+        "filtering": "Filtering & shaping",
+        "geospatial": "Geospatial",
+        "grouping": "Grouping & aggregation",
+        "ordering": "Ordering & limiting",
+        "sourcesOutput": "Sources & output",
+        "windows": "Windows & time series"
+      }
+    },
+    "tabs": {
+      "aggregation": "Aggregation",
+      "find": "Find"
+    },
+    "tooltips": {
+      "addToFavorites": "Add to favorites",
+      "closePanel": "Close Panel",
+      "collapseStage": "Collapse stage {{n}}",
+      "deleteSavedQuery": "Delete saved query",
+      "disableStage": "Disable stage {{n}}",
+      "enableStage": "Enable stage {{n}}",
+      "executeQuery": "Execute query ({{shortcut}})",
+      "expandStage": "Expand stage {{n}}",
+      "importDocuments": "Import documents from a file",
+      "moveStageDown": "Move stage {{n}} down",
+      "moveStageUp": "Move stage {{n}} up",
+      "openExportWorkspace": "Open export workspace",
+      "redoPipelineChange": "Redo pipeline change",
+      "removeFromFavorites": "Remove from favorites",
+      "removeRule": "Remove Rule",
+      "removeStage": "Remove stage {{n}}",
+      "runDisabled": "Fix the query syntax to run",
+      "runPipelineToStage": "Run pipeline to stage {{n}}",
+      "undoPipelineChange": "Undo pipeline change"
+    }
+  },
+  "editModal": {
+    "actions": {
+      "cancel": "Cancel",
+      "insert": "Insert",
+      "saveChanges": "Save Changes"
+    },
+    "errors": {
+      "empty": "Document is empty.",
+      "invalid": "Invalid document: {{message}}",
+      "mustBeObject": "A document must be an object (e.g. { \"field\": value }).",
+      "noId": "Cannot update: this document has no _id.",
+      "syntaxError": "syntax error"
+    },
+    "hints": {
+      "shellTypes": "Shell types are supported (e.g. {{example}}). Editing replaces the entire document."
+    },
+    "labels": {
+      "document": "Document"
+    },
+    "title": {
+      "edit": "Edit Document",
+      "insert": "Insert Document"
+    }
+  },
+  "errors": {
+    "loadingDataset": "Error loading dataset: {{detail}}"
+  },
+  "findQueryBar": {
+    "errors": {
+      "invalidJson": "Invalid JSON"
+    },
+    "labels": {
+      "limit": "Limit",
+      "options": "Options",
+      "projection": "Projection",
+      "query": "Query",
+      "skip": "Skip",
+      "sort": "Sort"
+    },
+    "tooltips": {
+      "clearFilter": "Clear Filter",
+      "clearProjection": "Clear Projection",
+      "clearSort": "Clear Sort",
+      "fewerOptions": "Fewer Options",
+      "hideOptions": "Hide projection, sort, skip and limit",
+      "moreOptions": "More Options",
+      "optionsSet": "Projection, sort, skip or limit is set",
+      "quickSortDirection": "Quick Sort Direction",
+      "resetLimit": "Reset Limit",
+      "resetSkip": "Reset Skip",
+      "showOptions": "Show projection, sort, skip and limit"
+    }
+  },
+  "schemaView": {
+    "empty": {
+      "title": "Collection is empty — nothing to analyze."
+    },
+    "labels": {
+      "analyzing": "Analyzing schema…",
+      "coverage": "coverage",
+      "field": "field",
+      "fieldsCount_one": "{{count}} field",
+      "fieldsCount_other": "{{count}} fields",
+      "planned": "Planned",
+      "sampledSummary": "sampled {{sampled}} docs · {{fields}} fields",
+      "schemaPrefix": "Schema:",
+      "types": "types",
+      "validationComingSoonPrefix": "Collection validation schema viewer coming soon (#93). This tab will show",
+      "validationComingSoonSuffix": "and validator rules for {{databaseName}}.{{collectionName}}."
+    },
+    "tabs": {
+      "fieldAnalysis": "Field Analysis",
+      "validationRules": "Validation Rules"
+    }
+  }
+}

@@ -29,8 +29,7 @@
   },
   "auth": {
     "authDatabase": "Authentication Database",
-    "externalNotePrefix": "Authenticates against the",
-    "externalNoteSuffix": "database.",
+    "externalNote": "Authenticates against the <1>$external</1> database.",
     "method": "Authentication Method",
     "methodAws": "MONGODB-AWS (IAM)",
     "methodKerberos": "GSSAPI (Kerberos)",
@@ -49,6 +48,16 @@
     "userLabelKerberos": "Principal",
     "userLabelX509": "Username (optional — derived from certificate)",
     "x509Note": "Requires TLS with a client certificate (TLS tab)."
+  },
+  "colorTags": {
+    "amber": "Amber",
+    "blue": "Blue",
+    "green": "Green",
+    "orange": "Orange",
+    "pink": "Pink",
+    "red": "Red",
+    "slate": "Slate",
+    "violet": "Violet"
   },
   "connectionMode": {
     "confirmDestructive": {
@@ -97,7 +106,9 @@
     "displayNameRequired": "Display Name is required",
     "fileReadFailed": "Could not read the selected file.",
     "folderNameExists": "A folder with this name already exists",
-    "folderNameRequired": "Folder name is required"
+    "folderNameRequired": "Folder name is required",
+    "importFileEmpty": "File is empty",
+    "importNoUriFound": "No mongodb:// or mongodb+srv:// URI found in file"
   },
   "export": {
     "allDescription_one": "Exporting {{count}} saved connection as JSON (including folder structure). Compatible with MQLens import and Studio 3T-style connection files.",
@@ -156,6 +167,9 @@
     "uriBadge": "URI"
   },
   "import": {
+    "errors": {
+      "notAMongoUri": "Enter a mongodb:// or mongodb+srv:// URI"
+    },
     "fromClipboard": "From clipboard",
     "fromFile": "From a file…",
     "pasteManually": "Paste manually…"

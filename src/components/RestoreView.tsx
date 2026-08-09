@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation, Trans } from 'react-i18next';
 import { DatabaseZap, ListChecks } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -70,24 +71,24 @@ const FLAG_FIELDS: {
     | 'restoreDbUsersAndRoles'
   >;
   testid: string;
-  label: string;
+  labelKey: string;
 }[] = [
-  { key: 'drop', testid: 'restore-opt-drop', label: 'Drop existing collections before restoring' },
-  { key: 'keepIndexVersion', testid: 'restore-opt-keepindexversion', label: 'Keep original index version' },
-  { key: 'noIndexRestore', testid: 'restore-opt-noindexrestore', label: 'Do not restore indexes' },
-  { key: 'noOptionsRestore', testid: 'restore-opt-nooptionsrestore', label: 'Do not restore collection options' },
+  { key: 'drop', testid: 'restore-opt-drop', labelKey: 'restoreView.options.flags.drop' },
+  { key: 'keepIndexVersion', testid: 'restore-opt-keepindexversion', labelKey: 'restoreView.options.flags.keepIndexVersion' },
+  { key: 'noIndexRestore', testid: 'restore-opt-noindexrestore', labelKey: 'restoreView.options.flags.noIndexRestore' },
+  { key: 'noOptionsRestore', testid: 'restore-opt-nooptionsrestore', labelKey: 'restoreView.options.flags.noOptionsRestore' },
   {
     key: 'maintainInsertionOrder',
     testid: 'restore-opt-maintaininsertionorder',
-    label: 'Maintain document insertion order',
+    labelKey: 'restoreView.options.flags.maintainInsertionOrder',
   },
-  { key: 'stopOnError', testid: 'restore-opt-stoponerror', label: 'Stop on error' },
+  { key: 'stopOnError', testid: 'restore-opt-stoponerror', labelKey: 'restoreView.options.flags.stopOnError' },
   {
     key: 'bypassDocumentValidation',
     testid: 'restore-opt-bypassvalidation',
-    label: 'Bypass document validation',
+    labelKey: 'restoreView.options.flags.bypassDocumentValidation',
   },
-  { key: 'restoreDbUsersAndRoles', testid: 'restore-opt-usersroles', label: 'Restore users and roles' },
+  { key: 'restoreDbUsersAndRoles', testid: 'restore-opt-usersroles', labelKey: 'restoreView.options.flags.restoreDbUsersAndRoles' },
 ];
 
 export const RestoreView: React.FC<RestoreViewProps> = ({
@@ -102,6 +103,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
   onRunRestore,
   onOpenTasks,
 }) => {
+  const { t } = useTranslation('transfer');
   const [sourceKind, setSourceKind] = React.useState<'folder' | 'archive'>('folder');
   const [folderPath, setFolderPath] = React.useState<string | null>(null);
   const [archiveFile, setArchiveFile] = React.useState<string | null>(null);
@@ -288,7 +290,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
     if (filterDb.trim()) {
       return [filterColl.trim() ? collKey(filterDb.trim(), filterColl.trim()) : `${filterDb.trim()}.*`];
     }
-    return ['(entire archive)'];
+    return [t('restoreView.confirm.entireArchive')];
   };
 
   const startRestore = async () => {
@@ -362,13 +364,13 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <DatabaseZap size={14} />
-            <span>Restore</span>
+            <span>{t('restoreView.title')}</span>
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">{connectionName}</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onOpenTasks}>
           <ListChecks size={12} />
-          View Tasks
+          {t('restoreView.actions.viewTasks')}
         </Button>
       </header>
 
@@ -380,8 +382,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
               data-testid="restore-tools-missing"
             >
               <p className="text-xs text-muted-foreground">
-                mongorestore was not found. Configure the MongoDB Database Tools directory in
-                Settings.
+                {t('restoreView.tools.missing')}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -391,7 +392,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                   onClick={onOpenSettings}
                   data-testid="restore-open-settings-btn"
                 >
-                  Open Settings
+                  {t('restoreView.actions.openSettings')}
                 </Button>
                 {onInstallTools && (
                   <Button
@@ -401,7 +402,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                     onClick={onInstallTools}
                     data-testid="restore-install-tools-btn"
                   >
-                    Install tools…
+                    {t('restoreView.actions.installTools')}
                   </Button>
                 )}
               </div>
@@ -415,9 +416,9 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
 
         <section className="flex flex-col gap-2 px-3.5 py-3">
           <div>
-            <h3 className="text-sm font-medium text-foreground">Source</h3>
+            <h3 className="text-sm font-medium text-foreground">{t('restoreView.source.title')}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Restore from a dump folder or a single archive file.
+              {t('restoreView.source.hint')}
             </p>
           </div>
 
@@ -430,7 +431,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                 checked={sourceKind === 'folder'}
                 onChange={() => selectSourceKind('folder')}
               />
-              <span>Folder</span>
+              <span>{t('restoreView.source.folder')}</span>
             </label>
             <label className={checkboxLabelClassName}>
               <input
@@ -440,7 +441,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                 checked={sourceKind === 'archive'}
                 onChange={() => selectSourceKind('archive')}
               />
-              <span>Archive</span>
+              <span>{t('restoreView.source.archive')}</span>
             </label>
           </div>
 
@@ -452,7 +453,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
               onClick={pickSource}
               data-testid="restore-pick-source-btn"
             >
-              {sourceKind === 'folder' ? 'Choose folder…' : 'Choose archive…'}
+              {sourceKind === 'folder' ? t('restoreView.actions.chooseFolder') : t('restoreView.actions.chooseArchive')}
             </Button>
             {(sourceKind === 'folder' ? folderPath : archiveFile) && (
               <span className="truncate text-xs text-muted-foreground" data-testid="restore-source-path">
@@ -463,7 +464,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
 
           {browseError && (
             <p className="text-xs text-destructive" data-testid="restore-browse-error">
-              Failed to browse dump folder: {browseError}
+              {t('restoreView.source.browseError', { error: browseError })}
             </p>
           )}
 
@@ -475,7 +476,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
               className="rounded border-input"
               data-testid="restore-opt-gzip"
             />
-            <span>gzip compressed</span>
+            <span>{t('restoreView.source.gzipLabel')}</span>
           </label>
 
           {sourceKind === 'folder' && tree && (
@@ -500,8 +501,8 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                         <Input
                           value={renames[key] ?? ''}
                           onChange={(e) => setRenameValue(key, e.target.value)}
-                          placeholder="new name (or db.name)"
-                          title="A bare name restores into the same database; use db.name to restore into a different database."
+                          placeholder={t('restoreView.rename.placeholder')}
+                          title={t('restoreView.rename.title')}
                           className="h-7 w-44 text-xs"
                           data-testid={`restore-rename-${key}`}
                         />
@@ -512,7 +513,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
               ))}
               {noneChecked && (
                 <p className="text-xs text-destructive" data-testid="restore-empty-selection-hint">
-                  Select at least one collection to restore.
+                  {t('restoreView.tree.emptySelectionHint')}
                 </p>
               )}
             </div>
@@ -522,7 +523,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
             <div className="flex flex-col gap-2 pt-1">
               <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground">Database filter</Label>
+                  <Label className="text-xs text-muted-foreground">{t('restoreView.labels.databaseFilter')}</Label>
                   <Input
                     value={filterDb}
                     onChange={(e) => setFilterDb(e.target.value)}
@@ -531,7 +532,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground">Collection filter</Label>
+                  <Label className="text-xs text-muted-foreground">{t('restoreView.labels.collectionFilter')}</Label>
                   <Input
                     value={filterColl}
                     onChange={(e) => setFilterColl(e.target.value)}
@@ -541,8 +542,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                 </div>
               </div>
               <p className="text-xs text-muted-foreground" data-testid="restore-archive-note">
-                Leave both blank to restore everything in the archive, or filter to a single
-                database or namespace.
+                {t('restoreView.source.archiveFilterHint')}
               </p>
             </div>
           )}
@@ -550,8 +550,8 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
 
         <section className="flex flex-col gap-2 px-3.5 py-3">
           <div>
-            <h3 className="text-sm font-medium text-foreground">Options</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">mongorestore flags.</p>
+            <h3 className="text-sm font-medium text-foreground">{t('restoreView.options.title')}</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('restoreView.options.hint')}</p>
           </div>
           <div className="flex flex-col gap-2">
             {FLAG_FIELDS.map((f) => (
@@ -563,7 +563,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                   className="rounded border-input"
                   data-testid={f.testid}
                 />
-                <span>{f.label}</span>
+                <span>{t(f.labelKey)}</span>
               </label>
             ))}
             <label
@@ -577,7 +577,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                 className="rounded border-input"
                 data-testid="restore-opt-oplogreplay"
               />
-              <span>Replay oplog for point-in-time consistency (full dump only)</span>
+              <span>{t('restoreView.options.oplogReplay')}</span>
             </label>
           </div>
         </section>
@@ -587,10 +587,10 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
             <div>
               <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
                 <DatabaseZap size={14} />
-                <span>Run</span>
+                <span>{t('restoreView.run.title')}</span>
               </h3>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Runs in the background and reports progress in the Tasks tab.
+                {t('restoreView.run.hint')}
               </p>
             </div>
             <Button
@@ -601,7 +601,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
               data-testid="restore-run-btn"
             >
               <DatabaseZap size={13} />
-              {starting ? 'Starting…' : 'Restore'}
+              {starting ? t('restoreView.actions.starting') : t('restoreView.actions.run')}
             </Button>
           </div>
 
@@ -620,7 +620,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
               data-testid="restore-drop-confirm"
             >
               <p className="text-xs text-foreground">
-                This will drop the following namespace(s) before restoring:
+                {t('restoreView.confirm.dropWarning')}
               </p>
               <ul className="list-disc pl-4 text-xs text-muted-foreground">
                 {dropNamespaces().map((ns) => (
@@ -636,7 +636,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                   onClick={handleConfirmDrop}
                   data-testid="restore-drop-confirm-btn"
                 >
-                  {starting ? 'Starting…' : 'Drop and restore'}
+                  {starting ? t('restoreView.actions.starting') : t('restoreView.actions.dropAndRestore')}
                 </Button>
                 <Button
                   type="button"
@@ -644,7 +644,7 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
                   variant="outline"
                   onClick={() => setShowDropConfirm(false)}
                 >
-                  Cancel
+                  {t('restoreView.actions.cancel')}
                 </Button>
               </div>
             </div>
@@ -653,11 +653,13 @@ export const RestoreView: React.FC<RestoreViewProps> = ({
       </div>
 
       <p className="px-3.5 py-3 text-xs text-muted-foreground">
-        Restores run in the background. Track their progress in the{' '}
-        <button type="button" className="underline hover:text-foreground" onClick={onOpenTasks}>
-          Tasks
-        </button>{' '}
-        tab.
+        <Trans i18nKey="restoreView.footer.backgroundNote" t={t}>
+          Restores run in the background. Track their progress in the{' '}
+          <button type="button" className="underline hover:text-foreground" onClick={onOpenTasks}>
+            Tasks
+          </button>{' '}
+          tab.
+        </Trans>
       </p>
     </div>
   );

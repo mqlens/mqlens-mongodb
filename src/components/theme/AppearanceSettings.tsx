@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Download, Upload, RotateCcw, Check } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
-import { FONT_OPTIONS } from "@/lib/themes/presets";
+import { FONT_OPTIONS, presetName } from "@/lib/themes/presets";
 import type { SpacingDensity, ThemeMode } from "@/lib/themes/schema";
 import {
   clampUiZoom,
@@ -29,6 +30,7 @@ import { formatZoomShortcutHint } from "@/lib/shortcuts";
 
 export function AppearanceSettings() {
   const { t } = useTranslation("settings");
+  const [importError, setImportError] = useState<string | null>(null);
   const {
     config,
     presets,
@@ -64,9 +66,19 @@ export function AppearanceSettings() {
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
-      const text = await file.text();
-      importTheme(text);
-      await saveAppearance();
+      // `importTheme` -> `applyTheme` throws on a malformed or hand-edited
+      // theme file. This runs inside an async `onchange` handler, so an
+      // uncaught throw becomes an unhandled rejection with no ErrorBoundary
+      // anywhere in src to catch it: the user picked a file and got no
+      // feedback whatsoever. Surface it instead.
+      setImportError(null);
+      try {
+        const text = await file.text();
+        importTheme(text);
+        await saveAppearance();
+      } catch {
+        setImportError(t("appearance.importFailed"));
+      }
     };
     input.click();
   };
@@ -106,9 +118,9 @@ export function AppearanceSettings() {
                     borderColor: `hsl(${preset.tokens.primary})`,
                   }}
                 />
-                <div className="text-sm font-medium leading-tight">{preset.name}</div>
+                <div className="text-sm font-medium leading-tight">{presetName(preset, t)}</div>
                 <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground line-clamp-2">
-                  {preset.description}
+                  {t(preset.descriptionKey)}
                 </div>
               </button>
             ))}
@@ -250,6 +262,11 @@ export function AppearanceSettings() {
               <Upload className="h-4 w-4" />
               {t("appearance.importTheme")}
             </Button>
+            {importError && (
+              <p role="alert" className="w-full text-xs text-destructive" data-testid="theme-import-error">
+                {importError}
+              </p>
+            )}
             <Button variant="outline" size="sm" onClick={clearOverrides}>
               <RotateCcw className="h-4 w-4" />
               {t("appearance.resetOverrides")}
@@ -270,7 +287,8 @@ export function AppearanceSettings() {
               <span className="h-2.5 w-2.5 rounded-full bg-warning/80" />
               <span className="h-2.5 w-2.5 rounded-full bg-success/80" />
               <span className="ml-2 truncate text-[10px] text-muted-foreground">
-                {activePreset?.name ?? t("appearance.themeFallback")} · {resolvedMode}
+                {activePreset ? presetName(activePreset, t) : t("appearance.themeFallback")} ·{' '}
+                {resolvedMode === 'dark' ? t('appearance.dark') : t('appearance.light')}
               </span>
             </div>
             <CardContent className="space-y-3 p-4">

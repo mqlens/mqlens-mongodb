@@ -245,6 +245,14 @@ describe('DumpView', () => {
     expect(screen.getByText('Select collection…')).toBeInTheDocument();
     expect(screen.getByTestId('dump-run-btn')).toBeDisabled();
   });
+
+  it('renders the footer Tasks link as a real, clickable button (not escaped markup)', () => {
+    const onOpenTasks = vi.fn();
+    renderDumpView({ onOpenTasks });
+    expect(screen.queryByText(/<button>/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
+    expect(onOpenTasks).toHaveBeenCalledTimes(1);
+  });
 });
 
 afterEach(() => {

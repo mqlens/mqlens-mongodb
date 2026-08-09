@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronRight, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,10 +16,11 @@ interface ConnectionCardProps {
 }
 
 export const ConnectionCard: React.FC<ConnectionCardProps> = ({ profile, connected, connecting, onConnect }) => {
+  const { t } = useTranslation('shell');
   const isSrv = /^mongodb\+srv:\/\//i.test(profile.uri);
   const hasSsh = !!profile.ssh?.enabled;
   const host = hostFromUri(profile.uri);
-  const topo = topology(profile.uri);
+  const topo = topology(profile.uri, t);
   const interactive = !connected && !connecting;
 
   return (
@@ -35,8 +37,12 @@ export const ConnectionCard: React.FC<ConnectionCardProps> = ({ profile, connect
         data-testid={`conn-card-${profile.id}`}
         disabled={!interactive}
         onClick={() => onConnect(profile)}
-        title={connected ? 'Already connected' : `Connect to ${profile.name}`}
-        aria-label={connected ? `${profile.name} – already connected` : `Connect to ${profile.name}`}
+        title={connected ? t('connectionCard.tooltip.alreadyConnected') : t('connectionCard.tooltip.connectTo', { name: profile.name })}
+        aria-label={
+          connected
+            ? t('connectionCard.ariaLabel.alreadyConnected', { name: profile.name })
+            : t('connectionCard.tooltip.connectTo', { name: profile.name })
+        }
         className="h-auto w-full flex-col items-stretch gap-0 rounded-none p-0 text-left font-normal hover:bg-transparent"
       >
         <div className="flex w-full items-start gap-3 p-4 pb-2">
@@ -49,12 +55,16 @@ export const ConnectionCard: React.FC<ConnectionCardProps> = ({ profile, connect
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="truncate font-medium text-foreground">{profile.name}</span>
-              {isSrv && <Badge variant="outline" title="MongoDB SRV record">SRV</Badge>}
-              {hasSsh && <Badge variant="secondary">SSH</Badge>}
+              {isSrv && (
+                <Badge variant="outline" title={t('connectionCard.badge.srvTooltip')}>
+                  {t('connectionCard.badge.srv')}
+                </Badge>
+              )}
+              {hasSsh && <Badge variant="secondary">{t('connectionCard.badge.ssh')}</Badge>}
             </div>
             <div className="mt-0.5">
               {connected ? (
-                <Badge variant="success">Connected</Badge>
+                <Badge variant="success">{t('connectionCard.badge.connected')}</Badge>
               ) : (
                 <span className="text-xs text-muted-foreground">{topo}</span>
               )}
@@ -67,11 +77,11 @@ export const ConnectionCard: React.FC<ConnectionCardProps> = ({ profile, connect
         <div className="flex w-full items-center px-4 pb-4 pt-2 text-xs">
           {connecting ? (
             <span className="flex items-center gap-1.5 text-muted-foreground">
-              <Loader2 size={13} className="animate-spin" /> Connecting…
+              <Loader2 size={13} className="animate-spin" /> {t('connectionCard.connecting')}
             </span>
           ) : interactive ? (
             <span className="flex items-center gap-0.5 text-primary">
-              Connect <ChevronRight size={14} />
+              {t('connectionCard.connect')} <ChevronRight size={14} />
             </span>
           ) : null}
         </div>

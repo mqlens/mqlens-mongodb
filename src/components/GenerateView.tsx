@@ -55,22 +55,25 @@ const STARTER_TEMPLATE = JSON.stringify(
   2,
 );
 
-const GEN_KIND_LABELS: Record<GenKind, string> = {
-  name: 'Full name ($name)',
-  firstName: 'First name ($firstName)',
-  lastName: 'Last name ($lastName)',
-  email: 'Email ($email)',
-  objectId: 'ObjectId ($objectId)',
-  uuid: 'UUID ($uuid)',
-  bool: 'Boolean ($bool)',
-  int: 'Integer ($int)',
-  float: 'Float ($float)',
-  date: 'Date ($date)',
-  lorem: 'Lorem text ($lorem)',
-  pick: 'Pick from list ($pick)',
-  array: 'Array of… ($array)',
-  literal: 'Literal value',
-  object: 'Nested object',
+// Kind labels are translated at render (see `RowEditor`); this map only
+// carries the literal `$token` DSL placeholder that must never be
+// translated — it's interpolated verbatim into the translated label.
+const GEN_KIND_TOKENS: Record<GenKind, string> = {
+  name: '$name',
+  firstName: '$firstName',
+  lastName: '$lastName',
+  email: '$email',
+  objectId: '$objectId',
+  uuid: '$uuid',
+  bool: '$bool',
+  int: '$int',
+  float: '$float',
+  date: '$date',
+  lorem: '$lorem',
+  pick: '$pick',
+  array: '$array',
+  literal: '',
+  object: '',
 };
 
 const PREVIEW_DEBOUNCE_MS = 400;
@@ -115,6 +118,7 @@ interface RowsListProps {
 }
 
 const RowsList: React.FC<RowsListProps> = ({ rows, onChange, parentKey }) => {
+  const { t: tg } = useTranslation('transfer');
   const updateAt = (index: number, updated: GenRow) => {
     const next = [...rows];
     next[index] = updated;
@@ -139,7 +143,7 @@ const RowsList: React.FC<RowsListProps> = ({ rows, onChange, parentKey }) => {
           onClick={() => onChange([...rows, newFieldRow(nextFieldName())])}
         >
           <Plus size={12} />
-          Add field
+          {tg('generateView.actions.addField')}
         </Button>
         <Button
           type="button"
@@ -149,7 +153,7 @@ const RowsList: React.FC<RowsListProps> = ({ rows, onChange, parentKey }) => {
           onClick={() => onChange([...rows, newObjectRow(nextFieldName())])}
         >
           <Plus size={12} />
-          Add nested object
+          {tg('generateView.actions.addNestedObject')}
         </Button>
         <Button
           type="button"
@@ -159,7 +163,7 @@ const RowsList: React.FC<RowsListProps> = ({ rows, onChange, parentKey }) => {
           onClick={() => onChange([...rows, newArrayRow(nextFieldName())])}
         >
           <Plus size={12} />
-          Add array
+          {tg('generateView.actions.addArray')}
         </Button>
       </div>
     </div>
@@ -174,6 +178,7 @@ interface RowEditorProps {
 }
 
 const RowEditor: React.FC<RowEditorProps> = ({ row, onChange, onRemove, isArrayItem = false }) => {
+  const { t: tg } = useTranslation('transfer');
   const setOptions = (options: Record<string, unknown>) => onChange({ ...row, options: { ...row.options, ...options } });
 
   return (
@@ -183,13 +188,13 @@ const RowEditor: React.FC<RowEditorProps> = ({ row, onChange, onRemove, isArrayI
     >
       <div className="flex flex-wrap items-center gap-1.5">
         {isArrayItem ? (
-          <span className="text-xs italic text-muted-foreground">Array item</span>
+          <span className="text-xs italic text-muted-foreground">{tg('generateView.labels.arrayItem')}</span>
         ) : (
           <Input
             className="h-7 w-36 text-xs"
             value={row.name}
-            placeholder="field name"
-            aria-label="Field name"
+            placeholder={tg('generateView.labels.fieldNamePlaceholder')}
+            aria-label={tg('generateView.tooltips.fieldName')}
             data-testid={`generate-row-name-${row.id}`}
             onChange={(e) => onChange({ ...row, name: e.target.value })}
           />
@@ -204,7 +209,7 @@ const RowEditor: React.FC<RowEditorProps> = ({ row, onChange, onRemove, isArrayI
           <SelectContent>
             {GEN_KINDS.map((k) => (
               <SelectItem key={k} value={k}>
-                {GEN_KIND_LABELS[k]}
+                {tg(`generateView.kindLabels.${k}`, { token: GEN_KIND_TOKENS[k] })}
               </SelectItem>
             ))}
           </SelectContent>
@@ -215,7 +220,7 @@ const RowEditor: React.FC<RowEditorProps> = ({ row, onChange, onRemove, isArrayI
             variant="ghost"
             size="icon"
             className="h-7 w-7 text-destructive"
-            aria-label="Remove field"
+            aria-label={tg('generateView.tooltips.removeField')}
             data-testid={`generate-row-remove-${row.id}`}
             onClick={onRemove}
           >
@@ -226,20 +231,20 @@ const RowEditor: React.FC<RowEditorProps> = ({ row, onChange, onRemove, isArrayI
 
       {row.kind === 'int' && (
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span>min</span>
+          <span>{tg('generateView.labels.min')}</span>
           <input
             type="number"
             className={numberInputClass}
             value={String(row.options.min ?? 0)}
-            aria-label="Minimum"
+            aria-label={tg('generateView.tooltips.minimum')}
             onChange={(e) => setOptions({ min: Number(e.target.value) })}
           />
-          <span>max</span>
+          <span>{tg('generateView.labels.max')}</span>
           <input
             type="number"
             className={numberInputClass}
             value={String(row.options.max ?? 1000)}
-            aria-label="Maximum"
+            aria-label={tg('generateView.tooltips.maximum')}
             onChange={(e) => setOptions({ max: Number(e.target.value) })}
           />
         </div>
@@ -247,28 +252,28 @@ const RowEditor: React.FC<RowEditorProps> = ({ row, onChange, onRemove, isArrayI
 
       {row.kind === 'float' && (
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span>min</span>
+          <span>{tg('generateView.labels.min')}</span>
           <input
             type="number"
             className={numberInputClass}
             value={String(row.options.min ?? 0)}
-            aria-label="Minimum"
+            aria-label={tg('generateView.tooltips.minimum')}
             onChange={(e) => setOptions({ min: Number(e.target.value) })}
           />
-          <span>max</span>
+          <span>{tg('generateView.labels.max')}</span>
           <input
             type="number"
             className={numberInputClass}
             value={String(row.options.max ?? 1000)}
-            aria-label="Maximum"
+            aria-label={tg('generateView.tooltips.maximum')}
             onChange={(e) => setOptions({ max: Number(e.target.value) })}
           />
-          <span>decimals</span>
+          <span>{tg('generateView.labels.decimals')}</span>
           <input
             type="number"
             className={numberInputClass}
             value={String(row.options.decimals ?? 2)}
-            aria-label="Decimals"
+            aria-label={tg('generateView.tooltips.decimals')}
             onChange={(e) => setOptions({ decimals: Number(e.target.value) })}
           />
         </div>
@@ -276,12 +281,12 @@ const RowEditor: React.FC<RowEditorProps> = ({ row, onChange, onRemove, isArrayI
 
       {row.kind === 'lorem' && (
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span>words</span>
+          <span>{tg('generateView.labels.words')}</span>
           <input
             type="number"
             className={numberInputClass}
             value={String(row.options.words ?? 2)}
-            aria-label="Words"
+            aria-label={tg('generateView.tooltips.words')}
             onChange={(e) => setOptions({ words: Number(e.target.value) })}
           />
         </div>
@@ -299,12 +304,12 @@ const RowEditor: React.FC<RowEditorProps> = ({ row, onChange, onRemove, isArrayI
               )
             }
           >
-            <SelectTrigger className="h-7 w-32 text-xs" aria-label="Date mode">
+            <SelectTrigger className="h-7 w-32 text-xs" aria-label={tg('generateView.tooltips.dateMode')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="past_days">Past N days</SelectItem>
-              <SelectItem value="range">From / to</SelectItem>
+              <SelectItem value="past_days">{tg('generateView.labels.pastDaysMode')}</SelectItem>
+              <SelectItem value="range">{tg('generateView.labels.rangeMode')}</SelectItem>
             </SelectContent>
           </Select>
           {row.options.mode === 'range' ? (
@@ -312,31 +317,31 @@ const RowEditor: React.FC<RowEditorProps> = ({ row, onChange, onRemove, isArrayI
               <input
                 type="text"
                 className={cn(numberInputClass, 'w-44')}
-                placeholder="from (ISO)"
-                aria-label="From"
+                placeholder={tg('generateView.labels.fromIsoPlaceholder')}
+                aria-label={tg('generateView.tooltips.from')}
                 value={String(row.options.from ?? '')}
                 onChange={(e) => setOptions({ from: e.target.value })}
               />
               <input
                 type="text"
                 className={cn(numberInputClass, 'w-44')}
-                placeholder="to (ISO)"
-                aria-label="To"
+                placeholder={tg('generateView.labels.toIsoPlaceholder')}
+                aria-label={tg('generateView.tooltips.to')}
                 value={String(row.options.to ?? '')}
                 onChange={(e) => setOptions({ to: e.target.value })}
               />
             </>
           ) : (
             <>
-              <span>past</span>
+              <span>{tg('generateView.labels.past')}</span>
               <input
                 type="number"
                 className={numberInputClass}
-                aria-label="Past days"
+                aria-label={tg('generateView.tooltips.pastDays')}
                 value={String(row.options.pastDays ?? 365)}
                 onChange={(e) => setOptions({ pastDays: Number(e.target.value) })}
               />
-              <span>days</span>
+              <span>{tg('generateView.labels.days')}</span>
             </>
           )}
         </div>
@@ -356,19 +361,19 @@ const RowEditor: React.FC<RowEditorProps> = ({ row, onChange, onRemove, isArrayI
       {row.kind === 'array' && (
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span>min</span>
+            <span>{tg('generateView.labels.min')}</span>
             <input
               type="number"
               className={numberInputClass}
-              aria-label="Array minimum length"
+              aria-label={tg('generateView.tooltips.arrayMinLength')}
               value={String(row.options.min ?? 1)}
               onChange={(e) => setOptions({ min: Number(e.target.value) })}
             />
-            <span>max</span>
+            <span>{tg('generateView.labels.max')}</span>
             <input
               type="number"
               className={numberInputClass}
-              aria-label="Array maximum length"
+              aria-label={tg('generateView.tooltips.arrayMaxLength')}
               value={String(row.options.max ?? 3)}
               onChange={(e) => setOptions({ max: Number(e.target.value) })}
             />
@@ -400,6 +405,7 @@ const PickValuesEditor: React.FC<{ values: unknown[]; onChange: (values: unknown
   values,
   onChange,
 }) => {
+  const { t: tg } = useTranslation('transfer');
   const parseEntry = (raw: string): unknown => {
     try {
       const parsed = JSON.parse(raw);
@@ -417,7 +423,7 @@ const PickValuesEditor: React.FC<{ values: unknown[]; onChange: (values: unknown
         <div key={i} className="flex items-center gap-1.5">
           <Input
             className="h-7 w-40 text-xs"
-            aria-label={`Pick value ${i + 1}`}
+            aria-label={tg('generateView.tooltips.pickValue', { n: i + 1 })}
             value={typeof v === 'string' ? v : JSON.stringify(v)}
             onChange={(e) => {
               const next = [...values];
@@ -430,7 +436,7 @@ const PickValuesEditor: React.FC<{ values: unknown[]; onChange: (values: unknown
             variant="ghost"
             size="icon"
             className="h-7 w-7 text-destructive"
-            aria-label={`Remove pick value ${i + 1}`}
+            aria-label={tg('generateView.tooltips.removePickValue', { n: i + 1 })}
             onClick={() => onChange(values.filter((_, idx) => idx !== i))}
           >
             <Trash2 size={12} />
@@ -439,23 +445,24 @@ const PickValuesEditor: React.FC<{ values: unknown[]; onChange: (values: unknown
       ))}
       {values.length === 0 && (
         <span className="text-[10px] text-destructive" data-testid="generate-pick-empty">
-          Add at least one value — $pick can&apos;t be empty.
+          {tg('generateView.errors.pickListEmpty')}
         </span>
       )}
       <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => onChange([...values, ''])}>
         <Plus size={12} />
-        Add value
+        {tg('generateView.actions.addValue')}
       </Button>
     </div>
   );
 };
 
 const LiteralValueEditor: React.FC<{ value: unknown; onChange: (value: unknown) => void }> = ({ value, onChange }) => {
+  const { t: tg } = useTranslation('transfer');
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? null);
   return (
     <Input
       className="h-7 w-64 text-xs font-mono"
-      aria-label="Literal value"
+      aria-label={tg('generateView.tooltips.literalValue')}
       value={text}
       onChange={(e) => {
         const raw = e.target.value;
@@ -478,6 +485,7 @@ const TaskProgress: React.FC<{ task: ExportTaskInfo; onCancel?: (taskId: string)
   onCancel,
   onOpenTasks,
 }) => {
+  const { t: tg } = useTranslation('transfer');
   const isRunning = task.status === 'running';
   const isFailed = task.status === 'failed';
   const isCancelled = task.status === 'cancelled';
@@ -526,12 +534,12 @@ const TaskProgress: React.FC<{ task: ExportTaskInfo; onCancel?: (taskId: string)
       <div className="flex items-center gap-2">
         {isRunning && onCancel && (
           <Button type="button" variant="outline" size="sm" data-testid="generate-cancel-btn" onClick={() => onCancel(task.id)}>
-            Cancel
+            {tg('generateView.actions.cancel')}
           </Button>
         )}
         <Button type="button" variant="ghost" size="sm" data-testid="generate-view-tasks-btn" onClick={onOpenTasks}>
           <ListChecks size={12} />
-          View in Tasks
+          {tg('generateView.actions.viewInTasks')}
         </Button>
       </div>
     </div>
@@ -553,6 +561,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
 }) => {
   const { confirm, prompt, toast } = useDialogs();
   const { t } = useTranslation('common');
+  const { t: tg } = useTranslation('transfer');
 
   const [targetCollection, setTargetCollection] = useState('');
   const [templateText, setTemplateText] = useState<string>(collection ? '' : STARTER_TEMPLATE);
@@ -674,7 +683,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
       parsed = JSON.parse(templateText);
     } catch (e: any) {
       previewGen.current += 1;
-      setPreviewError(`Invalid JSON: ${e?.message || 'syntax error'}`);
+      setPreviewError(tg('generateView.errors.invalidJson', { message: e?.message || tg('generateView.errors.syntaxError') }));
       setPreviewDocs([]);
       setPreviewLoading(false);
       return;
@@ -684,7 +693,11 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
       // Known-invalid — don't round-trip to the backend just to get the same
       // answer back; the row itself already shows this message too.
       previewGen.current += 1;
-      setPreviewError(`"${emptyPickRow.name || 'array item'}" needs at least one value for $pick.`);
+      setPreviewError(
+        tg('generateView.errors.emptyPickPreview', {
+          name: emptyPickRow.name || tg('generateView.labels.arrayItemInline'),
+        })
+      );
       setPreviewDocs([]);
       setPreviewLoading(false);
       return;
@@ -725,11 +738,11 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
   const count = Number(countText);
   const countError =
     countText.trim() === ''
-      ? 'Count is required'
+      ? tg('generateView.errors.countRequired')
       : !Number.isFinite(count) || !Number.isInteger(count)
-        ? 'Count must be a whole number'
+        ? tg('generateView.errors.countNotWholeNumber')
         : count < 1 || count > MAX_COUNT
-          ? `Count must be between 1 and ${MAX_COUNT}`
+          ? tg('generateView.errors.countOutOfRange', { max: MAX_COUNT })
           : null;
 
   const seedNumForValidation = Number(seedText);
@@ -737,9 +750,9 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
     seedText.trim() === ''
       ? null
       : !Number.isFinite(seedNumForValidation) || seedText.trim().includes('.') || !Number.isSafeInteger(seedNumForValidation)
-        ? 'Seed must be a whole number'
+        ? tg('generateView.errors.seedNotWholeNumber')
         : seedNumForValidation < 0
-          ? 'Seed must not be negative'
+          ? tg('generateView.errors.seedNegative')
           : null;
 
   const canGenerate =
@@ -762,22 +775,22 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
       }
 
       const message =
-        `Insert ${count} documents into ${database}.${effectiveCollection}.` +
-        (existing && existing > 0 ? ` This adds to the existing ${existing} documents.` : '');
+        tg('generateView.confirm.insertMessage', { count, namespace: `${database}.${effectiveCollection}` }) +
+        (existing && existing > 0 ? tg('generateView.confirm.insertMessageExistingClause', { existing }) : '');
 
       const confirmed = await confirm({
-        title: 'Generate documents',
+        title: tg('generateView.confirm.title'),
         message,
-        confirmLabel: 'Generate',
+        confirmLabel: tg('generateView.actions.generate'),
         destructive: true,
       });
       if (!confirmed) return;
 
       if (count > TYPED_CONFIRM_THRESHOLD) {
         const typed = await prompt({
-          title: 'Confirm count',
-          message: 'Type the exact number of documents to insert.',
-          validate: (v) => (v.trim() === String(count) ? null : 'Type the exact count to confirm'),
+          title: tg('generateView.confirm.typedTitle'),
+          message: tg('generateView.confirm.typedMessage'),
+          validate: (v) => (v.trim() === String(count) ? null : tg('generateView.confirm.typedValidateError')),
         });
         if (typed === null) return;
       }
@@ -801,7 +814,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Wand2 size={14} className="text-primary" />
-          <span>Generate Data: {collection ? `${database}.${collection}` : database}</span>
+          <span>{tg('generateView.labels.title', { namespace: collection ? `${database}.${collection}` : database })}</span>
         </div>
         <div className="flex items-center gap-1 rounded-md border border-border p-0.5" data-testid="generate-mode-toggle">
           <button
@@ -811,7 +824,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
             data-testid="generate-mode-builder"
             onClick={switchToBuilder}
           >
-            Builder
+            {tg('generateView.tabs.builder')}
           </button>
           <button
             type="button"
@@ -819,7 +832,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
             data-testid="generate-mode-raw"
             onClick={() => setMode('raw')}
           >
-            Raw
+            {tg('generateView.tabs.raw')}
           </button>
         </div>
       </div>
@@ -827,7 +840,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
       {loading && (
         <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground" data-testid="generate-loading">
           <Loader2 size={12} className="animate-spin" />
-          <span>Loading template…</span>
+          <span>{tg('generateView.labels.loadingTemplate')}</span>
         </div>
       )}
       {loadError && (
@@ -842,11 +855,11 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
           <div className="flex w-1/2 flex-col gap-2 overflow-auto">
             {!collection && (
               <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground">Target collection</Label>
+                <Label className="text-xs text-muted-foreground">{tg('generateView.labels.targetCollection')}</Label>
                 <Input
                   className="h-7 w-48 text-xs"
                   value={targetCollection}
-                  placeholder="collection name"
+                  placeholder={tg('generateView.labels.targetCollectionPlaceholder')}
                   data-testid="generate-target-collection-input"
                   onChange={(e) => setTargetCollection(e.target.value)}
                 />
@@ -859,7 +872,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
                 data-testid="generate-custom-notice"
               >
                 <AlertCircle size={12} className="flex-shrink-0" />
-                <span>Custom template — editing as raw JSON. Fix or simplify it to switch back to the builder.</span>
+                <span>{tg('generateView.hints.customTemplateNotice')}</span>
               </div>
             )}
 
@@ -879,7 +892,9 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
 
           <div className="flex w-1/2 flex-col gap-2 overflow-auto">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-medium text-foreground">Preview ({PREVIEW_COUNT} docs)</h3>
+              <h3 className="text-xs font-medium text-foreground">
+                {tg('generateView.labels.previewTitle', { count: PREVIEW_COUNT })}
+              </h3>
               <Button
                 type="button"
                 variant="outline"
@@ -889,7 +904,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
                 disabled={previewLoading}
               >
                 <RefreshCw size={12} className={cn(previewLoading && 'animate-spin')} />
-                Refresh
+                {tg('generateView.actions.refresh')}
               </Button>
             </div>
             {previewError && (
@@ -919,7 +934,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
 
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
-              <Label className="text-xs text-muted-foreground">Count</Label>
+              <Label className="text-xs text-muted-foreground">{tg('generateView.labels.count')}</Label>
               <input
                 type="number"
                 className={cn(numberInputClass, 'w-24')}
@@ -936,12 +951,12 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
               )}
             </div>
             <div className="flex flex-col gap-1">
-              <Label className="text-xs text-muted-foreground">Seed (optional)</Label>
+              <Label className="text-xs text-muted-foreground">{tg('generateView.labels.seedOptional')}</Label>
               <input
                 type="text"
                 className={cn(numberInputClass, 'w-24')}
                 value={seedText}
-                placeholder="random"
+                placeholder={tg('generateView.labels.seedPlaceholder')}
                 data-testid="generate-seed-input"
                 onChange={(e) => setSeedText(e.target.value)}
               />
@@ -952,16 +967,18 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
               )}
             </div>
             {!collection && !effectiveCollection && (
-              <span className="text-[10px] text-destructive">Choose a target collection first.</span>
+              <span className="text-[10px] text-destructive">{tg('generateView.hints.chooseTargetCollection')}</span>
             )}
             {emptyPickRow && (
               <span className="text-[10px] text-destructive" data-testid="generate-footer-empty-pick">
-                &ldquo;{emptyPickRow.name || 'array item'}&rdquo; needs at least one value for $pick.
+                {tg('generateView.errors.emptyPickFooter', {
+                  name: emptyPickRow.name || tg('generateView.labels.arrayItemInline'),
+                })}
               </span>
             )}
             {task?.status === 'running' && (
               <span className="text-[10px] text-muted-foreground" data-testid="generate-footer-run-in-progress">
-                A generate run is already in progress for this tab.
+                {tg('generateView.hints.runInProgress')}
               </span>
             )}
             <Button
@@ -971,7 +988,7 @@ export const GenerateView: React.FC<GenerateViewProps> = ({
               onClick={() => void handleGenerate()}
             >
               <Wand2 size={13} />
-              {running ? 'Starting…' : 'Generate'}
+              {running ? tg('generateView.actions.starting') : tg('generateView.actions.generate')}
             </Button>
           </div>
         </div>

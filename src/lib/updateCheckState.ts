@@ -57,16 +57,22 @@ export function classifyUpdateCheckError(err: unknown): 'offline' | 'check-faile
   return offlineHints.some((hint) => msg.includes(hint)) ? 'offline' : 'check-failed';
 }
 
+/**
+ * Returns a key into settings:updates.resultValues, not display text — this
+ * is a plain module function and cannot call the useTranslation hook.
+ * Translate at the call site (SettingsModal.tsx), same pattern as
+ * `tabLabelFor` in App.tsx.
+ */
 export function updateCheckResultLabel(result: UpdateCheckResultKind): string {
   switch (result) {
     case 'uptodate':
-      return 'Up to date';
+      return 'updates.resultValues.uptodate';
     case 'available':
-      return 'Update available';
+      return 'updates.resultValues.available';
     case 'offline':
-      return 'Offline';
+      return 'updates.resultValues.offline';
     case 'check-failed':
-      return 'Server error';
+      return 'updates.resultValues.checkFailed';
   }
 }
 

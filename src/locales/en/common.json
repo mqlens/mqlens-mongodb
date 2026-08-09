@@ -2,7 +2,31 @@
   "appName": "MQLens",
   "cancel": "Cancel",
   "close": "Close",
+  "confirm": "Confirm",
+  "ok": "OK",
+  "passwordInput": {
+    "hide": "Hide",
+    "hidePassword": "Hide password",
+    "show": "Show",
+    "showPassword": "Show password"
+  },
   "save": "Save",
+  "tabs": {
+    "createView": "New View: {{db}}",
+    "dump": "Dump: {{name}}",
+    "export": "Export: {{collection}}",
+    "generate": "Generate: {{name}}",
+    "gridfs": "GridFS: {{collection}}",
+    "import": "Import: {{collection}}",
+    "monitor": "Monitor: {{name}}",
+    "quickStart": "Quick Start",
+    "restore": "Restore: {{name}}",
+    "schema": "Schema: {{collection}}",
+    "settings": "Settings",
+    "tasks": "Tasks",
+    "users": "Users: {{name}}",
+    "validation": "Validation: {{collection}}"
+  },
   "toast": {
     "aggregationPipelineApplied": "Aggregation pipeline applied",
     "cannotDeleteNoId": "Cannot delete: this document has no _id.",
@@ -70,5 +94,10 @@
     "userCreated": "Created user {{name}}",
     "userDropped": "Dropped user {{name}}",
     "userUpdated": "Updated user {{name}}"
+  },
+  "typedNameConfirm": {
+    "messageCollection": "Type the collection name to confirm.",
+    "messageDatabase": "Type the database name to confirm.",
+    "validationError": "Name does not match"
   }
 }

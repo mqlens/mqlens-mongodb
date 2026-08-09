@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useTranslation } from 'react-i18next';
 import { Table2, Loader2, AlertCircle, ArrowUpDown, ShieldCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,14 +33,14 @@ interface SchemaViewProps {
 type SortKey = 'field' | 'coverage';
 
 const TypesCell: React.FC<{ field: FieldStat }> = ({ field }) => {
-  const total = field.types.reduce((sum, t) => sum + t.count, 0) || 1;
+  const total = field.types.reduce((sum, ty) => sum + ty.count, 0) || 1;
   return (
     <span data-testid={`schema-types-${field.path}`} className="flex flex-wrap gap-x-3 gap-y-0.5">
-      {field.types.map((t) => (
-        <span key={t.type} className="text-foreground">
-          {t.type}
+      {field.types.map((ty) => (
+        <span key={ty.type} className="text-foreground">
+          {ty.type}
           {field.types.length > 1 && (
-            <span className="text-muted-foreground"> {Math.round((t.count / total) * 100)}%</span>
+            <span className="text-muted-foreground"> {Math.round((ty.count / total) * 100)}%</span>
           )}
         </span>
       ))}
@@ -51,17 +52,19 @@ const SchemaFieldTable: React.FC<{
   report: SchemaReport;
   onSortKeyChange: (key: SortKey) => void;
   sortedFields: FieldStat[];
-}> = ({ report, onSortKeyChange, sortedFields }) => (
+}> = ({ report, onSortKeyChange, sortedFields }) => {
+  const { t } = useTranslation('documents');
+  return (
   <>
     <div className="flex items-center justify-between border-b border-border px-4 py-3">
       <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
         <Table2 size={14} className="text-success" />
         <span>
-          Schema: {report.sampled > 0 ? '' : ''}
+          {t('schemaView.labels.schemaPrefix')} {report.sampled > 0 ? '' : ''}
         </span>
       </div>
       <span className="font-mono text-[11px] text-muted-foreground">
-        sampled {report.sampled} docs · {report.fields.length} fields
+        {t('schemaView.labels.sampledSummary', { sampled: report.sampled, fields: report.fields.length })}
       </span>
     </div>
     <ScrollArea className="flex-1">
@@ -77,10 +80,10 @@ const SchemaFieldTable: React.FC<{
                 onClick={() => onSortKeyChange('field')}
                 data-testid="schema-sort-field"
               >
-                field <ArrowUpDown size={10} />
+                {t('schemaView.labels.field')} <ArrowUpDown size={10} />
               </Button>
             </th>
-            <th className="px-4 py-2 font-medium">types</th>
+            <th className="px-4 py-2 font-medium">{t('schemaView.labels.types')}</th>
             <th className="px-4 py-2 font-medium">
               <Button
                 type="button"
@@ -90,7 +93,7 @@ const SchemaFieldTable: React.FC<{
                 onClick={() => onSortKeyChange('coverage')}
                 data-testid="schema-sort-coverage"
               >
-                coverage <ArrowUpDown size={10} />
+                {t('schemaView.labels.coverage')} <ArrowUpDown size={10} />
               </Button>
             </th>
           </tr>
@@ -126,7 +129,8 @@ const SchemaFieldTable: React.FC<{
       </table>
     </ScrollArea>
   </>
-);
+  );
+};
 
 export const SchemaView: React.FC<SchemaViewProps> = ({
   connectionId,
@@ -134,6 +138,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
   collectionName,
   sampleSize = 1000,
 }) => {
+  const { t } = useTranslation('documents');
   const [report, setReport] = useState<SchemaReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -183,7 +188,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
     return (
       <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
         <Loader2 size={16} className="animate-spin" />
-        Analyzing schema…
+        {t('schemaView.labels.analyzing')}
       </div>
     );
   }
@@ -203,7 +208,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
         <Table2 size={20} />
-        Collection is empty — nothing to analyze.
+        {t('schemaView.empty.title')}
       </div>
     );
   }
@@ -218,7 +223,7 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
           </span>
         </div>
         <Badge variant="outline" className="text-[10px]">
-          {report.fields.length} fields
+          {t('schemaView.labels.fieldsCount', { count: report.fields.length })}
         </Badge>
       </div>
 
@@ -230,14 +235,14 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
               className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
               data-testid="schema-tab-fields"
             >
-              Field Analysis
+              {t('schemaView.tabs.fieldAnalysis')}
             </TabsTrigger>
             <TabsTrigger
               value="validation"
               className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
               data-testid="schema-tab-validation"
             >
-              Validation Rules
+              {t('schemaView.tabs.validationRules')}
             </TabsTrigger>
           </TabsList>
         </div>
@@ -258,15 +263,15 @@ export const SchemaView: React.FC<SchemaViewProps> = ({
           <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
             <ShieldCheck size={28} className="text-muted-foreground/50" />
             <div className="space-y-1">
-              <p className="text-sm font-medium text-foreground">Validation Rules</p>
+              <p className="text-sm font-medium text-foreground">{t('schemaView.tabs.validationRules')}</p>
               <p className="max-w-sm text-xs text-muted-foreground">
-                Collection validation schema viewer coming soon (#93). This tab will show
-                <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[10px]">$jsonSchema</code>
-                and validator rules for {databaseName}.{collectionName}.
+                {t('schemaView.labels.validationComingSoonPrefix')}{' '}
+                <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[10px]">$jsonSchema</code>{' '}
+                {t('schemaView.labels.validationComingSoonSuffix', { databaseName, collectionName })}
               </p>
             </div>
             <Badge variant="secondary" className="text-[10px]">
-              Planned
+              {t('schemaView.labels.planned')}
             </Badge>
           </div>
         </TabsContent>

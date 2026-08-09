@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Dialog,
   DialogContent,
@@ -99,6 +100,8 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
   presetTargetId,
   presetTargetDb,
 }) => {
+  const { t } = useTranslation('transfer');
+
   // Derive mode from source.collections.length
   const mode: 'database' | 'collection' | 'collections' =
     source.collections.length === 0
@@ -334,25 +337,25 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
 
   const modeLabel =
     mode === 'collection'
-      ? `collection "${source.collections[0]}"`
+      ? t('copyToDialog.title.collection', { name: source.collections[0] })
       : mode === 'collections'
-      ? `${source.collections.length} collections`
-      : `database "${source.db}"`;
+      ? t('copyToDialog.title.collections', { count: source.collections.length })
+      : t('copyToDialog.title.database', { name: source.db });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>Copy {modeLabel}</DialogTitle>
+          <DialogTitle>{modeLabel}</DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-col gap-4 py-2">
           {/* Target connection */}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="target-connection">Target connection</Label>
+            <Label htmlFor="target-connection">{t('copyToDialog.labels.targetConnection')}</Label>
             <Select value={targetId} onValueChange={handleTargetIdChange}>
               <SelectTrigger id="target-connection">
-                <SelectValue placeholder="Select connection…" />
+                <SelectValue placeholder={t('copyToDialog.placeholders.selectConnection')} />
               </SelectTrigger>
               <SelectContent>
                 {activeConnections.map((c) => (
@@ -366,26 +369,26 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
 
           {/* Target database */}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="target-database">Target database</Label>
+            <Label htmlFor="target-database">{t('copyToDialog.labels.targetDatabase')}</Label>
             {isNewDb ? (
               <>
                 <Input
                   id="target-database"
-                  placeholder="New database name…"
+                  placeholder={t('copyToDialog.placeholders.newDatabaseName')}
                   value={newDbName}
                   onChange={(e) => setNewDbName(e.target.value)}
                   autoFocus
                 />
                 {newDbName.trim() && !databases.includes(newDbName.trim()) && (
                   <p className="text-xs text-muted-foreground">
-                    Doesn't exist on the target — it will be created.
+                    {t('copyToDialog.hints.newDatabaseWillBeCreated')}
                   </p>
                 )}
               </>
             ) : (
               <Select value={targetDb} onValueChange={handleTargetDbChange}>
                 <SelectTrigger id="target-database">
-                  <SelectValue placeholder="Select database…" />
+                  <SelectValue placeholder={t('copyToDialog.placeholders.selectDatabase')} />
                 </SelectTrigger>
                 <SelectContent>
                   {databases.map((db) => (
@@ -393,7 +396,7 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
                       {db}
                     </SelectItem>
                   ))}
-                  <SelectItem value="__new__">➕ New database…</SelectItem>
+                  <SelectItem value="__new__">{t('copyToDialog.actions.newDatabase')}</SelectItem>
                 </SelectContent>
               </Select>
             )}
@@ -402,12 +405,12 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
           {/* Target collection (single-collection mode only) */}
           {mode === 'collection' && (
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="target-collection">Target collection</Label>
+              <Label htmlFor="target-collection">{t('copyToDialog.labels.targetCollection')}</Label>
               <Input
                 id="target-collection"
                 value={targetCollection}
                 onChange={(e) => setTargetCollection(e.target.value)}
-                placeholder="Collection name…"
+                placeholder={t('copyToDialog.placeholders.collectionName')}
               />
             </div>
           )}
@@ -415,7 +418,7 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
           {/* Single-collection filter */}
           {mode === 'collection' && (
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="filter-input">Filter (EJSON, optional)</Label>
+              <Label htmlFor="filter-input">{t('copyToDialog.labels.filter')}</Label>
               <Input
                 id="filter-input"
                 value={filter}
@@ -427,7 +430,7 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
 
           {/* Options */}
           <div className="flex flex-col gap-2">
-            <Label>Options</Label>
+            <Label>{t('copyToDialog.labels.options')}</Label>
             <div className="flex flex-col gap-2">
               <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <input
@@ -436,7 +439,7 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
                   onChange={(e) => setIncludeIndexes(e.target.checked)}
                   id="include-indexes"
                 />
-                Include indexes
+                {t('copyToDialog.labels.includeIndexes')}
               </label>
               {mode === 'database' && (
                 <label className="flex cursor-pointer items-center gap-2 text-sm">
@@ -446,7 +449,7 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
                     onChange={(e) => setIncludeViews(e.target.checked)}
                     id="include-views"
                   />
-                  Include views
+                  {t('copyToDialog.labels.includeViews')}
                 </label>
               )}
             </div>
@@ -455,7 +458,7 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
           {/* Conflict resolution — always rendered but only visible when there are conflicts */}
           {hasConflicts && (
             <div className="flex flex-col gap-2">
-              <Label>Conflict resolution</Label>
+              <Label>{t('copyToDialog.labels.conflictResolution')}</Label>
               <div className="flex flex-col gap-2">
                 <label className="flex cursor-pointer items-center gap-2 text-sm">
                   <input
@@ -468,7 +471,7 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
                       setOverwriteConfirmed(false);
                     }}
                   />
-                  Skip — leave existing target documents untouched
+                  {t('copyToDialog.labels.conflictModeSkip')}
                 </label>
                 <label className="flex cursor-pointer items-center gap-2 text-sm">
                   <input
@@ -481,7 +484,7 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
                       setOverwriteConfirmed(false);
                     }}
                   />
-                  Merge — keep existing documents, add new ones (duplicate _ids skipped)
+                  {t('copyToDialog.labels.conflictModeMerge')}
                 </label>
                 <label className="flex cursor-pointer items-center gap-2 text-sm">
                   <input
@@ -495,7 +498,7 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
                       setOverwriteConfirmed(false);
                     }}
                   />
-                  Overwrite — drop and replace the target collection(s)
+                  {t('copyToDialog.labels.conflictModeOverwrite')}
                 </label>
               </div>
 
@@ -508,7 +511,7 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
                     checked={overwriteConfirmed}
                     onChange={(e) => setOverwriteConfirmed(e.target.checked)}
                   />
-                  I understand this replaces the target collection(s)
+                  {t('copyToDialog.labels.overwriteConfirm')}
                 </label>
               )}
             </div>
@@ -517,17 +520,17 @@ export const CopyToDialog: React.FC<CopyToDialogProps> = ({
           {/* Self-overwrite warning */}
           {preflightResult?.selfOverwrite && (
             <p className="text-sm text-destructive">
-              Source and target are the same collection — copy is not allowed.
+              {t('copyToDialog.errors.selfOverwrite')}
             </p>
           )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
-            Cancel
+            {t('copyToDialog.actions.cancel')}
           </Button>
           <Button onClick={handleStart} disabled={startDisabled}>
-            Start copy
+            {t('copyToDialog.actions.startCopy')}
           </Button>
         </DialogFooter>
       </DialogContent>

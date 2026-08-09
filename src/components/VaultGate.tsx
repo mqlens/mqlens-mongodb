@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { PasswordInput } from './PasswordInput';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,10 +21,12 @@ import {
   type BiometricStatus,
 } from '../lib/vault';
 
-function biometryLabel(type: number): string {
-  if (type === 2) return 'Use Touch ID';
-  if (type === 3) return 'Use Face ID';
-  return 'Use biometrics';
+// Takes `t` as a parameter rather than calling useTranslation itself — this is
+// a module-level helper (not a component), so it can't call hooks directly.
+function biometryLabel(t: (key: string) => string, type: number): string {
+  if (type === 2) return t('shell:vaultGate.biometry.touchId');
+  if (type === 3) return t('shell:vaultGate.biometry.faceId');
+  return t('shell:vaultGate.biometry.generic');
 }
 
 interface VaultGateProps {
@@ -31,6 +34,7 @@ interface VaultGateProps {
 }
 
 export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
+  const { t } = useTranslation('shell');
   const [status, setStatus] = useState<VaultStatus | 'loading'>('loading');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -80,7 +84,7 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
         className="flex min-h-screen items-center justify-center bg-background text-muted-foreground"
         data-testid="vault-loading"
       >
-        Loading…
+        {t('vaultGate.loading')}
       </div>
     );
   }
@@ -93,11 +97,11 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
   const submit = async () => {
     setError('');
     if (!password) {
-      setError('Master password is required');
+      setError(t('vaultGate.errors.passwordRequired'));
       return;
     }
     if (isSetup && password !== confirm) {
-      setError('Passwords do not match');
+      setError(t('vaultGate.errors.passwordMismatch'));
       return;
     }
     setBusy(true);
@@ -129,7 +133,7 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
   };
 
   const doReset = async () => {
-    if (!window.confirm('Reset deletes ALL saved connections and API keys. Continue?')) return;
+    if (!window.confirm(t('vaultGate.confirmReset'))) return;
     setError('');
     try {
       await resetVault();
@@ -148,17 +152,15 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
     >
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>{isSetup ? 'Create a master password' : 'Unlock MQLens'}</CardTitle>
+          <CardTitle>{isSetup ? t('vaultGate.titles.setup') : t('vaultGate.titles.unlock')}</CardTitle>
           <CardDescription>
-            {isSetup
-              ? 'Your saved connections and API keys are encrypted with this password. There is no recovery if you forget it.'
-              : 'Enter your master password to decrypt your saved credentials.'}
+            {isSetup ? t('vaultGate.descriptions.setup') : t('vaultGate.descriptions.unlock')}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <PasswordInput
             data-testid="vault-password"
-            placeholder="Master password"
+            placeholder={t('vaultGate.placeholders.masterPassword')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && !isSetup && submit()}
@@ -166,7 +168,7 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
           {isSetup && (
             <PasswordInput
               data-testid="vault-confirm"
-              placeholder="Confirm password"
+              placeholder={t('vaultGate.placeholders.confirmPassword')}
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
             />
@@ -183,7 +185,7 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
             disabled={busy}
             onClick={submit}
           >
-            {isSetup ? 'Create & unlock' : 'Unlock'}
+            {isSetup ? t('vaultGate.actions.setup') : t('vaultGate.actions.unlock')}
           </Button>
           {!isSetup && bio?.available && bio?.enrolled && (
             <Button
@@ -193,7 +195,7 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
               data-testid="vault-biometric-btn"
               onClick={tryBiometric}
             >
-              {biometryLabel(bio.biometryType)}
+              {biometryLabel(t, bio.biometryType)}
             </Button>
           )}
           {!isSetup && (
@@ -204,7 +206,7 @@ export const VaultGate: React.FC<VaultGateProps> = ({ children }) => {
               data-testid="vault-reset-btn"
               onClick={doReset}
             >
-              Forgot password? Reset (deletes all saved credentials)
+              {t('vaultGate.actions.resetLink')}
             </Button>
           )}
         </CardContent>

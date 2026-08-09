@@ -28,9 +28,9 @@ describe('updateCheckState', () => {
     });
   });
 
-  it('labels results for settings display', () => {
-    expect(updateCheckResultLabel('offline')).toBe('Offline');
-    expect(updateCheckResultLabel('check-failed')).toBe('Server error');
+  it('returns translation keys (translated at the call site) for settings display', () => {
+    expect(updateCheckResultLabel('offline')).toBe('updates.resultValues.offline');
+    expect(updateCheckResultLabel('check-failed')).toBe('updates.resultValues.checkFailed');
   });
 
   it('backs off exponentially up to five minutes', () => {

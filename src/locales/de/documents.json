@@ -1,0 +1,398 @@
+{
+  "documentViewer": {
+    "actions": {
+      "addProjection": "Projektion hinzufügen",
+      "addRule": "Regel hinzufügen",
+      "addSortField": "Sortierfeld hinzufügen",
+      "addStage": "Stufe hinzufügen",
+      "aiHelper": "KI-Helfer",
+      "apply": "Anwenden",
+      "clearAll": "Alles zurücksetzen",
+      "clearDefault": "Standard entfernen",
+      "export": "Export",
+      "import": "Import",
+      "listShortcut": "Liste",
+      "loadQuery": "Abfrage laden",
+      "openInMongosh": "In mongosh öffnen",
+      "openQueryIn": "Abfrage öffnen in...",
+      "pinAsDefault": "Aktuelle Abfrage als Standard festlegen",
+      "queryHistory": "Abfrageverlauf",
+      "run": "Ausführen",
+      "runExplain": "Explain ausführen",
+      "runQuery": "Abfrage ausführen",
+      "saveAndFavorite": "Speichern und zu Favoriten hinzufügen",
+      "saveAsNew": "Als neue Abfrage speichern...",
+      "saveQuery": "Abfrage speichern",
+      "setDefaultQuery": "Standardabfrage festlegen",
+      "visualQueryBuilder": "Visueller Abfrage-Builder"
+    },
+    "breadcrumbs": {
+      "authenticatedAs": "Authentifiziert als {{user}}",
+      "noAuth": "keine Auth",
+      "noAuthentication": "Verbindung hat keine Authentifizierung"
+    },
+    "builder": {
+      "ascOption": "Aufsteigend ({{n}})",
+      "clickToAddProjection": "+ Klicken, um Projektionskriterien hinzuzufügen",
+      "clickToAddQueryRules": "+ Klicken, um Abfrageregeln hinzuzufügen",
+      "clickToAddSort": "+ Klicken, um Sortierkriterien hinzuzufügen",
+      "customField": "Benutzerdefiniertes Feld...",
+      "descOption": "Absteigend ({{n}})",
+      "excludeOption": "Ausschließen ({{n}})",
+      "fieldPathPlaceholder": "field.path",
+      "includeOption": "Einschließen ({{n}})",
+      "matchAll": "Alle Bedingungen ({{op}})",
+      "matchAny": "Beliebige Bedingung ({{op}})",
+      "operators": {
+        "in": "in",
+        "notIn": "nicht in",
+        "regex": "Regex",
+        "exists": "vorhanden"
+      },
+      "projection": "Projektion",
+      "query": "Abfrage",
+      "sort": "Sortierung",
+      "valuePlaceholder": "Wert"
+    },
+    "dialogs": {
+      "runAggregate": {
+        "messageUnknownTarget": "Diese Pipeline schreibt über $out/$merge in eine Sammlung auf einer abgesicherten Verbindung, aber das Ziel konnte nicht automatisch ermittelt werden.\n\nGib CONFIRM ein, um fortzufahren.",
+        "messageWithTarget": "Diese Pipeline schreibt in \"{{target}}\" ($out/$merge) auf einer abgesicherten Verbindung.\n\nGib den Namen der Zielsammlung ein, um zu bestätigen.",
+        "title": "Aggregation ausführen"
+      },
+      "saveQuery": {
+        "message": "Gib einen Namen für diese Abfrage ein:",
+        "nameRequired": "Name ist erforderlich",
+        "placeholder": "Abfragename",
+        "title": "Abfrage speichern"
+      }
+    },
+    "empty": {
+      "noHistory": "Noch kein Verlauf",
+      "noSavedQueries": "Keine gespeicherten Abfragen"
+    },
+    "errors": {
+      "invalidJsonSyntax": "Ungültige JSON-Syntax: {{message}}",
+      "invalidQuery": "Ungültige Abfrage",
+      "queryMustBeObject": "Die Abfrage muss ein Objekt sein"
+    },
+    "history": {
+      "aggregateSummary_one": "aggregate · {{count}} Stufe",
+      "aggregateSummary_other": "aggregate · {{count}} Stufen",
+      "findSummary": "find · {{filter}}"
+    },
+    "pipeline": {
+      "stageCount_one": "{{count}} Stufe",
+      "stageCount_other": "{{count}} Stufen",
+      "stageGroups": {
+        "arraysJoins": "Arrays & Verknüpfungen",
+        "filtering": "Filtern & Gestalten",
+        "geospatial": "Geodaten",
+        "grouping": "Gruppierung & Aggregation",
+        "ordering": "Sortierung & Begrenzung",
+        "sourcesOutput": "Quellen & Ausgabe",
+        "windows": "Fenster & Zeitreihen"
+      }
+    },
+    "tabs": {
+      "aggregation": "Aggregation",
+      "find": "Find"
+    },
+    "tooltips": {
+      "addToFavorites": "Zu Favoriten hinzufügen",
+      "closePanel": "Panel schließen",
+      "collapseStage": "Stufe {{n}} einklappen",
+      "deleteSavedQuery": "Gespeicherte Abfrage löschen",
+      "disableStage": "Stufe {{n}} deaktivieren",
+      "enableStage": "Stufe {{n}} aktivieren",
+      "executeQuery": "Abfrage ausführen ({{shortcut}})",
+      "expandStage": "Stufe {{n}} erweitern",
+      "importDocuments": "Dokumente aus einer Datei importieren",
+      "moveStageDown": "Stufe {{n}} nach unten verschieben",
+      "moveStageUp": "Stufe {{n}} nach oben verschieben",
+      "openExportWorkspace": "Export-Arbeitsbereich öffnen",
+      "redoPipelineChange": "Pipeline-Änderung wiederholen",
+      "removeFromFavorites": "Aus Favoriten entfernen",
+      "removeRule": "Regel entfernen",
+      "removeStage": "Stufe {{n}} entfernen",
+      "runDisabled": "Abfragesyntax korrigieren, um sie auszuführen",
+      "runPipelineToStage": "Pipeline bis Stufe {{n}} ausführen",
+      "undoPipelineChange": "Pipeline-Änderung rückgängig machen"
+    }
+  },
+  "findQueryBar": {
+    "labels": {
+      "limit": "Limit",
+      "options": "Optionen",
+      "projection": "Projektion",
+      "query": "Abfrage",
+      "skip": "Skip",
+      "sort": "Sortierung"
+    },
+    "errors": {
+      "invalidJson": "Ungültiges JSON"
+    },
+    "tooltips": {
+      "clearFilter": "Filter leeren",
+      "clearProjection": "Projektion leeren",
+      "clearSort": "Sortierung leeren",
+      "fewerOptions": "Weniger Optionen",
+      "hideOptions": "Projektion, Sortierung, Skip und Limit ausblenden",
+      "moreOptions": "Mehr Optionen",
+      "optionsSet": "Projektion, Sortierung, Skip oder Limit ist gesetzt",
+      "quickSortDirection": "Sortierrichtung umschalten",
+      "resetLimit": "Limit zurücksetzen",
+      "resetSkip": "Skip zurücksetzen",
+      "showOptions": "Projektion, Sortierung, Skip und Limit anzeigen"
+    }
+  },
+  "diffModal": {
+    "title": "Dokumente vergleichen",
+    "errors": {
+      "tooLarge_one": "Dieser Diff ist zu groß für die Anzeige ({{count}} Zeile)",
+      "tooLarge_other": "Dieser Diff ist zu groß für die Anzeige ({{count}} Zeilen)"
+    },
+    "labels": {
+      "documentA": "Dokument A",
+      "documentB": "Dokument B"
+    },
+    "summary": {
+      "added_one": "{{count}} hinzugefügt",
+      "added_other": "{{count}} hinzugefügt",
+      "changed_one": "{{count}} geändert",
+      "changed_other": "{{count}} geändert",
+      "removed_one": "{{count}} entfernt",
+      "removed_other": "{{count}} entfernt"
+    },
+    "tooltips": {
+      "closeModal": "Fenster schließen"
+    }
+  },
+  "editModal": {
+    "title": {
+      "edit": "Dokument bearbeiten",
+      "insert": "Dokument einfügen"
+    },
+    "actions": {
+      "cancel": "Abbrechen",
+      "insert": "Einfügen",
+      "saveChanges": "Änderungen speichern"
+    },
+    "errors": {
+      "empty": "Dokument ist leer.",
+      "invalid": "Ungültiges Dokument: {{message}}",
+      "mustBeObject": "Ein Dokument muss ein Objekt sein (z. B. { \"field\": value }).",
+      "syntaxError": "Syntaxfehler",
+      "noId": "Aktualisierung nicht möglich: Dieses Dokument hat keine _id."
+    },
+    "hints": {
+      "shellTypes": "Shell-Typen werden unterstützt (z. B. {{example}}). Beim Bearbeiten wird das gesamte Dokument ersetzt."
+    },
+    "labels": {
+      "document": "Dokument"
+    }
+  },
+  "chartView": {
+    "actions": {
+      "exportPng": "PNG"
+    },
+    "chartTypes": {
+      "area": "Flächendiagramm",
+      "bar": "Balkendiagramm",
+      "line": "Liniendiagramm",
+      "pie": "Kreisdiagramm",
+      "scatter": "Streudiagramm"
+    },
+    "empty": {
+      "noNumericField": "Kein numerisches Feld in diesen Ergebnissen zum Visualisieren.",
+      "noResults": "Führe eine Abfrage aus, um ihre Ergebnisse zu visualisieren.",
+      "pickNumericField": "Wähle ein numerisches Feld zum Visualisieren."
+    },
+    "footer": {
+      "charting_one": "{{count}} geladenes Dokument wird dargestellt — erhöhe das Seitengrößen-Limit, um mehr zu visualisieren.",
+      "charting_other": "{{count}} geladene Dokumente werden dargestellt — erhöhe das Seitengrößen-Limit, um mehr zu visualisieren.",
+      "truncatedNote_one": "(+{{count}} weitere {{unit}} nicht angezeigt)",
+      "truncatedNote_other": "(+{{count}} weitere {{unit}} nicht angezeigt)",
+      "unitCategories": "Kategorien",
+      "unitPoints": "Punkte"
+    },
+    "labels": {
+      "field": "Feld",
+      "measure": "Messgröße",
+      "type": "Typ",
+      "xAxis": "X-Achse",
+      "yAxis": "Y-Achse"
+    },
+    "measures": {
+      "avg": "Durchschnitt",
+      "count": "Anzahl",
+      "max": "Max",
+      "min": "Min",
+      "sum": "Summe"
+    },
+    "tabs": {
+      "aggregate": "Aggregiert",
+      "raw": "Roh"
+    },
+    "tooltips": {
+      "chartType": "Diagrammtyp",
+      "exportPng": "PNG exportieren",
+      "measureField": "Messgrößenfeld"
+    }
+  },
+  "dataGrid": {
+    "actions": {
+      "cancelCompareSelection": "Vergleichsauswahl abbrechen",
+      "compareWith": "Vergleichen mit…",
+      "compareWithReplaceSelection": "Vergleichen mit… (Auswahl ersetzen)",
+      "compareWithSelected": "Mit Auswahl vergleichen",
+      "copied": "Kopiert!",
+      "copy": "Kopieren",
+      "copyDocumentJson": "Dokument kopieren (JSON)",
+      "copyFieldName": "Feldnamen kopieren",
+      "copyPlan": "Plan kopieren",
+      "copyValue": "Wert kopieren",
+      "createIndex": "Index erstellen",
+      "deleteDocument": "Dokument löschen",
+      "deleteMany": "Mehrere löschen",
+      "duplicateDocument": "Dokument duplizieren",
+      "editDocument": "Dokument bearbeiten",
+      "insert": "Einfügen",
+      "next": "Weiter",
+      "prev": "Zurück",
+      "schema": "Schema",
+      "updateMany": "Mehrere aktualisieren"
+    },
+    "dialogs": {
+      "bulkAllWarning_one": "\n\n⚠ Dies betrifft das einzige Dokument in der Sammlung.",
+      "bulkAllWarning_other": "\n\n⚠ Dies betrifft ALLE {{count}} Dokumente in der Sammlung.",
+      "copyErrorMessage": "Fehlermeldung kopieren",
+      "deleteDocument": {
+        "body": "Dieses Dokument löschen? Dies kann nicht rückgängig gemacht werden.",
+        "confirmLabel": "Löschen"
+      },
+      "deleteMany": {
+        "body_one": "{{count}} Dokument löschen, das folgendem Filter entspricht?\n{{filter}}",
+        "body_other": "{{count}} Dokumente löschen, die folgendem Filter entsprechen?\n{{filter}}",
+        "confirmLabel": "Löschen",
+        "title": "Mehrere löschen"
+      },
+      "typeCollectionNameSuffix": "\n\nGib den Namen der Sammlung ein, um zu bestätigen.",
+      "updateMany": {
+        "body_one": "Diese Aktualisierung auf {{count}} Dokument anwenden, das folgendem Filter entspricht?\n{{filter}}",
+        "body_other": "Diese Aktualisierung auf {{count}} Dokumente anwenden, die folgendem Filter entsprechen?\n{{filter}}",
+        "confirmLabel": "Aktualisieren",
+        "promptMessage": "Dokument aktualisieren (Operatoren, z. B. {\"$set\": {...}}):",
+        "title": "Mehrere aktualisieren",
+        "validation": {
+          "invalidJson": "Ungültiges JSON",
+          "mustBeObject": "Die Aktualisierung muss ein JSON-Objekt sein",
+          "mustUseOperators": "Die Aktualisierung muss Operatoren wie $set verwenden"
+        }
+      }
+    },
+    "empty": {
+      "explainHint": "Um einen zu erstellen, öffne das <strong>Ausführen</strong>-Dropdown-Menü in der Symbolleiste des Abfrage-Editors und wähle <strong>Explain ausführen</strong>.",
+      "noDocuments": "Keine Dokumente gefunden, die den Kriterien entsprechen.",
+      "noExplainPlan": "Noch kein Explain-Plan erstellt.",
+      "noQueryRun": "Es wurde noch keine Abfrage ausgeführt."
+    },
+    "explain": {
+      "labels": {
+        "collectionFallback": "Sammlung",
+        "collectionNode": "Sammlung\n{{namespace}}",
+        "documentsFromCollection": "Dokumente aus Sammlung",
+        "indexNode": "Index: {{indexName}}"
+      },
+      "stage": {
+        "collectionScan": "Sammlungsscan",
+        "fetchDocuments": "Dokumente abrufen",
+        "indexIntersection": "Indexschnittmenge",
+        "indexScan": "Indexscan",
+        "limit": "Begrenzung",
+        "orMerge": "OR-Merge",
+        "projection": "Projektion",
+        "result": "Ergebnis",
+        "skip": "Überspringen",
+        "sort": "Sortierung"
+      }
+    },
+    "labels": {
+      "actions": "Aktionen",
+      "docsCountEstimated_one": "~{{count}} Dokument",
+      "docsCountEstimated_other": "~{{count}} Dokumente",
+      "docsCountExact_one": "{{count}} Dokument",
+      "docsCountExact_other": "{{count}} Dokumente",
+      "elements_one": "[ {{count}} Element ]",
+      "elements_other": "[ {{count}} Elemente ]",
+      "fields_one": "{ {{count}} Feld }",
+      "fields_other": "{ {{count}} Felder }",
+      "generatingQueryPlan": "Abfrageplan wird erstellt...",
+      "key": "Schlüssel",
+      "page": "Seite {{page}}",
+      "pageOf": "Seite {{page}} / {{totalPages}}",
+      "perPageOption": "{{size}} / Seite",
+      "queryPlanGenerated": "Abfrageplan erstellt",
+      "showingEmpty": "zeige {{from}}",
+      "showingRange": "zeige {{from}}–{{to}}",
+      "streamingDocuments": "Dokumente werden asynchron gestreamt...",
+      "type": "Typ",
+      "value": "Wert"
+    },
+    "tabs": {
+      "explainPlan": "Explain-Plan",
+      "queryCode": "Abfragecode",
+      "results": "Ergebnisse"
+    },
+    "tooltips": {
+      "analyzeSchema": "Das Feldschema der Sammlung analysieren",
+      "codeLanguage": "Codesprache",
+      "collapse": "Einklappen",
+      "copied": "Kopiert",
+      "copyDocument": "Dokument kopieren",
+      "copyExplainPlan": "Explain-Plan kopieren",
+      "copyQueryCode": "Abfragecode kopieren",
+      "deleteDocument": "Dokument löschen",
+      "deleteMany": "Alle Dokumente löschen, die dem aktuellen Filter entsprechen",
+      "editDocument": "Dokument bearbeiten",
+      "expand": "Ausklappen",
+      "insert": "Ein neues Dokument einfügen",
+      "readOnly": "Verbindung ist schreibgeschützt",
+      "resizeColumn": "Spalte {{label}} anpassen",
+      "updateMany": "Alle Dokumente aktualisieren, die dem aktuellen Filter entsprechen"
+    },
+    "viewModes": {
+      "chart": "Diagramm",
+      "json": "JSON",
+      "rawJson": "Roh-JSON",
+      "table": "Tabelle",
+      "tree": "Baum",
+      "visualTree": "Baumdiagramm"
+    }
+  },
+  "schemaView": {
+    "empty": {
+      "title": "Sammlung ist leer — nichts zu analysieren."
+    },
+    "labels": {
+      "analyzing": "Schema wird analysiert…",
+      "coverage": "Abdeckung",
+      "field": "Feld",
+      "fieldsCount_one": "{{count}} Feld",
+      "fieldsCount_other": "{{count}} Felder",
+      "planned": "Geplant",
+      "sampledSummary": "{{sampled}} Dokumente untersucht · {{fields}} Felder",
+      "schemaPrefix": "Schema:",
+      "types": "Typen",
+      "validationComingSoonPrefix": "Der Viewer für Sammlungs-Validierungsschemas folgt in Kürze (#93). Dieser Tab zeigt",
+      "validationComingSoonSuffix": "und Validierungsregeln für {{databaseName}}.{{collectionName}}."
+    },
+    "tabs": {
+      "fieldAnalysis": "Feldanalyse",
+      "validationRules": "Validierungsregeln"
+    }
+  },
+  "errors": {
+    "loadingDataset": "Fehler beim Laden des Datensatzes: {{detail}}"
+  }
+}

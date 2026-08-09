@@ -1,0 +1,409 @@
+{
+  "exportView": {
+    "title": "Export",
+    "actions": {
+      "viewTasks": "Aufgaben anzeigen",
+      "exportFormat": "{{format}} exportieren",
+      "copyToClipboard": "In Zwischenablage kopieren",
+      "scanFields": "Felder scannen",
+      "scanning": "Wird gescannt…",
+      "selectAll": "Alle auswählen",
+      "deselectAll": "Alle abwählen",
+      "count": "Zählen",
+      "counting": "Wird gezählt…",
+      "preview": "Vorschau",
+      "previewing": "Vorschau wird geladen…"
+    },
+    "labels": {
+      "format": "Format",
+      "jsonMode": "JSON-Modus",
+      "relaxed": "Relaxed",
+      "relaxedHint": "Menschenlesbar",
+      "canonical": "Canonical",
+      "canonicalHint": "mongoexport-kompatibel, verlustfreie Typen",
+      "delimiter": "Trennzeichen",
+      "customDelimiter": "Benutzerdefiniertes Trennzeichen",
+      "quote": "Anführungszeichen",
+      "recordSeparator": "Datensatztrennzeichen",
+      "includeHeaders": "Spaltenüberschriften einschließen",
+      "leaveNullEmpty": "Null-Felder leer lassen",
+      "boldHeaderRow": "Kopfzeile fett",
+      "autoSizeColumns": "Spaltenbreite automatisch anpassen",
+      "alignment": "Ausrichtung",
+      "left": "Links",
+      "center": "Zentriert",
+      "right": "Rechts",
+      "comma": "Komma (,)",
+      "semicolon": "Semikolon (;)",
+      "tab": "Tab",
+      "custom": "Benutzerdefiniert…",
+      "lf": "LF (\\n)",
+      "crlf": "CRLF (\\r\\n)",
+      "skip": "Skip",
+      "limit": "Limit"
+    },
+    "errors": {
+      "delimiterAscii": "Das Trennzeichen muss ein einzelnes ASCII-Zeichen sein.",
+      "mustBeObject": "Muss ein JSON-Objekt sein",
+      "invalidJson": "Ungültiges JSON",
+      "pipelineMustBeArray": "Pipeline muss ein JSON-Array von Stufen sein"
+    },
+    "fields": {
+      "title": "Felder",
+      "hint": "Scanne eine Stichprobe von Dokumenten, um die zu exportierenden Felder auszuwählen.",
+      "filterPlaceholder": "Felder filtern",
+      "noneToScan": "Keine Dokumente zum Scannen — alle Felder werden exportiert.",
+      "selectedCount": "{{selected}} von {{total}} ausgewählt",
+      "projectionDisabled": "Projektion deaktiviert — Feldauswahl wird verwendet"
+    },
+    "current": {
+      "title": "Aktuelle Ergebnisse",
+      "loadedCount_one": "{{count}} geladenes Dokument",
+      "loadedCount_other": "{{count}} geladene Dokumente"
+    },
+    "full": {
+      "title": "Vollständige Sammlung",
+      "hint": "Läuft im Hintergrund und schreibt direkt auf die Festplatte."
+    },
+    "filtered": {
+      "title": "Gefilterte Ergebnisse",
+      "hintAggregate": "Bearbeite die Aggregationspipeline und exportiere anschließend jedes Ergebnisdokument.",
+      "hintFind": "Bearbeite die Abfrage (aus der Dokumentenansicht übernommen) und exportiere anschließend jeden Treffer.",
+      "pipeline": "Pipeline",
+      "countNotRun": "Noch nicht gezählt",
+      "countFailed": "Zählung fehlgeschlagen",
+      "matchCount_one": "{{formatted}} übereinstimmendes Dokument",
+      "matchCount_other": "{{formatted}} übereinstimmende Dokumente"
+    },
+    "preview": {
+      "title": "Vorschau",
+      "hint": "Zeigt eine Stichprobe der exportierten Ausgabe vor der Ausführung.",
+      "failed": "Vorschau fehlgeschlagen: {{error}}"
+    },
+    "footer": {
+      "backgroundNote": "Gefilterte und vollständige Sammlungsexporte laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <2>Aufgaben</2>."
+    }
+  },
+  "generateView": {
+    "actions": {
+      "addArray": "Array hinzufügen",
+      "addField": "Feld hinzufügen",
+      "addNestedObject": "Verschachteltes Objekt hinzufügen",
+      "addValue": "Wert hinzufügen",
+      "cancel": "Abbrechen",
+      "generate": "Generieren",
+      "refresh": "Aktualisieren",
+      "starting": "Wird gestartet…",
+      "viewInTasks": "In Aufgaben anzeigen"
+    },
+    "confirm": {
+      "insertMessage_one": "{{count}} Dokument in {{namespace}} einfügen.",
+      "insertMessage_other": "{{count}} Dokumente in {{namespace}} einfügen.",
+      "insertMessageExistingClause": " Dies kommt zu den vorhandenen {{existing}} Dokumenten hinzu.",
+      "title": "Dokumente generieren",
+      "typedMessage": "Gib die genaue Anzahl der einzufügenden Dokumente ein.",
+      "typedTitle": "Anzahl bestätigen",
+      "typedValidateError": "Gib die genaue Anzahl zur Bestätigung ein"
+    },
+    "errors": {
+      "countNotWholeNumber": "Anzahl muss eine ganze Zahl sein",
+      "countOutOfRange": "Anzahl muss zwischen 1 und {{max}} liegen",
+      "countRequired": "Anzahl ist erforderlich",
+      "emptyPickFooter": "„{{name}}“ benötigt mindestens einen Wert für $pick.",
+      "emptyPickPreview": "\"{{name}}\" benötigt mindestens einen Wert für $pick.",
+      "invalidJson": "Ungültiges JSON: {{message}}",
+      "pickListEmpty": "Füge mindestens einen Wert hinzu — $pick darf nicht leer sein.",
+      "seedNegative": "Seed darf nicht negativ sein",
+      "seedNotWholeNumber": "Seed muss eine ganze Zahl sein",
+      "syntaxError": "Syntaxfehler"
+    },
+    "hints": {
+      "chooseTargetCollection": "Wähle zuerst eine Zielsammlung.",
+      "customTemplateNotice": "Benutzerdefinierte Vorlage — Bearbeitung als Roh-JSON. Korrigiere oder vereinfache sie, um zum Builder zurückzukehren.",
+      "runInProgress": "Für diesen Tab läuft bereits ein Generierungsvorgang."
+    },
+    "kindLabels": {
+      "array": "Array von… ({{token}})",
+      "bool": "Boolescher Wert ({{token}})",
+      "date": "Datum ({{token}})",
+      "email": "E-Mail ({{token}})",
+      "firstName": "Vorname ({{token}})",
+      "float": "Gleitkommazahl ({{token}})",
+      "int": "Ganzzahl ({{token}})",
+      "lastName": "Nachname ({{token}})",
+      "literal": "Literalwert",
+      "lorem": "Lorem-Text ({{token}})",
+      "name": "Vollständiger Name ({{token}})",
+      "object": "Verschachteltes Objekt",
+      "objectId": "ObjectId ({{token}})",
+      "pick": "Aus Liste wählen ({{token}})",
+      "uuid": "UUID ({{token}})"
+    },
+    "labels": {
+      "arrayItem": "Array-Element",
+      "arrayItemInline": "Array-Element",
+      "count": "Anzahl",
+      "days": "Tage",
+      "decimals": "Nachkommastellen",
+      "fieldNamePlaceholder": "Feldname",
+      "fromIsoPlaceholder": "von (ISO)",
+      "loadingTemplate": "Vorlage wird geladen…",
+      "max": "Max",
+      "min": "Min",
+      "past": "letzte",
+      "pastDaysMode": "Letzte N Tage",
+      "previewTitle_one": "Vorschau ({{count}} Dokument)",
+      "previewTitle_other": "Vorschau ({{count}} Dokumente)",
+      "rangeMode": "Von / bis",
+      "seedOptional": "Seed (optional)",
+      "seedPlaceholder": "zufällig",
+      "targetCollection": "Zielsammlung",
+      "targetCollectionPlaceholder": "Sammlungsname",
+      "title": "Daten generieren: {{namespace}}",
+      "toIsoPlaceholder": "bis (ISO)",
+      "words": "Wörter"
+    },
+    "tabs": {
+      "builder": "Builder",
+      "raw": "Roh"
+    },
+    "tooltips": {
+      "arrayMaxLength": "Maximale Array-Länge",
+      "arrayMinLength": "Minimale Array-Länge",
+      "dateMode": "Datumsmodus",
+      "decimals": "Nachkommastellen",
+      "fieldName": "Feldname",
+      "from": "Von",
+      "literalValue": "Literalwert",
+      "maximum": "Maximum",
+      "minimum": "Minimum",
+      "pastDays": "Vergangene Tage",
+      "pickValue": "Auswahlwert {{n}}",
+      "removeField": "Feld entfernen",
+      "removePickValue": "Auswahlwert {{n}} entfernen",
+      "to": "Bis",
+      "words": "Wörter"
+    }
+  },
+  "importView": {
+    "title": "Import",
+    "actions": {
+      "viewTasks": "Aufgaben anzeigen",
+      "chooseFile": "Datei auswählen…",
+      "import": "Import"
+    },
+    "source": {
+      "file": "Datei",
+      "fileFilterName": "Daten",
+      "hint": "Wähle eine Datei zum Importieren aus oder füge Dokumente direkt ein.",
+      "paste": "Einfügen",
+      "pasteCapNote": "Einfügen ist auf 2 MB begrenzt — speichere es als Datei und importiere sie stattdessen",
+      "title": "Quelle"
+    },
+    "labels": {
+      "format": "Format"
+    },
+    "csv": {
+      "delimiter": "Trennzeichen",
+      "comma": "Komma (,)",
+      "semicolon": "Semikolon (;)",
+      "tab": "Tab",
+      "custom": "Benutzerdefiniert…",
+      "customDelimiter": "Benutzerdefiniertes Trennzeichen",
+      "quote": "Anführungszeichen",
+      "skipLines": "Zeilen überspringen",
+      "hasHeaders": "Erste Zeile enthält Überschriften",
+      "delimiterAscii": "Das Trennzeichen muss ein einzelnes ASCII-Zeichen sein.",
+      "quoteAscii": "Das Anführungszeichen muss ein einzelnes ASCII-Zeichen sein"
+    },
+    "columnTypes": {
+      "auto": "automatisch",
+      "string": "Zeichenfolge",
+      "number": "Zahl",
+      "boolean": "Boolescher Wert",
+      "date": "Datum",
+      "json": "JSON"
+    },
+    "preview": {
+      "title": "Vorschau",
+      "captionChoose": "Wähle eine Quelle zur Vorschau",
+      "captionCount_one": "Vorschau des ersten Dokuments",
+      "captionCount_other": "Vorschau der ersten {{count}} Dokumente",
+      "captionCountWithTotal_one": "Vorschau des ersten von ~{{total}} Dokumenten",
+      "captionCountWithTotal_other": "Vorschau der ersten {{count}} Dokumente von ~{{total}}"
+    },
+    "duplicates": {
+      "title": "Umgang mit Duplikaten",
+      "hint": "Wie sollen vorhandene Dokumente mit derselben _id behandelt werden?",
+      "skip": "Duplikate überspringen (nur neue einfügen)",
+      "update": "Vorhandene anhand von _id aktualisieren",
+      "abort": "Abbrechen, wenn eine _id bereits existiert"
+    },
+    "run": {
+      "title": "Ausführen",
+      "hint": "Läuft im Hintergrund und meldet den Fortschritt im Aufgaben-Tab."
+    },
+    "footer": {
+      "backgroundNote": "Importe laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <2>Aufgaben</2>."
+    }
+  },
+  "dumpView": {
+    "title": "Dump",
+    "actions": {
+      "viewTasks": "Aufgaben anzeigen",
+      "openSettings": "Einstellungen öffnen",
+      "installTools": "Tools installieren…",
+      "chooseFolder": "Ordner wählen…",
+      "chooseFile": "Datei wählen…",
+      "starting": "Wird gestartet…",
+      "runDump": "Dump ausführen"
+    },
+    "status": {
+      "detecting": "{{tools}} werden gesucht…"
+    },
+    "errors": {
+      "toolMissing": "mongodump wurde nicht gefunden. Installiere die MongoDB Database Tools und lege den Pfad in den Einstellungen fest.",
+      "invalidQueryJson": "Kein gültiges JSON. mongodump akzeptiert nur kanonisches Extended JSON."
+    },
+    "scope": {
+      "title": "Umfang",
+      "hint": "Erstelle einen Dump des gesamten Servers, einer einzelnen Datenbank oder einer Sammlung.",
+      "optionServer": "Gesamter Server",
+      "optionDatabase": "Datenbank",
+      "optionCollection": "Sammlung"
+    },
+    "labels": {
+      "database": "Datenbank",
+      "collection": "Sammlung",
+      "selectDatabase": "Datenbank auswählen…",
+      "selectCollection": "Sammlung auswählen…",
+      "queryFilter": "Abfragefilter (optional)"
+    },
+    "hints": {
+      "queryFilterEjson": "mongodump erfordert kanonisches Extended JSON — Schlüssel in Anführungszeichen und typisierte Wrapper wie {{oidExample}} oder {{dateExample}}."
+    },
+    "destination": {
+      "title": "Ziel",
+      "hint": "Erstelle einen Dump in einen Ordner mit BSON-Dateien oder in eine einzelne komprimierte Archivdatei.",
+      "optionFolder": "Ordner (mehrere Dateien)",
+      "optionArchive": "Einzelne Archivdatei"
+    },
+    "options": {
+      "title": "Optionen",
+      "hint": "Wird unverändert als CLI-Flags an mongodump weitergegeben.",
+      "gzip": "Ausgabe mit Gzip komprimieren",
+      "forceTableScan": "Vollständigen Tabellen-Scan erzwingen (Indizes ignorieren)",
+      "usersAndRoles": "Benutzer und Rollen einschließen (nur im Datenbank-Umfang)",
+      "oplog": "Oplog für Point-in-Time-Wiederherstellung einschließen (nur im Server-Umfang)"
+    },
+    "run": {
+      "title": "Ausführen",
+      "hint": "Läuft im Hintergrund und meldet den Fortschritt im Aufgaben-Tab."
+    },
+    "footer": {
+      "backgroundNote": "Dumps laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <2>Aufgaben</2>."
+    }
+  },
+  "restoreView": {
+    "title": "Wiederherstellung",
+    "actions": {
+      "viewTasks": "Aufgaben anzeigen",
+      "openSettings": "Einstellungen öffnen",
+      "installTools": "Tools installieren…",
+      "chooseFolder": "Ordner wählen…",
+      "chooseArchive": "Archiv wählen…",
+      "run": "Wiederherstellen",
+      "starting": "Wird gestartet…",
+      "dropAndRestore": "Löschen und wiederherstellen",
+      "cancel": "Abbrechen"
+    },
+    "tools": {
+      "missing": "mongorestore wurde nicht gefunden. Konfiguriere das Verzeichnis für die MongoDB Database Tools in den Einstellungen."
+    },
+    "source": {
+      "title": "Quelle",
+      "hint": "Stelle aus einem Dump-Ordner oder einer einzelnen Archivdatei wieder her.",
+      "folder": "Ordner",
+      "archive": "Archiv",
+      "browseError": "Fehler beim Durchsuchen des Dump-Ordners: {{error}}",
+      "gzipLabel": "gzip-komprimiert",
+      "archiveFilterHint": "Lasse beide leer, um alles im Archiv wiederherzustellen, oder filtere nach einer einzelnen Datenbank oder einem Namespace."
+    },
+    "tree": {
+      "emptySelectionHint": "Wähle mindestens eine Sammlung zum Wiederherstellen aus."
+    },
+    "rename": {
+      "placeholder": "neuer Name (oder db.name)",
+      "title": "Ein einfacher Name stellt in dieselbe Datenbank wieder her; verwende db.name, um in eine andere Datenbank wiederherzustellen."
+    },
+    "labels": {
+      "databaseFilter": "Datenbankfilter",
+      "collectionFilter": "Sammlungsfilter"
+    },
+    "options": {
+      "title": "Optionen",
+      "hint": "mongorestore-Flags.",
+      "flags": {
+        "drop": "Vorhandene Sammlungen vor der Wiederherstellung löschen",
+        "keepIndexVersion": "Ursprüngliche Indexversion beibehalten",
+        "noIndexRestore": "Indizes nicht wiederherstellen",
+        "noOptionsRestore": "Sammlungsoptionen nicht wiederherstellen",
+        "maintainInsertionOrder": "Einfügereihenfolge der Dokumente beibehalten",
+        "stopOnError": "Bei Fehler anhalten",
+        "bypassDocumentValidation": "Dokumentvalidierung umgehen",
+        "restoreDbUsersAndRoles": "Benutzer und Rollen wiederherstellen"
+      },
+      "oplogReplay": "Oplog für Point-in-Time-Konsistenz wiedergeben (nur bei vollständigem Dump)"
+    },
+    "run": {
+      "title": "Ausführen",
+      "hint": "Läuft im Hintergrund und meldet den Fortschritt im Aufgaben-Tab."
+    },
+    "confirm": {
+      "dropWarning": "Dies löscht vor der Wiederherstellung die folgenden Namespace(s):",
+      "entireArchive": "(gesamtes Archiv)"
+    },
+    "footer": {
+      "backgroundNote": "Wiederherstellungen laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <2>Aufgaben</2>."
+    }
+  },
+  "copyToDialog": {
+    "title": {
+      "collection": "Sammlung \"{{name}}\" kopieren",
+      "collections_one": "{{count}} Sammlung kopieren",
+      "collections_other": "{{count}} Sammlungen kopieren",
+      "database": "Datenbank \"{{name}}\" kopieren"
+    },
+    "labels": {
+      "targetConnection": "Zielverbindung",
+      "targetDatabase": "Zieldatenbank",
+      "targetCollection": "Zielsammlung",
+      "filter": "Filter (EJSON, optional)",
+      "options": "Optionen",
+      "includeIndexes": "Indizes einschließen",
+      "includeViews": "Ansichten einschließen",
+      "conflictResolution": "Konfliktlösung",
+      "conflictModeSkip": "Überspringen — vorhandene Zieldokumente unverändert lassen",
+      "conflictModeMerge": "Zusammenführen — vorhandene Dokumente behalten, neue hinzufügen (doppelte _ids werden übersprungen)",
+      "conflictModeOverwrite": "Überschreiben — Zielsammlung(en) löschen und ersetzen",
+      "overwriteConfirm": "Mir ist bewusst, dass dies die Zielsammlung(en) ersetzt"
+    },
+    "placeholders": {
+      "selectConnection": "Verbindung auswählen…",
+      "newDatabaseName": "Name der neuen Datenbank…",
+      "selectDatabase": "Datenbank auswählen…",
+      "collectionName": "Sammlungsname…"
+    },
+    "actions": {
+      "newDatabase": "➕ Neue Datenbank…",
+      "cancel": "Abbrechen",
+      "startCopy": "Kopieren starten"
+    },
+    "hints": {
+      "newDatabaseWillBeCreated": "Existiert nicht auf dem Ziel — wird erstellt."
+    },
+    "errors": {
+      "selfOverwrite": "Quelle und Ziel sind dieselbe Sammlung — Kopieren ist nicht zulässig."
+    }
+  }
+}

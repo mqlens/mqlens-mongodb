@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation, Trans } from 'react-i18next';
 import { Upload, ListChecks } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -100,6 +101,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
   onRunImport,
   onOpenTasks,
 }) => {
+  const { t } = useTranslation('transfer');
   const [sourceKind, setSourceKind] = React.useState<'file' | 'paste'>('file');
   const [filePath, setFilePath] = React.useState<string | null>(null);
   const [text, setText] = React.useState('');
@@ -205,14 +207,14 @@ export const ImportView: React.FC<ImportViewProps> = ({
     <div className="flex h-full flex-col overflow-auto" data-testid="import-view">
       <header className="flex items-center justify-between gap-4 border-b border-border bg-muted/30 px-3.5 py-2">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Import</h2>
+          <h2 className="text-sm font-semibold text-foreground">{t('importView.title')}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {connectionName} / {databaseName}.{collectionName}
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onOpenTasks}>
           <ListChecks size={12} />
-          View Tasks
+          {t('importView.actions.viewTasks')}
         </Button>
       </header>
 
@@ -221,10 +223,10 @@ export const ImportView: React.FC<ImportViewProps> = ({
           <div>
             <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
               <Upload size={14} />
-              <span>Source</span>
+              <span>{t('importView.source.title')}</span>
             </h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Choose a file to import, or paste documents directly.
+              {t('importView.source.hint')}
             </p>
           </div>
 
@@ -237,7 +239,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
                 checked={sourceKind === 'file'}
                 onChange={() => selectSourceKind('file')}
               />
-              <span>File</span>
+              <span>{t('importView.source.file')}</span>
             </label>
             <label className={checkboxLabelClassName}>
               <input
@@ -247,7 +249,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
                 checked={sourceKind === 'paste'}
                 onChange={() => selectSourceKind('paste')}
               />
-              <span>Paste</span>
+              <span>{t('importView.source.paste')}</span>
             </label>
           </div>
 
@@ -260,7 +262,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
                 onClick={pickFile}
                 data-testid="import-pick-file-btn"
               >
-                Choose file…
+                {t('importView.actions.chooseFile')}
               </Button>
               {filePath && (
                 <span
@@ -281,14 +283,14 @@ export const ImportView: React.FC<ImportViewProps> = ({
               />
               {pasteOverCap && (
                 <span className="text-xs text-destructive" data-testid="import-paste-cap-note">
-                  paste is limited to 2 MB — save it as a file and import that
+                  {t('importView.source.pasteCapNote')}
                 </span>
               )}
             </div>
           )}
 
           <div className="flex items-center gap-2">
-            <Label className="text-xs text-muted-foreground">Format</Label>
+            <Label className="text-xs text-muted-foreground">{t('importView.labels.format')}</Label>
             <select
               value={format}
               onChange={(e) => setFormat(e.target.value as ImportFormat)}
@@ -307,22 +309,22 @@ export const ImportView: React.FC<ImportViewProps> = ({
         {format === 'csv' && (
           <section className="flex flex-wrap items-end gap-x-4 gap-y-2 px-3.5 py-3">
             <div className="flex flex-col gap-1">
-              <Label className="text-xs">Delimiter</Label>
+              <Label className="text-xs">{t('importView.csv.delimiter')}</Label>
               <select
                 value={delimiterChoice}
                 onChange={(e) => setDelimiterChoice(e.target.value as ',' | ';' | '\t' | 'custom')}
                 className={selectClassName}
                 data-testid="import-csv-delimiter"
               >
-                <option value=",">Comma (,)</option>
-                <option value=";">Semicolon (;)</option>
-                <option value={'\t'}>Tab</option>
-                <option value="custom">Custom…</option>
+                <option value=",">{t('importView.csv.comma')}</option>
+                <option value=";">{t('importView.csv.semicolon')}</option>
+                <option value={'\t'}>{t('importView.csv.tab')}</option>
+                <option value="custom">{t('importView.csv.custom')}</option>
               </select>
             </div>
             {delimiterChoice === 'custom' && (
               <div className="flex flex-col gap-1">
-                <Label className="text-xs">Custom delimiter</Label>
+                <Label className="text-xs">{t('importView.csv.customDelimiter')}</Label>
                 <Input
                   value={customDelimiter}
                   onChange={(e) => setCustomDelimiter(e.target.value)}
@@ -332,7 +334,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
               </div>
             )}
             <div className="flex flex-col gap-1">
-              <Label className="text-xs">Quote</Label>
+              <Label className="text-xs">{t('importView.csv.quote')}</Label>
               <Input
                 value={csvOptions.quote}
                 onChange={(e) => setCsvOptions((o) => ({ ...o, quote: e.target.value }))}
@@ -341,7 +343,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
               />
             </div>
             <div className="flex flex-col gap-1">
-              <Label className="text-xs">Skip lines</Label>
+              <Label className="text-xs">{t('importView.csv.skipLines')}</Label>
               <Input
                 type="number"
                 min={0}
@@ -364,17 +366,17 @@ export const ImportView: React.FC<ImportViewProps> = ({
                   className="rounded border-input"
                   data-testid="import-csv-headers"
                 />
-                <span>First row is headers</span>
+                <span>{t('importView.csv.hasHeaders')}</span>
               </label>
             </div>
             {!delimiterValid && (
               <span className="w-full text-xs text-destructive">
-                Delimiter must be a single ASCII character.
+                {t('importView.csv.delimiterAscii')}
               </span>
             )}
             {!quoteValid && (
               <span className="w-full text-xs text-destructive">
-                Quote must be a single ASCII character
+                {t('importView.csv.quoteAscii')}
               </span>
             )}
           </section>
@@ -382,12 +384,16 @@ export const ImportView: React.FC<ImportViewProps> = ({
 
         <section className="flex flex-col gap-2 px-3.5 py-3" data-testid="import-preview-section">
           <div>
-            <h3 className="text-sm font-medium text-foreground">Preview</h3>
+            <h3 className="text-sm font-medium text-foreground">{t('importView.preview.title')}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground" data-testid="import-preview-caption">
               {preview
-                ? `Previewing first ${preview.docs.length} document(s)` +
-                  (preview.totalHint !== null ? ` of ~${preview.totalHint}` : '')
-                : 'Choose a source to preview'}
+                ? preview.totalHint !== null
+                  ? t('importView.preview.captionCountWithTotal', {
+                      count: preview.docs.length,
+                      total: preview.totalHint,
+                    })
+                  : t('importView.preview.captionCount', { count: preview.docs.length })
+                : t('importView.preview.captionChoose')}
             </p>
           </div>
           {preview?.error && (
@@ -413,9 +419,9 @@ export const ImportView: React.FC<ImportViewProps> = ({
                             className={selectClassName}
                             data-testid={'import-coltype-' + col}
                           >
-                            {CSV_COLUMN_TYPES.map((t) => (
-                              <option key={t} value={t}>
-                                {t}
+                            {CSV_COLUMN_TYPES.map((colType) => (
+                              <option key={colType} value={colType}>
+                                {t(`importView.columnTypes.${colType}`)}
                               </option>
                             ))}
                           </select>
@@ -466,9 +472,9 @@ export const ImportView: React.FC<ImportViewProps> = ({
 
         <section className="flex flex-col gap-2 px-3.5 py-3">
           <div>
-            <h3 className="text-sm font-medium text-foreground">Duplicate handling</h3>
+            <h3 className="text-sm font-medium text-foreground">{t('importView.duplicates.title')}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              How should existing documents with the same _id be handled?
+              {t('importView.duplicates.hint')}
             </p>
           </div>
           <div className="flex flex-col gap-2">
@@ -480,7 +486,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
                 checked={mode === 'skip'}
                 onChange={() => setMode('skip')}
               />
-              <span>Skip duplicates (insert new only)</span>
+              <span>{t('importView.duplicates.skip')}</span>
             </label>
             <label className={checkboxLabelClassName}>
               <input
@@ -490,7 +496,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
                 checked={mode === 'update'}
                 onChange={() => setMode('update')}
               />
-              <span>Update existing by _id</span>
+              <span>{t('importView.duplicates.update')}</span>
             </label>
             <label className={checkboxLabelClassName}>
               <input
@@ -500,7 +506,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
                 checked={mode === 'abort'}
                 onChange={() => setMode('abort')}
               />
-              <span>Abort if any _id already exists</span>
+              <span>{t('importView.duplicates.abort')}</span>
             </label>
           </div>
         </section>
@@ -509,10 +515,10 @@ export const ImportView: React.FC<ImportViewProps> = ({
           <div>
             <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
               <Upload size={14} />
-              <span>Run</span>
+              <span>{t('importView.run.title')}</span>
             </h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Runs in the background and reports progress in the Tasks tab.
+              {t('importView.run.hint')}
             </p>
           </div>
           <Button
@@ -523,17 +529,19 @@ export const ImportView: React.FC<ImportViewProps> = ({
             data-testid="import-run-btn"
           >
             <Upload size={13} />
-            Import
+            {t('importView.actions.import')}
           </Button>
         </section>
       </div>
 
       <p className="px-3.5 py-3 text-xs text-muted-foreground">
-        Imports run in the background. Track their progress in the{' '}
-        <button type="button" className="underline hover:text-foreground" onClick={onOpenTasks}>
-          Tasks
-        </button>{' '}
-        tab.
+        <Trans i18nKey="importView.footer.backgroundNote" t={t}>
+          Imports run in the background. Track their progress in the{' '}
+          <button type="button" className="underline hover:text-foreground" onClick={onOpenTasks}>
+            Tasks
+          </button>{' '}
+          tab.
+        </Trans>
       </p>
     </div>
   );

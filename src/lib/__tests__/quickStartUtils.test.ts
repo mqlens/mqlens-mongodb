@@ -21,14 +21,34 @@ describe('primaryShortcutModifier', () => {
 });
 
 describe('topology', () => {
-  it('labels srv uris as SRV cluster', () => {
-    expect(topology('mongodb+srv://c.x9k2.mongodb.net/db')).toBe('SRV cluster');
+  // The real catalog rather than a stub `t`, so a missing or renamed key fails
+  // here instead of silently rendering the raw key on the connection card.
+  const tFor = async (lng: 'en' | 'de') => {
+    const { i18next } = await import('@/lib/i18n');
+    return i18next.getFixedT(lng, 'shell');
+  };
+
+  it('labels srv uris as SRV cluster', async () => {
+    const t = await tFor('en');
+    expect(topology('mongodb+srv://c.x9k2.mongodb.net/db', t)).toBe('SRV cluster');
   });
-  it('counts replica-set nodes from a multi-host uri', () => {
-    expect(topology('mongodb://h1:27017,h2:27017,h3:27017/db')).toBe('Replica set · 3 nodes');
+  it('counts replica-set nodes from a multi-host uri', async () => {
+    const t = await tFor('en');
+    expect(topology('mongodb://h1:27017,h2:27017,h3:27017/db', t)).toBe('Replica set · 3 nodes');
   });
-  it('labels a single host as standalone', () => {
-    expect(topology('mongodb://localhost:27017')).toBe('Standalone');
+  it('labels a single host as standalone', async () => {
+    const t = await tFor('en');
+    expect(topology('mongodb://localhost:27017', t)).toBe('Standalone');
+  });
+  it('labels all three topologies in German', async () => {
+    const t = await tFor('de');
+    expect(topology('mongodb+srv://c.x9k2.mongodb.net/db', t)).toBe('SRV-Cluster');
+    expect(topology('mongodb://h1:27017,h2:27017,h3:27017/db', t)).toBe('Replikatset · 3 Knoten');
+    // "Standalone" deliberately stays English in German: it is the same term
+    // the user picks in the connection editor (connections:form.topologyStandalone
+    // = "Standalone / Direkt"), and reporting it back translated meant the card
+    // never matched the choice.
+    expect(topology('mongodb://localhost:27017', t)).toBe('Standalone');
   });
 });
 

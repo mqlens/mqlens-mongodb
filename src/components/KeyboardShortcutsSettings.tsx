@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Keyboard } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,13 +7,17 @@ import {
   filterKeyboardShortcuts,
   formatShortcut,
   groupKeyboardShortcuts,
-  SHORTCUT_GROUP_LABELS,
+  SHORTCUT_GROUP_LABEL_KEYS,
   SHORTCUT_GROUP_ORDER,
 } from '@/lib/shortcuts';
 
 export const KeyboardShortcutsSettings: React.FC = () => {
+  const { t } = useTranslation('shell');
   const [filter, setFilter] = useState('');
-  const filtered = useMemo(() => filterKeyboardShortcuts(filter), [filter]);
+  const filtered = useMemo(
+    () => filterKeyboardShortcuts(filter, undefined, undefined, t),
+    [filter, t],
+  );
   const grouped = useMemo(() => groupKeyboardShortcuts(filtered), [filtered]);
 
   return (
@@ -20,10 +25,10 @@ export const KeyboardShortcutsSettings: React.FC = () => {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Keyboard className="h-4 w-4 text-primary" />
-          Keyboard shortcuts
+          {t('keyboardShortcuts.title')}
         </CardTitle>
         <CardDescription>
-          Global shortcuts for navigation, queries, the sidebar, zoom, and the command palette.
+          {t('keyboardShortcuts.description')}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -31,14 +36,14 @@ export const KeyboardShortcutsSettings: React.FC = () => {
           type="search"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Search shortcuts…"
+          placeholder={t('keyboardShortcuts.searchPlaceholder')}
           data-testid="shortcuts-filter"
-          aria-label="Search keyboard shortcuts"
+          aria-label={t('keyboardShortcuts.searchAriaLabel')}
         />
 
         {filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground" data-testid="shortcuts-empty">
-            No shortcuts match your search.
+            {t('keyboardShortcuts.empty')}
           </p>
         ) : (
           <div className="space-y-6">
@@ -48,7 +53,7 @@ export const KeyboardShortcutsSettings: React.FC = () => {
               return (
                 <section key={group} data-testid={`shortcuts-group-${group}`}>
                   <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {SHORTCUT_GROUP_LABELS[group]}
+                    {t(SHORTCUT_GROUP_LABEL_KEYS[group])}
                   </h3>
                   <ul className="divide-y divide-border rounded-lg border border-border">
                     {items.map((shortcut) => (
@@ -57,7 +62,7 @@ export const KeyboardShortcutsSettings: React.FC = () => {
                         className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
                         data-testid={`shortcut-row-${shortcut.id}`}
                       >
-                        <span className="text-sm text-foreground">{shortcut.label}</span>
+                        <span className="text-sm text-foreground">{t(shortcut.labelKey)}</span>
                         <kbd className="shrink-0 rounded-md border border-border bg-muted px-2 py-1 font-mono text-[11px] text-foreground">
                           {formatShortcut(shortcut)}
                         </kbd>

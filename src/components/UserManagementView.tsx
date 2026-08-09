@@ -79,7 +79,7 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
   onSaved,
 }) => {
   const { toast } = useDialogs();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('admin');
   const isEdit = editor.mode === 'edit';
   const [username, setUsername] = useState(editor.user?.user ?? '');
   const [authDb, setAuthDb] = useState(
@@ -118,26 +118,26 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
     setError(null);
     const name = username.trim();
     if (!name) {
-      setError('Username is required');
+      setError(t('userManagementView.editor.errors.usernameRequired'));
       return;
     }
     if (!isEdit && !password) {
-      setError('Password is required');
+      setError(t('userManagementView.editor.errors.passwordRequired'));
       return;
     }
     const cleanRoles = roles.map((r) => ({ role: r.role.trim(), db: r.db.trim() }));
     if (cleanRoles.some((r) => !r.role || !r.db)) {
-      setError('Select a role and a database for every granted role');
+      setError(t('userManagementView.editor.errors.roleAndDbRequired'));
       return;
     }
     setSaving(true);
     try {
       if (isEdit) {
         await updateUser(connectionId, authDb, name, password || null, cleanRoles);
-        toast(t('toast.userUpdated', { name }), 'success');
+        toast(t('common:toast.userUpdated', { name }), 'success');
       } else {
         await createUser(connectionId, authDb, name, password, cleanRoles);
-        toast(t('toast.userCreated', { name }), 'success');
+        toast(t('common:toast.userCreated', { name }), 'success');
       }
       onSaved();
     } catch (err: any) {
@@ -171,9 +171,9 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
         >
           <DialogTitle className="flex items-center gap-2 text-sm">
             <User size={14} className="text-primary" />
-            {isEdit ? `Edit User — ${editor.user?.user}` : 'New User'}
+            {isEdit ? t('userManagementView.editor.titleEdit', { user: editor.user?.user }) : t('userManagementView.editor.titleNew')}
           </DialogTitle>
-          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="Close modal" data-testid="close-user-editor">
+          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label={t('userManagementView.editor.closeAriaLabel')} data-testid="close-user-editor">
             <X size={13} />
           </Button>
         </DialogHeader>
@@ -181,13 +181,13 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="user-name-input">Username</Label>
+              <Label htmlFor="user-name-input">{t('userManagementView.editor.labels.username')}</Label>
               <Input
                 id="user-name-input"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="e.g. app_user"
+                placeholder={t('userManagementView.editor.placeholders.username')}
                 disabled={isEdit}
                 required
                 data-testid="user-name-input"
@@ -195,20 +195,20 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="user-password-input">{isEdit ? 'New Password' : 'Password'}</Label>
+              <Label htmlFor="user-password-input">{isEdit ? t('userManagementView.editor.labels.newPassword') : t('userManagementView.editor.labels.password')}</Label>
               <PasswordInput
                 id="user-password-input"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={isEdit ? 'Leave blank to keep current password' : 'Password'}
+                placeholder={isEdit ? t('userManagementView.editor.placeholders.passwordKeepCurrent') : t('userManagementView.editor.placeholders.password')}
                 required={!isEdit}
                 data-testid="user-password-input"
               />
-              {!isEdit && <span className="text-[11px] text-muted-foreground">The password must be set.</span>}
+              {!isEdit && <span className="text-[11px] text-muted-foreground">{t('userManagementView.editor.hints.passwordRequired')}</span>}
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <Label>Authentication Database</Label>
+              <Label>{t('userManagementView.editor.labels.authDatabase')}</Label>
               <Select value={authDb} onValueChange={setAuthDb} disabled={isEdit}>
                 <SelectTrigger data-testid="user-authdb-input">
                   <SelectValue />
@@ -221,22 +221,22 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
                   ))}
                 </SelectContent>
               </Select>
-              <span className="text-[11px] text-muted-foreground">The database the user authenticates against.</span>
+              <span className="text-[11px] text-muted-foreground">{t('userManagementView.editor.hints.authDatabaseExplain')}</span>
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label>Roles</Label>
+              <Label>{t('userManagementView.editor.labels.roles')}</Label>
               {roles.length > 0 && (
                 <div className="flex max-h-[170px] flex-col gap-2 overflow-y-auto pr-1">
                   {roles.map((rule, idx) => (
                     <div key={idx} className="flex items-center gap-2" data-testid={`role-row-${idx}`}>
                       <Select value={rule.role || '__none__'} onValueChange={(v) => setRole(idx, { role: v === '__none__' ? '' : v })}>
                         <SelectTrigger className="flex-[1.2]" data-testid={`role-select-${idx}`}>
-                          <SelectValue placeholder="Select role…" />
+                          <SelectValue placeholder={t('userManagementView.editor.placeholders.selectRole')} />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__none__" disabled>
-                            Select role…
+                            {t('userManagementView.editor.placeholders.selectRole')}
                           </SelectItem>
                           {withValue(roleNames, rule.role).map((r) => (
                             <SelectItem key={r} value={r}>
@@ -263,7 +263,7 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
                         size="icon"
                         className="h-8 w-8 text-destructive hover:text-destructive"
                         onClick={() => setRoles((prev) => prev.filter((_, i) => i !== idx))}
-                        title="Revoke role"
+                        title={t('userManagementView.editor.actions.revokeRole')}
                         data-testid={`revoke-role-${idx}`}
                       >
                         <Trash2 size={13} />
@@ -281,11 +281,11 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
                 data-testid="add-role-btn"
               >
                 <Plus size={12} />
-                Grant Role
+                {t('userManagementView.editor.actions.grantRole')}
               </Button>
               {isEdit && (
                 <span className="text-[11px] text-muted-foreground">
-                  Saving replaces the user&apos;s role set with the list above.
+                  {t('userManagementView.editor.hints.savingReplacesRoles')}
                 </span>
               )}
             </div>
@@ -297,10 +297,10 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
             </span>
             <div className="flex gap-2">
               <Button type="button" variant="outline" onClick={onClose}>
-                Cancel
+                {t('userManagementView.editor.actions.cancel')}
               </Button>
               <Button type="submit" disabled={saving} data-testid="save-user-btn">
-                {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add User'}
+                {saving ? t('userManagementView.editor.actions.saving') : isEdit ? t('userManagementView.editor.actions.saveChanges') : t('userManagementView.editor.actions.addUser')}
               </Button>
             </div>
           </DialogFooter>
@@ -312,7 +312,7 @@ const UserEditorModal: React.FC<UserEditorModalProps> = ({
 
 export const UserManagementView: React.FC<UserManagementViewProps> = ({ connectionId, database }) => {
   const { toast, confirm } = useDialogs();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('admin');
   const [users, setUsers] = useState<MongoUser[]>([]);
   const [databases, setDatabases] = useState<string[]>([]);
   const [scope, setScope] = useState<string>(database || ALL_DBS);
@@ -349,7 +349,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
           const dbs = await invoke<string[]>('list_databases', { id: connectionId });
           const results = await Promise.allSettled(dbs.map((db) => listUsers(connectionId, db)));
           setUsers(results.flatMap((r) => (r.status === 'fulfilled' ? r.value : [])));
-          setHint('Not authorized to list users across all databases — showing users from databases you can access.');
+          setHint(t('userManagementView.hint.notAuthorizedAllDbs'));
         }
       } else {
         setUsers(await listUsers(connectionId, scope));
@@ -359,7 +359,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
     } finally {
       setLoading(false);
     }
-  }, [connectionId, scope]);
+  }, [connectionId, scope, t]);
 
   useEffect(() => {
     refresh();
@@ -379,17 +379,17 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
 
   const handleDrop = async (user: MongoUser) => {
     const ok = await confirm({
-      title: 'Drop User',
-      message: `Drop user "${user.user}" on database "${user.db}"? This cannot be undone.`,
-      confirmLabel: 'Drop User',
+      title: t('userManagementView.confirm.dropTitle'),
+      message: t('userManagementView.confirm.dropMessage', { user: user.user, database: user.db }),
+      confirmLabel: t('userManagementView.confirm.dropConfirmLabel'),
     });
     if (!ok) return;
     try {
       await dropUser(connectionId, user.db, user.user);
-      toast(t('toast.userDropped', { name: user.user }), 'success');
+      toast(t('common:toast.userDropped', { name: user.user }), 'success');
       refresh();
     } catch (err: any) {
-      toast(t('toast.failedToDropUser', { detail: err?.message || err }), 'error');
+      toast(t('common:toast.failedToDropUser', { detail: err?.message || err }), 'error');
     }
   };
 
@@ -398,15 +398,15 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Users size={14} className="text-primary" />
-          <span>User Management</span>
+          <span>{t('userManagementView.title')}</span>
         </div>
         <div className="flex items-center gap-2">
           <Select value={scope} onValueChange={setScope}>
-            <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="user-db-scope" title="Database scope">
+            <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="user-db-scope" title={t('userManagementView.labels.databaseScope')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ALL_DBS}>All databases</SelectItem>
+              <SelectItem value={ALL_DBS}>{t('userManagementView.labels.allDatabases')}</SelectItem>
               {withValue(databases, scope === ALL_DBS ? '' : scope).map((d) => (
                 <SelectItem key={d} value={d}>
                   {d}
@@ -414,12 +414,12 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
               ))}
             </SelectContent>
           </Select>
-          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={refresh} title="Refresh" data-testid="refresh-users-btn">
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={refresh} title={t('userManagementView.actions.refresh')} data-testid="refresh-users-btn">
             <RefreshCw size={13} />
           </Button>
           <Button type="button" size="sm" onClick={() => setEditor({ mode: 'create' })} data-testid="create-user-btn">
             <Plus size={12} />
-            Create User
+            {t('userManagementView.actions.createUser')}
           </Button>
         </div>
       </div>
@@ -431,7 +431,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
       {loading ? (
         <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 size={16} className="animate-spin" />
-          Loading users…
+          {t('userManagementView.loading')}
         </div>
       ) : error ? (
         <div className="flex h-full items-center justify-center p-6">
@@ -449,7 +449,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
           }}
         >
           <ShieldCheck size={24} className="opacity-50" />
-          <span>No users found{scope !== ALL_DBS ? ` in ${scope}` : ''}.</span>
+          <span>{scope !== ALL_DBS ? t('userManagementView.empty.noUsersInScope', { scope }) : t('userManagementView.empty.noUsers')}</span>
         </div>
       ) : (
         <ScrollArea className="flex-1" data-testid="users-tree">
@@ -460,9 +460,9 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
             }}
           >
             <div className="grid grid-cols-[1.2fr_1fr_1fr] gap-2 border-b border-border bg-muted/50 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              <span>User</span>
-              <span>Database</span>
-              <span>Auth Mechanism</span>
+              <span>{t('userManagementView.labels.columnUser')}</span>
+              <span>{t('userManagementView.labels.columnDatabase')}</span>
+              <span>{t('userManagementView.labels.columnAuthMechanism')}</span>
             </div>
             {users.map((u) => {
               const key = userKey(u);
@@ -491,7 +491,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
                   {isOpen && (
                     <div className="border-t border-border bg-muted/20 px-4 py-1">
                       {u.roles.length === 0 ? (
-                        <div className="py-2 pl-6 text-xs italic text-muted-foreground">No roles granted</div>
+                        <div className="py-2 pl-6 text-xs italic text-muted-foreground">{t('userManagementView.labels.noRolesGranted')}</div>
                       ) : (
                         u.roles.map((r, i) => (
                           <div key={i} className="flex items-center gap-2 py-1.5 pl-6 text-xs text-foreground">
@@ -519,12 +519,12 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
               ...(menu.user
                 ? [
                     {
-                      label: 'Edit User',
+                      label: t('userManagementView.actions.editUser'),
                       icon: <Pencil size={12} />,
                       onClick: () => setEditor({ mode: 'edit', user: menu.user! }),
                     },
                     {
-                      label: 'Drop User',
+                      label: t('userManagementView.actions.dropUser'),
                       icon: <Trash2 size={12} />,
                       danger: true,
                       onClick: () => handleDrop(menu.user!),
@@ -532,12 +532,12 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ connecti
                   ]
                 : []),
               {
-                label: 'Create User',
+                label: t('userManagementView.actions.createUser'),
                 icon: <Plus size={12} />,
                 separatorBefore: !!menu.user,
                 onClick: () => setEditor({ mode: 'create' }),
               },
-              { label: 'Refresh', icon: <RefreshCw size={12} />, onClick: refresh },
+              { label: t('userManagementView.actions.refresh'), icon: <RefreshCw size={12} />, onClick: refresh },
             ] as ContextMenuItem[]
           }
         />

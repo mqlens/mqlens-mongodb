@@ -997,7 +997,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title: t('dialogs.dropCollection.title'),
           kind: 'collection',
           expectedName: collName,
-        }))
+        }, t))
       )
         return;
     } else if (
@@ -1056,7 +1056,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title: t('dialogs.renameCollection.title'),
           kind: 'collection',
           expectedName: collName,
-        }))
+        }, t))
       )
         return;
     }
@@ -1145,7 +1145,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title: t('dialogs.dropDatabase.title'),
           kind: 'database',
           expectedName: dbName,
-        }))
+        }, t))
       )
         return;
     } else if (
@@ -1243,7 +1243,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           kind: 'database',
           expectedName: dbName,
           message: t('dialogs.renameDatabase.messageTyped', { oldName: dbName, newName }),
-        }))
+        }, t))
       )
         return;
     } else if (
@@ -2440,8 +2440,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex flex-col gap-0.5 pb-1">
                 {favoriteItems.map((fav) => {
                     const connected = Boolean(connectionIdForName(fav.connectionName));
-                    const label = favoriteItemLabel(fav);
-                    const subtitle = favoriteItemSubtitle(fav);
+                    const label = favoriteItemLabel(fav, t);
+                    const subtitle = favoriteItemSubtitle(fav, t);
                     const FavIcon =
                       fav.kind === 'query'
                         ? Heart

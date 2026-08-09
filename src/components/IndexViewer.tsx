@@ -25,6 +25,7 @@ import { formatBytes } from '@/lib/format';
 import type { IndexInfo } from './Sidebar';
 import type { IndexStatUi } from './StatsCards';
 import { useDialogs } from './dialogs/DialogProvider';
+import { useTranslation } from 'react-i18next';
 
 interface IndexViewerProps {
   connectionId: string;
@@ -44,6 +45,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
   onDeleteIndex,
 }) => {
   const { confirm } = useDialogs();
+  const { t } = useTranslation('admin');
   const [copied, setCopied] = useState(false);
   const [info, setInfo] = useState<IndexInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,7 +69,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
         if (cancelled) return;
         const match = list.find((i) => i.name === indexName) || null;
         if (!match) {
-          setError(`Index "${indexName}" was not found on ${databaseName}.${collectionName}.`);
+          setError(t('indexViewer.errors.notFound', { indexName, namespace: `${databaseName}.${collectionName}` }));
         } else {
           setInfo(match);
         }
@@ -96,7 +98,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [connectionId, databaseName, collectionName, indexName]);
+  }, [connectionId, databaseName, collectionName, indexName, t]);
 
   const statEntry = useMemo(() => stats?.find((s) => s.name === indexName) ?? null, [stats, indexName]);
 
@@ -114,13 +116,15 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
     }
 
     const fieldCount = Object.keys(keyPattern).length;
-    const type = fieldCount > 1 ? 'Compound' : 'Single Field';
+    const type = fieldCount > 1 ? t('indexViewer.type.compound') : t('indexViewer.type.singleField');
     const unique = info?.unique ?? false;
     const sparse = info?.sparse ?? false;
     const isId = indexName === '_id_';
     const description = isId
-      ? 'System primary key index. Automatically created by MongoDB.'
-      : `User-created index on ${Object.keys(keyPattern).join(', ') || '(unknown fields)'}.`;
+      ? t('indexViewer.descriptions.systemPrimaryKey')
+      : t('indexViewer.descriptions.userCreated', {
+          fields: Object.keys(keyPattern).join(', ') || t('indexViewer.labels.unknownFields'),
+        });
 
     const rawJson = JSON.stringify(
       {
@@ -136,7 +140,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
     );
 
     return { keyPattern, type, unique, sparse, fieldCount, description, rawJson };
-  }, [info, indexName, databaseName, collectionName]);
+  }, [info, indexName, databaseName, collectionName, t]);
 
   const editableKeyPattern = useMemo(() => {
     const out: Record<string, number> = {};
@@ -193,7 +197,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
       <div className="flex h-full flex-col" data-testid="index-viewer" data-connection-id={connectionId}>
         <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          <span>Loading index definition…</span>
+          <span>{t('indexViewer.loading')}</span>
         </div>
       </div>
     );
@@ -220,7 +224,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-base font-semibold tracking-tight text-foreground">{indexName}</h1>
-                <Badge variant="secondary">Index</Badge>
+                <Badge variant="secondary">{t('indexViewer.badges.index')}</Badge>
               </div>
               <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Database size={11} className="text-warning" />
@@ -237,11 +241,11 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
                   variant="outline"
                   size="sm"
                   onClick={() => onEditIndex(indexName, editableKeyPattern, indexSpecs.unique, indexSpecs.sparse)}
-                  title="Edit Index"
+                  title={t('indexViewer.actions.editIndex')}
                   data-testid="edit-index-btn"
                 >
                   <Edit size={13} />
-                  Edit Index
+                  {t('indexViewer.actions.editIndex')}
                 </Button>
               )}
               {onDeleteIndex && (
@@ -253,20 +257,20 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
                   onClick={async () => {
                     if (
                       await confirm({
-                        title: 'Delete index',
-                        message: `Are you sure you want to delete index "${indexName}"?`,
-                        confirmLabel: 'Delete',
+                        title: t('indexViewer.confirm.deleteTitle'),
+                        message: t('indexViewer.confirm.deleteMessage', { indexName }),
+                        confirmLabel: t('indexViewer.confirm.deleteConfirmLabel'),
                         destructive: true,
                       })
                     ) {
                       onDeleteIndex(indexName);
                     }
                   }}
-                  title="Delete Index"
+                  title={t('indexViewer.actions.deleteIndex')}
                   data-testid="delete-index-btn"
                 >
                   <Trash2 size={13} />
-                  Delete Index
+                  {t('indexViewer.actions.deleteIndex')}
                 </Button>
               )}
             </div>
@@ -278,7 +282,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                 <Cpu size={12} className="text-primary" />
-                Definition
+                {t('indexViewer.cards.definition')}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -287,7 +291,7 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
                 {Object.entries(indexSpecs.keyPattern).map(([key, dir]) => {
                   const isDesc = dir === -1 || dir === '-1';
                   const isAsc = dir === 1 || dir === '1';
-                  const label = isDesc ? 'DESC (-1)' : isAsc ? 'ASC (1)' : String(dir);
+                  const label = isDesc ? t('indexViewer.direction.desc') : isAsc ? t('indexViewer.direction.asc') : String(dir);
                   return (
                     <Badge key={key} variant="outline" className="gap-1 font-mono text-[10px]">
                       <span>{key}</span>
@@ -303,16 +307,16 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                 <Layers size={12} className="text-success" />
-                Constraints
+                {t('indexViewer.cards.constraints')}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-lg font-semibold text-foreground">
-                {indexSpecs.unique ? 'Unique' : 'Non-Unique'}
+                {indexSpecs.unique ? t('indexViewer.constraints.unique') : t('indexViewer.constraints.nonUnique')}
               </div>
               <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <span className={cn('inline-block h-1.5 w-1.5 rounded-full', indexSpecs.sparse ? 'bg-success' : 'bg-muted-foreground/40')} />
-                {indexSpecs.sparse ? 'Sparse index' : 'Non-sparse (indexes all documents)'}
+                {indexSpecs.sparse ? t('indexViewer.constraints.sparseIndex') : t('indexViewer.constraints.nonSparse')}
               </p>
             </CardContent>
           </Card>
@@ -321,13 +325,15 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                 <Hash size={12} className="text-warning" />
-                Key Fields
+                {t('indexViewer.cards.keyFields')}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-lg font-semibold text-foreground">{indexSpecs.fieldCount}</div>
               <p className="mt-1 text-[11px] text-muted-foreground">
-                {indexSpecs.fieldCount === 1 ? 'Single-field index' : `${indexSpecs.fieldCount} fields (compound)`}
+                {indexSpecs.fieldCount === 1
+                  ? t('indexViewer.constraints.singleFieldIndex')
+                  : t('indexViewer.constraints.fieldsCompound', { count: indexSpecs.fieldCount })}
               </p>
             </CardContent>
           </Card>
@@ -337,12 +343,12 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                   <HardDrive size={12} className="text-primary" />
-                  Size
+                  {t('indexViewer.cards.size')}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-lg font-semibold text-foreground">{formatBytes(statEntry.sizeBytes)}</div>
-                <p className="mt-1 text-[11px] text-muted-foreground">On-disk index size</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">{t('indexViewer.size.onDiskIndexSize')}</p>
               </CardContent>
             </Card>
           )}
@@ -352,19 +358,19 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                   <Activity size={12} className="text-success" />
-                  Usage
+                  {t('indexViewer.cards.usage')}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-2">
-                  <div className="text-lg font-semibold text-foreground">{statEntry.ops.toLocaleString('en-US')} ops</div>
+                  <div className="text-lg font-semibold text-foreground">{t('indexViewer.usage.opsCount', { ops: statEntry.ops.toLocaleString('en-US') })}</div>
                   {statEntry.ops === 0 && (
                     <Badge variant="outline" data-testid="index-unused-badge">
-                      Unused
+                      {t('indexViewer.badges.unused')}
                     </Badge>
                   )}
                 </div>
-                <p className="mt-1 text-[11px] text-muted-foreground">Index accesses since last restart</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">{t('indexViewer.usage.indexAccessesSinceRestart')}</p>
               </CardContent>
             </Card>
           )}
@@ -375,38 +381,38 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-1.5 text-sm">
                 <Info size={13} className="text-primary" />
-                Properties &amp; Details
+                {t('indexViewer.properties.title')}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between gap-4 text-xs">
-                <span className="text-muted-foreground">Index Name</span>
+                <span className="text-muted-foreground">{t('indexViewer.properties.indexName')}</span>
                 <span className="select-text font-mono text-foreground">{indexName}</span>
               </div>
               <div className="flex items-center justify-between gap-4 text-xs">
-                <span className="text-muted-foreground">Unique Constraint</span>
+                <span className="text-muted-foreground">{t('indexViewer.properties.uniqueConstraint')}</span>
                 {indexSpecs.unique ? (
-                  <Badge variant="success">Unique</Badge>
+                  <Badge variant="success">{t('indexViewer.constraints.unique')}</Badge>
                 ) : (
-                  <Badge variant="outline">Non-Unique</Badge>
+                  <Badge variant="outline">{t('indexViewer.constraints.nonUnique')}</Badge>
                 )}
               </div>
               <div className="flex items-center justify-between gap-4 text-xs">
-                <span className="text-muted-foreground">Sparse Constraint</span>
+                <span className="text-muted-foreground">{t('indexViewer.properties.sparseConstraint')}</span>
                 {indexSpecs.sparse ? (
-                  <Badge variant="secondary">Sparse</Badge>
+                  <Badge variant="secondary">{t('indexModal.constraintLabels.sparse')}</Badge>
                 ) : (
-                  <Badge variant="outline">Non-Sparse</Badge>
+                  <Badge variant="outline">{t('indexViewer.properties.nonSparseBadge')}</Badge>
                 )}
               </div>
               <div className="flex items-center justify-between gap-4 text-xs">
-                <span className="text-muted-foreground">Operational Status</span>
-                <Badge variant="success">Active</Badge>
+                <span className="text-muted-foreground">{t('indexViewer.properties.operationalStatus')}</span>
+                <Badge variant="success">{t('indexViewer.properties.active')}</Badge>
               </div>
               <div className="rounded-md border border-border bg-muted/30 p-3">
                 <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-primary">
                   <Info size={12} />
-                  Description &amp; Guidelines
+                  {t('indexViewer.properties.descriptionAndGuidelines')}
                 </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">{indexSpecs.description}</p>
               </div>
@@ -417,18 +423,18 @@ export const IndexViewer: React.FC<IndexViewerProps> = ({
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="flex items-center gap-2 text-sm">
                 <FileJson size={13} className="text-warning" />
-                Raw Specification (BSON Metadata)
+                {t('indexViewer.raw.title')}
               </CardTitle>
-              <Button type="button" variant="outline" size="sm" className="h-7 text-[11px]" onClick={handleCopy} title="Copy to Clipboard">
+              <Button type="button" variant="outline" size="sm" className="h-7 text-[11px]" onClick={handleCopy} title={t('indexViewer.actions.copyToClipboard')}>
                 {copied ? (
                   <>
                     <Check size={11} className="text-success" />
-                    Copied!
+                    {t('indexViewer.actions.copied')}
                   </>
                 ) : (
                   <>
                     <Copy size={11} />
-                    Copy JSON
+                    {t('indexViewer.actions.copyJson')}
                   </>
                 )}
               </Button>

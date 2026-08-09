@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next';
 import type { SshConfig } from '../components/ConnectionManager';
 
 /** Mirrors backend `connections::ConnectionMode` (#188). */
@@ -27,9 +28,14 @@ export interface ExportUriOptions {
 export const MONGO_URI_RE = /^mongodb(\+srv)?:\/\//i;
 export const MONGO_URI_IN_TEXT_RE = /mongodb(\+srv)?:\/\/[^\s'"<>\r\n]+/i;
 
+/** Keys into connections:errors.import* — translated at the call site
+ *  (ConnectionManager.tsx), since this is a plain module function and
+ *  cannot call the useTranslation hook. */
+export type ImportParseErrorCode = 'empty' | 'noUriFound';
+
 export type ImportUriResult =
   | { ok: true; uri: string }
-  | { ok: false; error: string };
+  | { ok: false; error: ImportParseErrorCode };
 
 export type ImportedConnection = {
   name: string;
@@ -40,7 +46,7 @@ export type ImportedConnection = {
 
 export type ParseConnectionsResult =
   | { ok: true; connections: ImportedConnection[] }
-  | { ok: false; error: string };
+  | { ok: false; error: ImportParseErrorCode };
 
 export type ExportFolderInfo = {
   folders: Array<{ id: string; name: string }>;
@@ -88,11 +94,13 @@ export const buildExportUri = (uri: string, opts: ExportUriOptions): string => {
   return out;
 };
 
-/** Validation message for import flows; `null` when the string is a MongoDB URI. */
-export function validateMongoUri(text: string): string | null {
+/** Validation message for import flows; `null` when the string is a MongoDB URI.
+ *  Takes `t` as a parameter rather than calling a hook, so this module stays
+ *  pure and framework-free (same pattern as `tabLabelFor` in App.tsx). */
+export function validateMongoUri(text: string, t: TFunction): string | null {
   const trimmed = text.trim();
-  if (!trimmed) return 'Enter a mongodb:// or mongodb+srv:// URI';
-  if (!MONGO_URI_RE.test(trimmed)) return 'Enter a mongodb:// or mongodb+srv:// URI';
+  if (!trimmed) return t('connections:import.errors.notAMongoUri');
+  if (!MONGO_URI_RE.test(trimmed)) return t('connections:import.errors.notAMongoUri');
   return null;
 }
 
@@ -246,7 +254,7 @@ function collectConnectionsFromJson(value: unknown, out: ImportedConnection[], i
 export function parseConnectionImportFile(text: string): ParseConnectionsResult {
   const normalized = stripBom(text).trim();
   if (!normalized) {
-    return { ok: false, error: 'File is empty' };
+    return { ok: false, error: 'empty' };
   }
 
   const connections: ImportedConnection[] = [];
@@ -279,7 +287,7 @@ export function parseConnectionImportFile(text: string): ParseConnectionsResult 
   });
 
   if (unique.length === 0) {
-    return { ok: false, error: 'No mongodb:// or mongodb+srv:// URI found in file' };
+    return { ok: false, error: 'noUriFound' };
   }
 
   return { ok: true, connections: unique };

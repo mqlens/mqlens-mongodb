@@ -1,13 +1,17 @@
-/** Preset connection color tags (#34). Hex values work in inline styles. */
+/** Preset connection color tags (#34). Hex values work in inline styles.
+ *  The swatches are unlabelled circles, so `labelKey` is the ONLY thing a
+ *  screen-reader user gets — it carries a catalog key rather than English copy
+ *  (same `labelKey` indirection as shortcuts.ts) because this module is plain
+ *  `.ts` and cannot call a translation hook. */
 export const CONNECTION_COLOR_PALETTE = [
-  { id: 'red', value: '#ef4444', label: 'Red' },
-  { id: 'orange', value: '#f97316', label: 'Orange' },
-  { id: 'amber', value: '#eab308', label: 'Amber' },
-  { id: 'green', value: '#22c55e', label: 'Green' },
-  { id: 'blue', value: '#3b82f6', label: 'Blue' },
-  { id: 'violet', value: '#8b5cf6', label: 'Violet' },
-  { id: 'pink', value: '#ec4899', label: 'Pink' },
-  { id: 'slate', value: '#64748b', label: 'Slate' },
+  { id: 'red', value: '#ef4444', labelKey: 'colorTags.red' },
+  { id: 'orange', value: '#f97316', labelKey: 'colorTags.orange' },
+  { id: 'amber', value: '#eab308', labelKey: 'colorTags.amber' },
+  { id: 'green', value: '#22c55e', labelKey: 'colorTags.green' },
+  { id: 'blue', value: '#3b82f6', labelKey: 'colorTags.blue' },
+  { id: 'violet', value: '#8b5cf6', labelKey: 'colorTags.violet' },
+  { id: 'pink', value: '#ec4899', labelKey: 'colorTags.pink' },
+  { id: 'slate', value: '#64748b', labelKey: 'colorTags.slate' },
 ] as const;
 
 export type ConnectionColorId = (typeof CONNECTION_COLOR_PALETTE)[number]['id'];

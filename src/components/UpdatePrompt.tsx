@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { relaunch } from '@tauri-apps/plugin-process';
@@ -110,6 +111,7 @@ async function currentChannel(): Promise<string> {
 }
 
 export const UpdatePrompt: React.FC = () => {
+  const { t } = useTranslation('shell');
   const [update, setUpdate] = useState<UpdateMeta | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -237,15 +239,22 @@ export const UpdatePrompt: React.FC = () => {
   if (phase === 'checking' && manual) {
     return (
       <div className={toastClassName} data-testid="update-toast">
-        <RefreshCw size={14} className="animate-spin text-primary" /> Checking for updates…
+        <RefreshCw size={14} className="animate-spin text-primary" /> {t('updatePrompt.toast.checking')}
       </div>
     );
   }
   if (phase === 'uptodate') {
     return (
       <div className={toastClassName} data-testid="update-toast">
-        <CheckCircle2 size={14} className="text-success" /> You’re on the latest version.
-        <Button type="button" variant="ghost" size="icon" className="ml-1 h-6 w-6" onClick={dismiss} aria-label="Dismiss">
+        <CheckCircle2 size={14} className="text-success" /> {t('updatePrompt.toast.uptodate')}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="ml-1 h-6 w-6"
+          onClick={dismiss}
+          aria-label={t('updatePrompt.toast.dismiss')}
+        >
           <X size={12} />
         </Button>
       </div>
@@ -255,8 +264,15 @@ export const UpdatePrompt: React.FC = () => {
     return (
       <div className={cn(toastClassName, 'border-warning/30')} data-testid="update-toast">
         <WifiOff size={14} className="text-warning" />
-        You’re offline. Connect to the internet and try again.
-        <Button type="button" variant="ghost" size="icon" className="ml-1 h-6 w-6" onClick={dismiss} aria-label="Dismiss">
+        {t('updatePrompt.toast.offline')}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="ml-1 h-6 w-6"
+          onClick={dismiss}
+          aria-label={t('updatePrompt.toast.dismiss')}
+        >
           <X size={12} />
         </Button>
       </div>
@@ -266,8 +282,15 @@ export const UpdatePrompt: React.FC = () => {
     return (
       <div className={cn(toastClassName, 'border-destructive/30 text-destructive')} data-testid="update-toast" title={error ?? undefined}>
         <AlertTriangle size={14} />
-        Couldn’t reach the update server. Try again later.
-        <Button type="button" variant="ghost" size="icon" className="ml-1 h-6 w-6" onClick={dismiss} aria-label="Dismiss">
+        {t('updatePrompt.toast.checkFailed')}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="ml-1 h-6 w-6"
+          onClick={dismiss}
+          aria-label={t('updatePrompt.toast.dismiss')}
+        >
           <X size={12} />
         </Button>
       </div>
@@ -294,13 +317,25 @@ export const UpdatePrompt: React.FC = () => {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm">
             <ArrowUpCircle size={16} className="text-primary" />
-            Update available
+            {t('updatePrompt.dialog.title')}
           </DialogTitle>
         </DialogHeader>
 
         <p className="text-sm text-foreground" data-testid="update-version">
-          MQLens <strong>{update?.version}</strong> is available
-          {update?.current_version ? <> (you have {update.current_version})</> : null}.
+          {update?.current_version ? (
+            <Trans
+              i18nKey="shell:updatePrompt.dialog.versionAvailableWithCurrent"
+              t={t}
+              values={{ version: update?.version, current: update.current_version }}
+            >
+              MQLens <strong>{update?.version}</strong> is available (you have{' '}
+              {update.current_version}).
+            </Trans>
+          ) : (
+            <Trans i18nKey="shell:updatePrompt.dialog.versionAvailable" t={t} values={{ version: update?.version }}>
+              MQLens <strong>{update?.version}</strong> is available.
+            </Trans>
+          )}
         </p>
         {update?.notes && <ReleaseNotes markdown={update.notes} />}
 
@@ -310,17 +345,17 @@ export const UpdatePrompt: React.FC = () => {
               <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
             </div>
             <span className="text-xs text-muted-foreground">
-              {pct}% — downloading, the app will restart when done…
+              {t('updatePrompt.dialog.downloading', { pct })}
             </span>
           </div>
         ) : (
           <DialogFooter>
             <Button type="button" variant="outline" onClick={dismiss} data-testid="update-later">
-              Later
+              {t('updatePrompt.dialog.later')}
             </Button>
             <Button type="button" onClick={install} data-testid="update-now">
               <Download size={13} />
-              Update now
+              {t('updatePrompt.dialog.updateNow')}
             </Button>
           </DialogFooter>
         )}

@@ -1,4 +1,5 @@
 import { ListChecks } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -33,6 +34,7 @@ export function StatusBar({
   runningTasks = 0,
   className,
 }: StatusBarProps) {
+  const { t } = useTranslation('shell');
   const showZoom = zoomPercent != null && zoomPercent !== 100;
 
   return (
@@ -43,10 +45,10 @@ export function StatusBar({
         className
       )}
     >
-      <span className="text-success">MQLens Engine Online</span>
-      {cpu && <span>CPU {cpu}</span>}
-      {memory && <span>RAM {memory}</span>}
-      {mongoVersion && <span>MongoDB {mongoVersion}</span>}
+      <span className="text-success">{t('statusBar.engineOnline')}</span>
+      {cpu && <span>{t('statusBar.cpu', { value: cpu })}</span>}
+      {memory && <span>{t('statusBar.ram', { value: memory })}</span>}
+      {mongoVersion && <span>{t('statusBar.mongodb', { value: mongoVersion })}</span>}
       {showZoom && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -60,7 +62,7 @@ export function StatusBar({
             </button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            Reset zoom ({formatShortcut(shortcutById('zoom-reset')!)})
+            {t('statusBar.resetZoom', { shortcut: formatShortcut(shortcutById('zoom-reset')!) })}
           </TooltipContent>
         </Tooltip>
       )}
@@ -74,7 +76,7 @@ export function StatusBar({
               onClick={onOpenTasks}
             >
               <ListChecks size={12} />
-              <span>Tasks</span>
+              <span>{t('statusBar.tasks')}</span>
               {runningTasks > 0 && (
                 <span className="rounded-full bg-primary px-1.5 text-[10px] font-medium tabular-nums text-primary-foreground">
                   {runningTasks}
@@ -83,11 +85,13 @@ export function StatusBar({
             </button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            {runningTasks > 0 ? `${runningTasks} running task(s)` : "Background tasks"}
+            {runningTasks > 0
+              ? t('statusBar.runningTasks', { count: runningTasks })
+              : t('statusBar.backgroundTasks')}
           </TooltipContent>
         </Tooltip>
       )}
-      <span className={onOpenTasks ? "" : "ml-auto"}>MQLens {appVersion ?? ""}</span>
+      <span className={onOpenTasks ? "" : "ml-auto"}>{t('statusBar.appVersion', { version: appVersion ?? '' })}</span>
     </footer>
   );
 }

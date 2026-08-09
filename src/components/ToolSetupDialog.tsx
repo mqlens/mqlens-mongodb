@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Dialog,
   DialogContent,
@@ -40,13 +41,17 @@ interface ToolSetupDialogProps {
 
 const checkboxLabelClassName = 'flex cursor-pointer items-center gap-2 text-sm text-foreground';
 
-const TOOL_LABELS: Record<string, string> = {
-  'database-tools': 'Database Tools (mongodump, mongorestore)',
-  mongosh: 'mongosh',
+// Keys into shell:toolSetupDialog.toolLabels — translated at the call site
+// (toolLabel takes `t` as a param since this is a module-level constant/helper
+// and can't call the useTranslation hook itself).
+const TOOL_LABEL_KEYS: Record<string, string> = {
+  'database-tools': 'shell:toolSetupDialog.toolLabels.databaseTools',
+  mongosh: 'shell:toolSetupDialog.toolLabels.mongosh',
 };
 
-function toolLabel(name: string): string {
-  return TOOL_LABELS[name] ?? name;
+function toolLabel(t: (key: string) => string, name: string): string {
+  const key = TOOL_LABEL_KEYS[name];
+  return key ? t(key) : name;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -60,6 +65,7 @@ export const ToolSetupDialog: React.FC<ToolSetupDialogProps> = ({
   onCancel,
   onDone,
 }) => {
+  const { t } = useTranslation('shell');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastSubmitted, setLastSubmitted] = useState<{ tools: string[]; force: boolean } | null>(
     null
@@ -150,21 +156,20 @@ export const ToolSetupDialog: React.FC<ToolSetupDialogProps> = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Wrench className="h-4 w-4" />
-            Set up MongoDB tools
+            {t('toolSetupDialog.title')}
           </DialogTitle>
         </DialogHeader>
 
         {showChecklist && statuses === null && (
           <div className="flex flex-col gap-2 py-6 text-center text-sm text-muted-foreground">
-            Checking installed tools…
+            {t('toolSetupDialog.checkingTools')}
           </div>
         )}
 
         {showChecklist && statuses !== null && (
           <div className="flex flex-col gap-4 py-2">
             <p className="text-xs text-muted-foreground">
-              MQLens needs these command-line tools for dump, restore, import, and export. Pick
-              which ones to install or reinstall.
+              {t('toolSetupDialog.intro')}
             </p>
 
             <div className="divide-y divide-border rounded-md border border-border">
@@ -177,9 +182,9 @@ export const ToolSetupDialog: React.FC<ToolSetupDialogProps> = ({
                       onChange={() => toggle(tool.name)}
                       data-testid={`toolsetup-check-${tool.name}`}
                     />
-                    <span className="font-medium">{toolLabel(tool.name)}</span>
+                    <span className="font-medium">{toolLabel(t, tool.name)}</span>
                     {tool.installed && (
-                      <span className="text-xs text-muted-foreground">Installed</span>
+                      <span className="text-xs text-muted-foreground">{t('toolSetupDialog.installedBadge')}</span>
                     )}
                   </label>
                   <p
@@ -187,7 +192,7 @@ export const ToolSetupDialog: React.FC<ToolSetupDialogProps> = ({
                     data-testid={`toolsetup-version-${tool.name}`}
                   >
                     v{tool.version}
-                    {tool.path ? ` — ${tool.path}` : ''}
+                    {tool.path ? t('toolSetupDialog.pathSuffix', { path: tool.path }) : ''}
                   </p>
                 </section>
               ))}
@@ -195,17 +200,15 @@ export const ToolSetupDialog: React.FC<ToolSetupDialogProps> = ({
 
             {willReinstall && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
-                Will reinstall: already-installed tools you've kept checked will be downloaded
-                again and replaced.
+                {t('toolSetupDialog.reinstallWarning')}
               </p>
             )}
 
             <p className="text-xs text-muted-foreground" data-testid="toolsetup-size-note">
-              Downloads are roughly 50–100 MB per tool and are cached in the app's data
-              directory.
+              {t('toolSetupDialog.sizeNote')}
             </p>
             <p className="text-xs text-muted-foreground" data-testid="toolsetup-license-note">
-              Official Apache-2.0 builds downloaded from mongodb.com
+              {t('toolSetupDialog.licenseNote')}
             </p>
           </div>
         )}
@@ -246,7 +249,7 @@ export const ToolSetupDialog: React.FC<ToolSetupDialogProps> = ({
         {isCancelled && task && (
           <div className="flex flex-col gap-3 py-2">
             <p className="text-sm font-medium text-foreground" data-testid="toolsetup-cancelled-heading">
-              Cancelled
+              {t('toolSetupDialog.cancelled')}
             </p>
             <p className="text-sm text-muted-foreground" data-testid="toolsetup-error">
               {task.message}
@@ -264,7 +267,7 @@ export const ToolSetupDialog: React.FC<ToolSetupDialogProps> = ({
           {showChecklist && statuses !== null && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
+                {t('common:cancel')}
               </Button>
               <Button
                 onClick={handleInstall}
@@ -272,7 +275,7 @@ export const ToolSetupDialog: React.FC<ToolSetupDialogProps> = ({
                 data-testid="toolsetup-install-btn"
               >
                 <Download className="mr-2 h-4 w-4" />
-                {starting ? 'Starting…' : 'Install'}
+                {starting ? t('toolSetupDialog.actions.starting') : t('toolSetupDialog.actions.install')}
               </Button>
             </>
           )}
@@ -282,12 +285,12 @@ export const ToolSetupDialog: React.FC<ToolSetupDialogProps> = ({
               onClick={() => onCancel?.()}
               data-testid="toolsetup-cancel-btn"
             >
-              Cancel
+              {t('common:cancel')}
             </Button>
           )}
           {isFailed && (
             <Button onClick={handleRetry} disabled={starting} data-testid="toolsetup-retry-btn">
-              Retry
+              {t('toolSetupDialog.actions.retry')}
             </Button>
           )}
           {isCancelled && (
@@ -297,16 +300,16 @@ export const ToolSetupDialog: React.FC<ToolSetupDialogProps> = ({
                 onClick={() => onOpenChange(false)}
                 data-testid="toolsetup-dismiss-btn"
               >
-                Dismiss
+                {t('toolSetupDialog.actions.dismiss')}
               </Button>
               <Button onClick={handleRetry} disabled={starting} data-testid="toolsetup-retry-btn">
-                Retry
+                {t('toolSetupDialog.actions.retry')}
               </Button>
             </>
           )}
           {isCompleted && (
             <Button onClick={() => onDone?.()} data-testid="toolsetup-done-btn">
-              Done
+              {t('toolSetupDialog.actions.done')}
             </Button>
           )}
         </DialogFooter>

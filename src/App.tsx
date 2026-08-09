@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useReducer } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { AppShell } from '@/components/layout/AppShell';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { Toaster } from '@/components/ui/sonner';
@@ -7,7 +8,16 @@ import { useTheme } from '@/hooks/use-theme';
 import { Sidebar } from './components/Sidebar';
 import { CommandPalette, type PaletteAction } from './components/CommandPalette';
 import { DocumentViewer, builderStateFromQueryTab, type BuilderState } from './components/DocumentViewer';
-import { DataGrid } from './components/DataGrid';
+import type { ChatMessage } from './components/AIChatPanel';
+import { clearChatRequest, renameChatRequest, resetChatRequests } from './lib/aiChatRequest';
+import {
+  disposeShellSession,
+  disposeShellSessionsForTabs,
+  forgetShellSession,
+  renameShellSession,
+  retargetShellSessionDatabase,
+} from './lib/mongoshSession';
+import { DataGrid, type ViewMode } from './components/DataGrid';
 import { ConnectionManager } from './components/ConnectionManager';
 import { SettingsView, type SettingsTabId, MONGO_TOOLS_DIR_KEY } from './components/SettingsModal';
 import { IndexViewer } from './components/IndexViewer';
@@ -97,10 +107,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { FolderCode, KeyRound, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert } from 'lucide-react';
+import { FolderCode, KeyRound, X, ChevronsRight, XSquare, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 
-interface QueryTab {
+export interface QueryTab {
   id: string;
   type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate';
   connectionId: string;
@@ -117,6 +127,13 @@ interface QueryTab {
   lastQuery?: { filter: string; sort: string; projection: string; limit: number; skip: number };
   // Last executed aggregation pipeline, so an aggregate view refreshes as an aggregate.
   lastAggregate?: Record<string, unknown>[];
+  // Results view mode, kept on the tab so it survives the grid remounting on
+  // every run and the tab being switched away (#218).
+  viewMode?: ViewMode;
+  // What the results pager last asked for. The values travel with the revision
+  // so the builder can never observe a new revision beside a stale page size —
+  // see DocumentViewer's pagerRequest prop.
+  pagerRequest?: { limit: number; skip: number; revision: number };
   // Pagination count state.
   totalCount?: number;
   countLoading?: boolean;
@@ -285,9 +302,10 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
   }
 };
 
-const tabLabelFor = (
+export const tabLabelFor = (
   tab: QueryTab,
-  connectionName: (connectionId: string) => string
+  connectionName: (connectionId: string) => string,
+  t: TFunction
 ): string => {
   switch (tab.type) {
     case 'index':
@@ -295,33 +313,33 @@ const tabLabelFor = (
     case 'shell':
       return `mongosh: ${tab.collection || tab.db}`;
     case 'settings':
-      return 'Settings';
+      return t('tabs.settings');
     case 'quickstart':
-      return 'Quick Start';
+      return t('tabs.quickStart');
     case 'export':
-      return `Export: ${tab.collection}`;
+      return t('tabs.export', { collection: tab.collection });
     case 'import':
-      return `Import: ${tab.collection}`;
+      return t('tabs.import', { collection: tab.collection });
     case 'tasks':
-      return 'Tasks';
+      return t('tabs.tasks');
     case 'schema':
-      return `Schema: ${tab.collection}`;
+      return t('tabs.schema', { collection: tab.collection });
     case 'create-view':
-      return `New View: ${tab.db}`;
+      return t('tabs.createView', { db: tab.db });
     case 'gridfs':
-      return `GridFS: ${tab.collection}`;
+      return t('tabs.gridfs', { collection: tab.collection });
     case 'monitoring':
-      return `Monitor: ${connectionName(tab.connectionId)}`;
+      return t('tabs.monitor', { name: connectionName(tab.connectionId) });
     case 'users':
-      return `Users: ${connectionName(tab.connectionId)}`;
+      return t('tabs.users', { name: connectionName(tab.connectionId) });
     case 'dump':
-      return `Dump: ${tab.db || connectionName(tab.connectionId)}`;
+      return t('tabs.dump', { name: tab.db || connectionName(tab.connectionId) });
     case 'restore':
-      return `Restore: ${connectionName(tab.connectionId)}`;
+      return t('tabs.restore', { name: connectionName(tab.connectionId) });
     case 'validation':
-      return `Validation: ${tab.collection}`;
+      return t('tabs.validation', { collection: tab.collection });
     case 'generate':
-      return `Generate: ${tab.collection || tab.db}`;
+      return t('tabs.generate', { name: tab.collection || tab.db });
     default:
       return tab.collection;
   }
@@ -360,19 +378,23 @@ const CONNECTION_TAB_TYPES = new Set<QueryTab['type']>([
  * isn't in the flat `tabs[]` list — e.g. a not-yet-mirrored write race);
  * callers fall back to the bare window id in that case.
  */
-function activeTabHintFor(win: PersistedWindow, allTabs: PersistedTab[]): string | null {
+function activeTabHintFor(win: PersistedWindow, allTabs: PersistedTab[], t: TFunction): string | null {
   const pane = findPane(win.splitTree, win.focusedPaneId);
   const activeId = pane?.activeTabId;
   if (!activeId) return null;
   const tab = allTabs.find((t) => t.id === activeId);
   if (!tab) return null;
-  if (tab.type === 'quickstart') return 'Quick Start';
+  if (tab.type === 'quickstart') return t('tabs.quickStart');
   return tab.collection || tab.type;
 }
 
 function Workspace() {
   const { toast, confirm, prompt } = useDialogs();
   const { t } = useTranslation('common');
+  // Command palette action titles/keywords live in `shell` alongside the
+  // rest of the palette's copy (see src/locales/{en,de}/shell.json), not
+  // `common` — a second hook since `t` above is bound to `common`.
+  const { t: tShell, i18n: shellI18n } = useTranslation('shell');
   const { config, resolvedMode, setMode, setSpacingDensity, resetZoom } = useTheme();
   const density = config.spacingDensity;
   // Phase 3 Task 4: every window runs this same component — `isMainWindow`
@@ -425,6 +447,14 @@ function Workspace() {
     }
   }
   const tabBuilderStateCache = useRef(new Map<string, BuilderState>());
+  // Per-tab AI helper state (#221): transcript + whether the panel is open.
+  // Inactive collection tabs unmount DocumentViewer (and with it AIChatPanel),
+  // so both must live here — same pattern as `tabBuilderStateCache` (#120).
+  // Open state survives tab switches; only the panel close control (or opening
+  // the query builder) turns it off.
+  const tabChatCache = useRef(
+    new Map<string, { messages: ChatMessage[]; isOpen: boolean; chatId?: string }>()
+  );
   // Workspace-store mirroring plumbing (Phase 2 Task 5). Mirroring starts
   // DISABLED — the restore effect below is the only thing allowed to turn it
   // on, once workspace_get has resolved (snapshot applied or none found).
@@ -524,6 +554,27 @@ function Workspace() {
     mirrorUpdateTabState(tabId, activeConnectionsRef.current, { builderState: state });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const handleViewModeChange = useCallback((tabId: string, mode: ViewMode) => {
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, viewMode: mode } : t)));
+  }, []);
+  const handleChatMessagesChange = useCallback((tabId: string, messages: ChatMessage[]) => {
+    const prev = tabChatCache.current.get(tabId);
+    tabChatCache.current.set(tabId, { ...prev, messages, isOpen: prev?.isOpen ?? false });
+  }, []);
+  const handleAIHelperOpenChange = useCallback((tabId: string, isOpen: boolean) => {
+    const prev = tabChatCache.current.get(tabId);
+    tabChatCache.current.set(tabId, { ...prev, messages: prev?.messages ?? [], isOpen });
+  }, []);
+  /** Which stored conversation a tab has open — the transcript itself lives in
+   *  the backend chat store, not here. */
+  const handleAIChatIdChange = useCallback((tabId: string, chatId: string) => {
+    const prev = tabChatCache.current.get(tabId);
+    tabChatCache.current.set(tabId, {
+      messages: prev?.messages ?? [],
+      isOpen: prev?.isOpen ?? false,
+      chatId,
+    });
+  }, []);
   const [profilesRefreshKey, setProfilesRefreshKey] = useState(0);
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>();
@@ -613,6 +664,17 @@ function Workspace() {
         tabBuilderStateCache.current.set(newId, bs);
         tabBuilderStateCache.current.delete(oldId);
       }
+      const chat = tabChatCache.current.get(oldId);
+      if (chat) {
+        tabChatCache.current.set(newId, chat);
+        tabChatCache.current.delete(oldId);
+      }
+      // The in-flight request follows the tab; dropping it here would lose a
+      // reply that is already on its way.
+      renameChatRequest(oldId, newId);
+      // So does the shell session — it is a live process, and leaving it under
+      // the dead id would strand it while the rebound tab spawned another.
+      renameShellSession(oldId, newId);
     }
 
     // Dispatched straight to the layout reducer via `dispatchLayout`,
@@ -752,6 +814,14 @@ function Workspace() {
             for (const [tabId, state] of snapshot.builderStates) {
               tabBuilderStateCache.current.set(tabId, state as BuilderState);
             }
+            // Chat is session-local (not in the workspace snapshot) — drop any
+            // pre-restore entries so a Quick Start tab id can't inherit a
+            // stale transcript after hydrate reuses ids.
+            tabChatCache.current.clear();
+            resetChatRequests();
+            // Scoped to the ids this window is about to hydrate: a global clear
+            // would strip other windows' live shells of their recovery mapping.
+            void disposeShellSessionsForTabs(snapshot.tabs.map((t) => t.id));
             const windowTabIds = new Set(snapshot.tabs.map((t) => t.id));
             const profileNames = new Map<string, string>();
             for (const t of ws.tabs) {
@@ -1871,6 +1941,19 @@ function Workspace() {
     dispatchWorkspace({ type: 'open_tab', tabId });
   };
 
+  /** Carry a tab's chat state to its new id. A rename mints a new tab id, so
+   *  without this the renamed tab opens with no remembered conversation and an
+   *  in-flight reply is left addressed to a key nothing will mount under
+   *  again. `rebindProfileTabs` already does this for the same reason. */
+  const moveTabChatState = useCallback((oldId: string, newId: string) => {
+    const chat = tabChatCache.current.get(oldId);
+    if (chat) {
+      tabChatCache.current.set(newId, chat);
+      tabChatCache.current.delete(oldId);
+    }
+    renameChatRequest(oldId, newId);
+  }, []);
+
   const handleCollectionRenamed = (
     connectionId: string,
     dbName: string,
@@ -1897,7 +1980,14 @@ function Workspace() {
       .map(t => ({ oldId: t.id, newId: renameTab(t).id }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId }) => dispatchWorkspace({ type: 'rename_tab', oldId, newId }));
+    renamedPairs.forEach(({ oldId, newId }) => {
+      // A rename mints a new tab id, so the shell session has to follow it —
+      // otherwise the live mongosh child is stranded under the dead id and the
+      // renamed tab starts a second one.
+      renameShellSession(oldId, newId);
+      moveTabChatState(oldId, newId);
+      dispatchWorkspace({ type: 'rename_tab', oldId, newId });
+    });
     invalidatePaletteNamespaceIndex(connectionId);
   };
 
@@ -1944,10 +2034,29 @@ function Workspace() {
     };
 
     const renamedPairs = tabs
-      .map(t => ({ oldId: t.id, newId: renameTab(t).id }))
+      .map(t => ({ oldId: t.id, newId: renameTab(t).id, isShell: t.type === 'shell' }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId }) => dispatchWorkspace({ type: 'rename_tab', oldId, newId }));
+    renamedPairs.forEach(({ oldId, newId, isShell }) => {
+      // A rename mints a new tab id, so the shell session has to follow it —
+      // otherwise the live mongosh child is stranded under the dead id and the
+      // renamed tab starts a second one.
+      const moved = renameShellSession(oldId, newId);
+      if (isShell) {
+        // Moving the session is not enough when the DATABASE is what changed:
+        // the retained mongosh child is still `use`-d into the old name, and
+        // Sidebar renames with `dropSource: true`, so a write from this
+        // apparently-renamed tab would recreate the database the rename just
+        // dropped. Called synchronously, not off `moved`: the `setTabs` above
+        // re-keys this tab, so React remounts the shell before any awaited
+        // continuation would run and the new instance would seed itself from a
+        // registry entry still naming the old database. The retarget only falls
+        // back to awaiting the rename when nothing is cached to remount from.
+        void retargetShellSessionDatabase(newId, newName, moved);
+      }
+      moveTabChatState(oldId, newId);
+      dispatchWorkspace({ type: 'rename_tab', oldId, newId });
+    });
     invalidatePaletteNamespaceIndex(connectionId);
   };
 
@@ -2136,6 +2245,9 @@ function Workspace() {
     }
     if (action.type === 'close_tab') {
       tabBuilderStateCache.current.delete(action.tabId);
+      tabChatCache.current.delete(action.tabId);
+      clearChatRequest(action.tabId);
+      void disposeShellSession(action.tabId);
       // #91: forget this tab's generate-task tracking on close (running or
       // finished) — otherwise reopening "Generate Data…" on the same
       // namespace reuses the same deterministic tab id and the fresh view
@@ -2158,7 +2270,21 @@ function Workspace() {
       // connect, so any stale entries either of those leaves behind
       // permanently fall outside the tab-id space any future tab could
       // ever resolve — harmless, not reachable again. No fix needed there.
-      action.tabIds.forEach((id) => generateTaskIdsRef.current.delete(id));
+      const closing = new Set(action.tabIds);
+      action.tabIds.forEach((id) => {
+        generateTaskIdsRef.current.delete(id);
+        tabBuilderStateCache.current.delete(id);
+        tabChatCache.current.delete(id);
+        clearChatRequest(id);
+        void disposeShellSession(id);
+      });
+      // Prune `tabs[]` here rather than leaving it to the caller. Every
+      // pre-existing call site happened to do its own `setTabs` first, so the
+      // gap was invisible until a new one did not — and the symptom is a
+      // layout/tabs mismatch ("tabs[] contains ids missing from workspace
+      // layout") rather than anything that points at the cause. Filtering twice
+      // is harmless; forgetting to filter is not. `close_tab` already does this.
+      setTabs((prev) => prev.filter((t) => !closing.has(t.id)));
     }
     dispatchLayout(action);
 
@@ -2303,28 +2429,67 @@ function Workspace() {
   // backend has no record of them — so both are hidden for them, replaced
   // by a single disabled, explanatory entry.
   const buildTabContextMenuItems = (tabId: string): ContextMenuItem[] => {
-    if (unmirroredTabIdsRef.current.has(tabId)) {
-      const explanation = 'Export/import tabs stay in their window';
-      return [{ label: explanation, onClick: () => {}, disabled: true, title: explanation }];
-    }
-
+    // Unmirrored (export/import/generate) tabs exist only in this renderer, so
+    // anything that hands the tab to the BACKEND is unavailable to them. The
+    // close group is not in that category — closing is purely local, and
+    // `dispatchWorkspace` already strips unmirrored ids from what it mirrors,
+    // for `close_many` as well as `close_tab`. Gating the WHOLE menu on this
+    // left an export tab unable to close itself or its neighbours at all.
+    const isUnmirrored = unmirroredTabIdsRef.current.has(tabId);
     const items: ContextMenuItem[] = [];
 
     const dupSource = tabs.find((t) => t.id === tabId && t.type === 'collection');
-    if (dupSource) {
+    if (dupSource && !isUnmirrored) {
       items.push({
-        label: 'Duplicate Tab',
+        label: tShell('workspaceTabBar.contextMenu.duplicateTab'),
         icon: <Copy />,
         onClick: () => handleDuplicateTab(tabId),
       });
     }
 
-    if (allTabIds(layout).length > 1) {
+    if (!isUnmirrored && allTabIds(layout).length > 1) {
       items.push({
-        label: 'Detach to New Window',
+        label: tShell('workspaceTabBar.contextMenu.detachToNewWindow'),
         icon: <ExternalLink />,
         separatorBefore: items.length > 0,
         onClick: () => handleDetachTab(tabId),
+      });
+    }
+
+    // Close group. Scoped to the pane holding this tab, which is what "others"
+    // and "to the right" mean on a tab strip — a second pane's tabs are a
+    // different strip and are left alone. `close_many` is one op rather than a
+    // loop of `close_tab`, so the pane folds once and the backend sees a single
+    // mirrored action.
+    const paneTabIds = paneOfTab(layout.root, tabId)?.tabIds ?? [];
+    const tabIndex = paneTabIds.indexOf(tabId);
+    // Quick Start is the workspace's home tab, not a document: a bulk close
+    // aimed at query tabs should not sweep it away as collateral. Closing it
+    // deliberately still works — its own X, and Close Tab when it is the tab
+    // that was right-clicked.
+    const isBulkClosable = (id: string) =>
+      id !== tabId && tabs.find((t) => t.id === id)?.type !== 'quickstart';
+    const otherTabIds = paneTabIds.filter(isBulkClosable);
+    const rightTabIds = (tabIndex >= 0 ? paneTabIds.slice(tabIndex + 1) : []).filter(isBulkClosable);
+
+    items.push({
+      label: tShell('workspaceTabBar.contextMenu.closeTab'),
+      icon: <X />,
+      separatorBefore: items.length > 0,
+      onClick: () => closeTabById(tabId),
+    });
+    if (otherTabIds.length > 0) {
+      items.push({
+        label: tShell('workspaceTabBar.contextMenu.closeOthers'),
+        icon: <XSquare />,
+        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: otherTabIds }),
+      });
+    }
+    if (rightTabIds.length > 0) {
+      items.push({
+        label: tShell('workspaceTabBar.contextMenu.closeToTheRight'),
+        icon: <ChevronsRight />,
+        onClick: () => dispatchWorkspace({ type: 'close_many', tabIds: rightTabIds }),
       });
     }
 
@@ -2334,15 +2499,29 @@ function Workspace() {
     // "Detach to New Window" item was actually pushed) — otherwise the
     // first "Move to" entry would render an orphan divider line at the very
     // top of the menu.
-    otherWindows.forEach((w, i) => {
-      const hint = activeTabHintFor(w, allTabs);
+    (isUnmirrored ? [] : otherWindows).forEach((w, i) => {
+      const hint = activeTabHintFor(w, allTabs, t);
+      const target = hint ? `${w.id} (${hint})` : w.id;
       items.push({
-        label: `Move to ${hint ? `${w.id} (${hint})` : w.id}`,
+        label: tShell('workspaceTabBar.contextMenu.moveToWindow', { target }),
         icon: <MoveRight />,
         separatorBefore: i === 0 && items.length > 0,
         onClick: () => handleMoveTab(tabId, w.id),
       });
     });
+
+    // Kept as a trailing note rather than the whole menu: it now explains what
+    // is ABSENT (detach/move) instead of standing in for everything.
+    if (isUnmirrored) {
+      const explanation = tShell('workspaceTabBar.contextMenu.unmirroredExplanation');
+      items.push({
+        label: explanation,
+        onClick: () => {},
+        disabled: true,
+        title: explanation,
+        separatorBefore: items.length > 0,
+      });
+    }
 
     return items;
   };
@@ -2406,6 +2585,7 @@ function Workspace() {
       activeConnections.map(c => `${c.id}:${c.name}`).join('|'),
       collTabs.map(t => `${t.id}:${t.connectionId}:${t.db}:${t.collection}`).join('|'),
       paletteNamespaceScope,
+      shellI18n.language,
     ].join('::');
     if (paletteDynamicLoadKey.current === loadKey) return;
     paletteDynamicLoadKey.current = loadKey;
@@ -2422,7 +2602,7 @@ function Workspace() {
             id: `coll:${ns.connectionId}:${ns.db}:${coll}`,
             title: coll,
             hint: `${ns.connectionName} · ${ns.db}`,
-            keywords: `collection ${ns.db} ${ns.connectionName}`,
+            keywords: tShell('commandPalette.dynamic.collectionKeywords', { db: ns.db, connectionName: ns.connectionName }),
             run: () => { void handleSelectCollection(ns.connectionId, ns.db, coll); },
           });
         }
@@ -2437,9 +2617,9 @@ function Workspace() {
           for (const s of cq.saved) {
             items.push({
               id: `saved:${t.id}:${s.id}`,
-              title: `Saved query: ${s.name}`,
+              title: tShell('commandPalette.dynamic.savedQueryTitle', { name: s.name }),
               hint: `${t.db}.${t.collection}`,
-              keywords: `saved query ${t.collection} ${t.db}`,
+              keywords: tShell('commandPalette.dynamic.savedQueryKeywords', { collection: t.collection, db: t.db }),
               run: () => { void handleSelectCollection(t.connectionId, t.db, t.collection, s.query); },
             });
           }
@@ -2449,33 +2629,33 @@ function Workspace() {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shouldLoadPaletteDynamic, activeConnections, tabs, paletteNamespaceScope]);
+  }, [shouldLoadPaletteDynamic, activeConnections, tabs, paletteNamespaceScope, shellI18n.language]);
 
   const paletteActions: PaletteAction[] = [
-    { id: 'new-connection', title: 'New Connection…', keywords: 'connect database add server', run: () => setIsConnectionModalOpen(true) },
-    { id: 'toggle-theme', title: 'Toggle Light/Dark Theme', keywords: 'appearance color mode', run: toggleTheme },
-    { id: 'open-settings', title: 'Open Settings', keywords: 'preferences config density', run: handleOpenSettingsTab },
-    { id: 'open-quickstart', title: 'Open Quick Start', keywords: 'welcome home help', run: openQuickStartTab },
-    { id: 'refresh-palette-index', title: 'Refresh Command Palette Index', keywords: 'reload databases collections namespaces cache stale', run: () => invalidatePaletteNamespaceIndex() },
-    { id: 'density-roomy', title: 'Density: Roomy', keywords: 'layout spacing', run: () => setSpacingDensity('roomy') },
-    { id: 'density-cozy', title: 'Density: Cozy', keywords: 'layout spacing', run: () => setSpacingDensity('cozy') },
-    { id: 'density-compact', title: 'Density: Compact', keywords: 'layout spacing dense', run: () => setSpacingDensity('compact') },
+    { id: 'new-connection', title: tShell('commandPalette.paletteActions.newConnection.title'), keywords: tShell('commandPalette.paletteActions.newConnection.keywords'), run: () => setIsConnectionModalOpen(true) },
+    { id: 'toggle-theme', title: tShell('commandPalette.paletteActions.toggleTheme.title'), keywords: tShell('commandPalette.paletteActions.toggleTheme.keywords'), run: toggleTheme },
+    { id: 'open-settings', title: tShell('commandPalette.paletteActions.openSettings.title'), keywords: tShell('commandPalette.paletteActions.openSettings.keywords'), run: handleOpenSettingsTab },
+    { id: 'open-quickstart', title: tShell('commandPalette.paletteActions.openQuickstart.title'), keywords: tShell('commandPalette.paletteActions.openQuickstart.keywords'), run: openQuickStartTab },
+    { id: 'refresh-palette-index', title: tShell('commandPalette.paletteActions.refreshPaletteIndex.title'), keywords: tShell('commandPalette.paletteActions.refreshPaletteIndex.keywords'), run: () => invalidatePaletteNamespaceIndex() },
+    { id: 'density-roomy', title: tShell('commandPalette.paletteActions.densityRoomy.title'), keywords: tShell('commandPalette.paletteActions.densityRoomy.keywords'), run: () => setSpacingDensity('roomy') },
+    { id: 'density-cozy', title: tShell('commandPalette.paletteActions.densityCozy.title'), keywords: tShell('commandPalette.paletteActions.densityCozy.keywords'), run: () => setSpacingDensity('cozy') },
+    { id: 'density-compact', title: tShell('commandPalette.paletteActions.densityCompact.title'), keywords: tShell('commandPalette.paletteActions.densityCompact.keywords'), run: () => setSpacingDensity('compact') },
     ...(activeTab && activeTab.type === 'collection' ? [
-      { id: 'open-shell', title: 'Open mongosh Shell', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'terminal mongosh script', run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) },
-      { id: 'export-collection', title: 'Export Collection…', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'download json csv import', run: () => handleOpenExportTab(activeTab) },
-      { id: 'analyze-schema', title: 'Analyze Schema', hint: `${activeTab.db}.${activeTab.collection}`, keywords: 'fields types', run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
+      { id: 'open-shell', title: tShell('commandPalette.paletteActions.openShell.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.openShell.keywords'), run: () => handleOpenShell(activeTab.connectionId, activeTab.db, activeTab.collection) },
+      { id: 'export-collection', title: tShell('commandPalette.paletteActions.exportCollection.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.exportCollection.keywords'), run: () => handleOpenExportTab(activeTab) },
+      { id: 'analyze-schema', title: tShell('commandPalette.paletteActions.analyzeSchema.title'), hint: `${activeTab.db}.${activeTab.collection}`, keywords: tShell('commandPalette.paletteActions.analyzeSchema.keywords'), run: () => handleOpenSchemaTab(activeTab.connectionId, activeTab.db, activeTab.collection) },
     ] : []),
-    ...(activeTabId ? [{ id: 'close-tab', title: 'Close Tab', keywords: 'tab', run: () => closeTabById(activeTabId) }] : []),
+    ...(activeTabId ? [{ id: 'close-tab', title: tShell('commandPalette.paletteActions.closeTab.title'), keywords: tShell('commandPalette.paletteActions.closeTab.keywords'), run: () => closeTabById(activeTabId) }] : []),
     ...(focusedPane && focusedPane.tabIds.length > 1 ? [
-      { id: 'next-tab', title: 'Next Tab', keywords: 'tab switch', run: () => cycleTab(1) },
-      { id: 'prev-tab', title: 'Previous Tab', keywords: 'tab switch', run: () => cycleTab(-1) },
+      { id: 'next-tab', title: tShell('commandPalette.paletteActions.nextTab.title'), keywords: tShell('commandPalette.paletteActions.nextTab.keywords'), run: () => cycleTab(1) },
+      { id: 'prev-tab', title: tShell('commandPalette.paletteActions.prevTab.title'), keywords: tShell('commandPalette.paletteActions.prevTab.keywords'), run: () => cycleTab(-1) },
     ] : []),
     ...(activeTabId && focusedPane && focusedPane.tabIds.length > 1 ? [
-      { id: 'workspace.split-right', title: 'Split Right', keywords: 'workspace pane layout', run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'row', side: 'end', moveTabId: activeTabId }) },
-      { id: 'workspace.split-down', title: 'Split Down', keywords: 'workspace pane layout', run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'col', side: 'end', moveTabId: activeTabId }) },
+      { id: 'workspace.split-right', title: tShell('commandPalette.paletteActions.splitRight.title'), keywords: tShell('commandPalette.paletteActions.splitRight.keywords'), run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'row', side: 'end', moveTabId: activeTabId }) },
+      { id: 'workspace.split-down', title: tShell('commandPalette.paletteActions.splitDown.title'), keywords: tShell('commandPalette.paletteActions.splitDown.keywords'), run: () => dispatchWorkspace({ type: 'split_pane', paneId: focusedPane.id, dir: 'col', side: 'end', moveTabId: activeTabId }) },
     ] : []),
     ...(allPanes(layout.root).length > 1 ? [
-      { id: 'workspace.focus-next-pane', title: 'Focus Next Pane', keywords: 'workspace pane layout switch', run: () => {
+      { id: 'workspace.focus-next-pane', title: tShell('commandPalette.paletteActions.focusNextPane.title'), keywords: tShell('commandPalette.paletteActions.focusNextPane.keywords'), run: () => {
         const panes = allPanes(layout.root);
         const i = panes.findIndex(p => p.id === layout.focusedPaneId);
         dispatchWorkspace({ type: 'focus_pane', paneId: panes[(i + 1) % panes.length].id });
@@ -2483,17 +2663,17 @@ function Workspace() {
     ] : []),
     ...activeConnections.map(c => ({
       id: `monitoring:${c.id}`,
-      title: `Open Monitoring: ${c.name}`,
-      keywords: 'monitoring metrics server status profiler',
+      title: tShell('commandPalette.paletteActions.openMonitoring.title', { name: c.name }),
+      keywords: tShell('commandPalette.paletteActions.openMonitoring.keywords'),
       run: () => handleOpenMonitoringTab(c.id),
     })),
     ...activeConnections.map(c => ({
       id: `users:${c.id}`,
-      title: `Manage Users: ${c.name}`,
-      keywords: 'users roles access permissions authentication admin',
+      title: tShell('commandPalette.paletteActions.manageUsers.title', { name: c.name }),
+      keywords: tShell('commandPalette.paletteActions.manageUsers.keywords'),
       run: () => handleOpenUsersTab(c.id),
     })),
-    { id: 'check-updates', title: 'Check for Updates', keywords: 'version upgrade release', run: () => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT)) },
+    { id: 'check-updates', title: tShell('commandPalette.paletteActions.checkUpdates.title'), keywords: tShell('commandPalette.paletteActions.checkUpdates.keywords'), run: () => window.dispatchEvent(new Event(CHECK_UPDATE_EVENT)) },
     ...paletteDynamicItems,
   ];
 
@@ -2548,13 +2728,30 @@ function Workspace() {
     }
   };
 
+  // Records what the pager asked for so the query builder can follow it. The
+  // limit/skip are stored WITH the revision in one update: bumping a bare
+  // counter first let the builder see the new revision beside the not-yet
+  // updated lastQuery and sync to the old page size.
+  const notePagerRequest = (tabId: string, limit: number, skip: number) => {
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === tabId
+          ? { ...t, pagerRequest: { limit, skip, revision: (t.pagerRequest?.revision ?? 0) + 1 } }
+          : t
+      )
+    );
+  };
+
   const handlePageChange = (tab: QueryTab, newSkip: number) => {
     if (!tab.lastQuery) return;
-    handleExecuteQuery(tab, { ...tab.lastQuery, skip: Math.max(0, newSkip) });
+    const skip = Math.max(0, newSkip);
+    notePagerRequest(tab.id, tab.lastQuery.limit, skip);
+    handleExecuteQuery(tab, { ...tab.lastQuery, skip });
   };
 
   const handlePageSizeChange = (tab: QueryTab, newLimit: number) => {
     if (!tab.lastQuery) return;
+    notePagerRequest(tab.id, newLimit, 0);
     handleExecuteQuery(tab, { ...tab.lastQuery, limit: newLimit, skip: 0 });
   };
 
@@ -2572,16 +2769,19 @@ function Workspace() {
       const writeStage = detectAggregateWriteStage(pipeline);
       if (writeStage.hasWriteStage) {
         const ok = await confirmByTypedName(prompt, {
-          title: 'Run aggregation',
+          title: t('documents:documentViewer.dialogs.runAggregate.title'),
           kind: 'collection',
           // Fall back to a "type CONFIRM" prompt when the $out/$merge
           // target couldn't be extracted cleanly (e.g. an unrecognized
-          // shape) rather than silently under-matching a name.
+          // shape) rather than silently under-matching a name. `expectedName`
+          // is compared verbatim against what the user types (see
+          // `confirmByTypedName`'s doc comment) — it must stay the raw
+          // collection name/`'CONFIRM'`, never a translated string.
           expectedName: writeStage.target ?? 'CONFIRM',
           message: writeStage.target
-            ? `This pipeline writes into "${writeStage.target}" ($out/$merge) on a safeguarded connection.\n\nType the target collection name to confirm.`
-            : 'This pipeline writes to a collection via $out/$merge on a safeguarded connection, but the target could not be determined automatically.\n\nType CONFIRM to proceed.',
-        });
+            ? t('documents:documentViewer.dialogs.runAggregate.messageWithTarget', { target: writeStage.target })
+            : t('documents:documentViewer.dialogs.runAggregate.messageUnknownTarget'),
+        }, t);
         if (!ok) return;
         confirmed = true;
       }
@@ -2731,6 +2931,9 @@ function Workspace() {
           closeWorkspaceWindow();
           setTabs([]);
           tabBuilderStateCache.current.clear();
+          tabChatCache.current.clear();
+          resetChatRequests();
+          void disposeShellSessionsForTabs(tabsRef.current.map((t) => t.id));
           dispatchLayout({ type: 'hydrate', layout: createInitialLayout([], null) });
           return;
         }
@@ -2794,8 +2997,33 @@ function Workspace() {
         );
         if (leaving.length > 0) {
           const leavingIds = new Set(leaving.map((t) => t.id));
+          // "Leaving" means gone from THIS window's tree — which includes a tab
+          // that was merely moved or detached to another window. Those are still
+          // in the document, and killing their mongosh child would either strand
+          // the destination with a dead session id or lose the REPL state it is
+          // supposed to carry across. Only dispose tabs that left the workspace
+          // entirely.
+          // Translated to live space, exactly like `foreignLiveIds` above: the
+          // workspace stores profile-space ids, `leavingIds` holds live ones, so
+          // an untranslated comparison would report every rebound tab as gone
+          // from the document and kill the session the move was meant to carry.
+          const stillInWorkspace = new Set(
+            payload.workspace.windows
+              .flatMap((w) => allPanes(w.splitTree).flatMap((p) => p.tabIds))
+              .map((id) => toLiveSpaceId(id, connections))
+          );
           leavingIds.forEach((id) => {
             tabBuilderStateCache.current.delete(id);
+            tabChatCache.current.delete(id);
+            clearChatRequest(id);
+            // Gone from the document: end the session. Merely moved to another
+            // window: that window owns the child now, so it must keep running —
+            // but this renderer's cached copy has to go, or moving the tab back
+            // would seed it from a snapshot predating everything the other
+            // window did, and a command still in flight here would mirror its
+            // stale transcript over the newer one.
+            if (stillInWorkspace.has(id)) forgetShellSession(id);
+            else void disposeShellSession(id);
             unmirroredTabIdsRef.current.delete(id);
           });
           setTabs((prev) => prev.filter((t) => !leavingIds.has(t.id)));
@@ -2936,6 +3164,9 @@ function Workspace() {
           const removedIds = new Set(removed);
           removedIds.forEach((id) => {
             tabBuilderStateCache.current.delete(id);
+            tabChatCache.current.delete(id);
+            clearChatRequest(id);
+            void disposeShellSession(id);
             unmirroredTabIdsRef.current.delete(id);
           });
           setTabs((prev) => prev.filter((t) => !removedIds.has(t.id)));
@@ -2982,7 +3213,7 @@ function Workspace() {
         const profiles = await invoke<ConnectionProfile[]>('load_connection_profiles');
         const profile = profiles.find((p) => p.id === profileId);
         if (!profile) {
-          patchReconnectState(profileId, { busy: false, error: 'Connection profile no longer exists' });
+          patchReconnectState(profileId, { busy: false, error: t('shell:reconnectBanner.profileMissing') });
           return;
         }
 
@@ -3240,9 +3471,9 @@ function Workspace() {
     }
     if (
       !(await confirm({
-        title: 'Delete document',
-        message: 'Delete this document? This cannot be undone.',
-        confirmLabel: 'Delete',
+        title: t('documents:dataGrid.actions.deleteDocument'),
+        message: t('documents:dataGrid.dialogs.deleteDocument.body'),
+        confirmLabel: t('documents:dataGrid.dialogs.deleteDocument.confirmLabel'),
         destructive: true,
       }))
     )
@@ -3266,10 +3497,20 @@ function Workspace() {
   const isEmptyFilterStr = (f: string) => {
     try { return Object.keys(JSON.parse(f)).length === 0; } catch { return false; }
   };
-  const bulkConfirmMessage = (verb: string, count: number, filter: string) => {
-    const base = `${verb} ${count} document(s) matching:\n${filter}`;
+  // Each action gets its own complete-sentence catalog key
+  // (documents:dataGrid.dialogs.<action>.body), interpolated with count/filter,
+  // rather than splicing an English verb phrase (e.g. 'Delete', 'Apply this
+  // update to') into a shared template: German verb placement differs from
+  // English, so a fragment-concatenation approach can't produce correct
+  // German no matter how the fragments are translated. The "affects ALL"
+  // warning is a separate, independent sentence appended after a blank line
+  // (not glued mid-sentence), so it's safe to keep as its own shared key.
+  const bulkConfirmMessage = (action: 'delete' | 'update', count: number, filter: string) => {
+    const base = action === 'delete'
+      ? t('documents:dataGrid.dialogs.deleteMany.body', { count, filter })
+      : t('documents:dataGrid.dialogs.updateMany.body', { count, filter });
     return isEmptyFilterStr(filter)
-      ? `${base}\n\n⚠ This affects ALL ${count} documents in the collection.`
+      ? `${base}${t('documents:dataGrid.dialogs.bulkAllWarning', { count })}`
       : base;
   };
 
@@ -3295,18 +3536,20 @@ function Workspace() {
       let confirmed = false;
       if (mode === 'confirm_destructive') {
         const ok = await confirmByTypedName(prompt, {
-          title: 'Delete many',
+          title: t('documents:dataGrid.dialogs.deleteMany.title'),
           kind: 'collection',
+          // Raw collection name — compared verbatim against the user's
+          // typed input by confirmByTypedName, never a translated string.
           expectedName: tab.collection,
-          message: `${bulkConfirmMessage('Delete', count, filter)}\n\nType the collection name to confirm.`,
-        });
+          message: `${bulkConfirmMessage('delete', count, filter)}${t('documents:dataGrid.dialogs.typeCollectionNameSuffix')}`,
+        }, t);
         if (!ok) return;
         confirmed = true;
       } else if (
         !(await confirm({
-          title: 'Delete many',
-          message: bulkConfirmMessage('Delete', count, filter),
-          confirmLabel: 'Delete',
+          title: t('documents:dataGrid.dialogs.deleteMany.title'),
+          message: bulkConfirmMessage('delete', count, filter),
+          confirmLabel: t('documents:dataGrid.dialogs.deleteMany.confirmLabel'),
           destructive: true,
         }))
       ) {
@@ -3330,21 +3573,21 @@ function Workspace() {
     if (tab.type !== 'collection') return;
     const filter = bulkFilter(tab);
     const update = await prompt({
-      title: 'Update many',
-      message: 'Update document (operators, e.g. {"$set": {...}}):',
+      title: t('documents:dataGrid.dialogs.updateMany.title'),
+      message: t('documents:dataGrid.dialogs.updateMany.promptMessage'),
       defaultValue: '{ "$set": {} }',
       validate: (v) => {
         let parsed: any;
         try {
           parsed = JSON.parse(v);
         } catch {
-          return 'Invalid JSON';
+          return t('documents:dataGrid.dialogs.updateMany.validation.invalidJson');
         }
         if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          return 'Update must be a JSON object';
+          return t('documents:dataGrid.dialogs.updateMany.validation.mustBeObject');
         }
         if (Object.keys(parsed).length === 0 || !Object.keys(parsed).every((k) => k.startsWith('$'))) {
-          return 'Update must use operators like $set';
+          return t('documents:dataGrid.dialogs.updateMany.validation.mustUseOperators');
         }
         return null;
       },
@@ -3362,18 +3605,20 @@ function Workspace() {
       let confirmed = false;
       if (mode === 'confirm_destructive') {
         const ok = await confirmByTypedName(prompt, {
-          title: 'Update many',
+          title: t('documents:dataGrid.dialogs.updateMany.title'),
           kind: 'collection',
+          // Raw collection name — compared verbatim against the user's
+          // typed input by confirmByTypedName, never a translated string.
           expectedName: tab.collection,
-          message: `${bulkConfirmMessage('Apply this update to', count, filter)}\n\nType the collection name to confirm.`,
-        });
+          message: `${bulkConfirmMessage('update', count, filter)}${t('documents:dataGrid.dialogs.typeCollectionNameSuffix')}`,
+        }, t);
         if (!ok) return;
         confirmed = true;
       } else if (
         !(await confirm({
-          title: 'Update many',
-          message: bulkConfirmMessage('Apply this update to', count, filter),
-          confirmLabel: 'Update',
+          title: t('documents:dataGrid.dialogs.updateMany.title'),
+          message: bulkConfirmMessage('update', count, filter),
+          confirmLabel: t('documents:dataGrid.dialogs.updateMany.confirmLabel'),
           destructive: true,
         }))
       ) {
@@ -3414,7 +3659,9 @@ function Workspace() {
 
     const target = documentModal.targetDoc;
     if (!target || target._id === undefined) {
-      throw new Error('Cannot update: this document has no _id.');
+      // DocumentEditModal catches this and renders `err.message` straight into
+      // its error banner, so the text is user-facing copy, not a dev invariant.
+      throw new Error(t('documents:editModal.errors.noId'));
     }
     await invoke('update_document', {
       id: tab.connectionId,
@@ -3532,6 +3779,14 @@ function Workspace() {
                 ?? builderStateFromQueryTab(tab.lastQuery, tab.lastAggregate)
               }
               onBuilderStateChange={(state) => handleBuilderStateChange(tab.id, state)}
+              pagerRequest={tab.pagerRequest}
+              chatSessionKey={tab.id}
+              initialChatMessages={tabChatCache.current.get(tab.id)?.messages ?? []}
+              onChatMessagesChange={(messages) => handleChatMessagesChange(tab.id, messages)}
+              initialAIHelperOpen={tabChatCache.current.get(tab.id)?.isOpen}
+              onAIHelperOpenChange={(isOpen) => handleAIHelperOpenChange(tab.id, isOpen)}
+              aiChatId={tabChatCache.current.get(tab.id)?.chatId}
+              onAIChatIdChange={(chatId) => handleAIChatIdChange(tab.id, chatId)}
               onExecute={q => handleExecuteQuery(tab, q)}
               onExecuteAggregate={pipeline => handleExecuteAggregate(tab, pipeline)}
               onExplain={filter => handleExplainQuery(tab, filter)}
@@ -3545,12 +3800,12 @@ function Workspace() {
               <div className="flex min-h-0 flex-1 flex-col min-w-0 overflow-hidden">
                 {tab.error && (
                   <div className="p-3 bg-destructive/10 border-b border-border text-destructive font-mono text-xs select-text flex items-start gap-2">
-                    <span className="flex-grow">Error loading dataset: {tab.error}</span>
+                    <span className="flex-grow">{t('documents:errors.loadingDataset', { detail: tab.error })}</span>
                     <Button
                       variant="outline"
                       size="sm"
                       className="shrink-0"
-                      title="Copy error message"
+                      title={t('documents:dataGrid.dialogs.copyErrorMessage')}
                       onClick={() => { try { navigator.clipboard?.writeText(String(tab.error)); } catch { /* clipboard unavailable */ } }}
                     >
                       <Copy size={11} />
@@ -3562,7 +3817,7 @@ function Workspace() {
                   <div className="flex-grow flex items-center justify-center text-muted-foreground bg-background">
                     <div className="flex flex-col items-center gap-2 select-none">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
-                      <span className="text-xs">Streaming documents asynchronously...</span>
+                      <span className="text-xs">{t('documents:dataGrid.labels.streamingDocuments')}</span>
                     </div>
                   </div>
                 ) : (
@@ -3584,6 +3839,8 @@ function Workspace() {
                     countLoading={tab.countLoading}
                     skip={tab.lastQuery?.skip ?? 0}
                     limit={tab.lastQuery?.limit ?? 50}
+                    viewMode={tab.viewMode ?? 'json'}
+                    onViewModeChange={(mode) => handleViewModeChange(tab.id, mode)}
                     onCreateSuggestedIndex={s => handleCreateSuggestedIndex(tab, s)}
                     {...(!tab.lastAggregate ? {
                       onPageChange: (newSkip: number) => handlePageChange(tab, newSkip),
@@ -3694,7 +3951,10 @@ function Workspace() {
               onPickFile={async () => {
                 const p = await open({
                   multiple: false,
-                  filters: [{ name: 'Data', extensions: ['json', 'jsonl', 'ndjson', 'csv', 'bson'] }],
+                  // Display label for the native OS file-type filter dropdown
+                  // only (Tauri's dialog plugin) — not an identifier compared
+                  // or dispatched anywhere, so safe to translate.
+                  filters: [{ name: t('transfer:importView.source.fileFilterName'), extensions: ['json', 'jsonl', 'ndjson', 'csv', 'bson'] }],
                 });
                 return typeof p === 'string' ? p : null;
               }}
@@ -3798,9 +4058,9 @@ function Workspace() {
         {tab.type === 'tasks' && (
           <div className="flex h-full flex-col overflow-auto p-4" data-testid="tasks-view">
             <header className="mb-3">
-              <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
+              <h2 className="text-sm font-semibold text-foreground">{tShell('taskManager.header.title')}</h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Background copy and export jobs.
+                {tShell('taskManager.header.subtitle')}
               </p>
             </header>
             <TaskManager
@@ -3828,6 +4088,7 @@ function Workspace() {
               onOpenSettings={handleOpenToolsSettings}
               onInstallTools={handleOpenToolSetup}
               reconnectSignal={shellReconnectNonce}
+              sessionKey={tab.id}
             />
           );
         })()}
@@ -3872,8 +4133,8 @@ function Workspace() {
           {bannerIsReadOnly ? <Lock size={12} className="shrink-0" /> : <ShieldAlert size={12} className="shrink-0" />}
           <span>
             {bannerIsReadOnly
-              ? 'Read-only connection — writes are blocked'
-              : 'Production safeguard — destructive operations require confirmation'}
+              ? tShell('connectionModeBanner.readOnly')
+              : tShell('connectionModeBanner.guarded')}
           </span>
         </div>
         <div className="min-h-0 flex-1">{body}</div>
@@ -3889,12 +4150,12 @@ function Workspace() {
       </div>
       <h1 className="text-2xl font-semibold text-foreground">MQLens</h1>
       <p className="max-w-md text-sm text-muted-foreground">
-        No active connection. Connect to a MongoDB cluster to browse collections and run queries.
+        {tShell('emptyWorkspace.noConnection')}
       </p>
 
       <Button onClick={() => setIsConnectionModalOpen(true)}>
         <Play size={14} className="mr-1.5" fill="currentColor" />
-        Connect to Database...
+        {tShell('emptyWorkspace.connectButton')}
       </Button>
     </div>
   );
@@ -4098,7 +4359,7 @@ function Workspace() {
           pane.tabIds
             .map(id => tabs.find(t => t.id === id))
             .filter((t): t is QueryTab => !!t)
-            .map(t => ({ id: t.id, label: tabLabelFor(t, connectionNameFor), icon: tabIconFor(t, t.id === pane.activeTabId) }))
+            .map(tab => ({ id: tab.id, label: tabLabelFor(tab, connectionNameFor, t), icon: tabIconFor(tab, tab.id === pane.activeTabId) }))
         }
         renderTabContent={renderTabContent}
         renderEmptyPane={renderEmptyPane}

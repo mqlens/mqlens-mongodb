@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Command,
   CommandEmpty,
@@ -43,10 +44,12 @@ const MAX_VISIBLE_ACTIONS = 80;
 
 type ActionBucket = 'commands' | 'collections' | 'queries';
 
-const BUCKET_META: Record<ActionBucket, { label: string; empty: string }> = {
-  commands: { label: 'Commands', empty: 'No matching commands' },
-  collections: { label: 'Collections', empty: 'No matching collections' },
-  queries: { label: 'Saved queries', empty: 'No matching saved queries' },
+// Keys into shell:commandPalette.buckets — translated at render (this is a
+// module-level constant and can't call the useTranslation hook itself).
+const BUCKET_META: Record<ActionBucket, { labelKey: string }> = {
+  commands: { labelKey: 'commandPalette.buckets.commands.label' },
+  collections: { labelKey: 'commandPalette.buckets.collections.label' },
+  queries: { labelKey: 'commandPalette.buckets.queries.label' },
 };
 
 const bucketFor = (action: PaletteAction): ActionBucket => {
@@ -109,6 +112,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   scopeLabel = '',
   onQueryChange,
 }) => {
+  const { t } = useTranslation('shell');
   const [query, setQuery] = useState('');
 
   const visible = useMemo(() => {
@@ -162,15 +166,15 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         data-testid="command-palette"
         aria-describedby={undefined}
       >
-        <DialogTitle className="sr-only">Command palette</DialogTitle>
+        <DialogTitle className="sr-only">{t('commandPalette.title')}</DialogTitle>
         <Command shouldFilter={false} loop className="bg-popover [&_[cmdk-input-wrapper]]:border-0 [&_[cmdk-input-wrapper]]:px-0">
           <div className="border-b border-border/70 bg-muted/20 px-4 py-3">
             <CommandInput
-              placeholder="Search commands, collections, saved queries…"
+              placeholder={t('commandPalette.searchPlaceholder')}
               value={query}
               onValueChange={setQuery}
               data-testid="command-palette-input"
-              aria-label="Command palette"
+              aria-label={t('commandPalette.title')}
               className="h-11 border-0 bg-transparent px-0 text-base shadow-none focus-visible:ring-0"
             />
           </div>
@@ -178,10 +182,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           {scopeLabel.trim() ? (
             <div
               className="flex items-center gap-2 border-b border-border/60 bg-muted/30 px-4 py-2 text-xs"
-              title={`Sidebar filter: ${scopeLabel}`}
+              title={t('commandPalette.scopeFilterTitle', { scope: scopeLabel })}
             >
               <Filter className="size-3.5 shrink-0 text-primary" aria-hidden />
-              <span className="font-medium text-foreground/80">Sidebar scope</span>
+              <span className="font-medium text-foreground/80">{t('commandPalette.scopeLabel')}</span>
               <Badge variant="secondary" className="max-w-full truncate font-normal">
                 {scopeLabel}
               </Badge>
@@ -192,9 +196,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             {!hasResults ? (
               <CommandEmpty className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
                 <Search className="size-5 opacity-40" aria-hidden />
-                <span>No matching results</span>
+                <span>{t('commandPalette.noMatchingResults')}</span>
                 {query.trim().length > 0 && query.trim().length < 2 ? (
-                  <span className="text-xs">Type at least 2 characters to search collections</span>
+                  <span className="text-xs">{t('commandPalette.typeMoreHint')}</span>
                 ) : null}
               </CommandEmpty>
             ) : (
@@ -204,7 +208,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                 return (
                   <CommandGroup
                     key={bucket}
-                    heading={BUCKET_META[bucket].label}
+                    heading={t(BUCKET_META[bucket].labelKey)}
                     className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground"
                   >
                     {items.map((a) => (
@@ -225,21 +229,21 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
           <div className="flex items-center justify-between gap-3 border-t border-border/70 bg-muted/20 px-4 py-2.5 text-[11px] text-muted-foreground">
             <span className="tabular-nums">
-              {hasResults ? `${visible.length} result${visible.length === 1 ? '' : 's'}` : 'No results'}
+              {hasResults ? t('commandPalette.results', { count: visible.length }) : t('commandPalette.noResults')}
             </span>
             <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
               <span className="inline-flex items-center gap-1.5">
                 <Kbd>↑</Kbd>
                 <Kbd>↓</Kbd>
-                navigate
+                {t('commandPalette.hints.navigate')}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Kbd>↵</Kbd>
-                run
+                {t('commandPalette.hints.run')}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Kbd>esc</Kbd>
-                close
+                {t('commandPalette.hints.close')}
               </span>
             </div>
           </div>

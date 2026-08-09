@@ -59,7 +59,7 @@ import {
   normalizeAiHistoryRetentionMonths,
   saveAiHistoryRetentionMonths,
   type AiHistoryRetentionMonths,
-} from '@/lib/aiChatSession';
+} from '@/lib/aiChatStore';
 
 interface AppSettings {
   mongosh_path: string;
@@ -797,7 +797,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                       {t('updates.lastChecked', { time: formatLastChecked(updateCheck.checkedAt) })}
                     </p>
                     <p className="text-foreground">
-                      {t('updates.result', { result: updateCheckResultLabel(updateCheck.result) })}
+                      {t('updates.result', { result: t(updateCheckResultLabel(updateCheck.result)) })}
                     </p>
                   </div>
                 ) : (

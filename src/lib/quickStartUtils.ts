@@ -1,3 +1,5 @@
+import type { TFunction } from 'i18next';
+
 /** Avatar background colors (hex), chosen to read on the dark theme. */
 export const AVATAR_PALETTE = [
   '#1f7a4d', // green
@@ -26,13 +28,18 @@ export function initial(name: string): string {
   return m ? m[0].toUpperCase() : '?';
 }
 
-/** Short topology label derived from a mongodb URI: SRV cluster, replica set, or standalone. */
-export function topology(uri: string): string {
-  if (/^mongodb\+srv:\/\//i.test(uri)) return 'SRV cluster';
+/** Short topology label derived from a mongodb URI: SRV cluster, replica set, or
+ *  standalone. Rendered on the connection card, so all three branches are
+ *  user-facing copy; `t` is injected to keep this module pure (same pattern as
+ *  `tabLabelFor` in App.tsx). */
+export function topology(uri: string, t: TFunction): string {
+  if (/^mongodb\+srv:\/\//i.test(uri)) return t('shell:connectionCard.topology.srvCluster');
   const m = uri.match(/mongodb:\/\/(?:[^@/]*@)?([^/?]+)/i);
   if (!m) return '';
   const hosts = m[1].split(',').filter(Boolean);
-  return hosts.length > 1 ? `Replica set · ${hosts.length} nodes` : 'Standalone';
+  return hosts.length > 1
+    ? t('shell:connectionCard.topology.replicaSet', { count: hosts.length })
+    : t('shell:connectionCard.topology.standalone');
 }
 
 /** Deterministic palette color from a name (FNV-1a hash). */
