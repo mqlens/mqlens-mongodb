@@ -675,6 +675,11 @@ function Workspace() {
       if (chat) {
         tabChatCache.current.set(newId, chat);
         tabChatCache.current.delete(oldId);
+        // And the open-chat claim, whose owner token is built from the tab id.
+        // Left under the profile-space id it would keep the conversation marked
+        // as open, the rebound tab would be refused it, and closing that tab
+        // would release only the new owner.
+        if (chat.chatId) void transferChatClaim(chat.chatId, oldId, newId);
       }
       // The in-flight request follows the tab; dropping it here would lose a
       // reply that is already on its way.
@@ -3222,6 +3227,11 @@ function Workspace() {
             tabBuilderStateCache.current.delete(id);
             tabChatCache.current.delete(id);
             clearChatRequest(id);
+            // These tabs are going away with their connection. Panels do not
+            // release their conversation on unmount, so without this the chats
+            // stay claimed by tabs that no longer exist and read as open
+            // elsewhere until the window closes.
+            releaseChatsForTab(id);
             void disposeShellSession(id);
             unmirroredTabIdsRef.current.delete(id);
           });

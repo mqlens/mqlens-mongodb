@@ -175,6 +175,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // the history can be widened past this collection, and a chat picked from
   // there still belongs where it was created.
   const [openScope, setOpenScope] = useState<ChatScope | null>(null);
+  // Whether the scope question has been ANSWERED, which is not the same as
+  // having a scope: a chat that no longer exists resolves to "no foreign
+  // scope", and must not leave persistence blocked forever.
+  const [scopeResolved, setScopeResolved] = useState(!chatId);
 
   /** True when the open conversation belongs to another namespace, so its
    *  queries were written against a different collection. Running one here
@@ -237,13 +241,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     if (!chatId) return;
     let active = true;
     void loadChat(chatId).then((stored) => {
-      if (!active || !stored) return;
-      setOpenScope({
-        connectionName: stored.connectionName,
-        database: stored.database,
-        collection: stored.collection,
-        variant: stored.variant,
-      });
+      if (!active) return;
+      if (stored) {
+        setOpenScope({
+          connectionName: stored.connectionName,
+          database: stored.database,
+          collection: stored.collection,
+          variant: stored.variant,
+        });
+      }
+      setScopeResolved(true);
     });
     return () => {
       active = false;
@@ -258,17 +265,26 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // closing it again does not litter the history with blank chats.
   useEffect(() => {
     if (chatMessages.length === 0) return;
+    // Not until the recovery below has run for an incoming chat. The scope
+    // lookup is asynchronous, and saving in the meantime would write a foreign
+    // conversation under THIS collection — the very migration the recovery
+    // exists to prevent.
+    if (!scopeResolved) return;
     void saveChat({
       // Its own scope, not the panel's — rewriting a chat under the collection
       // that happens to be showing it would silently move it.
       ...(openScope ?? scope),
-      id: activeChatIdRef.current,
+      // `activeChatId` the state, not the ref. A save queued for one transcript
+      // can execute after New chat has already swapped the ref, and would then
+      // store the old messages under the new id — two conversations with the
+      // same content, one of them a ghost.
+      id: activeChatId,
       title: titleFromMessages(chatMessages, t('aiChatPanel.history.untitled')),
       messages: chatMessages,
       createdAt: createdAtRef.current,
       updatedAt: new Date().toISOString(),
     });
-  }, [chatMessages, scope, t]);
+  }, [chatMessages, activeChatId, openScope, scopeResolved, scope, t]);
 
   // Deliberately NO auto-adoption of the collection's most recent
   // conversation. A tab starts its own chat and the history is an explicit
@@ -280,6 +296,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
   const startNewChat = () => {
     setOpenScope(null);
+    setScopeResolved(true);
     setActiveChatId(newChatId());
     setChatMessages([]);
     setChatInput('');
@@ -304,6 +321,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       collection: stored.collection,
       variant: stored.variant,
     });
+    setScopeResolved(true);
     releaseOpenChat(activeChatIdRef.current, ownerRef.current);
     setActiveChatId(stored.id, stored.createdAt, false);
     setChatMessages(stored.messages);

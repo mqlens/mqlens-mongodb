@@ -369,7 +369,14 @@ JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
 
     expect(screen.queryByText('first question')).toBeNull();
     expect(screen.queryByText('ok')).toBeNull();
-    // ...and the old conversation is still in the history, not lost.
+    // ...and the old conversation is still in the history, not lost — exactly
+    // once. A save queued for the old transcript can execute after New chat has
+    // swapped the active id, which stored the same messages a second time under
+    // the new one; asserting on the store says so directly, where a DOM query
+    // only reports "multiple elements".
+    await waitFor(() =>
+      expect(chatStore.filter((c) => c.title === 'first question')).toHaveLength(1)
+    );
     fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
     await waitFor(() => expect(screen.getByText('first question')).toBeInTheDocument());
   });
