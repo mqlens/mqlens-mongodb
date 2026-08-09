@@ -21,7 +21,6 @@ import {
   pollChangeStream,
   resumeChangeStream,
   startChangeStream,
-  stopChangeStream,
   type ChangeEvent,
   type ChangeOperation,
   type StreamStatus,
@@ -173,31 +172,54 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   // The last sequence handed to the view. A ref because the poll loop reads it
   // on every tick and must not restart when it moves.
   const lastSeqRef = useRef<number | undefined>(undefined);
+  // Read inside the start effect, which must not re-run when it changes.
+  const pausedRef = useRef(false);
 
-  // One tail per tab, torn down with it. A cursor is a server-side resource and
-  // nothing here outlives the tab, so the tab is exactly where it ends.
+  // Started once per tab and NOT stopped on unmount. `PaneView` renders only
+  // the active tab, so an inactive watch tab is unmounted while still open —
+  // tearing the cursor down here would drop its resume token and silently miss
+  // every change until the user came back. The tab's close path stops it, the
+  // same way a shell session is ended.
   useEffect(() => {
     let alive = true;
+    // One poll at a time. The interval fires every 700ms regardless of how
+    // long a poll takes, and two in flight share an `afterSeq`, so both return
+    // the same events — duplicated rows and duplicated React keys.
+    let polling = false;
+
     void startChangeStream({
       streamId,
       connectionId,
       database: databaseName,
       collection: collectionName,
       operationTypes: operations,
-    }).catch(() => undefined);
+    })
+      .then(() => {
+        // A filter change is a new cursor, since the `$match` lives in the
+        // server-side pipeline — but it must not quietly resume a stream the
+        // user paused. Re-pause immediately if that is where they left it.
+        if (alive && pausedRef.current) void pauseChangeStream(streamId);
+      })
+      .catch(() => undefined);
 
     const tick = async () => {
-      const poll = await pollChangeStream(streamId, lastSeqRef.current);
-      if (!alive || !poll) return;
-      // Only when they actually move. These fire every 700ms, and setting an
-      // unchanged value still costs a render pass — on an idle tail that was a
-      // re-render a second for nothing.
-      setStatus((prev) => (prev === poll.status ? prev : poll.status));
-      setError((prev) => (prev === poll.error ? prev : poll.error));
-      setDropped((prev) => (prev === poll.dropped ? prev : poll.dropped));
-      if (poll.events.length > 0) {
-        lastSeqRef.current = poll.lastSeq;
-        setEvents((prev) => mergeEvents(prev, poll.events, VIEW_CAP));
+      if (polling) return;
+      polling = true;
+      try {
+        const poll = await pollChangeStream(streamId, lastSeqRef.current);
+        if (!alive || !poll) return;
+        // Only when they actually move. These fire every 700ms, and setting an
+        // unchanged value still costs a render pass — on an idle tail that was
+        // a re-render a second for nothing.
+        setStatus((prev) => (prev === poll.status ? prev : poll.status));
+        setError((prev) => (prev === poll.error ? prev : poll.error));
+        setDropped((prev) => (prev === poll.dropped ? prev : poll.dropped));
+        if (poll.events.length > 0) {
+          lastSeqRef.current = poll.lastSeq;
+          setEvents((prev) => mergeEvents(prev, poll.events, VIEW_CAP));
+        }
+      } finally {
+        polling = false;
       }
     };
     const timer = setInterval(() => void tick(), POLL_MS);
@@ -206,20 +228,28 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
     return () => {
       alive = false;
       clearInterval(timer);
-      void stopChangeStream(streamId);
     };
-    // Restarting on a filter change is deliberate: the `$match` lives in the
-    // server-side pipeline, so a new filter is a new cursor.
   }, [streamId, connectionId, databaseName, collectionName, operations]);
 
-  const toggleOperation = (op: ChangeOperation) => {
+  const applyOperations = (next: ChangeOperation[]) => {
     setEvents([]);
     setSelected(null);
+    // The namespace filter hides itself once fewer than two namespaces have
+    // been seen, so a stale selection could survive with no visible control to
+    // clear it — leaving an empty list and no way out.
+    setNamespace(null);
     lastSeqRef.current = undefined;
-    setOperations((prev) => (prev.includes(op) ? prev.filter((o) => o !== op) : [...prev, op]));
+    setOperations(next);
+  };
+
+  const toggleOperation = (op: ChangeOperation) => {
+    applyOperations(
+      operations.includes(op) ? operations.filter((o) => o !== op) : [...operations, op]
+    );
   };
 
   const paused = status === 'paused';
+  pausedRef.current = paused;
   // On a deployment tail the database differs from row to row, so it belongs
   // ON the row. Below that it is the same for every event and repeating it
   // would be noise, so it sits once at the foot of the list instead.
@@ -258,11 +288,19 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
 
   const detailDocument = useMemo(() => {
     if (!selected) return null;
-    const body =
-      selected.fullDocument ??
-      selected.updatedFields ??
-      selected.documentKey ??
-      (selected as unknown);
+    // An update that only `$unset`s carries `updatedFields: {}` — present, so
+    // a nullish chain picks it and hides the removals entirely. Both halves of
+    // an update description belong together.
+    const updated = selected.updatedFields as Record<string, unknown> | undefined;
+    const removed = selected.removedFields;
+    const isUpdate = updated !== undefined || (removed?.length ?? 0) > 0;
+    const body = selected.fullDocument
+      ? selected.fullDocument
+      : isUpdate
+        ? { ...(updated ?? {}), ...(removed?.length ? { $removed: removed } : {}) }
+        : selected.renamedTo
+          ? { renamedTo: selected.renamedTo, ...(selected.documentKey as object) }
+          : (selected.documentKey ?? (selected as unknown));
     return body && typeof body === 'object' && !Array.isArray(body)
       ? (body as Record<string, unknown>)
       : { value: body };

@@ -31,10 +31,12 @@ export interface ChangeEvent {
   fullDocument?: unknown;
   updatedFields?: unknown;
   removedFields?: string[];
+  /** Where a rename sent the collection; rename events carry no document. */
+  renamedTo?: string;
   atMs: number;
 }
 
-export type StreamStatus = 'starting' | 'running' | 'paused' | 'unsupported' | 'error';
+export type StreamStatus = 'starting' | 'running' | 'paused' | 'unsupported' | 'ended' | 'error';
 
 export interface StreamPoll {
   events: ChangeEvent[];
@@ -118,9 +120,15 @@ export function mergeEvents(
   cap: number
 ): ChangeEvent[] {
   if (incoming.length === 0) return current;
+  // Deduplicated by sequence. Polls are serialized at the call site, but a
+  // retry or an overlapping `afterSeq` would otherwise add the same change
+  // twice — and duplicate keys make React reconcile the wrong rows.
+  const seen = new Set(current.map((e) => e.seq));
+  const fresh = incoming.filter((e) => !seen.has(e.seq));
+  if (fresh.length === 0) return current;
   // Newest first: a tail is read from the top, and prepending keeps the thing
   // the user is watching where their eyes already are.
-  const next = [...incoming].sort((a, b) => b.seq - a.seq).concat(current);
+  const next = fresh.sort((a, b) => b.seq - a.seq).concat(current);
   return next.length > cap ? next.slice(0, cap) : next;
 }
 

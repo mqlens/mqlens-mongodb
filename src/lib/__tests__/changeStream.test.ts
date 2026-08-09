@@ -41,6 +41,18 @@ describe('change stream client', () => {
       expect(merged.map((e) => e.seq)).toEqual([3, 2]);
     });
 
+    it('drops events it already has, rather than duplicating rows', () => {
+      // Two polls can overlap on the same `afterSeq`, and duplicate keys make
+      // React reconcile the wrong rows.
+      const current = [event(2), event(1)];
+      expect(mergeEvents(current, [event(2), event(3)], 100).map((e) => e.seq)).toEqual([3, 2, 1]);
+    });
+
+    it('returns the same array when every incoming event is already known', () => {
+      const current = [event(2), event(1)];
+      expect(mergeEvents(current, [event(1)], 100)).toBe(current);
+    });
+
     it('leaves the view untouched when a poll brings nothing', () => {
       const current = [event(1)];
       expect(mergeEvents(current, [], 10)).toBe(current);

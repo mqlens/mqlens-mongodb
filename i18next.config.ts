@@ -94,6 +94,7 @@ export default defineConfig({
       'shell:watch.status.running',
       'shell:watch.status.paused',
       'shell:watch.status.unsupported',
+      'shell:watch.status.ended',
       'shell:watch.status.error',
       'settings:appearance.tabLabel',
       'settings:appearance.tabDescription',

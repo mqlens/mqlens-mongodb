@@ -16,6 +16,7 @@ import {
   resetChatRequests,
   takeSettledChatRequest,
 } from './lib/aiChatRequest';
+import { stopChangeStream } from './lib/changeStream';
 import {
   appendReplyToChat,
   releaseChatsForTab,
@@ -1437,7 +1438,12 @@ function Workspace() {
    *  starting a second cursor on the same collection. */
   const handleOpenWatch = (connectionId: string, dbName = '', collName = '') => {
     if (!connectionId) return;
-    const tabId = `watch.${connectionId}.${dbName || 'deployment'}.${collName || 'database'}`;
+    // The scope is encoded, not spelled with sentinel words: `database` and
+    // `deployment` are legal MongoDB names, so a collection called `database`
+    // used to produce the same tab id as its database-wide watch and the
+    // second target could never be opened.
+    const scope = collName ? 'c' : dbName ? 'd' : 'x';
+    const tabId = `watch.${scope}.${connectionId}.${dbName}.${collName}`;
     if (!tabs.some((t) => t.id === tabId)) {
       const newTab: QueryTab = {
         id: tabId,
@@ -2344,6 +2350,10 @@ function Workspace() {
       // release on unmount, because an inactive tab is unmounted and still owns
       // its chat. Closing is where that ends.
       releaseChatsForTab(action.tabId);
+      // A watch cursor is a server-side resource that deliberately outlives an
+      // unmount — inactive tabs are unmounted while still open. Closing the
+      // tab is where it ends.
+      void stopChangeStream(action.tabId);
       void disposeShellSession(action.tabId);
       // #91: forget this tab's generate-task tracking on close (running or
       // finished) — otherwise reopening "Generate Data…" on the same
@@ -2374,6 +2384,7 @@ function Workspace() {
         tabChatCache.current.delete(id);
         clearChatRequest(id);
         releaseChatsForTab(id);
+        void stopChangeStream(id);
         void disposeShellSession(id);
       });
       // Prune `tabs[]` here rather than leaving it to the caller. Every
@@ -3133,6 +3144,7 @@ function Workspace() {
             tabChatCache.current.delete(id);
             clearChatRequest(id);
             releaseChatsForTab(id);
+            void stopChangeStream(id);
             // Gone from the document: end the session. Merely moved to another
             // window: that window owns the child now, so it must keep running —
             // but this renderer's cached copy has to go, or moving the tab back
@@ -3288,6 +3300,7 @@ function Workspace() {
             // stay claimed by tabs that no longer exist and read as open
             // elsewhere until the window closes.
             releaseChatsForTab(id);
+            void stopChangeStream(id);
             void disposeShellSession(id);
             unmirroredTabIdsRef.current.delete(id);
           });

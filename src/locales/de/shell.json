@@ -508,6 +508,7 @@
     },
     "searchCollections": "Collections durchsuchen…",
     "status": {
+      "ended": "beendet",
       "error": "Fehler",
       "paused": "pausiert",
       "running": "live",

@@ -4941,8 +4941,8 @@ mod chat_store_tests {
 
 mod change_stream_tests {
     use crate::change_streams::{
-        build_pipeline, describe_stream_error, events_after, push_event, ChangeEvent,
-        StreamBuffer, StreamStatus, BUFFER_CAP,
+        build_pipeline, describe_stream_error, events_after, push_event, push_event_bounded,
+        ChangeEvent, StreamBuffer, StreamStatus, BUFFER_CAP,
     };
 
     fn event(op: &str) -> ChangeEvent {
@@ -4955,8 +4955,14 @@ mod change_stream_tests {
             full_document: None,
             updated_fields: None,
             removed_fields: None,
+            renamed_to: None,
             at_ms: 0,
+            bytes: 0,
         }
+    }
+
+    fn heavy(op: &str, bytes: usize) -> ChangeEvent {
+        ChangeEvent { bytes, ..event(op) }
     }
 
     #[test]
@@ -4976,6 +4982,33 @@ mod change_stream_tests {
             buffer.events.back().unwrap().seq,
             (BUFFER_CAP + 4) as u64
         );
+    }
+
+    #[test]
+    fn a_few_large_documents_evict_before_the_count_does() {
+        // A count is not a memory bound: a MongoDB document can approach 16
+        // MiB, so a thousand large inserts is gigabytes held in a desktop
+        // process — and polling clones them again on the way out.
+        let mut buffer = StreamBuffer::default();
+        for _ in 0..4 {
+            let mut e = heavy("insert", 400);
+            push_event_bounded(&mut buffer, &mut e, 1_000, 1_000);
+        }
+
+        assert!(buffer.events.len() < 4, "the byte budget never bit");
+        assert!(buffer.buffered_bytes <= 1_000, "over budget: {}", buffer.buffered_bytes);
+        assert!(buffer.dropped > 0, "an eviction was not reported");
+    }
+
+    #[test]
+    fn the_newest_event_survives_even_if_it_alone_is_over_budget() {
+        // Dropping what just arrived would make a collection of large
+        // documents look idle, which is worse than briefly exceeding the cap.
+        let mut buffer = StreamBuffer::default();
+        let mut huge = heavy("insert", 5_000);
+        push_event_bounded(&mut buffer, &mut huge, 1_000, 1_000);
+
+        assert_eq!(buffer.events.len(), 1);
     }
 
     #[test]

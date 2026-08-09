@@ -1503,14 +1503,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Terminal />
               <span>{t('ctx.openShell')}</span>
             </ContextMenuItem>
-            <ContextMenuItem
-              className={ctxItemClass}
-              onClick={() => onWatchCollection?.(connId, dbName, collName)}
-              data-testid="ctx-watch-collection"
-            >
-              <Radio />
-              <span>{t('ctx.watchCollection')}</span>
-            </ContextMenuItem>
+            {/* Hidden for the built-in demo connections: they have no driver
+                client behind them, so a change stream could never start. */}
+            {!isMockConnection(connId) && (
+              <ContextMenuItem
+                className={ctxItemClass}
+                onClick={() => onWatchCollection?.(connId, dbName, collName)}
+                data-testid="ctx-watch-collection"
+              >
+                <Radio />
+                <span>{t('ctx.watchCollection')}</span>
+              </ContextMenuItem>
+            )}
             <ContextMenuItem className={ctxItemClass} onClick={() => onAnalyzeSchema?.(connId, dbName, collName)}>
               <Table2 />
               <span>{t('ctx.analyzeSchema')}</span>
@@ -1877,14 +1881,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <span>{t('ctx.restore')}</span>
                     </ContextMenuItem>
                   )}
-                  <ContextMenuItem
-                    className={ctxItemClass}
-                    data-testid={`ctx-watch-deployment-${conn.id}`}
-                    onClick={() => onWatchCollection?.(conn.id)}
-                  >
-                    <Radio />
-                    <span>{t('ctx.watchDeployment')}</span>
-                  </ContextMenuItem>
+                  {!isMockConnection(conn.id) && (
+                    <ContextMenuItem
+                      className={ctxItemClass}
+                      data-testid={`ctx-watch-deployment-${conn.id}`}
+                      onClick={() => onWatchCollection?.(conn.id)}
+                    >
+                      <Radio />
+                      <span>{t('ctx.watchDeployment')}</span>
+                    </ContextMenuItem>
+                  )}
                   <ContextMenuSeparator />
                   <ContextMenuItem
                     className={cn(ctxItemClass, 'text-destructive focus:text-destructive')}
@@ -2022,14 +2028,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <Archive />
                               <span>{t('ctx.newBucket')}</span>
                             </ContextMenuItem>
-                            <ContextMenuItem
-                              className={ctxItemClass}
-                              data-testid={`ctx-watch-database-${conn.id}-${dbName}`}
-                              onClick={() => onWatchCollection?.(conn.id, dbName)}
-                            >
-                              <Radio />
-                              <span>{t('ctx.watchDatabase')}</span>
-                            </ContextMenuItem>
+                            {!isMockConnection(conn.id) && (
+                              <ContextMenuItem
+                                className={ctxItemClass}
+                                data-testid={`ctx-watch-database-${conn.id}-${dbName}`}
+                                onClick={() => onWatchCollection?.(conn.id, dbName)}
+                              >
+                                <Radio />
+                                <span>{t('ctx.watchDatabase')}</span>
+                              </ContextMenuItem>
+                            )}
                             <ContextMenuItem
                               className={ctxItemClass}
                               onClick={() => onOpenShell?.(conn.id, dbName, undefined, 'show collections')}

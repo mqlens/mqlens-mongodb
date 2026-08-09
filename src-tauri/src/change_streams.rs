@@ -20,12 +20,20 @@ use mongodb::bson::{doc, Document};
 use mongodb::change_stream::event::{ChangeStreamEvent, ResumeToken};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Events kept per stream. Oldest are dropped first; the count of what was
 /// dropped is reported so the UI can say so rather than silently skipping.
 pub const BUFFER_CAP: usize = 1_000;
+
+/// Bytes of document bodies kept per stream.
+///
+/// A count alone is not a memory bound: a MongoDB document can approach 16 MiB,
+/// so a thousand large inserts is gigabytes held in a desktop process — and
+/// polling clones them again on the way out. Whichever limit is reached first
+/// evicts.
+pub const BUFFER_BYTES: usize = 16 * 1024 * 1024;
 
 /// One change, flattened to what the viewer needs. The bodies stay as raw JSON
 /// — this module never interprets a document.
@@ -46,7 +54,15 @@ pub struct ChangeEvent {
     pub updated_fields: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub removed_fields: Option<Vec<String>>,
+    /// Where a rename sent the collection. Rename events carry no document, so
+    /// without this the viewer can say what moved but never where to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renamed_to: Option<String>,
     pub at_ms: u64,
+    /// Rough size of the bodies this event carries, for the byte bound. Not
+    /// sent to the frontend — it is bookkeeping, not information.
+    #[serde(skip)]
+    pub bytes: usize,
 }
 
 /// What a stream is doing, as the UI needs to render it.
@@ -60,6 +76,10 @@ pub enum StreamStatus {
     /// from `Error` because it is a fact about the deployment, not a failure to
     /// retry.
     Unsupported,
+    /// The cursor finished by itself — invalidated, or the connection went
+    /// away. Distinct from `Error`: nothing went wrong, there is just nothing
+    /// left to read.
+    Ended,
     Error,
 }
 
@@ -68,15 +88,24 @@ pub struct StreamBuffer {
     pub events: VecDeque<ChangeEvent>,
     pub next_seq: u64,
     pub dropped: u64,
+    /// Running total of `bytes` across `events`, so eviction does not have to
+    /// re-measure the whole buffer on every push.
+    pub buffered_bytes: usize,
 }
 
 pub struct LiveStream {
     pub buffer: Mutex<StreamBuffer>,
     pub status: Mutex<StreamStatus>,
     pub error: Mutex<Option<String>>,
-    /// Set to stop the reader task — pause and stop both use it; the difference
-    /// is whether the resume token is kept.
-    pub cancel: Arc<AtomicBool>,
+    /// Which reader is the live one.
+    ///
+    /// A boolean "cancelled" flag cannot wake a task blocked in
+    /// `next().await`, so pausing and resuming before the next event could
+    /// leave TWO readers on the same resume point, each buffering the same
+    /// changes. Every pause, resume and stop bumps this; a reader carries the
+    /// value it started with and retires the moment it stops matching, so a
+    /// straggler can neither push nor keep reading.
+    pub generation: Arc<AtomicU64>,
     pub resume_token: Mutex<Option<ResumeToken>>,
     pub connection_id: String,
     /// `None` watches the whole deployment (`client.watch()`), which is how a
@@ -106,12 +135,30 @@ pub struct StreamPoll {
 /// bounded under load, and getting this wrong is invisible until a collection
 /// is busy enough to matter.
 pub fn push_event(buffer: &mut StreamBuffer, mut event: ChangeEvent, cap: usize) {
+    push_event_bounded(buffer, &mut event, cap, BUFFER_BYTES);
+}
+
+/// The eviction itself, with both limits explicit so a test can use small ones.
+pub fn push_event_bounded(
+    buffer: &mut StreamBuffer,
+    event: &mut ChangeEvent,
+    cap: usize,
+    max_bytes: usize,
+) {
     event.seq = buffer.next_seq;
     buffer.next_seq += 1;
-    buffer.events.push_back(event);
-    while buffer.events.len() > cap {
-        buffer.events.pop_front();
-        buffer.dropped += 1;
+    buffer.buffered_bytes += event.bytes;
+    buffer.events.push_back(event.clone());
+    // Whichever limit bites first. The newest event always stays, even if it
+    // alone is over the byte budget — dropping the thing just received would
+    // make a large-document collection look idle.
+    while buffer.events.len() > cap
+        || (buffer.buffered_bytes > max_bytes && buffer.events.len() > 1)
+    {
+        if let Some(evicted) = buffer.events.pop_front() {
+            buffer.buffered_bytes = buffer.buffered_bytes.saturating_sub(evicted.bytes);
+            buffer.dropped += 1;
+        }
     }
 }
 
@@ -187,6 +234,24 @@ pub fn flatten_event(event: ChangeStreamEvent<Document>, database: &str) -> Chan
         ),
         None => (None, None),
     };
+    // The event's OWN wall time where the server sent one. `now_ms()` is when
+    // this process happened to read it, which after a pause or a backlog
+    // stamps every replayed change with the moment of resume.
+    let at_ms = event
+        .wall_time
+        .map(|t| t.timestamp_millis().max(0) as u64)
+        .unwrap_or_else(now_ms);
+    let renamed_to = event.to.as_ref().map(|ns| match &ns.coll {
+        Some(coll) => format!("{}.{}", ns.db, coll),
+        None => ns.db.clone(),
+    });
+    let document_key = to_json(event.document_key);
+    let full_document = event.full_document.and_then(|d| serde_json::to_value(d).ok());
+    let approx_bytes = |v: &Option<serde_json::Value>| {
+        v.as_ref().map(|j| j.to_string().len()).unwrap_or(0)
+    };
+    let bytes = approx_bytes(&full_document) + approx_bytes(&updated_fields) + approx_bytes(&document_key);
+
     ChangeEvent {
         // Assigned by `push_event`, which owns the sequence.
         seq: 0,
@@ -197,11 +262,13 @@ pub fn flatten_event(event: ChangeStreamEvent<Document>, database: &str) -> Chan
             .map(|n| n.db.clone())
             .unwrap_or_else(|| database.to_string()),
         collection: event.ns.as_ref().and_then(|n| n.coll.clone()),
-        document_key: to_json(event.document_key),
-        full_document: event.full_document.and_then(|d| serde_json::to_value(d).ok()),
+        document_key,
+        full_document,
         updated_fields,
         removed_fields,
-        at_ms: now_ms(),
+        renamed_to,
+        at_ms,
+        bytes,
     }
 }
 
@@ -218,7 +285,7 @@ fn get_stream(state: &AppState, stream_id: &str) -> Result<Arc<LiveStream>, Stri
 ///
 /// Spawned per stream. It owns the resume token: every event updates it, so a
 /// pause can restart exactly where this left off.
-async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client) {
+async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_generation: u64) {
     use futures::StreamExt;
 
     let pipeline = build_pipeline(&state_streams.operation_types);
@@ -275,13 +342,28 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client) {
         }
     };
 
+    // Only if this reader is still the live one AND nobody paused while the
+    // cursor was opening — otherwise the panel shows a running stream whose
+    // reader is about to retire, and its toggle offers Pause on something
+    // already stopped.
+    if state_streams.generation.load(Ordering::SeqCst) != my_generation {
+        return;
+    }
     if let Ok(mut s) = state_streams.status.lock() {
-        *s = StreamStatus::Running;
+        if *s == StreamStatus::Starting {
+            *s = StreamStatus::Running;
+        }
     }
 
-    while !state_streams.cancel.load(Ordering::SeqCst) {
+    while state_streams.generation.load(Ordering::SeqCst) == my_generation {
         match stream.next().await {
             Some(Ok(event)) => {
+                // Re-checked after the await: this task may have been retired
+                // while it was blocked, and its event belongs to a cursor
+                // nobody is watching any more.
+                if state_streams.generation.load(Ordering::SeqCst) != my_generation {
+                    return;
+                }
                 if let Ok(mut token) = state_streams.resume_token.lock() {
                     *token = Some(event.id.clone());
                 }
@@ -300,9 +382,18 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client) {
                 }
                 return;
             }
-            // The cursor closed on its own — treat it as a stop rather than an
-            // error, since that is what a dropped connection looks like too.
-            None => break,
+            // The cursor ended on its own: an invalidate after the watched
+            // collection was dropped or renamed, or a connection that went
+            // away. Leaving the status at Running would have the panel poll
+            // forever against a reader that no longer exists.
+            None => {
+                if state_streams.generation.load(Ordering::SeqCst) == my_generation {
+                    if let Ok(mut s) = state_streams.status.lock() {
+                        *s = StreamStatus::Ended;
+                    }
+                }
+                return;
+            }
         }
     }
 }
@@ -314,8 +405,10 @@ fn spawn_reader(state: &AppState, stream: Arc<LiveStream>) -> Result<(), String>
         .get(&stream.connection_id)
         .cloned()
         .ok_or_else(|| format!("connection {} is not open", stream.connection_id))?;
-    stream.cancel.store(false, Ordering::SeqCst);
-    tauri::async_runtime::spawn(run_stream(stream, client));
+    // Retires whatever was reading before, and claims the next generation for
+    // the task about to start.
+    let my_generation = stream.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn(run_stream(stream, client, my_generation));
     Ok(())
 }
 
@@ -343,7 +436,7 @@ pub async fn start_change_stream(
         buffer: Mutex::new(StreamBuffer::default()),
         status: Mutex::new(StreamStatus::Starting),
         error: Mutex::new(None),
-        cancel: Arc::new(AtomicBool::new(false)),
+        generation: Arc::new(AtomicU64::new(0)),
         resume_token: Mutex::new(None),
         connection_id,
         database,
@@ -354,7 +447,20 @@ pub async fn start_change_stream(
         .change_streams
         .lock_safe()?
         .insert(stream_id, stream.clone());
-    spawn_reader(&state, stream)
+    if let Err(err) = spawn_reader(&state, stream.clone()) {
+        // The panel polls for status, so a failure to start has to land THERE
+        // rather than only in a rejected promise the caller drops. A mock
+        // connection has no client at all, and would otherwise show "starting"
+        // for ever.
+        if let Ok(mut s) = stream.status.lock() {
+            *s = StreamStatus::Unsupported;
+        }
+        if let Ok(mut e) = stream.error.lock() {
+            *e = Some(err.clone());
+        }
+        return Err(err);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -392,7 +498,10 @@ pub async fn pause_change_stream(
     stream_id: String,
 ) -> Result<(), String> {
     let stream = get_stream(&state, &stream_id)?;
-    stream.cancel.store(true, Ordering::SeqCst);
+    // Retires the reader. It may be blocked in `next().await` and only notice
+    // when the next event arrives — which is fine, because it checks the
+    // generation before pushing anything.
+    stream.generation.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut s) = stream.status.lock() {
         *s = StreamStatus::Paused;
     }
@@ -419,7 +528,7 @@ pub async fn resume_change_stream(
 pub fn stop_change_stream_impl(state: &AppState, stream_id: &str) -> Result<(), String> {
     let removed = state.change_streams.lock_safe()?.remove(stream_id);
     if let Some(stream) = removed {
-        stream.cancel.store(true, Ordering::SeqCst);
+        stream.generation.fetch_add(1, Ordering::SeqCst);
     }
     Ok(())
 }
