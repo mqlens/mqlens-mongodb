@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { WatchPanel } from '../WatchPanel';
 
 const invokeMock = vi.fn();
@@ -104,6 +104,36 @@ describe('WatchPanel', () => {
 
     releaseStart();
     await waitFor(() => expect(callsTo('poll_change_stream').length).toBeGreaterThan(0));
+  });
+
+  it('does not re-pause a stream the user has just resumed', async () => {
+    // The re-pause on a filter change reads a ref, and that ref cannot be
+    // derived from the polled status: it arrives up to 700ms later. Resume,
+    // change a filter before the next poll, and the replacement would be
+    // paused again on the user's behalf — the Resume click looking like it did
+    // nothing at all.
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'describe_change_stream') return Promise.resolve(null);
+      if (command === 'poll_change_stream') {
+        return Promise.resolve({ events: [], status: 'paused', error: null, dropped: 0, lastSeq: 0 });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(panel());
+    // The toggle offers Resume only once a poll has reported the pause.
+    await waitFor(() => expect(callsTo('poll_change_stream').length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getByTestId('watch-toggle').getAttribute('title')).toMatch(/resume/i)
+    );
+
+    fireEvent.click(screen.getByTestId('watch-toggle'));
+    expect(callsTo('resume_change_stream')).toHaveLength(1);
+
+    // Straight into a filter change, before any poll could report `running`.
+    fireEvent.click(screen.getByTestId('watch-filter-insert'));
+    await waitFor(() => expect(callsTo('start_change_stream').length).toBeGreaterThan(1));
+    expect(callsTo('pause_change_stream')).toHaveLength(0);
   });
 
   it('watches the whole deployment when no database is given', async () => {

@@ -129,7 +129,10 @@ pub struct LiveStream {
     /// server-side cursor and a clone of the client the whole time. Pause,
     /// resume, filter, pause again and those pile up.
     pub retired: Arc<tokio::sync::Notify>,
-    pub resume_token: Mutex<ResumePoint>,
+    /// Shared with whatever replaces this stream on the same target, so a
+    /// reader retired by that replacement still writes its final cursor
+    /// position somewhere the replacement can read it.
+    pub resume_token: Arc<Mutex<ResumePoint>>,
     pub connection_id: String,
     /// `None` watches the whole deployment (`client.watch()`), which is how a
     /// cluster-level tail differs from a database one.
@@ -517,6 +520,38 @@ pub fn record_resume_token(point: &mut ResumePoint, generation: u64, token: Opti
     point.token = token;
 }
 
+/// What a replacement keeps from the stream it replaces.
+pub struct CarriedOver {
+    pub generation: Arc<AtomicU64>,
+    pub retired: Arc<tokio::sync::Notify>,
+    pub resume_token: Arc<Mutex<ResumePoint>>,
+}
+
+/// Shared when the replacement watches the same target, fresh otherwise.
+///
+/// Same target means the same connection and the same database: only the
+/// operation filter is being rebuilt, so the old cursor's position is still a
+/// place the new one can start from. A different target has nothing to inherit
+/// — its resume point would be meaningless, and a shared generation counter
+/// would retire readers that have nothing to do with each other.
+pub fn carry_over(
+    existing: Option<&Arc<LiveStream>>,
+    connection_id: &str,
+    database: &Option<String>,
+) -> CarriedOver {
+    let carried =
+        existing.filter(|e| e.connection_id == connection_id && &e.database == database);
+    CarriedOver {
+        generation: carried
+            .map(|e| Arc::clone(&e.generation))
+            .unwrap_or_else(|| Arc::new(AtomicU64::new(0))),
+        retired: carried.map(|e| Arc::clone(&e.retired)).unwrap_or_default(),
+        resume_token: carried
+            .map(|e| Arc::clone(&e.resume_token))
+            .unwrap_or_default(),
+    }
+}
+
 /// Retire whoever is reading and claim the next generation.
 ///
 /// Bumped while holding the BUFFER lock, which is the same lock a reader holds
@@ -576,13 +611,24 @@ pub async fn start_change_stream(
     }
 
     // Different filters, same namespace: the cursor has to be rebuilt because
-    // the `$match` lives in the pipeline, but the old resume token still points
-    // at a valid place in the oplog. Carrying it over is what stops a filter
-    // change from silently skipping everything buffered during a pause.
-    let inherited_token = existing
-        .as_ref()
-        .filter(|e| e.connection_id == connection_id && e.database == database)
-        .and_then(|e| e.resume_token.lock().ok().and_then(|p| p.token.clone()));
+    // the `$match` lives in the pipeline, but the old resume point is still a
+    // valid place in the oplog. Carrying it over is what stops a filter change
+    // from silently skipping everything that happened during a pause.
+    //
+    // The point itself is SHARED with the replacement rather than copied out of
+    // the old stream. Retiring a reader does not stop it instantly — it wakes,
+    // records where its cursor actually got to, and only then lets go — so a
+    // copy taken here is the position before that final update, and on a
+    // narrowly filtered stream that can be far behind. Sharing the slot means
+    // the straggler's last word lands where the replacement will read it. The
+    // generation counter travels with it for the same reason: it is what keeps
+    // a late write from overtaking a newer one, and a counter that restarted at
+    // zero would make every straggler look current.
+    let CarriedOver {
+        generation,
+        retired,
+        resume_token,
+    } = carry_over(existing.as_ref(), &connection_id, &database);
     let inherited_status = existing
         .as_ref()
         .and_then(|e| e.status.lock().ok().map(|s| s.clone()));
@@ -603,12 +649,9 @@ pub async fn start_change_stream(
             StreamStatus::Starting
         }),
         error: Mutex::new(None),
-        generation: Arc::new(AtomicU64::new(0)),
-        retired: Arc::new(tokio::sync::Notify::new()),
-        resume_token: Mutex::new(ResumePoint {
-            generation: 0,
-            token: inherited_token,
-        }),
+        generation,
+        retired,
+        resume_token,
         connection_id,
         database,
         collection,

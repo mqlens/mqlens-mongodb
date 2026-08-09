@@ -4942,7 +4942,7 @@ mod chat_store_tests {
 mod change_stream_tests {
     use crate::change_streams::{
         build_pipeline, describe_stream_error, events_after, push_event, push_event_bounded,
-        measure_event, record_resume_token, retire_reader, ChangeEvent, LiveStream, ResumePoint, StreamBuffer,
+        carry_over, measure_event, record_resume_token, retire_reader, ChangeEvent, LiveStream, ResumePoint, StreamBuffer,
         StreamStatus, BUFFER_CAP,
     };
     use mongodb::bson::{doc, Bson};
@@ -4963,7 +4963,7 @@ mod change_stream_tests {
             error: Mutex::new(None),
             generation: Arc::new(AtomicU64::new(0)),
             retired: Arc::new(tokio::sync::Notify::new()),
-            resume_token: Mutex::new(ResumePoint::default()),
+            resume_token: Arc::new(Mutex::new(ResumePoint::default())),
             connection_id: "c1".to_string(),
             database: Some("sales".to_string()),
             collection: Some("orders".to_string()),
@@ -5221,6 +5221,32 @@ mod change_stream_tests {
             "removed fields should count towards the byte bound, got {}",
             measure_event(&unset)
         );
+    }
+
+    #[test]
+    fn a_filter_change_keeps_the_resume_slot_it_is_replacing() {
+        // Shared, not copied. Retiring a reader does not stop it instantly: it
+        // wakes, records where its cursor actually reached, and only then lets
+        // go — so a copy taken while building the replacement is the position
+        // BEFORE that last word, and on a narrowly filtered stream it can be
+        // far enough behind to have aged out of the oplog by the time anyone
+        // resumes from it.
+        let old = live_stream();
+        let carried = carry_over(Some(&old), "c1", &Some("sales".to_string()));
+        assert!(Arc::ptr_eq(&carried.resume_token, &old.resume_token));
+        assert!(Arc::ptr_eq(&carried.generation, &old.generation));
+        assert!(Arc::ptr_eq(&carried.retired, &old.retired));
+    }
+
+    #[test]
+    fn a_watch_on_another_target_starts_from_nothing() {
+        // A different database has no resume point to inherit, and sharing a
+        // generation counter would retire readers with nothing to do with each
+        // other.
+        let old = live_stream();
+        let carried = carry_over(Some(&old), "c1", &Some("other".to_string()));
+        assert!(!Arc::ptr_eq(&carried.resume_token, &old.resume_token));
+        assert!(!Arc::ptr_eq(&carried.generation, &old.generation));
     }
 
     #[test]

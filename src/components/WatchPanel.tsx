@@ -282,7 +282,20 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   };
 
   const paused = status === 'paused';
-  pausedRef.current = paused;
+
+  /**
+   * Pause or resume, and remember which straight away.
+   *
+   * The ref cannot be derived from `status`: that arrives on a poll up to
+   * 700ms later, so a filter changed in between would consult the state the
+   * user just left. Resume, change a filter, and the replacement stream would
+   * be paused again on their behalf — their click looking like it did nothing.
+   */
+  const toggleRunning = () => {
+    const next = !paused;
+    pausedRef.current = next;
+    void (next ? pauseChangeStream(streamId) : resumeChangeStream(streamId));
+  };
   // On a deployment tail the database differs from row to row, so it belongs
   // ON the row. Below that it is the same for every event and repeating it
   // would be noise, so it sits once at the foot of the list instead.
@@ -369,7 +382,7 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
             size="icon"
             className="h-6 w-6"
             title={paused ? t('watch.actions.resume') : t('watch.actions.pause')}
-            onClick={() => void (paused ? resumeChangeStream(streamId) : pauseChangeStream(streamId))}
+            onClick={toggleRunning}
             data-testid="watch-toggle"
           >
             {paused ? <Play size={12} /> : <Pause size={12} />}
