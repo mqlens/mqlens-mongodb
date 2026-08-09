@@ -5,6 +5,7 @@ import {
   isHeldLocally,
   newPanelOwner,
   releaseChatsForTab,
+  retargetChatScope,
   tabChatOwner,
   transferChatClaim,
   listChats,
@@ -107,30 +108,34 @@ describe('AI chat store', () => {
     });
   });
 
-  it('parks a reply in a conversation nobody is showing', async () => {
-    // The tab moved to another window, whose renderer cannot see this one's
-    // request registry. The store is shared, so the answer waits there.
-    const stored = {
-      id: 'c1',
-      title: 't',
-      messages: [{ id: 'm0', role: 'user' as const, text: 'q' }],
-      connectionName: 'Local',
-      database: 'db',
-      collection: 'coll',
-      variant: 'editor' as const,
-      createdAt: '2026-01-01T00:00:00Z',
-      updatedAt: '2026-01-01T00:00:00Z',
-    };
-    invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'load_chat' ? Promise.resolve(stored) : Promise.resolve(undefined),
-    );
-
+  it('parks a reply through one backend call, not load-then-save', async () => {
+    // Two round trips release the store lock in between: a panel saving in that
+    // window is either lost or loses this message. The id is assigned backend
+    // side for the same reason.
     await appendReplyToChat('c1', { text: 'the answer' });
 
-    const saved = invokeMock.mock.calls.find((c) => c[0] === 'save_chat')?.[1] as any;
-    expect(saved.chat.messages.map((m: any) => m.text)).toEqual(['q', 'the answer']);
-    // A fresh id, not one the transcript already uses.
-    expect(saved.chat.messages[1].id).toBe('m1');
+    expect(invokeMock).toHaveBeenCalledWith(
+      'append_chat_message',
+      expect.objectContaining({ chatId: 'c1', role: 'assistant', text: 'the answer' }),
+    );
+    expect(invokeMock).not.toHaveBeenCalledWith('load_chat', expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith('save_chat', expect.anything());
+  });
+
+  it('moves conversations to a renamed namespace', async () => {
+    await retargetChatScope(
+      { connectionName: 'Local', database: 'sales', collection: 'users', variant: 'editor' },
+      { database: 'sales', collection: 'people' },
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith('retarget_chat_scope', {
+      connectionName: 'Local',
+      database: 'sales',
+      collection: 'users',
+      variant: 'editor',
+      newDatabase: 'sales',
+      newCollection: 'people',
+    });
   });
 
   it('titles a conversation from its opening question', () => {

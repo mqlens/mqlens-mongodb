@@ -4761,6 +4761,25 @@ mod chat_store_tests {
     }
 
     #[test]
+    fn appending_assigns_an_id_the_transcript_does_not_already_use() {
+        use crate::chats::next_message_id;
+        let msg = |id: &str| ChatMessage {
+            id: id.to_string(),
+            role: "user".to_string(),
+            text: "x".to_string(),
+            query: None,
+            error: None,
+        };
+
+        assert_eq!(next_message_id(&[]), "m0");
+        // Past the HIGHEST, not the count — a transcript is not always dense.
+        assert_eq!(next_message_id(&[msg("m0"), msg("m7")]), "m8");
+        // Ids that are not `m<N>` at all are ignored rather than crashing.
+        assert_eq!(next_message_id(&[msg("weird"), msg("m2")]), "m3");
+        assert_eq!(next_message_id(&[msg("weird")]), "m0");
+    }
+
+    #[test]
     fn retention_drops_only_what_predates_the_cutoff() {
         let existing = vec![
             chat("stale", "users", "2025-01-01T00:00:00Z"),

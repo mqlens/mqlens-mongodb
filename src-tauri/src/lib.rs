@@ -2524,6 +2524,8 @@ pub fn run() {
             chats::release_owner_chats,
             chats::load_chat,
             chats::save_chat,
+            chats::append_chat_message,
+            chats::retarget_chat_scope,
             chats::delete_chat,
             chats::clear_chats,
             queries::load_collection_queries,

@@ -212,34 +212,45 @@ export async function deleteChat(id: string): Promise<void> {
  * Append an assistant reply to a stored conversation the panel is not showing.
  *
  * Used when an answer arrives with nowhere local to land — the tab moved to
- * another window, or the panel has since switched conversations. The store is
- * shared, so parking it here is how the answer reaches wherever that
- * conversation is next opened, rather than being dropped.
+ * another window, or the panel has since switched conversations. One backend
+ * command, because load-then-save is two round trips with the store lock
+ * released between them: a panel saving in that window would either lose this
+ * message or be overwritten by it. The message id is assigned backend-side for
+ * the same reason.
  */
 export async function appendReplyToChat(
   chatId: string,
   reply: { text: string; query?: unknown; error?: boolean }
 ): Promise<void> {
-  const stored = await loadChat(chatId);
-  if (!stored) return;
-  const nextNum =
-    stored.messages.reduce((max, m) => {
-      const match = /^m(\d+)$/.exec(m.id);
-      return match ? Math.max(max, Number(match[1])) : max;
-    }, -1) + 1;
-  await saveChat({
-    ...stored,
-    messages: [
-      ...stored.messages,
-      {
-        id: `m${nextNum}`,
-        role: 'assistant',
-        text: reply.text,
-        ...(reply.error ? { error: true } : { query: reply.query as never }),
-      },
-    ],
+  await invoke('append_chat_message', {
+    chatId,
+    role: 'assistant',
+    text: reply.text,
+    query: reply.query ?? null,
+    error: reply.error ?? null,
     updatedAt: new Date().toISOString(),
-  });
+  }).catch(() => undefined);
+}
+
+/**
+ * Follow a renamed database or collection.
+ *
+ * The rename re-keys the tab but leaves the stored conversations naming the old
+ * namespace, after which the panel reads its own chat as foreign and refuses to
+ * continue it.
+ */
+export async function retargetChatScope(
+  scope: ChatScope,
+  next: { database: string; collection: string }
+): Promise<void> {
+  await invoke('retarget_chat_scope', {
+    connectionName: scope.connectionName,
+    database: scope.database,
+    collection: scope.collection,
+    variant: scope.variant,
+    newDatabase: next.database,
+    newCollection: next.collection,
+  }).catch(() => undefined);
 }
 
 /** Move a conversation's claim to a tab's new id — renames and profile rebinds

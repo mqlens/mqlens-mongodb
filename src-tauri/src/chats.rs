@@ -317,6 +317,93 @@ pub async fn save_chat(
     save_store_to_file(&path, &store)
 }
 
+/// The next free `m<N>` id for a transcript.
+///
+/// Assigned backend-side because only a caller holding the store lock can see
+/// what the conversation already uses — the frontend picking one from a copy it
+/// loaded a moment ago can collide with a message appended since, and duplicate
+/// React keys reconcile the wrong bubbles.
+pub fn next_message_id(messages: &[ChatMessage]) -> String {
+    let next = messages
+        .iter()
+        .filter_map(|m| m.id.strip_prefix('m').and_then(|n| n.parse::<u32>().ok()))
+        .max()
+        .map_or(0, |n| n + 1);
+    format!("m{next}")
+}
+
+/// Append one message to a conversation, under the store lock.
+///
+/// The obvious frontend shape — load, push, save — is two commands with the
+/// lock released between them, so a panel saving in that window is either lost
+/// or loses the appended message. The id is assigned here for the same reason:
+/// only a caller holding the lock can see what the transcript already uses.
+#[tauri::command]
+pub async fn append_chat_message(
+    app_handle: tauri::AppHandle,
+    chat_id: String,
+    role: String,
+    text: String,
+    query: Option<Value>,
+    error: Option<bool>,
+    updated_at: String,
+) -> Result<(), String> {
+    let _guard = store_lock();
+    let path = get_chats_path(&app_handle);
+    let mut store = load_store_from_file(&path);
+    let Some(chat) = store.chats.iter_mut().find(|c| c.id == chat_id) else {
+        return Ok(());
+    };
+    let id = next_message_id(&chat.messages);
+    chat.messages.push(ChatMessage {
+        id,
+        role,
+        text,
+        query,
+        error,
+    });
+    if chat.messages.len() > MAX_MESSAGES {
+        let excess = chat.messages.len() - MAX_MESSAGES;
+        chat.messages.drain(0..excess);
+    }
+    chat.updated_at = updated_at;
+    save_store_to_file(&path, &store)
+}
+
+/// Move a conversation to a renamed namespace, under the store lock. A rename
+/// re-keys the tab but leaves the stored chat naming the old database or
+/// collection, after which the panel reads its own conversation as foreign.
+#[tauri::command]
+pub async fn retarget_chat_scope(
+    app_handle: tauri::AppHandle,
+    connection_name: String,
+    database: String,
+    collection: String,
+    variant: String,
+    new_database: String,
+    new_collection: String,
+) -> Result<(), String> {
+    let _guard = store_lock();
+    let path = get_chats_path(&app_handle);
+    let mut store = load_store_from_file(&path);
+    let mut touched = false;
+    for chat in store.chats.iter_mut() {
+        if chat.connection_name == connection_name
+            && chat.database == database
+            && chat.collection == collection
+            && chat.variant == variant
+        {
+            chat.database = new_database.clone();
+            chat.collection = new_collection.clone();
+            touched = true;
+        }
+    }
+    if !touched {
+        return Ok(());
+    }
+    save_store_to_file(&path, &store)
+}
+
 #[tauri::command]
 pub async fn delete_chat(app_handle: tauri::AppHandle, id: String) -> Result<(), String> {
     let _guard = store_lock();

@@ -16,7 +16,12 @@ import {
   resetChatRequests,
   takeSettledChatRequest,
 } from './lib/aiChatRequest';
-import { appendReplyToChat, releaseChatsForTab, transferChatClaim } from './lib/aiChatStore';
+import {
+  appendReplyToChat,
+  releaseChatsForTab,
+  retargetChatScope,
+  transferChatClaim,
+} from './lib/aiChatStore';
 import {
   disposeShellSession,
   disposeShellSessionsForTabs,
@@ -2025,6 +2030,18 @@ function Workspace() {
       moveTabChatState(oldId, newId);
       dispatchWorkspace({ type: 'rename_tab', oldId, newId });
     });
+    // The stored conversations still name the old collection; without this the
+    // renamed tab reads its own chat as belonging somewhere else and refuses to
+    // continue it.
+    const renamedConnection = activeConnections.find((c) => c.id === connectionId);
+    if (renamedConnection) {
+      for (const variant of ['editor', 'shell'] as const) {
+        void retargetChatScope(
+          { connectionName: renamedConnection.name, database: dbName, collection: oldName, variant },
+          { database: dbName, collection: newName }
+        );
+      }
+    }
     invalidatePaletteNamespaceIndex(connectionId);
   };
 
@@ -2094,6 +2111,22 @@ function Workspace() {
       moveTabChatState(oldId, newId);
       dispatchWorkspace({ type: 'rename_tab', oldId, newId });
     });
+    // Every conversation under the old database name, whichever collection it
+    // was about — otherwise each renamed tab reads its own chat as foreign.
+    const renamedConnection = activeConnections.find((c) => c.id === connectionId);
+    if (renamedConnection) {
+      const affected = new Set(
+        tabs.filter((t) => t.connectionId === connectionId && t.db === oldName).map((t) => t.collection)
+      );
+      for (const collection of affected) {
+        for (const variant of ['editor', 'shell'] as const) {
+          void retargetChatScope(
+            { connectionName: renamedConnection.name, database: oldName, collection, variant },
+            { database: newName, collection }
+          );
+        }
+      }
+    }
     invalidatePaletteNamespaceIndex(connectionId);
   };
 

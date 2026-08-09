@@ -94,6 +94,8 @@ const LOCAL_COMMANDS: &[&str] = &[
     "release_owner_chats",
     "load_chat",
     "save_chat",
+    "append_chat_message",
+    "retarget_chat_scope",
     "delete_chat",
     "clear_chats",
     // Takes a tab's entry and stops the child it named, atomically — same
