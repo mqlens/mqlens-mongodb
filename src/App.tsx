@@ -2111,21 +2111,15 @@ function Workspace() {
       moveTabChatState(oldId, newId);
       dispatchWorkspace({ type: 'rename_tab', oldId, newId });
     });
-    // Every conversation under the old database name, whichever collection it
-    // was about — otherwise each renamed tab reads its own chat as foreign.
+    // Every conversation under the old database name — including collections
+    // with no open tab, which this renderer cannot enumerate, so the backend
+    // matches on the database alone.
     const renamedConnection = activeConnections.find((c) => c.id === connectionId);
     if (renamedConnection) {
-      const affected = new Set(
-        tabs.filter((t) => t.connectionId === connectionId && t.db === oldName).map((t) => t.collection)
+      void retargetChatScope(
+        { connectionName: renamedConnection.name, database: oldName },
+        { database: newName }
       );
-      for (const collection of affected) {
-        for (const variant of ['editor', 'shell'] as const) {
-          void retargetChatScope(
-            { connectionName: renamedConnection.name, database: oldName, collection, variant },
-            { database: newName, collection }
-          );
-        }
-      }
     }
     invalidatePaletteNamespaceIndex(connectionId);
   };

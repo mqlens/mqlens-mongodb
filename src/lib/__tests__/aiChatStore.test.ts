@@ -138,6 +138,21 @@ describe('AI chat store', () => {
     });
   });
 
+  it('moves a whole database without naming its collections', async () => {
+    // A database rename has to move conversations about collections with no
+    // open tab, which this renderer cannot enumerate.
+    await retargetChatScope({ connectionName: 'Local', database: 'sales' }, { database: 'revenue' });
+
+    expect(invokeMock).toHaveBeenCalledWith('retarget_chat_scope', {
+      connectionName: 'Local',
+      database: 'sales',
+      collection: null,
+      variant: null,
+      newDatabase: 'revenue',
+      newCollection: null,
+    });
+  });
+
   it('titles a conversation from its opening question', () => {
     expect(
       titleFromMessages(

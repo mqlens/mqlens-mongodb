@@ -4780,6 +4780,63 @@ mod chat_store_tests {
     }
 
     #[test]
+    fn saving_a_snapshot_keeps_messages_appended_since_it_was_taken() {
+        // A panel saves the whole conversation from a copy it loaded earlier.
+        // A reply parked for a tab that moved windows can land in between, and
+        // a blind replace would drop it.
+        use crate::chats::merge_appended;
+        let msg = |id: &str| ChatMessage {
+            id: id.to_string(),
+            role: "assistant".to_string(),
+            text: id.to_string(),
+            query: None,
+            error: None,
+        };
+        let mut stored = chat("c1", "users", "2026-01-01T00:00:00Z");
+        stored.messages = vec![msg("m0"), msg("m1"), msg("m2")];
+        let mut incoming = chat("c1", "users", "2026-01-02T00:00:00Z");
+        incoming.messages = vec![msg("m0"), msg("m1")]; // taken before m2 landed
+
+        let merged = merge_appended(&[stored], incoming);
+
+        assert_eq!(
+            merged.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["m0", "m1", "m2"]
+        );
+    }
+
+    #[test]
+    fn a_snapshot_that_is_already_current_is_left_alone() {
+        use crate::chats::merge_appended;
+        let msg = |id: &str| ChatMessage {
+            id: id.to_string(),
+            role: "user".to_string(),
+            text: "x".to_string(),
+            query: None,
+            error: None,
+        };
+        let mut stored = chat("c1", "users", "2026-01-01T00:00:00Z");
+        stored.messages = vec![msg("m0")];
+        let mut incoming = chat("c1", "users", "2026-01-02T00:00:00Z");
+        incoming.messages = vec![msg("m0"), msg("m1")];
+
+        let merged = merge_appended(&[stored], incoming);
+
+        assert_eq!(
+            merged.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["m0", "m1"],
+            "a longer snapshot must not gain duplicates"
+        );
+    }
+
+    #[test]
+    fn a_conversation_the_store_has_never_seen_merges_to_itself() {
+        use crate::chats::merge_appended;
+        let incoming = chat("brand-new", "users", "2026-01-01T00:00:00Z");
+        assert_eq!(merge_appended(&[], incoming.clone()), incoming);
+    }
+
+    #[test]
     fn retention_drops_only_what_predates_the_cutoff() {
         let existing = vec![
             chat("stale", "users", "2025-01-01T00:00:00Z"),

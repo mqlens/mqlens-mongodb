@@ -190,6 +190,12 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       openScope.collection !== collectionName ||
       openScope.variant !== variant);
 
+  /** The collection a stored command was written against. For a conversation
+   *  from elsewhere that is not this tab's — showing or copying it with the
+   *  local name would hand the user a command for the wrong collection. */
+  const commandCollection = openScope?.collection ?? collectionName;
+
+
   // Identifies this TAB to the shared open-chat claim. Not the mount: an
   // inactive tab unmounts and must be able to re-take the conversation it never
   // stopped pointing at.
@@ -695,7 +701,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                       className="m-0 max-h-[220px] overflow-auto rounded border border-border bg-background p-1.5 font-mono text-[10.5px] text-foreground"
                     >
                       {variant === 'shell'
-                        ? buildRunnableCommand(m.query, collectionName)
+                        ? buildRunnableCommand(m.query, commandCollection)
                         : m.query.queryType === 'aggregate'
                           ? JSON.stringify(m.query.pipeline ?? [], null, 2)
                           : JSON.stringify(
@@ -718,7 +724,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                           size="sm"
                           className="h-7 flex-1 text-xs"
                           onClick={() =>
-                            navigator.clipboard?.writeText(buildRunnableCommand(m.query!, collectionName))
+                            navigator.clipboard?.writeText(buildRunnableCommand(m.query!, commandCollection))
                           }
                           data-testid="chat-copy-btn"
                         >

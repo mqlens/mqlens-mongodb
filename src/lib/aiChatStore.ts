@@ -240,16 +240,18 @@ export async function appendReplyToChat(
  * continue it.
  */
 export async function retargetChatScope(
-  scope: ChatScope,
-  next: { database: string; collection: string }
+  scope: { connectionName: string; database: string; collection?: string; variant?: 'editor' | 'shell' },
+  next: { database: string; collection?: string }
 ): Promise<void> {
   await invoke('retarget_chat_scope', {
     connectionName: scope.connectionName,
     database: scope.database,
-    collection: scope.collection,
-    variant: scope.variant,
+    // Omitted for a database rename: conversations about collections with no
+    // open tab have to move too, and the caller cannot enumerate those.
+    collection: scope.collection ?? null,
+    variant: scope.variant ?? null,
     newDatabase: next.database,
-    newCollection: next.collection,
+    newCollection: next.collection ?? null,
   }).catch(() => undefined);
 }
 
