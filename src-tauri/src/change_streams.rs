@@ -385,6 +385,26 @@ pub fn publish_status(
     }
 }
 
+/// Report a cursor failure, keeping whatever ground the cursor had gained.
+///
+/// The token first, because it survives the failure and the status does not: a
+/// long-lived cursor advances through batches carrying nothing this stream
+/// watches for, and throwing that away on the way out leaves the shared resume
+/// point at the startup token or an event from hours ago. Retrying then asks
+/// the server for history the oplog no longer holds.
+pub fn fail_stream(
+    stream: &LiveStream,
+    my_generation: u64,
+    error: &str,
+    reached: Option<ResumeToken>,
+) {
+    if let Ok(mut point) = stream.resume_token.lock() {
+        record_resume_token(&mut point, my_generation, reached);
+    }
+    let (status, message) = describe_stream_error(error);
+    publish_status(stream, my_generation, status, Some(message));
+}
+
 /// Read the cursor until retired, buffering as it goes.
 ///
 /// Spawned per stream, one task per generation. Wraps {@link read_cursor} so
@@ -500,8 +520,7 @@ async fn read_cursor(
             // this task while its `watch()` is still in flight. Reporting that
             // failure would put the panel in Error over a cursor nobody is
             // reading — `publish_status` drops it for exactly that reason.
-            let (status, message) = describe_stream_error(&err.to_string());
-            publish_status(state_streams, my_generation, status, Some(message));
+            fail_stream(state_streams, my_generation, &err.to_string(), None);
             return;
         }
     };
@@ -566,8 +585,12 @@ async fn read_cursor(
                 push_event(&mut buffer, flat, BUFFER_CAP);
             }
             Some(Err(err)) => {
-                let (status, message) = describe_stream_error(&err.to_string());
-                publish_status(state_streams, my_generation, status, Some(message));
+                fail_stream(
+                    state_streams,
+                    my_generation,
+                    &err.to_string(),
+                    stream.resume_token(),
+                );
                 return;
             }
             // The cursor ended on its own: an invalidate after the watched
@@ -775,10 +798,9 @@ pub async fn start_change_stream(
         collection,
         operation_types,
     });
-    state
-        .change_streams
-        .lock_safe()?
-        .insert(stream_id, stream.clone());
+    if !install_stream(&state, &stream_id, stream.clone(), window.label())? {
+        return Ok(());
+    }
     // No reader while paused: it starts when the user resumes, from the token
     // carried over above.
     if was_paused {
@@ -905,6 +927,30 @@ pub async fn resume_change_stream(
         *e = None;
     }
     spawn_reader(&state, stream)
+}
+
+/// Publish a stream under its id, unless its window has gone away.
+///
+/// The closure check is made HERE, under the map lock the close sweep also
+/// takes, and not only when the command started: a window can close in
+/// between, and the sweep would then run over a map that does not yet hold
+/// this stream. Closing marks the window before it sweeps, so one order or the
+/// other always catches it — either the sweep sees the stream and stops it, or
+/// this sees the mark and never installs it.
+///
+/// `false` means the window was already gone and nothing was installed.
+pub fn install_stream(
+    state: &AppState,
+    stream_id: &str,
+    stream: Arc<LiveStream>,
+    window_id: &str,
+) -> Result<bool, String> {
+    let mut streams = state.change_streams.lock_safe()?;
+    if crate::window_is_closed(state, window_id)? {
+        return Ok(false);
+    }
+    streams.insert(stream_id.to_string(), stream);
+    Ok(true)
 }
 
 /// Stop every tail a window owns, because that window is going away.

@@ -4942,7 +4942,7 @@ mod chat_store_tests {
 mod change_stream_tests {
     use crate::change_streams::{
         build_pipeline, describe_stream_error, events_after, push_event, push_event_bounded,
-        await_handover, carry_over, measure_event, publish_status,
+        await_handover, carry_over, fail_stream, install_stream, measure_event, publish_status,
         record_resume_token, stop_change_streams_for_window,
         retire_reader, HANDOVER_GRACE, ChangeEvent, LiveStream, ResumePoint, StreamBuffer,
         StreamStatus, BUFFER_CAP,
@@ -5391,6 +5391,72 @@ mod change_stream_tests {
             .is_empty());
         assert_eq!(state.change_streams.lock_safe().unwrap().len(), 1);
         assert_eq!(moved.generation.load(Ordering::SeqCst), 0, "not retired");
+    }
+
+    #[test]
+    fn a_failing_cursor_keeps_the_ground_it_gained() {
+        // A long-lived cursor advances through batches carrying nothing this
+        // stream watches for. Throwing that away when it finally fails leaves
+        // the resume point at the startup token, and retrying then asks the
+        // server for history the oplog no longer holds.
+        let stream = live_stream();
+        let generation = retire_reader(&stream);
+
+        fail_stream(&stream, generation, "cursor died", Some(token("reached")));
+
+        assert_eq!(stream.resume_token.lock().unwrap().token, Some(token("reached")));
+        assert_eq!(*stream.status.lock().unwrap(), StreamStatus::Error);
+    }
+
+    #[test]
+    fn a_retired_cursors_failure_moves_nothing() {
+        // Same guard as everywhere else: a straggler must not drag the resume
+        // point backwards, nor report over a healthy replacement.
+        let stream = live_stream();
+        let straggler = retire_reader(&stream);
+        let live = retire_reader(&stream);
+        publish_status(&stream, live, StreamStatus::Running, None);
+        record_resume_token(
+            &mut stream.resume_token.lock().unwrap(),
+            live,
+            Some(token("current")),
+        );
+
+        fail_stream(&stream, straggler, "cursor died", Some(token("stale")));
+
+        assert_eq!(stream.resume_token.lock().unwrap().token, Some(token("current")));
+        assert_eq!(*stream.status.lock().unwrap(), StreamStatus::Running);
+    }
+
+    #[test]
+    fn a_stream_is_not_installed_for_a_window_that_has_gone() {
+        // Closing a window destroys the renderer that would have stopped this,
+        // and the sweep has already run over a map that did not yet hold it —
+        // so an install here would leak a cursor until the app exits.
+        use crate::state::LockExt;
+        let state = crate::AppState::new();
+        state
+            .closed_windows
+            .lock_safe()
+            .unwrap()
+            .insert("win-2".to_string());
+        let stream = live_stream();
+        *stream.window.lock().unwrap() = "win-2".to_string();
+
+        assert!(!install_stream(&state, "watch.c.c1.sales.orders", stream, "win-2").unwrap());
+        assert!(state.change_streams.lock_safe().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_stream_is_installed_for_a_window_that_is_still_there() {
+        use crate::state::LockExt;
+        let state = crate::AppState::new();
+        assert!(install_stream(&state, "watch.c.c1.sales.orders", live_stream(), "main").unwrap());
+        assert!(state
+            .change_streams
+            .lock_safe()
+            .unwrap()
+            .contains_key("watch.c.c1.sales.orders"));
     }
 
     #[test]
