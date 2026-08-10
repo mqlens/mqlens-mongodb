@@ -25,6 +25,10 @@ export interface FindQueryBarProps {
   filterInvalid?: boolean;
   projectionInvalid?: boolean;
   sortInvalid?: boolean;
+  /** Why the filter would not parse. Shown on hover over the badge — the badge
+   *  itself has no room for it, and "Invalid JSON" on its own leaves a user
+   *  staring at a query that looks perfectly correct. */
+  filterError?: string | null;
   fields: string[];
   schema?: SchemaMap;
   /** Emit mongosh-style completions (bare keys + ISODate()/ObjectId()) instead
@@ -83,6 +87,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
   onProjectionChange,
   onSortChange,
   filterInvalid = false,
+  filterError,
   projectionInvalid = false,
   sortInvalid = false,
   fields,
@@ -174,11 +179,15 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
     else onSortChange('');
   };
 
-  const invalidBadge = (
-    <span className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap">
+  const badge = (reason?: string | null) => (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap"
+      title={reason ?? undefined}
+    >
       <AlertCircle size={10} /> {t('findQueryBar.errors.invalidJson')}
     </span>
   );
+  const invalidBadge = badge();
 
   return (
     <div className="flex flex-col border-b border-border bg-muted/20">
@@ -197,7 +206,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
             schema={schema}
             data-testid="query-filter-input"
           />
-          {filterInvalid && invalidBadge}
+          {filterInvalid && badge(filterError)}
           <Button
             variant="ghost"
             size="icon"

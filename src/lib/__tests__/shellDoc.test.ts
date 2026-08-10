@@ -145,3 +145,63 @@ describe('parseShellJson — NumberLong precision (#222 review)', () => {
     expect(parseShellJson('{ a: 1 }')).toEqual({ a: 1 });
   });
 });
+
+describe('parseShellJson — queries pasted from somewhere else', () => {
+  // A query copied out of a browser, a chat window or a document arrives with
+  // characters that look exactly like the ones the user meant. The parser
+  // rejected them with nothing to go on but "Invalid JSON", on a query that
+  // reads as perfectly correct on screen.
+  it('accepts smart double quotes', () => {
+    expect(parseShellJson('domain: “account.test.com”')).toEqual({
+      domain: 'account.test.com',
+    });
+  });
+
+  it('accepts smart single quotes', () => {
+    expect(parseShellJson('domain: ‘account.test.com’')).toEqual({
+      domain: 'account.test.com',
+    });
+  });
+
+  it('accepts a zero-width space, which nobody can see', () => {
+    expect(parseShellJson('domain:​ "account.test.com"')).toEqual({
+      domain: 'account.test.com',
+    });
+  });
+
+  it('accepts a non-breaking space', () => {
+    expect(parseShellJson('domain: "account.test.com"')).toEqual({
+      domain: 'account.test.com',
+    });
+  });
+
+  it('accepts a trailing semicolon, as copied off a JavaScript line', () => {
+    expect(parseShellJson('{ domain: "account.test.com" };')).toEqual({
+      domain: 'account.test.com',
+    });
+  });
+
+  it('leaves a smart quote inside a string alone', () => {
+    // The user is searching for that character. Rewriting it would change what
+    // the query means.
+    expect(parseShellJson('note: "he said “hi”"')).toEqual({
+      note: 'he said “hi”',
+    });
+  });
+
+  it('leaves a lone curly apostrophe alone', () => {
+    // No closing partner, so it is an apostrophe rather than a delimiter —
+    // in a regex here, where inventing a string would corrupt a query that
+    // works today.
+    const parsed = parseShellJson('name: /don’t/');
+    expect(parsed.name.$regularExpression.pattern).toBe('don’t');
+  });
+
+  it('keeps a semicolon that belongs to a value', () => {
+    expect(parseShellJson('sql: "a;"')).toEqual({ sql: 'a;' });
+  });
+
+  it('keeps a straight quote found inside a smart-quoted run', () => {
+    expect(parseShellJson('q: “say "hi"”')).toEqual({ q: 'say "hi"' });
+  });
+});

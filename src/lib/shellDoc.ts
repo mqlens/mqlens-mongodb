@@ -134,8 +134,112 @@ export function shellDocErrorKey(err: unknown): string | null {
   return null;
 }
 
+/** Invisible characters that ride along with pasted text. */
+const ZERO_WIDTH = /[\u200B-\u200D\uFEFF]/;
+/** Spaces that are not the space character: NBSP and the typographic run. */
+const UNICODE_SPACE = /[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/;
+const CURLY_PAIRS: Record<string, string> = { '\u201C': '\u201D', '\u2018': '\u2019' };
+
+/**
+ * Undo what copying a query out of a browser, a chat window or a document does
+ * to it.
+ *
+ * A query pasted from anywhere that applies smart quotes arrives with `“ ”`
+ * instead of `" "`, and text copied out of a web page routinely carries a
+ * zero-width space. Both read as perfectly ordinary queries on screen — the
+ * zero-width one is literally invisible — and both made the parser fail with
+ * nothing to go on but "Invalid JSON".
+ *
+ * Conservative on purpose:
+ *
+ * - Straight-quoted strings are copied out verbatim, so a value that contains
+ *   a curly quote or an exotic space keeps it.
+ * - A curly quote is only rewritten when its matching partner appears later.
+ *   A lone `’` is an apostrophe — in a regex literal, say — and inventing a
+ *   string around it would corrupt a query that works today.
+ * - Trailing semicolons go, because a filter copied off the end of a
+ *   JavaScript statement brings one.
+ */
+export function normalizePastedQuery(text: string): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    // Verbatim: whatever is inside a straight-quoted string is the user's data.
+    if (c === '"' || c === "'") {
+      out += c;
+      i++;
+      while (i < text.length) {
+        if (text[i] === '\\') {
+          out += text[i] + (text[i + 1] ?? '');
+          i += 2;
+          continue;
+        }
+        out += text[i];
+        if (text[i] === c) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    const closer = CURLY_PAIRS[c];
+    if (closer) {
+      const end = text.indexOf(closer, i + 1);
+      if (end !== -1) {
+        // `JSON.stringify` re-quotes and escapes, so a straight quote inside
+        // the smart-quoted run survives instead of ending the string early.
+        out += JSON.stringify(text.slice(i + 1, end));
+        i = end + 1;
+        continue;
+      }
+      // No partner: an apostrophe, not a delimiter. Leave it exactly as it is.
+    }
+    if (ZERO_WIDTH.test(c)) {
+      i++;
+      continue;
+    }
+    out += UNICODE_SPACE.test(c) ? ' ' : c;
+    i++;
+  }
+  return stripTrailingSemicolons(out);
+}
+
+/** Drop `;` off the end, but only when it is not inside a string. */
+function stripTrailingSemicolons(text: string): string {
+  let cut = text.length;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"' || c === "'") {
+      i++;
+      while (i < text.length) {
+        if (text[i] === '\\') {
+          i += 2;
+          continue;
+        }
+        if (text[i] === c) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      cut = text.length;
+      continue;
+    }
+    if (c === ';' || /\s/.test(c)) {
+      if (c === ';' && cut === text.length) cut = i;
+    } else {
+      cut = text.length;
+    }
+    i++;
+  }
+  return cut === text.length ? text : text.slice(0, cut);
+}
+
 export function parseShellJson(text: string): any {
-  const trimmed = text.trim();
+  const trimmed = normalizePastedQuery(text).trim();
   if (!trimmed) return {};
   // parseFilter signals "unparseable / not a valid query" by returning an empty
   // string rather than throwing (e.g. `{ _id }`, a half-typed field). Surface

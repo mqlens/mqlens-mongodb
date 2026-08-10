@@ -157,6 +157,33 @@ describe('DocumentViewer Component', () => {
     expect(onImport).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts a query pasted with smart quotes, and says why when one will not parse', async () => {
+    // The bug: a query copied out of a browser or a chat arrives with `“ ”`,
+    // which reads as correct on screen and was rejected as "Invalid JSON" with
+    // no reason given.
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={mockOnExecute}
+        onExplain={mockOnExplain}
+        loading={false}
+      />
+    );
+
+    const filterInput = screen.getByTestId('query-filter-input');
+    fireEvent.change(filterInput, { target: { value: 'domain: “account.test.com”' } });
+    await waitFor(() => {
+      expect(screen.queryByText('Invalid JSON')).not.toBeInTheDocument();
+    });
+
+    // And when something really is wrong, the badge carries the reason.
+    fireEvent.change(filterInput, { target: { value: '{invalid' } });
+    const badge = await screen.findByText('Invalid JSON');
+    await waitFor(() => expect(badge.getAttribute('title')).toBeTruthy());
+  });
+
   it('performs JSON validation on typing', async () => {
     render(
       <DocumentViewer

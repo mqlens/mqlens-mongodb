@@ -902,14 +902,22 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [isProjectionValid, setIsProjectionValid] = useState(true);
   const [isSortValid, setIsSortValid] = useState(true);
 
+  // The reason, not just the fact. A query that fails on a character the user
+  // cannot see — a smart quote, a zero-width space pasted in from a browser —
+  // reads as correct on screen, and a bare "Invalid JSON" gives them nothing
+  // to act on.
+  const [filterError, setFilterError] = useState<string | null>(null);
+
   useEffect(() => {
     try {
       if (filterQuery.trim()) {
         parseQueryObject(filterQuery);
       }
       setIsFilterValid(true);
-    } catch {
+      setFilterError(null);
+    } catch (err) {
       setIsFilterValid(false);
+      setFilterError(err instanceof Error ? err.message : String(err));
     }
   }, [filterQuery]);
 
@@ -1833,6 +1841,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   if (isQueryBuilderOpen) syncSortRulesFromInput(v);
                 }}
                 filterInvalid={!isFilterValid}
+                filterError={filterError}
                 projectionInvalid={!isProjectionValid}
                 sortInvalid={!isSortValid}
                 fields={fields}
