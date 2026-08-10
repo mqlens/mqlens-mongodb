@@ -221,6 +221,19 @@ describe('parseShellJson — queries pasted from somewhere else', () => {
     expect(parseShellJson('path: \u201CC:\\\\temp\u201D')).toEqual({ path: 'C:\\temp' });
   });
 
+  it('keeps a joiner that belongs to a field name', () => {
+    // ZWNJ and ZWJ are valid identifier characters, so `a<ZWNJ>b` is a field
+    // genuinely distinct from `ab`. Dropping them sent the query to a
+    // different field and said nothing about it.
+    const zwnj = '‌';
+    const parsed = parseShellJson(`{ a${zwnj}b: 1 }`);
+    expect(Object.keys(parsed)).toEqual([`a${zwnj}b`]);
+  });
+
+  it('still drops a zero-width space, which no identifier may contain', () => {
+    expect(parseShellJson('domain:​ "a.com"')).toEqual({ domain: 'a.com' });
+  });
+
   it('copes with several paste artifacts at once', () => {
     // A paste brings its damage in combination. The lookahead that finds the
     // closing quote reads the original text, so it has to skip what the rest

@@ -182,6 +182,15 @@ describe('DocumentViewer Component', () => {
     fireEvent.change(filterInput, { target: { value: '{invalid' } });
     const badge = await screen.findByText('Invalid JSON');
     await waitFor(() => expect(badge.getAttribute('title')).toBeTruthy());
+
+    // Our own failures have a translated message; only the parser's are stuck
+    // in English. A bare `5` is not a query object.
+    fireEvent.change(filterInput, { target: { value: '5' } });
+    await waitFor(() =>
+      expect(screen.getByText('Invalid JSON').getAttribute('title')).not.toBe(
+        'Query must be an object'
+      )
+    );
   });
 
   it('performs JSON validation on typing', async () => {

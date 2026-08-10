@@ -134,8 +134,16 @@ export function shellDocErrorKey(err: unknown): string | null {
   return null;
 }
 
-/** Invisible characters that ride along with pasted text. */
-const ZERO_WIDTH = /[\u200B-\u200D\uFEFF]/;
+/**
+ * Invisible characters that ride along with pasted text.
+ *
+ * Deliberately NOT the whole `U+200B–U+200D` run. ZWNJ and ZWJ are valid
+ * ECMAScript identifier characters, so `a<ZWNJ>b` is a field name genuinely
+ * distinct from `ab` — dropping them would send the query to a different field
+ * without saying so. Only the zero-width SPACE, which a web page injects and
+ * no identifier may contain, and the byte-order mark.
+ */
+const ZERO_WIDTH = /[\u200B\uFEFF]/;
 /** Spaces that are not the space character: NBSP and the typographic run. */
 const UNICODE_SPACE = /[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/;
 const CURLY_PAIRS: Record<string, string> = { '\u201C': '\u201D', '\u2018': '\u2019' };

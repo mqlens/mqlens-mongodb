@@ -917,7 +917,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       setFilterError(null);
     } catch (err) {
       setIsFilterValid(false);
-      setFilterError(err instanceof Error ? err.message : String(err));
+      // Our own parse failures carry a code and have a translated message;
+      // only the underlying parser's errors are stuck in English. Same rule
+      // the Run and Explain paths follow.
+      const key = shellDocErrorKey(err);
+      setFilterError(
+        key ? td(key) : err instanceof Error ? err.message : String(err)
+      );
     }
   }, [filterQuery]);
 
