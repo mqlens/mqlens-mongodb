@@ -197,6 +197,33 @@ describe('parseShellJson — queries pasted from somewhere else', () => {
     expect(parsed.name.$regularExpression.pattern).toBe('don’t');
   });
 
+  it('leaves a regex literal alone, smart quotes and all', () => {
+    // `/“ACME”/` is a pattern that really does contain those characters.
+    // Rewriting them leaves a filter that still runs and quietly matches
+    // different documents, which is worse than refusing to parse.
+    const parsed = parseShellJson('name: /“ACME”/');
+    expect(parsed.name.$regularExpression.pattern).toBe('“ACME”');
+  });
+
+  it('leaves a regex alone inside an array of values', () => {
+    const parsed = parseShellJson('tags: {$in: [/“a”/, "b"]}');
+    expect(parsed.tags.$in[0].$regularExpression.pattern).toBe('“a”');
+    expect(parsed.tags.$in[1]).toBe('b');
+  });
+
+  it('keeps regex flags and escaped slashes', () => {
+    const parsed = parseShellJson('path: /a\\/b/i');
+    expect(parsed.path.$regularExpression.pattern).toBe('a\\/b');
+    expect(parsed.path.$regularExpression.options).toBe('i');
+  });
+
+  it('still fixes smart quotes that are not in a regex', () => {
+    // The regex carve-out must not swallow the rest of the query.
+    expect(parseShellJson('{ name: /x/, domain: “a.com” }')).toMatchObject({
+      domain: 'a.com',
+    });
+  });
+
   it('keeps a semicolon that belongs to a value', () => {
     expect(parseShellJson('sql: "a;"')).toEqual({ sql: 'a;' });
   });

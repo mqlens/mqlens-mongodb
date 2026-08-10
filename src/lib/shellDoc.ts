@@ -154,9 +154,12 @@ const CURLY_PAIRS: Record<string, string> = { '\u201C': '\u201D', '\u2018': '\u2
  *
  * - Straight-quoted strings are copied out verbatim, so a value that contains
  *   a curly quote or an exotic space keeps it.
+ * - Regex literals are copied out verbatim. `/“ACME”/` is a pattern that
+ *   really does contain smart quotes, and rewriting them would leave a filter
+ *   that still runs and quietly matches different documents.
  * - A curly quote is only rewritten when its matching partner appears later.
- *   A lone `’` is an apostrophe — in a regex literal, say — and inventing a
- *   string around it would corrupt a query that works today.
+ *   A lone `’` is an apostrophe, and inventing a string around it would
+ *   corrupt a query that works today.
  * - Trailing semicolons go, because a filter copied off the end of a
  *   JavaScript statement brings one.
  */
@@ -184,6 +187,15 @@ export function normalizePastedQuery(text: string): string {
       }
       continue;
     }
+    // Verbatim: a regex literal's contents are a pattern, not syntax.
+    if (c === '/' && startsRegex(out)) {
+      const end = endOfRegex(text, i);
+      if (end !== -1) {
+        out += text.slice(i, end);
+        i = end;
+        continue;
+      }
+    }
     const closer = CURLY_PAIRS[c];
     if (closer) {
       const end = text.indexOf(closer, i + 1);
@@ -204,6 +216,45 @@ export function normalizePastedQuery(text: string): string {
     i++;
   }
   return stripTrailingSemicolons(out);
+}
+
+/**
+ * Whether a `/` here opens a regex literal rather than divides.
+ *
+ * In a query a regex is always a value, so it follows a key's colon, a comma,
+ * an opening bracket, or nothing at all. Division does not appear in filter
+ * syntax — arithmetic goes through `$divide` — so this cannot mistake one for
+ * the other.
+ */
+function startsRegex(before: string): boolean {
+  const prev = before.replace(/\s+$/, '').slice(-1);
+  return prev === '' || prev === ':' || prev === ',' || prev === '[' || prev === '(' || prev === '{';
+}
+
+/**
+ * The index just past a regex literal's closing `/` and flags, or -1 if it
+ * never closes — in which case the `/` was something else and is left alone.
+ */
+function endOfRegex(text: string, start: number): number {
+  let i = start + 1;
+  let inClass = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '\\') {
+      i += 2;
+      continue;
+    }
+    if (c === '\n') return -1;
+    if (c === '[') inClass = true;
+    else if (c === ']') inClass = false;
+    else if (c === '/' && !inClass) {
+      i++;
+      while (i < text.length && /[a-z]/i.test(text[i])) i++;
+      return i;
+    }
+    i++;
+  }
+  return -1;
 }
 
 /** Drop `;` off the end, but only when it is not inside a string. */
