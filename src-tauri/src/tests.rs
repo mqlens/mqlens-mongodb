@@ -4942,7 +4942,7 @@ mod chat_store_tests {
 mod change_stream_tests {
     use crate::change_streams::{
         build_pipeline, describe_stream_error, events_after, push_event, push_event_bounded,
-        await_handover, carry_over, claim_by_poller, fail_stream, install_stream,
+        await_handover, carry_over, claim_by_poller, fail_stream, find_and_claim, install_stream,
         install_stream_with, measure_event, publish_status,
         record_resume_token, stop_change_streams_for_window,
         retire_reader, HANDOVER_GRACE, ChangeEvent, LiveStream, ResumePoint, StreamBuffer,
@@ -5543,6 +5543,83 @@ mod change_stream_tests {
         assert!(!installed);
         assert!(!started, "nothing should be started for a window that is gone");
         assert!(state.change_streams.lock_safe().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_poll_claims_its_stream_without_letting_go_of_the_map() {
+        // The lookup and the claim cannot be split: a close sweep landing
+        // between them would see the old owner, remove the stream, and leave
+        // the poll holding a detached `Arc` it claims for nothing.
+        use crate::state::LockExt;
+        let state = crate::AppState::new();
+        state
+            .change_streams
+            .lock_safe()
+            .unwrap()
+            .insert("watch.c.c1.sales.orders".to_string(), live_stream());
+
+        let found = find_and_claim(&state, "watch.c.c1.sales.orders", "win-2")
+            .unwrap()
+            .expect("the stream is installed");
+
+        assert_eq!(*found.window.lock().unwrap(), "win-2");
+        // Whatever the sweep does next, it now sees the new owner: the claim
+        // landed while the map was locked against it.
+        assert!(stop_change_streams_for_window(&state, "main")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_poll_waits_for_the_map_while_a_sweep_is_deciding() {
+        // A poll goes through the same map lock the close sweep holds while it
+        // decides what to remove, so the two are serialized rather than
+        // interleaved. That the lookup and the claim share ONE guard is
+        // structural — five lines, one `streams` binding — and not something a
+        // single-threaded test can distinguish; this covers the half that is
+        // observable. A thread slow to start reads the same way as a blocked
+        // one, so it can only miss, never fail spuriously.
+        use crate::state::LockExt;
+        let state = Arc::new(crate::AppState::new());
+        state
+            .change_streams
+            .lock_safe()
+            .unwrap()
+            .insert("watch.c.c1.sales.orders".to_string(), live_stream());
+
+        let sweeping = state.change_streams.lock().expect("fresh lock");
+        let (tx, rx) = mpsc::channel();
+        let polling = Arc::clone(&state);
+        let claimer = std::thread::spawn(move || {
+            let found = find_and_claim(&polling, "watch.c.c1.sales.orders", "win-2").unwrap();
+            let _ = tx.send(found.is_some());
+        });
+
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(sweeping);
+
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(true));
+        claimer.join().expect("claiming thread");
+        assert_eq!(
+            *state
+                .change_streams
+                .lock_safe()
+                .unwrap()
+                .get("watch.c.c1.sales.orders")
+                .unwrap()
+                .window
+                .lock()
+                .unwrap(),
+            "win-2"
+        );
+    }
+
+    #[test]
+    fn a_poll_for_a_stream_that_is_gone_claims_nothing() {
+        let state = crate::AppState::new();
+        assert!(find_and_claim(&state, "watch.c.c1.sales.orders", "win-2")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

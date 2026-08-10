@@ -348,6 +348,11 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   };
 
   const paused = status === 'paused';
+  // A cursor that failed or ended has no reader either, so the control has to
+  // restart it rather than offer to pause something already stopped. Without
+  // this the only way back from a transient failure was to click Pause on a
+  // dead stream, wait for a poll, and then click Resume.
+  const stopped = paused || status === 'error' || status === 'ended';
 
   /**
    * Pause or resume, and remember which straight away.
@@ -358,7 +363,7 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
    * be paused again on their behalf — their click looking like it did nothing.
    */
   const toggleRunning = () => {
-    const next = !paused;
+    const next = !stopped;
     pausedRef.current = next;
     void (next ? pauseChangeStream(streamId) : resumeChangeStream(streamId));
   };
@@ -447,11 +452,17 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
             variant="ghost"
             size="icon"
             className="h-6 w-6"
-            title={paused ? t('watch.actions.resume') : t('watch.actions.pause')}
+            title={
+              stopped
+                ? paused
+                  ? t('watch.actions.resume')
+                  : t('watch.actions.retry')
+                : t('watch.actions.pause')
+            }
             onClick={toggleRunning}
             data-testid="watch-toggle"
           >
-            {paused ? <Play size={12} /> : <Pause size={12} />}
+            {stopped ? <Play size={12} /> : <Pause size={12} />}
           </Button>
           <Button
             type="button"

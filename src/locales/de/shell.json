@@ -475,7 +475,8 @@
       "clear": "Liste leeren",
       "closeDetail": "Detailbereich schließen",
       "pause": "Stream pausieren",
-      "resume": "Dort fortsetzen, wo pausiert wurde"
+      "resume": "Dort fortsetzen, wo pausiert wurde",
+      "retry": "Stream erneut versuchen"
     },
     "allCollections": "Alle Collections",
     "columns": {

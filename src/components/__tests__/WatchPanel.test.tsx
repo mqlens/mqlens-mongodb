@@ -315,6 +315,34 @@ describe('WatchPanel', () => {
     expect(callsTo('pause_change_stream')).toHaveLength(pausesBefore);
   });
 
+  it('offers to retry a cursor that failed, rather than to pause it', async () => {
+    // An errored cursor has no reader either. Showing Pause meant the only way
+    // back from a transient failure was to pause a dead stream, wait for a
+    // poll, and then click Resume.
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'describe_change_stream') return Promise.resolve(null);
+      if (command === 'poll_change_stream') {
+        return Promise.resolve({
+          events: [],
+          status: 'error',
+          error: 'cursor died',
+          dropped: 0,
+          lastSeq: 0,
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(panel());
+    await waitFor(() =>
+      expect(screen.getByTestId('watch-toggle').getAttribute('title')).toMatch(/again|retry/i)
+    );
+
+    fireEvent.click(screen.getByTestId('watch-toggle'));
+    expect(callsTo('resume_change_stream')).toHaveLength(1);
+    expect(callsTo('pause_change_stream')).toHaveLength(0);
+  });
+
   it('watches the whole deployment when no database is given', async () => {
     // An empty database name reaches the driver as the namespace
     // `.$cmd.aggregate`, which the server rejects outright — a cluster-level

@@ -475,7 +475,8 @@
       "clear": "Clear the list",
       "closeDetail": "Close the detail pane",
       "pause": "Pause the stream",
-      "resume": "Resume from where it paused"
+      "resume": "Resume from where it paused",
+      "retry": "Try the stream again"
     },
     "allCollections": "All collections",
     "columns": {

@@ -852,11 +852,12 @@ pub async fn poll_change_stream(
     // caller can act on. Closing a tab and immediately reopening the same
     // target can land the old stop after the new start, and a panel that could
     // not tell that apart from a transient failure polled an empty id for ever.
-    let Some(stream) = state.change_streams.lock_safe()?.get(&stream_id).cloned() else {
+    // Whoever is polling is the window that is really watching this, and the
+    // lookup and the claim happen together so the close sweep cannot land
+    // between them.
+    let Some(stream) = find_and_claim(&state, &stream_id, window.label())? else {
         return Ok(None);
     };
-    // Whoever is polling is the window that is really watching this.
-    claim_by_poller(&stream, window.label());
     let (events, dropped, last_seq) = {
         let buffer = stream.buffer.lock().map_err(|_| "buffer lock poisoned")?;
         (
@@ -951,10 +952,31 @@ pub async fn resume_change_stream(
     spawn_reader(&state, stream)
 }
 
+/// Look a stream up and note that this window is the one watching it.
+///
+/// Both under the SAME map lock the close sweep takes, because they cannot be
+/// split: a sweep landing in between would see the old owner, remove the
+/// stream, and leave the poll holding a detached `Arc` it then claims for
+/// nothing. Locked together, either the sweep sees the new owner and leaves
+/// the stream alone, or it removes it first and this returns `None` — which
+/// the panel already knows how to recover from.
+pub fn find_and_claim(
+    state: &AppState,
+    stream_id: &str,
+    window_id: &str,
+) -> Result<Option<Arc<LiveStream>>, String> {
+    let streams = state.change_streams.lock_safe()?;
+    let stream = streams.get(stream_id).cloned();
+    if let Some(stream) = &stream {
+        claim_by_poller(stream, window_id);
+    }
+    Ok(stream)
+}
+
 /// Note which window is watching, if it has changed.
 ///
-/// Called from the poll. Compared before writing because this runs several
-/// times a second per open watch and the answer almost never changes.
+/// Compared before writing because this runs several times a second per open
+/// watch and the answer almost never changes.
 pub fn claim_by_poller(stream: &LiveStream, window_id: &str) {
     if window_id.is_empty() {
         return;
