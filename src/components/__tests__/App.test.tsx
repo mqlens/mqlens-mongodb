@@ -92,7 +92,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, activeConnections }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections }: any) => (
     <div data-testid="mock-sidebar">
       {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
           `activeConnections` prop for its "Connections" tree — lets tests
@@ -108,6 +108,12 @@ vi.mock('../Sidebar', () => ({
       </button>
       <button data-testid="select-orders-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'orders')}>
         Select Orders
+      </button>
+      <button
+        data-testid="watch-collection-btn"
+        onClick={() => onWatchCollection && onWatchCollection('conn-1', 'sales_db', 'customers')}
+      >
+        Watch customers
       </button>
       <button
         data-testid="rename-db-btn"
@@ -2858,6 +2864,54 @@ describe('App Component', () => {
       });
       const splitCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'split_pane');
       expect(splitCalls).toHaveLength(1);
+    });
+
+    it('renames a watch tab to a watch id, not to the collection tab it would collide with', async () => {
+      // Falling through to the generic `<connection>.<db>.<collection>` form
+      // mints the id an ordinary collection tab already uses, and abandons the
+      // backend tail under the dead `watch.*` key while the renamed tab opens
+      // a second one.
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'describe_change_stream') return Promise.resolve(null);
+        if (cmd === 'poll_change_stream') {
+          return Promise.resolve({
+            events: [],
+            status: 'running',
+            error: null,
+            dropped: 0,
+            lastSeq: 0,
+          });
+        }
+        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1' })]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('watch-collection-btn'));
+      await screen.findByTestId('watch-panel');
+
+      calls.length = 0;
+      fireEvent.click(screen.getByTestId('rename-db-btn'));
+
+      const renamed = calls
+        .filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'rename_tab')
+        .map((c) => (c.args.op as any).new_id);
+      expect(renamed).toContain('watch.c.conn-1.sales_db2.customers');
+      expect(renamed).not.toContain('conn-1.sales_db2.customers');
+      // And the tail on the namespace that no longer exists is let go of,
+      // rather than left holding a cursor nothing polls.
+      expect(
+        calls.filter(
+          (c) =>
+            c.cmd === 'stop_change_stream' &&
+            c.args?.streamId === 'watch.c.conn-1.sales_db.customers'
+        )
+      ).toHaveLength(1);
     });
 
     it('mirrors both rename_tab dispatches from a single-tick rename storm', async () => {

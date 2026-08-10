@@ -118,12 +118,18 @@ export async function describeChangeStream(streamId: string): Promise<StreamInfo
  * Never rejects: a tail that throws on a transient poll would tear down the
  * view over something the next poll fixes. A failure reads as "nothing new, no
  * status change", which the caller renders as-is.
+ *
+ * `null` is different from `undefined`: it means nothing is watching under
+ * that id at all. A caller that expects to be polling something is looking at
+ * a stream that went away — closing a tab and reopening the same target can
+ * land the old stop after the new start — and can start it again rather than
+ * polling an empty id for ever.
  */
 export async function pollChangeStream(
   streamId: string,
   afterSeq?: number
-): Promise<StreamPoll | undefined> {
-  return invoke<StreamPoll>('poll_change_stream', {
+): Promise<StreamPoll | null | undefined> {
+  return invoke<StreamPoll | null>('poll_change_stream', {
     streamId,
     afterSeq: afterSeq ?? null,
   }).catch(() => undefined);

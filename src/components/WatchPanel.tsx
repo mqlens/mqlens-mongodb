@@ -175,6 +175,9 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   const lastSeqRef = useRef<number | undefined>(undefined);
   // Read inside the start effect, which must not re-run when it changes.
   const pausedRef = useRef(false);
+  // Serializes every start for this panel, so replacements land in the order
+  // they were asked for.
+  const startingRef = useRef<Promise<void>>(Promise.resolve());
   // Whether the filter above has been reconciled with the running stream.
   //
   // `operations` is component state and this component is unmounted whenever
@@ -189,7 +192,11 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
     let alive = true;
     void describeChangeStream(streamId).then((info) => {
       if (!alive) return;
-      if (info) setOperations(info.operationTypes as ChangeOperation[]);
+      // Guarded on the shape, not just on presence: adopting a malformed
+      // reply would put a non-array where the filter buttons expect one.
+      if (Array.isArray(info?.operationTypes)) {
+        setOperations(info.operationTypes as ChangeOperation[]);
+      }
       setAdopted(true);
     });
     return () => {
@@ -212,20 +219,32 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
     // the same events — duplicated rows and duplicated React keys.
     let polling = false;
 
-    const started = startChangeStream({
-      streamId,
-      connectionId,
-      database: databaseName,
-      collection: collectionName,
-      operationTypes: operations,
-    })
-      .then(() => {
-        // A filter change is a new cursor, since the `$match` lives in the
-        // server-side pipeline — but it must not quietly resume a stream the
-        // user paused. Re-pause immediately if that is where they left it.
-        if (alive && pausedRef.current) void pauseChangeStream(streamId);
-      })
-      .catch(() => undefined);
+    // Chained onto whatever start is already in flight, never issued beside
+    // it. Toggling two operation buttons quickly runs this effect twice, and
+    // two replacements racing means the backend keeps whichever IPC call
+    // happens to land last — which can be the older filter, leaving the tail
+    // showing something other than what the buttons say.
+    const start = () => {
+      startingRef.current = startingRef.current
+        .then(() =>
+          startChangeStream({
+            streamId,
+            connectionId,
+            database: databaseName,
+            collection: collectionName,
+            operationTypes: operations,
+          })
+        )
+        .then(() => {
+          // A filter change is a new cursor, since the `$match` lives in the
+          // server-side pipeline — but it must not quietly resume a stream the
+          // user paused. Re-pause immediately if that is where they left it.
+          if (alive && pausedRef.current) void pauseChangeStream(streamId);
+        })
+        .catch(() => undefined);
+      return startingRef.current;
+    };
+    const started = start();
 
     const tick = async () => {
       if (polling) return;
@@ -240,7 +259,17 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
         await started;
         if (!alive) return;
         const poll = await pollChangeStream(streamId, lastSeqRef.current);
-        if (!alive || !poll) return;
+        if (!alive || poll === undefined) return;
+        if (poll === null) {
+          // Nothing is watching under this id. Closing a tab and reopening the
+          // same target can land the old stop after the new start, and without
+          // this the panel would poll an id nothing fills for as long as it
+          // stayed open. Starting again goes through the same chain, so it
+          // cannot race a replacement already on its way.
+          lastSeqRef.current = undefined;
+          await start();
+          return;
+        }
         // Only when they actually move. These fire every 700ms, and setting an
         // unchanged value still costs a render pass — on an idle tail that was
         // a re-render a second for nothing.

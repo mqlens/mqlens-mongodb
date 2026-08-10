@@ -136,6 +136,69 @@ describe('WatchPanel', () => {
     expect(callsTo('pause_change_stream')).toHaveLength(0);
   });
 
+  it('starts the stream again when it finds nothing watching under its id', async () => {
+    // Closing a tab and reopening the same target can land the old stop after
+    // the new start. Without noticing, the panel would poll an id nothing
+    // fills for as long as it stayed open — a tail that looks merely quiet.
+    let exists = false;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'describe_change_stream') return Promise.resolve(null);
+      if (command === 'start_change_stream') {
+        exists = true;
+        return Promise.resolve(undefined);
+      }
+      if (command === 'poll_change_stream') {
+        // Deleted out from under the panel by a stop that arrived late.
+        const answer = exists
+          ? { events: [], status: 'running', error: null, dropped: 0, lastSeq: 0 }
+          : null;
+        exists = false;
+        return Promise.resolve(answer);
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(panel());
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(1));
+    await waitFor(() => expect(callsTo('start_change_stream').length).toBeGreaterThan(1));
+  });
+
+  it('sends filter changes one at a time, in the order they were asked for', async () => {
+    // Two replacements in flight together means the backend keeps whichever
+    // IPC call happens to land last, which can be the older filter — a tail
+    // showing something other than what the buttons say.
+    const settle: Array<() => void> = [];
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'describe_change_stream') return Promise.resolve(null);
+      if (command === 'start_change_stream') {
+        return new Promise<void>((resolve) => settle.push(resolve));
+      }
+      if (command === 'poll_change_stream') {
+        return Promise.resolve({ events: [], status: 'running', error: null, dropped: 0, lastSeq: 0 });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(panel());
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(1));
+
+    fireEvent.click(screen.getByTestId('watch-filter-insert'));
+    fireEvent.click(screen.getByTestId('watch-filter-delete'));
+    // Both toggles have happened; neither replacement can have been sent while
+    // the first start is still unresolved.
+    await waitFor(() => expect(screen.getByTestId('watch-filter-delete')).toBeInTheDocument());
+    expect(callsTo('start_change_stream')).toHaveLength(1);
+
+    settle.shift()?.();
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(2));
+    settle.shift()?.();
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(3));
+    // Last asked for, last sent.
+    expect(callsTo('start_change_stream')[2][1]).toMatchObject({
+      operationTypes: ['insert', 'delete'],
+    });
+  });
+
   it('watches the whole deployment when no database is given', async () => {
     // An empty database name reaches the driver as the namespace
     // `.$cmd.aggregate`, which the server rejects outright — a cluster-level

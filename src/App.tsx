@@ -275,6 +275,21 @@ const createTasksTab = (): QueryTab => ({
   explainResult: null,
 });
 
+/**
+ * The id of the tab that watches a namespace.
+ *
+ * The scope is encoded, not spelled with sentinel words: `database` and
+ * `deployment` are legal MongoDB names, so a collection called `database` used
+ * to produce the same tab id as its database-wide watch and the second target
+ * could never be opened. Shared with the rename handlers, which have to mint
+ * the same id — the generic tab id they would otherwise fall through to is the
+ * ordinary collection tab's, and two tabs cannot share one.
+ */
+const watchTabId = (connectionId: string, dbName = '', collName = '') => {
+  const scope = collName ? 'c' : dbName ? 'd' : 'x';
+  return `watch.${scope}.${connectionId}.${dbName}.${collName}`;
+};
+
 const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
   const className = isActive ? 'text-primary' : 'text-muted-foreground';
   const size = 11;
@@ -1443,12 +1458,7 @@ function Workspace() {
    *  starting a second cursor on the same collection. */
   const handleOpenWatch = (connectionId: string, dbName = '', collName = '') => {
     if (!connectionId) return;
-    // The scope is encoded, not spelled with sentinel words: `database` and
-    // `deployment` are legal MongoDB names, so a collection called `database`
-    // used to produce the same tab id as its database-wide watch and the
-    // second target could never be opened.
-    const scope = collName ? 'c' : dbName ? 'd' : 'x';
-    const tabId = `watch.${scope}.${connectionId}.${dbName}.${collName}`;
+    const tabId = watchTabId(connectionId, dbName, collName);
     if (!tabs.some((t) => t.id === tabId)) {
       const newTab: QueryTab = {
         id: tabId,
@@ -2055,14 +2065,28 @@ function Workspace() {
       if (tab.type === 'export') {
         return { ...tab, id: `export.${connectionId}.${dbName}.${newName}`, collection: newName };
       }
+      if (tab.type === 'watch') {
+        // Its own id scheme, and not optional: the generic form below is the
+        // ordinary collection tab's id, so a renamed watch would collide with
+        // an open query tab on the same namespace.
+        return {
+          ...tab,
+          id: watchTabId(connectionId, dbName, newName),
+          collection: newName,
+        };
+      }
       return { ...tab, id: `${connectionId}.${dbName}.${newName}`, collection: newName };
     };
 
     const renamedPairs = tabs
-      .map(t => ({ oldId: t.id, newId: renameTab(t).id }))
+      .map(t => ({ oldId: t.id, newId: renameTab(t).id, isWatch: t.type === 'watch' }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId }) => {
+    renamedPairs.forEach(({ oldId, newId, isWatch }) => {
+      // The tail was watching a namespace that no longer exists. Left alone it
+      // would sit under the dead tab id for as long as the app runs, holding a
+      // cursor nothing polls, while the renamed tab opens a second one.
+      if (isWatch) void stopChangeStream(oldId);
       // A rename mints a new tab id, so the shell session has to follow it —
       // otherwise the live mongosh child is stranded under the dead id and the
       // renamed tab starts a second one.
@@ -2120,6 +2144,13 @@ function Workspace() {
           db: newName,
         };
       }
+      if (tab.type === 'watch') {
+        return {
+          ...tab,
+          id: watchTabId(connectionId, newName, tab.collection),
+          db: newName,
+        };
+      }
       return {
         ...tab,
         id: `${connectionId}.${newName}.${tab.collection}`,
@@ -2128,10 +2159,17 @@ function Workspace() {
     };
 
     const renamedPairs = tabs
-      .map(t => ({ oldId: t.id, newId: renameTab(t).id, isShell: t.type === 'shell' }))
+      .map(t => ({
+        oldId: t.id,
+        newId: renameTab(t).id,
+        isShell: t.type === 'shell',
+        isWatch: t.type === 'watch',
+      }))
       .filter(p => p.oldId !== p.newId);
     setTabs(prev => prev.map(renameTab));
-    renamedPairs.forEach(({ oldId, newId, isShell }) => {
+    renamedPairs.forEach(({ oldId, newId, isShell, isWatch }) => {
+      // Watching a database that no longer exists. See the collection rename.
+      if (isWatch) void stopChangeStream(oldId);
       // A rename mints a new tab id, so the shell session has to follow it —
       // otherwise the live mongosh child is stranded under the dead id and the
       // renamed tab starts a second one.

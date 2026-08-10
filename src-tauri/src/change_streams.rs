@@ -764,8 +764,14 @@ pub async fn poll_change_stream(
     state: tauri::State<'_, AppState>,
     stream_id: String,
     after_seq: Option<u64>,
-) -> Result<StreamPoll, String> {
-    let stream = get_stream(&state, &stream_id)?;
+) -> Result<Option<StreamPoll>, String> {
+    // Absent rather than an error: nothing is watching under this id, which a
+    // caller can act on. Closing a tab and immediately reopening the same
+    // target can land the old stop after the new start, and a panel that could
+    // not tell that apart from a transient failure polled an empty id for ever.
+    let Some(stream) = state.change_streams.lock_safe()?.get(&stream_id).cloned() else {
+        return Ok(None);
+    };
     let (events, dropped, last_seq) = {
         let buffer = stream.buffer.lock().map_err(|_| "buffer lock poisoned")?;
         (
@@ -774,7 +780,7 @@ pub async fn poll_change_stream(
             buffer.next_seq.saturating_sub(1),
         )
     };
-    Ok(StreamPoll {
+    Ok(Some(StreamPoll {
         events,
         status: stream
             .status
@@ -784,7 +790,7 @@ pub async fn poll_change_stream(
         error: stream.error.lock().ok().and_then(|e| e.clone()),
         dropped,
         last_seq,
-    })
+    }))
 }
 
 /// What a stream is actually watching, for a panel that has just mounted.
