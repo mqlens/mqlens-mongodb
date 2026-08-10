@@ -408,7 +408,15 @@ JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
     );
 
     // Not shown in the new, empty conversation...
-    await waitFor(() => expect(chatStore.find((c) => c.id === 'chat-one')).toBeTruthy());
+    //
+    // A real deadline, not the default second: the save cannot happen until an
+    // asynchronous scope lookup has resolved, so this waits on a chain of
+    // send, reply, resolve and save. One second is enough on an idle machine
+    // and not on a loaded CI runner, where it failed with the chat simply not
+    // written yet.
+    await waitFor(() => expect(chatStore.find((c) => c.id === 'chat-one')).toBeTruthy(), {
+      timeout: 10_000,
+    });
     expect(screen.queryByText('the answer')).toBeNull();
     // ...and stored with the question instead.
     const asked = chatStore.find((c) => c.id === 'chat-one');
