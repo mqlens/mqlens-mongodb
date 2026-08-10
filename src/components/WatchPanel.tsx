@@ -226,15 +226,26 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
     // showing something other than what the buttons say.
     const start = () => {
       startingRef.current = startingRef.current
-        .then(() =>
-          startChangeStream({
+        .then(() => {
+          // Checked when the queued start comes up, not when it was queued. A
+          // start waiting behind another one outlives this panel: close the
+          // tab and the close path's stop can run first, after which the queued
+          // start would recreate a cursor for a tab that no longer exists and
+          // nothing would ever poll or stop it again.
+          //
+          // A tab merely switched away also lands here, and a filter change
+          // queued in the instant before that switch is dropped. That is the
+          // trade: a reverted filter the user can see and redo, against a
+          // cursor that leaks silently until the app exits.
+          if (!alive) return undefined;
+          return startChangeStream({
             streamId,
             connectionId,
             database: databaseName,
             collection: collectionName,
             operationTypes: operations,
-          })
-        )
+          });
+        })
         .then(() => {
           // A filter change is a new cursor, since the `$match` lives in the
           // server-side pipeline — but it must not quietly resume a stream the

@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// Events kept per stream. Oldest are dropped first; the count of what was
 /// dropped is reported so the UI can say so rather than silently skipping.
@@ -36,9 +37,17 @@ pub const BUFFER_CAP: usize = 1_000;
 pub const BUFFER_BYTES: usize = 16 * 1024 * 1024;
 
 /// How long a new reader waits for the one it replaces to record where its
-/// cursor reached. Long enough for a woken task to run, short enough that a
-/// predecessor which never wakes cannot wedge the watch.
-pub const HANDOVER_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+/// cursor reached.
+///
+/// A backstop, not a budget. `run_stream` records every reader as settled on
+/// every exit path, so a predecessor that never settles means a task that was
+/// never polled at all — and the cost of giving up early is silent: the
+/// replacement opens with no resume point and skips whatever happened while
+/// the watch was paused. The wait is normally microseconds. It is long only
+/// when the predecessor is still inside `watch()`, and a cursor that is slow
+/// to open for one reader will be slow for its replacement too, so waiting
+/// costs nothing that hurrying would save.
+pub const HANDOVER_GRACE: Duration = Duration::from_secs(30);
 
 /// One change, flattened to what the viewer needs. The bodies stay as raw JSON
 /// — this module never interprets a document.
@@ -396,11 +405,11 @@ async fn run_stream(
 ///
 /// Bounded, because a predecessor that never wakes must not wedge the watch. A
 /// stale point is a bad start; no stream at all is worse.
-pub async fn await_handover(state_streams: &LiveStream, predecessor: u64) {
+pub async fn await_handover(state_streams: &LiveStream, predecessor: u64, grace: Duration) {
     if predecessor == 0 || state_streams.settled.load(Ordering::SeqCst) >= predecessor {
         return;
     }
-    let _ = tokio::time::timeout(HANDOVER_GRACE, async {
+    let _ = tokio::time::timeout(grace, async {
         loop {
             let settled = state_streams.retired.notified();
             tokio::pin!(settled);
@@ -422,7 +431,7 @@ async fn read_cursor(
 ) {
     use futures::StreamExt;
 
-    await_handover(state_streams, predecessor).await;
+    await_handover(state_streams, predecessor, HANDOVER_GRACE).await;
 
     let pipeline = build_pipeline(&state_streams.operation_types);
     let resume = state_streams

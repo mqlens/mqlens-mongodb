@@ -5293,7 +5293,7 @@ mod change_stream_tests {
     async fn a_reader_whose_predecessor_has_settled_starts_at_once() {
         let stream = live_stream();
         stream.settled.store(4, Ordering::SeqCst);
-        tokio::time::timeout(Duration::from_millis(100), await_handover(&stream, 4))
+        tokio::time::timeout(Duration::from_millis(100), await_handover(&stream, 4, HANDOVER_GRACE))
             .await
             .expect("nothing left to wait for");
     }
@@ -5313,7 +5313,7 @@ mod change_stream_tests {
             handing_over.retired.notify_waiters();
         });
 
-        tokio::time::timeout(Duration::from_secs(5), await_handover(&stream, 7))
+        tokio::time::timeout(Duration::from_secs(5), await_handover(&stream, 7, HANDOVER_GRACE))
             .await
             .expect("the handover should complete once the predecessor settles");
         assert!(stream.settled.load(Ordering::SeqCst) >= 7);
@@ -5326,7 +5326,11 @@ mod change_stream_tests {
         // timeout is there so a slow machine reports "still bounded" rather
         // than a spurious failure.
         let stream = live_stream();
-        tokio::time::timeout(HANDOVER_GRACE * 10, await_handover(&stream, 9))
+        // Its own grace, because the real one is a 30-second backstop against
+        // a task that was never polled — waiting that out here would say
+        // nothing extra and cost the suite half a minute.
+        let grace = Duration::from_millis(20);
+        tokio::time::timeout(grace * 50, await_handover(&stream, 9, grace))
             .await
             .expect("the wait for a predecessor must be bounded");
         assert!(stream.settled.load(Ordering::SeqCst) < 9);

@@ -189,14 +189,42 @@ describe('WatchPanel', () => {
     await waitFor(() => expect(screen.getByTestId('watch-filter-delete')).toBeInTheDocument());
     expect(callsTo('start_change_stream')).toHaveLength(1);
 
+    // Releasing the first lets the queue drain. What matters is where it ends
+    // up: the newest selection is what the backend is left holding, and no two
+    // replacements were ever in flight together to decide that by arrival
+    // order.
     settle.shift()?.();
-    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(2));
-    settle.shift()?.();
-    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(3));
-    // Last asked for, last sent.
-    expect(callsTo('start_change_stream')[2][1]).toMatchObject({
-      operationTypes: ['insert', 'delete'],
+    await waitFor(() => expect(callsTo('start_change_stream').length).toBeGreaterThan(1));
+    const sent = callsTo('start_change_stream');
+    expect(sent[sent.length - 1][1]).toMatchObject({ operationTypes: ['insert', 'delete'] });
+  });
+
+  it('drops a queued start when the tab goes away', async () => {
+    // A start waiting behind another one outlives the panel. Close the tab and
+    // the close path's stop can run first, after which the queued start
+    // recreates a cursor for a tab that no longer exists — with no panel left
+    // to notice, it holds its buffer until the app exits.
+    const settle: Array<() => void> = [];
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'describe_change_stream') return Promise.resolve(null);
+      if (command === 'start_change_stream') {
+        return new Promise<void>((resolve) => settle.push(resolve));
+      }
+      if (command === 'poll_change_stream') {
+        return Promise.resolve({ events: [], status: 'running', error: null, dropped: 0, lastSeq: 0 });
+      }
+      return Promise.resolve(undefined);
     });
+
+    const view = render(panel());
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(1));
+    fireEvent.click(screen.getByTestId('watch-filter-insert'));
+
+    view.unmount();
+    settle.forEach((resolve) => resolve());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(callsTo('start_change_stream')).toHaveLength(1);
   });
 
   it('watches the whole deployment when no database is given', async () => {
