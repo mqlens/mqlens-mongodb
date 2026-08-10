@@ -221,6 +221,15 @@ describe('parseShellJson — queries pasted from somewhere else', () => {
     expect(parseShellJson('path: \u201CC:\\\\temp\u201D')).toEqual({ path: 'C:\\temp' });
   });
 
+  it('copes with several paste artifacts at once', () => {
+    // A paste brings its damage in combination. The lookahead that finds the
+    // closing quote reads the original text, so it has to skip what the rest
+    // of the normalizer is about to remove.
+    expect(parseShellJson('domain: “x”;')).toEqual({ domain: 'x' });
+    expect(parseShellJson('{domain: “x”​}')).toEqual({ domain: 'x' });
+    expect(parseShellJson('{“domain”​: “x”}')).toEqual({ domain: 'x' });
+  });
+
   it('leaves a regex literal alone, smart quotes and all', () => {
     // `/“ACME”/` is a pattern that really does contain those characters.
     // Rewriting them leaves a filter that still runs and quietly matches

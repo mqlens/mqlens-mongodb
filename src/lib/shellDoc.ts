@@ -226,14 +226,23 @@ export function normalizePastedQuery(text: string): string {
  * the run was a key, or nothing at all — where an apostrophe inside a word is
  * followed by more word.
  *
+ * The lookahead reads the ORIGINAL text, so it has to skip what the rest of
+ * this normalizer is about to remove: a paste carries its damage in
+ * combination, and `“x”;` or `“x”<zero-width>}` would otherwise keep its curly
+ * quotes because the closer was followed by something not yet cleaned up.
+ *
  * -1 when no candidate qualifies, which leaves the text exactly as the user
  * typed it: a parse error they can see beats a silent change of meaning.
  */
 function closingSmartQuote(text: string, from: number, closer: string): number {
   for (let i = text.indexOf(closer, from); i !== -1; i = text.indexOf(closer, i + 1)) {
     let j = i + 1;
-    while (j < text.length && /\s/.test(text[j])) j++;
-    if (j >= text.length || ',}])'.includes(text[j]) || text[j] === ':') return i;
+    // `\s` already covers the non-breaking and typographic spaces, but not the
+    // zero-width run, which this normalizer drops outright.
+    while (j < text.length && (/\s/.test(text[j]) || ZERO_WIDTH.test(text[j]))) j++;
+    if (j >= text.length || ',}])'.includes(text[j]) || text[j] === ':' || text[j] === ';') {
+      return i;
+    }
   }
   return -1;
 }
