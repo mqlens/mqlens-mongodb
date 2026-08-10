@@ -321,6 +321,42 @@ describe('DocumentViewer Component', () => {
     }
   });
 
+  it('re-translates a parse error when the language changes', async () => {
+    const { i18next } = await import('@/lib/i18n');
+    try {
+      render(
+        <DocumentViewer
+          connectionName="test-conn"
+          databaseName="test-db"
+          collectionName="test-coll"
+          onExecute={mockOnExecute}
+          onExplain={mockOnExplain}
+          loading={false}
+        />
+      );
+      // A bare value is not a query object — one of our own errors, so it has
+      // a translated message rather than the parser's English one.
+      fireEvent.change(screen.getByTestId('query-filter-input'), { target: { value: '5' } });
+      const english = await waitFor(() => {
+        const title = screen.getByTestId('query-invalid-badge').getAttribute('title');
+        expect(title).toBeTruthy();
+        return title;
+      });
+
+      await act(async () => {
+        await i18next.changeLanguage('de');
+      });
+
+      await waitFor(() =>
+        expect(screen.getByTestId('query-invalid-badge').getAttribute('title')).not.toBe(english)
+      );
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en');
+      });
+    }
+  });
+
   it('toggles visual query builder panel', () => {
     render(
       <DocumentViewer

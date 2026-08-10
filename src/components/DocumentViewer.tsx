@@ -925,7 +925,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         key ? td(key) : err instanceof Error ? err.message : String(err)
       );
     }
-  }, [filterQuery]);
+    // `td` too: switching the interface language re-renders this component but
+    // would not re-run the effect, leaving an existing tooltip frozen in the
+    // old language while everything around it changed.
+  }, [filterQuery, td]);
 
   useEffect(() => {
     try {

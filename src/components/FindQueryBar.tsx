@@ -183,6 +183,9 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
     <span
       className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-destructive whitespace-nowrap"
       title={reason ?? undefined}
+      // The label itself is translated, so a test that wants the badge cannot
+      // look for its text.
+      data-testid="query-invalid-badge"
     >
       <AlertCircle size={10} /> {t('findQueryBar.errors.invalidJson')}
     </span>
