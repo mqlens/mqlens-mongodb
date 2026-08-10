@@ -154,6 +154,14 @@ pub struct LiveStream {
     /// reader retired by that replacement still writes its final cursor
     /// position somewhere the replacement can read it.
     pub resume_token: Arc<Mutex<ResumePoint>>,
+    /// Which window's panel last mounted this tail.
+    ///
+    /// Closing a secondary window with the OS button runs no frontend code at
+    /// all, so without an owner recorded here every watch it held would keep
+    /// its cursor and go on buffering for as long as the app lived. Updated on
+    /// every start, adoption included, so a tab moved between windows is swept
+    /// by the one it actually ended up in.
+    pub window: Mutex<String>,
     pub connection_id: String,
     /// `None` watches the whole deployment (`client.watch()`), which is how a
     /// cluster-level tail differs from a database one.
@@ -668,6 +676,7 @@ fn spawn_reader(state: &AppState, stream: Arc<LiveStream>) -> Result<(), String>
 #[tauri::command]
 pub async fn start_change_stream(
     state: tauri::State<'_, AppState>,
+    window: tauri::Window,
     stream_id: String,
     connection_id: String,
     database: Option<String>,
@@ -688,6 +697,12 @@ pub async fn start_change_stream(
             && existing.collection == collection
             && existing.operation_types == operation_types;
         if same {
+            // Adoption, not a restart — but the panel doing the adopting may be
+            // in a different window than the one that started it, and the
+            // window-close sweep goes by this.
+            if let Ok(mut owner) = existing.window.lock() {
+                *owner = window.label().to_string();
+            }
             return Ok(());
         }
     }
@@ -726,6 +741,7 @@ pub async fn start_change_stream(
     let was_paused = inherited_status == Some(StreamStatus::Paused);
 
     let stream = Arc::new(LiveStream {
+        window: Mutex::new(window.label().to_string()),
         buffer: Mutex::new(StreamBuffer::default()),
         status: Mutex::new(if was_paused {
             StreamStatus::Paused
@@ -873,6 +889,23 @@ pub async fn resume_change_stream(
         *e = None;
     }
     spawn_reader(&state, stream)
+}
+
+/// Every tail a window owns, for the sweep when that window goes away.
+pub fn change_stream_ids_for_window(state: &AppState, window_id: &str) -> Result<Vec<String>, String> {
+    Ok(state
+        .change_streams
+        .lock_safe()?
+        .iter()
+        .filter(|(_, stream)| {
+            stream
+                .window
+                .lock()
+                .map(|owner| *owner == window_id)
+                .unwrap_or(false)
+        })
+        .map(|(stream_id, _)| stream_id.clone())
+        .collect())
 }
 
 pub fn stop_change_stream_impl(state: &AppState, stream_id: &str) -> Result<(), String> {

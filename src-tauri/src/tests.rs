@@ -4942,7 +4942,8 @@ mod chat_store_tests {
 mod change_stream_tests {
     use crate::change_streams::{
         build_pipeline, describe_stream_error, events_after, push_event, push_event_bounded,
-        await_handover, carry_over, measure_event, publish_status, record_resume_token,
+        await_handover, carry_over, change_stream_ids_for_window, measure_event, publish_status,
+        record_resume_token,
         retire_reader, HANDOVER_GRACE, ChangeEvent, LiveStream, ResumePoint, StreamBuffer,
         StreamStatus, BUFFER_CAP,
     };
@@ -4959,6 +4960,7 @@ mod change_stream_tests {
 
     fn live_stream() -> Arc<LiveStream> {
         Arc::new(LiveStream {
+            window: Mutex::new("main".to_string()),
             buffer: Mutex::new(StreamBuffer::default()),
             status: Mutex::new(StreamStatus::Running),
             error: Mutex::new(None),
@@ -5334,6 +5336,36 @@ mod change_stream_tests {
             .await
             .expect("the wait for a predecessor must be bounded");
         assert!(stream.settled.load(Ordering::SeqCst) < 9);
+    }
+
+    #[test]
+    fn closing_a_window_can_find_the_watches_it_owned() {
+        // Closing a secondary window with the OS button runs no frontend code
+        // at all, so nothing tells these tails to stop. Left behind they hold a
+        // server-side cursor and go on buffering for as long as the app lives.
+        use crate::state::LockExt;
+        let state = crate::AppState::new();
+        let here = live_stream();
+        let elsewhere = live_stream();
+        *elsewhere.window.lock().unwrap() = "win-2".to_string();
+        {
+            let mut streams = state.change_streams.lock_safe().unwrap();
+            streams.insert("watch.c.c1.sales.orders".to_string(), here);
+            streams.insert("watch.c.c1.sales.invoices".to_string(), elsewhere);
+        }
+
+        assert_eq!(
+            change_stream_ids_for_window(&state, "main").unwrap(),
+            vec!["watch.c.c1.sales.orders".to_string()]
+        );
+        assert_eq!(
+            change_stream_ids_for_window(&state, "win-2").unwrap(),
+            vec!["watch.c.c1.sales.invoices".to_string()]
+        );
+        // And a window that owns none takes none with it.
+        assert!(change_stream_ids_for_window(&state, "win-9")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

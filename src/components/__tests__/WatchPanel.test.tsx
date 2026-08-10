@@ -163,6 +163,58 @@ describe('WatchPanel', () => {
     await waitFor(() => expect(callsTo('start_change_stream').length).toBeGreaterThan(1));
   });
 
+  it('forgets the old events when its stream is replaced under it', async () => {
+    // Sequence numbers restart at zero with the new cursor, and merging
+    // deduplicates by sequence — so events kept from the old stream make every
+    // fresh event up to the old high-water mark look already-shown, and the
+    // tail silently drops them. Three old events and two new ones with
+    // overlapping sequences: without the reset the count stays at three and
+    // the new pair is never seen.
+    const change = (seq: number) => ({
+      seq,
+      operationType: 'insert',
+      database: 'sales',
+      collection: 'orders',
+      atMs: 0,
+    });
+    let phase: 'first' | 'gone' | 'second' = 'first';
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'describe_change_stream') return Promise.resolve(null);
+      if (command === 'start_change_stream') return Promise.resolve(undefined);
+      if (command === 'poll_change_stream') {
+        if (phase === 'first') {
+          phase = 'gone';
+          return Promise.resolve({
+            events: [change(0), change(1), change(2)],
+            status: 'running',
+            error: null,
+            dropped: 0,
+            lastSeq: 2,
+          });
+        }
+        if (phase === 'gone') {
+          // Removed by a stop that arrived late.
+          phase = 'second';
+          return Promise.resolve(null);
+        }
+        return Promise.resolve({
+          events: [change(0), change(1)],
+          status: 'running',
+          error: null,
+          dropped: 0,
+          lastSeq: 1,
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(panel());
+    await waitFor(() => expect(screen.getByTestId('watch-count')).toHaveTextContent('3'));
+    await waitFor(() => expect(callsTo('start_change_stream').length).toBeGreaterThan(1));
+    // The replacement's events reuse sequences 0 and 1 and must still land.
+    await waitFor(() => expect(screen.getByTestId('watch-count')).toHaveTextContent('2'));
+  });
+
   it('sends filter changes one at a time, in the order they were asked for', async () => {
     // Two replacements in flight together means the backend keeps whichever
     // IPC call happens to land last, which can be the older filter — a tail

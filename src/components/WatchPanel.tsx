@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { List, type RowComponentProps } from 'react-window';
 import { useTranslation } from 'react-i18next';
 import { Database, Layers, Pause, Play, Radio, Trash2, X } from 'lucide-react';
@@ -212,6 +212,26 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
     };
   }, [streamId]);
 
+  /**
+   * Forget everything on screen, because it belongs to a stream that no longer
+   * exists.
+   *
+   * Sequence numbers restart at zero with the new cursor, and `mergeEvents`
+   * deduplicates by sequence — so events kept from the old one make every
+   * fresh event up to the old high-water mark look like something already
+   * shown, and the tail silently drops them.
+   */
+  const resetView = useCallback(() => {
+    setEvents([]);
+    setSelected(null);
+    // The namespace filter hides itself once fewer than two namespaces have
+    // been seen, so a stale selection could survive with no visible control to
+    // clear it — leaving an empty list and no way out.
+    setNamespace(null);
+    setDropped(0);
+    lastSeqRef.current = undefined;
+  }, []);
+
   // Started once per tab and NOT stopped on unmount. `PaneView` renders only
   // the active tab, so an inactive watch tab is unmounted while still open —
   // tearing the cursor down here would drop its resume token and silently miss
@@ -285,7 +305,11 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
           // this the panel would poll an id nothing fills for as long as it
           // stayed open. Starting again goes through the same chain, so it
           // cannot race a replacement already on its way.
-          lastSeqRef.current = undefined;
+          //
+          // The whole view goes, not just the sequence: what is on screen came
+          // from a stream that no longer exists, and its sequence numbers
+          // would shadow the new one's.
+          resetView();
           await start();
           return;
         }
@@ -310,16 +334,10 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
       alive = false;
       clearInterval(timer);
     };
-  }, [streamId, connectionId, databaseName, collectionName, operations, adopted]);
+  }, [streamId, connectionId, databaseName, collectionName, operations, adopted, resetView]);
 
   const applyOperations = (next: ChangeOperation[]) => {
-    setEvents([]);
-    setSelected(null);
-    // The namespace filter hides itself once fewer than two namespaces have
-    // been seen, so a stale selection could survive with no visible control to
-    // clear it — leaving an empty list and no way out.
-    setNamespace(null);
-    lastSeqRef.current = undefined;
+    resetView();
     setOperations(next);
   };
 
