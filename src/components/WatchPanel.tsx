@@ -197,6 +197,14 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
       if (Array.isArray(info?.operationTypes)) {
         setOperations(info.operationTypes as ChangeOperation[]);
       }
+      // The status too, not only the filter. Otherwise a paused tab comes back
+      // reading `starting` until the first poll 700ms later, and its toolbar
+      // offers Pause on something already paused — clicking it pauses again
+      // and the stream the user meant to resume stays stopped.
+      if (info?.status) {
+        setStatus(info.status);
+        pausedRef.current = info.status === 'paused';
+      }
       setAdopted(true);
     });
     return () => {

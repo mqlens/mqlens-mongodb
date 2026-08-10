@@ -227,6 +227,42 @@ describe('WatchPanel', () => {
     expect(callsTo('start_change_stream')).toHaveLength(1);
   });
 
+  it('comes back paused when that is how the tab was left', async () => {
+    // Without adopting the status the toolbar reads `starting` until the first
+    // poll 700ms later, offering Pause on something already paused — so the
+    // click meant to resume pauses again and the tail stays stopped.
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'describe_change_stream') {
+        return Promise.resolve({
+          connectionId: 'c1',
+          database: 'sales',
+          collection: 'orders',
+          operationTypes: [],
+          status: 'paused',
+        });
+      }
+      // Never answers, so nothing here can come from a poll.
+      if (command === 'poll_change_stream') return new Promise(() => {});
+      return Promise.resolve(undefined);
+    });
+
+    render(panel());
+
+    await waitFor(() =>
+      expect(screen.getByTestId('watch-toggle').getAttribute('title')).toMatch(/resume/i)
+    );
+    // The start settles into its own re-pause first — a paused tab stays
+    // paused across a restart — so what matters is that the click is not
+    // undone by it.
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(1));
+    const pausesBefore = callsTo('pause_change_stream').length;
+
+    fireEvent.click(screen.getByTestId('watch-toggle'));
+    expect(callsTo('resume_change_stream')).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(callsTo('pause_change_stream')).toHaveLength(pausesBefore);
+  });
+
   it('watches the whole deployment when no database is given', async () => {
     // An empty database name reaches the driver as the namespace
     // `.$cmd.aggregate`, which the server rejects outright — a cluster-level
