@@ -59,8 +59,18 @@ mod integration {
         let _ = disconnect_db_impl(state, id).await;
     }
 
+    /// Wait for a task to stop running.
+    ///
+    /// A DEADLINE, not a fixed number of polls. These tasks copy and index real
+    /// data on a real server, and CI runs them under coverage instrumentation
+    /// on a shared runner — the old 200 × 25ms came to five seconds, which a
+    /// database copy that also recreates a view can exceed without anything
+    /// being wrong. Returning the instant the task finishes means a generous
+    /// bound costs nothing in the normal case, and a task that really is stuck
+    /// still fails rather than hanging the suite.
     async fn wait_for_task(state: &AppState, task_id: &str) -> crate::TaskInfo {
-        for _ in 0..200 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while std::time::Instant::now() < deadline {
             let info = state.tasks.lock().unwrap().get(task_id).cloned();
             if let Some(info) = info {
                 if info.status != "running" {
