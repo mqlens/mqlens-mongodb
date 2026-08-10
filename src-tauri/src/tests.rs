@@ -4942,7 +4942,8 @@ mod chat_store_tests {
 mod change_stream_tests {
     use crate::change_streams::{
         build_pipeline, describe_stream_error, events_after, push_event, push_event_bounded,
-        carry_over, measure_event, record_resume_token, retire_reader, ChangeEvent, LiveStream, ResumePoint, StreamBuffer,
+        await_handover, carry_over, measure_event, publish_status, record_resume_token,
+        retire_reader, HANDOVER_GRACE, ChangeEvent, LiveStream, ResumePoint, StreamBuffer,
         StreamStatus, BUFFER_CAP,
     };
     use mongodb::bson::{doc, Bson};
@@ -4963,6 +4964,8 @@ mod change_stream_tests {
             error: Mutex::new(None),
             generation: Arc::new(AtomicU64::new(0)),
             retired: Arc::new(tokio::sync::Notify::new()),
+            settled: Arc::new(AtomicU64::new(0)),
+            spawned: Arc::new(AtomicU64::new(0)),
             resume_token: Arc::new(Mutex::new(ResumePoint::default())),
             connection_id: "c1".to_string(),
             database: Some("sales".to_string()),
@@ -5247,6 +5250,86 @@ mod change_stream_tests {
         let carried = carry_over(Some(&old), "c1", &Some("other".to_string()));
         assert!(!Arc::ptr_eq(&carried.resume_token, &old.resume_token));
         assert!(!Arc::ptr_eq(&carried.generation, &old.generation));
+    }
+
+    #[test]
+    fn a_retired_reader_cannot_report_a_failure_over_a_healthy_stream() {
+        // A cursor retired a microsecond ago can fail long after its
+        // replacement is happily running. Writing that into the shared stream
+        // would show the user a dead tail that is in fact fine — and the
+        // replacement cannot clear it, because it only promotes a stream still
+        // marked Starting.
+        let stream = live_stream();
+        let straggler = retire_reader(&stream);
+        let live = retire_reader(&stream);
+        publish_status(&stream, live, StreamStatus::Running, None);
+
+        publish_status(
+            &stream,
+            straggler,
+            StreamStatus::Error,
+            Some("cursor died".to_string()),
+        );
+
+        assert_eq!(*stream.status.lock().unwrap(), StreamStatus::Running);
+        assert_eq!(*stream.error.lock().unwrap(), None);
+    }
+
+    #[test]
+    fn a_stream_paused_while_its_cursor_opened_does_not_come_back_running() {
+        // Pause is answered immediately, but the reader only learns of it when
+        // its `watch()` finishes. Announcing Running then would leave the panel
+        // offering Pause on something already stopped.
+        let stream = live_stream();
+        let generation = retire_reader(&stream);
+        *stream.status.lock().unwrap() = StreamStatus::Paused;
+
+        publish_status(&stream, generation, StreamStatus::Running, None);
+
+        assert_eq!(*stream.status.lock().unwrap(), StreamStatus::Paused);
+    }
+
+    #[tokio::test]
+    async fn a_reader_whose_predecessor_has_settled_starts_at_once() {
+        let stream = live_stream();
+        stream.settled.store(4, Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_millis(100), await_handover(&stream, 4))
+            .await
+            .expect("nothing left to wait for");
+    }
+
+    #[tokio::test]
+    async fn a_reader_waits_for_its_predecessor_to_say_where_it_got_to() {
+        // Retiring a reader does not stop it: it wakes, records its final
+        // cursor position and only then lets go. A replacement that read the
+        // shared point before that starts from the position before the last
+        // word — which on a stream idle for hours is the point most likely to
+        // have aged out of the oplog.
+        let stream = live_stream();
+        let handing_over = Arc::clone(&stream);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            handing_over.settled.store(7, Ordering::SeqCst);
+            handing_over.retired.notify_waiters();
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), await_handover(&stream, 7))
+            .await
+            .expect("the handover should complete once the predecessor settles");
+        assert!(stream.settled.load(Ordering::SeqCst) >= 7);
+    }
+
+    #[tokio::test]
+    async fn a_predecessor_that_never_settles_does_not_wedge_the_watch() {
+        // A stale resume point is a bad start; no stream at all is worse. This
+        // one really does wait out `HANDOVER_GRACE` — the generous outer
+        // timeout is there so a slow machine reports "still bounded" rather
+        // than a spurious failure.
+        let stream = live_stream();
+        tokio::time::timeout(HANDOVER_GRACE * 10, await_handover(&stream, 9))
+            .await
+            .expect("the wait for a predecessor must be bounded");
+        assert!(stream.settled.load(Ordering::SeqCst) < 9);
     }
 
     #[test]

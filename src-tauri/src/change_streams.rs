@@ -35,6 +35,11 @@ pub const BUFFER_CAP: usize = 1_000;
 /// evicts.
 pub const BUFFER_BYTES: usize = 16 * 1024 * 1024;
 
+/// How long a new reader waits for the one it replaces to record where its
+/// cursor reached. Long enough for a woken task to run, short enough that a
+/// predecessor which never wakes cannot wedge the watch.
+pub const HANDOVER_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// One change, flattened to what the viewer needs. The bodies stay as raw JSON
 /// — this module never interprets a document.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -129,6 +134,13 @@ pub struct LiveStream {
     /// server-side cursor and a clone of the client the whole time. Pause,
     /// resume, filter, pause again and those pile up.
     pub retired: Arc<tokio::sync::Notify>,
+    /// The highest reader generation that has finished and written down where
+    /// its cursor reached. A replacement waits for its predecessor to appear
+    /// here before reading the resume point.
+    pub settled: Arc<AtomicU64>,
+    /// The generation of the most recently spawned reader, which is what a new
+    /// one names as the predecessor it must wait for.
+    pub spawned: Arc<AtomicU64>,
     /// Shared with whatever replaces this stream on the same target, so a
     /// reader retired by that replacement still writes its final cursor
     /// position somewhere the replacement can read it.
@@ -324,12 +336,93 @@ fn get_stream(state: &AppState, stream_id: &str) -> Result<Arc<LiveStream>, Stri
         .ok_or_else(|| format!("no change stream {stream_id}"))
 }
 
-/// Read the cursor until cancelled, buffering as it goes.
+/// Publish a status, but only for the reader that still owns the stream.
 ///
-/// Spawned per stream. It owns the resume token: every event updates it, so a
-/// pause can restart exactly where this left off.
-async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_generation: u64) {
+/// Taken under the BUFFER lock, which is where retirement and publication meet.
+/// A check made outside it can pass and then be overtaken: a reader retired a
+/// microsecond later would still write its own error over a `Paused` the user
+/// just asked for, or over the `Running` of the replacement that took its
+/// place, and the panel would report a dead stream that is in fact healthy.
+pub fn publish_status(
+    stream: &LiveStream,
+    my_generation: u64,
+    status: StreamStatus,
+    error: Option<String>,
+) {
+    let Ok(_publish) = stream.buffer.lock() else {
+        return;
+    };
+    if stream.generation.load(Ordering::SeqCst) != my_generation {
+        return;
+    }
+    if let Ok(mut current) = stream.status.lock() {
+        // `Running` is a promotion, not an announcement: a stream the user
+        // paused while its cursor was opening must not come back running.
+        if status == StreamStatus::Running && *current != StreamStatus::Starting {
+            return;
+        }
+        *current = status;
+    }
+    if let Ok(mut slot) = stream.error.lock() {
+        *slot = error;
+    }
+}
+
+/// Read the cursor until retired, buffering as it goes.
+///
+/// Spawned per stream, one task per generation. Wraps {@link read_cursor} so
+/// that however that returns — retired, ended, failed — this reader is recorded
+/// as settled and whoever is waiting on its resume point is woken.
+async fn run_stream(
+    state_streams: Arc<LiveStream>,
+    client: mongodb::Client,
+    my_generation: u64,
+    predecessor: u64,
+) {
+    read_cursor(&state_streams, client, my_generation, predecessor).await;
+    state_streams
+        .settled
+        .fetch_max(my_generation, Ordering::SeqCst);
+    state_streams.retired.notify_waiters();
+}
+
+/// Wait for the reader being replaced to say where its cursor actually reached.
+///
+/// Retiring a reader does not stop it: it wakes, records its final position and
+/// only then lets go. A replacement that read the shared resume point before
+/// that would start from the position before the last word — which on a stream
+/// that has been idle for hours is exactly the point most likely to have aged
+/// out of the oplog, and resuming from it fails outright.
+///
+/// Bounded, because a predecessor that never wakes must not wedge the watch. A
+/// stale point is a bad start; no stream at all is worse.
+pub async fn await_handover(state_streams: &LiveStream, predecessor: u64) {
+    if predecessor == 0 || state_streams.settled.load(Ordering::SeqCst) >= predecessor {
+        return;
+    }
+    let _ = tokio::time::timeout(HANDOVER_GRACE, async {
+        loop {
+            let settled = state_streams.retired.notified();
+            tokio::pin!(settled);
+            settled.as_mut().enable();
+            if state_streams.settled.load(Ordering::SeqCst) >= predecessor {
+                return;
+            }
+            settled.await;
+        }
+    })
+    .await;
+}
+
+async fn read_cursor(
+    state_streams: &Arc<LiveStream>,
+    client: mongodb::Client,
+    my_generation: u64,
+    predecessor: u64,
+) {
     use futures::StreamExt;
+
+    await_handover(state_streams, predecessor).await;
 
     let pipeline = build_pipeline(&state_streams.operation_types);
     let resume = state_streams
@@ -386,41 +479,25 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
     let mut stream = match started {
         Ok(stream) => stream,
         Err(err) => {
-            // Only if this reader is still the live one. Opening a cursor is
-            // not instant, and a pause-then-resume during it retires this task
-            // while its `watch()` is still in flight — reporting that failure
-            // would put the panel in Error over a cursor nobody is reading,
-            // and the replacement can never clear it because it only promotes
-            // a stream that is still `Starting`.
-            if state_streams.generation.load(Ordering::SeqCst) == my_generation {
-                let (status, message) = describe_stream_error(&err.to_string());
-                if let Ok(mut s) = state_streams.status.lock() {
-                    *s = status;
-                }
-                if let Ok(mut e) = state_streams.error.lock() {
-                    *e = Some(message);
-                }
-            }
+            // Opening a cursor is not instant, and a pause during it retires
+            // this task while its `watch()` is still in flight. Reporting that
+            // failure would put the panel in Error over a cursor nobody is
+            // reading — `publish_status` drops it for exactly that reason.
+            let (status, message) = describe_stream_error(&err.to_string());
+            publish_status(state_streams, my_generation, status, Some(message));
             return;
         }
     };
 
-    // Only if this reader is still the live one AND nobody paused while the
-    // cursor was opening — otherwise the panel shows a running stream whose
-    // reader is about to retire, and its toggle offers Pause on something
-    // already stopped.
+    // Recorded BEFORE the generation is checked. A pause landing while the
+    // cursor was opening would otherwise return with nothing written down, and
+    // resuming later would open at the current time and skip the whole pause —
+    // the one thing pause exists to prevent.
+    remember(stream.resume_token());
     if state_streams.generation.load(Ordering::SeqCst) != my_generation {
         return;
     }
-    // A resume point before the first event ever arrives. Without it a watch
-    // paused while idle had nothing to come back to, so resuming opened at the
-    // current time and skipped the entire pause.
-    remember(stream.resume_token());
-    if let Ok(mut s) = state_streams.status.lock() {
-        if *s == StreamStatus::Starting {
-            *s = StreamStatus::Running;
-        }
-    }
+    publish_status(state_streams, my_generation, StreamStatus::Running, None);
 
     loop {
         // Registered BEFORE the generation is checked, so a retirement landing
@@ -433,14 +510,17 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
             remember(stream.resume_token());
             return;
         }
-        // Dropping the half-finished `next()` is safe here in a way it would
-        // not be mid-stream: this reader is being abandoned along with its
-        // cursor, and its replacement resumes from the point recorded above.
         let next = tokio::select! {
             biased;
             _ = &mut retired => {
+                // Also fires when some OTHER reader in this lineage settles, so
+                // this is not proof of retirement — record where the cursor is
+                // (always useful) and let the check at the top of the loop
+                // decide. Dropping the half-finished `next()` is safe: the
+                // driver keeps the in-flight future inside the stream, so
+                // polling it again resumes rather than restarts.
                 remember(stream.resume_token());
-                return;
+                continue;
             }
             next = stream.next() => next,
         };
@@ -469,20 +549,8 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
                 push_event(&mut buffer, flat, BUFFER_CAP);
             }
             Some(Err(err)) => {
-                // Only if this reader is still the live one. A retired cursor
-                // can fail long after its replacement is happily running, and
-                // writing that into the shared stream would show an error for
-                // a tail that is working.
-                if state_streams.generation.load(Ordering::SeqCst) != my_generation {
-                    return;
-                }
                 let (status, message) = describe_stream_error(&err.to_string());
-                if let Ok(mut s) = state_streams.status.lock() {
-                    *s = status;
-                }
-                if let Ok(mut e) = state_streams.error.lock() {
-                    *e = Some(message);
-                }
+                publish_status(state_streams, my_generation, status, Some(message));
                 return;
             }
             // The cursor ended on its own: an invalidate after the watched
@@ -490,11 +558,7 @@ async fn run_stream(state_streams: Arc<LiveStream>, client: mongodb::Client, my_
             // away. Leaving the status at Running would have the panel poll
             // forever against a reader that no longer exists.
             None => {
-                if state_streams.generation.load(Ordering::SeqCst) == my_generation {
-                    if let Ok(mut s) = state_streams.status.lock() {
-                        *s = StreamStatus::Ended;
-                    }
-                }
+                publish_status(state_streams, my_generation, StreamStatus::Ended, None);
                 return;
             }
         }
@@ -524,6 +588,8 @@ pub fn record_resume_token(point: &mut ResumePoint, generation: u64, token: Opti
 pub struct CarriedOver {
     pub generation: Arc<AtomicU64>,
     pub retired: Arc<tokio::sync::Notify>,
+    pub settled: Arc<AtomicU64>,
+    pub spawned: Arc<AtomicU64>,
     pub resume_token: Arc<Mutex<ResumePoint>>,
 }
 
@@ -546,6 +612,8 @@ pub fn carry_over(
             .map(|e| Arc::clone(&e.generation))
             .unwrap_or_else(|| Arc::new(AtomicU64::new(0))),
         retired: carried.map(|e| Arc::clone(&e.retired)).unwrap_or_default(),
+        settled: carried.map(|e| Arc::clone(&e.settled)).unwrap_or_default(),
+        spawned: carried.map(|e| Arc::clone(&e.spawned)).unwrap_or_default(),
         resume_token: carried
             .map(|e| Arc::clone(&e.resume_token))
             .unwrap_or_default(),
@@ -578,7 +646,12 @@ fn spawn_reader(state: &AppState, stream: Arc<LiveStream>) -> Result<(), String>
         .cloned()
         .ok_or_else(|| format!("connection {} is not open", stream.connection_id))?;
     let my_generation = retire_reader(&stream);
-    tauri::async_runtime::spawn(run_stream(stream, client, my_generation));
+    // Whoever was reading before is the one whose final resume point this
+    // reader has to wait for. Recorded here rather than derived from the
+    // generation: retirement and spawning both bump it, so the arithmetic
+    // would be a guess.
+    let predecessor = stream.spawned.swap(my_generation, Ordering::SeqCst);
+    tauri::async_runtime::spawn(run_stream(stream, client, my_generation, predecessor));
     Ok(())
 }
 
@@ -627,6 +700,8 @@ pub async fn start_change_stream(
     let CarriedOver {
         generation,
         retired,
+        settled,
+        spawned,
         resume_token,
     } = carry_over(existing.as_ref(), &connection_id, &database);
     let inherited_status = existing
@@ -651,6 +726,8 @@ pub async fn start_change_stream(
         error: Mutex::new(None),
         generation,
         retired,
+        settled,
+        spawned,
         resume_token,
         connection_id,
         database,
