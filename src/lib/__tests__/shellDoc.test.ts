@@ -197,6 +197,30 @@ describe('parseShellJson — queries pasted from somewhere else', () => {
     expect(parsed.name.$regularExpression.pattern).toBe('don’t');
   });
 
+  it('keeps an apostrophe inside a smart-quoted value', () => {
+    // The `’` after O is part of the name, not the end of the string. Taking
+    // it produced `"O"Reilly’` and rejected a perfectly ordinary value.
+    expect(parseShellJson('name: ‘O’Reilly’')).toEqual({ name: 'O’Reilly' });
+  });
+
+  it('does not run one smart-quoted value into the next', () => {
+    expect(parseShellJson('{a: ‘x’, b: ‘y’}')).toEqual({ a: 'x', b: 'y' });
+  });
+
+  it('handles a smart-quoted key', () => {
+    expect(parseShellJson('{“domain”: “a.com”}')).toEqual({ domain: 'a.com' });
+  });
+
+  it('keeps escape sequences meaning what they meant', () => {
+    // Only the delimiters were wrong. Re-encoding the body escapes its
+    // backslashes a second time, so `\n` stops being a newline and starts
+    // being two characters — a filter that quietly matches something else.
+    // Source text here is: q: “a\nb”
+    expect(parseShellJson('q: \u201Ca\\nb\u201D')).toEqual({ q: 'a\nb' });
+    // Source text: path: “C:\\temp”, which a shell string reads as one slash.
+    expect(parseShellJson('path: \u201CC:\\\\temp\u201D')).toEqual({ path: 'C:\\temp' });
+  });
+
   it('leaves a regex literal alone, smart quotes and all', () => {
     // `/“ACME”/` is a pattern that really does contain those characters.
     // Rewriting them leaves a filter that still runs and quietly matches

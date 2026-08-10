@@ -198,11 +198,9 @@ export function normalizePastedQuery(text: string): string {
     }
     const closer = CURLY_PAIRS[c];
     if (closer) {
-      const end = text.indexOf(closer, i + 1);
+      const end = closingSmartQuote(text, i + 1, closer);
       if (end !== -1) {
-        // `JSON.stringify` re-quotes and escapes, so a straight quote inside
-        // the smart-quoted run survives instead of ending the string early.
-        out += JSON.stringify(text.slice(i + 1, end));
+        out += asStraightString(text.slice(i + 1, end));
         i = end + 1;
         continue;
       }
@@ -216,6 +214,53 @@ export function normalizePastedQuery(text: string): string {
     i++;
   }
   return stripTrailingSemicolons(out);
+}
+
+/**
+ * Where a smart-quoted run actually ends.
+ *
+ * Not simply the next `’`: in `‘O’Reilly’` that one is an apostrophe, and
+ * taking it would turn a common pasted value into `"O"Reilly’`. Nor the last
+ * one, which would swallow `‘x’, b: ‘y’` whole. A closing delimiter is
+ * followed by something structural — a comma, a closing bracket, a colon when
+ * the run was a key, or nothing at all — where an apostrophe inside a word is
+ * followed by more word.
+ *
+ * -1 when no candidate qualifies, which leaves the text exactly as the user
+ * typed it: a parse error they can see beats a silent change of meaning.
+ */
+function closingSmartQuote(text: string, from: number, closer: string): number {
+  for (let i = text.indexOf(closer, from); i !== -1; i = text.indexOf(closer, i + 1)) {
+    let j = i + 1;
+    while (j < text.length && /\s/.test(text[j])) j++;
+    if (j >= text.length || ',}])'.includes(text[j]) || text[j] === ':') return i;
+  }
+  return -1;
+}
+
+/**
+ * Re-quote a smart-quoted run as a straight-quoted one, changing NOTHING else.
+ *
+ * Only the delimiters were wrong, so only the delimiters are replaced.
+ * Re-encoding the body — `JSON.stringify`, say — escapes its backslashes a
+ * second time, and `“a\nb”` stops meaning a newline and starts meaning the
+ * two characters, which is the same silent change of meaning this whole
+ * function exists to avoid. Escape pairs pass through untouched; only a
+ * straight quote that would end the string early gets escaped.
+ */
+function asStraightString(body: string): string {
+  let out = '"';
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === '\\') {
+      // A trailing lone backslash would escape the quote this adds.
+      out += c + (body[i + 1] ?? '\\');
+      i++;
+      continue;
+    }
+    out += c === '"' ? '\\"' : c;
+  }
+  return `${out}"`;
 }
 
 /**
