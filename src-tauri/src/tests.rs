@@ -4942,7 +4942,8 @@ mod chat_store_tests {
 mod change_stream_tests {
     use crate::change_streams::{
         build_pipeline, describe_stream_error, events_after, push_event, push_event_bounded,
-        await_handover, carry_over, fail_stream, install_stream, measure_event, publish_status,
+        await_handover, carry_over, claim_by_poller, fail_stream, install_stream,
+        install_stream_with, measure_event, publish_status,
         record_resume_token, stop_change_streams_for_window,
         retire_reader, HANDOVER_GRACE, ChangeEvent, LiveStream, ResumePoint, StreamBuffer,
         StreamStatus, BUFFER_CAP,
@@ -5457,6 +5458,91 @@ mod change_stream_tests {
             .lock_safe()
             .unwrap()
             .contains_key("watch.c.c1.sales.orders"));
+    }
+
+    #[test]
+    fn the_window_that_polls_is_the_one_that_owns_it() {
+        // Ownership follows the poll rather than the start, because a start can
+        // be stale: a panel unmounted by a tab moving to another window may
+        // already have one in flight, and letting it claim would hand the
+        // stream back to the window the tab just left — where closing it would
+        // sweep a tail the other window is actively watching.
+        let stream = live_stream();
+        assert_eq!(*stream.window.lock().unwrap(), "main");
+
+        claim_by_poller(&stream, "win-2");
+
+        assert_eq!(*stream.window.lock().unwrap(), "win-2");
+    }
+
+    #[test]
+    fn a_poll_from_nowhere_claims_nothing() {
+        let stream = live_stream();
+        claim_by_poller(&stream, "");
+        assert_eq!(*stream.window.lock().unwrap(), "main");
+    }
+
+    #[test]
+    fn a_reader_starts_before_the_stream_can_be_swept() {
+        // The start runs inside the map lock the close sweep also takes.
+        // Spawning after the lock was released left a gap: the sweep could
+        // remove and retire the stream in between, and the spawn that followed
+        // would start a live reader on an `Arc` no longer in the map — a
+        // cursor with nothing left that could ever stop it.
+        use crate::state::LockExt;
+        let state = crate::AppState::new();
+        let stream = live_stream();
+        let mut started_while_mapped = None;
+
+        let installed = install_stream_with(
+            &state,
+            "watch.c.c1.sales.orders",
+            Arc::clone(&stream),
+            "main",
+            |_| {
+                // Anything the sweep could do would need this lock, which the
+                // install is holding.
+                started_while_mapped = Some(state.change_streams.try_lock().is_err());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(installed);
+        assert_eq!(started_while_mapped, Some(true), "started under the map lock");
+        assert!(state
+            .change_streams
+            .lock_safe()
+            .unwrap()
+            .contains_key("watch.c.c1.sales.orders"));
+    }
+
+    #[test]
+    fn a_reader_is_not_started_for_a_window_that_has_gone() {
+        use crate::state::LockExt;
+        let state = crate::AppState::new();
+        state
+            .closed_windows
+            .lock_safe()
+            .unwrap()
+            .insert("win-2".to_string());
+        let mut started = false;
+
+        let installed = install_stream_with(
+            &state,
+            "watch.c.c1.sales.orders",
+            live_stream(),
+            "win-2",
+            |_| {
+                started = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(!installed);
+        assert!(!started, "nothing should be started for a window that is gone");
+        assert!(state.change_streams.lock_safe().unwrap().is_empty());
     }
 
     #[test]

@@ -154,13 +154,18 @@ pub struct LiveStream {
     /// reader retired by that replacement still writes its final cursor
     /// position somewhere the replacement can read it.
     pub resume_token: Arc<Mutex<ResumePoint>>,
-    /// Which window's panel last mounted this tail.
+    /// Which window is watching this tail.
     ///
     /// Closing a secondary window with the OS button runs no frontend code at
     /// all, so without an owner recorded here every watch it held would keep
-    /// its cursor and go on buffering for as long as the app lived. Updated on
-    /// every start, adoption included, so a tab moved between windows is swept
-    /// by the one it actually ended up in.
+    /// its cursor and go on buffering for as long as the app lived.
+    ///
+    /// Written by the POLL, not by the start. A start can be stale — a panel
+    /// unmounted by a tab moving to another window may already have one in
+    /// flight, and letting that claim the stream would hand it back to the
+    /// window it just left. Only a mounted panel polls, it polls several times
+    /// a second, and it stops the moment it goes away, so the poller is the
+    /// one window that is demonstrably still watching.
     pub window: Mutex<String>,
     pub connection_id: String,
     /// `None` watches the whole deployment (`client.watch()`), which is how a
@@ -734,12 +739,11 @@ pub async fn start_change_stream(
                 && existing.collection == collection
                 && existing.operation_types == operation_types;
             if same {
-                // Adoption, not a restart — but the panel doing the adopting
-                // may be in a different window than the one that started it,
-                // and the sweep goes by this.
-                if let Ok(mut owner) = existing.window.lock() {
-                    *owner = window.label().to_string();
-                }
+                // Adoption, not a restart. Deliberately does NOT claim
+                // ownership: this start may itself be the stale one, sent by a
+                // panel whose tab has since moved to another window. The first
+                // poll from whichever panel is really mounted settles it, and
+                // that is at most 700ms away.
                 return Ok(());
             }
         }
@@ -798,15 +802,30 @@ pub async fn start_change_stream(
         collection,
         operation_types,
     });
-    if !install_stream(&state, &stream_id, stream.clone(), window.label())? {
+    // The reader starts inside the install, so the two cannot be split by the
+    // close sweep. No reader while paused: it starts when the user resumes,
+    // from the token carried over above.
+    let mut spawn_failed = None;
+    let installed = install_stream_with(
+        &state,
+        &stream_id,
+        stream.clone(),
+        window.label(),
+        |stream| {
+            if was_paused {
+                return Ok(());
+            }
+            if let Err(err) = spawn_reader(&state, stream) {
+                // Reported below, once the map lock is out of the way.
+                spawn_failed = Some(err);
+            }
+            Ok(())
+        },
+    )?;
+    if !installed {
         return Ok(());
     }
-    // No reader while paused: it starts when the user resumes, from the token
-    // carried over above.
-    if was_paused {
-        return Ok(());
-    }
-    if let Err(err) = spawn_reader(&state, stream.clone()) {
+    if let Some(err) = spawn_failed {
         // The panel polls for status, so a failure to start has to land THERE
         // rather than only in a rejected promise the caller drops. A mock
         // connection has no client at all, and would otherwise show "starting"
@@ -825,6 +844,7 @@ pub async fn start_change_stream(
 #[tauri::command]
 pub async fn poll_change_stream(
     state: tauri::State<'_, AppState>,
+    window: tauri::Window,
     stream_id: String,
     after_seq: Option<u64>,
 ) -> Result<Option<StreamPoll>, String> {
@@ -835,6 +855,8 @@ pub async fn poll_change_stream(
     let Some(stream) = state.change_streams.lock_safe()?.get(&stream_id).cloned() else {
         return Ok(None);
     };
+    // Whoever is polling is the window that is really watching this.
+    claim_by_poller(&stream, window.label());
     let (events, dropped, last_seq) = {
         let buffer = stream.buffer.lock().map_err(|_| "buffer lock poisoned")?;
         (
@@ -929,6 +951,21 @@ pub async fn resume_change_stream(
     spawn_reader(&state, stream)
 }
 
+/// Note which window is watching, if it has changed.
+///
+/// Called from the poll. Compared before writing because this runs several
+/// times a second per open watch and the answer almost never changes.
+pub fn claim_by_poller(stream: &LiveStream, window_id: &str) {
+    if window_id.is_empty() {
+        return;
+    }
+    if let Ok(mut owner) = stream.window.lock() {
+        if *owner != window_id {
+            *owner = window_id.to_string();
+        }
+    }
+}
+
 /// Publish a stream under its id, unless its window has gone away.
 ///
 /// The closure check is made HERE, under the map lock the close sweep also
@@ -945,10 +982,28 @@ pub fn install_stream(
     stream: Arc<LiveStream>,
     window_id: &str,
 ) -> Result<bool, String> {
+    install_stream_with(state, stream_id, stream, window_id, |_| Ok(()))
+}
+
+/// Install a stream and get its reader going without letting go of the map.
+///
+/// `start` runs INSIDE the map lock, which is what makes the pair atomic
+/// against the close sweep. Spawning after the lock was released left a gap:
+/// the sweep could remove and retire the stream in between, and the spawn that
+/// followed would start a live reader on an `Arc` no longer in the map — a
+/// cursor with nothing left that could ever stop it.
+pub fn install_stream_with(
+    state: &AppState,
+    stream_id: &str,
+    stream: Arc<LiveStream>,
+    window_id: &str,
+    start: impl FnOnce(Arc<LiveStream>) -> Result<(), String>,
+) -> Result<bool, String> {
     let mut streams = state.change_streams.lock_safe()?;
     if crate::window_is_closed(state, window_id)? {
         return Ok(false);
     }
+    start(Arc::clone(&stream))?;
     streams.insert(stream_id.to_string(), stream);
     Ok(true)
 }
