@@ -188,11 +188,7 @@ fn apply_window_closed_and_broadcast(app: &AppHandle, label: &str, origin: Strin
     // Its watches too. A change stream holds a server-side cursor and goes on
     // buffering whether or not anyone is polling it, and the panels that would
     // have stopped these are being destroyed without running a line of code.
-    for stream_id in
-        crate::change_streams::change_stream_ids_for_window(&state, label).unwrap_or_default()
-    {
-        let _ = crate::change_streams::stop_change_stream_impl(&state, &stream_id);
-    }
+    let _ = crate::change_streams::stop_change_streams_for_window(&state, label);
     match workspace::apply_impl(&state, &path, WorkspaceOp::WindowClosed { window_id: label.to_string() }, origin) {
         Ok(Some(payload)) => {
             let _ = app.emit("workspace-changed", payload);

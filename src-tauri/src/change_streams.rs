@@ -686,26 +686,42 @@ pub async fn start_change_stream(
     let database = database.filter(|d| !d.trim().is_empty());
     let collection = collection.filter(|c| !c.trim().is_empty());
 
+    // Nothing for a window that is already gone. Closing one destroys the
+    // renderer that would have stopped this, and a start still in flight when
+    // the sweep ran would otherwise install a tail nobody can ever reach — the
+    // same reason `start_mongosh_session` consults this set.
+    if crate::window_is_closed(&state, window.label())? {
+        return Ok(());
+    }
+
     // A remount is not a restart. An inactive tab is unmounted and mounts again
     // when the user returns, and replacing the stream then would throw away the
     // buffer and the resume token this whole design exists to keep. If an
     // identical stream is already running, leave it be.
-    let existing = state.change_streams.lock_safe()?.get(&stream_id).cloned();
-    if let Some(existing) = &existing {
-        let same = existing.connection_id == connection_id
-            && existing.database == database
-            && existing.collection == collection
-            && existing.operation_types == operation_types;
-        if same {
-            // Adoption, not a restart — but the panel doing the adopting may be
-            // in a different window than the one that started it, and the
-            // window-close sweep goes by this.
-            if let Ok(mut owner) = existing.window.lock() {
-                *owner = window.label().to_string();
+    //
+    // Held across the ownership write below, because that is the write the
+    // window-close sweep races: it decides what to remove under this same lock,
+    // so a claim made outside it could land on a stream already swept.
+    let existing = {
+        let streams = state.change_streams.lock_safe()?;
+        let existing = streams.get(&stream_id).cloned();
+        if let Some(existing) = &existing {
+            let same = existing.connection_id == connection_id
+                && existing.database == database
+                && existing.collection == collection
+                && existing.operation_types == operation_types;
+            if same {
+                // Adoption, not a restart — but the panel doing the adopting
+                // may be in a different window than the one that started it,
+                // and the sweep goes by this.
+                if let Ok(mut owner) = existing.window.lock() {
+                    *owner = window.label().to_string();
+                }
+                return Ok(());
             }
-            return Ok(());
         }
-    }
+        existing
+    };
 
     // Different filters, same namespace: the cursor has to be rebuilt because
     // the `$match` lives in the pipeline, but the old resume point is still a
@@ -891,21 +907,49 @@ pub async fn resume_change_stream(
     spawn_reader(&state, stream)
 }
 
-/// Every tail a window owns, for the sweep when that window goes away.
-pub fn change_stream_ids_for_window(state: &AppState, window_id: &str) -> Result<Vec<String>, String> {
-    Ok(state
-        .change_streams
-        .lock_safe()?
-        .iter()
-        .filter(|(_, stream)| {
-            stream
-                .window
-                .lock()
-                .map(|owner| *owner == window_id)
-                .unwrap_or(false)
-        })
-        .map(|(stream_id, _)| stream_id.clone())
-        .collect())
+/// Stop every tail a window owns, because that window is going away.
+///
+/// Ownership is checked and the stream removed under the SAME map lock, and
+/// the only place ownership is written — a panel in another window adopting
+/// the stream — takes that lock first too. Enumerating and then stopping would
+/// leave a gap: a tab moved out of this window in between would have its tail
+/// swept out from under the panel that had just claimed it, losing the buffer
+/// and the resume point the move was supposed to carry.
+///
+/// Returns the ids it stopped, which is what the tests read.
+pub fn stop_change_streams_for_window(
+    state: &AppState,
+    window_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut stopped = Vec::new();
+    let doomed: Vec<Arc<LiveStream>> = {
+        let mut streams = state.change_streams.lock_safe()?;
+        let ids: Vec<String> = streams
+            .iter()
+            .filter(|(_, stream)| {
+                stream
+                    .window
+                    .lock()
+                    .map(|owner| *owner == window_id)
+                    .unwrap_or(false)
+            })
+            .map(|(stream_id, _)| stream_id.clone())
+            .collect();
+        ids.into_iter()
+            .filter_map(|stream_id| {
+                let stream = streams.remove(&stream_id)?;
+                stopped.push(stream_id);
+                Some(stream)
+            })
+            .collect()
+    };
+    // Outside the map lock: retirement takes the buffer lock and waits on a
+    // reader mid-publish, which has no business blocking every other stream.
+    for stream in &doomed {
+        retire_reader(stream);
+    }
+    stopped.sort();
+    Ok(stopped)
 }
 
 pub fn stop_change_stream_impl(state: &AppState, stream_id: &str) -> Result<(), String> {

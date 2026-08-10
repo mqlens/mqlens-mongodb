@@ -4942,8 +4942,8 @@ mod chat_store_tests {
 mod change_stream_tests {
     use crate::change_streams::{
         build_pipeline, describe_stream_error, events_after, push_event, push_event_bounded,
-        await_handover, carry_over, change_stream_ids_for_window, measure_event, publish_status,
-        record_resume_token,
+        await_handover, carry_over, measure_event, publish_status,
+        record_resume_token, stop_change_streams_for_window,
         retire_reader, HANDOVER_GRACE, ChangeEvent, LiveStream, ResumePoint, StreamBuffer,
         StreamStatus, BUFFER_CAP,
     };
@@ -5339,7 +5339,7 @@ mod change_stream_tests {
     }
 
     #[test]
-    fn closing_a_window_can_find_the_watches_it_owned() {
+    fn closing_a_window_stops_the_watches_it_owned() {
         // Closing a secondary window with the OS button runs no frontend code
         // at all, so nothing tells these tails to stop. Left behind they hold a
         // server-side cursor and go on buffering for as long as the app lives.
@@ -5354,18 +5354,43 @@ mod change_stream_tests {
             streams.insert("watch.c.c1.sales.invoices".to_string(), elsewhere);
         }
 
-        assert_eq!(
-            change_stream_ids_for_window(&state, "main").unwrap(),
-            vec!["watch.c.c1.sales.orders".to_string()]
-        );
-        assert_eq!(
-            change_stream_ids_for_window(&state, "win-2").unwrap(),
-            vec!["watch.c.c1.sales.invoices".to_string()]
-        );
-        // And a window that owns none takes none with it.
-        assert!(change_stream_ids_for_window(&state, "win-9")
+        // A window that owns none takes none with it.
+        assert!(stop_change_streams_for_window(&state, "win-9")
             .unwrap()
             .is_empty());
+        assert_eq!(state.change_streams.lock_safe().unwrap().len(), 2);
+
+        assert_eq!(
+            stop_change_streams_for_window(&state, "main").unwrap(),
+            vec!["watch.c.c1.sales.orders".to_string()]
+        );
+        // Gone from the map, and its reader retired — the whole point is that
+        // it stops holding a cursor.
+        let left = state.change_streams.lock_safe().unwrap();
+        assert_eq!(left.len(), 1);
+        assert!(left.contains_key("watch.c.c1.sales.invoices"));
+    }
+
+    #[test]
+    fn a_watch_claimed_by_another_window_survives_the_sweep() {
+        // A tab moved out of a window that is closing has already been claimed
+        // by the window it moved to. Sweeping it anyway takes the buffer and
+        // the resume point the move was supposed to carry.
+        use crate::state::LockExt;
+        let state = crate::AppState::new();
+        let moved = live_stream();
+        state
+            .change_streams
+            .lock_safe()
+            .unwrap()
+            .insert("watch.c.c1.sales.orders".to_string(), Arc::clone(&moved));
+
+        *moved.window.lock().unwrap() = "win-2".to_string();
+        assert!(stop_change_streams_for_window(&state, "main")
+            .unwrap()
+            .is_empty());
+        assert_eq!(state.change_streams.lock_safe().unwrap().len(), 1);
+        assert_eq!(moved.generation.load(Ordering::SeqCst), 0, "not retired");
     }
 
     #[test]
