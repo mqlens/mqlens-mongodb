@@ -118,7 +118,7 @@
       "syntaxError": "Syntaxfehler"
     },
     "hints": {
-      "chooseTargetCollection": "Wähle zuerst eine Zielsammlung.",
+      "chooseTargetCollection": "Wähle zuerst eine Ziel-Collection.",
       "customTemplateNotice": "Benutzerdefinierte Vorlage — Bearbeitung als Roh-JSON. Korrigiere oder vereinfache sie, um zum Builder zurückzukehren.",
       "runInProgress": "Für diesen Tab läuft bereits ein Generierungsvorgang."
     },
@@ -157,7 +157,7 @@
       "rangeMode": "Von / bis",
       "seedOptional": "Seed (optional)",
       "seedPlaceholder": "zufällig",
-      "targetCollection": "Zielsammlung",
+      "targetCollection": "Ziel-Collection",
       "targetCollectionPlaceholder": "Collection-Name",
       "title": "Daten generieren: {{namespace}}",
       "toIsoPlaceholder": "bis (ISO)",
@@ -377,7 +377,7 @@
     "labels": {
       "targetConnection": "Zielverbindung",
       "targetDatabase": "Zieldatenbank",
-      "targetCollection": "Zielsammlung",
+      "targetCollection": "Ziel-Collection",
       "filter": "Filter (EJSON, optional)",
       "options": "Optionen",
       "includeIndexes": "Indizes einschließen",
@@ -385,8 +385,8 @@
       "conflictResolution": "Konfliktlösung",
       "conflictModeSkip": "Überspringen — vorhandene Zieldokumente unverändert lassen",
       "conflictModeMerge": "Zusammenführen — vorhandene Dokumente behalten, neue hinzufügen (doppelte _ids werden übersprungen)",
-      "conflictModeOverwrite": "Überschreiben — Zielsammlung(en) löschen und ersetzen",
-      "overwriteConfirm": "Mir ist bewusst, dass dies die Zielsammlung(en) ersetzt"
+      "conflictModeOverwrite": "Überschreiben — Ziel-Collection(s) löschen und ersetzen",
+      "overwriteConfirm": "Mir ist bewusst, dass dies die Ziel-Collection(s) ersetzt"
     },
     "placeholders": {
       "selectConnection": "Verbindung auswählen…",

@@ -337,7 +337,7 @@
     "title": "View erstellen — {{database}}",
     "labels": {
       "viewName": "View-Name",
-      "sourceCollection": "Quellsammlung",
+      "sourceCollection": "Quell-Collection",
       "pipeline": "Aggregationspipeline (JSON-Array)"
     },
     "loading": "Collections werden geladen…",
@@ -346,7 +346,7 @@
     },
     "errors": {
       "nameRequired": "View-Name ist erforderlich.",
-      "selectSource": "Wähle eine Quellsammlung aus.",
+      "selectSource": "Wähle eine Quell-Collection aus.",
       "pipelineMustBeArray": "Pipeline muss ein JSON-Array von Stufen sein.",
       "invalidPipelineJson": "Ungültiges Pipeline-JSON: {{message}}",
       "syntaxErrorFallback": "Syntaxfehler"

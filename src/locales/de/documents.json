@@ -57,7 +57,7 @@
     "dialogs": {
       "runAggregate": {
         "messageUnknownTarget": "Diese Pipeline schreibt über $out/$merge in eine Collection auf einer abgesicherten Verbindung, aber das Ziel konnte nicht automatisch ermittelt werden.\n\nGib CONFIRM ein, um fortzufahren.",
-        "messageWithTarget": "Diese Pipeline schreibt in \"{{target}}\" ($out/$merge) auf einer abgesicherten Verbindung.\n\nGib den Namen der Zielsammlung ein, um zu bestätigen.",
+        "messageWithTarget": "Diese Pipeline schreibt in \"{{target}}\" ($out/$merge) auf einer abgesicherten Verbindung.\n\nGib den Namen der Ziel-Collection ein, um zu bestätigen.",
         "title": "Aggregation ausführen"
       },
       "saveQuery": {
