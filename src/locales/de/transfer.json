@@ -62,7 +62,7 @@
       "loadedCount_other": "{{count}} geladene Dokumente"
     },
     "full": {
-      "title": "Vollständige Sammlung",
+      "title": "Vollständige Collection",
       "hint": "Läuft im Hintergrund und schreibt direkt auf die Festplatte."
     },
     "filtered": {
@@ -81,7 +81,7 @@
       "failed": "Vorschau fehlgeschlagen: {{error}}"
     },
     "footer": {
-      "backgroundNote": "Gefilterte und vollständige Sammlungsexporte laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <2>Aufgaben</2>."
+      "backgroundNote": "Gefilterte und vollständige Collection-Exporte laufen im Hintergrund. Verfolge ihren Fortschritt im Tab <2>Aufgaben</2>."
     }
   },
   "generateView": {
@@ -158,7 +158,7 @@
       "seedOptional": "Seed (optional)",
       "seedPlaceholder": "zufällig",
       "targetCollection": "Zielsammlung",
-      "targetCollectionPlaceholder": "Sammlungsname",
+      "targetCollectionPlaceholder": "Collection-Name",
       "title": "Daten generieren: {{namespace}}",
       "toIsoPlaceholder": "bis (ISO)",
       "words": "Wörter"
@@ -267,16 +267,16 @@
     },
     "scope": {
       "title": "Umfang",
-      "hint": "Erstelle einen Dump des gesamten Servers, einer einzelnen Datenbank oder einer Sammlung.",
+      "hint": "Erstelle einen Dump des gesamten Servers, einer einzelnen Datenbank oder einer Collection.",
       "optionServer": "Gesamter Server",
       "optionDatabase": "Datenbank",
-      "optionCollection": "Sammlung"
+      "optionCollection": "Collection"
     },
     "labels": {
       "database": "Datenbank",
-      "collection": "Sammlung",
+      "collection": "Collection",
       "selectDatabase": "Datenbank auswählen…",
-      "selectCollection": "Sammlung auswählen…",
+      "selectCollection": "Collection auswählen…",
       "queryFilter": "Abfragefilter (optional)"
     },
     "hints": {
@@ -330,7 +330,7 @@
       "archiveFilterHint": "Lasse beide leer, um alles im Archiv wiederherzustellen, oder filtere nach einer einzelnen Datenbank oder einem Namespace."
     },
     "tree": {
-      "emptySelectionHint": "Wähle mindestens eine Sammlung zum Wiederherstellen aus."
+      "emptySelectionHint": "Wähle mindestens eine Collection zum Wiederherstellen aus."
     },
     "rename": {
       "placeholder": "neuer Name (oder db.name)",
@@ -338,16 +338,16 @@
     },
     "labels": {
       "databaseFilter": "Datenbankfilter",
-      "collectionFilter": "Sammlungsfilter"
+      "collectionFilter": "Collection-Filter"
     },
     "options": {
       "title": "Optionen",
       "hint": "mongorestore-Flags.",
       "flags": {
-        "drop": "Vorhandene Sammlungen vor der Wiederherstellung löschen",
+        "drop": "Vorhandene Collections vor der Wiederherstellung löschen",
         "keepIndexVersion": "Ursprüngliche Indexversion beibehalten",
         "noIndexRestore": "Indizes nicht wiederherstellen",
-        "noOptionsRestore": "Sammlungsoptionen nicht wiederherstellen",
+        "noOptionsRestore": "Collection-Optionen nicht wiederherstellen",
         "maintainInsertionOrder": "Einfügereihenfolge der Dokumente beibehalten",
         "stopOnError": "Bei Fehler anhalten",
         "bypassDocumentValidation": "Dokumentvalidierung umgehen",
@@ -369,9 +369,9 @@
   },
   "copyToDialog": {
     "title": {
-      "collection": "Sammlung \"{{name}}\" kopieren",
-      "collections_one": "{{count}} Sammlung kopieren",
-      "collections_other": "{{count}} Sammlungen kopieren",
+      "collection": "Collection \"{{name}}\" kopieren",
+      "collections_one": "{{count}} Collection kopieren",
+      "collections_other": "{{count}} Collections kopieren",
       "database": "Datenbank \"{{name}}\" kopieren"
     },
     "labels": {
@@ -381,7 +381,7 @@
       "filter": "Filter (EJSON, optional)",
       "options": "Optionen",
       "includeIndexes": "Indizes einschließen",
-      "includeViews": "Ansichten einschließen",
+      "includeViews": "Views einschließen",
       "conflictResolution": "Konfliktlösung",
       "conflictModeSkip": "Überspringen — vorhandene Zieldokumente unverändert lassen",
       "conflictModeMerge": "Zusammenführen — vorhandene Dokumente behalten, neue hinzufügen (doppelte _ids werden übersprungen)",
@@ -392,7 +392,7 @@
       "selectConnection": "Verbindung auswählen…",
       "newDatabaseName": "Name der neuen Datenbank…",
       "selectDatabase": "Datenbank auswählen…",
-      "collectionName": "Sammlungsname…"
+      "collectionName": "Collection-Name…"
     },
     "actions": {
       "newDatabase": "➕ Neue Datenbank…",
@@ -403,7 +403,7 @@
       "newDatabaseWillBeCreated": "Existiert nicht auf dem Ziel — wird erstellt."
     },
     "errors": {
-      "selfOverwrite": "Quelle und Ziel sind dieselbe Sammlung — Kopieren ist nicht zulässig."
+      "selfOverwrite": "Quelle und Ziel sind dieselbe Collection — Kopieren ist nicht zulässig."
     }
   }
 }

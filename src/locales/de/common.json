@@ -12,7 +12,7 @@
   },
   "save": "Speichern",
   "tabs": {
-    "createView": "Neue Ansicht: {{db}}",
+    "createView": "Neue View: {{db}}",
     "dump": "Dump: {{name}}",
     "export": "Export: {{collection}}",
     "generate": "Generieren: {{name}}",
@@ -36,8 +36,8 @@
     "copiedMongoshCommand": "mongosh-Befehl kopiert",
     "copiedToClipboard": "{{what}} kopiert — Rechtsklick auf ein Ziel und „Hier einfügen“ wählen.",
     "copyFailed": "Kopieren fehlgeschlagen: {{detail}}",
-    "copyWhatCollections_one": "{{count}} Sammlung",
-    "copyWhatCollections_other": "{{count}} Sammlungen",
+    "copyWhatCollections_one": "{{count}} Collection",
+    "copyWhatCollections_other": "{{count}} Collections",
     "copyWhatDatabase": "Datenbank {{db}}",
     "couldNotCancelTask": "Abbrechen fehlgeschlagen: {{detail}}",
     "couldNotClearDefault": "Standardabfrage konnte nicht entfernt werden: {{detail}}",
@@ -97,7 +97,7 @@
     "userUpdated": "Benutzer {{name}} aktualisiert"
   },
   "typedNameConfirm": {
-    "messageCollection": "Gib den Namen der Sammlung ein, um zu bestätigen.",
+    "messageCollection": "Gib den Namen der Collection ein, um zu bestätigen.",
     "messageDatabase": "Gib den Namen der Datenbank ein, um zu bestätigen.",
     "validationError": "Name stimmt nicht überein"
   }

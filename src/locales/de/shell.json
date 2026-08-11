@@ -46,7 +46,7 @@
   "commandPalette": {
     "buckets": {
       "collections": {
-        "label": "Sammlungen"
+        "label": "Collections"
       },
       "commands": {
         "label": "Befehle"
@@ -94,7 +94,7 @@
       },
       "exportCollection": {
         "keywords": "herunterladen json csv import download",
-        "title": "Sammlung exportieren…"
+        "title": "Collection exportieren…"
       },
       "focusNextPane": {
         "keywords": "arbeitsbereich bereich layout wechseln workspace pane switch",
@@ -153,9 +153,9 @@
     "results_other": "{{count}} Ergebnisse",
     "scopeFilterTitle": "Seitenleisten-Filter: {{scope}}",
     "scopeLabel": "Bereich der Seitenleiste",
-    "searchPlaceholder": "Befehle, Sammlungen, gespeicherte Abfragen durchsuchen…",
+    "searchPlaceholder": "Befehle, Collections, gespeicherte Abfragen durchsuchen…",
     "title": "Befehlspalette",
-    "typeMoreHint": "Mindestens 2 Zeichen eingeben, um Sammlungen zu durchsuchen"
+    "typeMoreHint": "Mindestens 2 Zeichen eingeben, um Collections zu durchsuchen"
   },
   "connectionCard": {
     "ariaLabel": {
@@ -190,7 +190,7 @@
   },
   "emptyWorkspace": {
     "connectButton": "Mit Datenbank verbinden…",
-    "noConnection": "Keine aktive Verbindung. Verbinde dich mit einem MongoDB-Cluster, um Sammlungen zu durchsuchen und Abfragen auszuführen."
+    "noConnection": "Keine aktive Verbindung. Verbinde dich mit einem MongoDB-Cluster, um Collections zu durchsuchen und Abfragen auszuführen."
   },
   "keyboardShortcuts": {
     "description": "Globale Tastenkürzel für Navigation, Abfragen, die Seitenleiste, Zoom und die Befehlspalette.",
@@ -263,7 +263,7 @@
     "help": {
       "aggregateSyntax": "  db.<coll>.aggregate([{ $match }, { $sort }, { $skip }, { $limit }])",
       "clsClear": "  cls / clear              diese Konsole leeren",
-      "collectionMethodsHeader": "Sammlungsmethoden (werden in der Datenansicht angezeigt)",
+      "collectionMethodsHeader": "Collection-Methoden (werden in der Datenansicht angezeigt)",
       "countDocumentsSyntax": "  db.<coll>.countDocuments(<query>)",
       "findOneSyntax": "  db.<coll>.findOne(<query>)",
       "findSyntax": "  db.<coll>.find(<query>).sort(<sort>).skip(n).limit(n)",
@@ -272,7 +272,7 @@
       "jsMultiline": "  Mehrzeiliges JS schreiben: Variablen, Schleifen, Funktionen, try/catch.",
       "load": "  load(\"script.js\")                       eine .js-Datei ausführen",
       "printjson": "  printjson(db.<coll>.find().toArray())   Ergebnisse ausgeben",
-      "showCollections": "  show collections         Sammlungen der aktuellen Datenbank auflisten",
+      "showCollections": "  show collections         Collections der aktuellen Datenbank auflisten",
       "showDbs": "  show dbs                 Datenbanken auflisten",
       "title": "Shell-Befehle",
       "useDb": "  use <db>                 aktuelle Datenbank wechseln"
@@ -306,12 +306,12 @@
       "viewAllShortcuts": "Alle Tastenkürzel in den Einstellungen ansehen"
     },
     "empty": {
-      "body": "Füge einen MongoDB-Cluster von Atlas oder localhost hinzu oder lade den Beispieldatensatz, um MQLens mit Demo-Sammlungen zu erkunden.",
+      "body": "Füge einen MongoDB-Cluster von Atlas oder localhost hinzu oder lade den Beispieldatensatz, um MQLens mit Demo-Collections zu erkunden.",
       "title": "Noch keine gespeicherten Verbindungen"
     },
     "header": {
       "eyebrow": "Schnellstart",
-      "subtitle": "Deine lokale MongoDB-IDE — verbinde dich mit einem Cluster, erkunde Sammlungen und führe Abfragen aus; alles läuft lokal auf deinem Rechner.",
+      "subtitle": "Deine lokale MongoDB-IDE — verbinde dich mit einem Cluster, erkunde Collections und führe Abfragen aus; alles läuft lokal auf deinem Rechner.",
       "title": "Willkommen bei MQLens"
     },
     "newTile": {
@@ -328,7 +328,7 @@
       "localStorageTitle": "Lokaler Speicher",
       "quickActionsDescription": "Häufige Aufgaben vom Startbildschirm aus.",
       "quickActionsTitle": "Schnellaktionen",
-      "shortcutsHint": "Öffne eine Sammlung für Indizes & Explain-Pläne",
+      "shortcutsHint": "Öffne eine Collection für Indizes & Explain-Pläne",
       "shortcutsTitle": "Tastenkürzel"
     },
     "stats": {
@@ -373,7 +373,7 @@
       "title": "Aufgaben"
     },
     "row": {
-      "itemsProgressSuffix": " · {{processed}}/{{total}} Sammlungen",
+      "itemsProgressSuffix": " · {{processed}}/{{total}} Collections",
       "summary": {
         "copied_one": "{{count}} kopiert",
         "copied_other": "{{count}} kopiert",

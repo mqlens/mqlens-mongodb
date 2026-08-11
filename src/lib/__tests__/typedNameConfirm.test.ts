@@ -25,11 +25,15 @@ describe('confirmByTypedName', () => {
       const t = i18next.getFixedT('de');
       await confirmByTypedName(
         prompt,
-        { title: 'Sammlung löschen', kind: 'collection', expectedName: 'orders' },
+        { title: 'Collection löschen', kind: 'collection', expectedName: 'orders' },
         t,
       );
 
-      expect(capturedOpts?.message).toBe('Gib den Namen der Sammlung ein, um zu bestätigen.');
+      // "Collection", not "Sammlung": MongoDB's object names stay as MongoDB
+      // spells them, in German too.
+      expect(capturedOpts?.message).toBe(
+        'Gib den Namen der Collection ein, um zu bestätigen.'
+      );
       expect(capturedOpts?.validate?.('wrong-name')).toBe('Name stimmt nicht überein');
       // The comparison itself must stay against the raw name, never a
       // translated value — a mistyped guess must fail, and the exact name

@@ -318,7 +318,7 @@
       "defaultOption": "(Standard)"
     },
     "hints": {
-      "leaveEmptyToClear": "Leer lassen und anwenden, um die Validierung für diese Sammlung zu entfernen."
+      "leaveEmptyToClear": "Leer lassen und anwenden, um die Validierung für diese Collection zu entfernen."
     },
     "errors": {
       "invalidValidatorJson": "Ungültiges Validator-JSON: {{message}}",
@@ -334,18 +334,18 @@
     }
   },
   "createViewView": {
-    "title": "Ansicht erstellen — {{database}}",
+    "title": "View erstellen — {{database}}",
     "labels": {
-      "viewName": "Ansichtsname",
+      "viewName": "View-Name",
       "sourceCollection": "Quellsammlung",
       "pipeline": "Aggregationspipeline (JSON-Array)"
     },
-    "loading": "Sammlungen werden geladen…",
+    "loading": "Collections werden geladen…",
     "options": {
-      "noCollections": "(keine Sammlungen)"
+      "noCollections": "(keine Collections)"
     },
     "errors": {
-      "nameRequired": "Ansichtsname ist erforderlich.",
+      "nameRequired": "View-Name ist erforderlich.",
       "selectSource": "Wähle eine Quellsammlung aus.",
       "pipelineMustBeArray": "Pipeline muss ein JSON-Array von Stufen sein.",
       "invalidPipelineJson": "Ungültiges Pipeline-JSON: {{message}}",
@@ -353,7 +353,7 @@
     },
     "actions": {
       "creating": "Wird erstellt…",
-      "createView": "Ansicht erstellen"
+      "createView": "View erstellen"
     }
   },
   "statsCards": {
@@ -364,8 +364,8 @@
       "loading": "Datenbankstatistiken werden geladen…",
       "database": "Datenbank:",
       "labels": {
-        "collections": "Sammlungen",
-        "views": "Ansichten",
+        "collections": "Collections",
+        "views": "Views",
         "objects": "Objekte",
         "avgObjectSize": "Durchschn. Objektgröße",
         "dataSize": "Datengröße",
@@ -375,8 +375,8 @@
       }
     },
     "collStats": {
-      "loading": "Sammlungsstatistiken werden geladen…",
-      "collection": "Sammlung:",
+      "loading": "Collection-Statistiken werden geladen…",
+      "collection": "Collection:",
       "labels": {
         "documents": "Dokumente",
         "avgObjectSize": "Durchschn. Objektgröße",

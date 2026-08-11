@@ -47,7 +47,22 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'settings:updates.resultValues.offline', // Offline — established loanword, matches shell:updatePrompt.toast.offline's "offline" usage
   'settings:tools.tabLabel', // Tools
   'shell:watch.status.running', // live — the loanword German uses for a running stream too
-  'shell:watch.columns.collection', // Collection — MongoDB's own term, left untranslated in the German UI
+  // MongoDB's own object names. These are the names of things in the data
+  // model — what `db.createCollection` and `db.createView` make — so they
+  // stay as MongoDB spells them, the way GridFS already does. Translating
+  // them ('Sammlungen', 'Ansichten') left the sidebar naming things the
+  // documentation, the shell and the driver all call something else.
+  'shell:watch.columns.collection', // Collection
+  'sidebar:tree.collectionsLabel', // Collections
+  'sidebar:tree.viewsLabel', // Views
+  'documents:dataGrid.explain.labels.collectionNode', // Collection\n{{namespace}}
+  'documents:dataGrid.explain.labels.collectionFallback', // Collection
+  'admin:statsCards.collStats.collection', // Collection:
+  'admin:statsCards.dbStats.labels.collections', // Collections
+  'admin:statsCards.dbStats.labels.views', // Views
+  'shell:commandPalette.buckets.collections.label', // Collections
+  'transfer:dumpView.labels.collection', // Collection
+  'transfer:dumpView.scope.optionCollection', // Collection
   'settings:updates.tabLabel', // Updates
   'connections:connectionMode.normal.label', // Normal
   'connections:filePicker.textFilter', // Text

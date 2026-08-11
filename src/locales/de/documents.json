@@ -56,7 +56,7 @@
     },
     "dialogs": {
       "runAggregate": {
-        "messageUnknownTarget": "Diese Pipeline schreibt über $out/$merge in eine Sammlung auf einer abgesicherten Verbindung, aber das Ziel konnte nicht automatisch ermittelt werden.\n\nGib CONFIRM ein, um fortzufahren.",
+        "messageUnknownTarget": "Diese Pipeline schreibt über $out/$merge in eine Collection auf einer abgesicherten Verbindung, aber das Ziel konnte nicht automatisch ermittelt werden.\n\nGib CONFIRM ein, um fortzufahren.",
         "messageWithTarget": "Diese Pipeline schreibt in \"{{target}}\" ($out/$merge) auf einer abgesicherten Verbindung.\n\nGib den Namen der Zielsammlung ein, um zu bestätigen.",
         "title": "Aggregation ausführen"
       },
@@ -264,8 +264,8 @@
       "updateMany": "Mehrere aktualisieren"
     },
     "dialogs": {
-      "bulkAllWarning_one": "\n\n⚠ Dies betrifft das einzige Dokument in der Sammlung.",
-      "bulkAllWarning_other": "\n\n⚠ Dies betrifft ALLE {{count}} Dokumente in der Sammlung.",
+      "bulkAllWarning_one": "\n\n⚠ Dies betrifft das einzige Dokument in der Collection.",
+      "bulkAllWarning_other": "\n\n⚠ Dies betrifft ALLE {{count}} Dokumente in der Collection.",
       "copyErrorMessage": "Fehlermeldung kopieren",
       "deleteDocument": {
         "body": "Dieses Dokument löschen? Dies kann nicht rückgängig gemacht werden.",
@@ -277,7 +277,7 @@
         "confirmLabel": "Löschen",
         "title": "Mehrere löschen"
       },
-      "typeCollectionNameSuffix": "\n\nGib den Namen der Sammlung ein, um zu bestätigen.",
+      "typeCollectionNameSuffix": "\n\nGib den Namen der Collection ein, um zu bestätigen.",
       "updateMany": {
         "body_one": "Diese Aktualisierung auf {{count}} Dokument anwenden, das folgendem Filter entspricht?\n{{filter}}",
         "body_other": "Diese Aktualisierung auf {{count}} Dokumente anwenden, die folgendem Filter entsprechen?\n{{filter}}",
@@ -299,13 +299,13 @@
     },
     "explain": {
       "labels": {
-        "collectionFallback": "Sammlung",
-        "collectionNode": "Sammlung\n{{namespace}}",
-        "documentsFromCollection": "Dokumente aus Sammlung",
+        "collectionFallback": "Collection",
+        "collectionNode": "Collection\n{{namespace}}",
+        "documentsFromCollection": "Dokumente aus Collection",
         "indexNode": "Index: {{indexName}}"
       },
       "stage": {
-        "collectionScan": "Sammlungsscan",
+        "collectionScan": "Collection-Scan",
         "fetchDocuments": "Dokumente abrufen",
         "indexIntersection": "Indexschnittmenge",
         "indexScan": "Indexscan",
@@ -345,7 +345,7 @@
       "results": "Ergebnisse"
     },
     "tooltips": {
-      "analyzeSchema": "Das Feldschema der Sammlung analysieren",
+      "analyzeSchema": "Das Feldschema der Collection analysieren",
       "codeLanguage": "Codesprache",
       "collapse": "Einklappen",
       "copied": "Kopiert",
@@ -372,7 +372,7 @@
   },
   "schemaView": {
     "empty": {
-      "title": "Sammlung ist leer — nichts zu analysieren."
+      "title": "Collection ist leer — nichts zu analysieren."
     },
     "labels": {
       "analyzing": "Schema wird analysiert…",
@@ -384,7 +384,7 @@
       "sampledSummary": "{{sampled}} Dokumente untersucht · {{fields}} Felder",
       "schemaPrefix": "Schema:",
       "types": "Typen",
-      "validationComingSoonPrefix": "Der Viewer für Sammlungs-Validierungsschemas folgt in Kürze (#93). Dieser Tab zeigt",
+      "validationComingSoonPrefix": "Der Viewer für Collection-Validierungsschemas folgt in Kürze (#93). Dieser Tab zeigt",
       "validationComingSoonSuffix": "und Validierungsregeln für {{databaseName}}.{{collectionName}}."
     },
     "tabs": {
