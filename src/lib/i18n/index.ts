@@ -4,22 +4,31 @@ import { DEFAULT_LOCALE, type Locale } from './locales';
 
 import enCommon from '../../locales/en/common.json';
 import deCommon from '../../locales/de/common.json';
+import zhHansCommon from '../../locales/zh-Hans/common.json';
 import enSettings from '../../locales/en/settings.json';
 import deSettings from '../../locales/de/settings.json';
+import zhHansSettings from '../../locales/zh-Hans/settings.json';
 import enConnections from '../../locales/en/connections.json';
 import deConnections from '../../locales/de/connections.json';
+import zhHansConnections from '../../locales/zh-Hans/connections.json';
 import enErrors from '../../locales/en/errors.json';
 import deErrors from '../../locales/de/errors.json';
+import zhHansErrors from '../../locales/zh-Hans/errors.json';
 import enSidebar from '../../locales/en/sidebar.json';
 import deSidebar from '../../locales/de/sidebar.json';
+import zhHansSidebar from '../../locales/zh-Hans/sidebar.json';
 import enDocuments from '../../locales/en/documents.json';
 import deDocuments from '../../locales/de/documents.json';
+import zhHansDocuments from '../../locales/zh-Hans/documents.json';
 import enTransfer from '../../locales/en/transfer.json';
 import deTransfer from '../../locales/de/transfer.json';
+import zhHansTransfer from '../../locales/zh-Hans/transfer.json';
 import enAdmin from '../../locales/en/admin.json';
 import deAdmin from '../../locales/de/admin.json';
+import zhHansAdmin from '../../locales/zh-Hans/admin.json';
 import enShell from '../../locales/en/shell.json';
 import deShell from '../../locales/de/shell.json';
+import zhHansShell from '../../locales/zh-Hans/shell.json';
 
 /** Namespaces mirror the UI surfaces so a translator can take one file at a
  *  time. Every namespace must exist for every locale (enforced by the catalog
@@ -29,6 +38,7 @@ import deShell from '../../locales/de/shell.json';
 export const resources = {
   en: { common: enCommon, settings: enSettings, connections: enConnections, errors: enErrors, sidebar: enSidebar, documents: enDocuments, transfer: enTransfer, admin: enAdmin, shell: enShell },
   de: { common: deCommon, settings: deSettings, connections: deConnections, errors: deErrors, sidebar: deSidebar, documents: deDocuments, transfer: deTransfer, admin: deAdmin, shell: deShell },
+  'zh-Hans': { common: zhHansCommon, settings: zhHansSettings, connections: zhHansConnections, errors: zhHansErrors, sidebar: zhHansSidebar, documents: zhHansDocuments, transfer: zhHansTransfer, admin: zhHansAdmin, shell: zhHansShell },
 } as const;
 
 export const NAMESPACES = ['common', 'settings', 'connections', 'errors', 'sidebar', 'documents', 'transfer', 'admin', 'shell'] as const;

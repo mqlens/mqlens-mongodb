@@ -1,0 +1,200 @@
+{
+  "ai": {
+    "activeProvider": "当前服务商",
+    "apiKey": "API 密钥",
+    "customInstructionsDescription": "可选的系统提示词，会附加到每一次 AI 查询请求中。",
+    "customInstructionsPlaceholder": "例如：只投影用户提到的字段；文本搜索优先使用 $regex。",
+    "customInstructionsTitle": "自定义指令",
+    "detectedInstalled": "✓ 已安装",
+    "detectedInstalledWithVersion": "✓ 已安装 —— {{version}}",
+    "historyRetentionDescription": "每个 Collection 的聊天记录和提示词历史保留多久。超期的条目会被自动删除。",
+    "historyRetentionLabel": "历史保留时长",
+    "historyRetentionMonths_other": "{{count}} 个月",
+    "historyRetentionTitle": "AI 助手历史记录",
+    "localAgentTitle": "本地代理",
+    "localCommandHint": "使用代理自身的凭据在本地运行 —— 不会保存 API 密钥。",
+    "localCommandLabel": "命令（用 {prompt} 表示提示词）",
+    "model": "模型",
+    "notDetected": "✗ 未在 PATH 中找到 —— 请先安装，或在下方填写绝对路径。",
+    "providerDescription": "为查询助手选择云端 API 或本地代理命令行工具。",
+    "providerTitle": "服务商",
+    "tabDescription": "云端 API 密钥、本地代理、自定义查询指令，以及 AI 助手历史记录的保留时长。",
+    "tabLabel": "AI 助手"
+  },
+  "appearance": {
+    "colorMode": "配色模式",
+    "compact": "紧凑",
+    "cozy": "适中",
+    "dark": "深色",
+    "exportTheme": "导出主题",
+    "fontSize": "字号",
+    "importFailed": "无法导入该主题文件。请确认它是有效的 MQLens 主题 JSON。",
+    "importTheme": "导入主题",
+    "interfaceZoom": "界面缩放",
+    "light": "浅色",
+    "livePreview": "实时预览",
+    "monospaceFont": "等宽字体",
+    "presetDescription": "选择一套配色方案 —— 除非在下方另行指定，否则模式随预设变化。",
+    "presets": {
+      "githubDark": {
+        "description": "GitHub 深色主题配色"
+      },
+      "githubLight": {
+        "description": "GitHub 浅色主题配色"
+      },
+      "highContrast": {
+        "description": "符合 WCAG AAA 无障碍标准的主题",
+        "name": "高对比度"
+      },
+      "mqlensDark": {
+        "description": "默认品牌主题 —— 深蓝炭灰配电光蓝点缀"
+      },
+      "mqlensLight": {
+        "description": "冷调米白背景配深色文字"
+      },
+      "nord": {
+        "description": "北极风格的冷蓝配色"
+      },
+      "solarizedDark": {
+        "description": "Ethan Schoonover 为暗光环境设计的精准配色"
+      },
+      "solarizedLight": {
+        "description": "适合明亮环境的 Solarized 配色"
+      }
+    },
+    "presetTitle": "主题预设",
+    "previewError": "错误",
+    "previewSuccess": "成功",
+    "previewWarning": "警告",
+    "queryBarHeight": "查询栏高度",
+    "queryBarHeightHint": "调整查询输入框及其文字的大小。投影、排序、跳过和限制保持紧凑。",
+    "resetOverrides": "重置自定义项",
+    "roomy": "宽松",
+    "saveAppearance": "保存外观设置",
+    "spacingDensity": "间距密度",
+    "system": "跟随系统",
+    "tabDescription": "主题预设、字体、间距和配色模式。",
+    "tabLabel": "外观",
+    "themeFallback": "主题",
+    "themeFilesDescription": "导出、导入或重置自定义的主题变量。",
+    "themeFilesTitle": "主题文件",
+    "uiFont": "界面字体",
+    "zoomShortcutHint": "快捷键：{{shortcut}} 可重置"
+  },
+  "footer": {
+    "saveChanges": "保存更改",
+    "saving": "正在保存…",
+    "settingsSaved": "设置已保存"
+  },
+  "language": {
+    "fallbackNote": "尚未翻译的文本会回退为英文。",
+    "label": "语言",
+    "system": "跟随系统",
+    "tabDescription": "菜单、标签和提示信息所使用的界面语言。",
+    "tabLabel": "语言"
+  },
+  "mcp": {
+    "bearerToken": "Bearer 令牌",
+    "callLogDescription": "最近 200 次工具调用，最新的排在最前。",
+    "callLogEmpty": "暂无工具调用记录。",
+    "callLogTitle": "调用日志",
+    "claudeSnippetHint": "在终端中运行即可将 MQLens 注册为 MCP 服务器。",
+    "copied": "已复制",
+    "copy": "复制",
+    "cursorSnippetHint": "添加到 Cursor 的 MCP 服务器配置中。",
+    "description": "将你的连接以 Model Context Protocol 工具的形式提供给 Claude Code、Cursor 等代理。仅支持读取和需确认的写入；默认关闭。",
+    "disabled": "已禁用",
+    "enabled": "已启用",
+    "err": "错误",
+    "hide": "隐藏",
+    "manageInConnectionManager": "在连接管理器中管理。",
+    "port": "端口",
+    "portHint": "下次启用服务器时生效。取值范围必须为 {{min}}–{{max}}。",
+    "portRangeError": "端口必须介于 {{min}} 和 {{max}} 之间。",
+    "profilesDescription": "代理可以看到并连接的连接配置。",
+    "profilesEmpty": "尚未开放任何连接配置。请在连接管理器中启用“向 MCP 代理开放”。",
+    "profilesTitle": "已开放的连接配置",
+    "regenerate": "重新生成",
+    "reveal": "显示",
+    "tabDescription": "用于 AI 工具集成的 Model Context Protocol 服务器。",
+    "tabLabel": "MCP",
+    "title": "MCP 服务器",
+    "tokenRegeneratedNote": "令牌已重新生成 —— 现有客户端需要更新为新令牌。"
+  },
+  "nav": {
+    "sectionsAriaLabel": "设置分区",
+    "subtitle": "MQLens 偏好设置",
+    "title": "设置"
+  },
+  "security": {
+    "biometricDescription": "在本设备上使用 Touch ID 或 Face ID 解锁密钥库。",
+    "biometricsGeneric": "生物识别",
+    "biometricTitle": "生物识别解锁",
+    "changePasswordBtn": "修改密码",
+    "confirmNewPasswordPlaceholder": "确认新密码",
+    "confirmPassword": "确认",
+    "currentPassword": "当前密码",
+    "currentPasswordRequired": "请输入当前密码",
+    "dangerZoneDescription": "将永久删除所有已保存的连接和密钥。",
+    "dangerZoneTitle": "危险操作",
+    "masterPassword": "主密码",
+    "masterPasswordDescription": "用于加密密钥库中保存的连接和 API 密钥。",
+    "newPassword": "新密码",
+    "newPasswordRequired": "请输入新密码",
+    "passwordChanged": "主密码已修改",
+    "passwordsDoNotMatch": "两次输入的新密码不一致",
+    "resetVaultBtn": "重置密钥库",
+    "resetVaultConfirm": "重置会删除所有已保存的连接和 API 密钥。是否继续？",
+    "resetVaultSuccess": "密钥库已重置 —— 请重启应用。",
+    "tabDescription": "主密码、生物识别和密钥库恢复。",
+    "tabLabel": "安全",
+    "unlockWith": "使用{{type}}解锁"
+  },
+  "shortcuts": {
+    "tabDescription": "工作区的键盘快捷键参考。",
+    "tabLabel": "快捷键"
+  },
+  "tools": {
+    "checkingInstalled": "正在检查已安装的工具…",
+    "dbToolsDescription": "存放 mongodump/mongorestore 可执行文件的目录，供备份导出和恢复标签页使用。",
+    "dbToolsTitle": "MongoDB Database Tools",
+    "dirHint": "存放 mongodump/mongorestore 的目录。留空则使用 PATH。",
+    "dirLabel": "工具目录",
+    "installedVersion": "已安装 v{{version}}",
+    "installToolsBtn": "安装工具…",
+    "managedDescription": "MQLens 可以为你下载并管理 mongodump/mongorestore 和 mongosh，无需依赖系统 PATH。",
+    "managedTitle": "托管的工具",
+    "mongoshDescription": "绝对路径，或可通过系统 PATH 解析的命令名。",
+    "mongoshPath": "可执行文件路径",
+    "mongoshPathResolved": "mongosh 路径已解析",
+    "mongoshTitle": "Mongosh 可执行文件",
+    "notInstalled": "未安装",
+    "tabDescription": "Mongosh 与 MongoDB Database Tools 可执行文件，以及托管安装。",
+    "tabLabel": "工具",
+    "testing": "正在测试…",
+    "testPath": "测试路径"
+  },
+  "updates": {
+    "channelDescription": "MQLens 会在启动时检查更新，并在你确认后才安装。",
+    "channelGroupAriaLabel": "更新通道",
+    "channelHint": "Dev 通道会收到预发布版本。切换到 Dev 会拉取更新的开发版；切回 Stable 不会自动降级。点击保存以应用。",
+    "channelLabel": "通道",
+    "channelTitle": "发布通道",
+    "checkForUpdatesBtn": "检查更新",
+    "devPrerelease": "Dev（预发布）",
+    "lastChecked": "上次检查：{{time}}",
+    "manualCheckDescription": "无需重启应用即可触发一次更新检查。",
+    "manualCheckTitle": "手动检查",
+    "noCheckYet": "尚无更新检查记录。",
+    "result": "结果：{{result}}",
+    "resultValues": {
+      "available": "有可用更新",
+      "checkFailed": "服务器错误",
+      "offline": "离线",
+      "uptodate": "已是最新版本"
+    },
+    "stable": "Stable",
+    "tabDescription": "发布通道与手动更新检查。",
+    "tabLabel": "更新"
+  }
+}

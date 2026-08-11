@@ -1,0 +1,523 @@
+{
+  "aiChatPanel": {
+    "actions": {
+      "copy": "复制",
+      "foreignChat": "此对话属于其他 Collection",
+      "insert": "插入",
+      "insertAndRun": "插入并运行"
+    },
+    "composer": {
+      "placeholder": "用自然语言描述查询…（Enter 发送，Shift+Enter 换行）",
+      "send": "发送"
+    },
+    "empty": {
+      "body": "用日常语言描述你要的查询 —— 例如 <i>“年龄大于 30 的活跃用户，按年龄排序”</i> 或<i> “每位客户的平均订单金额”</i>。我会说明处理思路，你可以直接插入结果。"
+    },
+    "fallbackExplanation": "这是一个查询。",
+    "header": {
+      "closeTitle": "关闭 AI 助手",
+      "title": "AI 查询助手"
+    },
+    "history": {
+      "clearAll": "删除全部对话",
+      "clearScope": "删除此 Collection 的对话",
+      "current": "已打开",
+      "delete": "删除此对话",
+      "empty": "暂无对话",
+      "newChat": "新建对话",
+      "openElsewhere": "已在其他标签页中打开",
+      "thisCollectionOnly": "仅此 Collection",
+      "title": "对话历史",
+      "untitled": "未命名对话",
+      "viewingOtherScope": "正在查看来自 {{scope}} 的对话 —— 此处只读",
+      "viewingOtherScopeShort": "打开该 Collection 才能继续此对话"
+    },
+    "queryType": {
+      "aggregate": "聚合管道",
+      "find": "Find 查询",
+      "script": "Shell 脚本"
+    },
+    "roles": {
+      "assistant": "助手",
+      "you": "你"
+    },
+    "thinking": "正在思考…"
+  },
+  "commandPalette": {
+    "buckets": {
+      "collections": {
+        "label": "Collections"
+      },
+      "commands": {
+        "label": "命令"
+      },
+      "queries": {
+        "label": "已保存的查询"
+      }
+    },
+    "dynamic": {
+      "collectionKeywords": "collection 集合 {{db}} {{connectionName}}",
+      "savedQueryKeywords": "已保存 查询 saved query {{collection}} {{db}}",
+      "savedQueryTitle": "已保存的查询：{{name}}"
+    },
+    "hints": {
+      "close": "关闭",
+      "navigate": "选择",
+      "run": "执行"
+    },
+    "noMatchingResults": "没有匹配的结果",
+    "noResults": "无结果",
+    "paletteActions": {
+      "analyzeSchema": {
+        "keywords": "字段 类型 fields types",
+        "title": "分析结构"
+      },
+      "checkUpdates": {
+        "keywords": "版本 升级 发布 version upgrade release",
+        "title": "检查更新"
+      },
+      "closeTab": {
+        "keywords": "标签页 tab",
+        "title": "关闭标签页"
+      },
+      "densityCompact": {
+        "keywords": "布局 间距 紧凑 layout spacing dense",
+        "title": "密度：紧凑"
+      },
+      "densityCozy": {
+        "keywords": "布局 间距 layout spacing",
+        "title": "密度：适中"
+      },
+      "densityRoomy": {
+        "keywords": "布局 间距 layout spacing",
+        "title": "密度：宽松"
+      },
+      "exportCollection": {
+        "keywords": "下载 导出 json csv download import",
+        "title": "导出 Collection…"
+      },
+      "focusNextPane": {
+        "keywords": "工作区 窗格 布局 切换 workspace pane layout switch",
+        "title": "聚焦下一个窗格"
+      },
+      "manageUsers": {
+        "keywords": "用户 角色 权限 认证 users roles access permissions admin",
+        "title": "管理用户：{{name}}"
+      },
+      "newConnection": {
+        "keywords": "连接 数据库 添加 服务器 connect database add server",
+        "title": "新建连接…"
+      },
+      "nextTab": {
+        "keywords": "标签页 切换 tab switch",
+        "title": "下一个标签页"
+      },
+      "openMonitoring": {
+        "keywords": "监控 指标 服务器 状态 monitoring metrics server status profiler",
+        "title": "打开监控：{{name}}"
+      },
+      "openQuickstart": {
+        "keywords": "欢迎 首页 帮助 welcome home help",
+        "title": "打开快速开始"
+      },
+      "openSettings": {
+        "keywords": "偏好 配置 密度 preferences config density",
+        "title": "打开设置"
+      },
+      "openShell": {
+        "keywords": "终端 脚本 terminal mongosh script",
+        "title": "打开 mongosh 终端"
+      },
+      "prevTab": {
+        "keywords": "标签页 切换 tab switch",
+        "title": "上一个标签页"
+      },
+      "refreshPaletteIndex": {
+        "keywords": "重新加载 数据库 命名空间 缓存 reload databases collections namespaces cache stale",
+        "title": "刷新命令面板索引"
+      },
+      "splitDown": {
+        "keywords": "工作区 窗格 布局 workspace pane layout",
+        "title": "向下拆分"
+      },
+      "splitRight": {
+        "keywords": "工作区 窗格 布局 workspace pane layout",
+        "title": "向右拆分"
+      },
+      "toggleTheme": {
+        "keywords": "外观 配色 模式 appearance color mode",
+        "title": "切换浅色/深色主题"
+      }
+    },
+    "results_other": "{{count}} 条结果",
+    "scopeFilterTitle": "侧边栏筛选：{{scope}}",
+    "scopeLabel": "侧边栏范围",
+    "searchPlaceholder": "搜索命令、Collection、已保存的查询…",
+    "title": "命令面板",
+    "typeMoreHint": "至少输入 2 个字符以搜索 Collection"
+  },
+  "connectionCard": {
+    "ariaLabel": {
+      "alreadyConnected": "{{name}} – 已连接"
+    },
+    "badge": {
+      "connected": "已连接",
+      "srv": "SRV",
+      "srvTooltip": "MongoDB SRV 记录",
+      "ssh": "SSH"
+    },
+    "connect": "连接",
+    "connecting": "正在连接…",
+    "tooltip": {
+      "alreadyConnected": "已连接",
+      "connectTo": "连接到 {{name}}"
+    },
+    "topology": {
+      "replicaSet_other": "副本集 · {{count}} 个节点",
+      "srvCluster": "SRV 集群",
+      "standalone": "Standalone"
+    }
+  },
+  "connectionModeBanner": {
+    "guarded": "生产保护 —— 破坏性操作需要确认",
+    "readOnly": "只读连接 —— 已禁止写入"
+  },
+  "dialog": {
+    "resizeAriaLabel": "调整对话框大小",
+    "resizeTitle": "拖动以调整大小"
+  },
+  "emptyWorkspace": {
+    "connectButton": "连接到数据库…",
+    "noConnection": "没有活动连接。连接到 MongoDB 集群即可浏览 Collection 并运行查询。"
+  },
+  "keyboardShortcuts": {
+    "description": "用于导航、查询、侧边栏、缩放和命令面板的全局快捷键。",
+    "empty": "没有符合搜索条件的快捷键。",
+    "groups": {
+      "command-palette": "命令面板",
+      "navigation": "导航",
+      "query-editor": "查询编辑器",
+      "sidebar": "侧边栏",
+      "zoom": "缩放"
+    },
+    "items": {
+      "close-dialog": "关闭最上层的对话框或弹窗",
+      "palette-close": "关闭命令面板",
+      "palette-navigate": "在命令面板结果中移动",
+      "palette-open": "打开或关闭命令面板",
+      "palette-run": "执行选中的命令面板操作",
+      "run-query": "运行当前查询",
+      "sidebar-search": "聚焦侧边栏搜索框",
+      "submit-dialog": "提交多行对话框（导入 URI、输入框）",
+      "zoom-in": "放大界面",
+      "zoom-in-out": "放大或缩小界面",
+      "zoom-out": "缩小界面",
+      "zoom-reset": "将界面缩放重置为 100%"
+    },
+    "searchAriaLabel": "搜索键盘快捷键",
+    "searchPlaceholder": "搜索快捷键…",
+    "title": "键盘快捷键"
+  },
+  "mongoShell": {
+    "console": {
+      "cleared": "控制台已清空 —— 请在上方运行命令。",
+      "clearTitle": "清空控制台",
+      "dataViewerTabLabel": "数据视图",
+      "tabLabel": "控制台"
+    },
+    "destructiveDialog": {
+      "body": "此脚本会执行 <1>{{operation}}</1>，可能会永久删除数据。运行前请仔细检查。",
+      "cancel": "取消",
+      "runAnyway": "仍然运行",
+      "title": "破坏性操作"
+    },
+    "editor": {
+      "loading": "正在加载编辑器…"
+    },
+    "errors": {
+      "aggregateExpectsPipeline": "aggregate() 需要一个管道数组",
+      "invalidJsonLiteral": "无效的 mongosh JSON 字面量：{{value}}",
+      "sessionRequiredForScripts": "运行脚本需要 mongosh 会话"
+    },
+    "gate": {
+      "browseDialogTitle": "定位 mongosh 可执行文件",
+      "browseForBinary": "浏览可执行文件…",
+      "found": "已找到",
+      "foundMongoshVersion": "mongosh {{version}}",
+      "installHint": "也可以自行安装：<2>{{hint}}</2> —— 参见 <6>mongosh 安装文档</6>。",
+      "installNote": {
+        "generic": "从 mongodb.com 安装 mongosh",
+        "linux": "或使用你所用发行版的软件包",
+        "windows": "或使用 mongodb.com 提供的 MSI 安装包"
+      },
+      "installTools": "安装工具…",
+      "openSettings": "打开设置",
+      "requiresMongosh": "MongoShell 需要 mongosh",
+      "requiresMongoshBody": "在此运行查询和脚本需要一个活动的 mongosh 会话。",
+      "retry": "重试",
+      "startingSession": "正在启动 mongosh 会话…",
+      "useThisBinary": "使用此可执行文件"
+    },
+    "help": {
+      "aggregateSyntax": "  db.<coll>.aggregate([{ $match }, { $sort }, { $skip }, { $limit }])",
+      "clsClear": "  cls / clear              清空此控制台",
+      "collectionMethodsHeader": "Collection 方法（结果显示在数据视图中）",
+      "countDocumentsSyntax": "  db.<coll>.countDocuments(<query>)",
+      "findOneSyntax": "  db.<coll>.findOne(<query>)",
+      "findSyntax": "  db.<coll>.find(<query>).sort(<sort>).skip(n).limit(n)",
+      "getIndexesSyntax": "  db.<coll>.getIndexes()",
+      "jsHeader": "JavaScript 脚本（通过 mongosh 运行）",
+      "jsMultiline": "  可编写多行 JS：变量、循环、函数、try/catch。",
+      "load": "  load(\"script.js\")                       运行一个 .js 文件",
+      "printjson": "  printjson(db.<coll>.find().toArray())   打印结果",
+      "showCollections": "  show collections         列出当前数据库的 Collection",
+      "showDbs": "  show dbs                 列出数据库",
+      "title": "Shell 帮助",
+      "useDb": "  use <db>                 切换当前数据库"
+    },
+    "notes": {
+      "destructiveCancelled": "已取消该破坏性命令。",
+      "resultToDataViewer_other": "{{count}} 个文档 -> 数据视图",
+      "sessionAttached": "已接入 mongosh 会话",
+      "sessionRestarting": "正在重启 mongosh 会话…",
+      "sessionUnavailable": "mongosh 会话不可用：{{detail}}",
+      "switchedToDb": "已切换到数据库 {{db}}"
+    },
+    "toolbar": {
+      "aiToggleLabel": "AI",
+      "aiToggleTitle": "AI 助手",
+      "restartSession": "重启",
+      "restartSessionTitle": "停止当前 mongosh 会话并启动新会话",
+      "run": "运行"
+    }
+  },
+  "quickStart": {
+    "actions": {
+      "addConnection": "添加连接",
+      "configure": "配置",
+      "documentation": "文档",
+      "loadSampleData": "加载示例数据",
+      "manageConnections": "管理连接",
+      "newConnection": "新建连接",
+      "settings": "设置",
+      "viewAllShortcuts": "在设置中查看全部快捷键"
+    },
+    "empty": {
+      "body": "从 Atlas 或 localhost 添加一个 MongoDB 集群，或加载示例数据集，用演示 Collection 体验 MQLens。",
+      "title": "尚未保存任何连接"
+    },
+    "header": {
+      "eyebrow": "快速开始",
+      "subtitle": "你的本地 MongoDB IDE —— 连接集群、浏览 Collection、运行查询，全部在本机完成。",
+      "title": "欢迎使用 MQLens"
+    },
+    "newTile": {
+      "subtitle": "再添加一个 MongoDB 集群"
+    },
+    "savedSection": {
+      "subtitleEmpty": "添加你的第一个集群，或试试内置的示例数据集。",
+      "subtitleFilled": "点击某个连接即可在工作区中打开。",
+      "title": "已保存的连接"
+    },
+    "sidebar": {
+      "dataDirectory": "数据目录",
+      "localStorageDescription": "所有数据都保留在你的电脑上。",
+      "localStorageTitle": "本地存储",
+      "quickActionsDescription": "主页上的常用操作。",
+      "quickActionsTitle": "快捷操作",
+      "shortcutsHint": "打开一个 Collection 即可查看索引和执行计划",
+      "shortcutsTitle": "键盘快捷键"
+    },
+    "stats": {
+      "activeNow": "当前活动",
+      "savedConnections": "已保存的连接"
+    }
+  },
+  "reconnectBanner": {
+    "bodyGeneric": "此标签页恢复自上次会话。重新连接到 {{profile}} 即可加载。",
+    "bodyWithNamespace": "{{namespace}} 恢复自上次会话。重新连接到 {{profile}} 即可加载。",
+    "disconnected": "已断开",
+    "profileMissing": "该连接配置已不存在",
+    "reconnectButton": "重新连接 {{profile}}"
+  },
+  "statusBar": {
+    "appVersion": "MQLens {{version}}",
+    "backgroundTasks": "后台任务",
+    "cpu": "CPU {{value}}",
+    "engineOnline": "MQLens 引擎在线",
+    "mongodb": "MongoDB {{value}}",
+    "ram": "内存 {{value}}",
+    "resetZoom": "重置缩放（{{shortcut}}）",
+    "runningTasks_other": "{{count}} 个任务运行中",
+    "tasks": "任务"
+  },
+  "taskManager": {
+    "actions": {
+      "cancel": "取消",
+      "cancelling": "正在取消…",
+      "clearFinishedTasks": "清除已完成的任务",
+      "refreshTasks": "刷新任务"
+    },
+    "ariaLabel": "任务管理器",
+    "empty": {
+      "noTasks": "暂无后台任务。"
+    },
+    "header": {
+      "runningBadge_other": "{{count}} 个运行中",
+      "subtitle": "后台复制和导出作业。",
+      "title": "任务"
+    },
+    "row": {
+      "itemsProgressSuffix": " · {{processed}}/{{total}} 个 Collection",
+      "summary": {
+        "copied_other": "已复制 {{count}} 个",
+        "failedSuffix_other": " · {{count}} 个失败",
+        "indexesSuffix_other": "，{{count}} 个索引",
+        "skippedSuffix_other": "，跳过 {{count}} 个",
+        "skippedTitlePrefix": "已跳过：{{list}}"
+      }
+    },
+    "status": {
+      "cancelled": "已取消",
+      "completed": "已完成",
+      "failed": "失败",
+      "running": "运行中"
+    }
+  },
+  "toastStack": {
+    "defaultTitle": {
+      "error": "错误",
+      "info": "提示",
+      "success": "成功"
+    },
+    "dismissAriaLabel": "关闭通知"
+  },
+  "toolSetupDialog": {
+    "actions": {
+      "dismiss": "关闭",
+      "done": "完成",
+      "install": "安装",
+      "retry": "重试",
+      "starting": "正在启动…"
+    },
+    "cancelled": "已取消",
+    "checkingTools": "正在检查已安装的工具…",
+    "installedBadge": "已安装",
+    "intro": "MQLens 需要这些命令行工具来执行备份、恢复、导入和导出。请选择要安装或重新安装的工具。",
+    "licenseNote": "从 mongodb.com 下载的官方 Apache-2.0 构建版本",
+    "pathSuffix": " —— {{path}}",
+    "reinstallWarning": "将会重新安装：仍处于勾选状态的已安装工具会被重新下载并替换。",
+    "sizeNote": "每个工具的下载量约为 50–100 MB，会缓存在应用的数据目录中。",
+    "title": "设置 MongoDB 工具",
+    "toolLabels": {
+      "databaseTools": "Database Tools（mongodump、mongorestore）",
+      "mongosh": "mongosh"
+    }
+  },
+  "updatePrompt": {
+    "dialog": {
+      "downloading": "{{pct}}% —— 正在下载，完成后应用会自动重启…",
+      "later": "稍后",
+      "title": "有可用更新",
+      "updateNow": "立即更新",
+      "versionAvailable": "MQLens <strong>{{version}}</strong> 已发布。",
+      "versionAvailableWithCurrent": "MQLens <strong>{{version}}</strong> 已发布（你当前使用的是 {{current}}）。"
+    },
+    "toast": {
+      "checkFailed": "无法连接更新服务器，请稍后再试。",
+      "checking": "正在检查更新…",
+      "dismiss": "关闭",
+      "offline": "你当前处于离线状态。请连接网络后重试。",
+      "uptodate": "你已在使用最新版本。"
+    }
+  },
+  "vaultGate": {
+    "actions": {
+      "resetLink": "忘记密码？重置（会删除所有已保存的凭据）",
+      "setup": "创建并解锁",
+      "unlock": "解锁"
+    },
+    "biometry": {
+      "faceId": "使用 Face ID",
+      "generic": "使用生物识别",
+      "touchId": "使用 Touch ID"
+    },
+    "confirmReset": "重置会删除所有已保存的连接和 API 密钥。是否继续？",
+    "descriptions": {
+      "setup": "你保存的连接和 API 密钥会用此密码加密。一旦忘记，将无法恢复。",
+      "unlock": "请输入主密码以解密已保存的凭据。"
+    },
+    "errors": {
+      "passwordMismatch": "两次输入的密码不一致",
+      "passwordRequired": "请输入主密码"
+    },
+    "loading": "正在加载…",
+    "placeholders": {
+      "confirmPassword": "确认密码",
+      "masterPassword": "主密码"
+    },
+    "titles": {
+      "setup": "创建主密码",
+      "unlock": "解锁 MQLens"
+    }
+  },
+  "watch": {
+    "actions": {
+      "clear": "清空列表",
+      "closeDetail": "关闭详情面板",
+      "pause": "暂停监听",
+      "resume": "从暂停处继续",
+      "retry": "重新尝试监听"
+    },
+    "allCollections": "全部 Collection",
+    "columns": {
+      "collection": "Collection",
+      "database": "数据库",
+      "document": "文档",
+      "operation": "操作",
+      "time": "时间"
+    },
+    "deployment": "整个部署",
+    "dropped_other": "为控制缓冲区大小，已丢弃 {{count}} 条较早的事件",
+    "eventCount_other": "{{count}} 条事件",
+    "fieldsChanged_other": "{{count}} 个字段",
+    "filterAll": "全部",
+    "filterCollection": "按 Collection 筛选",
+    "filterLabel": "显示",
+    "noCollectionMatch": "没有匹配的 Collection",
+    "noneInCollection": "此 Collection 暂无事件",
+    "operations": {
+      "delete": "删除",
+      "drop": "删除 Collection",
+      "insert": "插入",
+      "invalidate": "失效",
+      "rename": "重命名",
+      "replace": "替换",
+      "update": "更新"
+    },
+    "searchCollections": "搜索 Collection…",
+    "status": {
+      "ended": "已结束",
+      "error": "错误",
+      "paused": "已暂停",
+      "running": "实时",
+      "starting": "启动中",
+      "unsupported": "不可用"
+    },
+    "unsupported": "变更流需要副本集或分片集群。当前服务器是单机部署。",
+    "waiting": "正在监听变更…"
+  },
+  "workspaceTabBar": {
+    "closeTab": "关闭 {{label}}",
+    "closeTooltip": "关闭标签页",
+    "contextMenu": {
+      "closeOthers": "关闭其他标签页",
+      "closeTab": "关闭标签页",
+      "closeToTheRight": "关闭右侧的标签页",
+      "detachToNewWindow": "分离到新窗口",
+      "duplicateTab": "复制标签页",
+      "moveToWindow": "移动到{{target}}",
+      "unmirroredExplanation": "导出/导入标签页会保留在各自的窗口中"
+    }
+  }
+}

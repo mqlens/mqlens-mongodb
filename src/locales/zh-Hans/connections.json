@@ -1,0 +1,254 @@
+{
+  "actions": {
+    "alreadyConnected": "已连接",
+    "browse": "浏览…",
+    "connect": "连接",
+    "connecting": "正在连接…",
+    "create": "创建",
+    "delete": "删除",
+    "duplicate": "复制副本",
+    "edit": "编辑",
+    "export": "导出…",
+    "exportAllUris": "导出全部 URI",
+    "exportUri": "导出 URI",
+    "hidePassword": "隐藏密码",
+    "import": "导入",
+    "importAll": "全部导入",
+    "importUri": "导入 URI",
+    "new": "新建…",
+    "newFolder": "新建文件夹",
+    "showPassword": "显示密码",
+    "testConnection": "测试连接"
+  },
+  "advanced": {
+    "compression": "BSON 压缩",
+    "compressionNone": "不压缩",
+    "compressionSnappy": "Snappy",
+    "compressionZlib": "Zlib",
+    "defaultDb": "默认数据库"
+  },
+  "auth": {
+    "authDatabase": "身份验证数据库",
+    "externalNote": "针对 <1>$external</1> 数据库进行身份验证。",
+    "method": "身份验证方式",
+    "methodAws": "MONGODB-AWS (IAM)",
+    "methodKerberos": "GSSAPI (Kerberos)",
+    "methodLdap": "LDAP (PLAIN)",
+    "methodNone": "无（访客访问）",
+    "methodScram1": "SCRAM-SHA-1",
+    "methodScram256": "SCRAM-SHA-256（默认）",
+    "methodX509": "x.509 客户端证书",
+    "passLabelAws": "Secret Access Key",
+    "passLabelDefault": "密码",
+    "serviceName": "服务名称（可选，默认：mongodb）",
+    "sessionToken": "会话令牌（可选）",
+    "sessionTokenPlaceholder": "用于临时 STS 凭据",
+    "userLabelAws": "Access Key ID",
+    "userLabelDefault": "用户名",
+    "userLabelKerberos": "Principal",
+    "userLabelX509": "用户名（可选 —— 可从证书中推导）",
+    "x509Note": "需要启用 TLS 并配置客户端证书（TLS 标签页）。"
+  },
+  "colorTags": {
+    "amber": "琥珀色",
+    "blue": "蓝色",
+    "green": "绿色",
+    "orange": "橙色",
+    "pink": "粉色",
+    "red": "红色",
+    "slate": "石板灰",
+    "violet": "紫罗兰色"
+  },
+  "connectionMode": {
+    "confirmDestructive": {
+      "description": "破坏性操作需要输入名称确认",
+      "label": "确认破坏性操作"
+    },
+    "normal": {
+      "description": "完整读写权限",
+      "label": "普通"
+    },
+    "readOnly": {
+      "description": "禁止所有写入",
+      "label": "只读"
+    }
+  },
+  "dialogs": {
+    "deleteProfile": {
+      "message": "确定要删除此连接配置吗？",
+      "title": "删除连接配置"
+    },
+    "importConnections": {
+      "message_other": "找到 {{count}} 个连接 URI。要为每一个创建保存的配置吗？",
+      "title": "导入连接"
+    },
+    "importUri": {
+      "message": "粘贴一个或多个 mongodb:// 或 mongodb+srv:// 连接字符串。以 # 开头的行可用于命名连接。（{{shortcut}} 导入）",
+      "placeholder": "# 本地\nmongodb://localhost:27017\n\n# 生产环境\nmongodb://user:pass@host1:27017/?replicaSet=rs0",
+      "title": "导入连接 URI"
+    }
+  },
+  "editor": {
+    "duplicateTitle": "复制连接",
+    "editTitle": "编辑连接",
+    "newTitle": "新建连接",
+    "subtitle": "配置服务器、身份验证、TLS 和高级选项",
+    "tabsAria": "连接设置分区"
+  },
+  "empty": {
+    "message": "请从侧边栏选择一个连接，或点击工具栏中的“新建…”创建一个。"
+  },
+  "errors": {
+    "alreadyActive": "该连接已处于活动状态",
+    "clipboardEmpty": "剪贴板为空",
+    "clipboardReadFailed": "无法读取剪贴板。",
+    "displayNameRequired": "请输入显示名称",
+    "fileReadFailed": "无法读取所选文件。",
+    "folderNameExists": "同名文件夹已存在",
+    "folderNameRequired": "请输入文件夹名称",
+    "importFileEmpty": "文件为空",
+    "importNoUriFound": "文件中未找到 mongodb:// 或 mongodb+srv:// URI"
+  },
+  "export": {
+    "allDescription_other": "正在将 {{count}} 个已保存的连接导出为 JSON（包含文件夹结构）。兼容 MQLens 导入以及 Studio 3T 格式的连接文件。",
+    "allTitle": "导出全部连接 URI",
+    "copyToClipboard": "复制到剪贴板",
+    "includePassword": "包含密码",
+    "includePasswordDescription": "关闭后会去除身份验证密码以及代理/令牌等机密信息，便于安全分享 URI。",
+    "includeSettings": "包含连接设置",
+    "includeSettingsDescription": "TLS 文件、副本集、身份验证机制、appName、代理和超时设置。",
+    "saveAllTitle": "保存连接 URI",
+    "saveTitle": "保存连接 URI",
+    "saveToFile": "保存到文件…",
+    "singleTitle": "导出连接 URI",
+    "sshNote": "此连接使用 SSH 隧道。隧道设置无法用 MongoDB URI 表示，因此不会被导出。"
+  },
+  "filePicker": {
+    "allFilesFilter": "所有文件",
+    "certificatesFilter": "证书",
+    "importFileTitle": "从文件导入连接 URI",
+    "jsonFilter": "JSON",
+    "jsonStudio3tFilter": "JSON / Studio 3T URI",
+    "selectCertificateTitle": "选择证书文件",
+    "textFilter": "文本"
+  },
+  "folder": {
+    "closeDialogAria": "关闭文件夹对话框",
+    "nameLabel": "文件夹名称",
+    "root": "（根目录）"
+  },
+  "form": {
+    "colorTag": "颜色标记",
+    "colorTagGroupAria": "连接颜色标记",
+    "connectionMode": "连接模式",
+    "connectionUriLabel": "连接 URI",
+    "custom": "自定义",
+    "displayName": "显示名称",
+    "folder": "文件夹",
+    "hostList": "主机列表",
+    "hostListHostnameOnly": "（仅主机名）",
+    "hostListHostPort": "（host:port，以逗号分隔）",
+    "mcpEnabled": "向 MCP 代理开放",
+    "mcpEnabledDescription": "连接到 MQLens MCP 服务器的代理可以看到并连接此配置。",
+    "noColor": "无颜色",
+    "parseIntoFields": "解析到表单字段",
+    "parseUriTitle": "用此 URI 填充服务器和身份验证表单字段，以便编辑",
+    "pickCustomColor": "选择自定义颜色",
+    "protocol": "协议",
+    "replicaSetName": "副本集名称",
+    "showPasswordToEdit": "显示密码以便编辑",
+    "topology": "拓扑结构",
+    "topologyReplicaSet": "副本集",
+    "topologySharded": "分片集群（mongos）",
+    "topologyStandalone": "Standalone / 直连",
+    "topologyUriOnly": "仅使用完整 URI 字符串",
+    "uriBadge": "URI"
+  },
+  "import": {
+    "errors": {
+      "notAMongoUri": "请输入 mongodb:// 或 mongodb+srv:// URI"
+    },
+    "fromClipboard": "从剪贴板导入",
+    "fromFile": "从文件导入…",
+    "pasteManually": "手动粘贴…"
+  },
+  "list": {
+    "colorDotTitle": "连接颜色"
+  },
+  "profile": {
+    "connectedActive": "已连接（活动）",
+    "connectionUri": "连接 URI",
+    "disconnected": "已断开",
+    "metadata": "连接元数据",
+    "profileId": "配置 ID：",
+    "status": "状态：",
+    "subtitle": "连接配置"
+  },
+  "proxy": {
+    "description": "MongoDB 驱动会通过 SOCKS5 代理建立连接。（驱动不支持 HTTP 代理。）",
+    "enableLabel": "启用 SOCKS5 客户端代理",
+    "host": "代理主机",
+    "password": "代理密码（可选）",
+    "port": "代理端口",
+    "username": "代理用户名（可选）"
+  },
+  "sidebar": {
+    "allFolders": "全部文件夹",
+    "allFoldersPlaceholder": "全部文件夹",
+    "connectedTitle": "已连接",
+    "emptyFolder": "空文件夹",
+    "searchPlaceholder": "搜索连接…",
+    "unnamedConnection": "未命名连接"
+  },
+  "ssh": {
+    "agentNote": "身份验证使用系统的 ssh-agent（SSH_AUTH_SOCK）。密钥和口令始终保留在 agent 中，不会接触 MQLens，也不会写入保存的配置。",
+    "authAgent": "SSH Agent",
+    "authKey": "私钥",
+    "authMethod": "认证方式",
+    "authPassword": "密码",
+    "enableLabel": "启用 SSH 隧道代理网关",
+    "host": "SSH 服务器主机",
+    "hostKeyNotePrefix": "SSH 服务器的主机密钥必须位于",
+    "hostKeyNoteSuffix": "。凭据会随配置一起明文保存；建议优先使用密钥认证。",
+    "keyPassphrase": "密钥口令（可选）",
+    "keyPassphrasePlaceholder": "如果密钥未加密，请留空",
+    "password": "SSH 密码",
+    "port": "SSH 端口",
+    "privateKeyPath": "私钥路径",
+    "username": "SSH 用户名"
+  },
+  "subtitle": "管理已保存的 MongoDB 配置和文件夹",
+  "tabs": {
+    "advanced": "高级",
+    "auth": "身份验证",
+    "proxy": "代理",
+    "server": "服务器",
+    "ssh": "SSH 隧道",
+    "tls": "TLS / SSL"
+  },
+  "test": {
+    "dismissAria": "关闭测试结果",
+    "dismissTitle": "关闭",
+    "hideDetails": "隐藏详情",
+    "progressLabel": "连接测试进度",
+    "showDetails": "显示详情",
+    "stageConnect": "初始化驱动客户端",
+    "stageParse": "解析连接 URI",
+    "stagePing": "验证连接（Ping）",
+    "stageResolve": "解析主机和端口",
+    "successMessage": "连接测试成功"
+  },
+  "title": "连接管理器",
+  "tls": {
+    "allowInvalidCerts": "允许无效证书",
+    "allowInvalidHosts": "允许无效主机名",
+    "caFilePath": "CA 文件路径",
+    "certValidation": "证书校验",
+    "insecureTag": "（不安全）",
+    "mode": "SSL / TLS 证书模式",
+    "modeFile": "上传自定义 CA 文件",
+    "modeOff": "关闭（不加密，明文传输）",
+    "modeSystem": "系统根 CA 证书",
+    "validationWarning": "关闭证书校验会使连接面临中间人攻击风险。请仅在受信任的自签名测试服务器上启用。"
+  }
+}

@@ -3,6 +3,10 @@
 export const SUPPORTED_LOCALES = [
   { code: 'en', label: 'English' },
   { code: 'de', label: 'Deutsch' },
+  // Labelled in the language itself, the way a language picker should be: a
+  // reader looking for their own language recognises it faster than its
+  // English name.
+  { code: 'zh-Hans', label: '简体中文' },
 ] as const;
 
 export type Locale = (typeof SUPPORTED_LOCALES)[number]['code'];

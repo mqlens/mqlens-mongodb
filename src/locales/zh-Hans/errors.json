@@ -1,0 +1,17 @@
+{
+  "conn": {
+    "authFailed": "身份验证失败。",
+    "authFailedHint": "请检查用户名、密码和身份验证数据库。",
+    "dnsFailed": "找不到主机（DNS 解析失败）。",
+    "dnsFailedHint": "请检查主机名；如果是内网主机，可能需要使用 SSH 隧道。",
+    "handshakeClosed": "服务器在握手过程中关闭了连接。",
+    "handshakeClosedHint": "多数情况下是服务器版本早于 MQLens 目前支持的最低版本 MongoDB 4.2——3.6 之前的服务器不支持驱动使用的通信协议。否则可能是服务器要求 TLS，而此处未启用 TLS。",
+    "refused": "连接被拒绝。",
+    "refusedHint": "服务器是否正在运行？本机能否访问该主机和端口？",
+    "selectionTimeout": "无法连接到任何服务器（服务器选择超时）。",
+    "selectionTimeoutHint": "请检查主机、端口和 TLS 设置，并确认本机可以访问该集群。",
+    "timedOut": "连接超时。",
+    "tlsNotTrusted": "TLS 证书不受信任。",
+    "tlsNotTrustedHint": "请在 TLS 中提供集群的 CA 文件，或为自签名/开发集群启用“允许无效证书”。"
+  }
+}

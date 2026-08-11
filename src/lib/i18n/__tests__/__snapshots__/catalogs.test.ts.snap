@@ -135,3 +135,65 @@ exports[`locale catalogs > keeps a snapshot of which values carry significant le
   "toolSetupDialog.pathSuffix",
 ]
 `;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 19`] = `[]`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 20`] = `[]`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 21`] = `[]`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 22`] = `[]`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 23`] = `
+[
+  "tree.offlineSuffix",
+]
+`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 24`] = `
+[
+  "dataGrid.dialogs.bulkAllWarning_other",
+  "dataGrid.dialogs.typeCollectionNameSuffix",
+]
+`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 25`] = `
+[
+  "generateView.confirm.insertMessageExistingClause",
+]
+`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 26`] = `
+[
+  "clusterHealthCard.memberStatus.onlinePrefix",
+  "clusterHealthCard.replicaSetClausePrefix",
+  "monitoringView.accessRequired.bodyPrefix",
+  "monitoringView.accessRequired.bodySuffix",
+  "monitoringView.cluster.summaryReplicaSetPrefix",
+  "monitoringView.cluster.summaryVersionClause",
+  "monitoringView.cluster.summaryYouClause",
+  "monitoringView.status.replSetClause",
+  "monitoringView.status.uptimeClause",
+  "monitoringView.tabs.opsCount_other",
+]
+`;
+
+exports[`locale catalogs > keeps a snapshot of which values carry significant leading/trailing whitespace, per locale 27`] = `
+[
+  "mongoShell.help.aggregateSyntax",
+  "mongoShell.help.clsClear",
+  "mongoShell.help.countDocumentsSyntax",
+  "mongoShell.help.findOneSyntax",
+  "mongoShell.help.findSyntax",
+  "mongoShell.help.getIndexesSyntax",
+  "mongoShell.help.jsMultiline",
+  "mongoShell.help.load",
+  "mongoShell.help.printjson",
+  "mongoShell.help.showCollections",
+  "mongoShell.help.showDbs",
+  "mongoShell.help.useDb",
+  "taskManager.row.itemsProgressSuffix",
+  "taskManager.row.summary.failedSuffix_other",
+  "toolSetupDialog.pathSuffix",
+]
+`;

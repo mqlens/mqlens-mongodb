@@ -1,0 +1,184 @@
+{
+  "connection": {
+    "ariaLabel": "连接 {{name}}",
+    "colorAriaLabel": "连接颜色",
+    "connectedAriaLabel": "已连接",
+    "guardedAriaLabel": "已启用生产保护的连接",
+    "guardedBadge": "已保护",
+    "readOnlyAriaLabel": "只读连接",
+    "readOnlyBadge": "只读",
+    "refreshAriaLabel": "刷新数据库",
+    "viaMcpAriaLabel": "通过 MCP 连接",
+    "viaMcpBadge": "通过 MCP"
+  },
+  "ctx": {
+    "addCollection": "添加 Collection",
+    "addDatabase": "添加数据库",
+    "addToFavorites": "添加到收藏",
+    "analyzeSchema": "分析结构",
+    "copy": "复制",
+    "copyCollectionName": "复制 Collection 名称",
+    "copyDatabase": "复制数据库",
+    "copyDatabaseTo": "将数据库复制到…",
+    "copyIndexName": "复制索引名称",
+    "copyTo": "复制到…",
+    "createIndex": "创建索引",
+    "createView": "创建 View",
+    "deleteIndex": "删除索引",
+    "disconnect": "断开连接",
+    "dropCollection": "删除 Collection",
+    "dropDatabase": "删除数据库",
+    "dropView": "删除 View",
+    "dump": "备份导出（mongodump）…",
+    "generateData": "生成数据…",
+    "manageConnections": "管理连接",
+    "manageUsersConnection": "管理用户",
+    "manageUsersDatabase": "管理用户",
+    "monitorCluster": "监控集群",
+    "newBucket": "新建 Bucket",
+    "newCollection": "新建 Collection",
+    "newConnection": "新建连接",
+    "open": "打开",
+    "openCollection": "打开 Collection",
+    "openInNewTab": "在新标签页中打开",
+    "openShell": "打开 mongosh 终端",
+    "pasteHere": "粘贴到这里",
+    "pinToSidebar": "固定到侧边栏",
+    "refreshDatabase": "刷新数据库",
+    "refreshDatabases": "刷新数据库列表",
+    "removeFromFavorites": "从收藏中移除",
+    "renameCollection": "重命名 Collection",
+    "renameDatabase": "重命名数据库",
+    "restore": "恢复（mongorestore）…",
+    "settings": "设置",
+    "unpin": "取消固定",
+    "unpinFromSidebar": "从侧边栏取消固定",
+    "validationRules": "校验规则",
+    "watchCollection": "监听变更…",
+    "watchDatabase": "监听数据库变更…",
+    "watchDeployment": "监听整个部署的变更…"
+  },
+  "dialogs": {
+    "dropCollection": {
+      "confirmLabel": "删除",
+      "message": "确定要删除 Collection“{{name}}”吗？",
+      "title": "删除 Collection"
+    },
+    "dropDatabase": {
+      "confirmLabel": "删除",
+      "message": "确定要删除数据库“{{name}}”吗？此操作无法撤销。",
+      "title": "删除数据库"
+    },
+    "enterNewCollectionName": "请输入新的 Collection 名称：",
+    "enterNewDatabaseName": "请输入新的数据库名称：",
+    "gridfsBucket": {
+      "bucketDefault": "fs",
+      "errors": {
+        "invalidChars": "只能使用字母、数字、下划线或连字符",
+        "noDot": "Bucket 名称不能包含“.”",
+        "noSystemPrefix": "Bucket 名称不能以“system”开头",
+        "required": "请输入 Bucket 名称"
+      },
+      "message": "Bucket 名称（Collection 会在首次上传时创建）：",
+      "title": "打开 GridFS Bucket"
+    },
+    "initialCollection": {
+      "defaultValue": "collection",
+      "message": "数据库需要一个初始 Collection。请输入名称：",
+      "title": "初始 Collection"
+    },
+    "nameRequired": "请输入名称",
+    "newCollection": {
+      "placeholder": "Collection 名称",
+      "title": "新建 Collection"
+    },
+    "newDatabase": {
+      "placeholder": "数据库名称",
+      "title": "新建数据库"
+    },
+    "renameCollection": {
+      "title": "重命名 Collection"
+    },
+    "renameDatabase": {
+      "confirmLabel": "重命名",
+      "messagePlain": "将数据库“{{oldName}}”重命名为“{{newName}}”？\n\nMongoDB 不支持原生的数据库重命名。MQLens 会复制其中的 Collection 和索引、核对文档数量，然后删除源数据库。",
+      "messageTyped": "将数据库“{{oldName}}”重命名为“{{newName}}”？MongoDB 不支持原生的数据库重命名。MQLens 会复制其中的 Collection 和索引、核对文档数量，然后删除源数据库。\n\n请输入数据库名称以确认。",
+      "promptTitle": "重命名数据库",
+      "title": "重命名数据库“{{name}}”"
+    }
+  },
+  "empty": {
+    "connectAriaLabel": "连接到数据库",
+    "connectButton": "连接到数据库…",
+    "favoritesHint": "右键点击树中的项目，或在 Collection 标签页中收藏已保存的查询",
+    "foldersHint": "在连接管理器中保存连接",
+    "noConnections": "连接到 MongoDB 服务器即可浏览数据库结构。",
+    "pinnedHint": "右键点击连接、数据库或 Collection → 固定到侧边栏"
+  },
+  "favorites": {
+    "connectionSubtitle": "连接",
+    "untitledQuery": "已保存的查询"
+  },
+  "folders": {
+    "manageConnectionsButton": "管理连接"
+  },
+  "footer": {
+    "themeLabel": "主题"
+  },
+  "header": {
+    "helpAriaLabel": "帮助与反馈",
+    "openSettingsAriaLabel": "打开设置",
+    "title": "MQLens 工作区"
+  },
+  "help": {
+    "documentation": "文档",
+    "reportBug": "报告问题",
+    "requestFeature": "提交功能建议",
+    "starOnGithub": "在 GitHub 上点星"
+  },
+  "search": {
+    "ariaLabel": "搜索侧边栏",
+    "clearAriaLabel": "清除搜索",
+    "placeholder": "搜索连接、数据库、Collection…"
+  },
+  "sections": {
+    "connections": "连接",
+    "favorites": "收藏",
+    "folders": "文件夹",
+    "pinned": "已固定"
+  },
+  "toasts": {
+    "addedToFavorites": "已添加到收藏",
+    "connectingTo": "正在连接到 {{name}}…",
+    "couldNotConnect": "无法连接到 {{name}}",
+    "couldNotUpdateFavorites": "无法更新收藏",
+    "couldNotUpdatePinned": "无法更新已固定的项目",
+    "createCollectionFailed": "创建 Collection 失败：{{error}}",
+    "createDatabaseFailed": "创建数据库失败：{{error}}",
+    "dropCollectionFailed": "删除 Collection 失败：{{error}}",
+    "dropDatabaseFailed": "删除数据库失败：{{error}}",
+    "noSavedConnection": "没有名为“{{name}}”的已保存连接。请先在连接管理器中添加，然后重试。",
+    "pinned": "已固定到侧边栏",
+    "readOnlyBlocked": "此连接为只读（生产保护）。如需修改数据，请在连接设置中更改连接模式。",
+    "removedFromFavorites": "已从收藏中移除",
+    "renameCollectionFailed": "重命名 Collection 失败：{{error}}",
+    "renameDatabaseFailed": "重命名数据库失败：{{error}}",
+    "savedQueryGone": "该已保存的查询已不存在",
+    "unpinned": "已从侧边栏取消固定"
+  },
+  "tree": {
+    "collectionsLabel": "Collections",
+    "databaseAriaLabel": "数据库 {{name}}",
+    "empty": "空",
+    "gridfsBucketsLabel": "GridFS Buckets",
+    "indexesLabel": "索引",
+    "newBucketAriaLabel": "新建 Bucket",
+    "newBucketInline": "新建 Bucket…",
+    "newCollectionAriaLabel": "新建 Collection",
+    "offlineSuffix": " · 离线",
+    "rootLabel": "根目录",
+    "systemLabel": "System",
+    "timeseriesAriaLabel": "时间序列 Collection",
+    "viewsLabel": "Views"
+  }
+}

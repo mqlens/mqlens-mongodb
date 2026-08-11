@@ -325,6 +325,7 @@ const EXEMPT_HITS: Record<string, string[]> = {
     // cannot read the current UI language cannot find their own.
     "label: 'English'",
     "label: 'Deutsch'",
+    "label: '简体中文'",
   ],
   'src/lib/connectionFolders.ts': [
     // Default folder NAME, persisted to localStorage under a stable id and

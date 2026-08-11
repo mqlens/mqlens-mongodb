@@ -1,0 +1,402 @@
+{
+  "copyToDialog": {
+    "actions": {
+      "cancel": "取消",
+      "newDatabase": "➕ 新建数据库…",
+      "startCopy": "开始复制"
+    },
+    "errors": {
+      "selfOverwrite": "源和目标是同一个 Collection —— 不允许复制。"
+    },
+    "hints": {
+      "newDatabaseWillBeCreated": "目标端不存在 —— 将会自动创建。"
+    },
+    "labels": {
+      "conflictModeMerge": "合并 —— 保留已有文档并添加新文档（跳过重复的 _id）",
+      "conflictModeOverwrite": "覆盖 —— 删除并替换目标 Collection",
+      "conflictModeSkip": "跳过 —— 不改动目标端已有的文档",
+      "conflictResolution": "冲突处理方式",
+      "filter": "筛选条件（EJSON，可选）",
+      "includeIndexes": "包含索引",
+      "includeViews": "包含 View",
+      "options": "选项",
+      "overwriteConfirm": "我了解这会替换目标 Collection",
+      "targetCollection": "目标 Collection",
+      "targetConnection": "目标连接",
+      "targetDatabase": "目标数据库"
+    },
+    "placeholders": {
+      "collectionName": "Collection 名称…",
+      "newDatabaseName": "新数据库名称…",
+      "selectConnection": "选择连接…",
+      "selectDatabase": "选择数据库…"
+    },
+    "title": {
+      "collection": "复制 Collection“{{name}}”",
+      "collections_other": "复制 {{count}} 个 Collection",
+      "database": "复制数据库“{{name}}”"
+    }
+  },
+  "dumpView": {
+    "actions": {
+      "chooseFile": "选择文件…",
+      "chooseFolder": "选择文件夹…",
+      "installTools": "安装工具…",
+      "openSettings": "打开设置",
+      "runDump": "开始备份导出",
+      "starting": "正在启动…",
+      "viewTasks": "查看任务"
+    },
+    "destination": {
+      "hint": "导出为一个包含 BSON 文件的文件夹，或单个压缩归档文件。",
+      "optionArchive": "单个归档文件",
+      "optionFolder": "文件夹（多个文件）",
+      "title": "目标位置"
+    },
+    "errors": {
+      "invalidQueryJson": "不是有效的 JSON。mongodump 只接受规范扩展 JSON。",
+      "toolMissing": "未找到 mongodump。请安装 MongoDB Database Tools 并在设置中配置路径。"
+    },
+    "footer": {
+      "backgroundNote": "备份导出在后台运行。可在 <2>任务</2> 标签页中查看进度。"
+    },
+    "hints": {
+      "queryFilterEjson": "mongodump 需要规范扩展 JSON —— 键名需加引号，并使用带类型的包装形式，例如 {{oidExample}} 或 {{dateExample}}。"
+    },
+    "labels": {
+      "collection": "Collection",
+      "database": "数据库",
+      "queryFilter": "查询筛选条件（可选）",
+      "selectCollection": "选择 Collection…",
+      "selectDatabase": "选择数据库…"
+    },
+    "options": {
+      "forceTableScan": "强制全表扫描（忽略索引）",
+      "gzip": "使用 Gzip 压缩输出",
+      "hint": "会作为命令行参数传递给 mongodump。",
+      "oplog": "包含 oplog 以支持时间点恢复（仅限整个服务器范围）",
+      "title": "选项",
+      "usersAndRoles": "包含用户和角色（仅限数据库范围）"
+    },
+    "run": {
+      "hint": "在后台运行，并在任务标签页中显示进度。",
+      "title": "运行"
+    },
+    "scope": {
+      "hint": "备份整个服务器、单个数据库或某一个 Collection。",
+      "optionCollection": "Collection",
+      "optionDatabase": "数据库",
+      "optionServer": "整个服务器",
+      "title": "范围"
+    },
+    "status": {
+      "detecting": "正在检测 {{tools}}…"
+    },
+    "title": "备份导出"
+  },
+  "exportView": {
+    "actions": {
+      "copyToClipboard": "复制到剪贴板",
+      "count": "统计数量",
+      "counting": "正在统计…",
+      "deselectAll": "全部取消选择",
+      "exportFormat": "导出 {{format}}",
+      "preview": "预览",
+      "previewing": "正在预览…",
+      "scanFields": "扫描字段",
+      "scanning": "正在扫描…",
+      "selectAll": "全选",
+      "viewTasks": "查看任务"
+    },
+    "current": {
+      "loadedCount_other": "已加载 {{count}} 个文档",
+      "title": "当前结果"
+    },
+    "errors": {
+      "delimiterAscii": "分隔符必须是单个 ASCII 字符。",
+      "invalidJson": "JSON 无效",
+      "mustBeObject": "必须是一个 JSON 对象",
+      "pipelineMustBeArray": "管道必须是由阶段组成的 JSON 数组"
+    },
+    "fields": {
+      "filterPlaceholder": "筛选字段",
+      "hint": "扫描部分文档样本，以选择要导出的字段。",
+      "noneToScan": "没有可扫描的文档 —— 将导出全部字段。",
+      "projectionDisabled": "已禁用投影 —— 改用字段选择",
+      "selectedCount": "已选 {{selected}} / {{total}}",
+      "title": "字段"
+    },
+    "filtered": {
+      "countFailed": "统计失败",
+      "countNotRun": "尚未统计",
+      "hintAggregate": "编辑聚合管道，然后导出全部结果文档。",
+      "hintFind": "编辑查询（沿用文档视图中的查询），然后导出全部匹配项。",
+      "matchCount_other": "{{formatted}} 个匹配的文档",
+      "pipeline": "管道",
+      "title": "筛选后的结果"
+    },
+    "footer": {
+      "backgroundNote": "筛选导出和整个 Collection 的导出都在后台运行。可在 <2>任务</2> 标签页中查看进度。"
+    },
+    "full": {
+      "hint": "在后台运行，直接写入磁盘。",
+      "title": "整个 Collection"
+    },
+    "labels": {
+      "alignment": "对齐方式",
+      "autoSizeColumns": "自动调整列宽",
+      "boldHeaderRow": "表头行加粗",
+      "canonical": "规范模式",
+      "canonicalHint": "与 mongoexport 兼容，类型无损",
+      "center": "居中",
+      "comma": "逗号（,）",
+      "crlf": "CRLF (\\r\\n)",
+      "custom": "自定义…",
+      "customDelimiter": "自定义分隔符",
+      "delimiter": "分隔符",
+      "format": "格式",
+      "includeHeaders": "包含列标题",
+      "jsonMode": "JSON 模式",
+      "leaveNullEmpty": "空值字段留空",
+      "left": "左对齐",
+      "lf": "LF (\\n)",
+      "limit": "限制",
+      "quote": "引号",
+      "recordSeparator": "记录分隔符",
+      "relaxed": "宽松模式",
+      "relaxedHint": "便于阅读",
+      "right": "右对齐",
+      "semicolon": "分号（;）",
+      "skip": "跳过",
+      "tab": "制表符"
+    },
+    "preview": {
+      "failed": "预览失败：{{error}}",
+      "hint": "在正式运行前查看导出结果的样本。",
+      "title": "预览"
+    },
+    "title": "导出"
+  },
+  "generateView": {
+    "actions": {
+      "addArray": "添加数组",
+      "addField": "添加字段",
+      "addNestedObject": "添加嵌套对象",
+      "addValue": "添加值",
+      "cancel": "取消",
+      "generate": "生成",
+      "refresh": "刷新",
+      "starting": "正在启动…",
+      "viewInTasks": "在任务中查看"
+    },
+    "confirm": {
+      "insertMessage_other": "向 {{namespace}} 插入 {{count}} 个文档。",
+      "insertMessageExistingClause": " 这些文档会追加到现有的 {{existing}} 个文档之后。",
+      "title": "生成文档",
+      "typedMessage": "请输入要插入的确切文档数量。",
+      "typedTitle": "确认数量",
+      "typedValidateError": "请输入确切数量以确认"
+    },
+    "errors": {
+      "countNotWholeNumber": "数量必须是整数",
+      "countOutOfRange": "数量必须介于 1 和 {{max}} 之间",
+      "countRequired": "请输入数量",
+      "emptyPickFooter": "“{{name}}”的 $pick 至少需要一个值。",
+      "emptyPickPreview": "\"{{name}}\" 的 $pick 至少需要一个值。",
+      "invalidJson": "JSON 无效：{{message}}",
+      "pickListEmpty": "请至少添加一个值 —— $pick 不能为空。",
+      "seedNegative": "随机种子不能为负数",
+      "seedNotWholeNumber": "随机种子必须是整数",
+      "syntaxError": "语法错误"
+    },
+    "hints": {
+      "chooseTargetCollection": "请先选择目标 Collection。",
+      "customTemplateNotice": "自定义模板 —— 正在以原始 JSON 编辑。修正或简化后即可切回构建器。",
+      "runInProgress": "此标签页已有一个生成任务正在进行。"
+    },
+    "kindLabels": {
+      "array": "数组…（{{token}}）",
+      "bool": "布尔值（{{token}}）",
+      "date": "日期（{{token}}）",
+      "email": "电子邮箱（{{token}}）",
+      "firstName": "名（{{token}}）",
+      "float": "浮点数（{{token}}）",
+      "int": "整数（{{token}}）",
+      "lastName": "姓（{{token}}）",
+      "literal": "字面值",
+      "lorem": "随机文本（{{token}}）",
+      "name": "姓名（{{token}}）",
+      "object": "嵌套对象",
+      "objectId": "ObjectId（{{token}}）",
+      "pick": "从列表中选取（{{token}}）",
+      "uuid": "UUID（{{token}}）"
+    },
+    "labels": {
+      "arrayItem": "数组元素",
+      "arrayItemInline": "数组元素",
+      "count": "数量",
+      "days": "天",
+      "decimals": "小数位",
+      "fieldNamePlaceholder": "字段名",
+      "fromIsoPlaceholder": "起始（ISO）",
+      "loadingTemplate": "正在加载模板…",
+      "max": "最大值",
+      "min": "最小值",
+      "past": "过去",
+      "pastDaysMode": "过去 N 天",
+      "previewTitle_other": "预览（{{count}} 个文档）",
+      "rangeMode": "起始 / 结束",
+      "seedOptional": "随机种子（可选）",
+      "seedPlaceholder": "随机",
+      "targetCollection": "目标 Collection",
+      "targetCollectionPlaceholder": "Collection 名称",
+      "title": "生成数据：{{namespace}}",
+      "toIsoPlaceholder": "结束（ISO）",
+      "words": "词数"
+    },
+    "tabs": {
+      "builder": "构建器",
+      "raw": "原始 JSON"
+    },
+    "tooltips": {
+      "arrayMaxLength": "数组最大长度",
+      "arrayMinLength": "数组最小长度",
+      "dateMode": "日期模式",
+      "decimals": "小数位数",
+      "fieldName": "字段名",
+      "from": "起始",
+      "literalValue": "字面值",
+      "maximum": "最大值",
+      "minimum": "最小值",
+      "pastDays": "过去天数",
+      "pickValue": "选取值 {{n}}",
+      "removeField": "删除字段",
+      "removePickValue": "删除选取值 {{n}}",
+      "to": "结束",
+      "words": "词数"
+    }
+  },
+  "importView": {
+    "actions": {
+      "chooseFile": "选择文件…",
+      "import": "导入",
+      "viewTasks": "查看任务"
+    },
+    "columnTypes": {
+      "auto": "自动",
+      "boolean": "布尔值",
+      "date": "日期",
+      "json": "json",
+      "number": "数字",
+      "string": "字符串"
+    },
+    "csv": {
+      "comma": "逗号（,）",
+      "custom": "自定义…",
+      "customDelimiter": "自定义分隔符",
+      "delimiter": "分隔符",
+      "delimiterAscii": "分隔符必须是单个 ASCII 字符。",
+      "hasHeaders": "第一行是列标题",
+      "quote": "引号",
+      "quoteAscii": "引号必须是单个 ASCII 字符",
+      "semicolon": "分号（;）",
+      "skipLines": "跳过行数",
+      "tab": "制表符"
+    },
+    "duplicates": {
+      "abort": "若 _id 已存在则中止",
+      "hint": "遇到 _id 相同的已有文档时该如何处理？",
+      "skip": "跳过重复项（仅插入新文档）",
+      "title": "重复项处理",
+      "update": "按 _id 更新已有文档"
+    },
+    "footer": {
+      "backgroundNote": "导入在后台运行。可在 <2>任务</2> 标签页中查看进度。"
+    },
+    "labels": {
+      "format": "格式"
+    },
+    "preview": {
+      "captionChoose": "请选择要预览的数据源",
+      "captionCount_other": "正在预览前 {{count}} 个文档",
+      "captionCountWithTotal_other": "正在预览约 {{total}} 个文档中的前 {{count}} 个",
+      "title": "预览"
+    },
+    "run": {
+      "hint": "在后台运行，并在任务标签页中显示进度。",
+      "title": "运行"
+    },
+    "source": {
+      "file": "文件",
+      "fileFilterName": "数据",
+      "hint": "选择要导入的文件，或直接粘贴文档。",
+      "paste": "粘贴",
+      "pasteCapNote": "粘贴内容上限为 2 MB —— 请另存为文件后再导入",
+      "title": "数据源"
+    },
+    "title": "导入"
+  },
+  "restoreView": {
+    "actions": {
+      "cancel": "取消",
+      "chooseArchive": "选择归档文件…",
+      "chooseFolder": "选择文件夹…",
+      "dropAndRestore": "删除并恢复",
+      "installTools": "安装工具…",
+      "openSettings": "打开设置",
+      "run": "恢复",
+      "starting": "正在启动…",
+      "viewTasks": "查看任务"
+    },
+    "confirm": {
+      "dropWarning": "恢复前将删除以下命名空间：",
+      "entireArchive": "（整个归档）"
+    },
+    "footer": {
+      "backgroundNote": "恢复在后台运行。可在 <2>任务</2> 标签页中查看进度。"
+    },
+    "labels": {
+      "collectionFilter": "Collection 筛选",
+      "databaseFilter": "数据库筛选"
+    },
+    "options": {
+      "flags": {
+        "bypassDocumentValidation": "跳过文档校验",
+        "drop": "恢复前删除已有的 Collection",
+        "keepIndexVersion": "保留原始索引版本",
+        "maintainInsertionOrder": "保持文档插入顺序",
+        "noIndexRestore": "不恢复索引",
+        "noOptionsRestore": "不恢复 Collection 选项",
+        "restoreDbUsersAndRoles": "恢复用户和角色",
+        "stopOnError": "出错时停止"
+      },
+      "hint": "mongorestore 的命令行参数。",
+      "oplogReplay": "重放 oplog 以实现时间点一致性（仅限完整备份）",
+      "title": "选项"
+    },
+    "rename": {
+      "placeholder": "新名称（或 db.name）",
+      "title": "只填名称会恢复到同一个数据库；使用 db.name 可恢复到其他数据库。"
+    },
+    "run": {
+      "hint": "在后台运行，并在任务标签页中显示进度。",
+      "title": "运行"
+    },
+    "source": {
+      "archive": "归档文件",
+      "archiveFilterHint": "两项都留空将恢复归档中的全部内容，也可筛选到单个数据库或命名空间。",
+      "browseError": "浏览备份文件夹失败：{{error}}",
+      "folder": "文件夹",
+      "gzipLabel": "gzip 压缩",
+      "hint": "从备份文件夹或单个归档文件恢复。",
+      "title": "数据源"
+    },
+    "title": "恢复",
+    "tools": {
+      "missing": "未找到 mongorestore。请在设置中配置 MongoDB Database Tools 目录。"
+    },
+    "tree": {
+      "emptySelectionHint": "请至少选择一个要恢复的 Collection。"
+    }
+  }
+}

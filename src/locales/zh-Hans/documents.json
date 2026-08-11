@@ -1,0 +1,382 @@
+{
+  "chartView": {
+    "actions": {
+      "exportPng": "PNG"
+    },
+    "chartTypes": {
+      "area": "面积图",
+      "bar": "柱状图",
+      "line": "折线图",
+      "pie": "饼图",
+      "scatter": "散点图"
+    },
+    "empty": {
+      "noNumericField": "这些结果中没有可用于绘图的数值字段。",
+      "noResults": "运行查询后即可对结果绘图。",
+      "pickNumericField": "请选择一个数值字段来绘图。"
+    },
+    "footer": {
+      "charting_other": "正在为已加载的 {{count}} 个文档绘图 —— 提高每页条数可绘制更多。",
+      "truncatedNote_other": "（另有 {{count}} 个{{unit}}未显示）",
+      "unitCategories": "分类",
+      "unitPoints": "数据点"
+    },
+    "labels": {
+      "field": "字段",
+      "measure": "度量",
+      "type": "类型",
+      "xAxis": "X 轴",
+      "yAxis": "Y 轴"
+    },
+    "measures": {
+      "avg": "平均值",
+      "count": "计数",
+      "max": "最大值",
+      "min": "最小值",
+      "sum": "求和"
+    },
+    "tabs": {
+      "aggregate": "聚合",
+      "raw": "原始数据"
+    },
+    "tooltips": {
+      "chartType": "图表类型",
+      "exportPng": "导出 PNG",
+      "measureField": "度量字段"
+    }
+  },
+  "dataGrid": {
+    "actions": {
+      "cancelCompareSelection": "取消对比选择",
+      "compareWith": "与…对比",
+      "compareWithReplaceSelection": "与…对比（替换所选）",
+      "compareWithSelected": "与所选项对比",
+      "copied": "已复制！",
+      "copy": "复制",
+      "copyDocumentJson": "复制文档（JSON）",
+      "copyFieldName": "复制字段名",
+      "copyPlan": "复制执行计划",
+      "copyValue": "复制值",
+      "createIndex": "创建索引",
+      "deleteDocument": "删除文档",
+      "deleteMany": "批量删除",
+      "duplicateDocument": "复制文档",
+      "editDocument": "编辑文档",
+      "insert": "插入",
+      "next": "下一页",
+      "prev": "上一页",
+      "schema": "结构",
+      "updateMany": "批量更新"
+    },
+    "dialogs": {
+      "bulkAllWarning_other": "\n\n⚠ 此操作会影响该 Collection 中的全部 {{count}} 个文档。",
+      "copyErrorMessage": "复制错误信息",
+      "deleteDocument": {
+        "body": "要删除此文档吗？此操作无法撤销。",
+        "confirmLabel": "删除"
+      },
+      "deleteMany": {
+        "body_other": "删除匹配以下条件的 {{count}} 个文档：\n{{filter}}",
+        "confirmLabel": "删除",
+        "title": "批量删除"
+      },
+      "typeCollectionNameSuffix": "\n\n请输入 Collection 名称以确认。",
+      "updateMany": {
+        "body_other": "将此更新应用到匹配以下条件的 {{count}} 个文档：\n{{filter}}",
+        "confirmLabel": "更新",
+        "promptMessage": "更新内容（使用操作符，例如 {\"$set\": {...}}）：",
+        "title": "批量更新",
+        "validation": {
+          "invalidJson": "JSON 无效",
+          "mustBeObject": "更新内容必须是一个 JSON 对象",
+          "mustUseOperators": "更新内容必须使用 $set 等操作符"
+        }
+      }
+    },
+    "empty": {
+      "explainHint": "要生成执行计划，请打开查询编辑器工具栏中 <strong>运行</strong> 旁边的下拉菜单，选择 <strong>运行 Explain</strong>。",
+      "noDocuments": "没有找到符合条件的文档。",
+      "noExplainPlan": "尚未生成执行计划。",
+      "noQueryRun": "尚未运行任何查询。"
+    },
+    "explain": {
+      "labels": {
+        "collectionFallback": "Collection",
+        "collectionNode": "Collection\n{{namespace}}",
+        "documentsFromCollection": "来自 Collection 的文档",
+        "indexNode": "索引：{{indexName}}"
+      },
+      "stage": {
+        "collectionScan": "全 Collection 扫描",
+        "fetchDocuments": "获取文档",
+        "indexIntersection": "索引交集",
+        "indexScan": "索引扫描",
+        "limit": "限制条数",
+        "orMerge": "OR 合并",
+        "projection": "投影",
+        "result": "结果",
+        "skip": "跳过",
+        "sort": "排序"
+      }
+    },
+    "labels": {
+      "actions": "操作",
+      "docsCountEstimated_other": "约 {{count}} 个文档",
+      "docsCountExact_other": "{{count}} 个文档",
+      "elements_other": "[ {{count}} 个元素 ]",
+      "fields_other": "{ {{count}} 个字段 }",
+      "generatingQueryPlan": "正在生成查询计划…",
+      "key": "键",
+      "page": "第 {{page}} 页",
+      "pageOf": "第 {{page}} / {{totalPages}} 页",
+      "perPageOption": "每页 {{size}} 条",
+      "queryPlanGenerated": "查询计划已生成",
+      "showingEmpty": "显示第 {{from}} 条",
+      "showingRange": "显示第 {{from}}–{{to}} 条",
+      "streamingDocuments": "正在异步加载文档…",
+      "type": "类型",
+      "value": "值"
+    },
+    "tabs": {
+      "explainPlan": "执行计划",
+      "queryCode": "查询代码",
+      "results": "结果"
+    },
+    "tooltips": {
+      "analyzeSchema": "分析该 Collection 的字段结构",
+      "codeLanguage": "代码语言",
+      "collapse": "折叠",
+      "copied": "已复制",
+      "copyDocument": "复制文档",
+      "copyExplainPlan": "复制执行计划",
+      "copyQueryCode": "复制查询代码",
+      "deleteDocument": "删除文档",
+      "deleteMany": "删除所有匹配当前筛选条件的文档",
+      "editDocument": "编辑文档",
+      "expand": "展开",
+      "insert": "插入新文档",
+      "readOnly": "该连接为只读",
+      "resizeColumn": "调整“{{label}}”列宽",
+      "updateMany": "更新所有匹配当前筛选条件的文档"
+    },
+    "viewModes": {
+      "chart": "图表",
+      "json": "JSON",
+      "rawJson": "原始 JSON",
+      "table": "表格",
+      "tree": "树形",
+      "visualTree": "可视化树"
+    }
+  },
+  "diffModal": {
+    "errors": {
+      "tooLarge_other": "此差异过大，无法显示（{{count}} 行）"
+    },
+    "labels": {
+      "documentA": "文档 A",
+      "documentB": "文档 B"
+    },
+    "summary": {
+      "added_other": "新增 {{count}} 处",
+      "changed_other": "修改 {{count}} 处",
+      "removed_other": "删除 {{count}} 处"
+    },
+    "title": "对比文档",
+    "tooltips": {
+      "closeModal": "关闭弹窗"
+    }
+  },
+  "documentViewer": {
+    "actions": {
+      "addProjection": "添加投影",
+      "addRule": "添加规则",
+      "addSortField": "添加排序字段",
+      "addStage": "添加阶段",
+      "aiHelper": "AI 助手",
+      "apply": "应用",
+      "clearAll": "全部清除",
+      "clearDefault": "清除默认",
+      "export": "导出",
+      "import": "导入",
+      "listShortcut": "列表",
+      "loadQuery": "加载查询",
+      "openInMongosh": "在 mongosh 中打开",
+      "openQueryIn": "在其他工具中打开查询…",
+      "pinAsDefault": "将当前查询设为默认",
+      "queryHistory": "查询历史",
+      "run": "运行",
+      "runExplain": "运行 Explain",
+      "runQuery": "运行查询",
+      "saveAndFavorite": "保存并加入收藏",
+      "saveAsNew": "另存为新查询…",
+      "saveQuery": "保存查询",
+      "setDefaultQuery": "设置默认查询",
+      "visualQueryBuilder": "可视化查询构建器"
+    },
+    "breadcrumbs": {
+      "authenticatedAs": "已以 {{user}} 身份认证",
+      "noAuth": "未认证",
+      "noAuthentication": "该连接未启用身份验证"
+    },
+    "builder": {
+      "ascOption": "升序（{{n}}）",
+      "clickToAddProjection": "+ 点击添加投影条件",
+      "clickToAddQueryRules": "+ 点击添加查询规则",
+      "clickToAddSort": "+ 点击添加排序条件",
+      "customField": "自定义字段…",
+      "descOption": "降序（{{n}}）",
+      "excludeOption": "排除（{{n}}）",
+      "fieldPathPlaceholder": "field.path",
+      "includeOption": "包含（{{n}}）",
+      "matchAll": "全部满足（{{op}}）",
+      "matchAny": "任一满足（{{op}}）",
+      "operators": {
+        "exists": "存在",
+        "in": "属于",
+        "notIn": "不属于",
+        "regex": "正则"
+      },
+      "projection": "投影",
+      "query": "查询",
+      "sort": "排序",
+      "valuePlaceholder": "值"
+    },
+    "dialogs": {
+      "runAggregate": {
+        "messageUnknownTarget": "此管道会在受保护的连接上通过 $out/$merge 写入某个 Collection，但无法自动确定目标。\n\n请输入 CONFIRM 以继续。",
+        "messageWithTarget": "此管道会在受保护的连接上写入“{{target}}”（$out/$merge）。\n\n请输入目标 Collection 名称以确认。",
+        "title": "运行聚合"
+      },
+      "saveQuery": {
+        "message": "请输入此查询的名称：",
+        "nameRequired": "请输入名称",
+        "placeholder": "查询名称",
+        "title": "保存查询"
+      }
+    },
+    "empty": {
+      "noHistory": "暂无历史记录",
+      "noSavedQueries": "暂无已保存的查询"
+    },
+    "errors": {
+      "invalidJsonSyntax": "JSON 语法无效：{{message}}",
+      "invalidQuery": "查询无效",
+      "queryMustBeObject": "查询必须是一个对象"
+    },
+    "history": {
+      "aggregateSummary_other": "聚合 · {{count}} 个阶段",
+      "findSummary": "查询 · {{filter}}"
+    },
+    "pipeline": {
+      "stageCount_other": "{{count}} 个阶段",
+      "stageGroups": {
+        "arraysJoins": "数组与联接",
+        "filtering": "筛选与整形",
+        "geospatial": "地理空间",
+        "grouping": "分组与聚合",
+        "ordering": "排序与限制",
+        "sourcesOutput": "数据源与输出",
+        "windows": "窗口与时间序列"
+      }
+    },
+    "tabs": {
+      "aggregation": "聚合",
+      "find": "Find"
+    },
+    "tooltips": {
+      "addToFavorites": "添加到收藏",
+      "closePanel": "关闭面板",
+      "collapseStage": "折叠第 {{n}} 个阶段",
+      "deleteSavedQuery": "删除已保存的查询",
+      "disableStage": "停用第 {{n}} 个阶段",
+      "enableStage": "启用第 {{n}} 个阶段",
+      "executeQuery": "执行查询（{{shortcut}}）",
+      "expandStage": "展开第 {{n}} 个阶段",
+      "importDocuments": "从文件导入文档",
+      "moveStageDown": "将第 {{n}} 个阶段下移",
+      "moveStageUp": "将第 {{n}} 个阶段上移",
+      "openExportWorkspace": "打开导出工作区",
+      "redoPipelineChange": "重做管道更改",
+      "removeFromFavorites": "从收藏中移除",
+      "removeRule": "删除规则",
+      "removeStage": "删除第 {{n}} 个阶段",
+      "runDisabled": "请先修正查询语法再运行",
+      "runPipelineToStage": "运行管道至第 {{n}} 个阶段",
+      "undoPipelineChange": "撤销管道更改"
+    }
+  },
+  "editModal": {
+    "actions": {
+      "cancel": "取消",
+      "insert": "插入",
+      "saveChanges": "保存更改"
+    },
+    "errors": {
+      "empty": "文档为空。",
+      "invalid": "文档无效：{{message}}",
+      "mustBeObject": "文档必须是一个对象（例如 { \"field\": value }）。",
+      "noId": "无法更新：该文档没有 _id。",
+      "syntaxError": "语法错误"
+    },
+    "hints": {
+      "shellTypes": "支持 Shell 类型（例如 {{example}}）。编辑会替换整个文档。"
+    },
+    "labels": {
+      "document": "文档"
+    },
+    "title": {
+      "edit": "编辑文档",
+      "insert": "插入文档"
+    }
+  },
+  "errors": {
+    "loadingDataset": "加载数据集出错：{{detail}}"
+  },
+  "findQueryBar": {
+    "errors": {
+      "invalidJson": "JSON 无效"
+    },
+    "labels": {
+      "limit": "限制",
+      "options": "选项",
+      "projection": "投影",
+      "query": "查询",
+      "skip": "跳过",
+      "sort": "排序"
+    },
+    "tooltips": {
+      "clearFilter": "清除筛选条件",
+      "clearProjection": "清除投影",
+      "clearSort": "清除排序",
+      "fewerOptions": "收起选项",
+      "hideOptions": "隐藏投影、排序、跳过和限制",
+      "moreOptions": "更多选项",
+      "optionsSet": "已设置投影、排序、跳过或限制",
+      "quickSortDirection": "快速切换排序方向",
+      "resetLimit": "重置限制",
+      "resetSkip": "重置跳过",
+      "showOptions": "显示投影、排序、跳过和限制"
+    }
+  },
+  "schemaView": {
+    "empty": {
+      "title": "该 Collection 为空 —— 没有可分析的内容。"
+    },
+    "labels": {
+      "analyzing": "正在分析结构…",
+      "coverage": "覆盖率",
+      "field": "字段",
+      "fieldsCount_other": "{{count}} 个字段",
+      "planned": "计划中",
+      "sampledSummary": "已采样 {{sampled}} 个文档 · {{fields}} 个字段",
+      "schemaPrefix": "结构：",
+      "types": "类型",
+      "validationComingSoonPrefix": "Collection 校验规则查看器即将推出（#93）。该标签页将显示",
+      "validationComingSoonSuffix": "以及 {{databaseName}}.{{collectionName}} 的校验规则。"
+    },
+    "tabs": {
+      "fieldAnalysis": "字段分析",
+      "validationRules": "校验规则"
+    }
+  }
+}

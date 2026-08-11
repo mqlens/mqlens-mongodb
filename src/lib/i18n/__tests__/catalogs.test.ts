@@ -63,6 +63,16 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'shell:commandPalette.buckets.collections.label', // Collections
   'transfer:dumpView.labels.collection', // Collection
   'transfer:dumpView.scope.optionCollection', // Collection
+  // Identical in Chinese, where German happened to differ. Proper names,
+  // credential field names from another vendor's API, and format
+  // identifiers — none of them translate.
+  'connections:auth.passLabelAws', // Secret Access Key
+  'connections:auth.userLabelAws', // Access Key ID
+  'connections:filePicker.jsonStudio3tFilter', // JSON / Studio 3T URI
+  'connections:ssh.authAgent', // SSH Agent
+  'shell:mongoShell.toolbar.aiToggleLabel', // AI
+  'sidebar:tree.gridfsBucketsLabel', // GridFS Buckets
+  'transfer:importView.columnTypes.json', // json
   'settings:updates.tabLabel', // Updates
   'connections:connectionMode.normal.label', // Normal
   'connections:filePicker.textFilter', // Text
