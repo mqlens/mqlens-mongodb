@@ -69,47 +69,47 @@
     "noResults": "无结果",
     "paletteActions": {
       "analyzeSchema": {
-        "keywords": "字段 类型 fields types",
+        "keywords": "字段 类型 fields types analyze schema",
         "title": "分析结构"
       },
       "checkUpdates": {
-        "keywords": "版本 升级 发布 version upgrade release",
+        "keywords": "版本 升级 发布 version upgrade release check updates",
         "title": "检查更新"
       },
       "closeTab": {
-        "keywords": "标签页 tab",
+        "keywords": "标签页 tab close",
         "title": "关闭标签页"
       },
       "densityCompact": {
-        "keywords": "布局 间距 紧凑 layout spacing dense",
+        "keywords": "布局 间距 紧凑 layout spacing dense density compact",
         "title": "密度：紧凑"
       },
       "densityCozy": {
-        "keywords": "布局 间距 layout spacing",
+        "keywords": "布局 间距 layout spacing density cozy",
         "title": "密度：适中"
       },
       "densityRoomy": {
-        "keywords": "布局 间距 layout spacing",
+        "keywords": "布局 间距 layout spacing density roomy",
         "title": "密度：宽松"
       },
       "exportCollection": {
-        "keywords": "下载 导出 json csv download import",
+        "keywords": "下载 导出 json csv download import export",
         "title": "导出 Collection…"
       },
       "focusNextPane": {
-        "keywords": "工作区 窗格 布局 切换 workspace pane layout switch",
+        "keywords": "工作区 窗格 布局 切换 workspace pane layout switch focus next",
         "title": "聚焦下一个窗格"
       },
       "manageUsers": {
-        "keywords": "用户 角色 权限 认证 users roles access permissions admin",
+        "keywords": "用户 角色 权限 认证 users roles access permissions admin manage authentication",
         "title": "管理用户：{{name}}"
       },
       "newConnection": {
-        "keywords": "连接 数据库 添加 服务器 connect database add server",
+        "keywords": "连接 数据库 添加 服务器 connect database add server connection",
         "title": "新建连接…"
       },
       "nextTab": {
-        "keywords": "标签页 切换 tab switch",
+        "keywords": "标签页 切换 tab switch next",
         "title": "下一个标签页"
       },
       "openMonitoring": {
@@ -117,35 +117,35 @@
         "title": "打开监控：{{name}}"
       },
       "openQuickstart": {
-        "keywords": "欢迎 首页 帮助 welcome home help",
+        "keywords": "欢迎 首页 帮助 welcome home help quick start",
         "title": "打开快速开始"
       },
       "openSettings": {
-        "keywords": "偏好 配置 密度 preferences config density",
+        "keywords": "偏好 配置 密度 preferences config density settings",
         "title": "打开设置"
       },
       "openShell": {
-        "keywords": "终端 脚本 terminal mongosh script",
+        "keywords": "终端 脚本 terminal mongosh script shell",
         "title": "打开 mongosh 终端"
       },
       "prevTab": {
-        "keywords": "标签页 切换 tab switch",
+        "keywords": "标签页 切换 tab switch previous",
         "title": "上一个标签页"
       },
       "refreshPaletteIndex": {
-        "keywords": "重新加载 数据库 命名空间 缓存 reload databases collections namespaces cache stale",
+        "keywords": "重新加载 数据库 命名空间 缓存 reload databases collections namespaces cache stale refresh command palette index",
         "title": "刷新命令面板索引"
       },
       "splitDown": {
-        "keywords": "工作区 窗格 布局 workspace pane layout",
+        "keywords": "工作区 窗格 布局 workspace pane layout split down",
         "title": "向下拆分"
       },
       "splitRight": {
-        "keywords": "工作区 窗格 布局 workspace pane layout",
+        "keywords": "工作区 窗格 布局 workspace pane layout split right",
         "title": "向右拆分"
       },
       "toggleTheme": {
-        "keywords": "外观 配色 模式 appearance color mode",
+        "keywords": "外观 配色 模式 appearance color mode toggle light dark theme",
         "title": "切换浅色/深色主题"
       }
     },

@@ -40,14 +40,24 @@ def main():
         en = dict(flat(json.load(open(path, encoding='utf-8'))))
         loc = dict(flat(json.load(open(target, encoding='utf-8'))))
         # What this locale should carry: its own plural forms, nothing else.
+        #
+        # Each form is measured against the SAME form in English where English
+        # has it, and against a sibling only where it does not. Mapping every
+        # form onto one English value compares e.g. a `_one` string that names
+        # no count against English's `_other`, which does — and reports a
+        # placeholder mismatch that is not there.
         expected = {}
         for k, v in en.items():
             m = PLURAL.match(k)
-            if m:
-                for c in cats:
-                    expected[f'{m.group(1)}_{c}'] = v
-            else:
+            if not m:
                 expected[k] = v
+                continue
+            base = m.group(1)
+            for c in cats:
+                exact = en.get(f'{base}_{c}')
+                sibling = next((en[f'{base}_{s}'] for s in ('other', 'one', 'many', 'few', 'two', 'zero')
+                                if f'{base}_{s}' in en), v)
+                expected[f'{base}_{c}'] = exact if exact is not None else sibling
         missing = sorted(set(expected) - set(loc))
         extra = sorted(set(loc) - set(expected))
         bad_ph = sorted(k for k in loc if k in expected and placeholders(loc[k]) != placeholders(expected[k]))
@@ -70,8 +80,54 @@ def main():
                 print(f'    {label}: {items[:8]}')
         if identical:
             print(f'    identical to en (allowlist or translate): {identical[:8]}')
+    palette_report(LOCALE)
     print('OK' if ok else 'PROBLEMS')
     return 0 if ok else 1
+
+
+# Words too generic to be worth searching for, or that survive translation
+# anyway.
+PALETTE_STOPWORDS = {'the', 'and', 'for', 'all', 'new', 'open', 'from', 'with',
+                     'into', 'this', 'that', 'tab', 'to', 'in', 'a'}
+
+
+def palette_report(locale):
+    """English search terms a command-palette entry stops answering to.
+
+    The palette scores a query against the title and the keywords, nothing
+    else. Translating a title therefore removes every English word in it from
+    the search index unless the keywords pick it up — so `export` stops finding
+    the export command, in a tool whose users type English command names all
+    day. Informational, not a failure: German predates the convention and does
+    not satisfy it, and retrofitting it is its own change.
+    """
+    en = json.load(open('src/locales/en/shell.json', encoding='utf-8'))['commandPalette']
+    try:
+        loc = json.load(open(f'src/locales/{locale}/shell.json', encoding='utf-8'))['commandPalette']
+    except FileNotFoundError:
+        return
+
+    def terms(text):
+        text = re.sub(r'\{\{[^}]+\}\}', ' ', text)
+        return [w for w in re.findall(r'[a-z0-9]+', text.lower()) if len(w) >= 3]
+
+    lost = {}
+    for key, entry in en['paletteActions'].items():
+        translated = loc['paletteActions'].get(key)
+        if not translated:
+            continue
+        wanted = set(terms(entry['title'])) | set(terms(entry.get('keywords', '')))
+        haystack = (translated['title'] + ' ' + translated.get('keywords', '')).lower()
+        missing = sorted(w for w in wanted if w not in haystack and w not in PALETTE_STOPWORDS)
+        if missing:
+            lost[key] = missing
+    print()
+    if lost:
+        print(f'command palette: {len(lost)} action(s) no longer answer to their English terms')
+        for key, missing in list(lost.items())[:8]:
+            print(f'    {key}: {missing}')
+    else:
+        print('command palette: every English search term still reaches its action')
 
 
 if __name__ == '__main__':
