@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
 import type { Surface } from '../lib/mongoCompletions';
@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import {
   clampQueryBarHeight,
   EDITOR_FONT_BASELINE_PX,
+  growQueryBarHeight,
   QUERY_BAR_HEIGHT_DEFAULT,
   QUERY_BAR_OPTION_HEIGHT,
 } from '@/lib/themes/ui-scale';
@@ -110,7 +111,12 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
   const singleLineLineHeight = Math.round(singleLineFontSize * 1.4);
   // Centre the single line within the full-height box.
   const singleLinePadTop = Math.max(0, Math.round((singleLineRowPx - singleLineLineHeight) / 2));
-  const editorHeight = height ?? (singleLine ? singleLineRowPx : 120);
+  // Only the primary Query field grows: it carries almost all of the typing,
+  // and the compact option rows beside it should not move when it does.
+  const growable = singleLine && large;
+  const [grownHeight, setGrownHeight] = useState<number | null>(null);
+  const editorHeight =
+    height ?? (singleLine ? (growable ? (grownHeight ?? singleLineRowPx) : singleLineRowPx) : 120);
 
   const overflowWidgetsDomNode = getOverflowNode();
 
@@ -133,12 +139,17 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
     glyphMargin: false,
     lineDecorationsWidth: 0,
     lineNumbersMinChars: 0,
-    wordWrap: 'off' as const,
+    // The Query field wraps; the compact option rows stay on one line. Without
+    // this a long filter ran off the right edge with the horizontal scrollbar
+    // hidden, so the only way to read the rest of it was to move the caret.
+    wordWrap: (growable ? 'on' : 'off') as 'on' | 'off',
     scrollbar: {
-      vertical: 'hidden' as const,
+      // Once it has grown as far as it may, it has to be scrollable — a hidden
+      // scrollbar and a fixed height is what made the query unreachable.
+      vertical: (growable ? 'auto' : 'hidden') as 'auto' | 'hidden',
       horizontal: 'hidden' as const,
-      handleMouseWheel: false,
-      verticalScrollbarSize: 0,
+      handleMouseWheel: growable,
+      verticalScrollbarSize: growable ? 8 : 0,
       horizontalScrollbarSize: 0,
     },
     overviewRulerLanes: 0,
@@ -195,6 +206,18 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
             onRunRef.current?.();
           }
         });
+
+        if (growable) {
+          // Follow the wrapped content. `automaticLayout` handles width; height
+          // is ours, because the row it sits in has to grow with it.
+          const followContent = () => {
+            setGrownHeight(
+              growQueryBarHeight(ed.getContentHeight(), singleLineLineHeight, singleLineRowPx)
+            );
+          };
+          ed.onDidContentSizeChange(followContent);
+          followContent();
+        }
 
         if (singleLine) {
           // Let Monaco accept suggestions on Enter when the widget is open; run only when closed.

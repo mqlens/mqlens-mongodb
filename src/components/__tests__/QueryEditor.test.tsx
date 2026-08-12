@@ -33,6 +33,9 @@ vi.mock('../../lib/monacoAppTheme', async (importOriginal) => {
   };
 });
 
+/** What Monaco reports its wrapped content needs. One line by default. */
+let mockContentHeight = 18;
+
 vi.mock('@monaco-editor/react', () => ({
   default: ({
     value,
@@ -61,6 +64,11 @@ vi.mock('@monaco-editor/react', () => ({
             return 'run-on-enter';
           },
           onDidChangeModelContent: vi.fn(),
+          // The Query field follows its wrapped content height (#260). One
+          // line's worth here, so the stock sizing assertions below still
+          // describe a field showing a one-line query.
+          onDidContentSizeChange: vi.fn(),
+          getContentHeight: () => mockContentHeight,
           getValue: () => value,
           setValue: vi.fn(),
           getPosition: () => null,
@@ -179,5 +187,44 @@ describe('QueryEditor — size follows the query bar height setting', () => {
     // Equal space above and below the line within the 58px row.
     expect(padTop.top).toBe(Math.max(0, Math.round((58 - lineHeight) / 2)));
     themeConfig.queryBarHeight = 29;
+  });
+});
+
+describe('QueryEditor — the Query field shows the whole query (#260)', () => {
+  // Reported as "the height of the query section is locked, so a multiline
+  // query is not fully visible": the field did not wrap, its horizontal
+  // scrollbar was hidden, and raising the height setting only made one line
+  // taller. Nothing could bring the rest of the query on screen.
+  beforeEach(() => {
+    themeConfig.queryBarHeight = 29;
+    mockContentHeight = 18;
+  });
+
+  it('wraps the primary Query field', () => {
+    render(<QueryEditor singleLine large surface="filter" value="" onChange={() => {}} fields={[]} />);
+    expect(lastOptions?.wordWrap).toBe('on');
+  });
+
+  it('leaves the compact option rows on one line', () => {
+    // Projection, sort, skip and limit hold short values and must not move
+    // when the query above them grows.
+    render(<QueryEditor singleLine surface="filter" value="" onChange={() => {}} fields={[]} />);
+    expect(lastOptions?.wordWrap).toBe('off');
+  });
+
+  it('grows to fit a query that wraps', () => {
+    mockContentHeight = 18 * 3;
+    render(<QueryEditor singleLine large surface="filter" value="" onChange={() => {}} fields={[]} />);
+    expect(lastHeight as number).toBeGreaterThan(29);
+  });
+
+  it('stops growing, and can be scrolled from there', () => {
+    mockContentHeight = 18 * 200;
+    render(<QueryEditor singleLine large surface="filter" value="" onChange={() => {}} fields={[]} />);
+    const capped = lastHeight as number;
+    expect(capped).toBeLessThan(18 * 200);
+    // A hidden scrollbar over a fixed height is what made the query
+    // unreachable in the first place.
+    expect((lastOptions?.scrollbar as { vertical: string }).vertical).toBe('auto');
   });
 });
