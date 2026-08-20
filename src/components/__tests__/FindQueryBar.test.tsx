@@ -115,13 +115,16 @@ describe('FindQueryBar — configurable Query height (#217)', () => {
   it('sizes the Query row from the setting', () => {
     themeConfig.queryBarHeight = 29;
     renderBar();
-    expect(heightOf('Query')).toBe(`${29 / 13}rem`);
+    const queryLabel = screen.getByText('Query') as HTMLElement;
+    expect(queryLabel.style.minHeight).toBe(`${29 / 13}rem`);
+    expect(queryLabel.style.height).toBe('');
+    expect(queryLabel).toHaveClass('self-stretch');
   });
 
   it('grows only the Query row — option rows stay compact', () => {
     themeConfig.queryBarHeight = 58;
     renderBar();
-    expect(heightOf('Query')).toBe(`${58 / 13}rem`);
+    expect((screen.getByText('Query') as HTMLElement).style.minHeight).toBe(`${58 / 13}rem`);
     // Projection/sort keep the compact height so the whole bar doesn't inflate.
     const compact = `${22.75 / 13}rem`;
     expect(heightOf('Projection')).toBe(compact);
@@ -141,7 +144,7 @@ describe('FindQueryBar — configurable Query height (#217)', () => {
   it('clamps an out-of-range stored value instead of trusting it', () => {
     themeConfig.queryBarHeight = 9999;
     renderBar();
-    expect(heightOf('Query')).toBe(`${64 / 13}rem`);
+    expect((screen.getByText('Query') as HTMLElement).style.minHeight).toBe(`${64 / 13}rem`);
     themeConfig.queryBarHeight = 29;
   });
 });
@@ -163,7 +166,7 @@ describe('FindQueryBar — export view is unaffected by the Query height setting
   it('still sizes the Query label when the field is sized (main query bar)', () => {
     themeConfig.queryBarHeight = 64;
     renderBar({ collapsibleOptions: true });
-    expect(heightOf('Query')).toBe(`${64 / 13}rem`);
+    expect((screen.getByText('Query') as HTMLElement).style.minHeight).toBe(`${64 / 13}rem`);
     themeConfig.queryBarHeight = 29;
   });
 

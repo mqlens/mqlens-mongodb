@@ -121,7 +121,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
   // to the configured height while its input stayed compact.
   const queryRowStyle = collapsibleOptions
     ? {
-        height: `${
+        minHeight: `${
           clampQueryBarHeight(themeCtx?.config.queryBarHeight ?? QUERY_BAR_HEIGHT_DEFAULT) /
           EDITOR_FONT_BASELINE_PX
         }rem`,
@@ -196,7 +196,12 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
     <div className="flex flex-col border-b border-border bg-muted/20">
       <div className="flex w-full border-b border-border">
         <div className={queryColClass(filterInvalid)}>
-          <span className={fieldBadgeClass(filterInvalid)} style={queryRowStyle}>{t('findQueryBar.labels.query')}</span>
+          <span
+            className={cn(fieldBadgeClass(filterInvalid), collapsibleOptions && 'self-stretch')}
+            style={queryRowStyle}
+          >
+            {t('findQueryBar.labels.query')}
+          </span>
           <QueryEditor
             singleLine
             large={collapsibleOptions}

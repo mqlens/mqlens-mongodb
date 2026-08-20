@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 
 type KeyDownHandler = (e: {
   keyCode: number;
@@ -17,6 +17,7 @@ let lastHeight: number | string | undefined;
 let keyDownHandler: KeyDownHandler | undefined;
 let enterRunCommand: (() => void) | undefined;
 let enterRunWhen: string | undefined;
+let firstContentSizeHandler: (() => void) | undefined;
 
 vi.mock('../../lib/monacoMongo', () => ({
   registerMongoCompletionProvider: vi.fn(),
@@ -36,23 +37,25 @@ vi.mock('../../lib/monacoAppTheme', async (importOriginal) => {
 /** What Monaco reports its wrapped content needs. One line by default. */
 let mockContentHeight = 18;
 
-vi.mock('@monaco-editor/react', () => ({
-  default: ({
-    value,
-    onMount,
-    options,
-    height,
-  }: {
-    value: string;
-    options?: Record<string, unknown>;
-    height?: number | string;
-    onMount?: (ed: unknown, monaco: { KeyCode: typeof KeyCode; editor: { defineTheme: () => void; setTheme: () => void } }) => void;
-  }) => {
-    lastOptions = options;
-    lastHeight = height;
-    if (onMount) {
-      onMount(
-        {
+vi.mock('@monaco-editor/react', async () => {
+  const React = await import('react');
+  return {
+    default: ({
+      value,
+      onMount,
+      options,
+      height,
+      wrapperProps,
+    }: {
+      value: string;
+      options?: Record<string, unknown>;
+      height?: number | string;
+      wrapperProps?: Record<string, unknown>;
+      onMount?: (ed: unknown, monaco: { KeyCode: typeof KeyCode; editor: { defineTheme: () => void; setTheme: () => void } }) => void;
+    }) => {
+      lastOptions = options;
+      lastHeight = height;
+      const editorRef = React.useRef({
           onKeyDown: (handler: KeyDownHandler) => {
             keyDownHandler = handler;
           },
@@ -67,7 +70,10 @@ vi.mock('@monaco-editor/react', () => ({
           // The Query field follows its wrapped content height (#260). One
           // line's worth here, so the stock sizing assertions below still
           // describe a field showing a one-line query.
-          onDidContentSizeChange: vi.fn(),
+          onDidContentSizeChange: (handler: () => void) => {
+            firstContentSizeHandler ??= handler;
+            return { dispose: vi.fn() };
+          },
           getContentHeight: () => mockContentHeight,
           getValue: () => value,
           setValue: vi.fn(),
@@ -75,16 +81,25 @@ vi.mock('@monaco-editor/react', () => ({
           setPosition: vi.fn(),
           getModel: () => ({ uri: { toString: () => 'test://model' } }),
           onDidDispose: vi.fn(),
-        },
-        {
-          KeyCode,
-          editor: { defineTheme: vi.fn(), setTheme: vi.fn() },
-        },
+      });
+      React.useEffect(() => {
+        onMount?.(
+          editorRef.current,
+          {
+            KeyCode,
+            editor: { defineTheme: vi.fn(), setTheme: vi.fn() },
+          },
+        );
+      }, []);
+      return (
+        <div
+          data-testid={(wrapperProps?.['data-testid'] as string | undefined) ?? 'monaco'}
+          data-value={value}
+        />
       );
-    }
-    return <div data-testid="monaco" data-value={value} />;
-  },
-}));
+    },
+  };
+});
 
 const themeConfig: Record<string, unknown> = { presetId: 'mqlens-dark', mode: 'dark', fontSize: 13, uiZoom: 1, queryBarHeight: 29 };
 vi.mock('@/hooks/use-theme', () => ({
@@ -115,6 +130,7 @@ describe('QueryEditor', () => {
     keyDownHandler = undefined;
     enterRunCommand = undefined;
     enterRunWhen = undefined;
+    firstContentSizeHandler = undefined;
   });
 
   it('renders a Monaco editor with the given value', () => {
@@ -198,6 +214,7 @@ describe('QueryEditor — the Query field shows the whole query (#260)', () => {
   beforeEach(() => {
     themeConfig.queryBarHeight = 29;
     mockContentHeight = 18;
+    firstContentSizeHandler = undefined;
   });
 
   it('wraps the primary Query field', () => {
@@ -214,8 +231,36 @@ describe('QueryEditor — the Query field shows the whole query (#260)', () => {
 
   it('grows to fit a query that wraps', () => {
     mockContentHeight = 18 * 3;
-    render(<QueryEditor singleLine large surface="filter" value="" onChange={() => {}} fields={[]} />);
+    const { getByTestId } = render(
+      <QueryEditor
+        singleLine
+        large
+        surface="filter"
+        value=""
+        onChange={() => {}}
+        fields={[]}
+        data-testid="query-input"
+      />
+    );
     expect(lastHeight as number).toBeGreaterThan(29);
+    expect(getByTestId('query-input').parentElement).toHaveStyle({ height: `${lastHeight}px` });
+  });
+
+  it('recomputes wrapped height with current appearance metrics', () => {
+    mockContentHeight = 18 * 3;
+    const { rerender } = render(
+      <QueryEditor singleLine large surface="filter" value="" onChange={() => {}} fields={[]} />
+    );
+
+    themeConfig.queryBarHeight = 58;
+    rerender(
+      <QueryEditor singleLine large surface="filter" value="" onChange={() => {}} fields={[]} />
+    );
+    act(() => firstContentSizeHandler?.());
+
+    // At the larger setting the line height is 36px. Monaco's 54px content
+    // therefore occupies two rows, with the new 22px vertical padding retained.
+    expect(lastHeight).toBe(94);
   });
 
   it('stops growing, and can be scrolled from there', () => {
