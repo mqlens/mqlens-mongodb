@@ -158,7 +158,10 @@ describe('FindQueryBar — export view is unaffected by the Query height setting
     themeConfig.queryBarHeight = 64;
     renderBar({ collapsibleOptions: false });
     const compact = `${22.75 / 13}rem`;
-    expect(heightOf('Query')).toBe(compact);
+    const queryLabel = screen.getByText('Query') as HTMLElement;
+    expect(queryLabel.style.minHeight).toBe(compact);
+    expect(queryLabel.style.height).toBe('');
+    expect(queryLabel).toHaveClass('self-stretch');
     expect(heightOf('Projection')).toBe(compact);
     themeConfig.queryBarHeight = 29;
   });

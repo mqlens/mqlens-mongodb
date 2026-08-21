@@ -108,6 +108,7 @@ vi.mock('@/hooks/use-theme', () => ({
 }));
 
 import { QueryEditor } from '../QueryEditor';
+import { QUERY_BAR_OPTION_HEIGHT } from '@/lib/themes/ui-scale';
 
 function pressEnter(modifiers: Partial<{ ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }> = {}) {
   const preventDefault = vi.fn();
@@ -220,6 +221,22 @@ describe('QueryEditor — the Query field shows the whole query (#260)', () => {
   it('wraps the primary Query field', () => {
     render(<QueryEditor singleLine large surface="filter" value="" onChange={() => {}} fields={[]} />);
     expect(lastOptions?.wordWrap).toBe('on');
+  });
+
+  it('wraps and grows the primary Query field with compact export styling', () => {
+    mockContentHeight = 18 * 3;
+    render(
+      <QueryEditor
+        singleLine
+        growWithContent
+        surface="filter"
+        value=""
+        onChange={() => {}}
+        fields={[]}
+      />
+    );
+    expect(lastOptions?.wordWrap).toBe('on');
+    expect(lastHeight as number).toBeGreaterThan(QUERY_BAR_OPTION_HEIGHT);
   });
 
   it('does not grow a one-line query just because Monaco includes top padding', () => {

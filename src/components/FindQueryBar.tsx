@@ -115,18 +115,15 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
   const optionsRegionId = `additional-query-options-container-${useId()}`;
   // Option rows keep the compact height regardless of the setting.
   const optionRowStyle = { height: `${QUERY_BAR_OPTION_HEIGHT / EDITOR_FONT_BASELINE_PX}rem` };
-  // The configured height applies only where the field itself is sized by it —
-  // QueryEditor keys that off `large`, which is `collapsibleOptions`. Without
-  // this gate the export view (no collapsibleOptions) would grow the QUERY label
-  // to the configured height while its input stayed compact.
-  const queryRowStyle = collapsibleOptions
-    ? {
-        minHeight: `${
-          clampQueryBarHeight(themeCtx?.config.queryBarHeight ?? QUERY_BAR_HEIGHT_DEFAULT) /
-          EDITOR_FONT_BASELINE_PX
-        }rem`,
-      }
-    : optionRowStyle;
+  // The configured height is the main query bar's floor. Export keeps the
+  // compact floor, but either Query field may grow with wrapped content and the
+  // badge stretches with its row.
+  const queryRowDesignPx = collapsibleOptions
+    ? clampQueryBarHeight(themeCtx?.config.queryBarHeight ?? QUERY_BAR_HEIGHT_DEFAULT)
+    : QUERY_BAR_OPTION_HEIGHT;
+  const queryRowStyle = {
+    minHeight: `${queryRowDesignPx / EDITOR_FONT_BASELINE_PX}rem`,
+  };
 
   const showPagination =
     skip !== undefined && limit !== undefined && !!onSkipChange && !!onLimitChange;
@@ -197,7 +194,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
       <div className="flex w-full border-b border-border">
         <div className={queryColClass(filterInvalid)}>
           <span
-            className={cn(fieldBadgeClass(filterInvalid), collapsibleOptions && 'self-stretch')}
+            className={cn(fieldBadgeClass(filterInvalid), 'self-stretch')}
             style={queryRowStyle}
           >
             {t('findQueryBar.labels.query')}
@@ -205,6 +202,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
           <QueryEditor
             singleLine
             large={collapsibleOptions}
+            growWithContent
             surface="filter"
             shellSyntax={shellSyntax}
             onRun={onRun}

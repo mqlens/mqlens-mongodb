@@ -47,6 +47,8 @@ interface QueryEditorProps {
   /** Roomier single-line field (taller row, larger font) for the primary query
    *  input, which carries almost all of the typing. */
   large?: boolean;
+  /** Wrap and grow this field with its content independently of visual size. */
+  growWithContent?: boolean;
   'data-testid'?: string;
 }
 
@@ -63,6 +65,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
   stageOperator,
   shellSyntax,
   large = false,
+  growWithContent = false,
   'data-testid': testid,
 }) => {
   const fieldsRef = useRef(fields); fieldsRef.current = fields;
@@ -113,7 +116,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
   const singleLinePadTop = Math.max(0, Math.round((singleLineRowPx - singleLineLineHeight) / 2));
   // Only the primary Query field grows: it carries almost all of the typing,
   // and the compact option rows beside it should not move when it does.
-  const growable = singleLine && large;
+  const growable = singleLine && (large || growWithContent);
   const [grownHeight, setGrownHeight] = useState<number | null>(null);
   const growthEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const growthMetricsRef = useRef({
