@@ -49,12 +49,20 @@ describe('growQueryBarHeight — showing the whole query (#260)', () => {
     expect(growQueryBarHeight(LINE * 3, LINE, MIN)).toBe(3 * LINE + (MIN - LINE));
   });
 
+  it('does not count Monaco editor padding as another wrapped row', () => {
+    const monacoPadding = 6;
+    expect(growQueryBarHeight(LINE + monacoPadding, LINE, MIN, monacoPadding)).toBe(MIN);
+    expect(growQueryBarHeight(LINE * 2 + monacoPadding, LINE, MIN, monacoPadding)).toBe(
+      2 * LINE + (MIN - LINE)
+    );
+  });
+
   it('stops growing at the cap, so the bar cannot take over the window', () => {
-    const capped = growQueryBarHeight(LINE * 40, LINE, MIN, 6);
+    const capped = growQueryBarHeight(LINE * 40, LINE, MIN, 0, 6);
     expect(capped).toBe(6 * LINE + (MIN - LINE));
     // Past the cap it is the same height whatever else arrives — the editor
     // scrolls from there.
-    expect(growQueryBarHeight(LINE * 400, LINE, MIN, 6)).toBe(capped);
+    expect(growQueryBarHeight(LINE * 400, LINE, MIN, 0, 6)).toBe(capped);
   });
 
   it('falls back to the configured height on nonsense input', () => {

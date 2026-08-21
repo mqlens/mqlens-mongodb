@@ -222,6 +222,13 @@ describe('QueryEditor — the Query field shows the whole query (#260)', () => {
     expect(lastOptions?.wordWrap).toBe('on');
   });
 
+  it('does not grow a one-line query just because Monaco includes top padding', () => {
+    // 18px text + the default 6px Monaco top padding still represents one row.
+    mockContentHeight = 24;
+    render(<QueryEditor singleLine large surface="filter" value="" onChange={() => {}} fields={[]} />);
+    expect(lastHeight).toBe(29);
+  });
+
   it('leaves the compact option rows on one line', () => {
     // Projection, sort, skip and limit hold short values and must not move
     // when the query above them grows.

@@ -34,12 +34,19 @@ export function growQueryBarHeight(
   contentHeight: number,
   lineHeight: number,
   minHeight: number,
+  contentPadding: number = 0,
   maxRows: number = QUERY_BAR_GROW_MAX_ROWS
 ): number {
   if (!Number.isFinite(contentHeight) || !Number.isFinite(lineHeight) || lineHeight <= 0) {
     return minHeight;
   }
-  const rows = Math.max(1, Math.min(maxRows, Math.ceil(contentHeight / lineHeight)));
+  // Monaco includes its configured editor padding in getContentHeight(). That
+  // padding positions the text inside the row; it is not another visual line.
+  const paddingInsideContent = Number.isFinite(contentPadding)
+    ? Math.max(0, contentPadding)
+    : 0;
+  const textHeight = Math.max(0, contentHeight - paddingInsideContent);
+  const rows = Math.max(1, Math.min(maxRows, Math.ceil(textHeight / lineHeight)));
   const padding = Math.max(0, minHeight - lineHeight);
   return Math.max(minHeight, Math.round(rows * lineHeight + padding));
 }

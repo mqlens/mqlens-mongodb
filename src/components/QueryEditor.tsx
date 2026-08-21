@@ -116,8 +116,18 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
   const growable = singleLine && large;
   const [grownHeight, setGrownHeight] = useState<number | null>(null);
   const growthEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
-  const growthMetricsRef = useRef({ growable, lineHeight: singleLineLineHeight, minHeight: singleLineRowPx });
-  growthMetricsRef.current = { growable, lineHeight: singleLineLineHeight, minHeight: singleLineRowPx };
+  const growthMetricsRef = useRef({
+    growable,
+    lineHeight: singleLineLineHeight,
+    minHeight: singleLineRowPx,
+    contentPadding: singleLinePadTop,
+  });
+  growthMetricsRef.current = {
+    growable,
+    lineHeight: singleLineLineHeight,
+    minHeight: singleLineRowPx,
+    contentPadding: singleLinePadTop,
+  };
   const followGrowableContent = useCallback(() => {
     const metrics = growthMetricsRef.current;
     const ed = growthEditorRef.current;
@@ -126,7 +136,12 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
       return;
     }
     setGrownHeight(
-      growQueryBarHeight(ed.getContentHeight(), metrics.lineHeight, metrics.minHeight)
+      growQueryBarHeight(
+        ed.getContentHeight(),
+        metrics.lineHeight,
+        metrics.minHeight,
+        metrics.contentPadding
+      )
     );
   }, []);
 
@@ -135,7 +150,7 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
   // scale changes using the current metrics rather than its mount-time values.
   useEffect(() => {
     followGrowableContent();
-  }, [followGrowableContent, growable, singleLineLineHeight, singleLineRowPx]);
+  }, [followGrowableContent, growable, singleLineLineHeight, singleLinePadTop, singleLineRowPx]);
 
   const editorHeight =
     height ?? (singleLine ? (growable ? (grownHeight ?? singleLineRowPx) : singleLineRowPx) : 120);
