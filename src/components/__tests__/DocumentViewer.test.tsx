@@ -108,11 +108,10 @@ describe('DocumentViewer Component', () => {
     localStorage.clear();
   });
 
-  it('renders breadcrumbs and query inputs correctly', () => {
+  it('uses the tab for namespace context instead of repeating breadcrumbs', () => {
     render(
       <DocumentViewer
         connectionName="test-conn"
-        connectionUser="app-user"
         databaseName="test-db"
         collectionName="test-coll"
         onExecute={mockOnExecute}
@@ -121,11 +120,9 @@ describe('DocumentViewer Component', () => {
       />
     );
 
-    // Verify breadcrumbs — the user crumb is driven by the connectionUser prop
-    expect(screen.getByText('app-user')).toBeInTheDocument();
-    expect(screen.getByText(/test-conn/)).toBeInTheDocument();
-    expect(screen.getByText('test-db')).toBeInTheDocument();
-    expect(screen.getByText('test-coll')).toBeInTheDocument();
+    expect(screen.queryByText('test-conn')).not.toBeInTheDocument();
+    expect(screen.queryByText('test-db')).not.toBeInTheDocument();
+    expect(screen.queryByText('test-coll')).not.toBeInTheDocument();
 
     // Verify labels
     expect(screen.getByText('Query')).toBeInTheDocument();
@@ -133,6 +130,9 @@ describe('DocumentViewer Component', () => {
     expect(screen.getByText('Sort')).toBeInTheDocument();
     expect(screen.getByText('Skip')).toBeInTheDocument();
     expect(screen.getByText('Limit')).toBeInTheDocument();
+    expect(screen.getByTestId('query-more-actions')).toHaveTextContent('More actions');
+    expect(screen.getByTestId('query-more-actions-menu')).toHaveClass('absolute', 'right-2');
+    expect(screen.getByText('Generate query by AI')).toBeInTheDocument();
   });
 
   it('renders Export/Import in the top toolbar and fires their handlers', () => {
@@ -1448,7 +1448,7 @@ describe('page size resync from the pager (#218)', () => {
     expect(row?.className).toContain('focus-within:after:border');
     expect(row?.className).toContain('focus-within:after:absolute');
     expect(row?.className).not.toContain('ring-inset');
-    expect(row?.className).toContain('bg-input/80');
+    expect(row?.className).toContain('bg-input/60');
     expect(editorWrapper?.className ?? '').not.toContain('bg-input');
   });
 

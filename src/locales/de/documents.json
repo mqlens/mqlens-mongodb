@@ -5,7 +5,6 @@
       "addRule": "Regel hinzufügen",
       "addSortField": "Sortierfeld hinzufügen",
       "addStage": "Stufe hinzufügen",
-      "aiHelper": "KI-Helfer",
       "apply": "Anwenden",
       "clearAll": "Alles zurücksetzen",
       "clearDefault": "Standard entfernen",
@@ -13,23 +12,18 @@
       "import": "Import",
       "listShortcut": "Liste",
       "loadQuery": "Abfrage laden",
+      "moreActions": "Weitere Aktionen",
       "openInMongosh": "In mongosh öffnen",
       "openQueryIn": "Abfrage öffnen in...",
       "pinAsDefault": "Aktuelle Abfrage als Standard festlegen",
       "queryHistory": "Abfrageverlauf",
       "run": "Ausführen",
       "runExplain": "Explain ausführen",
-      "runQuery": "Abfrage ausführen",
       "saveAndFavorite": "Speichern und zu Favoriten hinzufügen",
       "saveAsNew": "Als neue Abfrage speichern...",
       "saveQuery": "Abfrage speichern",
       "setDefaultQuery": "Standardabfrage festlegen",
       "visualQueryBuilder": "Visueller Abfrage-Builder"
-    },
-    "breadcrumbs": {
-      "authenticatedAs": "Authentifiziert als {{user}}",
-      "noAuth": "keine Auth",
-      "noAuthentication": "Verbindung hat keine Authentifizierung"
     },
     "builder": {
       "ascOption": "Aufsteigend ({{n}})",
@@ -105,7 +99,6 @@
       "deleteSavedQuery": "Gespeicherte Abfrage löschen",
       "disableStage": "Stufe {{n}} deaktivieren",
       "enableStage": "Stufe {{n}} aktivieren",
-      "executeQuery": "Abfrage ausführen ({{shortcut}})",
       "expandStage": "Stufe {{n}} erweitern",
       "importDocuments": "Dokumente aus einer Datei importieren",
       "moveStageDown": "Stufe {{n}} nach unten verschieben",
@@ -115,15 +108,18 @@
       "removeFromFavorites": "Aus Favoriten entfernen",
       "removeRule": "Regel entfernen",
       "removeStage": "Stufe {{n}} entfernen",
-      "runDisabled": "Abfragesyntax korrigieren, um sie auszuführen",
       "runPipelineToStage": "Pipeline bis Stufe {{n}} ausführen",
       "undoPipelineChange": "Pipeline-Änderung rückgängig machen"
     }
   },
   "findQueryBar": {
+    "actions": {
+      "generateWithAI": "Abfrage mit KI erstellen",
+      "run": "Ausführen"
+    },
     "labels": {
+      "addProjectionSort": "Projektion/Sortierung hinzufügen",
       "limit": "Limit",
-      "options": "Optionen",
       "projection": "Projektion",
       "query": "Abfrage",
       "skip": "Skip",
@@ -137,13 +133,10 @@
       "clearProjection": "Projektion leeren",
       "clearSort": "Sortierung leeren",
       "fewerOptions": "Weniger Optionen",
-      "hideOptions": "Projektion, Sortierung, Skip und Limit ausblenden",
       "moreOptions": "Mehr Optionen",
-      "optionsSet": "Projektion, Sortierung, Skip oder Limit ist gesetzt",
       "quickSortDirection": "Sortierrichtung umschalten",
       "resetLimit": "Limit zurücksetzen",
-      "resetSkip": "Skip zurücksetzen",
-      "showOptions": "Projektion, Sortierung, Skip und Limit anzeigen"
+      "resetSkip": "Skip zurücksetzen"
     }
   },
   "diffModal": {
@@ -345,7 +338,6 @@
       "results": "Ergebnisse"
     },
     "tooltips": {
-      "analyzeSchema": "Das Feldschema der Collection analysieren",
       "codeLanguage": "Codesprache",
       "collapse": "Einklappen",
       "copied": "Kopiert",

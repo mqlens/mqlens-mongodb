@@ -152,7 +152,6 @@
       "results": "Results"
     },
     "tooltips": {
-      "analyzeSchema": "Analyze the collection's field schema",
       "codeLanguage": "Code language",
       "collapse": "Collapse",
       "copied": "Copied",
@@ -205,7 +204,6 @@
       "addRule": "Add Rule",
       "addSortField": "Add Sort Field",
       "addStage": "Add Stage",
-      "aiHelper": "AI Helper",
       "apply": "Apply",
       "clearAll": "Clear All",
       "clearDefault": "Clear default",
@@ -213,23 +211,18 @@
       "import": "Import",
       "listShortcut": "List",
       "loadQuery": "Load query",
+      "moreActions": "More actions",
       "openInMongosh": "Open in mongosh",
       "openQueryIn": "Open query in...",
       "pinAsDefault": "Pin current query as default",
       "queryHistory": "Query history",
       "run": "Run",
       "runExplain": "Run Explain",
-      "runQuery": "Run Query",
       "saveAndFavorite": "Save and add to favorites",
       "saveAsNew": "Save as new query...",
       "saveQuery": "Save query",
       "setDefaultQuery": "Set default query",
       "visualQueryBuilder": "Visual Query Builder"
-    },
-    "breadcrumbs": {
-      "authenticatedAs": "Authenticated as {{user}}",
-      "noAuth": "no auth",
-      "noAuthentication": "Connection has no authentication"
     },
     "builder": {
       "ascOption": "Asc ({{n}})",
@@ -305,7 +298,6 @@
       "deleteSavedQuery": "Delete saved query",
       "disableStage": "Disable stage {{n}}",
       "enableStage": "Enable stage {{n}}",
-      "executeQuery": "Execute query ({{shortcut}})",
       "expandStage": "Expand stage {{n}}",
       "importDocuments": "Import documents from a file",
       "moveStageDown": "Move stage {{n}} down",
@@ -315,7 +307,6 @@
       "removeFromFavorites": "Remove from favorites",
       "removeRule": "Remove Rule",
       "removeStage": "Remove stage {{n}}",
-      "runDisabled": "Fix the query syntax to run",
       "runPipelineToStage": "Run pipeline to stage {{n}}",
       "undoPipelineChange": "Undo pipeline change"
     }
@@ -348,12 +339,16 @@
     "loadingDataset": "Error loading dataset: {{detail}}"
   },
   "findQueryBar": {
+    "actions": {
+      "generateWithAI": "Generate query by AI",
+      "run": "Run"
+    },
     "errors": {
       "invalidJson": "Invalid JSON"
     },
     "labels": {
+      "addProjectionSort": "Add Projection/Sort",
       "limit": "Limit",
-      "options": "Options",
       "projection": "Projection",
       "query": "Query",
       "skip": "Skip",
@@ -364,13 +359,10 @@
       "clearProjection": "Clear Projection",
       "clearSort": "Clear Sort",
       "fewerOptions": "Fewer Options",
-      "hideOptions": "Hide projection, sort, skip and limit",
       "moreOptions": "More Options",
-      "optionsSet": "Projection, sort, skip or limit is set",
       "quickSortDirection": "Quick Sort Direction",
       "resetLimit": "Reset Limit",
-      "resetSkip": "Reset Skip",
-      "showOptions": "Show projection, sort, skip and limit"
+      "resetSkip": "Reset Skip"
     }
   },
   "schemaView": {

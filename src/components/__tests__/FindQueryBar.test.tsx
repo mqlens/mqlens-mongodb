@@ -48,6 +48,40 @@ describe('FindQueryBar — Options disclosure (#217)', () => {
     expect(screen.getByTestId('projection-query-input')).toBeInTheDocument();
     expect(section()).toHaveClass('hidden');
     expect(screen.getByTestId('query-options-toggle')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('Add Projection/Sort')).toBeInTheDocument();
+  });
+
+  it('places AI generation and Run after the query editor', () => {
+    const onRun = vi.fn();
+    const onOpenAI = vi.fn();
+    renderBar({ onRun, onOpenAI });
+    fireEvent.click(screen.getByText('Generate query by AI'));
+    fireEvent.click(screen.getByTestId('query-run-below'));
+    expect(onOpenAI).toHaveBeenCalledOnce();
+    expect(onRun).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the editor and options in one composer with a full-width action footer', () => {
+    renderBar({ optionsOpen: true, skip: '0', limit: '50', onSkipChange: noop, onLimitChange: noop });
+    expect(screen.getByTestId('query-composer-body')).toHaveClass('flex');
+    expect(screen.getByTestId('query-options-section')).toHaveClass('border-l');
+    expect(screen.getByTestId('query-composer-footer')).toHaveClass('border-t');
+    expect(screen.getByTestId('query-composer-footer').parentElement).toBe(
+      screen.getByTestId('query-composer-body').parentElement,
+    );
+  });
+
+  it('renders expanded options as compact labelled fields instead of badge columns', () => {
+    renderBar({ optionsOpen: true });
+    expect(screen.getByTestId('projection-option-field')).toHaveClass('rounded-md');
+    expect(screen.getByTestId('sort-option-field')).toHaveClass('rounded-md');
+    expect(screen.getByText('Projection')).not.toHaveClass('min-w-[90px]');
+    expect(screen.getByText('Sort')).not.toHaveClass('min-w-[90px]');
+  });
+
+  it('gives the primary query a dominant four-line editing area', () => {
+    renderBar();
+    expect(screen.getByTestId('query-filter-input').parentElement).toHaveStyle({ height: '84px' });
   });
 
   it('reveals the options when the toggle is clicked, and hides them again', () => {
@@ -112,19 +146,18 @@ describe('FindQueryBar — Options disclosure (#217)', () => {
 describe('FindQueryBar — configurable Query height (#217)', () => {
   const heightOf = (label: string) => (screen.getByText(label) as HTMLElement).style.height;
 
-  it('sizes the Query row from the setting', () => {
+  it('uses shadow text instead of a separate Query column in the main editor', () => {
     themeConfig.queryBarHeight = 29;
     renderBar();
     const queryLabel = screen.getByText('Query') as HTMLElement;
-    expect(queryLabel.style.minHeight).toBe(`${29 / 13}rem`);
-    expect(queryLabel.style.height).toBe('');
-    expect(queryLabel).toHaveClass('self-stretch');
+    expect(queryLabel).toHaveClass('pointer-events-none');
+    expect(queryLabel).not.toHaveClass('uppercase');
   });
 
   it('grows only the Query row — option rows stay compact', () => {
     themeConfig.queryBarHeight = 58;
     renderBar();
-    expect((screen.getByText('Query') as HTMLElement).style.minHeight).toBe(`${58 / 13}rem`);
+    expect(screen.getByText('Query')).toHaveClass('pointer-events-none');
     // Projection/sort keep the compact height so the whole bar doesn't inflate.
     const compact = `${22.75 / 13}rem`;
     expect(heightOf('Projection')).toBe(compact);
@@ -144,7 +177,7 @@ describe('FindQueryBar — configurable Query height (#217)', () => {
   it('clamps an out-of-range stored value instead of trusting it', () => {
     themeConfig.queryBarHeight = 9999;
     renderBar();
-    expect((screen.getByText('Query') as HTMLElement).style.minHeight).toBe(`${64 / 13}rem`);
+    expect(screen.getByText('Query')).toHaveClass('pointer-events-none');
     themeConfig.queryBarHeight = 29;
   });
 });
@@ -166,10 +199,10 @@ describe('FindQueryBar — export view is unaffected by the Query height setting
     themeConfig.queryBarHeight = 29;
   });
 
-  it('still sizes the Query label when the field is sized (main query bar)', () => {
+  it('does not render the column-style Query badge in the main query bar', () => {
     themeConfig.queryBarHeight = 64;
     renderBar({ collapsibleOptions: true });
-    expect((screen.getByText('Query') as HTMLElement).style.minHeight).toBe(`${64 / 13}rem`);
+    expect(screen.getByText('Query')).toHaveClass('pointer-events-none');
     themeConfig.queryBarHeight = 29;
   });
 

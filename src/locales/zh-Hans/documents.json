@@ -143,7 +143,6 @@
       "results": "结果"
     },
     "tooltips": {
-      "analyzeSchema": "分析该 Collection 的字段结构",
       "codeLanguage": "代码语言",
       "collapse": "折叠",
       "copied": "已复制",
@@ -192,7 +191,6 @@
       "addRule": "添加规则",
       "addSortField": "添加排序字段",
       "addStage": "添加阶段",
-      "aiHelper": "AI 助手",
       "apply": "应用",
       "clearAll": "全部清除",
       "clearDefault": "清除默认",
@@ -200,23 +198,18 @@
       "import": "导入",
       "listShortcut": "列表",
       "loadQuery": "加载查询",
+      "moreActions": "更多操作",
       "openInMongosh": "在 mongosh 中打开",
       "openQueryIn": "在其他工具中打开查询…",
       "pinAsDefault": "将当前查询设为默认",
       "queryHistory": "查询历史",
       "run": "运行",
       "runExplain": "运行 Explain",
-      "runQuery": "运行查询",
       "saveAndFavorite": "保存并加入收藏",
       "saveAsNew": "另存为新查询…",
       "saveQuery": "保存查询",
       "setDefaultQuery": "设置默认查询",
       "visualQueryBuilder": "可视化查询构建器"
-    },
-    "breadcrumbs": {
-      "authenticatedAs": "已以 {{user}} 身份认证",
-      "noAuth": "未认证",
-      "noAuthentication": "该连接未启用身份验证"
     },
     "builder": {
       "ascOption": "升序（{{n}}）",
@@ -290,7 +283,6 @@
       "deleteSavedQuery": "删除已保存的查询",
       "disableStage": "停用第 {{n}} 个阶段",
       "enableStage": "启用第 {{n}} 个阶段",
-      "executeQuery": "执行查询（{{shortcut}}）",
       "expandStage": "展开第 {{n}} 个阶段",
       "importDocuments": "从文件导入文档",
       "moveStageDown": "将第 {{n}} 个阶段下移",
@@ -300,7 +292,6 @@
       "removeFromFavorites": "从收藏中移除",
       "removeRule": "删除规则",
       "removeStage": "删除第 {{n}} 个阶段",
-      "runDisabled": "请先修正查询语法再运行",
       "runPipelineToStage": "运行管道至第 {{n}} 个阶段",
       "undoPipelineChange": "撤销管道更改"
     }
@@ -333,12 +324,16 @@
     "loadingDataset": "加载数据集出错：{{detail}}"
   },
   "findQueryBar": {
+    "actions": {
+      "generateWithAI": "使用 AI 生成查询",
+      "run": "运行"
+    },
     "errors": {
       "invalidJson": "JSON 无效"
     },
     "labels": {
+      "addProjectionSort": "添加投影/排序",
       "limit": "限制",
-      "options": "选项",
       "projection": "投影",
       "query": "查询",
       "skip": "跳过",
@@ -349,13 +344,10 @@
       "clearProjection": "清除投影",
       "clearSort": "清除排序",
       "fewerOptions": "收起选项",
-      "hideOptions": "隐藏投影、排序、跳过和限制",
       "moreOptions": "更多选项",
-      "optionsSet": "已设置投影、排序、跳过或限制",
       "quickSortDirection": "快速切换排序方向",
       "resetLimit": "重置限制",
-      "resetSkip": "重置跳过",
-      "showOptions": "显示投影、排序、跳过和限制"
+      "resetSkip": "重置跳过"
     }
   },
   "schemaView": {
