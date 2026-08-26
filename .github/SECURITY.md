@@ -44,6 +44,11 @@ services you connect to.
 - **No account** — there is no MQLens backend.
 - **Credentials encrypted at rest** with AES-256-GCM and Argon2id key
   derivation, behind a master password (with optional biometric unlock).
+- **Activity / audit log (local only)** — optional operation history is stored
+  as vault-encrypted SQLite (`audit.db.enc`). It may include collection names,
+  filters, and (if enabled in Settings) document fragments. Protect the vault
+  password. **Export** is an explicit user action that writes **plaintext**
+  outside the vault envelope — treat exported files as sensitive.
 - **Signed builds** — macOS notarized, Windows signed, and GPG-signed Linux
   artifacts; updater artifacts are signed and verified before install.
 - **Apache-2.0** — the source is open for review.
