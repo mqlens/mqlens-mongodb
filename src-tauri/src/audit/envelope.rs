@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use super::level::AuditLevel;
 use super::store::{AuditEvent, AuditFilter, AuditStore};
 
 /// Encrypt raw SQLite DB bytes with the vault key.
@@ -18,12 +19,31 @@ pub fn unseal(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, String> {
     vault::decrypt(key, blob)
 }
 
+/// Cached audit settings for the open vault session (refreshed on unlock / save).
+#[derive(Clone, Copy, Debug)]
+pub struct AuditPolicy {
+    pub enabled: bool,
+    pub level: AuditLevel,
+    pub include_payloads: bool,
+}
+
+impl Default for AuditPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            level: AuditLevel::A,
+            include_payloads: false,
+        }
+    }
+}
+
 /// Open audit session while vault is unlocked; sealed on close/lock.
 pub struct AuditSession {
     enc_path: PathBuf,
     store: Mutex<Option<AuditStore>>,
     key: Mutex<Option<[u8; 32]>>,
     dropped: AtomicU64,
+    policy: Mutex<AuditPolicy>,
 }
 
 impl AuditSession {
@@ -33,6 +53,20 @@ impl AuditSession {
             store: Mutex::new(None),
             key: Mutex::new(None),
             dropped: AtomicU64::new(0),
+            policy: Mutex::new(AuditPolicy::default()),
+        }
+    }
+
+    pub fn policy(&self) -> AuditPolicy {
+        self.policy
+            .lock()
+            .map(|g| *g)
+            .unwrap_or_default()
+    }
+
+    pub fn set_policy(&self, policy: AuditPolicy) {
+        if let Ok(mut g) = self.policy.lock() {
+            *g = policy;
         }
     }
 

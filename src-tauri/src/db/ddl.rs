@@ -92,6 +92,31 @@ pub async fn drop_collection_impl(
     collection: &str,
     confirmed: bool,
 ) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = drop_collection_inner(state, id, database, collection, confirmed).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "drop_collection",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("dropCollection {database}.{collection}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn drop_collection_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    confirmed: bool,
+) -> Result<(), String> {
     guard_writable(state, id, WriteOp::Drop, confirmed)?;
 
     if connection_is_mock(state, id)? {
@@ -237,6 +262,30 @@ pub async fn set_validator_impl(
 }
 
 pub async fn drop_database_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    confirmed: bool,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = drop_database_inner(state, id, database, confirmed).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        None,
+        "drop_database",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("dropDatabase {database}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn drop_database_inner(
     state: &AppState,
     id: &str,
     database: &str,

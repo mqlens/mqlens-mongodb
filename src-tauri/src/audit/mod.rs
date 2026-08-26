@@ -1,14 +1,18 @@
 //! Local operation audit log (#272).
 //!
-//! Level gating, redaction, SQLite store, and vault envelope session.
+//! Level gating, redaction, SQLite store, vault envelope, and soft-fail recording.
 
+pub mod classify;
 pub mod envelope;
 pub mod level;
+pub mod record;
 pub mod redact;
 pub mod store;
 
-pub use envelope::{seal, unseal, AuditSession};
+pub use classify::classify_op;
+pub use envelope::{seal, unseal, AuditPolicy, AuditSession};
 pub use level::{should_record, AuditLevel, OpClass};
+pub use record::{maybe_record, maybe_record_result, RecordInput};
 pub use redact::{redact_text, truncate_args, MAX_ARGS_BYTES};
 pub use store::{AuditEvent, AuditFilter, AuditStore, SCHEMA_VERSION};
 
@@ -34,13 +38,20 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+fn policy_from_settings(settings: &AppSettings) -> AuditPolicy {
+    AuditPolicy {
+        enabled: settings.audit_enabled,
+        level: AuditLevel::parse(&settings.audit_level),
+        include_payloads: settings.audit_include_payloads,
+    }
+}
+
 /// Open (or replace) the audit session after a successful vault unlock.
 pub fn open_on_unlock(
     app: &tauri::AppHandle,
     state: &AppState,
     key: [u8; 32],
 ) -> Result<(), String> {
-    // Soft-fail: audit must never block unlock.
     if let Err(e) = open_on_unlock_inner(app, state, key) {
         eprintln!("audit open_on_unlock: {e}");
     }
@@ -61,6 +72,7 @@ fn open_on_unlock_inner(
         &key,
     )
     .unwrap_or_default();
+    session.set_policy(policy_from_settings(&settings));
     let cutoff = retention_cutoff_ms(settings.audit_retention_days, now_ms());
     let _ = session.prune_before(cutoff);
 
@@ -97,6 +109,15 @@ pub fn reset_store(app: &tauri::AppHandle, state: &AppState) -> Result<(), Strin
             .map_err(|e| format!("remove {}: {e}", path.display()))?;
     }
     Ok(())
+}
+
+/// Refresh in-memory audit policy after settings are saved (vault unlocked).
+pub fn refresh_policy_from_settings(state: &AppState, settings: &AppSettings) {
+    if let Ok(guard) = state.audit.lock_safe() {
+        if let Some(session) = guard.as_ref() {
+            session.set_policy(policy_from_settings(settings));
+        }
+    }
 }
 
 /// Current settings snapshot for audit decisions (defaults if locked/unloadable).

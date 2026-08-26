@@ -716,8 +716,24 @@ pub async fn run_mongosh_command_impl(
     session_id: &str,
     command: &str,
 ) -> Result<MongoshCommandOutput, String> {
+    let started = std::time::Instant::now();
     let session = get_mongosh_session(state, session_id)?;
-    run_mongosh_command_on_session(&session, command).await
+    let connection_id = session.connection_id.clone();
+    let result = run_mongosh_command_on_session(&session, command).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(&connection_id),
+        None,
+        None,
+        "run_mongosh_command",
+        crate::audit::OpClass::Shell,
+        Some("shell"),
+        started,
+        "mongosh",
+        Some(command),
+        &result,
+    );
+    result
 }
 
 /// Per-tab shell state, held backend-side so a frontend hot reload or window
@@ -2227,7 +2243,9 @@ async fn save_app_settings(
         &connections::get_settings_enc_path(&app_handle),
         &key,
         &settings,
-    )
+    )?;
+    audit::refresh_policy_from_settings(&state, &settings);
+    Ok(())
 }
 
 #[tauri::command]

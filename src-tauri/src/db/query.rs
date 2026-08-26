@@ -15,6 +15,38 @@ pub async fn execute_mql_query_impl(
     limit: i64,
     skip: i64,
 ) -> Result<Vec<String>, String> {
+    let started = std::time::Instant::now();
+    let result = execute_mql_query_inner(
+        state, id, database, collection, filter, sort, projection, limit, skip,
+    )
+    .await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "execute_mql_query",
+        crate::audit::OpClass::ReadHigh,
+        None,
+        started,
+        &format!("find {database}.{collection}"),
+        Some(filter),
+        &result,
+    );
+    return result;
+}
+
+async fn execute_mql_query_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    filter: &str,
+    sort: &str,
+    projection: &str,
+    limit: i64,
+    skip: i64,
+) -> Result<Vec<String>, String> {
     // Validate projection JSON up front (applies on the real path; mock ignores fields).
     let projection_doc: Option<mongodb::bson::Document> =
         if projection.trim().is_empty() || projection.trim() == "{}" {

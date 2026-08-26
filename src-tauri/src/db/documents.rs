@@ -209,6 +209,32 @@ pub async fn delete_many_impl(
     filter: &str,
     confirmed: bool,
 ) -> Result<u64, String> {
+    let started = std::time::Instant::now();
+    let result = delete_many_inner(state, id, database, collection, filter, confirmed).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "delete_many",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("deleteMany {database}.{collection}"),
+        Some(filter),
+        &result,
+    );
+    result
+}
+
+async fn delete_many_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    filter: &str,
+    confirmed: bool,
+) -> Result<u64, String> {
     guard_writable(state, id, WriteOp::DeleteMany, confirmed)?;
 
     let filter_doc = json_to_bson_document(filter)?;
@@ -226,6 +252,35 @@ pub async fn delete_many_impl(
 }
 
 pub async fn update_many_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    filter: &str,
+    update: &str,
+    confirmed: bool,
+) -> Result<u64, String> {
+    let started = std::time::Instant::now();
+    let args = format!("{{\"filter\":{filter},\"update\":{update}}}");
+    let result =
+        update_many_inner(state, id, database, collection, filter, update, confirmed).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "update_many",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("updateMany {database}.{collection}"),
+        Some(&args),
+        &result,
+    );
+    result
+}
+
+async fn update_many_inner(
     state: &AppState,
     id: &str,
     database: &str,
@@ -257,6 +312,31 @@ pub async fn update_many_impl(
 }
 
 pub async fn insert_document_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    document: &str,
+) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let result = insert_document_inner(state, id, database, collection, document).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "insert_document",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("insertOne {database}.{collection}"),
+        Some(document),
+        &result,
+    );
+    result
+}
+
+async fn insert_document_inner(
     state: &AppState,
     id: &str,
     database: &str,
