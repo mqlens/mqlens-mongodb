@@ -25,6 +25,7 @@ pub struct AuditPolicy {
     pub enabled: bool,
     pub level: AuditLevel,
     pub include_payloads: bool,
+    pub retention_days: u32,
 }
 
 impl Default for AuditPolicy {
@@ -33,6 +34,7 @@ impl Default for AuditPolicy {
             enabled: true,
             level: AuditLevel::A,
             include_payloads: false,
+            retention_days: 30,
         }
     }
 }
@@ -171,6 +173,18 @@ impl AuditSession {
     }
 }
 
+impl Drop for AuditSession {
+    /// Seal to disk if the vault session is still open — covers app quit and
+    /// dev reload without an explicit `vault_lock`.
+    fn drop(&mut self) {
+        if self.is_open() {
+            if let Err(e) = self.close() {
+                eprintln!("audit session drop: failed to seal: {e}");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +242,26 @@ mod tests {
 
         session.open(key).expect("reopen");
         let rows = session.query(&AuditFilter::default()).expect("query");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "e1");
+    }
+
+    #[test]
+    fn drop_seals_without_explicit_close() {
+        let dir = tempdir().unwrap();
+        let enc = dir.path().join("audit.db.enc");
+        let key = [9u8; 32];
+        {
+            let session = AuditSession::new(enc.clone());
+            session.open(key).expect("open");
+            assert!(session
+                .try_insert(&sample("e1", 100))
+                .expect("insert while open"));
+        }
+        assert!(enc.exists(), "envelope file must exist after drop");
+        let session2 = AuditSession::new(enc);
+        session2.open(key).expect("reopen");
+        let rows = session2.query(&AuditFilter::default()).expect("query");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "e1");
     }

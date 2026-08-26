@@ -4515,6 +4515,7 @@ function Workspace() {
           zoomPercent={Math.round(config.uiZoom * 100)}
           onZoomReset={resetZoom}
           onOpenTasks={handleOpenTasksTab}
+          onOpenActivity={handleOpenActivityTab}
           runningTasks={exportTasks.filter((t) => t.status === 'running').length}
         />
       }

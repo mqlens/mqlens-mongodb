@@ -74,15 +74,14 @@ fn maybe_record_inner(state: &AppState, input: RecordInput<'_>) -> Result<(), St
         .unwrap_or(inferred_source.as_str())
         .to_string();
 
-    let args_json = input.args.map(|raw| {
-        let redacted = redact_text(raw);
-        let cap = if policy.include_payloads {
-            MAX_ARGS_BYTES
-        } else {
-            2_048
-        };
-        truncate_args(&redacted, cap)
-    });
+    let args_json = if policy.include_payloads {
+        input.args.map(|raw| {
+            let redacted = redact_text(raw);
+            truncate_args(&redacted, MAX_ARGS_BYTES)
+        })
+    } else {
+        None
+    };
 
     let event = AuditEvent {
         id: Uuid::new_v4().to_string(),
@@ -103,6 +102,8 @@ fn maybe_record_inner(state: &AppState, input: RecordInput<'_>) -> Result<(), St
     };
 
     let _ = session.try_insert(&event)?;
+    let cutoff = super::retention_cutoff_ms(policy.retention_days, now_ms());
+    let _ = session.prune_before(cutoff);
     Ok(())
 }
 

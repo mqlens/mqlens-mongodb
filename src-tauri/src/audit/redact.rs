@@ -52,6 +52,75 @@ fn scrub_password_json_fields(input: &str) -> String {
     let mut out = input.to_string();
     for key in KEYS {
         out = scrub_json_string_value(&out, key);
+        out = scrub_js_object_value(&out, key);
+    }
+    out
+}
+
+/// Replace `key: "..."` / `key:'...'` / `key:word` (mongosh JS object syntax).
+fn scrub_js_object_value(input: &str, key: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let lower = input.to_ascii_lowercase();
+    let key_lower = key.to_ascii_lowercase();
+    let mut i = 0;
+    while i < input.len() {
+        let rest = &lower[i..];
+        if rest.starts_with(&key_lower) {
+            let after_key = i + key_lower.len();
+            // Must be a bare identifier (not `"pwd"` JSON key).
+            let before_ok = i == 0 || !input.as_bytes()[i - 1].is_ascii_alphanumeric();
+            let after_ok = after_key >= input.len()
+                || !input.as_bytes()[after_key].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                let mut j = after_key;
+                while j < input.len() && input.as_bytes()[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < input.len() && input.as_bytes()[j] == b':' {
+                    out.push_str(&input[i..=j]);
+                    i = j + 1;
+                    while i < input.len() && input.as_bytes()[i].is_ascii_whitespace() {
+                        out.push(input.as_bytes()[i] as char);
+                        i += 1;
+                    }
+                    if i < input.len() {
+                        let b = input.as_bytes()[i];
+                        if b == b'"' || b == b'\'' {
+                            let quote = b;
+                            i += 1;
+                            while i < input.len() {
+                                let c = input.as_bytes()[i];
+                                if c == b'\\' && i + 1 < input.len() {
+                                    i += 2;
+                                    continue;
+                                }
+                                if c == quote {
+                                    i += 1;
+                                    break;
+                                }
+                                i += 1;
+                            }
+                            out.push_str("\"***\"");
+                            continue;
+                        }
+                        // Unquoted token (identifier, number, etc.)
+                        while i < input.len() {
+                            let c = input.as_bytes()[i];
+                            if c.is_ascii_whitespace() || c == b',' || c == b'}' || c == b')' {
+                                break;
+                            }
+                            i += 1;
+                        }
+                        out.push_str("\"***\"");
+                        continue;
+                    }
+                    continue;
+                }
+            }
+        }
+        let ch = input[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
     }
     out
 }
@@ -145,6 +214,13 @@ mod tests {
         let out = redact_text(raw);
         assert!(!out.contains("hunter2"), "password value leaked: {out}");
         assert!(out.contains("password"), "key may remain: {out}");
+    }
+
+    #[test]
+    fn scrubs_unquoted_mongosh_pwd() {
+        let raw = r#"db.createUser({user:"alice",pwd:"secret"})"#;
+        let out = redact_text(raw);
+        assert!(!out.contains("secret"), "password value leaked: {out}");
     }
 
     #[test]

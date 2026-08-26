@@ -43,7 +43,13 @@ fn policy_from_settings(settings: &AppSettings) -> AuditPolicy {
         enabled: settings.audit_enabled,
         level: AuditLevel::parse(&settings.audit_level),
         include_payloads: settings.audit_include_payloads,
+        retention_days: settings.audit_retention_days,
     }
+}
+
+fn prune_for_policy(session: &AuditSession, policy: AuditPolicy) {
+    let cutoff = retention_cutoff_ms(policy.retention_days, now_ms());
+    let _ = session.prune_before(cutoff);
 }
 
 /// Open (or replace) the audit session after a successful vault unlock.
@@ -63,6 +69,13 @@ fn open_on_unlock_inner(
     state: &AppState,
     key: [u8; 32],
 ) -> Result<(), String> {
+    let mut slot = state.audit.lock_safe()?;
+    if let Some(existing) = slot.take() {
+        if let Err(e) = existing.close() {
+            eprintln!("audit close before reopen: {e}");
+        }
+    }
+
     let path = connections::get_audit_enc_path(app);
     let session = AuditSession::new(path);
     session.open(key)?;
@@ -73,10 +86,9 @@ fn open_on_unlock_inner(
     )
     .unwrap_or_default();
     session.set_policy(policy_from_settings(&settings));
-    let cutoff = retention_cutoff_ms(settings.audit_retention_days, now_ms());
-    let _ = session.prune_before(cutoff);
+    prune_for_policy(&session, session.policy());
 
-    *state.audit.lock_safe()? = Some(session);
+    *slot = Some(session);
     Ok(())
 }
 
@@ -113,9 +125,11 @@ pub fn reset_store(app: &tauri::AppHandle, state: &AppState) -> Result<(), Strin
 
 /// Refresh in-memory audit policy after settings are saved (vault unlocked).
 pub fn refresh_policy_from_settings(state: &AppState, settings: &AppSettings) {
+    let policy = policy_from_settings(settings);
     if let Ok(guard) = state.audit.lock_safe() {
         if let Some(session) = guard.as_ref() {
-            session.set_policy(policy_from_settings(settings));
+            session.set_policy(policy);
+            prune_for_policy(session, policy);
         }
     }
 }

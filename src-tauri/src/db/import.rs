@@ -376,6 +376,46 @@ pub async fn start_import_task_impl(
     csv_options: Option<CsvImportOptions>,
     mode: &str,
 ) -> Result<TaskInfo, String> {
+    let started = std::time::Instant::now();
+    let audit_summary = format!("import {database}.{collection} ({format}, {mode})");
+    let result = start_import_task_inner(
+        state,
+        id,
+        database,
+        collection,
+        source,
+        format,
+        csv_options,
+        mode,
+    )
+    .await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "start_import_task",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &audit_summary,
+        None,
+        &result,
+    );
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_import_task_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    source: ImportSourceArg,
+    format: &str,
+    csv_options: Option<CsvImportOptions>,
+    mode: &str,
+) -> Result<TaskInfo, String> {
     guard_writable(state, id, WriteOp::Import, false)?;
 
     if !matches!(mode, "skip" | "update" | "abort") {

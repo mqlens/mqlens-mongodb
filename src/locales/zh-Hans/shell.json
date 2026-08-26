@@ -345,11 +345,13 @@
     "reconnectButton": "重新连接 {{profile}}"
   },
   "statusBar": {
+    "activity": "活动",
     "appVersion": "MQLens {{version}}",
     "backgroundTasks": "后台任务",
     "cpu": "CPU {{value}}",
     "engineOnline": "MQLens 引擎在线",
     "mongodb": "MongoDB {{value}}",
+    "openActivity": "打开活动日志",
     "ram": "内存 {{value}}",
     "resetZoom": "重置缩放（{{shortcut}}）",
     "runningTasks_other": "{{count}} 个任务运行中",
@@ -538,7 +540,6 @@
     "actions": {
       "clear": "清空日志",
       "export": "导出…",
-      "openFolder": "打开文件夹",
       "refresh": "刷新"
     },
     "clearConfirm": "清除此密钥库中的全部活动事件？此操作无法撤销。",
@@ -557,11 +558,11 @@
       "error": "错误",
       "level": "记录时级别"
     },
-    "droppedBanner_one": "本会话有 {{count}} 条事件因存储或加密失败而被丢弃。",
     "droppedBanner_other": "本会话有 {{count}} 条事件因存储或加密失败而被丢弃。",
     "empty": "当前筛选条件下暂无活动记录。",
-    "exportDone_one": "已导出 {{count}} 条事件。",
+    "emptyLevelHint": "在审计级别 A（默认）下，仅记录写入和 shell 命令，不包括查询或浏览。",
     "exportDone_other": "已导出 {{count}} 条事件。",
+    "exportFileType": "JSONL 文件",
     "exportPlaintextWarning": "导出将在密钥库外写入明文 JSONL 文件。是否继续？",
     "filters": {
       "op": "操作",

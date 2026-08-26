@@ -3,7 +3,6 @@
     "actions": {
       "clear": "Clear log",
       "export": "Export…",
-      "openFolder": "Open folder",
       "refresh": "Refresh"
     },
     "clearConfirm": "Clear all activity events from this vault? This cannot be undone.",
@@ -25,8 +24,10 @@
     "droppedBanner_one": "{{count}} event was dropped this session (storage or encryption failures).",
     "droppedBanner_other": "{{count}} events were dropped this session (storage or encryption failures).",
     "empty": "No activity recorded yet for the current filters.",
+    "emptyLevelHint": "At audit level A (default), only writes and shell commands are logged — not finds or browsing.",
     "exportDone_one": "Exported {{count}} event.",
     "exportDone_other": "Exported {{count}} events.",
+    "exportFileType": "JSONL",
     "exportPlaintextWarning": "Export writes a plaintext JSONL file outside the vault. Continue?",
     "filters": {
       "op": "Operation",
@@ -397,11 +398,13 @@
     "reconnectButton": "Reconnect {{profile}}"
   },
   "statusBar": {
+    "activity": "Activity",
     "appVersion": "MQLens {{version}}",
     "backgroundTasks": "Background tasks",
     "cpu": "CPU {{value}}",
     "engineOnline": "MQLens Engine Online",
     "mongodb": "MongoDB {{value}}",
+    "openActivity": "Open activity log",
     "ram": "RAM {{value}}",
     "resetZoom": "Reset zoom ({{shortcut}})",
     "runningTasks_one": "{{count}} running task",

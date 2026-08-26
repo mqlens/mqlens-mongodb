@@ -23,6 +23,30 @@ pub async fn create_collection_impl(
     database: &str,
     collection: &str,
 ) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = create_collection_inner(state, id, database, collection).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "create_collection",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("createCollection {database}.{collection}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn create_collection_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+) -> Result<(), String> {
     guard_writable(state, id, WriteOp::CreateCollection, false)?;
 
     if collection.trim().is_empty() {
@@ -40,6 +64,32 @@ pub async fn create_collection_impl(
 }
 
 pub async fn create_view_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    view_name: &str,
+    source_collection: &str,
+    pipeline: &str,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = create_view_inner(state, id, database, view_name, source_collection, pipeline).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(view_name),
+        "create_view",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("createView {database}.{view_name} on {source_collection}"),
+        Some(pipeline),
+        &result,
+    );
+    result
+}
+
+async fn create_view_inner(
     state: &AppState,
     id: &str,
     database: &str,
@@ -139,6 +189,32 @@ pub async fn rename_collection_impl(
     to: &str,
     confirmed: bool,
 ) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = rename_collection_inner(state, id, database, from, to, confirmed).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(from),
+        "rename_collection",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("renameCollection {database}.{from} → {to}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn rename_collection_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    from: &str,
+    to: &str,
+    confirmed: bool,
+) -> Result<(), String> {
     guard_writable(state, id, WriteOp::Rename, confirmed)?;
 
     if from.trim().is_empty() || to.trim().is_empty() {
@@ -214,6 +290,42 @@ pub async fn get_collection_options_impl(
 }
 
 pub async fn set_validator_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    validator: &str,
+    validation_level: &str,
+    validation_action: &str,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = set_validator_inner(
+        state,
+        id,
+        database,
+        collection,
+        validator,
+        validation_level,
+        validation_action,
+    )
+    .await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "set_validator",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("collMod validator {database}.{collection}"),
+        Some(validator),
+        &result,
+    );
+    result
+}
+
+async fn set_validator_inner(
     state: &AppState,
     id: &str,
     database: &str,
@@ -308,6 +420,33 @@ async fn drop_database_inner(
 }
 
 pub async fn rename_database_impl(
+    state: &AppState,
+    id: &str,
+    from: &str,
+    to: &str,
+    drop_source: bool,
+    confirmed: bool,
+) -> Result<DatabaseRenameResult, String> {
+    let started = std::time::Instant::now();
+    let result =
+        rename_database_inner(state, id, from, to, drop_source, confirmed).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(from),
+        None,
+        "rename_database",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("renameDatabase {from} → {to}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn rename_database_inner(
     state: &AppState,
     id: &str,
     from: &str,

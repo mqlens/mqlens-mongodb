@@ -170,6 +170,32 @@ pub async fn create_user_impl(
     password: &str,
     roles: &[RoleSpec],
 ) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = create_user_inner(state, id, database, username, password, roles).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        None,
+        "create_user",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("createUser {database}.{username}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn create_user_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    username: &str,
+    password: &str,
+    roles: &[RoleSpec],
+) -> Result<(), String> {
     guard_writable(state, id, WriteOp::UserWrite, false)?;
 
     if username.trim().is_empty() {
@@ -198,6 +224,32 @@ pub async fn create_user_impl(
 /// Update a user's password and/or replace its role set. At least one of the
 /// two must be provided.
 pub async fn update_user_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    username: &str,
+    password: Option<&str>,
+    roles: Option<&[RoleSpec]>,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = update_user_inner(state, id, database, username, password, roles).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        None,
+        "update_user",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("updateUser {database}.{username}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn update_user_inner(
     state: &AppState,
     id: &str,
     database: &str,
@@ -236,6 +288,30 @@ pub async fn update_user_impl(
 }
 
 pub async fn drop_user_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    username: &str,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = drop_user_inner(state, id, database, username).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        None,
+        "drop_user",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("dropUser {database}.{username}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn drop_user_inner(
     state: &AppState,
     id: &str,
     database: &str,

@@ -565,6 +565,44 @@ pub fn migrate_plaintext_to_encrypted(
     Ok(())
 }
 
+/// Re-encrypt a vault blob from `old_key` to `new_key` without touching disk.
+pub fn reencrypt_blob(
+    old_key: &[u8; 32],
+    new_key: &[u8; 32],
+    blob: &[u8],
+) -> Result<Vec<u8>, String> {
+    if blob.is_empty() {
+        return Ok(Vec::new());
+    }
+    let plain = crate::vault::decrypt(old_key, blob)?;
+    crate::vault::encrypt(new_key, &plain)
+}
+
+/// Read and prepare a re-encrypted file. Missing/empty files return `None`.
+pub fn prepare_reencrypt_file(
+    old_key: &[u8; 32],
+    new_key: &[u8; 32],
+    path: &Path,
+) -> Result<Option<Vec<u8>>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let blob = fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    if blob.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(reencrypt_blob(old_key, new_key, &blob)?))
+}
+
+/// Write a prepared blob, or no-op when `None`/empty.
+pub fn write_prepared_file(path: &Path, blob: Option<Vec<u8>>) -> Result<(), String> {
+    match blob {
+        None => Ok(()),
+        Some(b) if b.is_empty() => Ok(()),
+        Some(b) => fs::write(path, b).map_err(|e| format!("write {}: {e}", path.display())),
+    }
+}
+
 /// Re-encrypt both data files from `old_key` to `new_key`. Missing files are skipped.
 pub fn reencrypt_data_files(
     old_key: &[u8; 32],
@@ -572,14 +610,10 @@ pub fn reencrypt_data_files(
     enc_profiles: &Path,
     enc_settings: &Path,
 ) -> Result<(), String> {
-    if enc_profiles.exists() {
-        let profiles = load_profiles_encrypted(enc_profiles, old_key)?;
-        save_profiles_encrypted(enc_profiles, new_key, &profiles)?;
-    }
-    if enc_settings.exists() {
-        let settings = load_settings_encrypted(enc_settings, old_key)?;
-        save_settings_encrypted(enc_settings, new_key, &settings)?;
-    }
+    let profiles = prepare_reencrypt_file(old_key, new_key, enc_profiles)?;
+    let settings = prepare_reencrypt_file(old_key, new_key, enc_settings)?;
+    write_prepared_file(enc_profiles, profiles)?;
+    write_prepared_file(enc_settings, settings)?;
     Ok(())
 }
 
@@ -589,16 +623,8 @@ pub fn reencrypt_audit_file(
     new_key: &[u8; 32],
     enc_audit: &Path,
 ) -> Result<(), String> {
-    if !enc_audit.exists() {
-        return Ok(());
-    }
-    let blob = fs::read(enc_audit).map_err(|e| format!("read {}: {e}", enc_audit.display()))?;
-    if blob.is_empty() {
-        return Ok(());
-    }
-    let plain = crate::vault::decrypt(old_key, &blob)?;
-    let sealed = crate::vault::encrypt(new_key, &plain)?;
-    fs::write(enc_audit, sealed).map_err(|e| format!("write {}: {e}", enc_audit.display()))
+    let blob = prepare_reencrypt_file(old_key, new_key, enc_audit)?;
+    write_prepared_file(enc_audit, blob)
 }
 
 #[tauri::command]

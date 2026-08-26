@@ -421,6 +421,25 @@ pub async fn current_ops_impl(state: &AppState, id: &str) -> Result<Vec<CurrentO
 }
 
 pub async fn kill_op_impl(state: &AppState, id: &str, opid: i64) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = kill_op_inner(state, id, opid).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        None,
+        None,
+        "kill_op",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("killOp {opid}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn kill_op_inner(state: &AppState, id: &str, opid: i64) -> Result<(), String> {
     guard_writable(state, id, WriteOp::ServerAdmin, false)?;
 
     if connection_is_mock(state, id)? {
@@ -449,6 +468,32 @@ pub async fn profiling_status_impl(state: &AppState, id: &str, database: &str) -
 }
 
 pub async fn set_profiling_level_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    level: i32,
+    slow_ms: i32,
+) -> Result<ProfilingStatus, String> {
+    let started = std::time::Instant::now();
+    let args = format!("{{\"level\":{level},\"slowMs\":{slow_ms}}}");
+    let result = set_profiling_level_inner(state, id, database, level, slow_ms).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        None,
+        "set_profiling_level",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("profile {database} level={level}"),
+        Some(&args),
+        &result,
+    );
+    result
+}
+
+async fn set_profiling_level_inner(
     state: &AppState,
     id: &str,
     database: &str,

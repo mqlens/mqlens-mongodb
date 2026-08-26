@@ -2198,14 +2198,39 @@ async fn save_connection_profile(
     state: tauri::State<'_, AppState>,
     mut profile: connections::ConnectionProfile,
 ) -> Result<(), String> {
+    let started = Instant::now();
+    let profile_id = profile.id.clone();
+    let profile_name = profile.name.clone();
+    let result = save_connection_profile_inner(&app_handle, &state, &mut profile).await;
+    audit::maybe_record_result(
+        &state,
+        Some(&profile_id),
+        None,
+        None,
+        "save_connection_profile",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("save connection profile {profile_name}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn save_connection_profile_inner(
+    app_handle: &tauri::AppHandle,
+    state: &AppState,
+    profile: &mut connections::ConnectionProfile,
+) -> Result<(), String> {
     let key = state.require_key()?;
-    let path = connections::get_profiles_enc_path(&app_handle);
+    let path = connections::get_profiles_enc_path(app_handle);
     let mut profiles = connections::load_profiles_encrypted(&path, &key)?;
     profile.uri = connections::normalize_mongodb_uri_options(&profile.uri);
     if let Some(pos) = profiles.iter().position(|p| p.id == profile.id) {
-        profiles[pos] = profile;
+        profiles[pos] = profile.clone();
     } else {
-        profiles.push(profile);
+        profiles.push(profile.clone());
     }
     connections::save_profiles_encrypted(&path, &key, &profiles)
 }
@@ -2364,19 +2389,23 @@ async fn vault_change_password(
     let new_meta = connections::build_vault_meta(&new_password, params)?;
     let new_key = connections::unlock_key(&new_meta, &new_password)?;
 
-    connections::reencrypt_data_files(
-        &old_key,
-        &new_key,
-        &connections::get_profiles_enc_path(&app_handle),
-        &connections::get_settings_enc_path(&app_handle),
-    )?;
-    // Seal any open audit session under the old key, then re-encrypt the file.
+    let profiles_path = connections::get_profiles_enc_path(&app_handle);
+    let settings_path = connections::get_settings_enc_path(&app_handle);
+    let audit_path = connections::get_audit_enc_path(&app_handle);
+
+    // Seal any open audit session under the old key before reading blobs.
     let _ = audit::close_on_lock(&state);
-    connections::reencrypt_audit_file(
-        &old_key,
-        &new_key,
-        &connections::get_audit_enc_path(&app_handle),
-    )?;
+
+    // Prepare all re-encrypted payloads before overwriting any vault file.
+    let new_profiles =
+        connections::prepare_reencrypt_file(&old_key, &new_key, &profiles_path)?;
+    let new_settings =
+        connections::prepare_reencrypt_file(&old_key, &new_key, &settings_path)?;
+    let new_audit = connections::prepare_reencrypt_file(&old_key, &new_key, &audit_path)?;
+
+    connections::write_prepared_file(&profiles_path, new_profiles)?;
+    connections::write_prepared_file(&settings_path, new_settings)?;
+    connections::write_prepared_file(&audit_path, new_audit)?;
     connections::write_vault_meta(&meta_path, &new_meta)?;
     *state.vault_key.lock_safe()? = Some(new_key);
     let _ = audit::open_on_unlock(&app_handle, &state, new_key);
@@ -2670,6 +2699,14 @@ pub fn run() {
             updater::update_check,
             updater::update_install
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            use tauri::Manager;
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    let _ = audit::close_on_lock(&state);
+                }
+            }
+        });
 }

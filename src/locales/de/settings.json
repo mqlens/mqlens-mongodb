@@ -34,7 +34,7 @@
     "levelTitle": "Ausführlichkeit",
     "payloadsDescription": "Standardmäßig aus. Wenn aktiv, speichert Dokumentfragmente und vollständige Filter bis zu einer Größenbegrenzung pro Ereignis.",
     "payloadsLabel": "Dokument-Payloads einbeziehen",
-    "payloadsTitle": "Payloads",
+    "payloadsTitle": "Dokumentinhalte",
     "retentionDays_one": "{{count}} Tag",
     "retentionDays_other": "{{count}} Tage",
     "retentionDescription": "Ältere Ereignisse werden automatisch entfernt. Standard sind 30 Tage.",

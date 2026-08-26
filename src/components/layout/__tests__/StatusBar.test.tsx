@@ -39,4 +39,11 @@ describe('StatusBar', () => {
     fireEvent.click(screen.getByTestId('status-bar-zoom'));
     expect(onZoomReset).toHaveBeenCalledTimes(1);
   });
+
+  it('calls onOpenActivity when the activity link is clicked', () => {
+    const onOpenActivity = vi.fn();
+    renderStatusBar({ onOpenActivity });
+    fireEvent.click(screen.getByTestId('status-bar-activity'));
+    expect(onOpenActivity).toHaveBeenCalledTimes(1);
+  });
 });

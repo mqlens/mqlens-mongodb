@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
-import { Download, FolderOpen, RefreshCw, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Download, RefreshCw, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -91,6 +91,11 @@ export const ActivityPanel: React.FC = () => {
     return filter;
   }, [summaryContains, opFilter, statusFilter]);
 
+  const buildExportFilter = useCallback((): AuditFilter => {
+    const { limit: _limit, offset: _offset, ...rest } = buildFilter();
+    return rest;
+  }, [buildFilter]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -124,11 +129,11 @@ export const ActivityPanel: React.FC = () => {
     try {
       const path = await save({
         defaultPath: 'mqlens-audit.jsonl',
-        filters: [{ name: 'JSONL', extensions: ['jsonl'] }],
+        filters: [{ name: t('activity.exportFileType'), extensions: ['jsonl'] }],
       });
       if (!path) return;
       if (!window.confirm(t('activity.exportPlaintextWarning'))) return;
-      const n = await invoke<number>('audit_export', { filter: buildFilter(), path });
+      const n = await invoke<number>('audit_export', { filter: buildExportFilter(), path });
       setError(null);
       window.alert(t('activity.exportDone', { count: n }));
     } catch (err) {
@@ -136,14 +141,6 @@ export const ActivityPanel: React.FC = () => {
       else setError(String(err));
     } finally {
       setBusy(false);
-    }
-  };
-
-  const onOpenFolder = async () => {
-    try {
-      await invoke('audit_open_folder');
-    } catch (err) {
-      setError(String(err));
     }
   };
 
@@ -200,17 +197,6 @@ export const ActivityPanel: React.FC = () => {
             >
               <Download className="h-3.5 w-3.5" />
               {t('activity.actions.export')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void onOpenFolder()}
-              disabled={busy}
-              data-testid="activity-open-folder-btn"
-            >
-              <FolderOpen className="h-3.5 w-3.5" />
-              {t('activity.actions.openFolder')}
             </Button>
             <Button
               type="button"
@@ -286,9 +272,10 @@ export const ActivityPanel: React.FC = () => {
         {loading && events.length === 0 ? (
           <p className="p-4 text-xs text-muted-foreground">{t('activity.loading')}</p>
         ) : events.length === 0 ? (
-          <p className="p-4 text-xs text-muted-foreground" data-testid="activity-empty">
-            {t('activity.empty')}
-          </p>
+          <div className="space-y-1 p-4 text-xs text-muted-foreground" data-testid="activity-empty">
+            <p>{t('activity.empty')}</p>
+            <p>{t('activity.emptyLevelHint')}</p>
+          </div>
         ) : (
           <table className="w-full min-w-[720px] border-collapse text-left text-xs">
             <thead className="sticky top-0 bg-muted/80 backdrop-blur">

@@ -24,6 +24,39 @@ pub async fn execute_aggregate_impl(
     pipeline: &str,
     confirmed: bool,
 ) -> Result<Vec<String>, String> {
+    let started = std::time::Instant::now();
+    let result = execute_aggregate_inner(state, id, database, collection, pipeline, confirmed).await;
+    let has_write_stage = serde_json::from_str::<serde_json::Value>(pipeline)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .map(|stages| stages.iter().any(crate::write_guard::stage_is_disallowed))
+        .unwrap_or(false);
+    if has_write_stage {
+        crate::audit::maybe_record_result(
+            state,
+            Some(id),
+            Some(database),
+            Some(collection),
+            "execute_aggregate",
+            crate::audit::OpClass::Write,
+            None,
+            started,
+            &format!("aggregate {database}.{collection} ($out/$merge)"),
+            Some(pipeline),
+            &result,
+        );
+    }
+    result
+}
+
+async fn execute_aggregate_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    pipeline: &str,
+    confirmed: bool,
+) -> Result<Vec<String>, String> {
     // Parse and validate the pipeline (a JSON array of stage documents) up front so a
     // malformed pipeline fails clearly regardless of the connection type.
     let pipeline_val: serde_json::Value = if pipeline.trim().is_empty() {

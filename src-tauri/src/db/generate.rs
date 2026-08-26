@@ -769,6 +769,34 @@ pub async fn start_generate_task_impl(
     count: u32,
     seed: Option<u64>,
 ) -> Result<TaskInfo, String> {
+    let started = std::time::Instant::now();
+    let audit_summary = format!("generate {count} docs → {database}.{collection}");
+    let result = start_generate_task_inner(state, id, database, collection, template, count, seed).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "start_generate_task",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &audit_summary,
+        None,
+        &result,
+    );
+    result
+}
+
+async fn start_generate_task_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    template: &str,
+    count: u32,
+    seed: Option<u64>,
+) -> Result<TaskInfo, String> {
     guard_writable(state, id, WriteOp::Generate, false)?;
 
     use crate::limits::{IMPORT_BATCH_SIZE, MAX_IMPORT_DOCS};

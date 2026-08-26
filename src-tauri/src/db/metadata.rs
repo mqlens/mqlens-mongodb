@@ -175,6 +175,34 @@ pub async fn create_index_impl(
     unique: bool,
     sparse: bool,
 ) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = create_index_inner(state, id, db, collection, index_name, keys, unique, sparse).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(db),
+        Some(collection),
+        "create_index",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("createIndex {db}.{collection}.{index_name}"),
+        Some(keys),
+        &result,
+    );
+    result
+}
+
+async fn create_index_inner(
+    state: &AppState,
+    id: &str,
+    db: &str,
+    collection: &str,
+    index_name: &str,
+    keys: &str,
+    unique: bool,
+    sparse: bool,
+) -> Result<(), String> {
     guard_writable(state, id, WriteOp::CreateIndex, false)?;
 
     let is_mock = {
@@ -242,6 +270,31 @@ pub async fn create_index_impl(
 }
 
 pub async fn delete_index_impl(
+    state: &AppState,
+    id: &str,
+    db: &str,
+    collection: &str,
+    index_name: &str,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = delete_index_inner(state, id, db, collection, index_name).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(db),
+        Some(collection),
+        "delete_index",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("dropIndex {db}.{collection}.{index_name}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn delete_index_inner(
     state: &AppState,
     id: &str,
     db: &str,

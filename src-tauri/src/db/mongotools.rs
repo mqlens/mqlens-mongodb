@@ -959,6 +959,32 @@ pub async fn start_restore_task_impl(
     tool_path: &str,
     options: RestoreOptions,
 ) -> Result<TaskInfo, String> {
+    let started = std::time::Instant::now();
+    let source = restore_source_path(&options.source).to_string();
+    let audit_summary = format!("restore from {}", basename(&source));
+    let result = start_restore_task_inner(state, id, tool_path, options).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        None,
+        None,
+        "start_restore_task",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &audit_summary,
+        None,
+        &result,
+    );
+    result
+}
+
+async fn start_restore_task_inner(
+    state: &AppState,
+    id: &str,
+    tool_path: &str,
+    options: RestoreOptions,
+) -> Result<TaskInfo, String> {
     guard_writable(state, id, WriteOp::RestoreWrite, false)?;
 
     let uri = require_real_conn_uri(state, id)?;

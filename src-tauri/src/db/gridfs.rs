@@ -151,6 +151,47 @@ pub async fn upload_gridfs_file_impl(
     content_type: Option<&str>,
     on_progress: Option<&(dyn Fn(GridFsTransferProgress) + Send + Sync)>,
 ) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let result = upload_gridfs_file_inner(
+        state,
+        id,
+        database,
+        bucket,
+        source_path,
+        filename,
+        metadata_json,
+        content_type,
+        on_progress,
+    )
+    .await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(bucket),
+        "upload_gridfs_file",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("gridfs upload {database}.{bucket}"),
+        filename,
+        &result,
+    );
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn upload_gridfs_file_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    bucket: &str,
+    source_path: &str,
+    filename: Option<&str>,
+    metadata_json: Option<&str>,
+    content_type: Option<&str>,
+    on_progress: Option<&(dyn Fn(GridFsTransferProgress) + Send + Sync)>,
+) -> Result<String, String> {
     guard_writable(state, id, WriteOp::GridFsWrite, false)?;
 
     if connection_is_mock(state, id)? {
@@ -266,6 +307,31 @@ pub async fn upload_gridfs_file_impl(
 }
 
 pub async fn delete_gridfs_file_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    bucket: &str,
+    file_id_json: &str,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = delete_gridfs_file_inner(state, id, database, bucket, file_id_json).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(bucket),
+        "delete_gridfs_file",
+        crate::audit::OpClass::Write,
+        None,
+        started,
+        &format!("gridfs delete {database}.{bucket}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn delete_gridfs_file_inner(
     state: &AppState,
     id: &str,
     database: &str,
