@@ -2703,7 +2703,12 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             use tauri::Manager;
-            if let tauri::RunEvent::ExitRequested { .. } = event {
+            // `AppHandle::exit` ends in process teardown that may skip Drop.
+            // Seal on both exit events so the in-memory store reaches disk.
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
                 if let Some(state) = app_handle.try_state::<AppState>() {
                     let _ = audit::close_on_lock(&state);
                 }

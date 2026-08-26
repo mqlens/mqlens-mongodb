@@ -103,39 +103,56 @@ impl AuditSession {
         Ok(())
     }
 
+    /// Encrypt the live store to `enc_path` without closing the session.
+    /// Called after every mutation so a crash or `process::exit` cannot lose events.
+    pub fn persist(&self) -> Result<(), String> {
+        let (plain, key) = {
+            let store_guard = self.store.lock().map_err(|e| e.to_string())?;
+            let key_guard = self.key.lock().map_err(|e| e.to_string())?;
+            let Some(store) = store_guard.as_ref() else {
+                return Ok(());
+            };
+            let Some(key) = key_guard.as_ref() else {
+                return Ok(());
+            };
+            (store.to_bytes()?, *key)
+        };
+        let blob = seal(&key, &plain)?;
+        if let Some(parent) = self.enc_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("create {}: {e}", parent.display()))?;
+        }
+        let tmp = self.enc_path.with_extension("enc.tmp");
+        fs::write(&tmp, &blob).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        fs::rename(&tmp, &self.enc_path)
+            .map_err(|e| format!("rename {} → {}: {e}", tmp.display(), self.enc_path.display()))?;
+        Ok(())
+    }
+
     /// Seal store to `enc_path`, drop plaintext store, clear key.
     pub fn close(&self) -> Result<(), String> {
-        let mut store_guard = self.store.lock().map_err(|e| e.to_string())?;
-        let mut key_guard = self.key.lock().map_err(|e| e.to_string())?;
-        let key = key_guard
-            .take()
-            .ok_or_else(|| "audit session has no key".to_string())?;
-        if let Some(store) = store_guard.take() {
-            let plain = store.to_bytes()?;
-            let blob = seal(&key, &plain)?;
-            if let Some(parent) = self.enc_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("create {}: {e}", parent.display()))?;
-            }
-            fs::write(&self.enc_path, blob)
-                .map_err(|e| format!("write {}: {e}", self.enc_path.display()))?;
-        }
+        self.persist()?;
+        self.discard();
         Ok(())
     }
 
     /// Insert when open; otherwise increment dropped and return Ok(false).
     pub fn try_insert(&self, event: &AuditEvent) -> Result<bool, String> {
-        let guard = self.store.lock().map_err(|e| e.to_string())?;
-        match guard.as_ref() {
-            Some(store) => {
-                store.insert(event)?;
-                Ok(true)
-            }
-            None => {
-                self.dropped.fetch_add(1, Ordering::Relaxed);
-                Ok(false)
+        {
+            let guard = self.store.lock().map_err(|e| e.to_string())?;
+            match guard.as_ref() {
+                Some(store) => store.insert(event)?,
+                None => {
+                    self.dropped.fetch_add(1, Ordering::Relaxed);
+                    return Ok(false);
+                }
             }
         }
+        if let Err(e) = self.persist() {
+            eprintln!("audit persist after insert: {e}");
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(true)
     }
 
     pub fn query(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, String> {
@@ -147,19 +164,29 @@ impl AuditSession {
     }
 
     pub fn prune_before(&self, ts_ms: i64) -> Result<u64, String> {
-        let guard = self.store.lock().map_err(|e| e.to_string())?;
-        match guard.as_ref() {
-            Some(store) => store.prune_before(ts_ms),
-            None => Ok(0),
+        let n = {
+            let guard = self.store.lock().map_err(|e| e.to_string())?;
+            match guard.as_ref() {
+                Some(store) => store.prune_before(ts_ms)?,
+                None => return Ok(0),
+            }
+        };
+        if n > 0 {
+            self.persist()?;
         }
+        Ok(n)
     }
 
     pub fn clear_all(&self) -> Result<u64, String> {
-        let guard = self.store.lock().map_err(|e| e.to_string())?;
-        match guard.as_ref() {
-            Some(store) => store.clear_all(),
-            None => Err("audit session is closed".into()),
-        }
+        let n = {
+            let guard = self.store.lock().map_err(|e| e.to_string())?;
+            match guard.as_ref() {
+                Some(store) => store.clear_all()?,
+                None => return Err("audit session is closed".into()),
+            }
+        };
+        self.persist()?;
+        Ok(n)
     }
 
     /// Close without sealing (used on vault reset when the enc file is deleted).
@@ -261,6 +288,29 @@ mod tests {
         assert!(enc.exists(), "envelope file must exist after drop");
         let session2 = AuditSession::new(enc);
         session2.open(key).expect("reopen");
+        let rows = session2.query(&AuditFilter::default()).expect("query");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "e1");
+    }
+
+    #[test]
+    fn insert_persists_without_close() {
+        let dir = tempdir().unwrap();
+        let enc = dir.path().join("audit.db.enc");
+        let key = [9u8; 32];
+        let session = AuditSession::new(enc.clone());
+        session.open(key).expect("open");
+        assert!(session
+            .try_insert(&sample("e1", 100))
+            .expect("insert"));
+        assert!(
+            enc.exists(),
+            "envelope must exist after insert, before close"
+        );
+        // Simulate a hard process exit: the live session is abandoned without close().
+        std::mem::forget(session);
+        let session2 = AuditSession::new(enc);
+        session2.open(key).expect("reopen after crash");
         let rows = session2.query(&AuditFilter::default()).expect("query");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "e1");
