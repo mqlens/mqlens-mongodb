@@ -243,6 +243,43 @@ impl AuditStore {
             .map_err(|e| e.to_string())?;
         Ok(n as u64)
     }
+
+    /// Serialize the live DB to a SQLite file byte image (for vault sealing).
+    pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let path = dir.path().join("audit.db");
+        {
+            let mut dst = Connection::open(&path).map_err(|e| e.to_string())?;
+            let backup =
+                rusqlite::backup::Backup::new(&conn, &mut dst).map_err(|e| e.to_string())?;
+            backup
+                .run_to_completion(64, std::time::Duration::from_millis(1), None)
+                .map_err(|e| e.to_string())?;
+        }
+        std::fs::read(&path).map_err(|e| e.to_string())
+    }
+
+    /// Open a store from a SQLite file byte image (after vault unseal).
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let path = dir.path().join("audit.db");
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        let src = Connection::open(&path).map_err(|e| e.to_string())?;
+        let mut mem = Connection::open_in_memory().map_err(|e| e.to_string())?;
+        {
+            let backup =
+                rusqlite::backup::Backup::new(&src, &mut mem).map_err(|e| e.to_string())?;
+            backup
+                .run_to_completion(64, std::time::Duration::from_millis(1), None)
+                .map_err(|e| e.to_string())?;
+        }
+        let store = Self {
+            conn: Mutex::new(mem),
+        };
+        store.migrate()?;
+        Ok(store)
+    }
 }
 
 #[cfg(test)]
