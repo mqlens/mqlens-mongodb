@@ -42,6 +42,7 @@ export type QueryTabType =
   | 'export'
   | 'import'
   | 'tasks'
+  | 'activity'
   | 'schema'
   | 'create-view'
   | 'gridfs'
@@ -125,7 +126,7 @@ export interface RestoredTab {
 // reads to populate `unmirroredTabIdsRef`, so no separate change is needed.
 const NON_PERSISTED_TYPES = new Set<QueryTabType>(['export', 'import', 'generate']);
 // These tab kinds carry no connection at all; pass their id through as-is.
-const CONNECTIONLESS_TYPES = new Set<QueryTabType>(['settings', 'quickstart', 'tasks']);
+const CONNECTIONLESS_TYPES = new Set<QueryTabType>(['settings', 'quickstart', 'tasks', 'activity']);
 
 /**
  * Rewrite `id`'s live `<connectionId>` segment (if any) to
@@ -138,7 +139,7 @@ const CONNECTIONLESS_TYPES = new Set<QueryTabType>(['settings', 'quickstart', 't
  * no matching live-connection segment pass through unchanged — this
  * correctly no-ops for ids already in `profile:` form (nothing in
  * `connections` has a live id that looks like `profile:...`) and for
- * connectionless ids (`settings`/`quickstart`/`tasks`, or a pane/split id).
+ * connectionless ids (`settings`/`quickstart`/`tasks`/`activity`, or a pane/split id).
  */
 export function toProfileSpaceId(id: string, connections: PersistableConnection[]): string {
   const conn = connections.find((c) => id.includes(c.id));
@@ -154,7 +155,7 @@ export function toProfileSpaceId(id: string, connections: PersistableConnection[
  * a tab whose connection this window already has live should render exactly
  * like any other locally-reconnected tab, not stuck as a `profile:` banner.
  * Ids with no matching profile prefix — already live-space, connectionless
- * (`settings`/`quickstart`/`tasks`), or a pane/split id — pass through
+ * (`settings`/`quickstart`/`tasks`/`activity`), or a pane/split id — pass through
  * unchanged, mirroring `toProfileSpaceId`'s own no-op cases.
  */
 export function toLiveSpaceId(id: string, connections: PersistableConnection[]): string {

@@ -26,7 +26,8 @@
     "tasks": "任务",
     "users": "用户：{{name}}",
     "validation": "校验规则：{{collection}}",
-    "watch": "监听：{{target}}"
+    "watch": "监听：{{target}}",
+    "activity": "活动"
   },
   "toast": {
     "aggregationPipelineApplied": "已应用聚合管道",

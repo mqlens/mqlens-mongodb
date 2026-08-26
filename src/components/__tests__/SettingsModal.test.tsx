@@ -289,6 +289,62 @@ describe('SettingsView Component', () => {
     expect(localStorage.getItem('mqlens_ai_history_retention_months')).toBe('12');
   });
 
+  it('loads and saves audit logging settings', async () => {
+    mockInvoke.mockImplementation(
+      (
+        cmd: string,
+        args?: {
+          settings?: {
+            audit_enabled?: boolean;
+            audit_level?: string;
+            audit_retention_days?: number;
+            audit_include_payloads?: boolean;
+          };
+        }
+      ) => {
+        if (cmd === 'load_app_settings') {
+          return Promise.resolve({
+            mongosh_path: '',
+            audit_enabled: true,
+            audit_level: 'A',
+            audit_retention_days: 30,
+            audit_include_payloads: false,
+          });
+        }
+        if (cmd === 'save_app_settings') {
+          expect(args?.settings?.audit_enabled).toBe(true);
+          expect(args?.settings?.audit_level).toBe('C');
+          expect(args?.settings?.audit_retention_days).toBe(90);
+          expect(args?.settings?.audit_include_payloads).toBe(true);
+          return Promise.resolve();
+        }
+        if (cmd === 'detect_local_agents') return Promise.resolve([]);
+        if (cmd === 'managed_tools_status') return Promise.resolve([]);
+        return Promise.resolve(undefined);
+      }
+    );
+
+    renderSettings();
+    await openTab('settings-tab-audit');
+
+    const levelTrigger = await screen.findByTestId('audit-level-select');
+    await waitFor(() => expect(levelTrigger).toHaveTextContent(/A\b|writes/i));
+
+    fireEvent.click(levelTrigger);
+    fireEvent.click(screen.getByRole('option', { name: /C\b|all/i }));
+
+    const retentionTrigger = screen.getByTestId('audit-retention-select');
+    fireEvent.click(retentionTrigger);
+    fireEvent.click(screen.getByRole('option', { name: /90/i }));
+
+    fireEvent.click(screen.getByTestId('audit-include-payloads-toggle'));
+    fireEvent.click(screen.getByTestId('settings-save-btn'));
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('save_app_settings', expect.any(Object))
+    );
+  });
+
   it('shows last update check status on the updates tab', async () => {
     writeUpdateCheckSnapshot({
       checkedAt: '2026-06-15T12:00:00.000Z',

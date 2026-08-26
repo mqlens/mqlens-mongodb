@@ -21,6 +21,26 @@
     "tabDescription": "云端 API 密钥、本地代理、自定义查询指令，以及 AI 助手历史记录的保留时长。",
     "tabLabel": "AI 助手"
   },
+  "audit": {
+    "enabledDescription": "启用后，MQLens 会将选定的数据库操作记录到经密钥库加密的本地日志中。",
+    "enabledLabel": "启用活动日志",
+    "enabledTitle": "活动日志",
+    "levelA": "A — 写入与 mongosh",
+    "levelB": "B — 写入、mongosh 与高影响读取",
+    "levelC": "C — 全部数据库操作",
+    "levelDescription": "A 覆盖删除、更新、删除集合/库与 Shell。B 增加聚合与 explain。C 记录每一次数据库操作。",
+    "levelLabel": "详细级别",
+    "levelTitle": "详细程度",
+    "payloadsDescription": "默认关闭。开启后会存储文档片段与完整过滤条件，并受单事件大小上限约束。",
+    "payloadsLabel": "包含文档载荷",
+    "payloadsTitle": "载荷",
+    "retentionDays_other": "{{count}} 天",
+    "retentionDescription": "更早的事件会自动删除。默认保留 30 天。",
+    "retentionLabel": "事件保留时长",
+    "retentionTitle": "保留期限",
+    "tabDescription": "本地操作日志，用于排查误删与破坏性变更。",
+    "tabLabel": "活动"
+  },
   "appearance": {
     "colorMode": "配色模式",
     "compact": "紧凑",

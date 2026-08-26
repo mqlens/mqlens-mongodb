@@ -103,6 +103,7 @@ import { GridFsView } from './components/GridFsView';
 import { MonitoringView } from './components/MonitoringView';
 import { UserManagementView } from './components/UserManagementView';
 import { TaskManager, type ExportTaskInfo } from './components/TaskManager';
+import { ActivityPanel } from './components/ActivityPanel';
 import { VaultGate } from './components/VaultGate';
 import { UpdatePrompt } from './components/UpdatePrompt';
 import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider';
@@ -121,13 +122,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { FolderCode, KeyRound, Radio, X, ChevronsRight, XSquare, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert } from 'lucide-react';
+import { FolderCode, KeyRound, Radio, X, ChevronsRight, XSquare, Play, Settings, Terminal, Rocket, Download, Upload, Table2, Eye, HardDrive, Activity, Copy, Users, ListChecks, DatabaseBackup, DatabaseZap, ShieldCheck, ExternalLink, MoveRight, Wand2, Lock, ShieldAlert, ScrollText } from 'lucide-react';
 import logoMark from './assets/logo-mark.svg';
 import { loadTabColors, saveTabColor, TAB_COLORS, tabColorCss, type TabColorId } from './lib/tabColors';
 
 export interface QueryTab {
   id: string;
-  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate' | 'watch';
+  type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'activity' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate' | 'watch';
   connectionId: string;
   db: string;
   collection: string;
@@ -276,6 +277,20 @@ const createTasksTab = (): QueryTab => ({
   explainResult: null,
 });
 
+const ACTIVITY_TAB_ID = 'activity';
+
+const createActivityTab = (): QueryTab => ({
+  id: ACTIVITY_TAB_ID,
+  type: 'activity',
+  connectionId: '',
+  db: '',
+  collection: '',
+  results: [],
+  loading: false,
+  error: null,
+  explainResult: null,
+});
+
 /**
  * The id of the tab that watches a namespace.
  *
@@ -311,6 +326,8 @@ const tabIconFor = (tab: QueryTab, isActive: boolean): React.ReactNode => {
       return <Upload size={size} className={className} />;
     case 'tasks':
       return <ListChecks size={size} className={className} />;
+    case 'activity':
+      return <ScrollText size={size} className={className} />;
     case 'schema':
       return <Table2 size={size} className={className} />;
     case 'create-view':
@@ -362,6 +379,8 @@ export const tabLabelFor = (
       return t('tabs.import', { collection: tab.collection });
     case 'tasks':
       return t('tabs.tasks');
+    case 'activity':
+      return t('tabs.activity');
     case 'schema':
       return t('tabs.schema', { collection: tab.collection });
     case 'create-view':
@@ -1577,6 +1596,16 @@ function Workspace() {
       return;
     }
     dispatchWorkspace({ type: 'open_tab', tabId: TASKS_TAB_ID });
+  };
+
+  const handleOpenActivityTab = () => {
+    if (!tabs.some(t => t.id === ACTIVITY_TAB_ID)) {
+      const activityTab = createActivityTab();
+      setTabs(prev => [...prev, activityTab]);
+      dispatchWorkspace({ type: 'open_tab', tabId: ACTIVITY_TAB_ID }, { tab: activityTab });
+      return;
+    }
+    dispatchWorkspace({ type: 'open_tab', tabId: ACTIVITY_TAB_ID });
   };
 
   const handleOpenExportTab = (sourceTab: QueryTab) => {
@@ -2844,6 +2873,7 @@ function Workspace() {
     { id: 'new-connection', title: tShell('commandPalette.paletteActions.newConnection.title'), keywords: tShell('commandPalette.paletteActions.newConnection.keywords'), run: () => setIsConnectionModalOpen(true) },
     { id: 'toggle-theme', title: tShell('commandPalette.paletteActions.toggleTheme.title'), keywords: tShell('commandPalette.paletteActions.toggleTheme.keywords'), run: toggleTheme },
     { id: 'open-settings', title: tShell('commandPalette.paletteActions.openSettings.title'), keywords: tShell('commandPalette.paletteActions.openSettings.keywords'), run: handleOpenSettingsTab },
+    { id: 'open-activity', title: tShell('commandPalette.paletteActions.openActivity.title'), keywords: tShell('commandPalette.paletteActions.openActivity.keywords'), run: handleOpenActivityTab },
     { id: 'open-quickstart', title: tShell('commandPalette.paletteActions.openQuickstart.title'), keywords: tShell('commandPalette.paletteActions.openQuickstart.keywords'), run: openQuickStartTab },
     { id: 'refresh-palette-index', title: tShell('commandPalette.paletteActions.refreshPaletteIndex.title'), keywords: tShell('commandPalette.paletteActions.refreshPaletteIndex.keywords'), run: () => invalidatePaletteNamespaceIndex() },
     { id: 'density-roomy', title: tShell('commandPalette.paletteActions.densityRoomy.title'), keywords: tShell('commandPalette.paletteActions.densityRoomy.keywords'), run: () => setSpacingDensity('roomy') },
@@ -4313,6 +4343,11 @@ function Workspace() {
               onCancel={handleCancelTask}
               variant="embedded"
             />
+          </div>
+        )}
+        {tab.type === 'activity' && (
+          <div className="h-full" data-testid="activity-view">
+            <ActivityPanel />
           </div>
         )}
         {tab.type === 'watch' && (

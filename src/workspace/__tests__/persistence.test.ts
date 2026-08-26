@@ -61,7 +61,7 @@ describe('toPersistedTab', () => {
   });
 
   it('passes settings/quickstart/tasks tabs through unchanged with empty profile fields', () => {
-    for (const type of ['settings', 'quickstart', 'tasks'] as const) {
+    for (const type of ['settings', 'quickstart', 'tasks', 'activity'] as const) {
       const tab: PersistableTab = { id: type, type, connectionId: '', db: '', collection: '' };
       const persisted = toPersistedTab(tab, undefined, undefined);
       expect(persisted).toEqual({

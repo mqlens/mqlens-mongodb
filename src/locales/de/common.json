@@ -26,7 +26,8 @@
     "tasks": "Aufgaben",
     "users": "Benutzer: {{name}}",
     "validation": "Validierung: {{collection}}",
-    "watch": "Beobachten: {{target}}"
+    "watch": "Beobachten: {{target}}",
+    "activity": "Aktivität"
   },
   "toast": {
     "aggregationPipelineApplied": "Aggregationspipeline angewendet",

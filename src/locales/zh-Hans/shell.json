@@ -147,6 +147,10 @@
       "toggleTheme": {
         "keywords": "外观 配色 模式 appearance color mode toggle light dark theme",
         "title": "切换浅色/深色主题"
+      },
+      "openActivity": {
+        "title": "打开活动",
+        "keywords": "审计 日志 历史 操作 误删 drop"
       }
     },
     "results_other": "{{count}} 条结果",
@@ -529,5 +533,54 @@
       },
       "unmirroredExplanation": "导出/导入标签页会保留在各自的窗口中"
     }
+  },
+  "activity": {
+    "actions": {
+      "clear": "清空日志",
+      "export": "导出…",
+      "openFolder": "打开文件夹",
+      "refresh": "刷新"
+    },
+    "clearConfirm": "清除此密钥库中的全部活动事件？此操作无法撤销。",
+    "columns": {
+      "connection": "连接",
+      "namespace": "命名空间",
+      "op": "操作",
+      "source": "来源",
+      "status": "状态",
+      "summary": "摘要",
+      "time": "时间"
+    },
+    "detail": {
+      "args": "参数",
+      "duration": "耗时",
+      "error": "错误",
+      "level": "记录时级别"
+    },
+    "droppedBanner_one": "本会话有 {{count}} 条事件因存储或加密失败而被丢弃。",
+    "droppedBanner_other": "本会话有 {{count}} 条事件因存储或加密失败而被丢弃。",
+    "empty": "当前筛选条件下暂无活动记录。",
+    "exportDone_one": "已导出 {{count}} 条事件。",
+    "exportDone_other": "已导出 {{count}} 条事件。",
+    "exportPlaintextWarning": "导出将在密钥库外写入明文 JSONL 文件。是否继续？",
+    "filters": {
+      "op": "操作",
+      "opPlaceholder": "例如 dropCollection",
+      "status": "状态",
+      "statusAll": "全部",
+      "statusError": "失败",
+      "statusOk": "成功",
+      "summary": "摘要包含",
+      "summaryPlaceholder": "搜索摘要…"
+    },
+    "header": {
+      "subtitle": "本地、经密钥库加密的数据库操作日志。",
+      "title": "活动"
+    },
+    "loading": "正在加载活动…",
+    "lockedBody": "解锁密钥库后即可查看和导出活动日志。",
+    "lockedTitle": "密钥库已锁定",
+    "statusError": "失败",
+    "statusOk": "成功"
   }
 }

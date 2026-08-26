@@ -147,6 +147,10 @@
       "toggleTheme": {
         "keywords": "darstellung farbe modus appearance color",
         "title": "Hell-/Dunkelmodus umschalten"
+      },
+      "openActivity": {
+        "title": "Aktivität öffnen",
+        "keywords": "audit protokoll historie operationen löschen drop"
       }
     },
     "results_one": "{{count}} Ergebnis",
@@ -541,5 +545,54 @@
       },
       "unmirroredExplanation": "Export-/Import-Tabs bleiben in ihrem Fenster"
     }
+  },
+  "activity": {
+    "actions": {
+      "clear": "Protokoll leeren",
+      "export": "Exportieren…",
+      "openFolder": "Ordner öffnen",
+      "refresh": "Aktualisieren"
+    },
+    "clearConfirm": "Alle Aktivitätsereignisse in diesem Tresor löschen? Das kann nicht rückgängig gemacht werden.",
+    "columns": {
+      "connection": "Verbindung",
+      "namespace": "Namensraum",
+      "op": "Operation",
+      "source": "Quelle",
+      "status": "Status",
+      "summary": "Zusammenfassung",
+      "time": "Zeit"
+    },
+    "detail": {
+      "args": "Argumente",
+      "duration": "Dauer",
+      "error": "Fehler",
+      "level": "Stufe bei Aufzeichnung"
+    },
+    "droppedBanner_one": "{{count}} Ereignis wurde in dieser Sitzung verworfen (Speicher- oder Verschlüsselungsfehler).",
+    "droppedBanner_other": "{{count}} Ereignisse wurden in dieser Sitzung verworfen (Speicher- oder Verschlüsselungsfehler).",
+    "empty": "Noch keine Aktivität für die aktuellen Filter.",
+    "exportDone_one": "{{count}} Ereignis exportiert.",
+    "exportDone_other": "{{count}} Ereignisse exportiert.",
+    "exportPlaintextWarning": "Der Export schreibt eine Klartext-JSONL-Datei außerhalb des Tresors. Fortfahren?",
+    "filters": {
+      "op": "Operation",
+      "opPlaceholder": "z. B. dropCollection",
+      "status": "Status",
+      "statusAll": "Alle",
+      "statusError": "Fehlgeschlagen",
+      "statusOk": "Erfolgreich",
+      "summary": "Zusammenfassung enthält",
+      "summaryPlaceholder": "Zusammenfassung suchen…"
+    },
+    "header": {
+      "subtitle": "Lokales, tresorverschlüsseltes Protokoll von Datenbankoperationen.",
+      "title": "Aktivität"
+    },
+    "loading": "Aktivität wird geladen…",
+    "lockedBody": "Entsperre den Tresor, um das Aktivitätsprotokoll anzuzeigen und zu exportieren.",
+    "lockedTitle": "Tresor ist gesperrt",
+    "statusError": "Fehlgeschlagen",
+    "statusOk": "OK"
   }
 }

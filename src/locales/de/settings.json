@@ -22,6 +22,27 @@
     "tabDescription": "Cloud-API-Schlüssel, lokale Agenten, individuelle Abfrageanweisungen und KI-Helfer-Verlaufsdauer.",
     "tabLabel": "KI-Assistent"
   },
+  "audit": {
+    "enabledDescription": "Aktiviert die Aufzeichnung ausgewählter Datenbankoperationen in einem tresorverschlüsselten lokalen Protokoll.",
+    "enabledLabel": "Aktivitätsprotokollierung aktivieren",
+    "enabledTitle": "Aktivitätsprotokoll",
+    "levelA": "A — Schreibvorgänge und mongosh",
+    "levelB": "B — Schreibvorgänge, mongosh und leseintensive Operationen",
+    "levelC": "C — Alle Datenbankoperationen",
+    "levelDescription": "A deckt Löschen, Aktualisieren, Drop und Shell ab. B ergänzt Aggregationen und Explain. C zeichnet jede DB-Operation auf.",
+    "levelLabel": "Detailstufe",
+    "levelTitle": "Ausführlichkeit",
+    "payloadsDescription": "Standardmäßig aus. Wenn aktiv, speichert Dokumentfragmente und vollständige Filter bis zu einer Größenbegrenzung pro Ereignis.",
+    "payloadsLabel": "Dokument-Payloads einbeziehen",
+    "payloadsTitle": "Payloads",
+    "retentionDays_one": "{{count}} Tag",
+    "retentionDays_other": "{{count}} Tage",
+    "retentionDescription": "Ältere Ereignisse werden automatisch entfernt. Standard sind 30 Tage.",
+    "retentionLabel": "Ereignisse behalten für",
+    "retentionTitle": "Aufbewahrung",
+    "tabDescription": "Lokale Operationsprotokollierung zur Untersuchung versehentlicher Löschungen und zerstörerischer Änderungen.",
+    "tabLabel": "Aktivität"
+  },
   "appearance": {
     "colorMode": "Farbmodus",
     "compact": "Kompakt",

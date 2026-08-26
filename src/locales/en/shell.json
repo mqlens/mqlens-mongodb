@@ -1,4 +1,53 @@
 {
+  "activity": {
+    "actions": {
+      "clear": "Clear log",
+      "export": "Export…",
+      "openFolder": "Open folder",
+      "refresh": "Refresh"
+    },
+    "clearConfirm": "Clear all activity events from this vault? This cannot be undone.",
+    "columns": {
+      "connection": "Connection",
+      "namespace": "Namespace",
+      "op": "Operation",
+      "source": "Source",
+      "status": "Status",
+      "summary": "Summary",
+      "time": "Time"
+    },
+    "detail": {
+      "args": "Arguments",
+      "duration": "Duration",
+      "error": "Error",
+      "level": "Level at record"
+    },
+    "droppedBanner_one": "{{count}} event was dropped this session (storage or encryption failures).",
+    "droppedBanner_other": "{{count}} events were dropped this session (storage or encryption failures).",
+    "empty": "No activity recorded yet for the current filters.",
+    "exportDone_one": "Exported {{count}} event.",
+    "exportDone_other": "Exported {{count}} events.",
+    "exportPlaintextWarning": "Export writes a plaintext JSONL file outside the vault. Continue?",
+    "filters": {
+      "op": "Operation",
+      "opPlaceholder": "e.g. dropCollection",
+      "status": "Status",
+      "statusAll": "All",
+      "statusError": "Failed",
+      "statusOk": "Succeeded",
+      "summary": "Summary contains",
+      "summaryPlaceholder": "Search summary…"
+    },
+    "header": {
+      "subtitle": "Local vault-encrypted log of database operations.",
+      "title": "Activity"
+    },
+    "loading": "Loading activity…",
+    "lockedBody": "Unlock the vault to view and export the activity log.",
+    "lockedTitle": "Vault is locked",
+    "statusError": "Failed",
+    "statusOk": "OK"
+  },
   "aiChatPanel": {
     "actions": {
       "copy": "Copy",
@@ -111,6 +160,10 @@
       "nextTab": {
         "keywords": "tab switch",
         "title": "Next Tab"
+      },
+      "openActivity": {
+        "keywords": "audit log history operations wipe drop",
+        "title": "Open Activity"
       },
       "openMonitoring": {
         "keywords": "monitoring metrics server status profiler",

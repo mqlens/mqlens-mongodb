@@ -110,6 +110,8 @@ export default defineConfig({
       'settings:shortcuts.tabDescription',
       'settings:security.tabLabel',
       'settings:security.tabDescription',
+      'settings:audit.tabLabel',
+      'settings:audit.tabDescription',
       'settings:language.tabLabel',
       'settings:language.tabDescription',
       'connections:tabs.server',

@@ -12,6 +12,7 @@
   },
   "save": "Save",
   "tabs": {
+    "activity": "Activity",
     "createView": "New View: {{db}}",
     "dump": "Dump: {{name}}",
     "export": "Export: {{collection}}",

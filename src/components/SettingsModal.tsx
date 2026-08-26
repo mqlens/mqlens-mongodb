@@ -13,6 +13,7 @@ import {
   Wrench,
   Copy,
   Languages,
+  ScrollText,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -74,7 +75,25 @@ interface AppSettings {
   local_commands?: Record<string, string>;
   ai_custom_instructions?: string;
   ai_history_retention_months?: number;
+  audit_enabled?: boolean;
+  audit_level?: string;
+  audit_retention_days?: number;
+  audit_include_payloads?: boolean;
   update_channel?: string;
+}
+
+const AUDIT_LEVELS = ['A', 'B', 'C'] as const;
+const AUDIT_RETENTION_DAYS = [7, 30, 90] as const;
+type AuditLevel = (typeof AUDIT_LEVELS)[number];
+
+function normalizeAuditLevel(value: unknown): AuditLevel {
+  const s = String(value ?? 'A').toUpperCase();
+  return (AUDIT_LEVELS as readonly string[]).includes(s) ? (s as AuditLevel) : 'A';
+}
+
+function normalizeAuditRetentionDays(value: unknown): number {
+  const n = Number(value);
+  return (AUDIT_RETENTION_DAYS as readonly number[]).includes(n) ? n : 30;
 }
 
 interface AgentDetection {
@@ -113,6 +132,7 @@ type SettingsTabId =
   | 'updates'
   | 'shortcuts'
   | 'security'
+  | 'audit'
   | 'language';
 
 const SETTINGS_TABS: {
@@ -166,6 +186,13 @@ const SETTINGS_TABS: {
     labelKey: 'security.tabLabel',
     descriptionKey: 'security.tabDescription',
     Icon: ShieldCheck,
+  },
+  {
+    id: 'audit',
+    labelKey: 'audit.tabLabel',
+    descriptionKey: 'audit.tabDescription',
+    Icon: ScrollText,
+    persistFooter: true,
   },
   {
     id: 'language',
@@ -566,6 +593,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   const [historyRetentionMonths, setHistoryRetentionMonths] = useState<AiHistoryRetentionMonths>(
     DEFAULT_AI_HISTORY_RETENTION_MONTHS
   );
+  const [auditEnabled, setAuditEnabled] = useState(true);
+  const [auditLevel, setAuditLevel] = useState<AuditLevel>('A');
+  const [auditRetentionDays, setAuditRetentionDays] = useState(30);
+  const [auditIncludePayloads, setAuditIncludePayloads] = useState(false);
   const [updateChannel, setUpdateChannel] = useState<'stable' | 'dev'>('stable');
   const [agents, setAgents] = useState<AgentDetection[]>([]);
   const [status, setStatus] = useState<string | null>(null);
@@ -614,6 +645,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
         setHistoryRetentionMonths(
           normalizeAiHistoryRetentionMonths(s.ai_history_retention_months)
         );
+        setAuditEnabled(s.audit_enabled !== false);
+        setAuditLevel(normalizeAuditLevel(s.audit_level));
+        setAuditRetentionDays(normalizeAuditRetentionDays(s.audit_retention_days));
+        setAuditIncludePayloads(!!s.audit_include_payloads);
         setUpdateChannel(s.update_channel === 'dev' ? 'dev' : 'stable');
         // Keep the localStorage mirror in sync so AI Helper prune uses the vault value.
         saveAiHistoryRetentionMonths(
@@ -662,6 +697,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
           local_commands: localCommands,
           ai_custom_instructions: customInstructions,
           ai_history_retention_months: historyRetentionMonths,
+          audit_enabled: auditEnabled,
+          audit_level: auditLevel,
+          audit_retention_days: auditRetentionDays,
+          audit_include_payloads: auditIncludePayloads,
           update_channel: updateChannel,
         },
       });
@@ -1255,6 +1294,96 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                 </CardContent>
               </Card>
             </div>
+          </div>
+        );
+
+      case 'audit':
+        return (
+          <div className="grid max-w-2xl gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('audit.enabledTitle')}</CardTitle>
+                <CardDescription>{t('audit.enabledDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-3">
+                  <Switch
+                    data-testid="audit-enabled-toggle"
+                    checked={auditEnabled}
+                    onCheckedChange={setAuditEnabled}
+                  />
+                  <Label className="font-normal">{t('audit.enabledLabel')}</Label>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('audit.levelTitle')}</CardTitle>
+                <CardDescription>{t('audit.levelDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <Label htmlFor="audit-level">{t('audit.levelLabel')}</Label>
+                <Select
+                  value={auditLevel}
+                  onValueChange={(v) => setAuditLevel(normalizeAuditLevel(v))}
+                  disabled={!auditEnabled}
+                >
+                  <SelectTrigger id="audit-level" data-testid="audit-level-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="A">{t('audit.levelA')}</SelectItem>
+                    <SelectItem value="B">{t('audit.levelB')}</SelectItem>
+                    <SelectItem value="C">{t('audit.levelC')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('audit.retentionTitle')}</CardTitle>
+                <CardDescription>{t('audit.retentionDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <Label htmlFor="audit-retention">{t('audit.retentionLabel')}</Label>
+                <Select
+                  value={String(auditRetentionDays)}
+                  onValueChange={(v) => setAuditRetentionDays(normalizeAuditRetentionDays(Number(v)))}
+                  disabled={!auditEnabled}
+                >
+                  <SelectTrigger id="audit-retention" data-testid="audit-retention-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {AUDIT_RETENTION_DAYS.map((days) => (
+                      <SelectItem key={days} value={String(days)}>
+                        {t('audit.retentionDays', { count: days })}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('audit.payloadsTitle')}</CardTitle>
+                <CardDescription>{t('audit.payloadsDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-3">
+                  <Switch
+                    data-testid="audit-include-payloads-toggle"
+                    checked={auditIncludePayloads}
+                    disabled={!auditEnabled}
+                    onCheckedChange={setAuditIncludePayloads}
+                  />
+                  <Label className="font-normal">{t('audit.payloadsLabel')}</Label>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         );
 

@@ -82,6 +82,27 @@
     "uiFont": "UI font",
     "zoomShortcutHint": "Shortcut: {{shortcut}} to reset"
   },
+  "audit": {
+    "enabledDescription": "When enabled, MQLens records selected database operations in a vault-encrypted local log.",
+    "enabledLabel": "Enable activity logging",
+    "enabledTitle": "Activity log",
+    "levelA": "A — Writes and mongosh",
+    "levelB": "B — Writes, mongosh, and high-impact reads",
+    "levelC": "C — All database operations",
+    "levelDescription": "A covers deletes, updates, drops, and shell. B adds aggregations and explain. C records every DB op.",
+    "levelLabel": "Detail level",
+    "levelTitle": "Verbosity",
+    "payloadsDescription": "Off by default. When on, stores document fragments and full filters up to a per-event size cap.",
+    "payloadsLabel": "Include document payloads",
+    "payloadsTitle": "Payloads",
+    "retentionDays_one": "{{count}} day",
+    "retentionDays_other": "{{count}} days",
+    "retentionDescription": "Older events are removed automatically. Default is 30 days.",
+    "retentionLabel": "Keep events for",
+    "retentionTitle": "Retention",
+    "tabDescription": "Local operation logging for investigating accidental wipes and destructive changes.",
+    "tabLabel": "Activity"
+  },
   "footer": {
     "saveChanges": "Save changes",
     "saving": "Saving...",
