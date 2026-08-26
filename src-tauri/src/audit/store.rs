@@ -9,6 +9,7 @@ pub const SCHEMA_VERSION: i32 = 1;
 
 /// One persisted audit row (matches `audit_events` table).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuditEvent {
     pub id: String,
     pub ts: i64,
@@ -28,7 +29,8 @@ pub struct AuditEvent {
 }
 
 /// Filter for listing audit events (all fields optional).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuditFilter {
     pub connection_id: Option<String>,
     pub database: Option<String>,

@@ -53,6 +53,19 @@ fn default_ai_provider() -> String {
 fn default_ai_history_retention_months() -> u8 {
     3
 }
+
+fn default_audit_enabled() -> bool {
+    true
+}
+fn default_audit_level() -> String {
+    "A".to_string()
+}
+fn default_audit_retention_days() -> u32 {
+    30
+}
+fn default_audit_include_payloads() -> bool {
+    false
+}
 fn default_openai_model() -> String {
     "gpt-4o".to_string()
 }
@@ -157,6 +170,18 @@ pub struct AppSettings {
     /// How long to keep AI Helper chat/prompt history (1–12 months).
     #[serde(default = "default_ai_history_retention_months")]
     pub ai_history_retention_months: u8,
+    /// Master switch for local operation audit logging (#272).
+    #[serde(default = "default_audit_enabled")]
+    pub audit_enabled: bool,
+    /// Audit verbosity: `"A"` (writes+shell), `"B"` (+high reads), `"C"` (all DB ops).
+    #[serde(default = "default_audit_level")]
+    pub audit_level: String,
+    /// How long to keep audit events (days). Default 30; UI presets 7/30/90.
+    #[serde(default = "default_audit_retention_days")]
+    pub audit_retention_days: u32,
+    /// When true, store document bodies / full filters up to the per-event cap.
+    #[serde(default = "default_audit_include_payloads")]
+    pub audit_include_payloads: bool,
     // Auto-update channel: "stable" (default) or "dev".
     #[serde(default = "default_update_channel")]
     pub update_channel: String,
@@ -180,6 +205,10 @@ impl Default for AppSettings {
             local_commands: std::collections::HashMap::new(),
             ai_custom_instructions: String::new(),
             ai_history_retention_months: default_ai_history_retention_months(),
+            audit_enabled: default_audit_enabled(),
+            audit_level: default_audit_level(),
+            audit_retention_days: default_audit_retention_days(),
+            audit_include_payloads: default_audit_include_payloads(),
             update_channel: default_update_channel(),
             appearance: AppearanceSettings::default(),
         }
@@ -431,6 +460,11 @@ pub fn get_settings_enc_path(app_handle: &tauri::AppHandle) -> PathBuf {
     config_dir_file(app_handle, "settings.json.enc")
 }
 
+/// Vault-encrypted audit SQLite database (`audit.db.enc`).
+pub fn get_audit_enc_path(app_handle: &tauri::AppHandle) -> PathBuf {
+    config_dir_file(app_handle, "audit.db.enc")
+}
+
 /// Shared helper: a file inside the app config dir (creating the dir), or CWD fallback.
 fn config_dir_file(app_handle: &tauri::AppHandle, name: &str) -> PathBuf {
     match app_handle.path().app_config_dir() {
@@ -547,6 +581,24 @@ pub fn reencrypt_data_files(
         save_settings_encrypted(enc_settings, new_key, &settings)?;
     }
     Ok(())
+}
+
+/// Re-encrypt `audit.db.enc` from `old_key` to `new_key`. Missing/empty file is a no-op.
+pub fn reencrypt_audit_file(
+    old_key: &[u8; 32],
+    new_key: &[u8; 32],
+    enc_audit: &Path,
+) -> Result<(), String> {
+    if !enc_audit.exists() {
+        return Ok(());
+    }
+    let blob = fs::read(enc_audit).map_err(|e| format!("read {}: {e}", enc_audit.display()))?;
+    if blob.is_empty() {
+        return Ok(());
+    }
+    let plain = crate::vault::decrypt(old_key, &blob)?;
+    let sealed = crate::vault::encrypt(new_key, &plain)?;
+    fs::write(enc_audit, sealed).map_err(|e| format!("write {}: {e}", enc_audit.display()))
 }
 
 #[tauri::command]

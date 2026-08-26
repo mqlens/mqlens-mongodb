@@ -2676,6 +2676,10 @@ mod tests {
         assert_eq!(legacy.gemini_model, "gemini-1.5-flash");
         assert_eq!(legacy.ai_custom_instructions, "");
         assert_eq!(legacy.ai_history_retention_months, 3);
+        assert!(legacy.audit_enabled);
+        assert_eq!(legacy.audit_level, "A");
+        assert_eq!(legacy.audit_retention_days, 30);
+        assert!(!legacy.audit_include_payloads);
 
         // resolve_local_command falls back to built-in defaults when unset.
         assert_eq!(

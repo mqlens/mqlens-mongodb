@@ -121,6 +121,7 @@ pub async fn biometric_unlock(
     match decode_and_verify_key(&meta, &resp.data) {
         Ok(key) => {
             *state.vault_key.lock_safe()? = Some(key);
+            let _ = crate::audit::open_on_unlock(&app, &state, key);
             Ok(connections::VaultStatus::Unlocked)
         }
         Err(e) => {

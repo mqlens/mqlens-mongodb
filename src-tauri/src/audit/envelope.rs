@@ -109,6 +109,32 @@ impl AuditSession {
             None => Err("audit session is closed".into()),
         }
     }
+
+    pub fn prune_before(&self, ts_ms: i64) -> Result<u64, String> {
+        let guard = self.store.lock().map_err(|e| e.to_string())?;
+        match guard.as_ref() {
+            Some(store) => store.prune_before(ts_ms),
+            None => Ok(0),
+        }
+    }
+
+    pub fn clear_all(&self) -> Result<u64, String> {
+        let guard = self.store.lock().map_err(|e| e.to_string())?;
+        match guard.as_ref() {
+            Some(store) => store.clear_all(),
+            None => Err("audit session is closed".into()),
+        }
+    }
+
+    /// Close without sealing (used on vault reset when the enc file is deleted).
+    pub fn discard(&self) {
+        if let Ok(mut g) = self.store.lock() {
+            *g = None;
+        }
+        if let Ok(mut k) = self.key.lock() {
+            *k = None;
+        }
+    }
 }
 
 #[cfg(test)]

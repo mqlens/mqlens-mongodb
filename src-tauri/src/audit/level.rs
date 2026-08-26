@@ -14,6 +14,24 @@ pub enum AuditLevel {
     C,
 }
 
+impl AuditLevel {
+    pub fn parse(s: &str) -> Self {
+        match s.trim() {
+            "B" | "b" => Self::B,
+            "C" | "c" => Self::C,
+            _ => Self::A,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::A => "A",
+            Self::B => "B",
+            Self::C => "C",
+        }
+    }
+}
+
 /// Coarse class of a MongoDB-facing operation for level gating.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpClass {
@@ -65,5 +83,14 @@ mod tests {
         assert!(should_record(AuditLevel::C, OpClass::Shell));
         assert!(should_record(AuditLevel::C, OpClass::ReadHigh));
         assert!(should_record(AuditLevel::C, OpClass::ReadOther));
+    }
+
+    #[test]
+    fn parse_level_defaults_unknown_to_a() {
+        assert_eq!(AuditLevel::parse("A"), AuditLevel::A);
+        assert_eq!(AuditLevel::parse("b"), AuditLevel::B);
+        assert_eq!(AuditLevel::parse("C"), AuditLevel::C);
+        assert_eq!(AuditLevel::parse("nope"), AuditLevel::A);
+        assert_eq!(AuditLevel::A.as_str(), "A");
     }
 }

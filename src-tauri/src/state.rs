@@ -148,6 +148,8 @@ pub struct AppState {
     /// full `Arc<AppState>` or a second copy of the token that could drift
     /// out of sync with a `mcp_regenerate_token` call.
     pub mcp: Arc<Mutex<mcp::McpControl>>,
+    /// Open vault-backed audit session (#272). `None` while the vault is locked.
+    pub audit: Mutex<Option<crate::audit::AuditSession>>,
 }
 
 impl AppState {
@@ -172,6 +174,7 @@ impl AppState {
             workspace_write_gen: Arc::new(AtomicU64::new(0)),
             connection_meta: Mutex::new(HashMap::new()),
             mcp: Arc::new(Mutex::new(mcp::McpControl::new())),
+            audit: Mutex::new(None),
         }
     }
 

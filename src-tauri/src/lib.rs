@@ -2274,6 +2274,7 @@ async fn vault_initialize(
     )?;
 
     *state.vault_key.lock_safe()? = Some(key);
+    let _ = audit::open_on_unlock(&app_handle, &state, key);
     Ok(())
 }
 
@@ -2288,11 +2289,13 @@ async fn vault_unlock(
         .ok_or_else(|| "vault is not initialized".to_string())?;
     let key = connections::unlock_key(&meta, &password)?;
     *state.vault_key.lock_safe()? = Some(key);
+    let _ = audit::open_on_unlock(&app_handle, &state, key);
     Ok(connections::VaultStatus::Unlocked)
 }
 
 #[tauri::command]
 async fn vault_lock(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let _ = audit::close_on_lock(&state);
     *state.vault_key.lock_safe()? = None;
     // A locked vault must never leave the embedded MCP server listening —
     // it reads through `require_key`-gated seams, same precondition as
@@ -2306,6 +2309,7 @@ async fn vault_reset(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    let _ = audit::reset_store(&app_handle, &state);
     for p in [
         connections::get_vault_meta_path(&app_handle),
         connections::get_profiles_enc_path(&app_handle),
@@ -2348,11 +2352,90 @@ async fn vault_change_password(
         &connections::get_profiles_enc_path(&app_handle),
         &connections::get_settings_enc_path(&app_handle),
     )?;
+    // Seal any open audit session under the old key, then re-encrypt the file.
+    let _ = audit::close_on_lock(&state);
+    connections::reencrypt_audit_file(
+        &old_key,
+        &new_key,
+        &connections::get_audit_enc_path(&app_handle),
+    )?;
     connections::write_vault_meta(&meta_path, &new_meta)?;
     *state.vault_key.lock_safe()? = Some(new_key);
+    let _ = audit::open_on_unlock(&app_handle, &state, new_key);
     // Approach A: a password change derives a new key; keep biometrics working transparently.
     biometric::restore_key_if_enrolled(&app_handle, &new_key);
     Ok(())
+}
+
+#[tauri::command]
+async fn audit_list(
+    state: tauri::State<'_, AppState>,
+    filter: audit::AuditFilter,
+) -> Result<Vec<audit::AuditEvent>, String> {
+    let guard = state.audit.lock_safe()?;
+    match guard.as_ref() {
+        Some(session) => session.query(&filter),
+        None => Err("vault is locked".into()),
+    }
+}
+
+#[tauri::command]
+async fn audit_export(
+    state: tauri::State<'_, AppState>,
+    filter: audit::AuditFilter,
+    path: String,
+) -> Result<u64, String> {
+    use std::io::Write;
+    let events = {
+        let guard = state.audit.lock_safe()?;
+        match guard.as_ref() {
+            Some(session) => session.query(&filter)?,
+            None => return Err("vault is locked".into()),
+        }
+    };
+    let mut file = std::fs::File::create(&path).map_err(|e| format!("create {path}: {e}"))?;
+    for ev in &events {
+        let line = serde_json::to_string(ev).map_err(|e| e.to_string())?;
+        writeln!(file, "{line}").map_err(|e| format!("write {path}: {e}"))?;
+    }
+    Ok(events.len() as u64)
+}
+
+#[tauri::command]
+async fn audit_open_folder(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let path = connections::get_audit_enc_path(&app_handle);
+    let dir = path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| path.clone());
+    tauri_plugin_opener::open_path(&dir, None::<&str>).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn audit_clear(state: tauri::State<'_, AppState>) -> Result<u64, String> {
+    let guard = state.audit.lock_safe()?;
+    match guard.as_ref() {
+        Some(session) => session.clear_all(),
+        None => Err("vault is locked".into()),
+    }
+}
+
+#[tauri::command]
+async fn audit_reset(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let key = state.require_key()?;
+    audit::reset_store(&app_handle, &state)?;
+    audit::open_on_unlock(&app_handle, &state, key)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn audit_dropped_count(state: tauri::State<'_, AppState>) -> Result<u64, String> {
+    let guard = state.audit.lock_safe()?;
+    Ok(guard.as_ref().map(|s| s.dropped_count()).unwrap_or(0))
 }
 
 /// Thin wrappers over `mcp.rs`'s testable impl fns (the established
@@ -2519,6 +2602,12 @@ pub fn run() {
             connections::test_connection_uri,
             load_app_settings,
             save_app_settings,
+            audit_list,
+            audit_export,
+            audit_open_folder,
+            audit_clear,
+            audit_reset,
+            audit_dropped_count,
             connections::test_mongosh_path,
             change_streams::start_change_stream,
             change_streams::poll_change_stream,
