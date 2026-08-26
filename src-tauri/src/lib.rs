@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 pub mod limits;
 pub mod ai;
+pub mod audit;
 #[cfg(test)]
 mod command_coverage;
 pub mod change_streams;
