@@ -4463,4 +4463,51 @@ describe('App Component', () => {
       expect(upd.args.edited).toBe('{"_id":"66a1","age":35}');
     });
   });
+
+  it('withholds row edit and delete for a reshaping pipeline (#275)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'execute_mql_query') {
+        return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    // A find result: the row is a stored document, so editing is offered.
+    expect(await screen.findByTestId('edit-doc-btn')).toBeInTheDocument();
+  });
+});
+
+describe('pipelineYieldsWholeDocuments (#275)', () => {
+  it('accepts stages that pass documents through untouched', async () => {
+    const { pipelineYieldsWholeDocuments } = await import('../../App');
+    expect(pipelineYieldsWholeDocuments(undefined)).toBe(true);
+    expect(pipelineYieldsWholeDocuments([])).toBe(true);
+    expect(pipelineYieldsWholeDocuments([{ $match: { active: true } }])).toBe(true);
+    expect(
+      pipelineYieldsWholeDocuments([{ $match: {} }, { $sort: { a: 1 } }, { $limit: 10 }, { $skip: 5 }])
+    ).toBe(true);
+  });
+
+  it('rejects stages that reshape a row or replace its identity', async () => {
+    const { pipelineYieldsWholeDocuments } = await import('../../App');
+    // `_id` becomes the group key, so row actions would target the wrong document.
+    expect(pipelineYieldsWholeDocuments([{ $group: { _id: '$status' } }])).toBe(false);
+    expect(pipelineYieldsWholeDocuments([{ $project: { name: 1 } }])).toBe(false);
+    expect(pipelineYieldsWholeDocuments([{ $replaceRoot: { newRoot: '$x' } }])).toBe(false);
+    expect(pipelineYieldsWholeDocuments([{ $unwind: '$roles' }])).toBe(false);
+    expect(pipelineYieldsWholeDocuments([{ $lookup: {} }])).toBe(false);
+    expect(pipelineYieldsWholeDocuments([{ $addFields: { n: 1 } }])).toBe(false);
+    // One safe stage does not redeem an unsafe one.
+    expect(pipelineYieldsWholeDocuments([{ $match: {} }, { $group: { _id: '$s' } }])).toBe(false);
+  });
+
+  it('rejects a malformed stage rather than assuming it is safe', async () => {
+    const { pipelineYieldsWholeDocuments } = await import('../../App');
+    expect(pipelineYieldsWholeDocuments([{} as Record<string, unknown>])).toBe(false);
+    expect(pipelineYieldsWholeDocuments([{ $match: {}, $sort: {} }])).toBe(false);
+  });
 });

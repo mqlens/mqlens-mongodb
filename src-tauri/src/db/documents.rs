@@ -419,6 +419,9 @@ fn path_is_unaddressable(key: &str) -> bool {
 pub struct ProjectionShape {
     /// Every path the projection names, flattened to dotted form.
     paths: Vec<String>,
+    /// Paths whose value the projection *computed*, so there is nothing in the
+    /// stored document to write back to.
+    computed: Vec<String>,
     scope: Scope,
 }
 
@@ -442,10 +445,18 @@ enum Scope {
 enum Leaf {
     Include,
     Exclude,
-    /// `$slice`, `$elemMatch`, `$meta`: truncates a value, does not restrict the
-    /// field list.
+    /// A true projection operator — `$slice`, `$elemMatch`, `$meta`. These
+    /// truncate a value without restricting which fields come back.
     Operator,
+    /// A computed expression such as `{"display": {"$concat": [...]}}`. It both
+    /// restricts the field list, like any inclusion, *and* produces a value that
+    /// does not exist in the stored document.
+    Computed,
 }
+
+/// Operators that truncate a value rather than compute one. Everything else
+/// under a `$` is an aggregation expression, which restricts the field list.
+const PROJECTION_OPERATORS: [&str; 3] = ["$slice", "$elemMatch", "$meta"];
 
 impl ProjectionShape {
     /// Parse a find projection, or `None` when the shape cannot be known — the
@@ -456,6 +467,7 @@ impl ProjectionShape {
             Some(p) => Self::parse(p),
             None => Self {
                 paths: Vec::new(),
+                computed: Vec::new(),
                 scope: Scope::Unknown,
             },
         }
@@ -471,6 +483,7 @@ impl ProjectionShape {
         let Ok(serde_json::Value::Object(map)) = serde_json::from_str(trimmed) else {
             return Self {
                 paths: Vec::new(),
+                computed: Vec::new(),
                 scope: Scope::Unknown,
             };
         };
@@ -488,7 +501,9 @@ impl ProjectionShape {
                 continue;
             }
             match leaf {
-                Leaf::Include => includes = true,
+                // A computed field restricts the field list exactly as an
+                // inclusion does: nothing unlisted comes back.
+                Leaf::Include | Leaf::Computed => includes = true,
                 Leaf::Exclude => excludes = true,
                 Leaf::Operator => {}
             }
@@ -499,10 +514,24 @@ impl ProjectionShape {
             (false, true) => Scope::Excluded,
             (false, false) => Scope::All,
         };
+        let computed = entries
+            .iter()
+            .filter(|(_, leaf)| matches!(leaf, Leaf::Computed))
+            .map(|(path, _)| path.clone())
+            .collect();
         Self {
             paths: entries.into_iter().map(|(path, _)| path).collect(),
+            computed,
             scope,
         }
+    }
+
+    /// True when the value at `path` was computed by the projection, so there is
+    /// no stored field it corresponds to.
+    fn is_computed(&self, path: &str) -> bool {
+        self.computed
+            .iter()
+            .any(|p| p == path || path.starts_with(&format!("{p}.")))
     }
 
     /// True when nothing was projected away, so the document is whole.
@@ -557,10 +586,19 @@ fn flatten_projection(
             }
             // `{"roles": {"$slice": 2}}` truncates a value; it does not restrict
             // which fields come back.
-            serde_json::Value::Object(inner) if inner.keys().all(|k| k.starts_with('$')) => {
+            serde_json::Value::Object(inner)
+                if !inner.is_empty()
+                    && inner.keys().all(|k| PROJECTION_OPERATORS.contains(&k.as_str())) =>
+            {
                 for op in inner.keys() {
                     out.push((format!("{path}.{op}"), Leaf::Operator));
                 }
+            }
+            // Any other `$`-keyed object is an aggregation expression, e.g.
+            // `{"display": {"$concat": [...]}}`. It restricts the field list and
+            // its value is synthesized, so it cannot be written back.
+            serde_json::Value::Object(inner) if inner.keys().any(|k| k.starts_with('$')) => {
+                out.push((path, Leaf::Computed));
             }
             // `{"address": {"city": 1}}` is the nested spelling of
             // `{"address.city": 1}`.
@@ -582,6 +620,8 @@ fn flatten_projection(
 /// falling back would report a save that silently kept the old value.
 #[derive(Debug)]
 pub enum UpdateBuildError {
+    /// The rows have no known source document, so nothing may be written.
+    NoLineage(String),
     /// `_id` was changed or removed.
     ImmutableId(String),
     /// A changed field's name contains `.` or starts with `$`.
@@ -593,7 +633,10 @@ pub enum UpdateBuildError {
 impl std::fmt::Display for UpdateBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let msg = match self {
-            Self::ImmutableId(m) | Self::UnaddressableNames(m) | Self::PartialWrite(m) => m,
+            Self::NoLineage(m)
+            | Self::ImmutableId(m)
+            | Self::UnaddressableNames(m)
+            | Self::PartialWrite(m) => m,
         };
         f.write_str(msg)
     }
@@ -624,6 +667,18 @@ pub fn build_field_update(
     edited: &Document,
     shape: &ProjectionShape,
 ) -> Result<Document, UpdateBuildError> {
+    // An unknown shape means the rows did not come from a find, so `_id` may be a
+    // group key rather than a document id. Writing anything would target whichever
+    // source document happens to share that value — or none at all. There is no
+    // safe subset here, not even a scalar field.
+    if shape.scope == Scope::Unknown {
+        return Err(UpdateBuildError::NoLineage(
+            "cannot save: these rows did not come from a plain query, so MQLens cannot tell \
+             which stored document each one came from. Re-run as a find query to edit \
+             documents."
+                .into(),
+        ));
+    }
     // `_id` is immutable. The old replacement surfaced MongoDB's error; skipping
     // the change silently would report a save that did not happen.
     if let Some(original_id) = original.get("_id") {
@@ -652,6 +707,7 @@ pub fn build_field_update(
     let mut partial_writes: Vec<String> = Vec::new();
     let mut ambiguous_removals: Vec<String> = Vec::new();
     let mut hidden_additions: Vec<String> = Vec::new();
+    let mut computed_writes: Vec<String> = Vec::new();
     diff_documents(
         "",
         original,
@@ -664,6 +720,7 @@ pub fn build_field_update(
             partial_writes: &mut partial_writes,
             ambiguous_removals: &mut ambiguous_removals,
             hidden_additions: &mut hidden_additions,
+            computed_writes: &mut computed_writes,
         },
     );
 
@@ -675,6 +732,16 @@ pub fn build_field_update(
              separator and a leading \"$\" as an operator. Re-run the query without a \
              projection so the whole document can be saved.",
             blocked.join(", ")
+        )));
+    }
+    if !computed_writes.is_empty() {
+        computed_writes.sort();
+        computed_writes.dedup();
+        return Err(UpdateBuildError::PartialWrite(format!(
+            "cannot save field(s) {}: the projection computed them, so there is no stored \
+             field to write back to. Re-run the query without the projection to edit this \
+             document.",
+            computed_writes.join(", ")
         )));
     }
     if !hidden_additions.is_empty() {
@@ -734,6 +801,8 @@ struct DiffSink<'a> {
     /// Fields the editor appears to add, but which the projection may simply not
     /// have returned — so writing them could overwrite an existing value.
     hidden_additions: &'a mut Vec<String>,
+    /// Fields the projection computed, which have no stored counterpart.
+    computed_writes: &'a mut Vec<String>,
 }
 
 fn diff_documents(
@@ -761,6 +830,10 @@ fn diff_documents(
         let path = path_of(key);
         let old = original.get(key);
         let changed = old != Some(new_value);
+        if changed && shape.is_computed(&path) {
+            sink.computed_writes.push(path);
+            continue;
+        }
         if changed && path_is_unaddressable(key) {
             sink.blocked.push(path);
             continue;
@@ -1815,31 +1888,7 @@ mod csv_import_tests {
         assert!(err.contains("profile.roles"), "{err}");
     }
 
-    #[test]
-    fn an_aggregation_result_assumes_nothing_is_complete() {
-        // A pipeline's shape cannot be reduced to a field list, so no whole-value
-        // write is allowed and removals stay leaf-only.
-        let shape = ProjectionShape::parse_optional(None);
-        assert!(!shape.is_whole_document());
 
-        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
-        let edited = doc_of(r#"{"_id":"66a1"}"#);
-        let update = build_field_update(&original, &edited, &shape).expect("addressable");
-        assert_eq!(
-            update,
-            doc_of(r#"{"$unset":{"address.city":""}}"#),
-            "must not unset the parent on an unknown shape"
-        );
-    }
-
-    #[test]
-    fn a_scalar_edit_still_works_on_an_aggregation_result() {
-        let shape = ProjectionShape::parse_optional(None);
-        let original = doc_of(r#"{"_id":"66a1","age":34}"#);
-        let edited = doc_of(r#"{"_id":"66a1","age":35}"#);
-        let update = build_field_update(&original, &edited, &shape).expect("addressable");
-        assert_eq!(update, doc_of(r#"{"$set":{"age":35}}"#));
-    }
 
     #[test]
     fn an_immutable_id_error_is_reported_as_such_not_as_an_addressing_problem() {
@@ -1862,6 +1911,56 @@ mod csv_import_tests {
         let err = build_field_update(&original, &edited, &no_projection())
             .expect_err("must refuse");
         assert!(matches!(err, UpdateBuildError::UnaddressableNames(_)), "{err:?}");
+    }
+
+    #[test]
+    fn rows_without_known_lineage_cannot_be_saved_at_all() {
+        // Aggregation rows may carry a group key as `_id`, so any write would
+        // target whichever stored document happens to share that value — or none.
+        // There is no safe subset, not even a scalar field.
+        let shape = ProjectionShape::parse_optional(None);
+        let original = doc_of(r#"{"_id":"active","count":3}"#);
+        let edited = doc_of(r#"{"_id":"active","count":4}"#);
+        let err = build_field_update(&original, &edited, &shape).expect_err("must refuse");
+        assert!(matches!(err, UpdateBuildError::NoLineage(_)), "{err:?}");
+        assert!(err.to_string().contains("find query"), "{err}");
+    }
+
+    #[test]
+    fn a_computed_projection_field_cannot_be_written_back() {
+        // `{"display": {"$concat": [...]}}` synthesizes a value; there is no
+        // stored `display` to update.
+        let shape = ProjectionShape::parse(r#"{"display":{"$concat":["$first"," ","$last"]}}"#);
+        let original = doc_of(r#"{"_id":"66a1","display":"Ada L"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","display":"Ada Lovelace"}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("display"), "{err}");
+        assert!(err.contains("computed"), "{err}");
+    }
+
+    #[test]
+    fn a_computed_projection_establishes_inclusion_scope() {
+        // It restricts the field list like any inclusion, so an unlisted field may
+        // already exist and must not be added blindly.
+        let shape = ProjectionShape::parse(r#"{"display":{"$concat":["$first"," ","$last"]}}"#);
+        let original = doc_of(r#"{"_id":"66a1","display":"Ada L"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","display":"Ada L","address":{"city":"Berlin"}}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("address"), "{err}");
+    }
+
+    #[test]
+    fn a_slice_is_still_treated_as_a_projection_operator_not_an_expression() {
+        // Only $slice/$elemMatch/$meta truncate a value; they must keep leaving the
+        // field list unrestricted.
+        let shape = ProjectionShape::parse(r#"{"roles":{"$slice":2}}"#);
+        assert!(shape.is_partial_at("roles"));
+        assert!(!shape.is_computed("roles"));
+        assert!(!shape.may_hide("city"), "a $slice-only projection returns every field");
     }
 
     #[test]

@@ -156,6 +156,35 @@ export interface QueryTab {
   estimated?: boolean;
 }
 
+/// Stages that pass documents through unchanged, so the rows are still whole
+/// stored documents with their real `_id`s and can be edited.
+///
+/// Anything else — `$group`, `$project`, `$replaceRoot`, `$unwind`, `$lookup`,
+/// `$addFields` — reshapes the row or replaces its identity, so its `_id` may be
+/// a group key rather than a document id and saving could hit an unrelated
+/// document.
+const DOCUMENT_PRESERVING_STAGES = new Set(['$match', '$sort', '$limit', '$skip']);
+
+/** True when every stage of `pipeline` leaves documents intact. */
+export function pipelineYieldsWholeDocuments(pipeline?: Record<string, unknown>[]): boolean {
+  if (!pipeline || pipeline.length === 0) return true;
+  return pipeline.every((stage) => {
+    const keys = Object.keys(stage ?? {});
+    return keys.length === 1 && DOCUMENT_PRESERVING_STAGES.has(keys[0]);
+  });
+}
+
+/// Whether a tab's rows are stored documents that row actions may target by
+/// `_id`. False for reshaping pipelines, where `_id` may be a group key and
+/// editing or deleting would hit an unrelated document.
+///
+/// `DataGrid` offers the edit and delete actions only when the callbacks are
+/// provided, so passing `undefined` withholds them rather than showing something
+/// that would be refused.
+function rowsAreStoredDocuments(tab: { lastAggregate?: Record<string, unknown>[] }): boolean {
+  return !tab.lastAggregate || pipelineYieldsWholeDocuments(tab.lastAggregate);
+}
+
 const DEFAULT_QUERY = { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
 
 // A cached/restored builder state may carry "{}" in the query/sort/projection
@@ -3951,11 +3980,14 @@ function Workspace() {
       // of `original` are complete: `{"address": 1}` includes the whole
       // sub-document, `{"address.city": 1}` does not (see ProjectionShape).
       //
-      // `null` when the rows came from an aggregation: `lastQuery` is left intact
-      // by handleExecuteAggregate and would be stale, and a pipeline's shape
-      // cannot be reduced to a field list. The backend then assumes nothing is
-      // complete rather than trusting a projection that did not produce these rows.
-      projection: tab.lastAggregate ? null : (tab.lastQuery?.projection ?? '{}'),
+      // `null` when the rows came from a pipeline that reshapes them: `lastQuery`
+      // is left intact by handleExecuteAggregate and would be stale, and a row's
+      // `_id` may be a group key rather than a document id. The backend refuses
+      // to write in that case. A pipeline of only $match/$sort/$limit/$skip
+      // passes documents through untouched, so those rows are whole documents.
+      projection: tab.lastAggregate
+        ? (pipelineYieldsWholeDocuments(tab.lastAggregate) ? '{}' : null)
+        : (tab.lastQuery?.projection ?? '{}'),
     });
     setDocumentModal(null);
     await refreshTabResults(tab);
@@ -4114,9 +4146,9 @@ function Workspace() {
                     explainResult={tab.explainResult}
                     querySpec={buildTabQuerySpec(tab)}
                     onInsertDocument={() => handleInsertDocument(tab)}
-                    onEditDocument={doc => handleEditDocument(tab, doc)}
+                    onEditDocument={rowsAreStoredDocuments(tab) ? (doc => handleEditDocument(tab, doc)) : undefined}
                     onDuplicateDocument={doc => handleDuplicateDocument(tab, doc)}
-                    onDeleteDocument={doc => handleDeleteDocument(tab, doc)}
+                    onDeleteDocument={rowsAreStoredDocuments(tab) ? (doc => handleDeleteDocument(tab, doc)) : undefined}
                     onAnalyzeSchema={() => handleOpenSchemaTab(tab.connectionId, tab.db, tab.collection)}
                     onUpdateMany={() => handleUpdateMany(tab)}
                     onDeleteMany={() => handleDeleteMany(tab)}
