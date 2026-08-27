@@ -327,18 +327,70 @@ mod integration {
         .expect("insert");
         assert!(inserted.contains("u1"));
 
-        // replace_one via update_document_impl.
+        // A field-level update: the whole document is loaded and edited, so every
+        // field is sent and the result is the same as the old replace.
         let modified = update_document_impl(
             &state,
             &id,
             &db,
             "people",
             r#"{"_id":"u1"}"#,
+            r#"{"_id":"u1","name":"Ada","tier":"gold"}"#,
             r#"{"_id":"u1","name":"Ada Lovelace","tier":"platinum"}"#,
         )
         .await
-        .expect("replace");
+        .expect("update");
         assert_eq!(modified, 1);
+
+        // #275: editing a *projected* document must leave the fields the
+        // projection hid completely alone. This used to `replaceOne` with the
+        // partial view and delete them.
+        insert_document_impl(
+            &state,
+            &id,
+            &db,
+            "people",
+            r#"{"_id":"p275","name":"Grace","tier":"gold","age":34,"roles":["admin","devops"]}"#,
+        )
+        .await
+        .expect("insert p275");
+
+        // What the grid holds after a `{ "age": 1 }` projection.
+        let projected = execute_mql_query_impl(
+            &state, &id, &db, "people", r#"{"_id":"p275"}"#, "{}", r#"{"age":1}"#, 1, 0,
+        )
+        .await
+        .expect("projected find");
+        let loaded: serde_json::Value = serde_json::from_str(&projected[0]).unwrap();
+        assert_eq!(loaded["age"], 34);
+        assert!(loaded.get("name").is_none(), "projection must hide name");
+
+        update_document_impl(
+            &state,
+            &id,
+            &db,
+            "people",
+            r#"{"_id":"p275"}"#,
+            r#"{"_id":"p275","age":34}"#,
+            r#"{"_id":"p275","age":35}"#,
+        )
+        .await
+        .expect("update projected");
+
+        let after = execute_mql_query_impl(
+            &state, &id, &db, "people", r#"{"_id":"p275"}"#, "{}", "{}", 1, 0,
+        )
+        .await
+        .expect("read back");
+        let full: serde_json::Value = serde_json::from_str(&after[0]).unwrap();
+        assert_eq!(full["age"], 35, "the edited field must be written");
+        assert_eq!(full["name"], "Grace", "an unprojected field must survive");
+        assert_eq!(full["tier"], "gold", "an unprojected field must survive");
+        assert_eq!(
+            full["roles"],
+            serde_json::json!(["admin", "devops"]),
+            "an unprojected array must survive"
+        );
 
         // update_many with an operator.
         seed(

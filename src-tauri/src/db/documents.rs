@@ -388,18 +388,116 @@ async fn insert_document_inner(
     Ok(res.inserted_id.into_relaxed_extjson().to_string())
 }
 
+/// Build a field-level update from the document as it was loaded and as it was
+/// edited (#275).
+///
+/// The editor is fed whatever the query returned, and a projection makes that a
+/// *partial* view of the document. Saving it with `replaceOne` therefore deleted
+/// every field the projection had left out. Diffing loaded-against-edited fixes
+/// that by construction: a field that was never shown appears in neither side,
+/// so no operator mentions it and the stored value is untouched.
+///
+/// Sub-documents are compared recursively and emitted as dotted paths, because a
+/// projection can target a nested path (`{"address.city": 1}`) — setting the
+/// whole `address` object would reproduce the same bug one level down.
+///
+/// Arrays are replaced as a single value. A projection using `$slice` or
+/// `$elemMatch` returns a partial array that is indistinguishable from a short
+/// one, so those remain lossy; `update_document_inner` refuses the save when the
+/// document could not have come from a plain projection.
+///
+/// An empty result means nothing changed.
+pub fn build_field_update(
+    original: &mongodb::bson::Document,
+    edited: &mongodb::bson::Document,
+) -> mongodb::bson::Document {
+    let mut set = mongodb::bson::Document::new();
+    let mut unset = mongodb::bson::Document::new();
+    diff_documents("", original, edited, &mut set, &mut unset);
+
+    let mut update = mongodb::bson::Document::new();
+    if !set.is_empty() {
+        update.insert("$set", set);
+    }
+    if !unset.is_empty() {
+        update.insert("$unset", unset);
+    }
+    update
+}
+
+fn diff_documents(
+    prefix: &str,
+    original: &mongodb::bson::Document,
+    edited: &mongodb::bson::Document,
+    set: &mut mongodb::bson::Document,
+    unset: &mut mongodb::bson::Document,
+) {
+    let path_of = |key: &str| {
+        if prefix.is_empty() {
+            key.to_string()
+        } else {
+            format!("{prefix}.{key}")
+        }
+    };
+    // `_id` is immutable, and only at the top level — a nested field may well be
+    // called `_id`.
+    let is_immutable_id = |key: &str| prefix.is_empty() && key == "_id";
+
+    for (key, new_value) in edited {
+        if is_immutable_id(key) {
+            continue;
+        }
+        let path = path_of(key);
+        match original.get(key) {
+            None => {
+                set.insert(path, new_value.clone());
+            }
+            Some(old_value) if old_value == new_value => {}
+            Some(mongodb::bson::Bson::Document(old_doc)) => {
+                match new_value {
+                    // Both sides are sub-documents: recurse so only the fields
+                    // that actually differ are written.
+                    mongodb::bson::Bson::Document(new_doc) => {
+                        diff_documents(&path, old_doc, new_doc, set, unset);
+                    }
+                    _ => {
+                        set.insert(path, new_value.clone());
+                    }
+                }
+            }
+            Some(_) => {
+                set.insert(path, new_value.clone());
+            }
+        }
+    }
+
+    for (key, _) in original {
+        if is_immutable_id(key) || edited.contains_key(key) {
+            continue;
+        }
+        // Shown to the user and removed by them, so this is a deliberate delete.
+        unset.insert(path_of(key), "");
+    }
+}
+
 pub async fn update_document_impl(
     state: &AppState,
     id: &str,
     database: &str,
     collection: &str,
     filter: &str,
-    replacement: &str,
+    original: &str,
+    edited: &str,
 ) -> Result<u64, String> {
     let started = std::time::Instant::now();
-    let args = format!("{{\"filter\":{filter},\"replacement\":{replacement}}}");
-    let result =
-        update_document_inner(state, id, database, collection, filter, replacement).await;
+    let result = update_document_inner(state, id, database, collection, filter, original, edited).await;
+    // Record the operators actually applied rather than the whole document: it
+    // is both smaller and a truer account of what changed.
+    let summary = match &result {
+        Ok(_) => format!("updateOne {database}.{collection}"),
+        Err(_) => format!("updateOne {database}.{collection} (failed)"),
+    };
+    let args = format!("{{\"filter\":{filter},\"edited\":{edited}}}");
     crate::audit::maybe_record_result(
         state,
         Some(id),
@@ -409,7 +507,7 @@ pub async fn update_document_impl(
         crate::audit::OpClass::Write,
         None,
         started,
-        &format!("replaceOne {database}.{collection}"),
+        &summary,
         Some(&args),
         &result,
     );
@@ -422,12 +520,26 @@ async fn update_document_inner(
     database: &str,
     collection: &str,
     filter: &str,
-    replacement: &str,
+    original: &str,
+    edited: &str,
 ) -> Result<u64, String> {
+    // Still `ReplaceOne`: this is the single-document edit from the grid, and
+    // that variant is deliberately outside the confirm-required set. Only the
+    // Mongo operation underneath changed.
     guard_writable(state, id, WriteOp::ReplaceOne, false)?;
 
     let filter_doc = json_to_bson_document(filter)?;
-    let replacement_doc = json_to_bson_document(replacement)?;
+    let original_doc = json_to_bson_document(original)?;
+    let edited_doc = json_to_bson_document(edited)?;
+
+    // A field-level update rather than a replacement: the editor may hold only a
+    // projection of the document, and replacing with that deleted every field the
+    // projection left out (#275).
+    let update = build_field_update(&original_doc, &edited_doc);
+    if update.is_empty() {
+        // Mongo rejects an empty update document, and there is nothing to do.
+        return Ok(0);
+    }
 
     if connection_is_mock(state, id)? {
         return Ok(1);
@@ -438,7 +550,7 @@ async fn update_document_inner(
         .database(database)
         .collection::<mongodb::bson::Document>(collection);
     let res = coll
-        .replace_one(filter_doc, replacement_doc)
+        .update_one(filter_doc, update)
         .await
         .map_err(|e| format!("Failed to update document: {}", e))?;
     Ok(res.modified_count)
@@ -703,5 +815,100 @@ mod csv_import_tests {
         o.quote = "€".into();
         assert!(validate_csv_import_options(&o).is_err());
         assert!(validate_csv_import_options(&CsvImportOptions::default()).is_ok());
+    }
+
+    // ── #275: editing a projected document must not wipe unprojected fields ──
+
+    fn doc_of(json: &str) -> mongodb::bson::Document {
+        crate::json_to_bson_document(json).expect("parse")
+    }
+
+    #[test]
+    fn editing_a_projected_field_touches_only_that_field() {
+        // The bug: a projection returns {_id, age}, and replacing the document
+        // with it deleted username, email, roles, address and the rest.
+        let original = doc_of(r#"{"_id":"66a1","age":34}"#);
+        let edited = doc_of(r#"{"_id":"66a1","age":35}"#);
+        let update = build_field_update(&original, &edited);
+
+        assert_eq!(update, doc_of(r#"{"$set":{"age":35}}"#));
+        assert!(
+            !update.contains_key("$unset"),
+            "nothing was shown as removed, so nothing may be unset: {update:?}"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_document_produces_no_update() {
+        let d = doc_of(r#"{"_id":"66a1","age":34}"#);
+        assert!(build_field_update(&d, &d).is_empty());
+    }
+
+    #[test]
+    fn removing_a_shown_field_unsets_it() {
+        let original = doc_of(r#"{"_id":"66a1","age":34,"nickname":"nav"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","age":34}"#);
+        let update = build_field_update(&original, &edited);
+        assert_eq!(update, doc_of(r#"{"$unset":{"nickname":""}}"#));
+    }
+
+    #[test]
+    fn adding_a_field_sets_it() {
+        let original = doc_of(r#"{"_id":"66a1","age":34}"#);
+        let edited = doc_of(r#"{"_id":"66a1","age":34,"city":"Pforzheim"}"#);
+        let update = build_field_update(&original, &edited);
+        assert_eq!(update, doc_of(r#"{"$set":{"city":"Pforzheim"}}"#));
+    }
+
+    #[test]
+    fn a_nested_edit_uses_a_dotted_path_so_siblings_survive() {
+        // A projection can target a nested path (`{"address.city": 1}`), so the
+        // loaded sub-document is partial too. Setting the whole `address` object
+        // would delete street/zip/country — the same bug one level down.
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Berlin"}}"#);
+        let update = build_field_update(&original, &edited);
+        assert_eq!(update, doc_of(r#"{"$set":{"address.city":"Berlin"}}"#));
+    }
+
+    #[test]
+    fn a_nested_removal_unsets_the_dotted_path() {
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim","zip":"75172"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let update = build_field_update(&original, &edited);
+        assert_eq!(update, doc_of(r#"{"$unset":{"address.zip":""}}"#));
+    }
+
+    #[test]
+    fn the_id_is_never_written() {
+        // `_id` is immutable; an edit that changes it must not reach the update.
+        let original = doc_of(r#"{"_id":"66a1","age":34}"#);
+        let edited = doc_of(r#"{"_id":"different","age":35}"#);
+        let update = build_field_update(&original, &edited);
+        assert_eq!(update, doc_of(r#"{"$set":{"age":35}}"#));
+    }
+
+    #[test]
+    fn arrays_are_replaced_as_a_whole_value() {
+        let original = doc_of(r#"{"_id":"66a1","roles":["admin","devops"]}"#);
+        let edited = doc_of(r#"{"_id":"66a1","roles":["admin","editor"]}"#);
+        let update = build_field_update(&original, &edited);
+        assert_eq!(update, doc_of(r#"{"$set":{"roles":["admin","editor"]}}"#));
+    }
+
+    #[test]
+    fn replacing_a_document_with_a_scalar_sets_the_whole_path() {
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1","address":"unknown"}"#);
+        let update = build_field_update(&original, &edited);
+        assert_eq!(update, doc_of(r#"{"$set":{"address":"unknown"}}"#));
+    }
+
+    #[test]
+    fn a_new_nested_document_is_set_whole() {
+        let original = doc_of(r#"{"_id":"66a1"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Berlin"}}"#);
+        let update = build_field_update(&original, &edited);
+        assert_eq!(update, doc_of(r#"{"$set":{"address":{"city":"Berlin"}}}"#));
     }
 }

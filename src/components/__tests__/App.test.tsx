@@ -752,7 +752,7 @@ describe('App Component', () => {
     });
   });
 
-  it('edits a document via replace by _id (C1)', async () => {
+  it('edits a document as a field-level update by _id (C1)', async () => {
     const calls: any[] = [];
     mockInvoke.mockImplementation((cmd, args) => {
       calls.push({ cmd, args });
@@ -779,7 +779,11 @@ describe('App Component', () => {
       const upd = calls.find((c) => c.cmd === 'update_document');
       expect(upd).toBeTruthy();
       expect(upd.args.filter).toBe('{"_id":"1"}');
-      expect(upd.args.replacement).toBe('{"_id":"1","name":"Ada"}');
+      // Both sides are sent so the backend can write only what changed; a bare
+      // `replacement` would wipe fields a projection had left out (#275).
+      expect(upd.args.edited).toBe('{"_id":"1","name":"Ada"}');
+      expect(upd.args.original).toContain('"name" : "John Doe"');
+      expect(upd.args.replacement).toBeUndefined();
       expect(screen.getByText(/Document saved in customers/)).toBeInTheDocument();
     });
   });
@@ -4424,6 +4428,39 @@ describe('App Component', () => {
       } finally {
         await i18next.changeLanguage('en');
       }
+    });
+  });
+
+  it('sends the projected document as the original so unprojected fields survive (#275)', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'execute_mql_query') {
+        // What a `{ "age": 1 }` projection returns: a partial view.
+        return Promise.resolve([JSON.stringify({ _id: '66a1', age: 34 })]);
+      }
+      if (cmd === 'update_document') return Promise.resolve(1);
+      return Promise.resolve([]);
+    });
+
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    renderWithProviders(<App />);
+    await screen.findByTestId('mock-sidebar');
+    fireEvent.click(screen.getByTestId('select-collection-btn'));
+    await screen.findByText(/34/);
+
+    fireEvent.click(screen.getAllByTestId('edit-doc-btn')[0]);
+    const input = await screen.findByTestId('document-json-input');
+    fireEvent.change(input, { target: { value: '{"_id":"66a1","age":35}' } });
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+
+    await waitFor(() => {
+      const upd = calls.find((c) => c.cmd === 'update_document');
+      expect(upd).toBeTruthy();
+      // The projected document goes as `original`, so the backend diff can tell
+      // "not shown" from "deleted" and leaves username/email/roles alone.
+      expect(upd.args.original).toContain('"age" : 34');
+      expect(upd.args.edited).toBe('{"_id":"66a1","age":35}');
     });
   });
 });

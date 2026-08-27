@@ -186,7 +186,7 @@
       "noId": "Aktualisierung nicht möglich: Dieses Dokument hat keine _id."
     },
     "hints": {
-      "shellTypes": "Shell-Typen werden unterstützt (z. B. {{example}}). Beim Bearbeiten wird das gesamte Dokument ersetzt."
+      "shellTypes": "Shell-Typen werden unterstützt (z. B. {{example}}). Es werden nur die Felder geschrieben, die du änderst; alles, was hier nicht angezeigt wird, bleibt unberührt."
     },
     "labels": {
       "document": "Dokument"

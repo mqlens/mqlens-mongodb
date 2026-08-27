@@ -334,7 +334,7 @@
       "syntaxError": "syntax error"
     },
     "hints": {
-      "shellTypes": "Shell types are supported (e.g. {{example}}). Editing replaces the entire document."
+      "shellTypes": "Shell types are supported (e.g. {{example}}). Only the fields you change are written; anything not shown here is left untouched."
     },
     "labels": {
       "document": "Document"

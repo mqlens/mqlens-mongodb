@@ -1051,13 +1051,14 @@ mod tests {
         .expect("insert should succeed in mock mode");
         assert!(!inserted_id.is_empty());
 
-        // replace_one
+        // field-level update
         let modified = update_document_impl(
             &state,
             &conn_id,
             "sales_db",
             "customers",
             r#"{"_id":{"$oid":"507f1f77bcf86cd799439011"}}"#,
+            r#"{"_id":{"$oid":"507f1f77bcf86cd799439011"},"name":"Original"}"#,
             r#"{"_id":{"$oid":"507f1f77bcf86cd799439011"},"name":"Edited"}"#,
         )
         .await

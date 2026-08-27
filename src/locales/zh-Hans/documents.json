@@ -319,7 +319,7 @@
       "syntaxError": "语法错误"
     },
     "hints": {
-      "shellTypes": "支持 Shell 类型（例如 {{example}}）。编辑会替换整个文档。"
+      "shellTypes": "支持 Shell 类型（例如 {{example}}）。仅写入你修改的字段；此处未显示的内容保持不变。"
     },
     "labels": {
       "document": "文档"

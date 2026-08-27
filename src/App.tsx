@@ -3936,12 +3936,17 @@ function Workspace() {
       // its error banner, so the text is user-facing copy, not a dev invariant.
       throw new Error(t('documents:editModal.errors.noId'));
     }
+    // Send the document as loaded *and* as edited so the backend can apply only
+    // the fields that changed. The grid may be showing a projection, and saving
+    // that partial view as a replacement deleted everything else (#275).
+    // `docToShell` on both sides means they go through the identical parse path.
     await invoke('update_document', {
       id: tab.connectionId,
       database: tab.db,
       collection,
       filter: JSON.stringify({ _id: target._id }),
-      replacement: json,
+      original: docToShell(target),
+      edited: json,
     });
     setDocumentModal(null);
     await refreshTabResults(tab);
