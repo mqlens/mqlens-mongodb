@@ -12,6 +12,17 @@
  * Without that, every pane would open its own find bar on one keypress.
  */
 
+/**
+ * Marks the find bar's own input as belonging to the results pane.
+ *
+ * The suppression below deliberately leaves text fields alone, and the find
+ * input is a text field — so pressing the shortcut a second time, with the caret
+ * already in it, fell through to the browser's find. That is the common path:
+ * open the bar, press again to reselect. This attribute is the exception, and
+ * the constant is shared so the bar and this module cannot disagree on its name.
+ */
+export const RESULTS_FIND_INPUT_ATTR = "data-results-find-input";
+
 /** A registered results pane. */
 interface Pane {
   /** Its root element, used to decide which pane the user means. */
@@ -28,6 +39,9 @@ let listening = false;
 /** Editors and text fields keep their own find/typing behaviour. */
 function eventBelongsToAnEditor(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
+  // The find bar's own input is a text field but is not somebody else's: the
+  // shortcut pressed inside it means "search here again", not "leave me alone".
+  if (target.closest(`[${RESULTS_FIND_INPUT_ATTR}]`)) return false;
   if (target.closest(".monaco-editor")) return true;
   const tag = target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;

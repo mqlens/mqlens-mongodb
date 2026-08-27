@@ -1094,15 +1094,30 @@ describe('find bar focus and type/value agreement (#280 review round 2)', () => 
     expect(screen.getByTestId('results-find-input')).toHaveFocus();
   });
 
-  it('selects the existing query on reopening, so typing replaces it', () => {
+  it('selects the existing query when the shortcut is pressed from the field', () => {
+    // Dispatched from the input, which is where the event really comes from once
+    // the bar has focus. Pressing from document.body passed while the real path
+    // was suppressed as an ordinary text field.
     render(<DataGrid documents={mockDocuments} />);
     pressFind();
     const input = screen.getByTestId('results-find-input') as HTMLInputElement;
     fireEvent.change(input, { target: { value: 'Electronics' } });
 
-    pressFind();
+    fireEvent.keyDown(input, { key: 'f', metaKey: true });
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe('Electronics'.length);
+  });
+
+  it('keeps the bar open and the query intact when pressed from the field', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    const input = screen.getByTestId('results-find-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Electronics' } });
+
+    fireEvent.keyDown(input, { key: 'f', metaKey: true });
+    expect(screen.getByTestId('results-find-bar')).toBeInTheDocument();
+    expect(screen.getByTestId('results-find-input')).toHaveValue('Electronics');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 2');
   });
 
   it('labels a Timestamp consistently in the value and type columns', () => {

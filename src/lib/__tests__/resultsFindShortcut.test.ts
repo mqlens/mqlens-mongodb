@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
+  RESULTS_FIND_INPUT_ATTR,
   registerResultsFindTarget,
   resetResultsFindShortcutForTests,
 } from '../resultsFindShortcut';
@@ -46,6 +47,30 @@ describe('results find shortcut', () => {
     document.body.appendChild(editor);
 
     const event = pressFind(inner);
+    expect(p.open).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('routes back to the pane from the find bar’s own input', () => {
+    // The find input is a text field, so the blanket suppression swallowed the
+    // second press — the one that reselects the query — and the browser's find
+    // opened instead.
+    const p = pane();
+    const input = document.createElement('input');
+    input.setAttribute(RESULTS_FIND_INPUT_ATTR, 'true');
+    p.el.appendChild(input);
+
+    const event = pressFind(input);
+    expect(p.open).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('still suppresses an ordinary input that happens to sit in the pane', () => {
+    const p = pane();
+    const other = document.createElement('input');
+    p.el.appendChild(other);
+
+    const event = pressFind(other);
     expect(p.open).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });

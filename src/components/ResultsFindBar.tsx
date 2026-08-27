@@ -8,6 +8,7 @@ import React, { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { RESULTS_FIND_INPUT_ATTR } from '@/lib/resultsFindShortcut';
 
 export interface ResultsFindBarProps {
   query: string;
@@ -86,6 +87,9 @@ export const ResultsFindBar: React.FC<ResultsFindBarProps> = ({
         placeholder={t('dataGrid.find.placeholder')}
         aria-label={t('dataGrid.find.placeholder')}
         data-testid="results-find-input"
+        // Lets the shortcut route back to this pane instead of being suppressed
+        // as an ordinary text field; see RESULTS_FIND_INPUT_ATTR.
+        {...{ [RESULTS_FIND_INPUT_ATTR]: 'true' }}
         className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
       />
       <span
