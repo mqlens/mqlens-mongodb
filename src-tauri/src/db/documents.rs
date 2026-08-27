@@ -521,9 +521,9 @@ pub fn build_field_update(
     let mut set = Document::new();
     let mut unset = Document::new();
     let mut blocked: Vec<String> = Vec::new();
-    let mut truncated: Vec<String> = Vec::new();
+    let mut partial_writes: Vec<String> = Vec::new();
     diff_documents(
-        "", original, edited, shape, &mut set, &mut unset, &mut blocked, &mut truncated,
+        "", original, edited, shape, &mut set, &mut unset, &mut blocked, &mut partial_writes,
     );
 
     if !blocked.is_empty() {
@@ -536,14 +536,14 @@ pub fn build_field_update(
             blocked.join(", ")
         ));
     }
-    if !truncated.is_empty() {
-        truncated.sort();
-        truncated.dedup();
+    if !partial_writes.is_empty() {
+        partial_writes.sort();
+        partial_writes.dedup();
         return Err(format!(
-            "cannot save field(s) {}: the projection returned only part of the array, so \
-             writing it back would discard the rest. Re-run the query without the \
+            "cannot save field(s) {}: the projection returned only part of their contents, \
+             so writing them back would discard the rest. Re-run the query without the \
              projection to edit these.",
-            truncated.join(", ")
+            partial_writes.join(", ")
         ));
     }
 
@@ -566,7 +566,7 @@ fn diff_documents(
     set: &mut Document,
     unset: &mut Document,
     blocked: &mut Vec<String>,
-    truncated: &mut Vec<String>,
+    partial_writes: &mut Vec<String>,
 ) {
     let path_of = |key: &str| {
         if prefix.is_empty() {
@@ -590,13 +590,23 @@ fn diff_documents(
             blocked.push(path);
             continue;
         }
-        // A `$slice`/`$elemMatch` projection returns part of an array. Writing it
-        // back as a whole value would silently discard the rest.
-        if changed
-            && matches!(new_value, mongodb::bson::Bson::Array(_))
-            && shape.is_partial_at(&path)
-        {
-            truncated.push(path);
+        // Anything the projection loaded only partly cannot be written back as a
+        // whole value: a `$slice`/`$elemMatch` array would lose its unseen
+        // elements, and replacing a partially loaded object — including with a
+        // scalar or null — would lose the siblings it hid.
+        let old_may_hide_more = matches!(
+            old,
+            Some(mongodb::bson::Bson::Document(_)) | Some(mongodb::bson::Bson::Array(_))
+        );
+        let writes_whole_value = !matches!(
+            (old, new_value),
+            (
+                Some(mongodb::bson::Bson::Document(_)),
+                mongodb::bson::Bson::Document(_)
+            )
+        );
+        if changed && old_may_hide_more && writes_whole_value && shape.is_partial_at(&path) {
+            partial_writes.push(path);
             continue;
         }
         match old {
@@ -609,7 +619,7 @@ fn diff_documents(
                 // actually differ are written.
                 mongodb::bson::Bson::Document(new_doc) => {
                     diff_documents(
-                        &path, old_doc, new_doc, shape, set, unset, blocked, truncated,
+                        &path, old_doc, new_doc, shape, set, unset, blocked, partial_writes,
                     );
                 }
                 _ => {
@@ -634,6 +644,12 @@ fn diff_documents(
         match old_value {
             mongodb::bson::Bson::Document(old_doc) => {
                 unset_removed_subtree(&path, old_doc, shape, unset, blocked);
+            }
+            // A partially loaded array reaches here rather than the change guard,
+            // because the key is simply absent from the edited document. Unsetting
+            // it would delete the elements the projection never showed.
+            mongodb::bson::Bson::Array(_) if shape.is_partial_at(&path) => {
+                partial_writes.push(path);
             }
             _ => {
                 unset.insert(path, "");
@@ -1248,7 +1264,57 @@ mod csv_import_tests {
         let edited = doc_of(r#"{"_id":"66a1","roles":["admin","editor"]}"#);
         let err = build_field_update(&original, &edited, &shape).expect_err("must refuse");
         assert!(err.contains("roles"), "{err}");
-        assert!(err.contains("part of the array"), "{err}");
+        assert!(err.contains("part of their contents"), "{err}");
+    }
+
+    #[test]
+    fn replacing_a_partially_projected_object_with_a_scalar_is_refused() {
+        // Under `{"address.city": 1}` the loaded `address` hides street and zip;
+        // `$set: {address: "unknown"}` would replace the whole stored object.
+        let shape = ProjectionShape::parse(r#"{"address.city":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1","address":"unknown"}"#);
+        let err = build_field_update(&original, &edited, &shape).expect_err("must refuse");
+        assert!(err.contains("address"), "{err}");
+        assert!(err.contains("part of their contents"), "{err}");
+    }
+
+    #[test]
+    fn nulling_a_partially_projected_object_is_refused() {
+        let shape = ProjectionShape::parse(r#"{"address.city":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1","address":null}"#);
+        assert!(build_field_update(&original, &edited, &shape).is_err());
+    }
+
+    #[test]
+    fn replacing_a_fully_included_object_with_a_scalar_is_allowed() {
+        // Nothing was hidden, so the whole value really is the whole value.
+        let shape = ProjectionShape::parse(r#"{"address":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1","address":"unknown"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"address":"unknown"}}"#));
+    }
+
+    #[test]
+    fn removing_a_partially_projected_array_is_refused() {
+        // The key is absent from the edited document, so this never reaches the
+        // change guard — but unsetting it would delete the unseen elements.
+        let shape = ProjectionShape::parse(r#"{"roles":{"$slice":2}}"#);
+        let original = doc_of(r#"{"_id":"66a1","roles":["admin","devops"]}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let err = build_field_update(&original, &edited, &shape).expect_err("must refuse");
+        assert!(err.contains("roles"), "{err}");
+    }
+
+    #[test]
+    fn removing_a_fully_included_array_is_allowed() {
+        let shape = ProjectionShape::parse(r#"{"roles":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","roles":["admin","devops"]}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$unset":{"roles":""}}"#));
     }
 
     #[test]
@@ -1327,9 +1393,15 @@ mod csv_import_tests {
 
     #[test]
     fn replacing_a_document_with_a_scalar_sets_the_whole_path() {
+        // Written before the diff knew about projections, so it asked for the
+        // whole path to be set under a *nested* projection — which is exactly the
+        // unsafe write now refused. The behaviour it meant to pin only holds when
+        // nothing was hidden; see
+        // `replacing_a_partially_projected_object_with_a_scalar_is_refused` for
+        // the projected case.
         let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
         let edited = doc_of(r#"{"_id":"66a1","address":"unknown"}"#);
-        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
+        let update = build_field_update(&original, &edited, &no_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"address":"unknown"}}"#));
     }
 
