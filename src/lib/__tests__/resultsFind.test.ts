@@ -1,39 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { ObjectId, Long } from 'bson';
-import { cellText, findMatches, stepMatch, isMatchAt, type FindCell } from '../resultsFind';
+import { findMatches, stepMatch, isMatchAt, type FindCell } from '../resultsFind';
 
 const cell = (rowIndex: number, text: string, extra: Partial<FindCell> = {}): FindCell => ({
   rowIndex,
   text,
   ...extra,
-});
-
-describe('cellText', () => {
-  it('joins the key and the value the way the grid shows them', () => {
-    expect(cellText('serviceName', 'token-srv')).toBe('serviceName token-srv');
-  });
-
-  it('renders BSON as the scalar a user would copy, not the EJSON wrapper', () => {
-    const oid = new ObjectId('507f1f77bcf86cd799439011');
-    expect(cellText('_id', oid)).toBe('_id 507f1f77bcf86cd799439011');
-    expect(cellText('big', Long.fromString('42'))).toBe('big 42');
-  });
-
-  it('handles the table view\'s plain extended-JSON shapes', () => {
-    expect(cellText('_id', { $oid: '507f1f77bcf86cd799439011' })).toBe(
-      '_id 507f1f77bcf86cd799439011',
-    );
-  });
-
-  it('copes with a missing key or a missing value', () => {
-    expect(cellText(null, 'lonely')).toBe('lonely');
-    expect(cellText('lonely', undefined)).toBe('lonely');
-    expect(cellText(null, undefined)).toBe('');
-  });
-
-  it('searches nested containers via their serialized form', () => {
-    expect(cellText('address', { city: 'Pforzheim' })).toContain('Pforzheim');
-  });
 });
 
 describe('findMatches', () => {

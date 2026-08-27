@@ -11,8 +11,6 @@
  * every view is virtualized: a match may sit outside the rendered window or
  * inside a collapsed fold, and neither exists as an element to scan.
  */
-import { copyValueToText } from "./copyValue";
-
 /** One searchable piece of a view, in that view's own row order. */
 export interface FindCell {
   /** Row index in the view's index space, used to scroll the match into view. */
@@ -31,21 +29,6 @@ export interface FindMatch {
   columnKey?: string;
   /** Folds to open before scrolling to it. Empty when nothing is collapsed. */
   ancestors: number[];
-}
-
-/**
- * Text for a key/value pair, matching what the grid shows and what "Copy value"
- * puts on the clipboard.
- *
- * Reuses `copyValueToText` rather than restating it: it already mirrors
- * `renderColoredCell`, and already handles both real BSON instances (line and
- * tree views) and the canonical extended-JSON shapes the table view holds.
- * Searching what the user would copy is the least surprising behaviour.
- */
-export function cellText(keyName: string | null | undefined, value: unknown): string {
-  const key = keyName ?? "";
-  const rendered = value === undefined ? "" : copyValueToText(value);
-  return key && rendered ? `${key} ${rendered}` : key || rendered;
 }
 
 /**

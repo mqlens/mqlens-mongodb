@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 
 // Monaco renders the Query Code panel; mock it as a plain textarea (same shape
@@ -35,6 +35,7 @@ vi.mock('@/hooks/use-theme', () => ({
 }));
 
 import { DataGrid, getExplainTree } from '../DataGrid';
+import { resetResultsFindShortcutForTests } from '@/lib/resultsFindShortcut';
 
 // Collect every node name in the tree (depth-first) for assertions.
 const collectNames = (node: any): string[] => [
@@ -872,5 +873,164 @@ describe('local find over the loaded results (#279)', () => {
     // allowed to differ — what matters is that it is recomputed, not stale.
     expect(screen.getByTestId('results-find-status').textContent).toBeTruthy();
     expect(inJson).toBeTruthy();
+  });
+});
+
+describe('find indexes what each view actually displays (#280 review)', () => {
+  beforeEach(() => resetResultsFindShortcutForTests());
+
+  const pressFind = () => fireEvent.keyDown(document.body, { key: 'f', metaKey: true });
+  const search = (value: string) =>
+    fireEvent.change(screen.getByTestId('results-find-input'), { target: { value } });
+
+  it('finds the constructor name the JSON view renders, not just the scalar', () => {
+    // The grid shows ObjectId("603d…"); "copy value" would yield the bare hex.
+    // Searching the copy text made a visible `ObjectId` unfindable.
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    search('ObjectId');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 3');
+  });
+
+  it('finds a quoted string, since the JSON view renders the quotes', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    search('"Alice Smith"');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 1');
+  });
+
+  it('finds an escape sequence as the two characters on screen', () => {
+    render(<DataGrid documents={[{ note: 'first\nsecond' }]} />);
+    pressFind();
+    search('\\n');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 1');
+  });
+
+  it('does not count the column name once per table cell', () => {
+    // The heading is in the header once, so matching it in every cell reported
+    // three matches for one visible occurrence.
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    pressFind();
+    search('category');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent(/no matches/i);
+  });
+
+  it('finds the table view’s ObjectId by the bare hex it displays', () => {
+    // The table renders the backend's {$oid} as plain hex, so unlike the JSON
+    // view a search for `ObjectId` finds nothing there — each view is indexed
+    // as it is drawn.
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    pressFind();
+    search('603d779f4f102e3a185c3221');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 1');
+    search('ObjectId');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent(/no matches/i);
+  });
+
+  it('searches the tree view’s type column', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+    pressFind();
+    search('ObjectId');
+    // The key, the rendered value and the type label are all on screen.
+    expect(screen.getByTestId('results-find-status')).not.toHaveTextContent(/no matches/i);
+  });
+});
+
+describe('find shortcut routing across panes (#280 review)', () => {
+  beforeEach(() => resetResultsFindShortcutForTests());
+
+  it('routes to the pane whose toolbar was clicked', () => {
+    // The registered root used to start below the toolbar, so selecting a pane
+    // by its view-mode control pointed at no pane at all: with two mounted, the
+    // keypress went nowhere or to the wrong one.
+    const { container: paneA } = render(<DataGrid documents={mockDocuments} />);
+    const { container: paneB } = render(<DataGrid documents={mockDocuments} />);
+
+    const bTableButton = within(paneB).getAllByRole('button', { name: /table/i })[0];
+    fireEvent.pointerDown(bTableButton);
+    fireEvent.keyDown(document.body, { key: 'f', metaKey: true });
+
+    expect(within(paneB).queryByTestId('results-find-bar')).toBeInTheDocument();
+    expect(within(paneA).queryByTestId('results-find-bar')).not.toBeInTheDocument();
+  });
+
+  it('opens nothing when two panes are mounted and neither was selected', () => {
+    const { container: paneA } = render(<DataGrid documents={mockDocuments} />);
+    const { container: paneB } = render(<DataGrid documents={mockDocuments} />);
+
+    fireEvent.keyDown(document.body, { key: 'f', metaKey: true });
+
+    expect(within(paneA).queryByTestId('results-find-bar')).not.toBeInTheDocument();
+    expect(within(paneB).queryByTestId('results-find-bar')).not.toBeInTheDocument();
+  });
+
+  it('closes and clears the bar when the pane leaves the results tab', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.keyDown(document.body, { key: 'f', metaKey: true });
+    fireEvent.change(screen.getByTestId('results-find-input'), {
+      target: { value: 'Electronics' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /explain/i }));
+    expect(screen.queryByTestId('results-find-bar')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /results/i }));
+    expect(screen.queryByTestId('results-find-bar')).not.toBeInTheDocument();
+  });
+});
+
+describe('find scrolls the matched table column into view (#280 review)', () => {
+  beforeEach(() => resetResultsFindShortcutForTests());
+
+  it('scrolls horizontally so the highlighted cell is on screen', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    // jsdom has no layout, so the overflow the real table has is stubbed: the
+    // body is 1000px of content in a 300px viewport.
+    const body = screen.getByTestId('table-body-scroll');
+    let scrollLeft = 0;
+    Object.defineProperty(body, 'scrollWidth', { value: 1000, configurable: true });
+    Object.defineProperty(body, 'clientWidth', { value: 300, configurable: true });
+    Object.defineProperty(body, 'scrollLeft', {
+      get: () => scrollLeft,
+      set: (v: number) => {
+        scrollLeft = v;
+      },
+      configurable: true,
+    });
+
+    fireEvent.keyDown(document.body, { key: 'f', metaKey: true });
+    fireEvent.change(screen.getByTestId('results-find-input'), { target: { value: '349.5' } });
+
+    // `price` is the 4th column: 48px gutter + 3 × 180px = 588, ending at 768.
+    // Bringing its right edge into a 300px viewport means scrolling to 468.
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 1');
+    expect(scrollLeft).toBe(468);
+  });
+
+  it('leaves the scroll alone for a column already on screen', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+
+    const body = screen.getByTestId('table-body-scroll');
+    let scrollLeft = 0;
+    Object.defineProperty(body, 'scrollWidth', { value: 1000, configurable: true });
+    Object.defineProperty(body, 'clientWidth', { value: 900, configurable: true });
+    Object.defineProperty(body, 'scrollLeft', {
+      get: () => scrollLeft,
+      set: (v: number) => {
+        scrollLeft = v;
+      },
+      configurable: true,
+    });
+
+    fireEvent.keyDown(document.body, { key: 'f', metaKey: true });
+    fireEvent.change(screen.getByTestId('results-find-input'), { target: { value: '349.5' } });
+
+    expect(scrollLeft).toBe(0);
   });
 });
