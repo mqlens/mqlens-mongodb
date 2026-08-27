@@ -2188,13 +2188,21 @@ async fn update_document(
     original: String,
     edited: String,
     // The find projection the row came back under, so the backend knows which
-    // parts of `original` are complete. `{"address": 1}` includes the whole
+    // parts of `original` are complete: `{"address": 1}` includes the whole
     // sub-document while `{"address.city": 1}` does not, and a removal has to
-    // tell those apart.
-    projection: String,
+    // tell those apart. `None` means the shape cannot be known — the rows came
+    // from an aggregation — and nothing is then assumed complete.
+    projection: Option<String>,
 ) -> Result<u64, String> {
     update_document_impl(
-        &state, &id, &database, &collection, &filter, &original, &edited, &projection,
+        &state,
+        &id,
+        &database,
+        &collection,
+        &filter,
+        &original,
+        &edited,
+        projection.as_deref(),
     )
     .await
 }

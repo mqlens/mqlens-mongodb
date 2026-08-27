@@ -3950,7 +3950,12 @@ function Workspace() {
       // The projection the row came back under, so the backend knows which parts
       // of `original` are complete: `{"address": 1}` includes the whole
       // sub-document, `{"address.city": 1}` does not (see ProjectionShape).
-      projection: tab.lastQuery?.projection ?? '{}',
+      //
+      // `null` when the rows came from an aggregation: `lastQuery` is left intact
+      // by handleExecuteAggregate and would be stale, and a pipeline's shape
+      // cannot be reduced to a field list. The backend then assumes nothing is
+      // complete rather than trusting a projection that did not produce these rows.
+      projection: tab.lastAggregate ? null : (tab.lastQuery?.projection ?? '{}'),
     });
     setDocumentModal(null);
     await refreshTabResults(tab);
