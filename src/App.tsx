@@ -156,6 +156,19 @@ export interface QueryTab {
   estimated?: boolean;
 }
 
+/** True when a find projection actually restricts the fields returned. */
+function hasProjection(projection?: string): boolean {
+  const trimmed = (projection ?? '').trim();
+  if (trimmed === '' || trimmed === '{}') return false;
+  try {
+    return Object.keys(JSON.parse(trimmed)).length > 0;
+  } catch {
+    // Unparseable projection: the query would not have run with it, but treat it
+    // as restricting rather than risk a replacement that deletes hidden fields.
+    return true;
+  }
+}
+
 const DEFAULT_QUERY = { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
 
 // A cached/restored builder state may carry "{}" in the query/sort/projection
@@ -3947,6 +3960,10 @@ function Workspace() {
       filter: JSON.stringify({ _id: target._id }),
       original: docToShell(target),
       edited: json,
+      // Whether the row came back under a projection, i.e. whether `original` is
+      // a partial view. The backend needs it to know if falling back to a whole
+      // document replacement is safe (see update_document_inner).
+      partial: hasProjection(tab.lastQuery?.projection),
     });
     setDocumentModal(null);
     await refreshTabResults(tab);

@@ -231,7 +231,7 @@ mod tests {
             (
                 "update_document_impl",
                 Box::pin(async move {
-                    documents::update_document_impl(state, "ro", "db", "coll", "{}", "{}", "{}")
+                    documents::update_document_impl(state, "ro", "db", "coll", "{}", "{}", "{}", false)
                         .await
                         .map(|_| ())
                 }),

@@ -2178,6 +2178,7 @@ async fn start_generate_task(
 /// Takes the document as it was loaded *and* as it was edited, rather than one
 /// replacement: the grid may be showing a projection, and replacing the stored
 /// document with a partial view deleted every field the projection left out.
+#[allow(clippy::too_many_arguments)]
 async fn update_document(
     state: tauri::State<'_, AppState>,
     id: String,
@@ -2186,8 +2187,15 @@ async fn update_document(
     filter: String,
     original: String,
     edited: String,
+    // `partial` is true when the document was loaded under a projection, so
+    // `original` is only a partial view — which decides whether falling back to
+    // a whole-document replacement is safe.
+    partial: bool,
 ) -> Result<u64, String> {
-    update_document_impl(&state, &id, &database, &collection, &filter, &original, &edited).await
+    update_document_impl(
+        &state, &id, &database, &collection, &filter, &original, &edited, partial,
+    )
+    .await
 }
 
 #[tauri::command]

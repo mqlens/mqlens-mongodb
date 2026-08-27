@@ -337,6 +337,7 @@ mod integration {
             r#"{"_id":"u1"}"#,
             r#"{"_id":"u1","name":"Ada","tier":"gold"}"#,
             r#"{"_id":"u1","name":"Ada Lovelace","tier":"platinum"}"#,
+            false,
         )
         .await
         .expect("update");
@@ -373,6 +374,7 @@ mod integration {
             r#"{"_id":"p275"}"#,
             r#"{"_id":"p275","age":34}"#,
             r#"{"_id":"p275","age":35}"#,
+            true,
         )
         .await
         .expect("update projected");
@@ -391,6 +393,51 @@ mod integration {
             serde_json::json!(["admin", "devops"]),
             "an unprojected array must survive"
         );
+
+        // #275 follow-up: removing a sub-document that was loaded under a *nested*
+        // projection must unset only the leaf that was visible. Unsetting the
+        // parent would delete the siblings the projection hid — the same bug one
+        // level down.
+        insert_document_impl(
+            &state,
+            &id,
+            &db,
+            "people",
+            r#"{"_id":"p275n","address":{"city":"Pforzheim","street":"Maximilianstrasse 12","zip":"75172"}}"#,
+        )
+        .await
+        .expect("insert p275n");
+
+        update_document_impl(
+            &state,
+            &id,
+            &db,
+            "people",
+            r#"{"_id":"p275n"}"#,
+            // What `{"address.city": 1}` returns.
+            r#"{"_id":"p275n","address":{"city":"Pforzheim"}}"#,
+            // The user deleted the whole visible `address` object.
+            r#"{"_id":"p275n"}"#,
+            true,
+        )
+        .await
+        .expect("update nested projection");
+
+        let nested = execute_mql_query_impl(
+            &state, &id, &db, "people", r#"{"_id":"p275n"}"#, "{}", "{}", 1, 0,
+        )
+        .await
+        .expect("read back nested");
+        let nested: serde_json::Value = serde_json::from_str(&nested[0]).unwrap();
+        assert!(
+            nested["address"].get("city").is_none(),
+            "the visible leaf must be removed: {nested:?}"
+        );
+        assert_eq!(
+            nested["address"]["street"], "Maximilianstrasse 12",
+            "a hidden sibling must survive"
+        );
+        assert_eq!(nested["address"]["zip"], "75172", "a hidden sibling must survive");
 
         // update_many with an operator.
         seed(

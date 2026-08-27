@@ -388,6 +388,16 @@ async fn insert_document_inner(
     Ok(res.inserted_id.into_relaxed_extjson().to_string())
 }
 
+/// A field path that MongoDB cannot address literally in an update.
+///
+/// A dot makes it traverse into a sub-document and a leading `$` makes it an
+/// operator, so a field genuinely *named* `price.usd` cannot be targeted by
+/// `$set`/`$unset` at all. Such names are legal in MongoDB documents, and the
+/// old whole-document replacement handled them correctly by never naming them.
+fn path_is_unaddressable(key: &str) -> bool {
+    key.contains('.') || key.starts_with('$')
+}
+
 /// Build a field-level update from the document as it was loaded and as it was
 /// edited (#275).
 ///
@@ -399,38 +409,60 @@ async fn insert_document_inner(
 ///
 /// Sub-documents are compared recursively and emitted as dotted paths, because a
 /// projection can target a nested path (`{"address.city": 1}`) — setting the
-/// whole `address` object would reproduce the same bug one level down.
+/// whole `address` object would reproduce the same bug one level down. Removals
+/// follow the same rule: deleting a partially loaded `address` unsets the leaves
+/// that were visible, never the parent, which would take the hidden siblings
+/// with it.
 ///
-/// Arrays are replaced as a single value. A projection using `$slice` or
-/// `$elemMatch` returns a partial array that is indistinguishable from a short
-/// one, so those remain lossy; `update_document_inner` refuses the save when the
-/// document could not have come from a plain projection.
+/// `partial` says whether `original` came back under a projection. It only
+/// affects one otherwise-undecidable case: removing an empty sub-document, where
+/// `{}` on screen could be a genuinely empty object or one whose fields the
+/// projection hid.
 ///
-/// An empty result means nothing changed.
+/// Returns `Err` when a changed field cannot be addressed (see
+/// [`path_is_unaddressable`]); the caller decides what to do about it.
+///
+/// An empty `Ok` result means nothing changed.
 pub fn build_field_update(
-    original: &mongodb::bson::Document,
-    edited: &mongodb::bson::Document,
-) -> mongodb::bson::Document {
-    let mut set = mongodb::bson::Document::new();
-    let mut unset = mongodb::bson::Document::new();
-    diff_documents("", original, edited, &mut set, &mut unset);
+    original: &Document,
+    edited: &Document,
+    partial: bool,
+) -> Result<Document, String> {
+    let mut set = Document::new();
+    let mut unset = Document::new();
+    let mut blocked: Vec<String> = Vec::new();
+    diff_documents("", original, edited, partial, &mut set, &mut unset, &mut blocked);
 
-    let mut update = mongodb::bson::Document::new();
+    if !blocked.is_empty() {
+        blocked.sort();
+        blocked.dedup();
+        return Err(format!(
+            "cannot update field name(s) {} in place: MongoDB reads \".\" as a path \
+             separator and a leading \"$\" as an operator. Re-run the query without a \
+             projection so the whole document can be saved.",
+            blocked.join(", ")
+        ));
+    }
+
+    let mut update = Document::new();
     if !set.is_empty() {
         update.insert("$set", set);
     }
     if !unset.is_empty() {
         update.insert("$unset", unset);
     }
-    update
+    Ok(update)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn diff_documents(
     prefix: &str,
-    original: &mongodb::bson::Document,
-    edited: &mongodb::bson::Document,
-    set: &mut mongodb::bson::Document,
-    unset: &mut mongodb::bson::Document,
+    original: &Document,
+    edited: &Document,
+    partial: bool,
+    set: &mut Document,
+    unset: &mut Document,
+    blocked: &mut Vec<String>,
 ) {
     let path_of = |key: &str| {
         if prefix.is_empty() {
@@ -448,35 +480,85 @@ fn diff_documents(
             continue;
         }
         let path = path_of(key);
-        match original.get(key) {
+        let old = original.get(key);
+        if old != Some(new_value) && path_is_unaddressable(key) {
+            blocked.push(path);
+            continue;
+        }
+        match old {
             None => {
                 set.insert(path, new_value.clone());
             }
             Some(old_value) if old_value == new_value => {}
-            Some(mongodb::bson::Bson::Document(old_doc)) => {
-                match new_value {
-                    // Both sides are sub-documents: recurse so only the fields
-                    // that actually differ are written.
-                    mongodb::bson::Bson::Document(new_doc) => {
-                        diff_documents(&path, old_doc, new_doc, set, unset);
-                    }
-                    _ => {
-                        set.insert(path, new_value.clone());
-                    }
+            Some(mongodb::bson::Bson::Document(old_doc)) => match new_value {
+                // Both sides are sub-documents: recurse so only the fields that
+                // actually differ are written.
+                mongodb::bson::Bson::Document(new_doc) => {
+                    diff_documents(&path, old_doc, new_doc, partial, set, unset, blocked);
                 }
-            }
+                _ => {
+                    set.insert(path, new_value.clone());
+                }
+            },
             Some(_) => {
                 set.insert(path, new_value.clone());
             }
         }
     }
 
-    for (key, _) in original {
+    for (key, old_value) in original {
         if is_immutable_id(key) || edited.contains_key(key) {
             continue;
         }
-        // Shown to the user and removed by them, so this is a deliberate delete.
-        unset.insert(path_of(key), "");
+        if path_is_unaddressable(key) {
+            blocked.push(path_of(key));
+            continue;
+        }
+        // Removing a sub-document must unset the leaves that were on screen, not
+        // the parent: under a nested projection the parent also holds fields the
+        // user never saw, and unsetting it would delete them.
+        match old_value {
+            mongodb::bson::Bson::Document(old_doc) if !old_doc.is_empty() => {
+                unset_visible_leaves(&path_of(key), old_doc, unset, blocked);
+            }
+            // An empty sub-document has no visible leaf to unset. If the document
+            // was loaded under a projection it may still hold hidden fields, so
+            // unsetting the parent would be a guess — skip it. With the whole
+            // document loaded, `{}` really is empty and the removal can apply.
+            mongodb::bson::Bson::Document(_) if partial => {}
+            _ => {
+                unset.insert(path_of(key), "");
+            }
+        }
+    }
+}
+
+/// Unset every leaf path under a removed sub-document.
+///
+/// An empty sub-document has no leaves, so nothing is emitted for it: what is on
+/// screen cannot tell a genuinely empty object apart from one whose fields a
+/// projection hid, and unsetting the parent on that guess is exactly how
+/// unprojected siblings get destroyed.
+fn unset_visible_leaves(
+    prefix: &str,
+    doc: &Document,
+    unset: &mut Document,
+    blocked: &mut Vec<String>,
+) {
+    for (key, value) in doc {
+        if path_is_unaddressable(key) {
+            blocked.push(format!("{prefix}.{key}"));
+            continue;
+        }
+        let path = format!("{prefix}.{key}");
+        match value {
+            mongodb::bson::Bson::Document(inner) if !inner.is_empty() => {
+                unset_visible_leaves(&path, inner, unset, blocked);
+            }
+            _ => {
+                unset.insert(path, "");
+            }
+        }
     }
 }
 
@@ -488,16 +570,30 @@ pub async fn update_document_impl(
     filter: &str,
     original: &str,
     edited: &str,
+    partial: bool,
 ) -> Result<u64, String> {
     let started = std::time::Instant::now();
-    let result = update_document_inner(state, id, database, collection, filter, original, edited).await;
-    // Record the operators actually applied rather than the whole document: it
-    // is both smaller and a truer account of what changed.
-    let summary = match &result {
-        Ok(_) => format!("updateOne {database}.{collection}"),
-        Err(_) => format!("updateOne {database}.{collection} (failed)"),
+    let result = update_document_inner(
+        state, id, database, collection, filter, original, edited, partial,
+    )
+    .await;
+    // Record the operation that actually ran and the operators it applied. The
+    // edited document alone cannot show that removing a field issued `$unset`,
+    // so the mutation would not be reconstructable from the log.
+    let (summary, args) = match &result {
+        Ok((_, applied)) => (
+            format!("{} {database}.{collection}", applied.op),
+            format!(
+                "{{\"filter\":{filter},\"{}\":{}}}",
+                applied.op, applied.payload
+            ),
+        ),
+        Err(_) => (
+            format!("updateOne {database}.{collection} (failed)"),
+            format!("{{\"filter\":{filter},\"edited\":{edited}}}"),
+        ),
     };
-    let args = format!("{{\"filter\":{filter},\"edited\":{edited}}}");
+    let outcome = result.as_ref().map(|(modified, _)| *modified);
     crate::audit::maybe_record_result(
         state,
         Some(id),
@@ -509,11 +605,26 @@ pub async fn update_document_impl(
         started,
         &summary,
         Some(&args),
-        &result,
+        &outcome,
     );
-    result
+    result.map(|(modified, _)| modified)
 }
 
+/// What [`update_document_inner`] actually sent, for the audit record.
+struct AppliedWrite {
+    /// `updateOne` or `replaceOne`.
+    op: &'static str,
+    /// The update document or the replacement, as JSON.
+    payload: String,
+}
+
+/// Which Mongo write to issue for an edited document.
+enum WritePlan {
+    Update(Document),
+    Replace,
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn update_document_inner(
     state: &AppState,
     id: &str,
@@ -522,7 +633,8 @@ async fn update_document_inner(
     filter: &str,
     original: &str,
     edited: &str,
-) -> Result<u64, String> {
+    partial: bool,
+) -> Result<(u64, AppliedWrite), String> {
     // Still `ReplaceOne`: this is the single-document edit from the grid, and
     // that variant is deliberately outside the confirm-required set. Only the
     // Mongo operation underneath changed.
@@ -532,28 +644,63 @@ async fn update_document_inner(
     let original_doc = json_to_bson_document(original)?;
     let edited_doc = json_to_bson_document(edited)?;
 
-    // A field-level update rather than a replacement: the editor may hold only a
-    // projection of the document, and replacing with that deleted every field the
-    // projection left out (#275).
-    let update = build_field_update(&original_doc, &edited_doc);
-    if update.is_empty() {
+    let plan = match build_field_update(&original_doc, &edited_doc, partial) {
         // Mongo rejects an empty update document, and there is nothing to do.
-        return Ok(0);
-    }
+        Ok(update) if update.is_empty() => {
+            return Ok((
+                0,
+                AppliedWrite {
+                    op: "updateOne",
+                    payload: "{}".into(),
+                },
+            ));
+        }
+        Ok(update) => WritePlan::Update(update),
+        Err(e) => {
+            if partial {
+                // The document on screen is incomplete, so replacing it would
+                // delete whatever the projection hid. Nothing safe to do here.
+                return Err(e);
+            }
+            // The whole document is loaded, so replacing it is both safe and the
+            // only way to address a field whose name contains "." or "$".
+            WritePlan::Replace
+        }
+    };
+
+    let applied = match &plan {
+        WritePlan::Update(update) => AppliedWrite {
+            op: "updateOne",
+            payload: serde_json::to_string(&mongodb::bson::Bson::Document(update.clone()))
+                .unwrap_or_else(|_| "{}".into()),
+        },
+        WritePlan::Replace => AppliedWrite {
+            op: "replaceOne",
+            payload: edited.to_string(),
+        },
+    };
 
     if connection_is_mock(state, id)? {
-        return Ok(1);
+        return Ok((1, applied));
     }
 
     let client = require_real_client(state, id)?;
     let coll = client
         .database(database)
-        .collection::<mongodb::bson::Document>(collection);
-    let res = coll
-        .update_one(filter_doc, update)
-        .await
-        .map_err(|e| format!("Failed to update document: {}", e))?;
-    Ok(res.modified_count)
+        .collection::<Document>(collection);
+    let modified = match plan {
+        WritePlan::Update(update) => coll
+            .update_one(filter_doc, update)
+            .await
+            .map_err(|e| format!("Failed to update document: {}", e))?
+            .modified_count,
+        WritePlan::Replace => coll
+            .replace_one(filter_doc, edited_doc)
+            .await
+            .map_err(|e| format!("Failed to update document: {}", e))?
+            .modified_count,
+    };
+    Ok((modified, applied))
 }
 
 #[derive(serde::Serialize)]
@@ -829,7 +976,7 @@ mod csv_import_tests {
         // with it deleted username, email, roles, address and the rest.
         let original = doc_of(r#"{"_id":"66a1","age":34}"#);
         let edited = doc_of(r#"{"_id":"66a1","age":35}"#);
-        let update = build_field_update(&original, &edited);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
 
         assert_eq!(update, doc_of(r#"{"$set":{"age":35}}"#));
         assert!(
@@ -841,14 +988,14 @@ mod csv_import_tests {
     #[test]
     fn an_unchanged_document_produces_no_update() {
         let d = doc_of(r#"{"_id":"66a1","age":34}"#);
-        assert!(build_field_update(&d, &d).is_empty());
+        assert!(build_field_update(&d, &d, true).expect("addressable").is_empty());
     }
 
     #[test]
     fn removing_a_shown_field_unsets_it() {
         let original = doc_of(r#"{"_id":"66a1","age":34,"nickname":"nav"}"#);
         let edited = doc_of(r#"{"_id":"66a1","age":34}"#);
-        let update = build_field_update(&original, &edited);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$unset":{"nickname":""}}"#));
     }
 
@@ -856,7 +1003,7 @@ mod csv_import_tests {
     fn adding_a_field_sets_it() {
         let original = doc_of(r#"{"_id":"66a1","age":34}"#);
         let edited = doc_of(r#"{"_id":"66a1","age":34,"city":"Pforzheim"}"#);
-        let update = build_field_update(&original, &edited);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"city":"Pforzheim"}}"#));
     }
 
@@ -867,7 +1014,7 @@ mod csv_import_tests {
         // would delete street/zip/country — the same bug one level down.
         let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
         let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Berlin"}}"#);
-        let update = build_field_update(&original, &edited);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"address.city":"Berlin"}}"#));
     }
 
@@ -875,8 +1022,78 @@ mod csv_import_tests {
     fn a_nested_removal_unsets_the_dotted_path() {
         let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim","zip":"75172"}}"#);
         let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
-        let update = build_field_update(&original, &edited);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$unset":{"address.zip":""}}"#));
+    }
+
+    #[test]
+    fn removing_a_projected_subdocument_unsets_only_what_was_visible() {
+        // Under `{"address.city": 1}` the loaded `address` holds only `city`.
+        // Deleting it must not `$unset: address` — that takes street/zip/country
+        // with it, which is the very bug this change exists to prevent.
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$unset":{"address.city":""}}"#));
+    }
+
+    #[test]
+    fn removing_a_nested_subdocument_unsets_its_leaves_recursively() {
+        let original =
+            doc_of(r#"{"_id":"66a1","a":{"b":{"c":1,"d":2},"e":3}}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
+        assert_eq!(
+            update,
+            doc_of(r#"{"$unset":{"a.b.c":"","a.b.d":"","a.e":""}}"#)
+        );
+    }
+
+    #[test]
+    fn removing_an_empty_subdocument_under_a_projection_writes_nothing() {
+        // `{}` on screen could be a genuinely empty object, or one whose fields
+        // the projection hid — so there is no leaf it is safe to unset.
+        let original = doc_of(r#"{"_id":"66a1","address":{}}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
+        assert!(update.is_empty(), "must not guess at hidden fields: {update:?}");
+    }
+
+    #[test]
+    fn removing_an_empty_subdocument_from_a_whole_document_unsets_it() {
+        // Nothing was hidden, so `{}` really is empty and the removal applies.
+        let original = doc_of(r#"{"_id":"66a1","address":{}}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let update = build_field_update(&original, &edited, false).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$unset":{"address":""}}"#));
+    }
+
+    #[test]
+    fn a_literal_dotted_field_name_is_refused_not_mistargeted() {
+        // `price.usd` is a legal field name. Emitting it into `$set` would make
+        // MongoDB traverse into a `price` sub-document instead.
+        let original = doc_of(r#"{"_id":"66a1","price.usd":10}"#);
+        let edited = doc_of(r#"{"_id":"66a1","price.usd":11}"#);
+        let err = build_field_update(&original, &edited, true).expect_err("must refuse");
+        assert!(err.contains("price.usd"), "{err}");
+        assert!(err.contains("projection"), "should say how to proceed: {err}");
+    }
+
+    #[test]
+    fn a_dollar_prefixed_field_name_is_refused() {
+        let original = doc_of(r#"{"_id":"66a1","$weird":1}"#);
+        let edited = doc_of(r#"{"_id":"66a1","$weird":2}"#);
+        assert!(build_field_update(&original, &edited, true).is_err());
+    }
+
+    #[test]
+    fn an_untouched_dotted_field_name_does_not_block_the_update() {
+        // Only *changed* fields need addressing, so a document merely containing
+        // such a name is still editable elsewhere.
+        let original = doc_of(r#"{"_id":"66a1","price.usd":10,"age":34}"#);
+        let edited = doc_of(r#"{"_id":"66a1","price.usd":10,"age":35}"#);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"age":35}}"#));
     }
 
     #[test]
@@ -884,7 +1101,7 @@ mod csv_import_tests {
         // `_id` is immutable; an edit that changes it must not reach the update.
         let original = doc_of(r#"{"_id":"66a1","age":34}"#);
         let edited = doc_of(r#"{"_id":"different","age":35}"#);
-        let update = build_field_update(&original, &edited);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"age":35}}"#));
     }
 
@@ -892,7 +1109,7 @@ mod csv_import_tests {
     fn arrays_are_replaced_as_a_whole_value() {
         let original = doc_of(r#"{"_id":"66a1","roles":["admin","devops"]}"#);
         let edited = doc_of(r#"{"_id":"66a1","roles":["admin","editor"]}"#);
-        let update = build_field_update(&original, &edited);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"roles":["admin","editor"]}}"#));
     }
 
@@ -900,7 +1117,7 @@ mod csv_import_tests {
     fn replacing_a_document_with_a_scalar_sets_the_whole_path() {
         let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
         let edited = doc_of(r#"{"_id":"66a1","address":"unknown"}"#);
-        let update = build_field_update(&original, &edited);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"address":"unknown"}}"#));
     }
 
@@ -908,7 +1125,7 @@ mod csv_import_tests {
     fn a_new_nested_document_is_set_whole() {
         let original = doc_of(r#"{"_id":"66a1"}"#);
         let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Berlin"}}"#);
-        let update = build_field_update(&original, &edited);
+        let update = build_field_update(&original, &edited, true).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"address":{"city":"Berlin"}}}"#));
     }
 }
