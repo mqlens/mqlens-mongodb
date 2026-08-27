@@ -12,6 +12,10 @@ import { suggestESRIndex, type IndexSuggestion } from '../lib/indexSuggestions';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { EJSON, ObjectId, Long, Decimal128, Int32, Double, Binary, Timestamp } from 'bson';
 import { copyValueToText } from '../lib/copyValue';
+import { ResultsFindBar } from './ResultsFindBar';
+import { registerResultsFindTarget } from '../lib/resultsFindShortcut';
+import { cellText, findMatches, isMatchAt, stepMatch, type FindCell } from '../lib/resultsFind';
+import type { ListImperativeAPI } from 'react-window';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useThemeOptional } from '@/hooks/use-theme';
@@ -402,6 +406,9 @@ interface TreeRow {
 interface JsonRowExtra {
   lines: JsonLine[];
   collapsedFolds: Set<number>;
+  /** Highlight class for a matched line, or undefined. Module-scope row, so
+   *  the lookup is passed in rather than closed over. */
+  findHighlightClass: (rowId: number) => string | undefined;
   toggleFold: (id: number) => void;
   documents: Array<Record<string, any>>;
   openCtxMenu: (
@@ -430,6 +437,7 @@ const JsonRow = ({
   style,
   lines,
   collapsedFolds,
+  findHighlightClass,
   toggleFold,
   documents,
   openCtxMenu,
@@ -447,7 +455,8 @@ const JsonRow = ({
       className={cn(
         'flex items-center whitespace-pre hover:bg-accent',
         line.docIndex % 2 === 0 ? 'bg-background' : 'bg-card',
-        line.isDocRoot && line.docIndex > 0 && 'border-t border-border'
+        line.isDocRoot && line.docIndex > 0 && 'border-t border-border',
+        findHighlightClass(line.num)
       )}
       data-doc-even={line.docIndex % 2 === 0}
       onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value)}
@@ -709,6 +718,34 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [explainView, setExplainView] = useState<'visual' | 'json'>('visual');
   // Collapsed fold blocks in the JSON view, keyed by their generated fold id.
   const [collapsedFolds, setCollapsedFolds] = useState<Set<number>>(new Set());
+
+  // ── Local find over the loaded results (#279) ────────────────────────────
+  // Searches what is already on screen; the query filter above re-queries the
+  // server and is a different job.
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [activeMatch, setActiveMatch] = useState(-1);
+  const resultsRootRef = React.useRef<HTMLDivElement>(null);
+  const jsonListRef = React.useRef<ListImperativeAPI | null>(null);
+  const treeListRef = React.useRef<ListImperativeAPI | null>(null);
+  const tableListRef = React.useRef<ListImperativeAPI | null>(null);
+
+  // Several results panes can be mounted at once, so the shortcut is routed
+  // rather than bound per instance — see resultsFindShortcut.
+  useEffect(
+    () =>
+      registerResultsFindTarget({
+        element: () => resultsRootRef.current,
+        open: () => setFindOpen(true),
+      }),
+    []
+  );
+
+  const closeFind = React.useCallback(() => {
+    setFindOpen(false);
+    setFindQuery('');
+    setActiveMatch(-1);
+  }, []);
   // Collapsed rows in the tree-table view (separate id space from JSON folds).
   const [treeCollapsed, setTreeCollapsed] = useState<Set<number>>(new Set());
 
@@ -1115,6 +1152,64 @@ export const DataGrid: React.FC<DataGridProps> = ({
     setTreeCollapsed(new Set(treeDefaultCollapsed));
   }, [treeDefaultCollapsed]);
 
+  // Flatten the active view into searchable cells. Built from the *full* row
+  // lists, not the visible ones: every view is virtualized and folds can hide a
+  // row, so a match must be findable before it is rendered.
+  const findCells = useMemo<FindCell[]>(() => {
+    if (!findOpen) return [];
+    if (viewMode === 'json') {
+      return jsonLines
+        .filter((line) => line.keyName !== null || line.value !== undefined)
+        .map((line) => ({
+          rowIndex: line.num,
+          text: cellText(line.keyName, line.value),
+          ancestors: line.ancestors,
+        }));
+    }
+    if (viewMode === 'tree') {
+      return treeRows.map((row) => ({
+        rowIndex: row.num,
+        // The type column is on screen, so it is searchable too.
+        text: `${cellText(row.keyName, row.value)} ${row.type}`,
+        ancestors: row.ancestors,
+      }));
+    }
+    if (viewMode === 'table') {
+      return documents.flatMap((doc, index) =>
+        columns.map((col) => ({
+          rowIndex: index,
+          columnKey: col,
+          text: cellText(col, (doc as Record<string, unknown>)?.[col]),
+        }))
+      );
+    }
+    // Chart has no text to search.
+    return [];
+  }, [findOpen, viewMode, jsonLines, treeRows, documents, columns]);
+
+  const findMatchList = useMemo(() => findMatches(findCells, findQuery), [findCells, findQuery]);
+
+  // A changed query starts from the first match rather than keeping a stale index.
+  useEffect(() => {
+    setActiveMatch(findMatchList.length > 0 ? 0 : -1);
+  }, [findMatchList]);
+
+  const activeFindMatch = activeMatch >= 0 ? findMatchList[activeMatch] : undefined;
+
+  // Open whatever folds hide the active match. The two views keep separate
+  // collapse state, so each is updated on its own.
+  useEffect(() => {
+    if (!activeFindMatch || activeFindMatch.ancestors.length === 0) return;
+    const reveal = (prev: Set<number>) => {
+      if (!activeFindMatch.ancestors.some((a) => prev.has(a))) return prev;
+      const next = new Set(prev);
+      for (const ancestor of activeFindMatch.ancestors) next.delete(ancestor);
+      return next;
+    };
+    if (viewMode === 'json') setCollapsedFolds(reveal);
+    else if (viewMode === 'tree') setTreeCollapsed(reveal);
+  }, [activeFindMatch, viewMode]);
+
   const visibleTreeRows = useMemo(
     () => treeRows.filter((r) => !r.ancestors.some((a) => treeCollapsed.has(a))),
     [treeRows, treeCollapsed]
@@ -1220,7 +1315,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
         {columns.map((col) => (
           <div
             key={col}
-            className="flex h-full items-center truncate border-r border-border px-3 text-foreground"
+            className={cn(
+              'flex h-full items-center truncate border-r border-border px-3 text-foreground',
+              findHighlightClass(index, col)
+            )}
             style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
             onContextMenu={(e) => openCtxMenu(e, rawDoc, col, rawDoc[col])}
           >
@@ -1236,6 +1334,49 @@ export const DataGrid: React.FC<DataGridProps> = ({
     );
   };
 
+
+  // Scroll after the visible lists recompute, so revealing a fold and jumping to
+  // the row happen in the right order. `scrollToRow` throws on an out-of-range
+  // index, so the row is looked up rather than assumed present.
+  useEffect(() => {
+    if (!activeFindMatch) return;
+    if (viewMode === 'table') {
+      if (activeFindMatch.rowIndex < documents.length) {
+        tableListRef.current?.scrollToRow({ index: activeFindMatch.rowIndex, align: 'smart' });
+      }
+      return;
+    }
+    const rows = viewMode === 'json' ? visibleJsonLines : viewMode === 'tree' ? visibleTreeRows : [];
+    const index = rows.findIndex((row) => row.num === activeFindMatch.rowIndex);
+    if (index < 0) return;
+    const list = viewMode === 'json' ? jsonListRef : treeListRef;
+    list.current?.scrollToRow({ index, align: 'smart' });
+  }, [activeFindMatch, viewMode, visibleJsonLines, visibleTreeRows, documents.length]);
+
+  // Row-level highlighting: every view renders its values through its own
+  // coloured spans, so marking the containing row or cell keeps one mechanism
+  // across all three instead of threading a text range through each renderer.
+  const findMatchedRows = useMemo(
+    () => new Set(findMatchList.filter((m) => !m.columnKey).map((m) => m.rowIndex)),
+    [findMatchList]
+  );
+  const findMatchedCells = useMemo(
+    () =>
+      new Set(
+        findMatchList.filter((m) => m.columnKey).map((m) => `${m.rowIndex}:${m.columnKey}`)
+      ),
+    [findMatchList]
+  );
+  const findHighlightClass = (rowId: number, columnKey?: string): string | undefined => {
+    if (!findOpen || findQuery.trim() === '') return undefined;
+    const matched = columnKey
+      ? findMatchedCells.has(`${rowId}:${columnKey}`)
+      : findMatchedRows.has(rowId);
+    if (!matched) return undefined;
+    return isMatchAt(activeFindMatch, rowId, columnKey)
+      ? 'bg-warning/40 ring-1 ring-inset ring-warning'
+      : 'bg-warning/15';
+  };
 
   // Row height depends on viewMode and density
   const getRowHeight = () => {
@@ -1265,7 +1406,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
         className={cn(
           'flex items-center border-b border-border font-mono text-[11.5px] hover:bg-accent',
           row.docIndex % 2 === 0 ? 'bg-background' : 'bg-card',
-          row.isDocRoot && row.docIndex > 0 && 'border-t border-border'
+          row.isDocRoot && row.docIndex > 0 && 'border-t border-border',
+          findHighlightClass(row.num)
         )}
         data-doc-even={row.docIndex % 2 === 0}
         onContextMenu={(e) => openCtxMenu(e, documents[row.docIndex], row.kind === 'scalar' ? row.keyName : undefined, row.value)}
@@ -1506,7 +1648,18 @@ export const DataGrid: React.FC<DataGridProps> = ({
       )}
 
       {effectiveTab === 'results' ? (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div ref={resultsRootRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {findOpen && (
+          <ResultsFindBar
+            query={findQuery}
+            onQueryChange={setFindQuery}
+            matchCount={findMatchList.length}
+            activeIndex={activeMatch}
+            onNext={() => setActiveMatch((i) => stepMatch(findMatchList.length, i, 1))}
+            onPrevious={() => setActiveMatch((i) => stepMatch(findMatchList.length, i, -1))}
+            onClose={closeFind}
+          />
+        )}
         {!documents || documents.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center p-8 text-muted-foreground">
             <ListFilter size={24} className="mb-2 text-muted-foreground" />
@@ -1517,11 +1670,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
             <div className="min-h-0 flex-1 min-w-0 overflow-auto">
               <List<JsonRowExtra>
                 rowCount={visibleJsonLines.length}
+                listRef={jsonListRef}
                 rowHeight={getRowHeight()}
                 rowComponent={JsonRow}
                 rowProps={{
                   lines: visibleJsonLines,
                   collapsedFolds,
+                  findHighlightClass,
                   toggleFold,
                   documents,
                   openCtxMenu,
@@ -1551,6 +1706,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             <div className="min-h-0 flex-1 min-w-0 overflow-hidden">
               <List<{}>
                 rowCount={visibleTreeRows.length}
+                listRef={treeListRef}
                 rowHeight={getRowHeight()}
                 rowComponent={TreeRowComponent}
                 rowProps={{}}
@@ -1604,6 +1760,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             >
               <List<{}>
                 rowCount={documents.length}
+                listRef={tableListRef}
                 rowHeight={getRowHeight()}
                 rowComponent={Row}
                 rowProps={{}}

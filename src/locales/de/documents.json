@@ -317,6 +317,14 @@
         "sort": "Sortierung"
       }
     },
+    "find": {
+      "close": "Suche schließen (Esc)",
+      "count": "{{current}} von {{total}}",
+      "next": "Nächster Treffer (Enter)",
+      "noMatches": "Keine Treffer",
+      "placeholder": "In Ergebnissen suchen…",
+      "previous": "Vorheriger Treffer (Shift+Enter)"
+    },
     "labels": {
       "actions": "Aktionen",
       "docsCountEstimated_one": "~{{count}} Dokument",

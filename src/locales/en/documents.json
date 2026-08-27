@@ -124,6 +124,14 @@
         "sort": "Sort"
       }
     },
+    "find": {
+      "close": "Close find (Esc)",
+      "count": "{{current}} of {{total}}",
+      "next": "Next match (Enter)",
+      "noMatches": "No matches",
+      "placeholder": "Find in results…",
+      "previous": "Previous match (Shift+Enter)"
+    },
     "labels": {
       "actions": "Actions",
       "docsCountEstimated_one": "~{{count}} doc",

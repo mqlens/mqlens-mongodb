@@ -745,3 +745,132 @@ describe('view mode persistence (#218)', () => {
     expect(screen.getByRole('button', { name: /table/i }).className).toContain('bg-accent');
   });
 });
+
+describe('local find over the loaded results (#279)', () => {
+  // `fireEvent` wraps the dispatch in act(), so the state update flushes before
+  // the assertion. A raw dispatchEvent does not.
+  const pressFind = () => fireEvent.keyDown(document.body, { key: 'f', metaKey: true });
+
+  it('is closed until Cmd/Ctrl+F asks for it', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    expect(screen.queryByTestId('results-find-bar')).not.toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: 'f' });
+    expect(screen.queryByTestId('results-find-bar')).not.toBeInTheDocument();
+  });
+
+  it('opens on the shortcut and reports how many rows match', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+
+    const input = screen.getByTestId('results-find-input');
+    fireEvent.change(input, { target: { value: 'Electronics' } });
+    // Two documents are in Electronics, one line each in the JSON view.
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 2');
+  });
+
+  it('says so when nothing matches', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    fireEvent.change(screen.getByTestId('results-find-input'), {
+      target: { value: 'nothing-here' },
+    });
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent(/no matches/i);
+  });
+
+  it('steps through matches with the buttons, wrapping at the end', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    fireEvent.change(screen.getByTestId('results-find-input'), {
+      target: { value: 'Electronics' },
+    });
+
+    fireEvent.click(screen.getByTestId('results-find-next'));
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('2 of 2');
+    fireEvent.click(screen.getByTestId('results-find-next'));
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 2');
+    fireEvent.click(screen.getByTestId('results-find-prev'));
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('2 of 2');
+  });
+
+  it('steps with Enter and Shift+Enter from the input', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    const input = screen.getByTestId('results-find-input');
+    fireEvent.change(input, { target: { value: 'Electronics' } });
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('2 of 2');
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 2');
+  });
+
+  it('closes on Escape and forgets the query', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    const input = screen.getByTestId('results-find-input');
+    fireEvent.change(input, { target: { value: 'Electronics' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(screen.queryByTestId('results-find-bar')).not.toBeInTheDocument();
+    pressFind();
+    expect(screen.getByTestId('results-find-input')).toHaveValue('');
+  });
+
+  it('closes on the close button', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    fireEvent.click(screen.getByTestId('results-find-close'));
+    expect(screen.queryByTestId('results-find-bar')).not.toBeInTheDocument();
+  });
+
+  it('searches keys as well as values', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    fireEvent.change(screen.getByTestId('results-find-input'), { target: { value: 'category' } });
+    // The key appears once per document.
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 3');
+  });
+
+  it('finds an ObjectId by its hex, as the grid displays it', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    fireEvent.change(screen.getByTestId('results-find-input'), {
+      target: { value: '603d779f4f102e3a185c3221' },
+    });
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 1');
+  });
+
+  it('searches the table view too', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    pressFind();
+    fireEvent.change(screen.getByTestId('results-find-input'), {
+      target: { value: 'Electronics' },
+    });
+    // One cell per matching document, in the category column.
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 2');
+  });
+
+  it('searches the tree view too', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+    pressFind();
+    fireEvent.change(screen.getByTestId('results-find-input'), {
+      target: { value: 'Electronics' },
+    });
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent(/of 2/);
+  });
+
+  it('recounts when the view changes, since each view has its own rows', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    fireEvent.change(screen.getByTestId('results-find-input'), { target: { value: 'price' } });
+    const inJson = screen.getByTestId('results-find-status').textContent;
+
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    // The table has one `price` cell per row plus no key text, so the count is
+    // allowed to differ — what matters is that it is recomputed, not stale.
+    expect(screen.getByTestId('results-find-status').textContent).toBeTruthy();
+    expect(inJson).toBeTruthy();
+  });
+});

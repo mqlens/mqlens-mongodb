@@ -119,6 +119,14 @@
         "sort": "排序"
       }
     },
+    "find": {
+      "close": "关闭查找（Esc）",
+      "count": "第 {{current}} 个，共 {{total}} 个",
+      "next": "下一个匹配项（Enter）",
+      "noMatches": "无匹配项",
+      "placeholder": "在结果中查找…",
+      "previous": "上一个匹配项（Shift+Enter）"
+    },
     "labels": {
       "actions": "操作",
       "docsCountEstimated_other": "约 {{count}} 个文档",
