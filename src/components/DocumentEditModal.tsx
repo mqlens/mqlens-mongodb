@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { shellToEjson } from '../lib/shellDoc';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
+import { DOC_LANGUAGE_ID, registerDocLanguage } from '../lib/monacoDocLanguage';
+import { registerMqlensMonacoThemes } from '../lib/monacoAppTheme';
 import { useEscapeClose } from '../lib/useEscapeClose';
 import {
   Dialog,
@@ -110,19 +112,22 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
           <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-background">
             <Editor
               height="100%"
-              defaultLanguage="javascript"
-              language="javascript"
+              // Not `javascript`: Monaco's JS tokenizer emits plain `string` for
+              // every quoted literal, so a key cannot be coloured differently
+              // from a string value and the editor could not match the grid.
+              // Nothing else is lost — this editor already disables suggestions
+              // and diagnostics, so the language was only ever doing highlighting.
+              defaultLanguage={DOC_LANGUAGE_ID}
+              language={DOC_LANGUAGE_ID}
               theme={theme}
               value={json}
               onChange={(v) => setJson(v ?? '')}
               wrapperProps={{ 'data-testid': 'document-json-input' }}
               onMount={(_editor, monaco) => {
-                monaco.languages.typescript?.javascriptDefaults?.setDiagnosticsOptions({
-                  noSemanticValidation: true,
-                  noSyntaxValidation: true,
-                  noSuggestionDiagnostics: true,
-                });
-                monaco.languages.json?.jsonDefaults?.setDiagnosticsOptions({ validate: false });
+                registerDocLanguage(monaco);
+                // The theme's token colours come from the same design tokens the
+                // grid uses, so both must be registered before the editor paints.
+                registerMqlensMonacoThemes(monaco);
               }}
               options={{
                 minimap: { enabled: false },

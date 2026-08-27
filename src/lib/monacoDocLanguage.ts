@@ -1,0 +1,119 @@
+/**
+ * Syntax highlighting for the document editor, sharing the results grid's colours.
+ *
+ * The grid renders documents with a React walker over *parsed* BSON values
+ * (`val instanceof ObjectId`, `typeof val === 'number'`) and colours them with
+ * the `--syntax-*` design tokens. An editor cannot reuse that: it has to colour
+ * raw text as it is typed, including text that is momentarily invalid, so there
+ * is no parsed value to inspect. A tokenizer is therefore unavoidable.
+ *
+ * What *is* avoidable is a second set of colours. Monaco's themes previously
+ * declared `rules: []`, so every editor fell back to VS Code's built-in token
+ * colours and the same document looked different in the grid and the editor.
+ * [`DOC_SYNTAX_TOKENS`] is the one place the mapping lives; the theme reads the
+ * design tokens through it, so the two surfaces cannot drift apart again.
+ */
+import type { Monaco } from "@monaco-editor/react";
+
+/** Language id for the mongosh-flavoured document text the editor holds. */
+export const DOC_LANGUAGE_ID = "mqlens-doc";
+
+/**
+ * Monarch token → design token, with a fallback for when the CSS variable
+ * cannot be read (SSR, tests).
+ *
+ * The design tokens are the same ones `DataGrid` applies as `text-syntax-*`
+ * classes, so a colour changes in both places at once. `delimiter` follows the
+ * grid's `jsonPunct`, which renders `:`, `,` and brackets in muted-foreground.
+ * Constructor *names* use `syntax-boolean` because the grid does
+ * (`<span className="text-syntax-boolean">ObjectId</span>`).
+ */
+export const DOC_SYNTAX_TOKENS: ReadonlyArray<{
+  token: string;
+  cssToken: string;
+  fallback: string;
+}> = [
+  { token: "key", cssToken: "syntax-key", fallback: "#7dd3fc" },
+  { token: "string", cssToken: "syntax-string", fallback: "#86efac" },
+  { token: "number", cssToken: "syntax-number", fallback: "#f59e0b" },
+  { token: "boolean", cssToken: "syntax-boolean", fallback: "#c4b5fd" },
+  { token: "null", cssToken: "syntax-null", fallback: "#8b93a1" },
+  { token: "constructor", cssToken: "syntax-boolean", fallback: "#c4b5fd" },
+  { token: "delimiter", cssToken: "muted-foreground", fallback: "#8b93a1" },
+];
+
+/** BSON helpers mongosh accepts, rendered as calls in the grid and the editor. */
+const BSON_CONSTRUCTORS = [
+  "ObjectId",
+  "ISODate",
+  "NumberLong",
+  "NumberDecimal",
+  "NumberInt",
+  "Timestamp",
+  "BinData",
+  "UUID",
+  "DBRef",
+  "MinKey",
+  "MaxKey",
+  "Code",
+  "Decimal128",
+  "Date",
+] as const;
+
+let registered = false;
+
+/**
+ * Register the document language. Idempotent, so every editor can call it.
+ *
+ * Tokenizes the format `docToShell` produces: quoted or bare keys, the three
+ * JavaScript string forms, numbers, `true`/`false`/`null`, and BSON constructor
+ * calls. A key is distinguished from a string value by the colon that follows
+ * it — which is why `language="javascript"` could not do this, as Monaco's
+ * JavaScript tokenizer emits plain `string` for every quoted literal.
+ */
+export function registerDocLanguage(monaco: Monaco): void {
+  if (registered) return;
+  registered = true;
+
+  monaco.languages.register({ id: DOC_LANGUAGE_ID });
+  monaco.languages.setMonarchTokensProvider(DOC_LANGUAGE_ID, {
+    defaultToken: "",
+    tokenizer: {
+      root: [
+        // Constructor names first, so `ObjectId` is not read as a bare key.
+        [
+          new RegExp(`\\b(?:${BSON_CONSTRUCTORS.join("|")})\\b`),
+          "constructor",
+        ],
+
+        // A quoted or bare identifier followed by `:` is a key, not a value.
+        [/"(?:[^"\\]|\\.)*"(?=\s*:)/, "key"],
+        [/'(?:[^'\\]|\\.)*'(?=\s*:)/, "key"],
+        [/`(?:[^`\\]|\\.)*`(?=\s*:)/, "key"],
+        [/[A-Za-z_$][\w$]*(?=\s*:)/, "key"],
+
+        // String values, in all three JavaScript quotings.
+        [/"(?:[^"\\]|\\.)*"/, "string"],
+        [/'(?:[^'\\]|\\.)*'/, "string"],
+        [/`(?:[^`\\]|\\.)*`/, "string"],
+        // Half-typed strings: colour them as strings rather than dropping to the
+        // default, so text does not flicker uncoloured while being written.
+        [/"[^"]*$/, "string"],
+        [/'[^']*$/, "string"],
+
+        [/\b(?:true|false)\b/, "boolean"],
+        [/\bnull\b/, "null"],
+        [/-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/, "number"],
+
+        // Matches the grid's `jsonPunct`. Parentheses are left alone because the
+        // grid renders a constructor's own parens in the default foreground.
+        [/[{}[\],:]/, "delimiter"],
+      ],
+    },
+  });
+}
+
+/** Reset for tests, which register against a fresh Monaco stub each time. */
+export function resetDocLanguageForTests(): void {
+  registered = false;
+}

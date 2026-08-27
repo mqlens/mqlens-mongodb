@@ -1,5 +1,7 @@
 import type { Monaco } from "@monaco-editor/react";
 
+import { DOC_SYNTAX_TOKENS } from "./monacoDocLanguage";
+
 export type MqlensMonacoThemeId = "mqlens-light" | "mqlens-dark";
 
 let registered = false;
@@ -66,6 +68,21 @@ export function getMqlensMonacoThemeId(): MqlensMonacoThemeId {
     : "mqlens-dark";
 }
 
+/**
+ * Token colours for both themes, read from the same design tokens the results
+ * grid uses.
+ *
+ * These were previously `rules: []`, so Monaco fell back to VS Code's built-in
+ * colours and the same document looked different in the grid and the editor.
+ * Monaco wants hex without the leading `#`.
+ */
+function syntaxRules(): { token: string; foreground: string }[] {
+  return DOC_SYNTAX_TOKENS.map(({ token, cssToken, fallback }) => ({
+    token,
+    foreground: readToken(cssToken, fallback).replace("#", ""),
+  }));
+}
+
 export function registerMqlensMonacoThemes(monaco: Monaco): void {
   if (registered) return;
 
@@ -75,7 +92,7 @@ export function registerMqlensMonacoThemes(monaco: Monaco): void {
   monaco.editor.defineTheme(lightTheme, {
     base: "vs",
     inherit: true,
-    rules: [],
+    rules: syntaxRules(),
     colors: {
       "editor.background": readToken("input", "#ffffff"),
       "editor.foreground": readToken("foreground", "#1a1a1a"),
@@ -91,7 +108,7 @@ export function registerMqlensMonacoThemes(monaco: Monaco): void {
   monaco.editor.defineTheme(darkTheme, {
     base: "vs-dark",
     inherit: true,
-    rules: [],
+    rules: syntaxRules(),
     colors: {
       "editor.background": readToken("input", "#1e1e1e"),
       "editor.foreground": readToken("foreground", "#d4d4d4"),
@@ -115,7 +132,7 @@ export function refreshMqlensMonacoTheme(monaco: Monaco): void {
   monaco.editor.defineTheme(lightTheme, {
     base: "vs",
     inherit: true,
-    rules: [],
+    rules: syntaxRules(),
     colors: {
       "editor.background": readToken("input", "#ffffff"),
       "editor.foreground": readToken("foreground", "#1a1a1a"),
@@ -131,7 +148,7 @@ export function refreshMqlensMonacoTheme(monaco: Monaco): void {
   monaco.editor.defineTheme(darkTheme, {
     base: "vs-dark",
     inherit: true,
-    rules: [],
+    rules: syntaxRules(),
     colors: {
       "editor.background": readToken("input", "#1e1e1e"),
       "editor.foreground": readToken("foreground", "#d4d4d4"),
