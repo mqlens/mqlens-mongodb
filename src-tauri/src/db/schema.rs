@@ -171,6 +171,31 @@ pub async fn analyze_schema_impl(
     collection: &str,
     sample_size: i64,
 ) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let result = analyze_schema_impl_inner(state, id, database, collection, sample_size).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "analyze_schema",
+        crate::audit::OpClass::ReadOther,
+        None,
+        started,
+        &format!("analyzeSchema {database}.{collection}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn analyze_schema_impl_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    sample_size: i64,
+) -> Result<String, String> {
     let sample_size = normalize_schema_sample(sample_size);
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;

@@ -154,6 +154,25 @@ fn mock_index_stats(db: &str, coll: &str) -> Vec<IndexStatUi> {
 // ── Async command impls ──────────────────────────────────────────────────────
 
 pub async fn db_stats_impl(state: &AppState, id: &str, db: &str) -> Result<DbStatsUi, String> {
+    let started = std::time::Instant::now();
+    let result = db_stats_impl_inner(state, id, db).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(db),
+        None,
+        "db_stats",
+        crate::audit::OpClass::ReadOther,
+        None,
+        started,
+        &format!("dbStats {db}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn db_stats_impl_inner(state: &AppState, id: &str, db: &str) -> Result<DbStatsUi, String> {
     if connection_is_mock(state, id)? {
         return Ok(mock_db_stats(db));
     }
@@ -187,6 +206,25 @@ async fn coll_storage_stats(
 }
 
 pub async fn coll_stats_impl(state: &AppState, id: &str, db: &str, coll: &str) -> Result<CollStatsUi, String> {
+    let started = std::time::Instant::now();
+    let result = coll_stats_impl_inner(state, id, db, coll).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(db),
+        Some(coll),
+        "coll_stats",
+        crate::audit::OpClass::ReadOther,
+        None,
+        started,
+        &format!("collStats {db}.{coll}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn coll_stats_impl_inner(state: &AppState, id: &str, db: &str, coll: &str) -> Result<CollStatsUi, String> {
     if connection_is_mock(state, id)? {
         return Ok(mock_coll_stats());
     }
@@ -196,6 +234,25 @@ pub async fn coll_stats_impl(state: &AppState, id: &str, db: &str, coll: &str) -
 }
 
 pub async fn index_stats_impl(state: &AppState, id: &str, db: &str, coll: &str) -> Result<Vec<IndexStatUi>, String> {
+    let started = std::time::Instant::now();
+    let result = index_stats_impl_inner(state, id, db, coll).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(db),
+        Some(coll),
+        "index_stats",
+        crate::audit::OpClass::ReadOther,
+        None,
+        started,
+        &format!("indexStats {db}.{coll}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn index_stats_impl_inner(state: &AppState, id: &str, db: &str, coll: &str) -> Result<Vec<IndexStatUi>, String> {
     if connection_is_mock(state, id)? {
         return Ok(mock_index_stats(db, coll));
     }

@@ -552,6 +552,8 @@
       "summary": "摘要",
       "time": "时间"
     },
+    "degradedBanner": "活动日志未在运行：{{reason}}。当前执行的操作不会被记录。",
+    "degradedUnknownReason": "无法打开加密日志",
     "detail": {
       "args": "参数",
       "duration": "耗时",
@@ -578,6 +580,7 @@
       "subtitle": "本地、经密钥库加密的数据库操作日志。",
       "title": "活动"
     },
+    "integrityBanner": "活动日志完整性校验失败：{{reason}}。记录已停止，文件将被保留。使用“清空”可开始新的日志。",
     "loading": "正在加载活动…",
     "lockedBody": "解锁密钥库后即可查看和导出活动日志。",
     "lockedTitle": "密钥库已锁定",

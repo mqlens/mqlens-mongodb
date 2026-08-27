@@ -64,7 +64,7 @@ rmcp = { version = "=2.2.0", features = ["server", "transport-streamable-http-se
 # proven-compatible pairing rather than a guess.
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
 # Bundled SQLite for local audit log (#272) — no system libsqlite required.
-rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]
 tiny_http = "0.12.0"

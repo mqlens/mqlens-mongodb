@@ -502,7 +502,7 @@ impl McpServer {
         let (app_handle, path) = self.resolve()?;
         let state = app_handle.state::<AppState>();
         let summary = crate::mcp_tools::truncate_summary(&format!("connectionId={}", args.connection_id), 200);
-        let result = crate::mcp_tools::list_databases_tool_impl(&state, &path, &args.connection_id).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::list_databases_tool_impl(&state, &path, &args.connection_id)).await;
         finish_json(&state, "list_databases", Some(args.connection_id), &summary, result)
     }
 
@@ -511,7 +511,7 @@ impl McpServer {
         let (app_handle, path) = self.resolve()?;
         let state = app_handle.state::<AppState>();
         let summary = crate::mcp_tools::truncate_summary(&format!("connectionId={} database={}", args.connection_id, args.database), 200);
-        let result = crate::mcp_tools::list_collections_tool_impl(&state, &path, &args.connection_id, &args.database).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::list_collections_tool_impl(&state, &path, &args.connection_id, &args.database)).await;
         finish_json(&state, "list_collections", Some(args.connection_id), &summary, result)
     }
 
@@ -535,7 +535,7 @@ impl McpServer {
             ),
             200,
         );
-        let result = crate::mcp_tools::find_impl(&state, &path, args).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::find_impl(&state, &path, args)).await;
         finish_json(&state, "find", Some(connection_id), &summary, result)
     }
 
@@ -550,7 +550,7 @@ impl McpServer {
             &format!("connectionId={connection_id} {}.{} stages={}", args.database, args.collection, args.pipeline.len()),
             200,
         );
-        let result = crate::mcp_tools::aggregate_impl(&state, &path, args).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::aggregate_impl(&state, &path, args)).await;
         finish_json(&state, "aggregate", Some(connection_id), &summary, result)
     }
 
@@ -562,7 +562,7 @@ impl McpServer {
         let state = app_handle.state::<AppState>();
         let connection_id = args.connection_id.clone();
         let summary = crate::mcp_tools::truncate_summary(&format!("connectionId={connection_id} {}.{}", args.database, args.collection), 200);
-        let result = crate::mcp_tools::explain_impl(&state, &path, args).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::explain_impl(&state, &path, args)).await;
         finish_text(&state, "explain", Some(connection_id), &summary, result)
     }
 
@@ -574,7 +574,7 @@ impl McpServer {
         let state = app_handle.state::<AppState>();
         let connection_id = args.connection_id.clone();
         let summary = crate::mcp_tools::truncate_summary(&format!("connectionId={connection_id} {}.{}", args.database, args.collection), 200);
-        let result = crate::mcp_tools::schema_analysis_impl(&state, &path, args).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::schema_analysis_impl(&state, &path, args)).await;
         finish_text(&state, "schema_analysis", Some(connection_id), &summary, result)
     }
 
@@ -586,7 +586,7 @@ impl McpServer {
         let state = app_handle.state::<AppState>();
         let summary =
             crate::mcp_tools::truncate_summary(&format!("connectionId={} {}.{}", args.connection_id, args.database, args.collection), 200);
-        let result = crate::mcp_tools::list_indexes_tool_impl(&state, &path, &args.connection_id, &args.database, &args.collection).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::list_indexes_tool_impl(&state, &path, &args.connection_id, &args.database, &args.collection)).await;
         finish_json(&state, "list_indexes", Some(args.connection_id.clone()), &summary, result)
     }
 
@@ -601,7 +601,7 @@ impl McpServer {
         let connection_id = args.connection_id.clone();
         let summary =
             crate::mcp_tools::truncate_summary(&crate::mcp_tools::insert_one_summary(&args.database, &args.collection, &args.document, args._confirm), 200);
-        let result = crate::mcp_tools::insert_one_impl(&state, &path, args).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::insert_one_impl(&state, &path, args)).await;
         finish_json(&state, "insert_one", Some(connection_id), &summary, result)
     }
 
@@ -616,7 +616,7 @@ impl McpServer {
             &crate::mcp_tools::update_many_summary(&args.database, &args.collection, &args.filter, &args.update, args._confirm),
             200,
         );
-        let result = crate::mcp_tools::update_many_tool_impl(&state, &path, args).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::update_many_tool_impl(&state, &path, args)).await;
         finish_json(&state, "update_many", Some(connection_id), &summary, result)
     }
 
@@ -628,7 +628,7 @@ impl McpServer {
         let state = app_handle.state::<AppState>();
         let connection_id = args.connection_id.clone();
         let summary = crate::mcp_tools::truncate_summary(&crate::mcp_tools::delete_many_summary(&args.database, &args.collection, &args.filter, args._confirm), 200);
-        let result = crate::mcp_tools::delete_many_tool_impl(&state, &path, args).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::delete_many_tool_impl(&state, &path, args)).await;
         finish_json(&state, "delete_many", Some(connection_id), &summary, result)
     }
 
@@ -651,7 +651,7 @@ impl McpServer {
             ),
             200,
         );
-        let result = crate::mcp_tools::create_index_tool_impl(&state, &path, args).await;
+        let result = crate::audit::with_source("mcp", crate::mcp_tools::create_index_tool_impl(&state, &path, args)).await;
         finish_json(&state, "create_index", Some(connection_id), &summary, result)
     }
 }

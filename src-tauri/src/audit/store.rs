@@ -103,11 +103,19 @@ impl AuditStore {
         Ok(())
     }
 
+    /// Insert an event, replacing any existing row with the same `id`.
+    ///
+    /// Replace rather than reject, for two reasons. A background task records a
+    /// `running` event when it is queued and then supersedes it with its real
+    /// outcome under the same id, so the listing shows one row per operation
+    /// instead of two. And rebuilding the index by replaying the append-only log
+    /// then converges on the latest state of each event rather than tripping over
+    /// the superseded record.
     pub fn insert(&self, event: &AuditEvent) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
             r#"
-            INSERT INTO audit_events (
+            INSERT OR REPLACE INTO audit_events (
                 id, ts, connection_id, profile_name, database, collection,
                 op, source, ok, error, duration_ms, summary, args_json,
                 level_at_record, schema_version
@@ -246,41 +254,47 @@ impl AuditStore {
         Ok(n as u64)
     }
 
-    /// Serialize the live DB to a SQLite file byte image (for vault sealing).
-    pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
+    /// Every event in write order, for rebuilding the append-only log on
+    /// compaction. Deliberately not `query`, whose `ORDER BY ts DESC` would
+    /// reverse the log and make its hash chain disagree with write order.
+    pub fn all_chronological(&self) -> Result<Vec<AuditEvent>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
-        let path = dir.path().join("audit.db");
-        {
-            let mut dst = Connection::open(&path).map_err(|e| e.to_string())?;
-            let backup =
-                rusqlite::backup::Backup::new(&conn, &mut dst).map_err(|e| e.to_string())?;
-            backup
-                .run_to_completion(64, std::time::Duration::from_millis(1), None)
-                .map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT id, ts, connection_id, profile_name, database, collection,
+                       op, source, ok, error, duration_ms, summary, args_json,
+                       level_at_record, schema_version
+                FROM audit_events ORDER BY ts ASC, rowid ASC
+                "#,
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(AuditEvent {
+                    id: row.get(0)?,
+                    ts: row.get(1)?,
+                    connection_id: row.get(2)?,
+                    profile_name: row.get(3)?,
+                    database: row.get(4)?,
+                    collection: row.get(5)?,
+                    op: row.get(6)?,
+                    source: row.get(7)?,
+                    ok: row.get::<_, i64>(8)? != 0,
+                    error: row.get(9)?,
+                    duration_ms: row.get(10)?,
+                    summary: row.get(11)?,
+                    args_json: row.get(12)?,
+                    level_at_record: row.get(13)?,
+                    schema_version: row.get(14)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| e.to_string())?);
         }
-        std::fs::read(&path).map_err(|e| e.to_string())
-    }
-
-    /// Open a store from a SQLite file byte image (after vault unseal).
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
-        let path = dir.path().join("audit.db");
-        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-        let src = Connection::open(&path).map_err(|e| e.to_string())?;
-        let mut mem = Connection::open_in_memory().map_err(|e| e.to_string())?;
-        {
-            let backup =
-                rusqlite::backup::Backup::new(&src, &mut mem).map_err(|e| e.to_string())?;
-            backup
-                .run_to_completion(64, std::time::Duration::from_millis(1), None)
-                .map_err(|e| e.to_string())?;
-        }
-        let store = Self {
-            conn: Mutex::new(mem),
-        };
-        store.migrate()?;
-        Ok(store)
+        Ok(out)
     }
 }
 
@@ -324,6 +338,22 @@ mod tests {
         assert_eq!(rows[0].id, "e1");
         assert_eq!(rows[0].op, "dropCollection");
         assert_eq!(rows[0].schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn all_chronological_returns_write_order_not_query_order() {
+        let store = AuditStore::open_memory().expect("open");
+        store.insert(&sample_event("old", 1_000, "insert")).expect("insert old");
+        store.insert(&sample_event("new", 5_000, "deleteMany")).expect("insert new");
+
+        let listed = store.query(&AuditFilter::default()).expect("query");
+        assert_eq!(listed[0].id, "new", "listing stays newest-first");
+
+        let chronological = store.all_chronological().expect("chronological");
+        assert_eq!(
+            chronological.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            ["old", "new"]
+        );
     }
 
     #[test]

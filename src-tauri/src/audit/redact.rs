@@ -51,72 +51,116 @@ fn scrub_password_json_fields(input: &str) -> String {
     const KEYS: &[&str] = &["password", "passwd", "pwd", "secret", "api_key", "api-key", "token"];
     let mut out = input.to_string();
     for key in KEYS {
-        out = scrub_json_string_value(&out, key);
-        out = scrub_js_object_value(&out, key);
+        out = scrub_secret_key_values(&out, key);
     }
     out
 }
 
-/// Replace `key: "..."` / `key:'...'` / `key:word` (mongosh JS object syntax).
-fn scrub_js_object_value(input: &str, key: &str) -> String {
-    let mut out = String::with_capacity(input.len());
+/// True when `b` can appear inside a bare JS identifier.
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+/// End index of a quoted string starting at `open` (the quote byte), honouring
+/// backslash escapes. Returns `None` when the string is unterminated.
+fn quoted_end(bytes: &[u8], open: usize) -> Option<usize> {
+    let quote = bytes[open];
+    let mut i = open + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if i + 1 < bytes.len() => i += 2,
+            b if b == quote => return Some(i + 1),
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// Match `<key><ws>:<ws><value>` at `i`, where the key may be bare (`pwd`),
+/// double-quoted (`"pwd"`) or single-quoted (`'pwd'`), and the value may be
+/// double-quoted, single-quoted or a bare token. Returns the byte range of the
+/// value so the caller can keep the key text verbatim.
+fn match_key_value(
+    input: &str,
+    lower: &str,
+    key_lower: &str,
+    i: usize,
+) -> Option<(usize, usize)> {
+    let bytes = input.as_bytes();
+    let mut j = i;
+    let key_quote = match bytes.get(j) {
+        Some(&b) if b == b'"' || b == b'\'' => {
+            j += 1;
+            Some(b)
+        }
+        _ => None,
+    };
+    if !lower.get(j..)?.starts_with(key_lower) {
+        return None;
+    }
+    let after_key = j + key_lower.len();
+    let mut k = match key_quote {
+        Some(q) => {
+            if bytes.get(after_key) != Some(&q) {
+                return None;
+            }
+            after_key + 1
+        }
+        None => {
+            // Bare key: must not be a fragment of a longer identifier.
+            let before_ok = i == 0 || !is_ident_byte(bytes[i - 1]);
+            let after_ok = !bytes.get(after_key).is_some_and(|&b| is_ident_byte(b));
+            if !before_ok || !after_ok {
+                return None;
+            }
+            after_key
+        }
+    };
+
+    while bytes.get(k).is_some_and(|b| b.is_ascii_whitespace()) {
+        k += 1;
+    }
+    if bytes.get(k) != Some(&b':') {
+        return None;
+    }
+    k += 1;
+    while bytes.get(k).is_some_and(|b| b.is_ascii_whitespace()) {
+        k += 1;
+    }
+
+    let value_start = k;
+    let &first = bytes.get(value_start)?;
+    let value_end = if first == b'"' || first == b'\'' {
+        quoted_end(bytes, value_start)?
+    } else {
+        let mut e = value_start;
+        while let Some(&b) = bytes.get(e) {
+            if b.is_ascii_whitespace() || matches!(b, b',' | b'}' | b')' | b']' | b';') {
+                break;
+            }
+            e += 1;
+        }
+        if e == value_start {
+            return None;
+        }
+        e
+    };
+    Some((value_start, value_end))
+}
+
+/// Replace the value of every occurrence of `key` with `"***"`, covering both
+/// strict JSON and mongosh JavaScript object syntax.
+fn scrub_secret_key_values(input: &str, key: &str) -> String {
     let lower = input.to_ascii_lowercase();
     let key_lower = key.to_ascii_lowercase();
+    let mut out = String::with_capacity(input.len());
     let mut i = 0;
     while i < input.len() {
-        let rest = &lower[i..];
-        if rest.starts_with(&key_lower) {
-            let after_key = i + key_lower.len();
-            // Must be a bare identifier (not `"pwd"` JSON key).
-            let before_ok = i == 0 || !input.as_bytes()[i - 1].is_ascii_alphanumeric();
-            let after_ok = after_key >= input.len()
-                || !input.as_bytes()[after_key].is_ascii_alphanumeric();
-            if before_ok && after_ok {
-                let mut j = after_key;
-                while j < input.len() && input.as_bytes()[j].is_ascii_whitespace() {
-                    j += 1;
-                }
-                if j < input.len() && input.as_bytes()[j] == b':' {
-                    out.push_str(&input[i..=j]);
-                    i = j + 1;
-                    while i < input.len() && input.as_bytes()[i].is_ascii_whitespace() {
-                        out.push(input.as_bytes()[i] as char);
-                        i += 1;
-                    }
-                    if i < input.len() {
-                        let b = input.as_bytes()[i];
-                        if b == b'"' || b == b'\'' {
-                            let quote = b;
-                            i += 1;
-                            while i < input.len() {
-                                let c = input.as_bytes()[i];
-                                if c == b'\\' && i + 1 < input.len() {
-                                    i += 2;
-                                    continue;
-                                }
-                                if c == quote {
-                                    i += 1;
-                                    break;
-                                }
-                                i += 1;
-                            }
-                            out.push_str("\"***\"");
-                            continue;
-                        }
-                        // Unquoted token (identifier, number, etc.)
-                        while i < input.len() {
-                            let c = input.as_bytes()[i];
-                            if c.is_ascii_whitespace() || c == b',' || c == b'}' || c == b')' {
-                                break;
-                            }
-                            i += 1;
-                        }
-                        out.push_str("\"***\"");
-                        continue;
-                    }
-                    continue;
-                }
-            }
+        if let Some((value_start, value_end)) = match_key_value(input, &lower, &key_lower, i) {
+            out.push_str(&input[i..value_start]);
+            out.push_str("\"***\"");
+            i = value_end;
+            continue;
         }
         let ch = input[i..].chars().next().unwrap();
         out.push(ch);
@@ -125,47 +169,52 @@ fn scrub_js_object_value(input: &str, key: &str) -> String {
     out
 }
 
-/// Replace `"key":"..."` string values with `"***"` (case-insensitive key).
-fn scrub_json_string_value(input: &str, key: &str) -> String {
+/// Hard cap for a persisted error string (UTF-8 bytes).
+pub const MAX_ERROR_BYTES: usize = 2 * 1024;
+
+/// Sanitize a driver error before it is persisted.
+///
+/// Errors always go through [`redact_text`]. When payload logging is off they
+/// additionally have every `{...}` group collapsed, because MongoDB duplicate-key
+/// and validation errors embed rejected document values there
+/// (`dup key: { email: "..." }`) — that must not reach the log or a plaintext
+/// export under the payload-free default.
+pub fn redact_error(input: &str, include_payloads: bool) -> String {
+    let redacted = redact_text(input);
+    let stripped = if include_payloads {
+        redacted
+    } else {
+        collapse_brace_groups(&redacted)
+    };
+    truncate_args(&stripped, MAX_ERROR_BYTES)
+}
+
+/// Replace every balanced `{...}` group (and any unterminated tail) with `{...}`.
+fn collapse_brace_groups(input: &str) -> String {
+    const PLACEHOLDER: &str = "{…}";
+    let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
-    let lower = input.to_ascii_lowercase();
-    let key_lower = key.to_ascii_lowercase();
-    let needle = format!("\"{key_lower}\"");
     let mut i = 0;
     while i < input.len() {
-        if lower[i..].starts_with(&needle) {
-            out.push_str(&input[i..i + needle.len()]);
-            i += needle.len();
-            // skip whitespace and colon
-            while i < input.len() && input.as_bytes()[i].is_ascii_whitespace() {
-                out.push(input.as_bytes()[i] as char);
-                i += 1;
-            }
-            if i < input.len() && input.as_bytes()[i] == b':' {
-                out.push(':');
-                i += 1;
-            }
-            while i < input.len() && input.as_bytes()[i].is_ascii_whitespace() {
-                out.push(input.as_bytes()[i] as char);
-                i += 1;
-            }
-            if i < input.len() && input.as_bytes()[i] == b'"' {
-                i += 1; // opening quote
-                while i < input.len() {
-                    let b = input.as_bytes()[i];
-                    if b == b'\\' && i + 1 < input.len() {
-                        i += 2;
-                        continue;
+        if bytes[i] == b'{' {
+            let mut depth = 0usize;
+            let mut j = i;
+            while j < bytes.len() {
+                match bytes[j] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            j += 1;
+                            break;
+                        }
                     }
-                    if b == b'"' {
-                        i += 1;
-                        break;
-                    }
-                    i += 1;
+                    _ => {}
                 }
-                out.push_str("\"***\"");
-                continue;
+                j += 1;
             }
+            out.push_str(PLACEHOLDER);
+            i = j;
             continue;
         }
         let ch = input[i..].chars().next().unwrap();
@@ -221,6 +270,59 @@ mod tests {
         let raw = r#"db.createUser({user:"alice",pwd:"secret"})"#;
         let out = redact_text(raw);
         assert!(!out.contains("secret"), "password value leaked: {out}");
+    }
+
+    #[test]
+    fn scrubs_quoted_js_keys_and_single_quoted_values() {
+        for raw in [
+            r#"db.createUser({'user':'alice','pwd':'secret'})"#,
+            r#"db.createUser({"user":"alice","pwd": 'secret'})"#,
+            r#"db.createUser({user:'alice', PWD : "secret"})"#,
+            r#"db.createUser({'pwd':secret})"#,
+            r#"{"password": 'secret'}"#,
+        ] {
+            let out = redact_text(raw);
+            assert!(!out.contains("secret"), "password leaked from {raw}: {out}");
+        }
+    }
+
+    #[test]
+    fn keeps_non_secret_keys_and_similar_identifiers() {
+        let raw = r#"{"user":"alice","pwdHash":"keepme","oldpwd":"keepme2"}"#;
+        let out = redact_text(raw);
+        assert!(out.contains("alice"), "unrelated value dropped: {out}");
+        assert!(out.contains("keepme"), "pwdHash must not match: {out}");
+        assert!(out.contains("keepme2"), "oldpwd must not match: {out}");
+    }
+
+    #[test]
+    fn error_redaction_drops_brace_payloads_when_disabled() {
+        let raw = r#"E11000 duplicate key error collection: shop.users index: email_1 dup key: { email: "a@b.example" }"#;
+        let out = redact_error(raw, false);
+        assert!(!out.contains("a@b.example"), "document value leaked: {out}");
+        assert!(out.contains("E11000"), "diagnostic text must survive: {out}");
+        assert!(out.contains("email_1"), "index name must survive: {out}");
+    }
+
+    #[test]
+    fn error_redaction_keeps_payloads_when_enabled_but_still_scrubs_secrets() {
+        let raw = r#"failed for mongodb://alice:s3cret@host:27017 dup key: { email: "a@b.example" }"#;
+        let out = redact_error(raw, true);
+        assert!(out.contains("a@b.example"), "payload expected when enabled: {out}");
+        assert!(!out.contains("s3cret"), "URI credential leaked: {out}");
+    }
+
+    #[test]
+    fn error_redaction_caps_length() {
+        let raw = format!("boom {}", "x".repeat(MAX_ERROR_BYTES * 2));
+        let out = redact_error(&raw, true);
+        assert!(out.len() <= MAX_ERROR_BYTES, "len={}", out.len());
+    }
+
+    #[test]
+    fn collapse_handles_unterminated_brace() {
+        let out = redact_error("bad doc: { email: \"a@b.example\"", false);
+        assert!(!out.contains("a@b.example"), "unterminated group leaked: {out}");
     }
 
     #[test]

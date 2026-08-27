@@ -2,14 +2,50 @@
 
 use super::classify::classify_op;
 use super::level::{should_record, OpClass};
-use super::redact::{redact_text, truncate_args, MAX_ARGS_BYTES};
+use super::redact::{redact_error, redact_text, truncate_args, MAX_ARGS_BYTES};
 use super::store::{AuditEvent, SCHEMA_VERSION};
+use super::envelope::AuditSession;
 use crate::state::{AppState, LockExt};
+use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+/// Shared handle to the audit session slot in `AppState`.
+pub type SessionSlot = Arc<Mutex<Option<AuditSession>>>;
+
+tokio::task_local! {
+    /// Invoking surface for audit attribution, scoped around one tool call.
+    static AUDIT_SOURCE: &'static str;
+}
+
+/// Run `fut` with the audit source pinned to `source` (e.g. `"mcp"`).
+///
+/// The MCP tools share the same `_impl`s as the UI, and a connection's
+/// `via_mcp` flag records who *opened* it, not who is calling now —
+/// `require_mcp_connection` deliberately accepts any live opted-in connection.
+/// Without this scope an agent's reads and destructive writes on a UI-opened
+/// connection were attributed to the human UI.
+pub async fn with_source<F>(source: &'static str, fut: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    AUDIT_SOURCE.scope(source, fut).await
+}
+
+/// The source pinned by an enclosing [`with_source`] scope, if any.
+fn scoped_source() -> Option<&'static str> {
+    AUDIT_SOURCE.try_with(|s| *s).ok()
+}
+
 /// Inputs for a single audit attempt. Never causes the Mongo op to fail.
 pub struct RecordInput<'a> {
+    /// Reuse an existing event id to *supersede* that event instead of adding a
+    /// row. Used by background tasks to replace their `running` event with the
+    /// real outcome. `None` mints a fresh id.
+    pub event_id: Option<&'a str>,
+    /// Pin the event's timestamp. A superseding record keeps the original time
+    /// so the row does not jump around the listing when a long task finishes.
+    pub ts: Option<i64>,
     pub connection_id: Option<&'a str>,
     pub database: Option<&'a str>,
     pub collection: Option<&'a str>,
@@ -55,7 +91,28 @@ pub fn maybe_record(state: &AppState, input: RecordInput<'_>) {
 }
 
 fn maybe_record_inner(state: &AppState, input: RecordInput<'_>) -> Result<(), String> {
-    let guard = state.audit.lock_safe()?;
+    let (profile_name, inferred_source) = profile_and_source(state, input.connection_id);
+    // Explicit override wins, then the invoking surface pinned by the caller's
+    // `with_source` scope, and only then the connection's provenance.
+    let source = input
+        .source
+        .map(|s| s.to_string())
+        .or_else(|| scoped_source().map(|s| s.to_string()))
+        .unwrap_or(inferred_source);
+    record_into(&state.audit, profile_name, source, input)
+}
+
+/// Build and insert the event against an already-resolved profile and source.
+///
+/// Split out of [`maybe_record_inner`] so [`TaskAuditContext`] can record from a
+/// spawned task that no longer has an `&AppState` to resolve them from.
+fn record_into(
+    slot: &SessionSlot,
+    profile_name: Option<String>,
+    source: String,
+    input: RecordInput<'_>,
+) -> Result<(), String> {
+    let guard = slot.lock().map_err(|e| e.to_string())?;
     let Some(session) = guard.as_ref() else {
         return Ok(());
     };
@@ -68,12 +125,6 @@ fn maybe_record_inner(state: &AppState, input: RecordInput<'_>) -> Result<(), St
         return Ok(());
     }
 
-    let (profile_name, inferred_source) = profile_and_source(state, input.connection_id);
-    let source = input
-        .source
-        .unwrap_or(inferred_source.as_str())
-        .to_string();
-
     let args_json = if policy.include_payloads {
         input.args.map(|raw| {
             let redacted = redact_text(raw);
@@ -84,8 +135,11 @@ fn maybe_record_inner(state: &AppState, input: RecordInput<'_>) -> Result<(), St
     };
 
     let event = AuditEvent {
-        id: Uuid::new_v4().to_string(),
-        ts: now_ms(),
+        id: input
+            .event_id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| Uuid::new_v4().to_string()),
+        ts: input.ts.unwrap_or_else(now_ms),
         connection_id: input.connection_id.map(|s| s.to_string()),
         profile_name,
         database: input.database.map(|s| s.to_string()),
@@ -93,10 +147,15 @@ fn maybe_record_inner(state: &AppState, input: RecordInput<'_>) -> Result<(), St
         op: input.op.to_string(),
         source,
         ok: input.ok,
-        error: input.error.map(|s| s.to_string()),
+        // Errors carry payload values of their own (dup-key / validation
+        // errors embed rejected documents), so they are sanitized against the
+        // same payload gate as `args_json` rather than stored verbatim.
+        error: input
+            .error
+            .map(|s| redact_error(s, policy.include_payloads)),
         duration_ms: input.duration_ms,
         summary: input.summary.to_string(),
-        args_json: args_json,
+        args_json,
         level_at_record: policy.level.as_str().to_string(),
         schema_version: SCHEMA_VERSION,
     };
@@ -105,6 +164,149 @@ fn maybe_record_inner(state: &AppState, input: RecordInput<'_>) -> Result<(), St
     let cutoff = super::retention_cutoff_ms(policy.retention_days, now_ms());
     let _ = session.prune_before(cutoff);
     Ok(())
+}
+
+/// Record a background task's start only when no background task will record it.
+///
+/// A queued task writes its own `running` event and later supersedes it with the
+/// terminal outcome, so recording queue acceptance here as well would put two
+/// rows in the listing for every import, copy, generate and restore. Two cases
+/// still have to be recorded at this level, because nothing runs in the
+/// background to do it:
+///
+/// - a **rejected** start (read-only connection, invalid mode) — exactly the
+///   blocked destructive attempt an audit log needs;
+/// - a task that **completed inline**, as mock/demo connections do.
+#[allow(clippy::too_many_arguments)]
+pub fn maybe_record_task_start(
+    state: &AppState,
+    connection_id: Option<&str>,
+    database: Option<&str>,
+    collection: Option<&str>,
+    op: &str,
+    started: Instant,
+    summary: &str,
+    args: Option<&str>,
+    result: &Result<crate::TaskInfo, String>,
+) {
+    let (outcome, ok, error) = match result {
+        Err(e) => ("rejected", false, Some(e.clone())),
+        // Still running: the spawned task owns this event from here on.
+        Ok(task) if task.status == "running" => return,
+        Ok(task) => (
+            task.status.as_str(),
+            task.status == "completed",
+            task.error.clone(),
+        ),
+    };
+    maybe_record(
+        state,
+        RecordInput {
+            event_id: None,
+            ts: None,
+            connection_id,
+            database,
+            collection,
+            op,
+            class: Some(OpClass::Write),
+            source: None,
+            ok,
+            error: error.as_deref(),
+            duration_ms: Some(started.elapsed().as_millis() as i64),
+            summary: &format!("{summary} ({outcome})"),
+            args,
+        },
+    );
+}
+
+/// Audit context captured when a background task is queued, so the task can
+/// record its own terminal outcome after the queuing command has returned.
+///
+/// Queue acceptance and the task's real result are separate facts: recording only
+/// the former logged `ok: true` for imports/copies/restores that later failed,
+/// were cancelled, or wrote only partially.
+#[derive(Clone)]
+pub struct TaskAuditContext {
+    slot: SessionSlot,
+    /// Stable across the `running` record and the terminal one, so the second
+    /// replaces the first instead of adding a row.
+    event_id: String,
+    /// Time the task was queued; kept on the terminal record too.
+    ts: i64,
+    connection_id: Option<String>,
+    profile_name: Option<String>,
+    database: Option<String>,
+    collection: Option<String>,
+    op: String,
+    source: String,
+    summary: String,
+}
+
+impl TaskAuditContext {
+    /// Capture the context and record the task as `running`.
+    ///
+    /// Recording immediately matters: if the app dies mid-import the log still
+    /// shows the operation was started, which a terminal-only event would miss.
+    pub fn capture(
+        state: &AppState,
+        connection_id: Option<&str>,
+        database: Option<&str>,
+        collection: Option<&str>,
+        op: &str,
+        summary: &str,
+    ) -> Self {
+        let (profile_name, inferred_source) = profile_and_source(state, connection_id);
+        let source = scoped_source()
+            .map(|s| s.to_string())
+            .unwrap_or(inferred_source);
+        let ctx = Self {
+            slot: Arc::clone(&state.audit),
+            event_id: Uuid::new_v4().to_string(),
+            ts: now_ms(),
+            connection_id: connection_id.map(|s| s.to_string()),
+            profile_name,
+            database: database.map(|s| s.to_string()),
+            collection: collection.map(|s| s.to_string()),
+            op: op.to_string(),
+            source,
+            summary: summary.to_string(),
+        };
+        ctx.write("running", true, None, None);
+        ctx
+    }
+
+    /// Record the task's terminal state, replacing its `running` event.
+    /// `outcome` is `completed`, `failed` or `cancelled`.
+    pub fn record_terminal(&self, outcome: &str, error: Option<&str>, duration_ms: Option<i64>) {
+        self.write(outcome, outcome == "completed", error, duration_ms);
+    }
+
+    fn write(&self, outcome: &str, ok: bool, error: Option<&str>, duration_ms: Option<i64>) {
+        let summary = format!("{} ({outcome})", self.summary);
+        let input = RecordInput {
+            event_id: Some(&self.event_id),
+            ts: Some(self.ts),
+            connection_id: self.connection_id.as_deref(),
+            database: self.database.as_deref(),
+            collection: self.collection.as_deref(),
+            op: &self.op,
+            class: Some(OpClass::Write),
+            source: None,
+            ok,
+            error,
+            duration_ms,
+            summary: &summary,
+            args: None,
+        };
+        if let Err(e) = record_into(
+            &self.slot,
+            self.profile_name.clone(),
+            self.source.clone(),
+            input,
+        ) {
+            eprintln!("audit task record ({outcome}): {e}");
+        }
+    }
 }
 
 /// Record from a `Result`, capturing ok/error and elapsed time.
@@ -125,6 +327,8 @@ pub fn maybe_record_result<T, E: std::fmt::Display>(
     maybe_record(
         state,
         RecordInput {
+            event_id: None,
+            ts: None,
             connection_id,
             database,
             collection,
@@ -138,4 +342,332 @@ pub fn maybe_record_result<T, E: std::fmt::Display>(
             args,
         },
     );
+}
+
+/// Record a background task's *rejected* start, and nothing on success.
+///
+/// A queued task records its own `running` event and then its terminal outcome
+/// under the same id, so also recording queue acceptance here would put two rows
+/// in the listing for every import, copy, generate and restore. A rejection —
+/// a read-only connection, an invalid mode — never reaches the task, so it has
+/// to be recorded at this level or it is lost.
+#[allow(clippy::too_many_arguments)]
+pub fn maybe_record_rejection<T, E: std::fmt::Display>(
+    state: &AppState,
+    connection_id: Option<&str>,
+    database: Option<&str>,
+    collection: Option<&str>,
+    op: &str,
+    started: Instant,
+    summary: &str,
+    args: Option<&str>,
+    result: &Result<T, E>,
+) {
+    let Err(err) = result else {
+        return;
+    };
+    let err = err.to_string();
+    maybe_record(
+        state,
+        RecordInput {
+            event_id: None,
+            ts: None,
+            connection_id,
+            database,
+            collection,
+            op,
+            class: Some(OpClass::Write),
+            source: None,
+            ok: false,
+            error: Some(&err),
+            duration_ms: Some(started.elapsed().as_millis() as i64),
+            summary: &format!("{summary} (rejected)"),
+            args,
+        },
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audit::envelope::AuditPolicy;
+    use crate::audit::level::AuditLevel;
+    use crate::audit::store::AuditFilter;
+
+    fn state_with_open_session(dir: &std::path::Path) -> AppState {
+        let state = AppState::new();
+        let session = AuditSession::new(dir.join("audit.log.enc"));
+        session.open([5u8; 32]).expect("open session");
+        session.set_policy(AuditPolicy {
+            enabled: true,
+            level: AuditLevel::C,
+            include_payloads: false,
+            retention_days: 30,
+        });
+        *state.audit.lock().unwrap() = Some(session);
+        state
+    }
+
+    fn drop_input<'a>(source: Option<&'a str>) -> RecordInput<'a> {
+        RecordInput {
+            event_id: None,
+            ts: None,
+            connection_id: Some("c1"),
+            database: Some("shop"),
+            collection: Some("orders"),
+            op: "drop_collection",
+            class: None,
+            source,
+            ok: true,
+            error: None,
+            duration_ms: None,
+            summary: "dropCollection shop.orders",
+            args: None,
+        }
+    }
+
+    fn only_source(state: &AppState) -> String {
+        let guard = state.audit.lock().unwrap();
+        let rows = guard
+            .as_ref()
+            .unwrap()
+            .query(&AuditFilter::default())
+            .expect("query");
+        assert_eq!(rows.len(), 1, "expected exactly one recorded event");
+        rows[0].source.clone()
+    }
+
+    #[tokio::test]
+    async fn scoped_source_overrides_connection_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        // No `connection_meta` entry, so provenance inference would say "ui".
+        with_source("mcp", async {
+            maybe_record(&state, drop_input(None));
+        })
+        .await;
+        assert_eq!(only_source(&state), "mcp");
+    }
+
+    #[tokio::test]
+    async fn explicit_source_wins_over_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        with_source("mcp", async {
+            maybe_record(&state, drop_input(Some("shell")));
+        })
+        .await;
+        assert_eq!(only_source(&state), "shell");
+    }
+
+    #[tokio::test]
+    async fn without_a_scope_source_falls_back_to_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        maybe_record(&state, drop_input(None));
+        assert_eq!(only_source(&state), "ui");
+    }
+
+    #[tokio::test]
+    async fn task_context_captures_the_scoped_source_and_records_terminal_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        let ctx = with_source("mcp", async {
+            TaskAuditContext::capture(
+                &state,
+                Some("c1"),
+                Some("shop"),
+                Some("orders"),
+                "start_import_task",
+                "import shop.orders (json, skip)",
+            )
+        })
+        .await;
+        ctx.record_terminal("failed", Some("boom"), Some(7));
+
+        let guard = state.audit.lock().unwrap();
+        let rows = guard
+            .as_ref()
+            .unwrap()
+            .query(&AuditFilter::default())
+            .expect("query");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source, "mcp");
+        assert!(!rows[0].ok, "a failed task must not be recorded as ok");
+        assert!(rows[0].summary.ends_with("(failed)"), "{}", rows[0].summary);
+        assert_eq!(rows[0].error.as_deref(), Some("boom"));
+    }
+
+    #[tokio::test]
+    async fn a_task_produces_exactly_one_row_not_two() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        let ctx = TaskAuditContext::capture(
+            &state,
+            Some("c1"),
+            Some("shop"),
+            Some("orders"),
+            "start_collection_copy",
+            "copy shop.orders → shop.orders_copy",
+        );
+        // Queued: visible immediately, so a mid-task crash still leaves a trace.
+        {
+            let guard = state.audit.lock().unwrap();
+            let rows = guard
+                .as_ref()
+                .unwrap()
+                .query(&AuditFilter::default())
+                .expect("query");
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].summary.ends_with("(running)"), "{}", rows[0].summary);
+        }
+
+        ctx.record_terminal("completed", None, Some(50));
+
+        let guard = state.audit.lock().unwrap();
+        let rows = guard
+            .as_ref()
+            .unwrap()
+            .query(&AuditFilter::default())
+            .expect("query");
+        assert_eq!(
+            rows.len(),
+            1,
+            "the terminal record must supersede the running one, not add a row"
+        );
+        assert!(rows[0].summary.ends_with("(completed)"), "{}", rows[0].summary);
+        assert_eq!(rows[0].duration_ms, Some(50));
+    }
+
+    #[tokio::test]
+    async fn a_superseding_record_keeps_the_original_timestamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        let ctx = TaskAuditContext::capture(
+            &state,
+            Some("c1"),
+            Some("shop"),
+            None,
+            "start_database_copy",
+            "copy database a → shop",
+        );
+        let queued_ts = {
+            let guard = state.audit.lock().unwrap();
+            guard.as_ref().unwrap().query(&AuditFilter::default()).unwrap()[0].ts
+        };
+        ctx.record_terminal("failed", Some("boom"), Some(9));
+
+        let guard = state.audit.lock().unwrap();
+        let rows = guard.as_ref().unwrap().query(&AuditFilter::default()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].ts, queued_ts,
+            "a long task finishing must not reorder its row in the listing"
+        );
+        assert!(!rows[0].ok);
+    }
+
+    fn task(status: &str, error: Option<&str>) -> crate::TaskInfo {
+        crate::TaskInfo {
+            id: "t1".into(),
+            kind: "import".into(),
+            label: "Import".into(),
+            status: status.into(),
+            processed: 0,
+            total: None,
+            message: String::new(),
+            path: None,
+            error: error.map(|e| e.to_string()),
+            created_at_ms: 0,
+            finished_at_ms: None,
+            sub_label: None,
+            items_processed: None,
+            items_total: None,
+            summary: None,
+        }
+    }
+
+    fn rows(state: &AppState) -> Vec<AuditEvent> {
+        let guard = state.audit.lock().unwrap();
+        guard
+            .as_ref()
+            .unwrap()
+            .query(&AuditFilter::default())
+            .expect("query")
+    }
+
+    fn record_start(state: &AppState, result: &Result<crate::TaskInfo, String>) {
+        maybe_record_task_start(
+            state,
+            Some("c1"),
+            Some("shop"),
+            Some("orders"),
+            "start_import_task",
+            Instant::now(),
+            "import shop.orders (json, skip)",
+            None,
+            result,
+        );
+    }
+
+    #[tokio::test]
+    async fn a_queued_task_start_is_left_for_the_task_itself_to_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        record_start(&state, &Ok(task("running", None)));
+        assert!(
+            rows(&state).is_empty(),
+            "queue acceptance must not be recorded — it would double-log every task"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rejected_start_is_recorded_as_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        record_start(&state, &Err("connection is read-only".into()));
+        let rows = rows(&state);
+        assert_eq!(rows.len(), 1, "a blocked destructive attempt must be logged");
+        assert!(!rows[0].ok);
+        assert!(rows[0].summary.ends_with("(rejected)"), "{}", rows[0].summary);
+        assert_eq!(rows[0].error.as_deref(), Some("connection is read-only"));
+    }
+
+    #[tokio::test]
+    async fn a_task_that_finished_inline_is_recorded_here() {
+        // Mock/demo connections complete without spawning anything, so nothing
+        // else would ever record them.
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        record_start(&state, &Ok(task("completed", None)));
+        let rows = rows(&state);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].ok);
+        assert!(rows[0].summary.ends_with("(completed)"), "{}", rows[0].summary);
+    }
+
+    #[tokio::test]
+    async fn completed_task_is_recorded_as_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        let ctx = TaskAuditContext::capture(
+            &state,
+            Some("c1"),
+            Some("shop"),
+            None,
+            "start_database_copy",
+            "copy database a → shop",
+        );
+        ctx.record_terminal("completed", None, Some(12));
+
+        let guard = state.audit.lock().unwrap();
+        let rows = guard
+            .as_ref()
+            .unwrap()
+            .query(&AuditFilter::default())
+            .expect("query");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].ok);
+        assert!(rows[0].summary.ends_with("(completed)"), "{}", rows[0].summary);
+    }
 }

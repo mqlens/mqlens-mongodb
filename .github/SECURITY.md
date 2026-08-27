@@ -45,10 +45,20 @@ services you connect to.
 - **Credentials encrypted at rest** with AES-256-GCM and Argon2id key
   derivation, behind a master password (with optional biometric unlock).
 - **Activity / audit log (local only)** — optional operation history is stored
-  as vault-encrypted SQLite (`audit.db.enc`). It may include collection names,
-  filters, and (if enabled in Settings) document fragments. Protect the vault
-  password. **Export** is an explicit user action that writes **plaintext**
-  outside the vault envelope — treat exported files as sensitive.
+  in `audit.log.enc` as an append-only log whose records are each encrypted
+  individually with the vault key; the decrypted log never touches the
+  filesystem. It may include collection names, filters, and (if enabled in
+  Settings) document fragments. Protect the vault password. **Export** is an
+  explicit user action that writes **plaintext** outside the vault envelope —
+  treat exported files as sensitive.
+- **Audit log integrity** — every record carries its sequence number and the
+  hash of the record before it, so deleting, reordering or editing entries is
+  detected when the log is opened; MQLens then stops recording and preserves the
+  file instead of writing over it. A crash mid-write is distinguished from
+  tampering: the partial trailing record is discarded and logging continues.
+  Note the limit: the log is encrypted with your own master password on your own
+  machine, so it is tamper-**evident**, not tamper-**proof** — anyone holding
+  that password can delete it and start fresh.
 - **Signed builds** — macOS notarized, Windows signed, and GPG-signed Linux
   artifacts; updater artifacts are signed and verified before install.
 - **Apache-2.0** — the source is open for review.

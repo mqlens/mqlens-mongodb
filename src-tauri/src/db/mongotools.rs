@@ -883,6 +883,7 @@ async fn run_tool_task(
     uri: String,
     direct_connection: bool,
     verb: &'static str,
+    audit: Option<(crate::audit::TaskAuditContext, std::time::Instant)>,
 ) {
     let outcome =
         run_tool_process(&tasks, &task_id, &cancel, &tool_path, &args, &uri, direct_connection)
@@ -900,6 +901,14 @@ async fn run_tool_task(
             crate::db::tasks::prune_tasks(&tasks);
         }
         Err(err) => fail_task(&tasks, &task_id, err),
+    }
+    if let Some((ctx, started)) = audit {
+        let (outcome, error) = crate::db::tasks::terminal_state(&tasks, &task_id, "failed");
+        ctx.record_terminal(
+            &outcome,
+            error.as_deref(),
+            Some(started.elapsed().as_millis() as i64),
+        );
     }
     if let Ok(mut guard) = cancels.lock() {
         guard.remove(&task_id);
@@ -945,8 +954,10 @@ pub async fn start_dump_task_impl(
     let tool_path = tool_path.to_string();
     let task_id2 = task_id.clone();
     tokio::spawn(async move {
-        run_tool_task(tasks, cancels, task_id2, cancel, tool_path, args, uri, tunneled, "Dump")
-            .await;
+        run_tool_task(
+            tasks, cancels, task_id2, cancel, tool_path, args, uri, tunneled, "Dump", None,
+        )
+        .await;
     });
 
     Ok(task)
@@ -963,14 +974,12 @@ pub async fn start_restore_task_impl(
     let source = restore_source_path(&options.source).to_string();
     let audit_summary = format!("restore from {}", basename(&source));
     let result = start_restore_task_inner(state, id, tool_path, options).await;
-    crate::audit::maybe_record_result(
+    crate::audit::maybe_record_task_start(
         state,
         Some(id),
         None,
         None,
         "start_restore_task",
-        crate::audit::OpClass::Write,
-        None,
         started,
         &audit_summary,
         None,
@@ -992,6 +1001,15 @@ async fn start_restore_task_inner(
     let args = build_restore_args(&options)?;
     let source = restore_source_path(&options.source).to_string();
     let label = format!("Restore {}", basename(&source));
+    let audit_ctx = crate::audit::TaskAuditContext::capture(
+        state,
+        Some(id),
+        None,
+        None,
+        "start_restore_task",
+        &format!("restore from {}", basename(&source)),
+    );
+    let audit_started = std::time::Instant::now();
 
     let task_id = Uuid::new_v4().to_string();
     let task = TaskInfo {
@@ -1019,8 +1037,19 @@ async fn start_restore_task_inner(
     let tool_path = tool_path.to_string();
     let task_id2 = task_id.clone();
     tokio::spawn(async move {
-        run_tool_task(tasks, cancels, task_id2, cancel, tool_path, args, uri, tunneled, "Restore")
-            .await;
+        run_tool_task(
+            tasks,
+            cancels,
+            task_id2,
+            cancel,
+            tool_path,
+            args,
+            uri,
+            tunneled,
+            "Restore",
+            Some((audit_ctx, audit_started)),
+        )
+        .await;
     });
 
     Ok(task)

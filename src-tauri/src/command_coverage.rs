@@ -144,6 +144,7 @@ const LOCAL_COMMANDS: &[&str] = &[
     "audit_clear",
     "audit_reset",
     "audit_dropped_count",
+    "audit_status",
     "test_mongosh_path",
     "load_collection_queries",
     "save_query",

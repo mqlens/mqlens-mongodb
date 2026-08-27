@@ -15,6 +15,8 @@
       "summary": "Summary",
       "time": "Time"
     },
+    "degradedBanner": "Activity logging is not running: {{reason}}. Operations performed now are not being recorded.",
+    "degradedUnknownReason": "the encrypted log could not be opened",
     "detail": {
       "args": "Arguments",
       "duration": "Duration",
@@ -43,6 +45,7 @@
       "subtitle": "Local vault-encrypted log of database operations.",
       "title": "Activity"
     },
+    "integrityBanner": "Activity log integrity check failed: {{reason}}. Recording has stopped and the file is being preserved. Use Clear to start a new log.",
     "loading": "Loading activity…",
     "lockedBody": "Unlock the vault to view and export the activity log.",
     "lockedTitle": "Vault is locked",

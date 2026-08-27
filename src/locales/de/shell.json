@@ -564,6 +564,8 @@
       "summary": "Zusammenfassung",
       "time": "Zeit"
     },
+    "degradedBanner": "Die Aktivitätsprotokollierung läuft nicht: {{reason}}. Jetzt ausgeführte Operationen werden nicht aufgezeichnet.",
+    "degradedUnknownReason": "das verschlüsselte Protokoll konnte nicht geöffnet werden",
     "detail": {
       "args": "Argumente",
       "duration": "Dauer",
@@ -592,6 +594,7 @@
       "subtitle": "Lokales, tresorverschlüsseltes Protokoll von Datenbankoperationen.",
       "title": "Aktivität"
     },
+    "integrityBanner": "Integritätsprüfung des Aktivitätsprotokolls fehlgeschlagen: {{reason}}. Die Aufzeichnung wurde gestoppt und die Datei bleibt erhalten. Mit „Leeren“ ein neues Protokoll beginnen.",
     "loading": "Aktivität wird geladen…",
     "lockedBody": "Entsperre den Tresor, um das Aktivitätsprotokoll anzuzeigen und zu exportieren.",
     "lockedTitle": "Tresor ist gesperrt",

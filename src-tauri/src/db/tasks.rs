@@ -50,6 +50,25 @@ pub fn finish_task(
     prune_tasks(tasks);
 }
 
+/// The task's own final status and error, for audit recording — status is
+/// `completed`, `failed` or `cancelled`.
+///
+/// Read from the task map rather than inferred from the job's `Result`, because
+/// cancellation and partial-write bookkeeping overwrite the status after the job
+/// returns. Falls back to `default` if the entry was already pruned.
+pub fn terminal_state(
+    tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>,
+    task_id: &str,
+    default: &str,
+) -> (String, Option<String>) {
+    tasks
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(task_id)
+        .map(|t| (t.status.clone(), t.error.clone()))
+        .unwrap_or_else(|| (default.to_string(), None))
+}
+
 pub fn prune_tasks(tasks: &Arc<Mutex<HashMap<String, TaskInfo>>>) {
     use crate::limits::MAX_TASK_HISTORY;
     let mut guard = tasks.lock().unwrap_or_else(|p| p.into_inner());

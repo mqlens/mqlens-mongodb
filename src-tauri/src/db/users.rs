@@ -135,6 +135,29 @@ pub async fn list_users_impl(
     id: &str,
     database: Option<&str>,
 ) -> Result<Vec<MongoUser>, String> {
+    let started = std::time::Instant::now();
+    let result = list_users_impl_inner(state, id, database).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        database,
+        None,
+        "list_users",
+        crate::audit::OpClass::ReadOther,
+        None,
+        started,
+        &format!("listUsers {}", database.unwrap_or("admin")),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn list_users_impl_inner(
+    state: &AppState,
+    id: &str,
+    database: Option<&str>,
+) -> Result<Vec<MongoUser>, String> {
     if connection_is_mock(state, id)? {
         let users = mock_users();
         return Ok(match database {
@@ -336,6 +359,29 @@ async fn drop_user_inner(
 
 /// List roles grantable on a database, including built-in roles.
 pub async fn list_roles_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+) -> Result<Vec<RoleInfo>, String> {
+    let started = std::time::Instant::now();
+    let result = list_roles_impl_inner(state, id, database).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        None,
+        "list_roles",
+        crate::audit::OpClass::ReadOther,
+        None,
+        started,
+        &format!("listRoles {database}"),
+        None,
+        &result,
+    );
+    result
+}
+
+async fn list_roles_impl_inner(
     state: &AppState,
     id: &str,
     database: &str,

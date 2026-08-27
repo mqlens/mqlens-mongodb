@@ -4,7 +4,6 @@ use crate::limits::IMPORT_BATCH_SIZE;
 use crate::state::LockExt;
 use crate::write_guard::{guard_writable, WriteOp};
 use crate::{connection_is_mock, mock_db, require_real_client, AppState, CopyFailure, CopySummary, TaskInfo};
-use crate::audit::{maybe_record_result, OpClass};
 use mongodb::bson::Document;
 use mongodb::Client;
 use std::collections::HashMap;
@@ -442,14 +441,12 @@ pub async fn start_collection_copy_impl(
         conflict_mode,
     )
     .await;
-    maybe_record_result(
+    crate::audit::maybe_record_task_start(
         state,
         Some(target_id),
         Some(target_db),
         Some(target_collection),
         "start_collection_copy",
-        OpClass::Write,
-        None,
         started,
         &audit_summary,
         filter.as_deref(),
@@ -525,6 +522,18 @@ async fn start_collection_copy_inner(
     let target = require_real_client(state, target_id)?;
     let tasks = state.tasks.clone();
     let cancels = state.cancels.clone(); // Arc<Mutex<..>> — clone the Arc
+    let audit_ctx = crate::audit::TaskAuditContext::capture(
+        state,
+        Some(target_id),
+        Some(target_db),
+        Some(target_collection),
+        "start_collection_copy",
+        &format!(
+            "copy {}.{} → {}.{}",
+            source_db, source_collection, target_db, target_collection
+        ),
+    );
+    let audit_started = std::time::Instant::now();
     let (sdb, scoll) = (source_db.to_string(), source_collection.to_string());
     let (tdb, tcoll) = (target_db.to_string(), target_collection.to_string());
     let task_id2 = task_id.clone();
@@ -561,6 +570,12 @@ async fn start_collection_copy_inner(
             }
             Err(err) => fail_task(&tasks, &task_id2, err),
         }
+        let (outcome, error) = crate::db::tasks::terminal_state(&tasks, &task_id2, "failed");
+        audit_ctx.record_terminal(
+            &outcome,
+            error.as_deref(),
+            Some(audit_started.elapsed().as_millis() as i64),
+        );
         clear_cancel_flag(&cancels, &task_id2);
     });
 
@@ -594,14 +609,12 @@ pub async fn start_database_copy_impl(
         conflict_mode,
     )
     .await;
-    maybe_record_result(
+    crate::audit::maybe_record_task_start(
         state,
         Some(target_id),
         Some(target_db),
         None,
         "start_database_copy",
-        OpClass::Write,
-        None,
         started,
         &audit_summary,
         collections_arg.as_deref(),
@@ -677,6 +690,15 @@ async fn start_database_copy_inner(
     let target = require_real_client(state, target_id)?;
     let tasks = state.tasks.clone();
     let cancels = state.cancels.clone();
+    let audit_ctx = crate::audit::TaskAuditContext::capture(
+        state,
+        Some(target_id),
+        Some(target_db),
+        None,
+        "start_database_copy",
+        &format!("copy database {} → {}", source_db, target_db),
+    );
+    let audit_started = std::time::Instant::now();
     let (sdb, tdb) = (source_db.to_string(), target_db.to_string());
     let task_id2 = task_id.clone();
 
@@ -756,6 +778,12 @@ async fn start_database_copy_inner(
         let status = if cancel.load(Ordering::SeqCst) { "cancelled" } else { "completed" };
         update_task(&tasks, &task_id2, |t| t.items_processed = t.items_total);
         finish_copy_task(&tasks, &task_id2, status, summary);
+        let (outcome, error) = crate::db::tasks::terminal_state(&tasks, &task_id2, "completed");
+        audit_ctx.record_terminal(
+            &outcome,
+            error.as_deref(),
+            Some(audit_started.elapsed().as_millis() as i64),
+        );
         clear_cancel_flag(&cancels, &task_id2);
     });
 

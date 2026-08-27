@@ -31,21 +31,35 @@ pub async fn execute_aggregate_impl(
         .and_then(|v| v.as_array().cloned())
         .map(|stages| stages.iter().any(crate::write_guard::stage_is_disallowed))
         .unwrap_or(false);
-    if has_write_stage {
-        crate::audit::maybe_record_result(
-            state,
-            Some(id),
-            Some(database),
-            Some(collection),
+    // A `$out`/`$merge` pipeline is a write and is recorded at every level; a
+    // pure-read pipeline is the aggregation activity level B advertises, so it
+    // is recorded under its own op with the read class rather than skipped.
+    let (op, class, summary) = if has_write_stage {
+        (
             "execute_aggregate",
             crate::audit::OpClass::Write,
-            None,
-            started,
-            &format!("aggregate {database}.{collection} ($out/$merge)"),
-            Some(pipeline),
-            &result,
-        );
-    }
+            format!("aggregate {database}.{collection} ($out/$merge)"),
+        )
+    } else {
+        (
+            "execute_aggregate_read",
+            crate::audit::OpClass::ReadHigh,
+            format!("aggregate {database}.{collection}"),
+        )
+    };
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        op,
+        class,
+        None,
+        started,
+        &summary,
+        Some(pipeline),
+        &result,
+    );
     result
 }
 
@@ -133,6 +147,31 @@ async fn execute_aggregate_inner(
 /// Explain an entire aggregation pipeline (M1), not just its `$match` stage.
 /// Mirrors `execute_aggregate_impl`'s validation and is real-connection-only.
 pub async fn explain_aggregate_query_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    pipeline: &str,
+) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let result = explain_aggregate_query_impl_inner(state, id, database, collection, pipeline).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "explain_aggregate_query",
+        crate::audit::OpClass::ReadHigh,
+        None,
+        started,
+        &format!("explain aggregate {database}.{collection}"),
+        Some(pipeline),
+        &result,
+    );
+    result
+}
+
+async fn explain_aggregate_query_impl_inner(
     state: &AppState,
     id: &str,
     database: &str,

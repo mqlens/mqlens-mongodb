@@ -151,6 +151,31 @@ pub async fn count_documents_impl(
     collection: &str,
     filter: &str,
 ) -> Result<u64, String> {
+    let started = std::time::Instant::now();
+    let result = count_documents_impl_inner(state, id, database, collection, filter).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "count_documents",
+        crate::audit::OpClass::ReadHigh,
+        None,
+        started,
+        &format!("count {database}.{collection}"),
+        Some(filter),
+        &result,
+    );
+    result
+}
+
+async fn count_documents_impl_inner(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    filter: &str,
+) -> Result<u64, String> {
     let is_mock = {
         let mocks = state.mocks.lock_safe()?;
         *mocks
@@ -199,6 +224,31 @@ pub async fn count_documents_impl(
 }
 
 pub async fn explain_mql_query_impl(
+    state: &AppState,
+    id: &str,
+    database: &str,
+    collection: &str,
+    filter: &str,
+) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let result = explain_mql_query_impl_inner(state, id, database, collection, filter).await;
+    crate::audit::maybe_record_result(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "explain_mql_query",
+        crate::audit::OpClass::ReadHigh,
+        None,
+        started,
+        &format!("explain find {database}.{collection}"),
+        Some(filter),
+        &result,
+    );
+    result
+}
+
+async fn explain_mql_query_impl_inner(
     state: &AppState,
     id: &str,
     database: &str,

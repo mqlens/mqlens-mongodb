@@ -460,7 +460,15 @@ pub fn get_settings_enc_path(app_handle: &tauri::AppHandle) -> PathBuf {
     config_dir_file(app_handle, "settings.json.enc")
 }
 
-/// Vault-encrypted audit SQLite database (`audit.db.enc`).
+/// Append-only encrypted audit log (`audit.log.enc`).
+pub fn get_audit_log_path(app_handle: &tauri::AppHandle) -> PathBuf {
+    config_dir_file(app_handle, "audit.log.enc")
+}
+
+/// The superseded whole-image audit envelope (`audit.db.enc`).
+///
+/// Kept only so the pre-append-log file can be found and set aside; nothing
+/// reads its contents any more.
 pub fn get_audit_enc_path(app_handle: &tauri::AppHandle) -> PathBuf {
     config_dir_file(app_handle, "audit.db.enc")
 }
@@ -599,7 +607,7 @@ pub fn write_prepared_file(path: &Path, blob: Option<Vec<u8>>) -> Result<(), Str
     match blob {
         None => Ok(()),
         Some(b) if b.is_empty() => Ok(()),
-        Some(b) => fs::write(path, b).map_err(|e| format!("write {}: {e}", path.display())),
+        Some(b) => crate::durable::write_atomic(path, &b),
     }
 }
 
@@ -617,14 +625,17 @@ pub fn reencrypt_data_files(
     Ok(())
 }
 
-/// Re-encrypt `audit.db.enc` from `old_key` to `new_key`. Missing/empty file is a no-op.
-pub fn reencrypt_audit_file(
+/// Prepare the audit log re-encrypted from `old_key` to `new_key`.
+///
+/// Not `prepare_reencrypt_file`: the log encrypts each record separately, so
+/// rotation has to decrypt every record and rebuild the hash chain rather than
+/// re-wrap one blob.
+pub fn prepare_reencrypt_audit_log(
     old_key: &[u8; 32],
     new_key: &[u8; 32],
-    enc_audit: &Path,
-) -> Result<(), String> {
-    let blob = prepare_reencrypt_file(old_key, new_key, enc_audit)?;
-    write_prepared_file(enc_audit, blob)
+    log_path: &Path,
+) -> Result<Option<Vec<u8>>, String> {
+    crate::audit::log::prepare_reencrypted(old_key, new_key, log_path)
 }
 
 #[tauri::command]

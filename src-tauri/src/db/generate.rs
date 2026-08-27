@@ -772,14 +772,12 @@ pub async fn start_generate_task_impl(
     let started = std::time::Instant::now();
     let audit_summary = format!("generate {count} docs → {database}.{collection}");
     let result = start_generate_task_inner(state, id, database, collection, template, count, seed).await;
-    crate::audit::maybe_record_result(
+    crate::audit::maybe_record_task_start(
         state,
         Some(id),
         Some(database),
         Some(collection),
         "start_generate_task",
-        crate::audit::OpClass::Write,
-        None,
         started,
         &audit_summary,
         None,
@@ -845,6 +843,15 @@ async fn start_generate_task_inner(
 
     let tasks = state.tasks.clone();
     let cancels = state.cancels.clone();
+    let audit_ctx = crate::audit::TaskAuditContext::capture(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "start_generate_task",
+        &format!("generate {count} docs → {database}.{collection}"),
+    );
+    let audit_started = std::time::Instant::now();
     let database = database.to_string();
     let collection = collection.to_string();
     let seed = seed.unwrap_or_else(rand::random);
@@ -929,6 +936,13 @@ async fn start_generate_task_inner(
             };
             finish_task(&tasks, &task_id2, processed, message);
         }
+
+        let (outcome, error) = crate::db::tasks::terminal_state(&tasks, &task_id2, "completed");
+        audit_ctx.record_terminal(
+            &outcome,
+            error.as_deref(),
+            Some(audit_started.elapsed().as_millis() as i64),
+        );
 
         if let Ok(mut guard) = cancels.lock() {
             guard.remove(&task_id2);

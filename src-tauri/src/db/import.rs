@@ -389,14 +389,12 @@ pub async fn start_import_task_impl(
         mode,
     )
     .await;
-    crate::audit::maybe_record_result(
+    crate::audit::maybe_record_task_start(
         state,
         Some(id),
         Some(database),
         Some(collection),
         "start_import_task",
-        crate::audit::OpClass::Write,
-        None,
         started,
         &audit_summary,
         None,
@@ -467,6 +465,15 @@ async fn start_import_task_inner(
     state.tasks.lock_safe()?.insert(task_id.clone(), task.clone());
 
     let tasks = state.tasks.clone();
+    let audit_ctx = crate::audit::TaskAuditContext::capture(
+        state,
+        Some(id),
+        Some(database),
+        Some(collection),
+        "start_import_task",
+        &format!("import {database}.{collection} ({format}, {mode})"),
+    );
+    let audit_started = std::time::Instant::now();
     let database = database.to_string();
     let collection = collection.to_string();
     let format = format.to_string();
@@ -496,6 +503,12 @@ async fn start_import_task_inner(
             }
             Err(err) => fail_task(&tasks, &task_id, err),
         }
+        let (outcome, error) = crate::db::tasks::terminal_state(&tasks, &task_id, "failed");
+        audit_ctx.record_terminal(
+            &outcome,
+            error.as_deref(),
+            Some(audit_started.elapsed().as_millis() as i64),
+        );
     });
     Ok(task)
 }

@@ -149,7 +149,16 @@ pub struct AppState {
     /// out of sync with a `mcp_regenerate_token` call.
     pub mcp: Arc<Mutex<mcp::McpControl>>,
     /// Open vault-backed audit session (#272). `None` while the vault is locked.
-    pub audit: Mutex<Option<crate::audit::AuditSession>>,
+    ///
+    /// `Arc` for the same reason as `mcp`: a spawned background task (import,
+    /// copy, generate, restore) outlives the command that queued it and must
+    /// record its own terminal outcome without holding an `&AppState`.
+    pub audit: Arc<Mutex<Option<crate::audit::AuditSession>>>,
+    /// Why auditing is inactive despite an unlocked vault (#272) — a corrupt or
+    /// unreadable `audit.log.enc`. `Some` puts the app in an
+    /// explicit degraded state the UI surfaces, so an unlogged destructive
+    /// operation is never mistaken for an audited one.
+    pub audit_degraded: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -174,7 +183,8 @@ impl AppState {
             workspace_write_gen: Arc::new(AtomicU64::new(0)),
             connection_meta: Mutex::new(HashMap::new()),
             mcp: Arc::new(Mutex::new(mcp::McpControl::new())),
-            audit: Mutex::new(None),
+            audit: Arc::new(Mutex::new(None)),
+            audit_degraded: Mutex::new(None),
         }
     }
 

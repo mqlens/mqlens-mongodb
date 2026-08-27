@@ -29,6 +29,8 @@ const sampleEvent = {
   schemaVersion: 1,
 };
 
+const activeStatus = { active: true, degradedReason: null, droppedCount: 0 };
+
 describe('ActivityPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -37,7 +39,7 @@ describe('ActivityPanel', () => {
   it('shows a locked-vault empty state when audit_list fails', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'audit_list') return Promise.reject('vault is locked');
-      if (cmd === 'audit_dropped_count') return Promise.resolve(0);
+      if (cmd === 'audit_status') return Promise.resolve(activeStatus);
       return Promise.resolve(undefined);
     });
 
@@ -50,7 +52,7 @@ describe('ActivityPanel', () => {
   it('lists events and reloads with filter args when searching', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'audit_list') return Promise.resolve([sampleEvent]);
-      if (cmd === 'audit_dropped_count') return Promise.resolve(0);
+      if (cmd === 'audit_status') return Promise.resolve(activeStatus);
       return Promise.resolve(undefined);
     });
 
@@ -73,5 +75,98 @@ describe('ActivityPanel', () => {
         })
       )
     );
+  });
+
+  it('shows a degraded banner instead of "locked" when the session failed to open', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      // A failed audit session reports the same error as a locked vault.
+      if (cmd === 'audit_list') return Promise.reject('vault is locked');
+      if (cmd === 'audit_status')
+        return Promise.resolve({
+          active: false,
+          degradedReason: 'read audit.log.enc: unrecognized header',
+          droppedCount: 0,
+        });
+      return Promise.resolve(undefined);
+    });
+
+    render(<ActivityPanel />);
+
+    const banner = await screen.findByTestId('activity-degraded-banner');
+    expect(banner).toHaveTextContent(/unrecognized header/i);
+    expect(screen.queryByTestId('activity-locked')).not.toBeInTheDocument();
+  });
+
+  it('still shows the locked state when the vault really is locked', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'audit_list') return Promise.reject('vault is locked');
+      if (cmd === 'audit_status') return Promise.resolve(activeStatus);
+      return Promise.resolve(undefined);
+    });
+
+    render(<ActivityPanel />);
+
+    expect(await screen.findByTestId('activity-locked')).toBeInTheDocument();
+    expect(screen.queryByTestId('activity-degraded-banner')).not.toBeInTheDocument();
+  });
+
+  it('reports dropped events from audit_status', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'audit_list') return Promise.resolve([sampleEvent]);
+      if (cmd === 'audit_status')
+        return Promise.resolve({ active: true, degradedReason: null, droppedCount: 3 });
+      return Promise.resolve(undefined);
+    });
+
+    render(<ActivityPanel />);
+
+    expect(await screen.findByTestId('activity-dropped-banner')).toHaveTextContent('3');
+  });
+
+  it('shows an integrity banner and hides the degraded one when the log is sealed', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      // A sealed log still reads back its verified prefix.
+      if (cmd === 'audit_list') return Promise.resolve([sampleEvent]);
+      if (cmd === 'audit_status')
+        return Promise.resolve({
+          active: false,
+          degradedReason: null,
+          integrityError: 'hash chain broken at record 2',
+          droppedCount: 0,
+        });
+      return Promise.resolve(undefined);
+    });
+
+    render(<ActivityPanel />);
+
+    const banner = await screen.findByTestId('activity-integrity-banner');
+    expect(banner).toHaveTextContent(/hash chain broken/i);
+    // Only one explanation, not two competing banners.
+    expect(screen.queryByTestId('activity-degraded-banner')).not.toBeInTheDocument();
+    // The verified prefix is still listed so the history stays inspectable.
+    expect(screen.getByTestId('activity-row-ev-1')).toBeInTheDocument();
+  });
+
+  it('shows the full summary in the expanded detail, not just the truncated cell', async () => {
+    const longSummary =
+      'copy cidaas-management-test.Rating_SingleRating → cidaas-management-test.Rating_SingleRating11 (completed)';
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'audit_list')
+        return Promise.resolve([{ ...sampleEvent, summary: longSummary }]);
+      if (cmd === 'audit_status') return Promise.resolve(activeStatus);
+      return Promise.resolve(undefined);
+    });
+
+    render(<ActivityPanel />);
+
+    const row = await screen.findByTestId('activity-row-ev-1');
+    // The row cell carries the full text as a tooltip even while truncated.
+    expect(row).toHaveTextContent(/Rating_SingleRating11/);
+
+    fireEvent.click(row);
+
+    const detail = await screen.findByTestId('activity-detail-ev-1');
+    expect(detail).toHaveTextContent(longSummary);
+    expect(detail).toHaveTextContent('sales.orders');
   });
 });

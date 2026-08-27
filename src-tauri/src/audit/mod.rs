@@ -5,15 +5,20 @@
 pub mod classify;
 pub mod envelope;
 pub mod level;
+pub mod log;
 pub mod record;
 pub mod redact;
 pub mod store;
 
 pub use classify::classify_op;
-pub use envelope::{seal, unseal, AuditPolicy, AuditSession};
+pub use envelope::{AuditPolicy, AuditSession};
+pub use log::{AuditLog, LoadReport};
 pub use level::{should_record, AuditLevel, OpClass};
-pub use record::{maybe_record, maybe_record_result, RecordInput};
-pub use redact::{redact_text, truncate_args, MAX_ARGS_BYTES};
+pub use record::{
+    maybe_record, maybe_record_result, maybe_record_task_start, with_source, RecordInput,
+    TaskAuditContext,
+};
+pub use redact::{redact_error, redact_text, truncate_args, MAX_ARGS_BYTES, MAX_ERROR_BYTES};
 pub use store::{AuditEvent, AuditFilter, AuditStore, SCHEMA_VERSION};
 
 use crate::connections::{self, AppSettings};
@@ -52,16 +57,40 @@ fn prune_for_policy(session: &AuditSession, policy: AuditPolicy) {
     let _ = session.prune_before(cutoff);
 }
 
+/// Record (or clear) the reason auditing is inactive while the vault is unlocked.
+fn set_degraded(state: &AppState, reason: Option<String>) {
+    if let Ok(mut slot) = state.audit_degraded.lock_safe() {
+        *slot = reason;
+    }
+}
+
+/// Why auditing is inactive despite an unlocked vault, if it is.
+pub fn degraded_reason(state: &AppState) -> Option<String> {
+    state.audit_degraded.lock_safe().ok().and_then(|g| g.clone())
+}
+
 /// Open (or replace) the audit session after a successful vault unlock.
+///
+/// A failure here must not block the unlock itself — a corrupt `audit.log.enc`
+/// would otherwise lock the user out of their own vault. Instead the reason is
+/// stored so [`degraded_reason`] can surface it and the error is returned for
+/// callers that want to react.
 pub fn open_on_unlock(
     app: &tauri::AppHandle,
     state: &AppState,
     key: [u8; 32],
 ) -> Result<(), String> {
-    if let Err(e) = open_on_unlock_inner(app, state, key) {
-        eprintln!("audit open_on_unlock: {e}");
+    match open_on_unlock_inner(app, state, key) {
+        Ok(()) => {
+            set_degraded(state, None);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("audit open_on_unlock: {e}");
+            set_degraded(state, Some(e.clone()));
+            Err(e)
+        }
     }
-    Ok(())
 }
 
 fn open_on_unlock_inner(
@@ -76,9 +105,14 @@ fn open_on_unlock_inner(
         }
     }
 
-    let path = connections::get_audit_enc_path(app);
+    supersede_legacy_envelope(app);
+
+    let path = connections::get_audit_log_path(app);
     let session = AuditSession::new(path);
-    session.open(key)?;
+    let report = session.open(key)?;
+    if let Some(err) = &report.integrity_error {
+        eprintln!("audit log integrity: {err}");
+    }
 
     let settings = connections::load_settings_encrypted(
         &connections::get_settings_enc_path(app),
@@ -101,6 +135,7 @@ pub fn close_on_lock(state: &AppState) -> Result<(), String> {
 }
 
 fn close_on_lock_inner(state: &AppState) -> Result<(), String> {
+    set_degraded(state, None);
     let mut slot = state.audit.lock_safe()?;
     if let Some(session) = slot.take() {
         session.close()?;
@@ -108,17 +143,42 @@ fn close_on_lock_inner(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
-/// Discard session and delete `audit.db.enc` on vault reset.
+/// Move a pre-append-log `audit.db.enc` out of the way.
+///
+/// The whole-image envelope was replaced by `audit.log.enc` before this feature
+/// shipped, so there is no released format to migrate. The old file is renamed
+/// rather than deleted so a developer's local history is not silently destroyed.
+fn supersede_legacy_envelope(app: &tauri::AppHandle) {
+    let legacy = connections::get_audit_enc_path(app);
+    if !legacy.exists() {
+        return;
+    }
+    let superseded = legacy.with_extension("enc.superseded");
+    match std::fs::rename(&legacy, &superseded) {
+        Ok(()) => eprintln!(
+            "audit: {} predates the append-only log format; renamed to {}",
+            legacy.display(),
+            superseded.display()
+        ),
+        Err(e) => eprintln!("audit: could not set aside {}: {e}", legacy.display()),
+    }
+}
+
+/// Discard session and delete the audit log on vault reset.
 pub fn reset_store(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
     if let Ok(mut slot) = state.audit.lock_safe() {
         if let Some(session) = slot.take() {
             session.discard();
         }
     }
-    let path = connections::get_audit_enc_path(app);
-    if path.exists() {
-        std::fs::remove_file(&path)
-            .map_err(|e| format!("remove {}: {e}", path.display()))?;
+    for path in [
+        connections::get_audit_log_path(app),
+        connections::get_audit_enc_path(app),
+    ] {
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("remove {}: {e}", path.display()))?;
+        }
     }
     Ok(())
 }

@@ -18,6 +18,7 @@ pub mod change_streams;
 pub mod chats;
 pub mod connections;
 mod db;
+pub mod durable;
 pub mod mcp;
 pub mod mcp_tools;
 pub(crate) mod mock_db;
@@ -2391,7 +2392,7 @@ async fn vault_change_password(
 
     let profiles_path = connections::get_profiles_enc_path(&app_handle);
     let settings_path = connections::get_settings_enc_path(&app_handle);
-    let audit_path = connections::get_audit_enc_path(&app_handle);
+    let audit_log_path = connections::get_audit_log_path(&app_handle);
 
     // Seal any open audit session under the old key before reading blobs.
     let _ = audit::close_on_lock(&state);
@@ -2401,11 +2402,12 @@ async fn vault_change_password(
         connections::prepare_reencrypt_file(&old_key, &new_key, &profiles_path)?;
     let new_settings =
         connections::prepare_reencrypt_file(&old_key, &new_key, &settings_path)?;
-    let new_audit = connections::prepare_reencrypt_file(&old_key, &new_key, &audit_path)?;
+    let new_audit =
+        connections::prepare_reencrypt_audit_log(&old_key, &new_key, &audit_log_path)?;
 
     connections::write_prepared_file(&profiles_path, new_profiles)?;
     connections::write_prepared_file(&settings_path, new_settings)?;
-    connections::write_prepared_file(&audit_path, new_audit)?;
+    connections::write_prepared_file(&audit_log_path, new_audit)?;
     connections::write_vault_meta(&meta_path, &new_meta)?;
     *state.vault_key.lock_safe()? = Some(new_key);
     let _ = audit::open_on_unlock(&app_handle, &state, new_key);
@@ -2450,7 +2452,7 @@ async fn audit_export(
 
 #[tauri::command]
 async fn audit_open_folder(app_handle: tauri::AppHandle) -> Result<(), String> {
-    let path = connections::get_audit_enc_path(&app_handle);
+    let path = connections::get_audit_log_path(&app_handle);
     let dir = path
         .parent()
         .map(|p| p.to_path_buf())
@@ -2483,6 +2485,37 @@ async fn audit_reset(
 async fn audit_dropped_count(state: tauri::State<'_, AppState>) -> Result<u64, String> {
     let guard = state.audit.lock_safe()?;
     Ok(guard.as_ref().map(|s| s.dropped_count()).unwrap_or(0))
+}
+
+/// Whether auditing is actually recording, and why not when it isn't (#272).
+///
+/// A corrupt or unreadable `audit.log.enc` leaves the vault unlocked and the app
+/// fully usable but unaudited; the UI needs to say so rather than let the user
+/// assume destructive operations are being logged.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuditStatusUi {
+    active: bool,
+    degraded_reason: Option<String>,
+    /// Set when the on-disk log failed verification: recording has stopped and
+    /// the file is being preserved as evidence.
+    integrity_error: Option<String>,
+    dropped_count: u64,
+}
+
+#[tauri::command]
+async fn audit_status(state: tauri::State<'_, AppState>) -> Result<AuditStatusUi, String> {
+    let guard = state.audit.lock_safe()?;
+    let session = guard.as_ref();
+    let integrity_error = session.and_then(|s| s.integrity_error());
+    Ok(AuditStatusUi {
+        // A sealed log is open for reading but no longer recording, so it must
+        // not report itself as active auditing.
+        active: session.is_some_and(|s| s.is_open()) && integrity_error.is_none(),
+        degraded_reason: audit::degraded_reason(&state),
+        integrity_error,
+        dropped_count: session.map(|s| s.dropped_count()).unwrap_or(0),
+    })
 }
 
 /// Thin wrappers over `mcp.rs`'s testable impl fns (the established
@@ -2655,6 +2688,7 @@ pub fn run() {
             audit_clear,
             audit_reset,
             audit_dropped_count,
+            audit_status,
             connections::test_mongosh_path,
             change_streams::start_change_stream,
             change_streams::poll_change_stream,

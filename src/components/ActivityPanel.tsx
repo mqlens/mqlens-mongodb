@@ -47,6 +47,15 @@ export interface AuditFilter {
   offset?: number;
 }
 
+/// Whether auditing is actually recording, and why not when it isn't.
+export interface AuditStatus {
+  active: boolean;
+  degradedReason?: string | null;
+  /** Set when the on-disk log failed verification: recording has stopped. */
+  integrityError?: string | null;
+  droppedCount: number;
+}
+
 type StatusFilter = 'all' | 'ok' | 'error';
 
 function isVaultLockedError(err: unknown): boolean {
@@ -74,6 +83,8 @@ export const ActivityPanel: React.FC = () => {
   const [locked, setLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dropped, setDropped] = useState(0);
+  const [degradedReason, setDegradedReason] = useState<string | null>(null);
+  const [integrityError, setIntegrityError] = useState<string | null>(null);
   const [summaryContains, setSummaryContains] = useState('');
   const [opFilter, setOpFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -99,18 +110,26 @@ export const ActivityPanel: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Status first, and never let it throw: a failed audit session reports the
+    // same "vault is locked" error as an actually-locked vault, and the two must
+    // not look the same to the user.
+    const status = await invoke<AuditStatus>('audit_status').catch(
+      (): AuditStatus => ({ active: true, degradedReason: null, droppedCount: 0 }),
+    );
+    setDropped(status.droppedCount);
+    setIntegrityError(status.integrityError ?? null);
+    const degraded = status.active ? null : (status.degradedReason ?? '');
     try {
-      const [list, count] = await Promise.all([
-        invoke<AuditEvent[]>('audit_list', { filter: buildFilter() }),
-        invoke<number>('audit_dropped_count').catch(() => 0),
-      ]);
+      const list = await invoke<AuditEvent[]>('audit_list', { filter: buildFilter() });
       setEvents(list);
-      setDropped(count);
+      setDegradedReason(degraded);
       setLocked(false);
     } catch (err) {
       if (isVaultLockedError(err)) {
-        setLocked(true);
         setEvents([]);
+        // Unlocked but unable to audit is a degraded state, not a locked vault.
+        setDegradedReason(degraded);
+        setLocked(degraded === null);
       } else {
         setError(String(err));
       }
@@ -253,6 +272,26 @@ export const ActivityPanel: React.FC = () => {
         </div>
       </header>
 
+      {integrityError !== null && (
+        <div
+          className="shrink-0 border-b border-border bg-destructive/10 px-4 py-2 text-xs text-destructive"
+          data-testid="activity-integrity-banner"
+        >
+          {t('activity.integrityBanner', { reason: integrityError })}
+        </div>
+      )}
+
+      {degradedReason !== null && integrityError === null && (
+        <div
+          className="shrink-0 border-b border-border bg-destructive/10 px-4 py-2 text-xs text-destructive"
+          data-testid="activity-degraded-banner"
+        >
+          {t('activity.degradedBanner', {
+            reason: degradedReason || t('activity.degradedUnknownReason'),
+          })}
+        </div>
+      )}
+
       {dropped > 0 && (
         <div
           className="shrink-0 border-b border-border bg-warning/10 px-4 py-2 text-xs text-warning"
@@ -306,14 +345,16 @@ export const ActivityPanel: React.FC = () => {
                       <td className="whitespace-nowrap px-2 py-2 font-mono">{formatTs(ev.ts)}</td>
                       <td className="px-2 py-2 font-mono">{ev.op}</td>
                       <td className="px-2 py-2">{ev.profileName || ev.connectionId || '—'}</td>
-                      <td className="px-2 py-2 font-mono">{namespaceOf(ev)}</td>
+                      <td className="max-w-[320px] truncate px-2 py-2 font-mono" title={namespaceOf(ev)}>
+                        {namespaceOf(ev)}
+                      </td>
                       <td className="px-2 py-2">{ev.source}</td>
                       <td className="px-2 py-2">
                         <span className={ev.ok ? 'text-success' : 'text-destructive'}>
                           {ev.ok ? t('activity.statusOk') : t('activity.statusError')}
                         </span>
                       </td>
-                      <td className="max-w-[280px] truncate px-2 py-2" title={ev.summary}>
+                      <td className="max-w-0 truncate px-2 py-2" title={ev.summary}>
                         {ev.summary}
                       </td>
                     </tr>
@@ -321,6 +362,22 @@ export const ActivityPanel: React.FC = () => {
                       <tr className="border-b border-border bg-muted/20" data-testid={`activity-detail-${ev.id}`}>
                         <td colSpan={8} className="px-4 py-3">
                           <dl className="grid gap-2 sm:grid-cols-2">
+                            {/* The row truncates these to stay scannable, so the
+                                expanded view has to show them in full. */}
+                            <div className="sm:col-span-2">
+                              <dt className="text-muted-foreground">{t('activity.columns.summary')}</dt>
+                              <dd className="break-words font-mono">{ev.summary}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-muted-foreground">{t('activity.columns.namespace')}</dt>
+                              <dd className="break-words font-mono">{namespaceOf(ev)}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-muted-foreground">{t('activity.columns.connection')}</dt>
+                              <dd className="break-words font-mono">
+                                {ev.profileName || ev.connectionId || '—'}
+                              </dd>
+                            </div>
                             <div>
                               <dt className="text-muted-foreground">{t('activity.detail.level')}</dt>
                               <dd className="font-mono">{ev.levelAtRecord}</dd>
