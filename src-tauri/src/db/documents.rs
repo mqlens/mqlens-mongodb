@@ -794,28 +794,8 @@ pub async fn update_document_impl(
         state, id, database, collection, filter, original, edited, projection,
     )
     .await;
-    // Record the operation that was attempted and the operators it carried —
-    // including when the database rejected it. The edited document alone cannot
-    // show that removing a field issued `$unset`, and a failed replacement
-    // fallback must not be logged as an update.
-    let (summary, args) = match &outcome.attempted {
-        Some(applied) => {
-            let suffix = if outcome.result.is_err() { " (failed)" } else { "" };
-            (
-                format!("{} {database}.{collection}{suffix}", applied.op),
-                format!(
-                    "{{\"filter\":{filter},\"{}\":{}}}",
-                    applied.op, applied.payload
-                ),
-            )
-        }
-        // Rejected before a write was planned: a write guard, unparseable JSON,
-        // or a refusal. There is no operation to name, so record the input.
-        None => (
-            format!("updateOne {database}.{collection} (rejected)"),
-            format!("{{\"filter\":{filter},\"edited\":{edited}}}"),
-        ),
-    };
+    let (summary, args) = audit_labels(&outcome, database, collection, filter, edited);
+
     crate::audit::maybe_record_result(
         state,
         Some(id),
@@ -830,6 +810,45 @@ pub async fn update_document_impl(
         &outcome.result,
     );
     outcome.result
+}
+
+/// Summary and payload for the audit record.
+///
+/// Three states, all derivable from [`WriteOutcome`]: a write was attempted and
+/// went through, a write was attempted and the database rejected it, or no write
+/// was ever planned — either because nothing changed or because it was refused
+/// before reaching MongoDB. Naming an operation that never ran, or attaching an
+/// update document MongoDB would itself reject, makes the trail describe
+/// something that did not happen.
+fn audit_labels(
+    outcome: &WriteOutcome,
+    database: &str,
+    collection: &str,
+    filter: &str,
+    edited: &str,
+) -> (String, String) {
+    let submitted = format!("{{\"filter\":{filter},\"edited\":{edited}}}");
+    match (&outcome.attempted, &outcome.result) {
+        (Some(applied), result) => {
+            let suffix = if result.is_err() { " (failed)" } else { "" };
+            (
+                format!("{} {database}.{collection}{suffix}", applied.op),
+                format!(
+                    "{{\"filter\":{filter},\"{}\":{}}}",
+                    applied.op, applied.payload
+                ),
+            )
+        }
+        // Saved without editing anything: a real user action worth recording, but
+        // no database operation to name.
+        (None, Ok(_)) => (format!("no change {database}.{collection}"), submitted),
+        // Rejected before a write was planned: a write guard, unparseable JSON,
+        // or one of the refusals.
+        (None, Err(_)) => (
+            format!("update_document {database}.{collection} (rejected)"),
+            submitted,
+        ),
+    }
 }
 
 /// The write that was attempted, plus how it went.
@@ -898,11 +917,10 @@ async fn update_document_inner(
     let plan = match build_field_update(&original_doc, &edited_doc, &shape) {
         // Mongo rejects an empty update document, and there is nothing to do.
         Ok(update) if update.is_empty() => {
+            // Nothing changed, so nothing is sent. `attempted: None` with an `Ok`
+            // result is what distinguishes this from a rejection.
             return WriteOutcome {
-                attempted: Some(AppliedWrite {
-                    op: "updateOne",
-                    payload: "{}".into(),
-                }),
+                attempted: None,
                 result: Ok(0),
             };
         }
@@ -1238,6 +1256,72 @@ mod csv_import_tests {
         o.quote = "€".into();
         assert!(validate_csv_import_options(&o).is_err());
         assert!(validate_csv_import_options(&CsvImportOptions::default()).is_ok());
+    }
+
+    // ── #275: the audit record must describe what actually happened ──
+
+    fn outcome(attempted: Option<&'static str>, result: Result<u64, String>) -> WriteOutcome {
+        WriteOutcome {
+            attempted: attempted.map(|op| AppliedWrite {
+                op,
+                payload: r#"{"$set":{"age":35}}"#.into(),
+            }),
+            result,
+        }
+    }
+
+    #[test]
+    fn an_unchanged_save_is_not_recorded_as_a_database_write() {
+        // It used to log `updateOne` carrying `{}` — an update MongoDB would
+        // itself reject, describing a write that never happened.
+        let (summary, args) = audit_labels(
+            &outcome(None, Ok(0)),
+            "shop",
+            "orders",
+            r#"{"_id":1}"#,
+            r#"{"_id":1}"#,
+        );
+        assert_eq!(summary, "no change shop.orders");
+        assert!(!args.contains("$set"), "must not invent an update: {args}");
+        assert!(args.contains("edited"), "should record what was submitted: {args}");
+    }
+
+    #[test]
+    fn a_successful_write_records_its_operation_and_operators() {
+        let (summary, args) = audit_labels(
+            &outcome(Some("updateOne"), Ok(1)),
+            "shop",
+            "orders",
+            r#"{"_id":1}"#,
+            r#"{"_id":1,"age":35}"#,
+        );
+        assert_eq!(summary, "updateOne shop.orders");
+        assert!(args.contains(r#""$set""#), "{args}");
+    }
+
+    #[test]
+    fn a_failed_write_keeps_the_operation_it_attempted() {
+        let (summary, args) = audit_labels(
+            &outcome(Some("replaceOne"), Err("boom".into())),
+            "shop",
+            "orders",
+            r#"{"_id":1}"#,
+            r#"{"_id":1,"age":35}"#,
+        );
+        assert_eq!(summary, "replaceOne shop.orders (failed)");
+        assert!(args.contains("replaceOne"), "must not be relabelled: {args}");
+    }
+
+    #[test]
+    fn a_refusal_names_no_operation() {
+        let (summary, _) = audit_labels(
+            &outcome(None, Err("refused".into())),
+            "shop",
+            "orders",
+            r#"{"_id":1}"#,
+            r#"{"_id":1}"#,
+        );
+        assert_eq!(summary, "update_document shop.orders (rejected)");
     }
 
     // ── #275: editing a projected document must not wipe unprojected fields ──
