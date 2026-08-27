@@ -2410,11 +2410,18 @@ async fn vault_change_password(
         let new_audit =
             connections::prepare_reencrypt_audit_log(&old_key, &new_key, &audit_log_path)?;
 
-        connections::write_prepared_file(&profiles_path, new_profiles)?;
-        connections::write_prepared_file(&settings_path, new_settings)?;
-        connections::write_prepared_file(&audit_log_path, new_audit)?;
-        connections::write_vault_meta(&meta_path, &new_meta)?;
-        Ok(())
+        // Commit all four files together: a partial rotation leaves data under
+        // the new key while the metadata still derives the old one, which no
+        // password can then open.
+        connections::commit_vault_rotation(
+            vec![
+                (profiles_path.clone(), new_profiles),
+                (settings_path.clone(), new_settings),
+                (audit_log_path.clone(), new_audit),
+            ],
+            &meta_path,
+            &new_meta,
+        )
     };
 
     if let Err(e) = rotate() {

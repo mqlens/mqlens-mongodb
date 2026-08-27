@@ -189,7 +189,12 @@ pub fn redact_error(input: &str, include_payloads: bool) -> String {
     truncate_args(&stripped, MAX_ERROR_BYTES)
 }
 
-/// Replace every balanced `{...}` group (and any unterminated tail) with `{...}`.
+/// Replace every balanced `{...}` group (and any unterminated tail) with `{…}`.
+///
+/// Quote-aware: MongoDB errors embed document values, and those values can
+/// themselves contain braces (`dup key: {{ email: "alice}}secret@example" }}`).
+/// A brace counter that ignored quoting would stop at the `}}` *inside* the
+/// string and copy the rest of the value straight into the log.
 fn collapse_brace_groups(input: &str) -> String {
     const PLACEHOLDER: &str = "{…}";
     let bytes = input.as_bytes();
@@ -197,24 +202,8 @@ fn collapse_brace_groups(input: &str) -> String {
     let mut i = 0;
     while i < input.len() {
         if bytes[i] == b'{' {
-            let mut depth = 0usize;
-            let mut j = i;
-            while j < bytes.len() {
-                match bytes[j] {
-                    b'{' => depth += 1,
-                    b'}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            j += 1;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-                j += 1;
-            }
             out.push_str(PLACEHOLDER);
-            i = j;
+            i = end_of_brace_group(bytes, i);
             continue;
         }
         let ch = input[i..].chars().next().unwrap();
@@ -222,6 +211,42 @@ fn collapse_brace_groups(input: &str) -> String {
         i += ch.len_utf8();
     }
     out
+}
+
+/// Index just past the `{...}` group starting at `start`, skipping over braces
+/// that sit inside quoted strings. Returns `bytes.len()` when unterminated, so
+/// a truncated error cannot leak its tail either.
+fn end_of_brace_group(bytes: &[u8], start: usize) -> usize {
+    let mut depth = 0usize;
+    let mut i = start;
+    let mut quote: Option<u8> = None;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match quote {
+            Some(q) => {
+                if b == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                    continue;
+                }
+                if b == q {
+                    quote = None;
+                }
+            }
+            None => match b {
+                b'"' | b'\'' => quote = Some(b),
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return i + 1;
+                    }
+                }
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    bytes.len()
 }
 
 /// Truncate to at most `max_bytes` UTF-8 bytes, appending a marker when cut.
@@ -317,6 +342,27 @@ mod tests {
         let raw = format!("boom {}", "x".repeat(MAX_ERROR_BYTES * 2));
         let out = redact_error(&raw, true);
         assert!(out.len() <= MAX_ERROR_BYTES, "len={}", out.len());
+    }
+
+    #[test]
+    fn error_redaction_suppresses_values_containing_braces() {
+        // A brace inside the quoted value must not be mistaken for the end of
+        // the group, or the rest of the value gets copied into the log.
+        let raw = r#"E11000 duplicate key error dup key: { email: "alice}secret@example" }"#;
+        let out = redact_error(raw, false);
+        assert!(!out.contains("secret@example"), "value leaked: {out}");
+        assert!(!out.contains("alice"), "value leaked: {out}");
+        assert!(out.contains("E11000"), "diagnostic must survive: {out}");
+    }
+
+    #[test]
+    fn error_redaction_handles_escaped_quotes_and_nesting() {
+        let raw = r#"failed: { doc: { name: "a\"}\" b", tag: 'x}y' }, n: 2 }"#;
+        let out = redact_error(raw, false);
+        for leak in ["a\\\"", "x}y", "tag", "n: 2"] {
+            assert!(!out.contains(leak), "leaked {leak:?} from {raw}: {out}");
+        }
+        assert!(out.contains("failed:"), "prefix must survive: {out}");
     }
 
     #[test]

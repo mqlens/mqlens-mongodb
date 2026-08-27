@@ -611,6 +611,77 @@ pub fn write_prepared_file(path: &Path, blob: Option<Vec<u8>>) -> Result<(), Str
     }
 }
 
+/// Commit a whole vault key rotation, restoring the previous files if any write
+/// fails.
+///
+/// The rotation spans four files, and partial success bricks the vault: files
+/// re-encrypted under the new key while `vault.json` still derives the old one
+/// leave neither password able to open the complete vault. Preparing the blobs
+/// first (see `prepare_reencrypt_file`) removes the *encryption* failures from
+/// this window, but the writes themselves can still fail — a full disk being the
+/// obvious one — so every original is held in memory and put back on error.
+///
+/// `files` is `(path, Some(new_bytes))` per data file; `None` means "not
+/// present, leave alone".
+pub fn commit_vault_rotation(
+    files: Vec<(PathBuf, Option<Vec<u8>>)>,
+    meta_path: &Path,
+    new_meta: &VaultMeta,
+) -> Result<(), String> {
+    let meta_bytes = serde_json::to_vec_pretty(new_meta)
+        .map_err(|e| format!("serialize vault.json: {e}"))?;
+
+    // Snapshot everything this rotation will overwrite, before touching any of it.
+    let mut planned: Vec<(PathBuf, Vec<u8>, Option<Vec<u8>>)> = Vec::new();
+    for (path, new_bytes) in files {
+        let Some(new_bytes) = new_bytes.filter(|b| !b.is_empty()) else {
+            continue;
+        };
+        let original = read_backup(&path)?;
+        planned.push((path, new_bytes, original));
+    }
+    let meta_original = read_backup(meta_path)?;
+    planned.push((meta_path.to_path_buf(), meta_bytes, meta_original));
+
+    let mut written: Vec<(&PathBuf, &Option<Vec<u8>>)> = Vec::new();
+    for (path, new_bytes, original) in &planned {
+        if let Err(e) = crate::durable::write_atomic(path, new_bytes) {
+            // Put back only what this call actually replaced.
+            let mut restore_errors = Vec::new();
+            for (done_path, done_original) in written.iter().rev() {
+                let restored = match done_original {
+                    Some(bytes) => crate::durable::write_atomic(done_path, bytes),
+                    None => fs::remove_file(done_path)
+                        .map_err(|e| format!("remove {}: {e}", done_path.display())),
+                };
+                if let Err(re) = restored {
+                    restore_errors.push(re);
+                }
+            }
+            if restore_errors.is_empty() {
+                return Err(format!("{e} (vault left unchanged)"));
+            }
+            return Err(format!(
+                "{e} — and restoring the previous vault files failed: {}. \
+                 The vault may be inconsistent; restore from a backup.",
+                restore_errors.join("; ")
+            ));
+        }
+        written.push((path, original));
+    }
+    Ok(())
+}
+
+/// Current contents of `path`, or `None` when it does not exist.
+fn read_backup(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    fs::read(path)
+        .map(Some)
+        .map_err(|e| format!("read {} for rollback: {e}", path.display()))
+}
+
 /// Re-encrypt both data files from `old_key` to `new_key`. Missing files are skipped.
 pub fn reencrypt_data_files(
     old_key: &[u8; 32],
@@ -832,4 +903,116 @@ pub async fn test_connection_uri(
         let _ = on_phase.send(update);
     };
     run_connection_test(&uri, ssh.as_ref(), &emit).await
+}
+
+#[cfg(test)]
+mod rotation_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn meta() -> VaultMeta {
+        build_vault_meta("pw", crate::vault::KdfParams { m_kib: 8, t: 1, p: 1 })
+            .expect("build meta")
+    }
+
+    #[test]
+    fn a_successful_rotation_writes_every_file() {
+        let dir = tempdir().unwrap();
+        let a = dir.path().join("connections.json.enc");
+        let b = dir.path().join("settings.json.enc");
+        let meta_path = dir.path().join("vault.json");
+        fs::write(&a, b"old-a").unwrap();
+        fs::write(&b, b"old-b").unwrap();
+
+        commit_vault_rotation(
+            vec![(a.clone(), Some(b"new-a".to_vec())), (b.clone(), Some(b"new-b".to_vec()))],
+            &meta_path,
+            &meta(),
+        )
+        .expect("commit");
+
+        assert_eq!(fs::read(&a).unwrap(), b"new-a");
+        assert_eq!(fs::read(&b).unwrap(), b"new-b");
+        assert!(meta_path.exists(), "metadata must be written last but written");
+    }
+
+    #[test]
+    fn a_failed_write_restores_every_earlier_file() {
+        let dir = tempdir().unwrap();
+        let good = dir.path().join("connections.json.enc");
+        let meta_path = dir.path().join("vault.json");
+        fs::write(&good, b"old-good").unwrap();
+        fs::write(&meta_path, b"old-meta").unwrap();
+
+        // `write_atomic` stages through `<path>.tmp`; a directory there makes the
+        // *write* fail (not the pre-write snapshot), which is the path that has
+        // to roll back what it already committed.
+        let blocked = dir.path().join("blocked.enc");
+        fs::create_dir(dir.path().join("blocked.enc.tmp")).unwrap();
+
+        let err = commit_vault_rotation(
+            vec![
+                (good.clone(), Some(b"new-good".to_vec())),
+                (blocked.clone(), Some(b"new-blocked".to_vec())),
+            ],
+            &meta_path,
+            &meta(),
+        )
+        .expect_err("the blocked write must fail");
+        assert!(err.contains("vault left unchanged"), "{err}");
+
+        assert_eq!(
+            fs::read(&good).unwrap(),
+            b"old-good",
+            "the already-written file must be rolled back, or no password opens the vault"
+        );
+        assert_eq!(
+            fs::read(&meta_path).unwrap(),
+            b"old-meta",
+            "metadata must be untouched"
+        );
+    }
+
+    #[test]
+    fn rollback_removes_files_that_did_not_exist_before() {
+        let dir = tempdir().unwrap();
+        let fresh = dir.path().join("settings.json.enc");
+        let meta_path = dir.path().join("vault.json");
+        let blocked = dir.path().join("blocked.enc");
+        fs::create_dir(dir.path().join("blocked.enc.tmp")).unwrap();
+
+        commit_vault_rotation(
+            vec![
+                (fresh.clone(), Some(b"new".to_vec())),
+                (blocked, Some(b"x".to_vec())),
+            ],
+            &meta_path,
+            &meta(),
+        )
+        .expect_err("must fail");
+
+        assert!(
+            !fresh.exists(),
+            "a file created by the aborted rotation must not survive it"
+        );
+    }
+
+    #[test]
+    fn absent_and_empty_payloads_are_skipped() {
+        let dir = tempdir().unwrap();
+        let skipped = dir.path().join("connections.json.enc");
+        let empty = dir.path().join("settings.json.enc");
+        let meta_path = dir.path().join("vault.json");
+
+        commit_vault_rotation(
+            vec![(skipped.clone(), None), (empty.clone(), Some(Vec::new()))],
+            &meta_path,
+            &meta(),
+        )
+        .expect("commit");
+
+        assert!(!skipped.exists());
+        assert!(!empty.exists());
+        assert!(meta_path.exists());
+    }
 }

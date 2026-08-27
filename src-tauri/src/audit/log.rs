@@ -24,7 +24,9 @@
 //!
 //! `vault::encrypt` emits a self-contained 12-byte random nonce plus AES-256-GCM
 //! ciphertext and tag, so every record stands alone and carries its own
-//! authentication tag.
+//! authentication tag. The length prefix is passed as additional authenticated
+//! data, so editing that unencrypted header breaks authentication rather than
+//! passing as a short append.
 //!
 //! # Integrity
 //!
@@ -66,6 +68,11 @@ const LEN_PREFIX: usize = 4;
 const MAX_RECORD_BYTES: u32 = 8 * 1024 * 1024;
 
 const GENESIS: [u8; 32] = [0u8; 32];
+
+/// AES-256-GCM framing overhead in a `vault::encrypt` blob: random nonce, then
+/// ciphertext (same length as the plaintext), then the authentication tag.
+const NONCE_BYTES: usize = 12;
+const TAG_BYTES: usize = 16;
 
 /// One log record: the event plus its position in the hash chain.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -129,14 +136,20 @@ fn encode_record(
         event: event.clone(),
     };
     let json = serde_json::to_vec(&record).map_err(|e| format!("encode audit record: {e}"))?;
-    let blob = vault::encrypt(key, &json)?;
-    let len: u32 = blob
-        .len()
+    // The length prefix is stored unencrypted, so bind it into the record's
+    // authentication tag. Editing the prefix then fails to decrypt instead of
+    // looking indistinguishable from a partial append.
+    //
+    // The ciphertext length is fixed by the plaintext length (AES-GCM adds a
+    // constant nonce + tag), so it can be computed before encrypting.
+    let len: u32 = (NONCE_BYTES + json.len() + TAG_BYTES)
         .try_into()
         .map_err(|_| "audit record exceeds u32 length".to_string())?;
     if len > MAX_RECORD_BYTES {
         return Err(format!("audit record too large ({len} bytes)"));
     }
+    let blob = vault::encrypt_with_aad(key, &json, &len.to_be_bytes())?;
+    debug_assert_eq!(blob.len(), len as usize, "framed length must match the blob");
     let mut framed = Vec::with_capacity(LEN_PREFIX + blob.len());
     framed.extend_from_slice(&len.to_be_bytes());
     framed.extend_from_slice(&blob);
@@ -195,9 +208,23 @@ fn decode_file(key: &[u8; 32], bytes: &[u8]) -> Result<Decoded, String> {
             bytes[off + 2],
             bytes[off + 3],
         ]);
-        // A length that does not fit the remaining file can only be a partial
-        // append; the same is true of an absurd length written into a torn prefix.
-        if len == 0 || len > MAX_RECORD_BYTES || remaining - LEN_PREFIX < len as usize {
+        // A length no real record could have means the prefix itself was edited,
+        // not that an append was cut short — never truncate on those, or the
+        // record and everything after it would be deleted silently.
+        let minimum = (NONCE_BYTES + TAG_BYTES) as u32;
+        if len < minimum || len > MAX_RECORD_BYTES {
+            decoded.report.integrity_error = Some(format!(
+                "audit log record {} declares an impossible length ({len} bytes) — \
+                 the file was modified outside MQLens",
+                decoded.seq + 1
+            ));
+            break;
+        }
+        // Declared longer than the bytes actually present. Only the final frame
+        // can be in this state, and it is what an interrupted append leaves
+        // behind. An edited prefix on a complete record is caught instead by the
+        // authentication tag below, which covers the prefix as AAD.
+        if remaining - LEN_PREFIX < len as usize {
             decoded.report.truncated_tail = true;
             break;
         }
@@ -208,7 +235,7 @@ fn decode_file(key: &[u8; 32], bytes: &[u8]) -> Result<Decoded, String> {
         // reached the disk, so failing to authenticate means it was altered (or
         // the key is wrong) — never truncate it away, or the last record of a
         // tampered log would be silently erased.
-        let plain = match vault::decrypt(key, body) {
+        let plain = match vault::decrypt_with_aad(key, body, &len.to_be_bytes()) {
             Ok(p) => p,
             Err(e) => {
                 decoded.report.integrity_error = Some(format!(
@@ -265,6 +292,13 @@ struct Decoded {
 
 /// Open state: the append handle plus the chain position it continues from.
 struct Open {
+    /// Held for the whole session. Kept on a sidecar path rather than the log
+    /// itself because compaction *replaces* the log file: locking the data file
+    /// would release the lock the moment its inode is swapped, letting a second
+    /// process lock the new file while the first still appends to the unlinked
+    /// old one. The sidecar inode is stable, so the exclusion holds across
+    /// compaction. Released when this handle drops.
+    lock: fs::File,
     file: fs::File,
     seq: u64,
     head: [u8; 32],
@@ -276,14 +310,46 @@ struct Open {
 /// Append-only encrypted audit log.
 pub struct AuditLog {
     path: PathBuf,
+    lock_path: PathBuf,
     open: Mutex<Option<Open>>,
 }
 
 impl AuditLog {
     pub fn new(path: PathBuf) -> Self {
+        let mut lock_path = path.clone().into_os_string();
+        lock_path.push(".lock");
         Self {
             path,
+            lock_path: PathBuf::from(lock_path),
             open: Mutex::new(None),
+        }
+    }
+
+    /// Path of the sidecar lock file, so vault reset can clean it up.
+    pub fn lock_path(&self) -> &Path {
+        &self.lock_path
+    }
+
+    /// Take the cross-process exclusive lock for this session.
+    fn acquire_lock(&self) -> Result<fs::File, String> {
+        if let Some(parent) = self.lock_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+        }
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&self.lock_path)
+            .map_err(|e| format!("open {}: {e}", self.lock_path.display()))?;
+        match file.try_lock_exclusive() {
+            Ok(true) => Ok(file),
+            Ok(false) => Err(format!(
+                "another MQLens instance is already recording to the activity log ({}) — \
+                 only one instance can record at a time",
+                self.path.display()
+            )),
+            Err(e) => Err(format!("lock {}: {e}", self.lock_path.display())),
         }
     }
 
@@ -302,6 +368,7 @@ impl AuditLog {
 
         // Take the lock before reading, so no other instance can be appending
         // while recovery decides what is a torn tail and what is tampering.
+        let lock = self.acquire_lock()?;
         let mut file = self.open_handle()?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)
@@ -316,6 +383,7 @@ impl AuditLog {
             file.sync_all()
                 .map_err(|e| format!("fsync {}: {e}", self.path.display()))?;
             *slot = Some(Open {
+                lock,
                 file,
                 seq: 0,
                 head: GENESIS,
@@ -336,6 +404,7 @@ impl AuditLog {
         }
 
         *slot = Some(Open {
+            lock,
             file,
             seq: decoded.seq,
             head: decoded.head,
@@ -344,34 +413,20 @@ impl AuditLog {
         Ok((decoded.events, decoded.report))
     }
 
-    /// Open the log and take an exclusive advisory lock on it.
-    ///
-    /// The lock is what keeps a second MQLens process from interleaving appends:
-    /// each process caches its own `seq` and `head`, so concurrent writers would
-    /// duplicate sequence numbers and break the hash chain, sealing the log on
-    /// the next unlock. There is no single-instance enforcement in the app, so
-    /// this has to be handled here. The lock is released when the handle drops.
+    /// Open the log data file for reading and appending. Exclusion is the
+    /// sidecar lock's job, not this handle's.
     fn open_handle(&self) -> Result<fs::File, String> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
         }
-        let file = fs::OpenOptions::new()
+        fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             // Never truncate: the whole point is to append to existing history.
             .truncate(false)
             .open(&self.path)
-            .map_err(|e| format!("open {}: {e}", self.path.display()))?;
-        match file.try_lock_exclusive() {
-            Ok(true) => Ok(file),
-            Ok(false) => Err(format!(
-                "another MQLens instance is already recording to the activity log ({}) — \
-                 only one instance can record at a time",
-                self.path.display()
-            )),
-            Err(e) => Err(format!("lock {}: {e}", self.path.display())),
-        }
+            .map_err(|e| format!("open {}: {e}", self.path.display()))
     }
 
     /// Append one event and fsync it. O(1) in the size of the existing log.
@@ -405,20 +460,41 @@ impl AuditLog {
     /// the only O(total history) operations, and none of them per-event.
     pub fn compact(&self, key: &[u8; 32], events: &[AuditEvent]) -> Result<(), String> {
         let mut slot = self.open.lock().map_err(|e| e.to_string())?;
-        if slot.is_none() {
+        let Some(open) = slot.take() else {
             return Err("audit log is closed".into());
-        }
+        };
         let (bytes, head, seq) = encode_file(key, events)?;
-        // Drop the handle before replacing the file so Windows can rename over it.
-        *slot = None;
-        durable::write_atomic(&self.path, &bytes)?;
+
+        // Carry the sidecar lock across untouched: it must stay held for the
+        // whole replacement, or another instance could lock the new file while
+        // this one still holds the unlinked old inode. Only the *data* handle is
+        // closed, because Windows cannot rename over an open file.
+        let Open {
+            lock,
+            file,
+            seq: prev_seq,
+            head: prev_head,
+            sealed_reason: prev_sealed,
+        } = open;
+        drop(file);
+
+        let replaced = durable::write_atomic(&self.path, &bytes);
+        // Restore the session either way, so a failed compaction leaves a
+        // usable log rather than a closed one — with the chain state that
+        // matches whichever file is actually on disk.
+        let (seq, head, sealed_reason) = if replaced.is_ok() {
+            (seq, head, None)
+        } else {
+            (prev_seq, prev_head, prev_sealed)
+        };
         *slot = Some(Open {
+            lock,
             file: self.open_handle()?,
             seq,
             head,
-            sealed_reason: None,
+            sealed_reason,
         });
-        Ok(())
+        replaced
     }
 
     /// Records written so far, or `None` when closed.
@@ -675,6 +751,64 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap().len(), before, "file must be intact");
     }
 
+    /// Overwrite the first record's 4-byte length prefix with `len`.
+    fn set_first_length(path: &Path, len: u32) -> Vec<u8> {
+        let mut bytes = fs::read(path).unwrap();
+        bytes[HEADER_LEN..HEADER_LEN + LEN_PREFIX].copy_from_slice(&len.to_be_bytes());
+        fs::write(path, &bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn an_edited_length_prefix_seals_the_log_rather_than_truncating_it() {
+        // The prefix is stored unencrypted, so it is the one field an attacker
+        // can edit without touching ciphertext. Each of these used to be read as
+        // "partial append" and deleted the record and everything after it.
+        for bogus in [0u32, 1, 27, MAX_RECORD_BYTES + 1] {
+            let dir = tempdir().unwrap();
+            let (log, path) = log_with(dir.path(), 3);
+            log.close();
+            let tampered = set_first_length(&path, bogus);
+
+            let reopened = AuditLog::new(path.clone());
+            let (events, report) = reopened.open(&KEY).expect("load");
+            assert!(
+                report.integrity_error.is_some(),
+                "length {bogus} must be reported as tampering: {report:?}"
+            );
+            assert!(events.is_empty());
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                tampered,
+                "length {bogus} must not truncate the file"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plausible_but_wrong_length_prefix_fails_authentication() {
+        // Big enough to look real and still fit inside the file, so only the
+        // AAD binding over the prefix can catch it.
+        let dir = tempdir().unwrap();
+        let (log, path) = log_with(dir.path(), 3);
+        log.close();
+        let real_len = u32::from_be_bytes([
+            fs::read(&path).unwrap()[HEADER_LEN],
+            fs::read(&path).unwrap()[HEADER_LEN + 1],
+            fs::read(&path).unwrap()[HEADER_LEN + 2],
+            fs::read(&path).unwrap()[HEADER_LEN + 3],
+        ]);
+        let tampered = set_first_length(&path, real_len + 1);
+
+        let reopened = AuditLog::new(path.clone());
+        let (_, report) = reopened.open(&KEY).expect("load");
+        assert!(
+            report.integrity_error.is_some(),
+            "a fitting but altered prefix must fail authentication: {report:?}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), tampered, "file must be intact");
+    }
+
     #[test]
     fn deleting_a_record_breaks_the_hash_chain() {
         let dir = tempdir().unwrap();
@@ -787,18 +921,36 @@ mod tests {
     }
 
     #[test]
-    fn compaction_keeps_the_lock_held_afterwards() {
+    fn the_lock_is_never_released_during_compaction() {
         let dir = tempdir().unwrap();
         let (log, path) = log_with(dir.path(), 3);
-        log.compact(&KEY, &[event("e3", 1_003)]).expect("compact");
+        let other = AuditLog::new(path.clone());
 
-        // Compaction replaces the file, so it must re-acquire the lock.
-        let other = AuditLog::new(path);
-        assert!(
-            other.open(&KEY).is_err(),
-            "the lock must still be held after compaction"
-        );
+        // Compaction replaces the data file's inode. The lock lives on a stable
+        // sidecar path precisely so this window does not exist — otherwise a
+        // second instance could take the new file while this one appends to the
+        // unlinked old one, losing those events silently.
+        assert!(other.open(&KEY).is_err(), "locked before compaction");
+        log.compact(&KEY, &[event("e3", 1_003)]).expect("compact");
+        assert!(other.open(&KEY).is_err(), "must still be locked after compaction");
+
         log.append(&KEY, &event("e4", 1_004)).expect("append after compact");
+        log.close();
+
+        let (events, report) = other.open(&KEY).expect("open once released");
+        assert!(report.integrity_error.is_none(), "{report:?}");
+        assert_eq!(
+            events.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            ["e3", "e4"]
+        );
+    }
+
+    #[test]
+    fn the_lock_lives_on_a_sidecar_path_not_the_log_itself() {
+        let dir = tempdir().unwrap();
+        let (log, path) = log_with(dir.path(), 1);
+        assert_eq!(log.lock_path(), path.with_extension("enc.lock"));
+        assert!(log.lock_path().exists(), "sidecar lock file must exist");
     }
 
     #[test]

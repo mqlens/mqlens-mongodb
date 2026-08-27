@@ -2,7 +2,7 @@
 //! AES-256-GCM authenticated encryption. No file I/O and no Tauri types here so
 //! every function is unit-testable in isolation.
 
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use argon2::{Algorithm, Argon2, Params, Version};
 use rand::Rng;
@@ -52,25 +52,46 @@ pub fn new_nonce() -> [u8; 12] {
 
 /// Encrypt plaintext, returning `nonce(12) || ciphertext+tag`.
 pub fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    encrypt_with_aad(key, plaintext, b"")
+}
+
+/// Encrypt with additional authenticated data.
+///
+/// `aad` is not stored in the blob, but altering it makes decryption fail. The
+/// audit log uses this to authenticate each record's *unencrypted* length
+/// prefix: without it, editing that prefix looks exactly like a partial write.
+pub fn encrypt_with_aad(
+    key: &[u8; 32],
+    plaintext: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     let nonce_bytes = new_nonce();
     let nonce = Nonce::from_slice(&nonce_bytes);
     let mut out = nonce_bytes.to_vec();
     let ct = cipher
-        .encrypt(nonce, plaintext)
+        .encrypt(nonce, Payload { msg: plaintext, aad })
         .map_err(|_| "encryption failed".to_string())?;
     out.extend_from_slice(&ct);
     Ok(out)
 }
 
-/// Decrypt a `nonce(12) || ciphertext+tag` blob. Wrong key or tampered bytes -> Err.
 pub fn decrypt(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, String> {
+    decrypt_with_aad(key, blob, b"")
+}
+
+/// Decrypt a blob produced by [`encrypt_with_aad`]. `aad` must match exactly.
+pub fn decrypt_with_aad(
+    key: &[u8; 32],
+    blob: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>, String> {
     if blob.len() < 12 {
         return Err("ciphertext too short".to_string());
     }
     let (nonce_bytes, ct) = blob.split_at(12);
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     cipher
-        .decrypt(Nonce::from_slice(nonce_bytes), ct)
+        .decrypt(Nonce::from_slice(nonce_bytes), Payload { msg: ct, aad })
         .map_err(|_| "decryption failed (wrong password or corrupt data)".to_string())
 }
