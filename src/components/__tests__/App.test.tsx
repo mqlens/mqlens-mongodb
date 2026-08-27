@@ -782,7 +782,11 @@ describe('App Component', () => {
       // Both sides are sent so the backend can write only what changed; a bare
       // `replacement` would wipe fields a projection had left out (#275).
       expect(upd.args.edited).toBe('{"_id":"1","name":"Ada"}');
-      expect(upd.args.original).toContain('"name" : "John Doe"');
+      // Must be parseable JSON, not shell text: the backend parses it with strict
+      // serde_json, so `ObjectId(...)` in here fails the save outright. A
+      // substring assertion passed while that was broken.
+      expect(() => JSON.parse(upd.args.original)).not.toThrow();
+      expect(JSON.parse(upd.args.original)).toEqual({ _id: '1', name: 'John Doe' });
       expect(upd.args.replacement).toBeUndefined();
       expect(screen.getByText(/Document saved in customers/)).toBeInTheDocument();
     });
@@ -4459,7 +4463,7 @@ describe('App Component', () => {
       expect(upd).toBeTruthy();
       // The projected document goes as `original`, so the backend diff can tell
       // "not shown" from "deleted" and leaves username/email/roles alone.
-      expect(upd.args.original).toContain('"age" : 34');
+      expect(JSON.parse(upd.args.original)).toEqual({ _id: '66a1', age: 34 });
       expect(upd.args.edited).toBe('{"_id":"66a1","age":35}');
     });
   });
@@ -4478,6 +4482,26 @@ describe('App Component', () => {
     fireEvent.click(screen.getByTestId('select-collection-btn'));
     // A find result: the row is a stored document, so editing is offered.
     expect(await screen.findByTestId('edit-doc-btn')).toBeInTheDocument();
+  });
+});
+
+describe('projectionComputesId (#275)', () => {
+  it('accepts projections that keep _id as the stored id', async () => {
+    const { projectionComputesId } = await import('../../App');
+    expect(projectionComputesId(undefined)).toBe(false);
+    expect(projectionComputesId('{}')).toBe(false);
+    expect(projectionComputesId('{"name":1}')).toBe(false);
+    expect(projectionComputesId('{"_id":1,"name":1}')).toBe(false);
+    expect(projectionComputesId('{"_id":0,"name":1}')).toBe(false);
+    expect(projectionComputesId('{"_id":true}')).toBe(false);
+  });
+
+  it('rejects a computed _id, whose value is not the document id', async () => {
+    const { projectionComputesId } = await import('../../App');
+    expect(projectionComputesId('{"_id":"$email","name":1}')).toBe(true);
+    expect(projectionComputesId('{"_id":{"$concat":["$a","$b"]}}')).toBe(true);
+    // Unparseable: the backend refuses, so the action is withheld too.
+    expect(projectionComputesId('{not json')).toBe(true);
   });
 });
 

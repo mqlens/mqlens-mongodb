@@ -466,6 +466,44 @@ mod integration {
             "the field itself must be removed, not left as an empty object: {gone:?}"
         );
 
+        // A document whose `_id` is a real ObjectId, saved through the same
+        // serialization the UI uses. Sending the original as shell text made this
+        // fail with "Invalid JSON" before any update was attempted, which the
+        // string-`_id` fixtures above could not catch.
+        let oid = mongodb::bson::oid::ObjectId::new();
+        seed(
+            &state,
+            &id,
+            &db,
+            "people",
+            vec![doc! { "_id": oid, "name": "Hopper", "tier": "gold" }],
+        )
+        .await;
+
+        let filter = format!(r#"{{"_id":{{"$oid":"{}"}}}}"#, oid.to_hex());
+        let loaded = format!(
+            r#"{{"_id":{{"$oid":"{}"}},"name":"Hopper","tier":"gold"}}"#,
+            oid.to_hex()
+        );
+        let saved = format!(
+            r#"{{"_id":{{"$oid":"{}"}},"name":"Grace Hopper","tier":"gold"}}"#,
+            oid.to_hex()
+        );
+        let modified = update_document_impl(
+            &state, &id, &db, "people", &filter, &loaded, &saved, Some("{}"),
+        )
+        .await
+        .expect("an ObjectId _id must round-trip");
+        assert_eq!(modified, 1);
+
+        let back = execute_mql_query_impl(
+            &state, &id, &db, "people", &filter, "{}", "{}", 1, 0,
+        )
+        .await
+        .expect("read back objectid doc");
+        let back: serde_json::Value = serde_json::from_str(&back[0]).unwrap();
+        assert_eq!(back["name"], "Grace Hopper");
+
         // update_many with an operator.
         seed(
             &state,

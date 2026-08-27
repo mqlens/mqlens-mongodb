@@ -110,7 +110,7 @@ import { DialogProvider, useDialogs } from './components/dialogs/DialogProvider'
 import { formatBytes } from './lib/format';
 import type { QueryCodeSpec } from './lib/queryCodeGen';
 import type { IndexSuggestion } from './lib/indexSuggestions';
-import { docToShell } from './lib/shellDoc';
+import { docToShell, shellToEjson } from './lib/shellDoc';
 import { recordHistory, loadCollectionQueries, type SavedQueryBody } from './lib/queryStore';
 import { clearNamespaceIndex, loadNamespaceIndex, matchesNamespaceScope } from './lib/paletteIndex';
 import { CHECK_UPDATE_EVENT } from './components/UpdatePrompt';
@@ -174,15 +174,38 @@ export function pipelineYieldsWholeDocuments(pipeline?: Record<string, unknown>[
   });
 }
 
+/// True when a find projection replaces `_id` with a computed value, e.g.
+/// `{"_id": "$email"}`. The row's `_id` is then not the document's, so a filter
+/// built from it targets whatever happens to match. Only `1`/`0`/`true`/`false`
+/// keep `_id` as the stored id; any other value is an aggregation expression.
+export function projectionComputesId(projection?: string): boolean {
+  const trimmed = (projection ?? '').trim();
+  if (trimmed === '' || trimmed === '{}') return false;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed !== 'object' || parsed === null || !('_id' in parsed)) return false;
+    const value = (parsed as Record<string, unknown>)._id;
+    return !(typeof value === 'number' || typeof value === 'boolean');
+  } catch {
+    // Unparseable: the backend refuses anyway, so withhold the action.
+    return true;
+  }
+}
+
 /// Whether a tab's rows are stored documents that row actions may target by
-/// `_id`. False for reshaping pipelines, where `_id` may be a group key and
-/// editing or deleting would hit an unrelated document.
+/// `_id`. False for reshaping pipelines, where `_id` may be a group key, and for
+/// a find projection that computes `_id` — both make the row's id something other
+/// than the stored document's, so editing or deleting would hit an unrelated one.
 ///
 /// `DataGrid` offers the edit and delete actions only when the callbacks are
 /// provided, so passing `undefined` withholds them rather than showing something
 /// that would be refused.
-function rowsAreStoredDocuments(tab: { lastAggregate?: Record<string, unknown>[] }): boolean {
-  return !tab.lastAggregate || pipelineYieldsWholeDocuments(tab.lastAggregate);
+function rowsAreStoredDocuments(tab: {
+  lastAggregate?: Record<string, unknown>[];
+  lastQuery?: { projection: string };
+}): boolean {
+  if (tab.lastAggregate) return pipelineYieldsWholeDocuments(tab.lastAggregate);
+  return !projectionComputesId(tab.lastQuery?.projection);
 }
 
 const DEFAULT_QUERY = { filter: '{}', sort: '{}', projection: '{}', limit: 50, skip: 0 };
@@ -3974,7 +3997,14 @@ function Workspace() {
       database: tab.db,
       collection,
       filter: JSON.stringify({ _id: target._id }),
-      original: docToShell(target),
+      // Must be EJSON, not shell text: the backend parses both sides with strict
+      // `serde_json`, and DocumentEditModal already converts the editor contents
+      // with `shellToEjson` before calling onSave — so sending shell here failed
+      // on any document with an ObjectId `_id`. Running the original through the
+      // same docToShell → shellToEjson pipeline also makes an unedited save
+      // produce byte-identical sides, so the diff cannot report a change that came
+      // from serialization rather than from the user.
+      original: shellToEjson(docToShell(target)),
       edited: json,
       // The projection the row came back under, so the backend knows which parts
       // of `original` are complete: `{"address": 1}` includes the whole

@@ -452,9 +452,12 @@ enum Leaf {
     Include,
     /// `0` / `false`. Excludes; other values are the stored ones.
     Exclude,
-    /// `$slice` / `$elemMatch`. Does not restrict the field list; the value is a
-    /// truncated view of the stored one.
+    /// `$slice`. Does not restrict the field list; the value is a truncated view
+    /// of the stored array.
     Slice,
+    /// `$elemMatch`. Unlike `$slice` this *is* an inclusion projection — only the
+    /// named field comes back — and the array holds just the matching element.
+    ElemMatch,
     /// An aggregation expression. Restricts the field list *and* synthesizes its
     /// value, so there is nothing to write back to.
     Computed,
@@ -468,12 +471,17 @@ impl Leaf {
     fn is_writable(&self) -> bool {
         !matches!(self, Leaf::Computed | Leaf::Meta)
     }
+
+    /// Whether the entry limits the result to the named fields.
+    fn restricts_field_list(&self) -> bool {
+        matches!(self, Leaf::Include | Leaf::Computed | Leaf::ElemMatch)
+    }
 }
 
 /// Operators that return a view of the stored value rather than computing one.
 /// `$meta` is deliberately absent: it does not restrict the field list either,
 /// but its value is synthesized.
-const SLICE_OPERATORS: [&str; 2] = ["$slice", "$elemMatch"];
+const SLICE_OPERATORS: [&str; 1] = ["$slice"];
 
 impl ProjectionShape {
     /// Parse a find projection, or `None` when the shape cannot be known — the
@@ -517,13 +525,10 @@ impl ProjectionShape {
             if path == "_id" && matches!(leaf, Leaf::Exclude) {
                 continue;
             }
-            match leaf {
-                // A computed field restricts the field list exactly as an
-                // inclusion does: nothing unlisted comes back.
-                Leaf::Include | Leaf::Computed => includes = true,
-                Leaf::Exclude => excludes = true,
-                // Neither restricts the field list.
-                Leaf::Slice | Leaf::Meta => {}
+            if leaf.restricts_field_list() {
+                includes = true;
+            } else if matches!(leaf, Leaf::Exclude) {
+                excludes = true;
             }
         }
         let scope = match (includes, excludes) {
@@ -622,6 +627,11 @@ fn flatten_projection(
                     out.push((format!("{path}.{op}"), Leaf::Slice));
                 }
             }
+            // `{"roles": {"$elemMatch": {...}}}` returns only the matching element,
+            // and unlike `$slice` it hides every unlisted field.
+            serde_json::Value::Object(inner) if inner.keys().all(|k| k == "$elemMatch") => {
+                out.push((format!("{path}.$elemMatch"), Leaf::ElemMatch));
+            }
             // `{"score": {"$meta": "textScore"}}` adds a field from result
             // metadata: nothing is hidden, but nothing is stored there either.
             serde_json::Value::Object(inner) if inner.keys().all(|k| k == "$meta") => {
@@ -702,6 +712,17 @@ pub fn build_field_update(
     // group key rather than a document id. Writing anything would target whichever
     // source document happens to share that value — or none at all. There is no
     // safe subset here, not even a scalar field.
+    // A find projection can replace `_id` with an expression
+    // (`{"_id": "$email"}`), in which case the row's id is not the document's and
+    // any filter built from it targets whatever happens to match.
+    if shape.is_computed("_id") {
+        return Err(UpdateBuildError::NoLineage(
+            "cannot save: the query replaced _id with a computed value, so MQLens cannot \
+             tell which stored document this row came from. Re-run the query without \
+             projecting _id to edit documents."
+                .into(),
+        ));
+    }
     if shape.scope == Scope::Unknown {
         return Err(UpdateBuildError::NoLineage(
             "cannot save: these rows did not come from a plain query, so MQLens cannot tell \
@@ -2043,6 +2064,53 @@ mod csv_import_tests {
             .expect_err("must refuse")
             .to_string();
         assert!(err.contains("address"), "{err}");
+    }
+
+    #[test]
+    fn an_elem_match_projection_hides_unlisted_fields() {
+        // Unlike `$slice`, `$elemMatch` returns only the named field, so an
+        // apparently absent `address` may already exist.
+        let shape = ProjectionShape::parse(r#"{"roles":{"$elemMatch":{"$eq":"admin"}}}"#);
+        let original = doc_of(r#"{"_id":"66a1","roles":["admin"]}"#);
+        let edited = doc_of(r#"{"_id":"66a1","roles":["admin"],"address":{"city":"Berlin"}}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("address"), "{err}");
+    }
+
+    #[test]
+    fn an_elem_match_array_is_still_partial() {
+        // Only the matching element came back, so writing the array whole would
+        // discard the others.
+        let shape = ProjectionShape::parse(r#"{"roles":{"$elemMatch":{"$eq":"admin"}}}"#);
+        let original = doc_of(r#"{"_id":"66a1","roles":["admin"]}"#);
+        let edited = doc_of(r#"{"_id":"66a1","roles":["admin","editor"]}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("roles"), "{err}");
+    }
+
+    #[test]
+    fn a_computed_id_means_the_row_has_no_known_document() {
+        // `{"_id": "$email"}` is a plain find, but the row's id is not the
+        // document's — a filter built from it would hit whatever matches.
+        let shape = ProjectionShape::parse(r#"{"_id":"$email","name":1}"#);
+        let original = doc_of(r#"{"_id":"ada@example.com","name":"Ada"}"#);
+        let edited = doc_of(r#"{"_id":"ada@example.com","name":"Grace"}"#);
+        let err = build_field_update(&original, &edited, &shape).expect_err("must refuse");
+        assert!(matches!(err, UpdateBuildError::NoLineage(_)), "{err:?}");
+        assert!(err.to_string().contains("_id"), "{err}");
+    }
+
+    #[test]
+    fn an_included_id_keeps_lineage() {
+        let shape = ProjectionShape::parse(r#"{"_id":1,"name":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","name":"Ada"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","name":"Grace"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"name":"Grace"}}"#));
     }
 
     #[test]
