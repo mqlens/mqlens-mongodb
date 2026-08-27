@@ -52,7 +52,10 @@ export function docToShell(v: any, indent = 0): string {
     }
     if (ks.length === 0) return '{}';
     return `{\n${ks
-      .map((k) => `${padIn}${JSON.stringify(k)}: ${docToShell(v[k], indent + 1)}`)
+      // `" : "` (not `": "`) to match how the results grid renders documents —
+      // the same document must not look different in the grid and the editor.
+      // See DataGrid's `jsonPunct(' : ')`.
+      .map((k) => `${padIn}${JSON.stringify(k)} : ${docToShell(v[k], indent + 1)}`)
       .join(',\n')}\n${pad}}`;
   }
 

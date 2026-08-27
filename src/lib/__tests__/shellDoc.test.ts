@@ -13,12 +13,12 @@ describe('docToShell', () => {
       n: { $numberInt: '7' },
       name: 'Acme',
     });
-    expect(out).toContain('"_id": ObjectId("507f1f77bcf86cd799439011")');
-    expect(out).toContain('"createdAt": ISODate("2025-01-04T00:00:00.000Z")');
-    expect(out).toContain('"big": NumberLong("9007199254740993")');
-    expect(out).toContain('"price": NumberDecimal("12.50")');
-    expect(out).toContain('"n": NumberInt(7)');
-    expect(out).toContain('"name": "Acme"');
+    expect(out).toContain('"_id" : ObjectId("507f1f77bcf86cd799439011")');
+    expect(out).toContain('"createdAt" : ISODate("2025-01-04T00:00:00.000Z")');
+    expect(out).toContain('"big" : NumberLong("9007199254740993")');
+    expect(out).toContain('"price" : NumberDecimal("12.50")');
+    expect(out).toContain('"n" : NumberInt(7)');
+    expect(out).toContain('"name" : "Acme"');
   });
 
   it('renders canonical $date ($numberLong) as ISODate', () => {
