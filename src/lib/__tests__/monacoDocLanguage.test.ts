@@ -109,8 +109,34 @@ describe('document editor language', () => {
   it('does not mistake a key named like a constructor for a call', () => {
     const f = fakeMonaco();
     registerDocLanguage(f.monaco);
-    const tokens = tokenize(f.rules(), '"ObjectId" : 1');
-    expect(tokens[0]).toEqual({ text: '"ObjectId"', token: 'key' });
+    // Quoted: the constructor pattern cannot match at the opening quote.
+    expect(tokenize(f.rules(), '"ObjectId" : 1')[0]).toEqual({
+      text: '"ObjectId"',
+      token: 'key',
+    });
+    // Bare: only the following parenthesis separates a call from a field name,
+    // and the constructor rule is matched first.
+    expect(tokenize(f.rules(), 'ObjectId : "legacy"')[0]).toEqual({
+      text: 'ObjectId',
+      token: 'key',
+    });
+    expect(tokenize(f.rules(), 'ISODate: 1')[0]).toEqual({
+      text: 'ISODate',
+      token: 'key',
+    });
+  });
+
+  it('still reads a constructor call as a call, including with a space', () => {
+    const f = fakeMonaco();
+    registerDocLanguage(f.monaco);
+    expect(tokenize(f.rules(), 'ObjectId("abc")')[0]).toEqual({
+      text: 'ObjectId',
+      token: 'constructor',
+    });
+    expect(tokenize(f.rules(), 'ISODate ("2025-01-01")')[0]).toEqual({
+      text: 'ISODate',
+      token: 'constructor',
+    });
   });
 
   it('classifies literals and punctuation', () => {

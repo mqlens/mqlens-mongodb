@@ -121,9 +121,11 @@ export function registerDocLanguage(monaco: Monaco): void {
     defaultToken: "",
     tokenizer: {
       root: [
-        // Constructor names first, so `ObjectId` is not read as a bare key.
+        // A constructor is a *call*, so require the parenthesis. Without it a
+        // document with a bare field named `ObjectId` — `ObjectId: "legacy"` —
+        // matched here before the bare-key rule and was coloured as a call.
         [
-          new RegExp(`\\b(?:${BSON_CONSTRUCTORS.join("|")})\\b`),
+          new RegExp(`\\b(?:${BSON_CONSTRUCTORS.join("|")})\\b(?=\\s*\\()`),
           "constructor",
         ],
 
