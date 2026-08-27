@@ -518,14 +518,23 @@ fn diff_documents(
         // the parent: under a nested projection the parent also holds fields the
         // user never saw, and unsetting it would delete them.
         match old_value {
-            mongodb::bson::Bson::Document(old_doc) if !old_doc.is_empty() => {
-                unset_visible_leaves(&path_of(key), old_doc, unset, blocked);
+            mongodb::bson::Bson::Document(old_doc) => {
+                if !partial {
+                    // The whole document was loaded, so nothing is hidden under
+                    // this key: remove the field itself. Unsetting leaf by leaf
+                    // would leave an empty `{}` behind, so the stored document
+                    // would differ from the editor and still satisfy
+                    // `{field: {$exists: true}}`.
+                    unset.insert(path_of(key), "");
+                } else if !old_doc.is_empty() {
+                    // Partial view: only the leaves that were actually visible
+                    // can safely go, or the projection's hidden siblings go too.
+                    unset_visible_leaves(&path_of(key), old_doc, unset, blocked);
+                }
+                // Partial *and* empty: `{}` on screen may be a genuinely empty
+                // object or one whose fields the projection hid, so there is no
+                // leaf it is safe to unset and nothing is emitted.
             }
-            // An empty sub-document has no visible leaf to unset. If the document
-            // was loaded under a projection it may still hold hidden fields, so
-            // unsetting the parent would be a guess — skip it. With the whole
-            // document loaded, `{}` really is empty and the removal can apply.
-            mongodb::bson::Bson::Document(_) if partial => {}
             _ => {
                 unset.insert(path_of(key), "");
             }
@@ -1047,6 +1056,17 @@ mod csv_import_tests {
             update,
             doc_of(r#"{"$unset":{"a.b.c":"","a.b.d":"","a.e":""}}"#)
         );
+    }
+
+    #[test]
+    fn removing_a_subdocument_from_a_whole_document_unsets_the_parent() {
+        // Nothing is hidden, so the field itself goes. Unsetting `address.city`
+        // alone would leave `address: {}` stored, which is not what the editor
+        // showed and still matches `{address: {$exists: true}}`.
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let update = build_field_update(&original, &edited, false).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$unset":{"address":""}}"#));
     }
 
     #[test]

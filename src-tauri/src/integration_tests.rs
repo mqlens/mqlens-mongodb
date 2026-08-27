@@ -439,6 +439,33 @@ mod integration {
         );
         assert_eq!(nested["address"]["zip"], "75172", "a hidden sibling must survive");
 
+        // The whole-document counterpart: with nothing hidden, deleting a
+        // sub-document must remove the field itself rather than leave `{}` behind,
+        // which would still satisfy `{address: {$exists: true}}`.
+        update_document_impl(
+            &state,
+            &id,
+            &db,
+            "people",
+            r#"{"_id":"p275n"}"#,
+            r#"{"_id":"p275n","address":{"street":"Maximilianstrasse 12","zip":"75172"}}"#,
+            r#"{"_id":"p275n"}"#,
+            false,
+        )
+        .await
+        .expect("update whole document");
+
+        let gone = execute_mql_query_impl(
+            &state, &id, &db, "people", r#"{"_id":"p275n"}"#, "{}", "{}", 1, 0,
+        )
+        .await
+        .expect("read back after full removal");
+        let gone: serde_json::Value = serde_json::from_str(&gone[0]).unwrap();
+        assert!(
+            gone.get("address").is_none(),
+            "the field itself must be removed, not left as an empty object: {gone:?}"
+        );
+
         // update_many with an operator.
         seed(
             &state,
