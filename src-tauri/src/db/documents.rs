@@ -442,21 +442,38 @@ enum Scope {
 }
 
 /// What a projection entry says about its path.
+///
+/// Two independent axes, which an earlier version conflated: whether the entry
+/// *restricts the field list*, and whether the returned value *exists in the
+/// stored document*. `$meta` is the case that separates them — it adds a
+/// synthesized field without hiding anything else.
 enum Leaf {
+    /// `1` / `true`. Restricts the field list; the value is the stored one.
     Include,
+    /// `0` / `false`. Excludes; other values are the stored ones.
     Exclude,
-    /// A true projection operator — `$slice`, `$elemMatch`, `$meta`. These
-    /// truncate a value without restricting which fields come back.
-    Operator,
-    /// A computed expression such as `{"display": {"$concat": [...]}}`. It both
-    /// restricts the field list, like any inclusion, *and* produces a value that
-    /// does not exist in the stored document.
+    /// `$slice` / `$elemMatch`. Does not restrict the field list; the value is a
+    /// truncated view of the stored one.
+    Slice,
+    /// An aggregation expression. Restricts the field list *and* synthesizes its
+    /// value, so there is nothing to write back to.
     Computed,
+    /// `$meta`. Does not restrict the field list, but synthesizes its value from
+    /// result metadata.
+    Meta,
 }
 
-/// Operators that truncate a value rather than compute one. Everything else
-/// under a `$` is an aggregation expression, which restricts the field list.
-const PROJECTION_OPERATORS: [&str; 3] = ["$slice", "$elemMatch", "$meta"];
+impl Leaf {
+    /// Whether the value came from the stored field, so a write can go back to it.
+    fn is_writable(&self) -> bool {
+        !matches!(self, Leaf::Computed | Leaf::Meta)
+    }
+}
+
+/// Operators that return a view of the stored value rather than computing one.
+/// `$meta` is deliberately absent: it does not restrict the field list either,
+/// but its value is synthesized.
+const SLICE_OPERATORS: [&str; 2] = ["$slice", "$elemMatch"];
 
 impl ProjectionShape {
     /// Parse a find projection, or `None` when the shape cannot be known — the
@@ -505,7 +522,8 @@ impl ProjectionShape {
                 // inclusion does: nothing unlisted comes back.
                 Leaf::Include | Leaf::Computed => includes = true,
                 Leaf::Exclude => excludes = true,
-                Leaf::Operator => {}
+                // Neither restricts the field list.
+                Leaf::Slice | Leaf::Meta => {}
             }
         }
         let scope = match (includes, excludes) {
@@ -516,7 +534,7 @@ impl ProjectionShape {
         };
         let computed = entries
             .iter()
-            .filter(|(_, leaf)| matches!(leaf, Leaf::Computed))
+            .filter(|(_, leaf)| !leaf.is_writable())
             .map(|(path, _)| path.clone())
             .collect();
         Self {
@@ -581,33 +599,46 @@ fn flatten_projection(
             format!("{prefix}.{key}")
         };
         match value {
+            serde_json::Value::Bool(true) => out.push((path, Leaf::Include)),
+            serde_json::Value::Bool(false) => out.push((path, Leaf::Exclude)),
+            serde_json::Value::Number(n) => {
+                let leaf = if n.as_f64() == Some(0.0) {
+                    Leaf::Exclude
+                } else {
+                    Leaf::Include
+                };
+                out.push((path, leaf));
+            }
             serde_json::Value::Object(inner) if inner.is_empty() => {
                 out.push((path, Leaf::Include));
             }
-            // `{"roles": {"$slice": 2}}` truncates a value; it does not restrict
-            // which fields come back.
+            // `{"roles": {"$slice": 2}}` returns a truncated view of the stored
+            // array; the field list is untouched and the value is still the
+            // document's own.
             serde_json::Value::Object(inner)
-                if !inner.is_empty()
-                    && inner.keys().all(|k| PROJECTION_OPERATORS.contains(&k.as_str())) =>
+                if inner.keys().all(|k| SLICE_OPERATORS.contains(&k.as_str())) =>
             {
                 for op in inner.keys() {
-                    out.push((format!("{path}.{op}"), Leaf::Operator));
+                    out.push((format!("{path}.{op}"), Leaf::Slice));
                 }
             }
+            // `{"score": {"$meta": "textScore"}}` adds a field from result
+            // metadata: nothing is hidden, but nothing is stored there either.
+            serde_json::Value::Object(inner) if inner.keys().all(|k| k == "$meta") => {
+                out.push((path, Leaf::Meta));
+            }
             // Any other `$`-keyed object is an aggregation expression, e.g.
-            // `{"display": {"$concat": [...]}}`. It restricts the field list and
-            // its value is synthesized, so it cannot be written back.
+            // `{"display": {"$concat": [...]}}`.
             serde_json::Value::Object(inner) if inner.keys().any(|k| k.starts_with('$')) => {
                 out.push((path, Leaf::Computed));
             }
             // `{"address": {"city": 1}}` is the nested spelling of
             // `{"address.city": 1}`.
             serde_json::Value::Object(inner) => flatten_projection(&path, inner, out),
-            serde_json::Value::Bool(false) => out.push((path, Leaf::Exclude)),
-            serde_json::Value::Number(n) if n.as_f64() == Some(0.0) => {
-                out.push((path, Leaf::Exclude))
-            }
-            _ => out.push((path, Leaf::Include)),
+            // Anything else is an aggregation expression too: `{"display": "$name"}`
+            // aliases a field, `{"tag": "fixed"}` is a literal, and an array is a
+            // computed list. None of them read the stored field of that name.
+            _ => out.push((path, Leaf::Computed)),
         }
     }
 }
@@ -805,6 +836,16 @@ struct DiffSink<'a> {
     computed_writes: &'a mut Vec<String>,
 }
 
+/// Compare loaded against edited, depositing operators and refusals in `sink`.
+///
+/// Three directions, each needing its own guards — a rule added to one does not
+/// apply itself to the others, which is how several were missed:
+///
+/// | direction | guards |
+/// |---|---|
+/// | change  | computed value, unaddressable name, whole-value write to a partial |
+/// | add     | computed value, unaddressable name, path the projection may hide   |
+/// | remove  | computed value, unaddressable name, partial array, inexpressible   |
 fn diff_documents(
     prefix: &str,
     original: &Document,
@@ -909,6 +950,12 @@ fn plan_removal(
     shape: &ProjectionShape,
     sink: &mut DiffSink<'_>,
 ) {
+    // The value on screen was synthesized, so `$unset` here would delete a stored
+    // field of that name which the editor never showed.
+    if shape.is_computed(path) {
+        sink.computed_writes.push(path.to_string());
+        return;
+    }
     match value {
         mongodb::bson::Bson::Document(doc) => {
             if !shape.is_partial_at(path) {
@@ -1951,6 +1998,74 @@ mod csv_import_tests {
             .expect_err("must refuse")
             .to_string();
         assert!(err.contains("address"), "{err}");
+    }
+
+    #[test]
+    fn removing_a_computed_field_is_refused() {
+        // `$unset: {display: ""}` would delete a stored `display` the editor never
+        // showed — the synthesized value is not evidence one exists.
+        let shape = ProjectionShape::parse(r#"{"display":{"$concat":["$first"," ","$last"]}}"#);
+        let original = doc_of(r#"{"_id":"66a1","display":"Ada L"}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("display"), "{err}");
+        assert!(err.contains("computed"), "{err}");
+    }
+
+    #[test]
+    fn a_field_alias_projection_is_computed_not_an_inclusion() {
+        // `{"display": "$name"}` reads `name`; there is no stored `display`.
+        let shape = ProjectionShape::parse(r#"{"display":"$name"}"#);
+        let original = doc_of(r#"{"_id":"66a1","display":"Ada"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","display":"Grace"}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("display"), "{err}");
+    }
+
+    #[test]
+    fn a_literal_projection_value_is_computed_too() {
+        let shape = ProjectionShape::parse(r#"{"tag":"fixed"}"#);
+        let original = doc_of(r#"{"_id":"66a1","tag":"fixed"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","tag":"other"}"#);
+        assert!(build_field_update(&original, &edited, &shape).is_err());
+    }
+
+    #[test]
+    fn a_field_alias_projection_still_restricts_the_field_list() {
+        let shape = ProjectionShape::parse(r#"{"display":"$name"}"#);
+        let original = doc_of(r#"{"_id":"66a1","display":"Ada"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","display":"Ada","address":{"city":"Berlin"}}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("address"), "{err}");
+    }
+
+    #[test]
+    fn a_meta_projection_adds_a_field_without_hiding_any() {
+        // `{"score": {"$meta": "textScore"}}` returns every field plus a
+        // synthesized score, so it must not read as an inclusion...
+        let shape = ProjectionShape::parse(r#"{"score":{"$meta":"textScore"}}"#);
+        let original = doc_of(r#"{"_id":"66a1","name":"Ada","score":1.5}"#);
+        let edited = doc_of(r#"{"_id":"66a1","name":"Ada","score":1.5,"city":"Berlin"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"city":"Berlin"}}"#));
+    }
+
+    #[test]
+    fn a_meta_projection_value_cannot_be_written_back() {
+        // ...but the score itself came from result metadata, not the document.
+        let shape = ProjectionShape::parse(r#"{"score":{"$meta":"textScore"}}"#);
+        let original = doc_of(r#"{"_id":"66a1","score":1.5}"#);
+        let edited = doc_of(r#"{"_id":"66a1","score":9.9}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("score"), "{err}");
     }
 
     #[test]
