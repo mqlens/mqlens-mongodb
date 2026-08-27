@@ -608,15 +608,33 @@ impl AuditLog {
         drop(file);
 
         let replaced = durable::write_atomic(&self.path, &bytes);
-        // Restore the session either way, so a failed compaction leaves a
-        // usable log rather than a closed one — with the chain state that
-        // matches whichever file is actually on disk.
-        let (seq, head, sealed_reason) = if replaced.is_ok() {
-            self.write_state(key, seq, &head)?;
+
+        // Restore the session on every path. Returning early here would leave
+        // the slot empty and drop the cross-process lock while the in-memory
+        // index stayed populated, so `audit_status` would claim auditing was
+        // active while every append failed with "audit log is closed".
+        let (seq, head, mut sealed_reason) = if replaced.is_ok() {
             (seq, head, None)
         } else {
             (prev_seq, prev_head, prev_sealed)
         };
+
+        // The counter must follow the data file. If it cannot be written, the
+        // compacted log no longer matches the count on disk and the next unlock
+        // would read that as missing records — so seal now rather than report
+        // healthy and fail later.
+        let mut state_error = None;
+        if replaced.is_ok() {
+            if let Err(e) = self.write_state(key, seq, &head) {
+                sealed_reason = Some(format!(
+                    "the audit log was compacted but its state file could not be updated \
+                     ({e}), so the log can no longer be verified. Clear the log to start a \
+                     new one."
+                ));
+                state_error = Some(e);
+            }
+        }
+
         *slot = Some(Open {
             lock,
             file: self.open_handle()?,
@@ -624,7 +642,10 @@ impl AuditLog {
             head,
             sealed_reason,
         });
-        replaced
+        match state_error {
+            Some(e) => Err(e),
+            None => replaced,
+        }
     }
 
     /// Records written so far, or `None` when closed.
@@ -1070,6 +1091,38 @@ mod tests {
             events.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
             ["e3", "e4", "e5"]
         );
+    }
+
+    #[test]
+    fn a_failed_state_write_seals_but_never_closes_the_session() {
+        let dir = tempdir().unwrap();
+        let (log, path) = log_with(dir.path(), 3);
+
+        // Block only the state sidecar's staging path, so the data file is
+        // replaced but the counter cannot follow it.
+        let state_tmp = dir.path().join("audit.log.enc.state.tmp");
+        fs::create_dir(&state_tmp).unwrap();
+
+        let err = log
+            .compact(&KEY, &[event("e3", 1_003)])
+            .expect_err("state write must fail");
+        assert!(err.contains("state"), "{err}");
+
+        // The session must not be left closed: that would drop the lock while the
+        // in-memory index stayed populated, so status would claim auditing works.
+        assert!(log.is_open(), "session must stay open");
+        assert!(
+            log.sealed_reason().is_some(),
+            "an unverifiable log must report itself sealed rather than healthy"
+        );
+        assert!(
+            log.append(&KEY, &event("e4", 1_004)).is_err(),
+            "a sealed log must refuse appends"
+        );
+
+        // And the lock is still held, so no second instance can step in.
+        let other = AuditLog::new(path);
+        assert!(other.open(&KEY).is_err(), "lock must still be held");
     }
 
     #[test]

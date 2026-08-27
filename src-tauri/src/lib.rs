@@ -2353,7 +2353,10 @@ async fn vault_reset(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let _ = audit::reset_store(&app_handle, &state);
+    // Before any core vault file is removed: if the audit log cannot be deleted,
+    // a replacement vault would start with a log its new key cannot authenticate,
+    // so auditing would be sealed from the first unlock. Abort instead.
+    audit::reset_store(&app_handle, &state)?;
     for p in [
         connections::get_vault_meta_path(&app_handle),
         connections::get_profiles_enc_path(&app_handle),

@@ -56,6 +56,13 @@ fn scrub_password_json_fields(input: &str) -> String {
     out
 }
 
+/// Quote characters that delimit a JS string value. Backticks included: a
+/// template literal is valid mongosh, and treating one as a bare token stopped
+/// redaction at the first space inside the secret.
+fn is_quote(b: u8) -> bool {
+    b == b'"' || b == b'\'' || b == b'`'
+}
+
 /// True when `b` can appear inside a bare JS identifier.
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
@@ -89,7 +96,7 @@ fn match_key_value(
     let bytes = input.as_bytes();
     let mut j = i;
     let key_quote = match bytes.get(j) {
-        Some(&b) if b == b'"' || b == b'\'' => {
+        Some(&b) if is_quote(b) => {
             j += 1;
             Some(b)
         }
@@ -130,7 +137,7 @@ fn match_key_value(
 
     let value_start = k;
     let &first = bytes.get(value_start)?;
-    let value_end = if first == b'"' || first == b'\'' {
+    let value_end = if is_quote(first) {
         quoted_end(bytes, value_start)?
     } else {
         let mut e = value_start;
@@ -233,7 +240,7 @@ fn end_of_brace_group(bytes: &[u8], start: usize) -> usize {
                 }
             }
             None => match b {
-                b'"' | b'\'' => quote = Some(b),
+                _ if is_quote(b) => quote = Some(b),
                 b'{' => depth += 1,
                 b'}' => {
                     depth -= 1;
@@ -309,6 +316,32 @@ mod tests {
             let out = redact_text(raw);
             assert!(!out.contains("secret"), "password leaked from {raw}: {out}");
         }
+    }
+
+    #[test]
+    fn scrubs_template_literal_secrets_containing_whitespace() {
+        for raw in [
+            "db.createUser({pwd: `very secret`})",
+            "db.createUser({user:'alice', password: `two words here`})",
+            "db.createUser({`pwd`: `spaced value`})",
+        ] {
+            let out = redact_text(raw);
+            assert!(!out.contains("secret"), "template literal leaked from {raw}: {out}");
+            assert!(!out.contains("words"), "template literal leaked from {raw}: {out}");
+            assert!(!out.contains("spaced"), "template literal leaked from {raw}: {out}");
+            // The key text is preserved verbatim, backticks included; only the
+            // value must be replaced.
+            assert!(out.contains("\"***\""), "value must be masked: {out}");
+        }
+    }
+
+    #[test]
+    fn error_redaction_handles_backticks_inside_brace_groups() {
+        let raw = "failed: { note: `has } brace`, tag: 2 }";
+        let out = redact_error(raw, false);
+        assert!(!out.contains("has"), "value leaked: {out}");
+        assert!(!out.contains("tag"), "group ended early: {out}");
+        assert!(out.contains("failed:"), "prefix must survive: {out}");
     }
 
     #[test]
