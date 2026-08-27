@@ -43,6 +43,93 @@ export function jsonStringLiteral(value: string): string {
 }
 
 /**
+ * One BSON type the grid knows how to display, and everything it displays about
+ * it: the constructor call in the value column, and the type name in the tree's
+ * Type column.
+ *
+ * A single ordered list because the order is load-bearing and was got wrong
+ * twice. `Timestamp extends Long` and `UUID extends Binary` in the driver, so a
+ * base class tested first swallows its subclass — which is how a timestamp came
+ * to render as `NumberLong(…)`. Splitting the call and the label into two
+ * separately-ordered functions let the value column say `Timestamp(…)` while the
+ * Type column said `Int64` about the same row. Matching once, here, means they
+ * cannot disagree.
+ */
+interface BsonKind {
+  /** BSON type name, as the tree's Type column shows it. */
+  label: string;
+  matches: (val: unknown) => boolean;
+  call: (val: any) => BsonCall;
+}
+
+const BSON_KINDS: readonly BsonKind[] = [
+  {
+    label: "ObjectId",
+    matches: (v) => v instanceof ObjectId,
+    call: (v: ObjectId) => ({
+      ctor: "ObjectId",
+      args: [{ text: jsonStringLiteral(v.toString()), kind: "string" }],
+    }),
+  },
+  {
+    label: "Date",
+    matches: (v) => v instanceof Date,
+    call: (v: Date) => ({
+      ctor: "ISODate",
+      args: [{ text: jsonStringLiteral(v.toISOString()), kind: "string" }],
+    }),
+  },
+  {
+    label: "Decimal128",
+    matches: (v) => v instanceof Decimal128,
+    call: (v: Decimal128) => ({
+      ctor: "NumberDecimal",
+      args: [{ text: jsonStringLiteral(v.toString()), kind: "string" }],
+    }),
+  },
+  // Before Long: Timestamp extends it.
+  {
+    label: "Timestamp",
+    matches: (v) => v instanceof Timestamp,
+    call: (v: Timestamp) => ({
+      ctor: "Timestamp",
+      args: [{ text: v.toString(), kind: "number" }],
+    }),
+  },
+  {
+    label: "Int64",
+    matches: (v) => v instanceof Long,
+    call: (v: Long) => ({ ctor: "NumberLong", args: [{ text: v.toString(), kind: "number" }] }),
+  },
+  {
+    label: "Int32",
+    matches: (v) => v instanceof Int32,
+    call: (v: Int32) => ({ ctor: "NumberInt", args: [{ text: v.toString(), kind: "number" }] }),
+  },
+  {
+    label: "Double",
+    matches: (v) => v instanceof Double,
+    call: (v: Double) => ({ ctor: "Double", args: [{ text: v.toString(), kind: "number" }] }),
+  },
+  {
+    label: "Binary",
+    matches: (v) => v instanceof Binary,
+    call: (v: Binary) => ({
+      ctor: "BinData",
+      args: [
+        { text: String(v.sub_type), kind: "number" },
+        { text: jsonStringLiteral(v.toString("base64")), kind: "string" },
+      ],
+    }),
+  },
+];
+
+function bsonKindOf(val: unknown): BsonKind | undefined {
+  if (val === null || val === undefined) return undefined;
+  return BSON_KINDS.find((kind) => kind.matches(val));
+}
+
+/**
  * The constructor call for a BSON instance, or null when `val` is not one.
  *
  * Only real `bson` instances qualify. The table view holds the backend's plain
@@ -50,43 +137,18 @@ export function jsonStringLiteral(value: string): string {
  * [`plainBsonShape`].
  */
 export function bsonCallOf(val: unknown): BsonCall | null {
-  if (val instanceof ObjectId) {
-    return { ctor: "ObjectId", args: [{ text: jsonStringLiteral(val.toString()), kind: "string" }] };
-  }
-  if (val instanceof Date) {
-    return { ctor: "ISODate", args: [{ text: jsonStringLiteral(val.toISOString()), kind: "string" }] };
-  }
-  // Before Long: `Timestamp extends Long` in the driver, so testing the base
-  // class first would display every timestamp as `NumberLong(…)` — which is what
-  // the grid's renderer did before it read this descriptor.
-  if (val instanceof Timestamp) {
-    return { ctor: "Timestamp", args: [{ text: val.toString(), kind: "number" }] };
-  }
-  if (val instanceof Long) {
-    return { ctor: "NumberLong", args: [{ text: val.toString(), kind: "number" }] };
-  }
-  if (val instanceof Decimal128) {
-    return {
-      ctor: "NumberDecimal",
-      args: [{ text: jsonStringLiteral(val.toString()), kind: "string" }],
-    };
-  }
-  if (val instanceof Int32) {
-    return { ctor: "NumberInt", args: [{ text: val.toString(), kind: "number" }] };
-  }
-  if (val instanceof Double) {
-    return { ctor: "Double", args: [{ text: val.toString(), kind: "number" }] };
-  }
-  if (val instanceof Binary) {
-    return {
-      ctor: "BinData",
-      args: [
-        { text: String(val.sub_type), kind: "number" },
-        { text: jsonStringLiteral(val.toString("base64")), kind: "string" },
-      ],
-    };
-  }
-  return null;
+  const kind = bsonKindOf(val);
+  return kind ? kind.call(val) : null;
+}
+
+/**
+ * The BSON type name for an instance, or null when `val` is not one.
+ *
+ * The grid's own labeller handles the rest (Array, Object, the JavaScript
+ * primitives); this covers only the types whose display order matters.
+ */
+export function bsonInstanceTypeLabel(val: unknown): string | null {
+  return bsonKindOf(val)?.label ?? null;
 }
 
 /** The call as one string, matching the spans the renderer emits for it. */
@@ -96,7 +158,7 @@ export function bsonCallText(call: BsonCall): string {
 
 /** True for the BSON instances the grid gives a constructor call. */
 export function isBsonInstance(val: unknown): boolean {
-  return bsonCallOf(val) !== null;
+  return bsonKindOf(val) !== undefined;
 }
 
 /**

@@ -10,13 +10,14 @@ import Editor from '@monaco-editor/react';
 import { generateQueryCode, CODE_LANGUAGES, CODE_LANGUAGE_MONACO_IDS, type CodeLanguage, type QueryCodeSpec } from '../lib/queryCodeGen';
 import { suggestESRIndex, type IndexSuggestion } from '../lib/indexSuggestions';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
-import { EJSON, ObjectId, Long, Decimal128, Int32, Double, Binary, Timestamp } from 'bson';
+import { EJSON } from 'bson';
 import { copyValueToText } from '../lib/copyValue';
 import { ResultsFindBar } from './ResultsFindBar';
 import { registerResultsFindTarget } from '../lib/resultsFindShortcut';
 import { findMatches, isMatchAt, stepMatch, type FindCell } from '../lib/resultsFind';
 import {
   bsonCallOf,
+  bsonInstanceTypeLabel,
   bsonValueText,
   isBsonInstance,
   jsonStringLiteral,
@@ -738,6 +739,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [activeMatch, setActiveMatch] = useState(-1);
+  // Bumped on every shortcut press so the bar refocuses even when already open.
+  const [findFocusToken, setFindFocusToken] = useState(0);
   // The whole pane, toolbar included. Clicking a pane's view-mode or tab
   // controls is how a user selects it before searching, so those controls have
   // to be inside the element that routing tests against — a root starting at the
@@ -757,7 +760,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (effectiveTab !== 'results') return;
     return registerResultsFindTarget({
       element: () => paneRootRef.current,
-      open: () => setFindOpen(true),
+      open: () => {
+        setFindOpen(true);
+        setFindFocusToken((token) => token + 1);
+      },
     });
   }, [effectiveTab]);
 
@@ -889,15 +895,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // so the JSON view can render a continuous, line-numbered, collapsible panel.
   // Approximate rendered character count of a scalar value (for horizontal width).
   const valueLen = (v: any): number => {
-    if (v === null) return 4;
-    if (typeof v === 'boolean') return v ? 4 : 5;
-    if (typeof v === 'number') return String(v).length;
-    if (typeof v === 'string') return printableJsonString(v).length;
-    if (v instanceof ObjectId) return 40;
-    if (v instanceof Date) return 36;
-    if (v instanceof Binary) return 64;
-    if (isBsonObject(v)) return String((v as any).toString?.() ?? '').length + 16;
-    return 12;
+    // Containers get lines of their own, so only their bracket is on this one.
+    if (v !== null && typeof v === 'object' && !isBsonObject(v)) return 12;
+    // Exact rather than estimated: the displayed text is now available, so the
+    // per-type guesses (40 for an ObjectId, 64 for any Binary) are gone.
+    return bsonValueText(v).length;
   };
 
   const { jsonLines, jsonMaxWidthPx } = useMemo<{ jsonLines: JsonLine[]; jsonMaxWidthPx: number }>(() => {
@@ -1051,16 +1053,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   // ── Tree-table view (Key | Value | Type) ──────────────────────────────────
+  // The Type column. BSON instances are labelled from bsonDisplay's ordered
+  // table — the same table that decides the value's constructor call — so the
+  // two columns of one row cannot contradict each other. The rest is
+  // JavaScript-level and belongs here.
   const bsonTypeLabel = (v: any): string => {
     if (v === null) return 'Null';
-    if (v instanceof ObjectId) return 'ObjectId';
-    if (v instanceof Date) return 'Date';
-    if (v instanceof Decimal128) return 'Decimal128';
-    if (v instanceof Long) return 'Int64';
-    if (v instanceof Int32) return 'Int32';
-    if (v instanceof Double) return 'Double';
-    if (v instanceof Binary) return 'Binary';
-    if (v instanceof Timestamp) return 'Timestamp';
+    const bson = bsonInstanceTypeLabel(v);
+    if (bson) return bson;
     if (Array.isArray(v)) return 'Array';
     if (typeof v === 'object') return 'Object';
     if (typeof v === 'boolean') return 'Boolean';
@@ -1708,6 +1708,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             onNext={() => setActiveMatch((i) => stepMatch(findMatchList.length, i, 1))}
             onPrevious={() => setActiveMatch((i) => stepMatch(findMatchList.length, i, -1))}
             onClose={closeFind}
+            focusToken={findFocusToken}
           />
         )}
         {!documents || documents.length === 0 ? (

@@ -1034,3 +1034,48 @@ describe('find scrolls the matched table column into view (#280 review)', () => 
     expect(scrollLeft).toBe(0);
   });
 });
+
+describe('find bar focus and type/value agreement (#280 review round 2)', () => {
+  beforeEach(() => resetResultsFindShortcutForTests());
+
+  const pressFind = () => fireEvent.keyDown(document.body, { key: 'f', metaKey: true });
+
+  it('brings focus back to the field when the bar is already open', () => {
+    // `setFindOpen(true)` is a no-op the second time, so focusing only on mount
+    // left the caret on whatever the user had clicked and the typing went there.
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    const input = screen.getByTestId('results-find-input');
+    expect(input).toHaveFocus();
+
+    const elsewhere = screen.getByRole('button', { name: /table/i });
+    elsewhere.focus();
+    expect(input).not.toHaveFocus();
+
+    pressFind();
+    expect(screen.getByTestId('results-find-input')).toHaveFocus();
+  });
+
+  it('selects the existing query on reopening, so typing replaces it', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    pressFind();
+    const input = screen.getByTestId('results-find-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Electronics' } });
+
+    pressFind();
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe('Electronics'.length);
+  });
+
+  it('labels a Timestamp consistently in the value and type columns', () => {
+    // The value column renders from bsonDisplay's ordered table and the Type
+    // column used to have its own order, so one row read `Timestamp(…)` in Value
+    // and `Int64` in Type. The grid parses extended JSON, so the input is the
+    // `$timestamp` shape the backend actually sends.
+    render(<DataGrid documents={[{ ts: { $timestamp: { t: 1, i: 2 } } }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+
+    expect(screen.getAllByText('Timestamp').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Int64')).not.toBeInTheDocument();
+  });
+});

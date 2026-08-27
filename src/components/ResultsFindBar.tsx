@@ -18,6 +18,13 @@ export interface ResultsFindBarProps {
   onNext: () => void;
   onPrevious: () => void;
   onClose: () => void;
+  /**
+   * Bumped by the parent whenever the shortcut is pressed, including while the
+   * bar is already open. Focusing only on mount left the caret wherever it was
+   * — a result row, a view-mode button — so the keypress opened nothing and the
+   * next keystrokes went elsewhere.
+   */
+  focusToken: number;
 }
 
 export const ResultsFindBar: React.FC<ResultsFindBarProps> = ({
@@ -28,16 +35,18 @@ export const ResultsFindBar: React.FC<ResultsFindBarProps> = ({
   onNext,
   onPrevious,
   onClose,
+  focusToken,
 }) => {
   const { t } = useTranslation('documents');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Opening the bar should put the caret in it; the shortcut that opens it is
-  // the same one users expect to type into immediately.
+  // Opening the bar should put the caret in it, and pressing the shortcut again
+  // should bring it back and select what is there — which is what an editor's
+  // find does. Runs on mount too, since the token starts at its first value.
   useEffect(() => {
     inputRef.current?.focus();
     inputRef.current?.select();
-  }, []);
+  }, [focusToken]);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {

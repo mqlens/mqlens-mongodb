@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Binary, Decimal128, Double, Int32, Long, ObjectId, Timestamp } from 'bson';
 import {
   bsonCallOf,
+  bsonInstanceTypeLabel,
   bsonCallText,
   bsonValueText,
   isBsonInstance,
@@ -150,5 +151,31 @@ describe('tableValueText — what the table view displays', () => {
 describe('jsonStringLiteral', () => {
   it('is the quoting the JSON views use', () => {
     expect(jsonStringLiteral('a"b')).toBe('"a\\"b"');
+  });
+});
+
+describe('bsonInstanceTypeLabel — the tree’s Type column', () => {
+  it('names each BSON type the grid displays', () => {
+    expect(bsonInstanceTypeLabel(new ObjectId())).toBe('ObjectId');
+    expect(bsonInstanceTypeLabel(new Date())).toBe('Date');
+    expect(bsonInstanceTypeLabel(Decimal128.fromString('1.25'))).toBe('Decimal128');
+    expect(bsonInstanceTypeLabel(Long.fromString('42'))).toBe('Int64');
+    expect(bsonInstanceTypeLabel(new Int32(7))).toBe('Int32');
+    expect(bsonInstanceTypeLabel(new Double(1.5))).toBe('Double');
+    expect(bsonInstanceTypeLabel(new Binary(Buffer.from('hi'), 0))).toBe('Binary');
+  });
+
+  it('labels a Timestamp as Timestamp, not as its Long base class', () => {
+    // The label and the constructor call now come from one ordered list, so the
+    // Type column cannot say Int64 while the value says Timestamp(…).
+    const ts = new Timestamp({ t: 1, i: 2 });
+    expect(bsonInstanceTypeLabel(ts)).toBe('Timestamp');
+    expect(bsonValueText(ts)).toBe(`Timestamp(${ts.toString()})`);
+  });
+
+  it('is null for values the grid labels itself', () => {
+    for (const v of [null, undefined, 'text', 7, true, { a: 1 }, [1, 2]]) {
+      expect(bsonInstanceTypeLabel(v)).toBeNull();
+    }
   });
 });

@@ -292,6 +292,27 @@ const EXEMPT_HITS: Record<string, string[]> = {
   ],
 
   // ── Detector false positives ─────────────────────────────────────────────
+  // BSON type names shown in the tree view's Type column. Identifiers from the
+  // BSON specification rather than prose — `ObjectId`, `Int64` and `Binary` read
+  // the same in every locale, and the value column prints the matching
+  // constructor (`NumberLong(…)`) next to them. Same precedent as ExportView's
+  // format names above.
+  //
+  // They are newly *detected*, not newly untranslated: they lived in
+  // DataGrid.tsx as bare `return 'ObjectId'` statements, which the bare-return
+  // detector does not treat as prose. Collecting them into one ordered table —
+  // so a subclass cannot be labelled as its base class — put them behind
+  // `label:` properties, which the label-ish property detector does match.
+  'src/lib/bsonDisplay.ts': [
+    'label: "ObjectId"',
+    'label: "Date"',
+    'label: "Decimal128"',
+    'label: "Timestamp"',
+    'label: "Int64"',
+    'label: "Int32"',
+    'label: "Double"',
+    'label: "Binary"',
+  ],
   'src/lib/clusterHealth.ts': [
     // A backtick-quoted `new URL` inside a JSDoc comment, read as a template
     // literal — the comment blindness this file's header warns about.
