@@ -109,7 +109,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use russh::client::{self, Config};
 use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::agent::AgentIdentity;
-use russh::keys::{check_known_hosts, load_secret_key, ssh_key, PrivateKeyWithHashAlg};
+use russh::keys::{
+    check_known_hosts, load_secret_key, PrivateKeyWithHashAlg, PublicKeyOrCertificate,
+};
 use russh::{ChannelMsg, Disconnect};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -176,10 +178,30 @@ struct TunnelClient {
 impl client::Handler for TunnelClient {
     type Error = russh::Error;
 
+    /// Verify the server's host key against `~/.ssh/known_hosts`.
+    ///
+    /// russh 0.63 widened this callback from `&ssh_key::PublicKey` to
+    /// `&PublicKeyOrCertificate`, so a host that presents an OpenSSH
+    /// *certificate* now arrives here too — earlier versions never surfaced that
+    /// case. `check_known_hosts` only understands plain host keys, and honouring
+    /// a certificate would mean validating it against a `@cert-authority` entry,
+    /// which is not implemented. So certificates are refused explicitly: the
+    /// previous behaviour was "only raw host keys are ever trusted", and that is
+    /// preserved rather than quietly widened.
     async fn check_server_key(
         &mut self,
-        server_public_key: &ssh_key::PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        let server_public_key = match server_public_key {
+            PublicKeyOrCertificate::PublicKey { key, .. } => key,
+            PublicKeyOrCertificate::Certificate(_) => {
+                *self.reject_reason.lock().unwrap_or_else(|p| p.into_inner()) = Some(format!(
+                    "SSH host {}:{} presented a host certificate. MQLens verifies host keys against ~/.ssh/known_hosts and does not validate certificate authorities, so this connection was refused.",
+                    self.host, self.port
+                ));
+                return Ok(false);
+            }
+        };
         match check_known_hosts(&self.host, self.port, server_public_key) {
             Ok(true) => Ok(true),
             Ok(false) => {
