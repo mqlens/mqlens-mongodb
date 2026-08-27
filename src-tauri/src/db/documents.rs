@@ -565,8 +565,19 @@ pub fn build_field_update(
     let mut unset = Document::new();
     let mut blocked: Vec<String> = Vec::new();
     let mut partial_writes: Vec<String> = Vec::new();
+    let mut ambiguous_removals: Vec<String> = Vec::new();
     diff_documents(
-        "", original, edited, shape, &mut set, &mut unset, &mut blocked, &mut partial_writes,
+        "",
+        original,
+        edited,
+        shape,
+        &mut DiffSink {
+            set: &mut set,
+            unset: &mut unset,
+            blocked: &mut blocked,
+            partial_writes: &mut partial_writes,
+            ambiguous_removals: &mut ambiguous_removals,
+        },
     );
 
     if !blocked.is_empty() {
@@ -577,6 +588,16 @@ pub fn build_field_update(
              separator and a leading \"$\" as an operator. Re-run the query without a \
              projection so the whole document can be saved.",
             blocked.join(", ")
+        )));
+    }
+    if !ambiguous_removals.is_empty() {
+        ambiguous_removals.sort();
+        ambiguous_removals.dedup();
+        return Err(UpdateBuildError::PartialWrite(format!(
+            "cannot remove field(s) {}: the projection returned them empty, so an empty \
+             stored object cannot be told apart from one whose fields it hid. Re-run the \
+             query without the projection to remove these.",
+            ambiguous_removals.join(", ")
         )));
     }
     if !partial_writes.is_empty() {
@@ -600,16 +621,27 @@ pub fn build_field_update(
     Ok(update)
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Where a diff deposits what it works out. Grouped because the list kept
+/// growing a parameter at a time as refusal cases were added.
+struct DiffSink<'a> {
+    set: &'a mut Document,
+    unset: &'a mut Document,
+    /// Field names an update operator cannot address.
+    blocked: &'a mut Vec<String>,
+    /// Values the projection loaded only partly, so writing them whole would
+    /// discard the rest.
+    partial_writes: &'a mut Vec<String>,
+    /// Removals that cannot be expressed at all, because the projection returned
+    /// the object empty.
+    ambiguous_removals: &'a mut Vec<String>,
+}
+
 fn diff_documents(
     prefix: &str,
     original: &Document,
     edited: &Document,
     shape: &ProjectionShape,
-    set: &mut Document,
-    unset: &mut Document,
-    blocked: &mut Vec<String>,
-    partial_writes: &mut Vec<String>,
+    sink: &mut DiffSink<'_>,
 ) {
     let path_of = |key: &str| {
         if prefix.is_empty() {
@@ -630,7 +662,7 @@ fn diff_documents(
         let old = original.get(key);
         let changed = old != Some(new_value);
         if changed && path_is_unaddressable(key) {
-            blocked.push(path);
+            sink.blocked.push(path);
             continue;
         }
         // Anything the projection loaded only partly cannot be written back as a
@@ -649,28 +681,26 @@ fn diff_documents(
             )
         );
         if changed && old_may_hide_more && writes_whole_value && shape.is_partial_at(&path) {
-            partial_writes.push(path);
+            sink.partial_writes.push(path);
             continue;
         }
         match old {
             None => {
-                set.insert(path, new_value.clone());
+                sink.set.insert(path, new_value.clone());
             }
             Some(old_value) if old_value == new_value => {}
             Some(mongodb::bson::Bson::Document(old_doc)) => match new_value {
                 // Both sides are sub-documents: recurse so only the fields that
                 // actually differ are written.
                 mongodb::bson::Bson::Document(new_doc) => {
-                    diff_documents(
-                        &path, old_doc, new_doc, shape, set, unset, blocked, partial_writes,
-                    );
+                    diff_documents(&path, old_doc, new_doc, shape, sink);
                 }
                 _ => {
-                    set.insert(path, new_value.clone());
+                    sink.set.insert(path, new_value.clone());
                 }
             },
             Some(_) => {
-                set.insert(path, new_value.clone());
+                sink.set.insert(path, new_value.clone());
             }
         }
     }
@@ -680,17 +710,10 @@ fn diff_documents(
             continue;
         }
         if path_is_unaddressable(key) {
-            blocked.push(path_of(key));
+            sink.blocked.push(path_of(key));
             continue;
         }
-        plan_removal(
-            &path_of(key),
-            old_value,
-            shape,
-            unset,
-            blocked,
-            partial_writes,
-        );
+        plan_removal(&path_of(key), old_value, shape, sink);
     }
 }
 
@@ -704,9 +727,7 @@ fn plan_removal(
     path: &str,
     value: &mongodb::bson::Bson,
     shape: &ProjectionShape,
-    unset: &mut Document,
-    blocked: &mut Vec<String>,
-    partial_writes: &mut Vec<String>,
+    sink: &mut DiffSink<'_>,
 ) {
     match value {
         mongodb::bson::Bson::Document(doc) => {
@@ -714,34 +735,46 @@ fn plan_removal(
                 // Loaded whole — because nothing was projected, or because the
                 // projection included it outright (`{"address": 1}`) — so remove
                 // the field itself. Descending would leave an empty `{}` behind.
-                unset.insert(path.to_string(), "");
+                sink.unset.insert(path.to_string(), "");
                 return;
             }
             // Partial: only what was visible may go, or the projection's hidden
-            // siblings go with it. An empty sub-document yields nothing at all,
-            // since `{}` on screen may be genuinely empty or hidden.
+            // siblings go with it.
+            let before = (
+                sink.unset.len(),
+                sink.blocked.len(),
+                sink.partial_writes.len(),
+                sink.ambiguous_removals.len(),
+            );
             for (key, child) in doc {
                 if path_is_unaddressable(key) {
-                    blocked.push(format!("{path}.{key}"));
+                    sink.blocked.push(format!("{path}.{key}"));
                     continue;
                 }
-                plan_removal(
-                    &format!("{path}.{key}"),
-                    child,
-                    shape,
-                    unset,
-                    blocked,
-                    partial_writes,
-                );
+                plan_removal(&format!("{path}.{key}"), child, shape, sink);
+            }
+            let after = (
+                sink.unset.len(),
+                sink.blocked.len(),
+                sink.partial_writes.len(),
+                sink.ambiguous_removals.len(),
+            );
+            if before == after {
+                // Nothing could be expressed: what was shown is an empty object
+                // (or only empty objects), so an empty stored object cannot be
+                // told apart from one whose fields the projection hid. Emitting
+                // nothing would close the editor with a success message over a
+                // document that did not change.
+                sink.ambiguous_removals.push(path.to_string());
             }
         }
         // `$slice`/`$elemMatch` returned only part of the array, so unsetting it
         // would delete the elements that were never shown.
         mongodb::bson::Bson::Array(_) if shape.is_partial_at(path) => {
-            partial_writes.push(path.to_string());
+            sink.partial_writes.push(path.to_string());
         }
         _ => {
-            unset.insert(path.to_string(), "");
+            sink.unset.insert(path.to_string(), "");
         }
     }
 }
@@ -757,27 +790,32 @@ pub async fn update_document_impl(
     projection: Option<&str>,
 ) -> Result<u64, String> {
     let started = std::time::Instant::now();
-    let result = update_document_inner(
+    let outcome = update_document_inner(
         state, id, database, collection, filter, original, edited, projection,
     )
     .await;
-    // Record the operation that actually ran and the operators it applied. The
-    // edited document alone cannot show that removing a field issued `$unset`,
-    // so the mutation would not be reconstructable from the log.
-    let (summary, args) = match &result {
-        Ok((_, applied)) => (
-            format!("{} {database}.{collection}", applied.op),
-            format!(
-                "{{\"filter\":{filter},\"{}\":{}}}",
-                applied.op, applied.payload
-            ),
-        ),
-        Err(_) => (
-            format!("updateOne {database}.{collection} (failed)"),
+    // Record the operation that was attempted and the operators it carried —
+    // including when the database rejected it. The edited document alone cannot
+    // show that removing a field issued `$unset`, and a failed replacement
+    // fallback must not be logged as an update.
+    let (summary, args) = match &outcome.attempted {
+        Some(applied) => {
+            let suffix = if outcome.result.is_err() { " (failed)" } else { "" };
+            (
+                format!("{} {database}.{collection}{suffix}", applied.op),
+                format!(
+                    "{{\"filter\":{filter},\"{}\":{}}}",
+                    applied.op, applied.payload
+                ),
+            )
+        }
+        // Rejected before a write was planned: a write guard, unparseable JSON,
+        // or a refusal. There is no operation to name, so record the input.
+        None => (
+            format!("updateOne {database}.{collection} (rejected)"),
             format!("{{\"filter\":{filter},\"edited\":{edited}}}"),
         ),
     };
-    let outcome = result.as_ref().map(|(modified, _)| *modified);
     crate::audit::maybe_record_result(
         state,
         Some(id),
@@ -789,12 +827,21 @@ pub async fn update_document_impl(
         started,
         &summary,
         Some(&args),
-        &outcome,
+        &outcome.result,
     );
-    result.map(|(modified, _)| modified)
+    outcome.result
 }
 
-/// What [`update_document_inner`] actually sent, for the audit record.
+/// The write that was attempted, plus how it went.
+///
+/// `attempted` survives a database error on purpose: a failed mutation is
+/// exactly the one an audit trail needs to be reconstructable from.
+struct WriteOutcome {
+    attempted: Option<AppliedWrite>,
+    result: Result<u64, String>,
+}
+
+/// What [`update_document_inner`] sent, for the audit record.
 struct AppliedWrite {
     /// `updateOne` or `replaceOne`.
     op: &'static str,
@@ -818,27 +865,46 @@ async fn update_document_inner(
     original: &str,
     edited: &str,
     projection: Option<&str>,
-) -> Result<(u64, AppliedWrite), String> {
+) -> WriteOutcome {
+    macro_rules! rejected {
+        ($e:expr) => {
+            return WriteOutcome {
+                attempted: None,
+                result: Err($e),
+            }
+        };
+    }
     // Still `ReplaceOne`: this is the single-document edit from the grid, and
     // that variant is deliberately outside the confirm-required set. Only the
     // Mongo operation underneath changed.
-    guard_writable(state, id, WriteOp::ReplaceOne, false)?;
+    if let Err(e) = guard_writable(state, id, WriteOp::ReplaceOne, false) {
+        rejected!(e);
+    }
 
-    let filter_doc = json_to_bson_document(filter)?;
-    let original_doc = json_to_bson_document(original)?;
-    let edited_doc = json_to_bson_document(edited)?;
+    let filter_doc = match json_to_bson_document(filter) {
+        Ok(d) => d,
+        Err(e) => rejected!(e),
+    };
+    let original_doc = match json_to_bson_document(original) {
+        Ok(d) => d,
+        Err(e) => rejected!(e),
+    };
+    let edited_doc = match json_to_bson_document(edited) {
+        Ok(d) => d,
+        Err(e) => rejected!(e),
+    };
 
     let shape = ProjectionShape::parse_optional(projection);
     let plan = match build_field_update(&original_doc, &edited_doc, &shape) {
         // Mongo rejects an empty update document, and there is nothing to do.
         Ok(update) if update.is_empty() => {
-            return Ok((
-                0,
-                AppliedWrite {
+            return WriteOutcome {
+                attempted: Some(AppliedWrite {
                     op: "updateOne",
                     payload: "{}".into(),
-                },
-            ));
+                }),
+                result: Ok(0),
+            };
         }
         Ok(update) => WritePlan::Update(update),
         Err(err) => {
@@ -850,13 +916,13 @@ async fn update_document_inner(
             let recoverable = matches!(err, UpdateBuildError::UnaddressableNames(_))
                 && shape.is_whole_document();
             if !recoverable {
-                return Err(err.to_string());
+                rejected!(err.to_string());
             }
             WritePlan::Replace
         }
     };
 
-    let applied = match &plan {
+    let attempted = Some(match &plan {
         WritePlan::Update(update) => AppliedWrite {
             op: "updateOne",
             payload: serde_json::to_string(&mongodb::bson::Bson::Document(update.clone()))
@@ -866,29 +932,51 @@ async fn update_document_inner(
             op: "replaceOne",
             payload: edited.to_string(),
         },
-    };
+    });
 
-    if connection_is_mock(state, id)? {
-        return Ok((1, applied));
+    match connection_is_mock(state, id) {
+        Ok(true) => {
+            return WriteOutcome {
+                attempted,
+                result: Ok(1),
+            }
+        }
+        Ok(false) => {}
+        Err(e) => {
+            return WriteOutcome {
+                attempted,
+                result: Err(e),
+            }
+        }
     }
 
-    let client = require_real_client(state, id)?;
+    let client = match require_real_client(state, id) {
+        Ok(c) => c,
+        Err(e) => {
+            return WriteOutcome {
+                attempted,
+                result: Err(e),
+            }
+        }
+    };
     let coll = client
         .database(database)
         .collection::<Document>(collection);
-    let modified = match plan {
+    // The plan is already decided, so a database rejection keeps `attempted` —
+    // a failed mutation is exactly the one the audit trail must describe.
+    let result = match plan {
         WritePlan::Update(update) => coll
             .update_one(filter_doc, update)
             .await
-            .map_err(|e| format!("Failed to update document: {}", e))?
-            .modified_count,
+            .map(|r| r.modified_count)
+            .map_err(|e| format!("Failed to update document: {}", e)),
         WritePlan::Replace => coll
             .replace_one(filter_doc, edited_doc)
             .await
-            .map_err(|e| format!("Failed to update document: {}", e))?
-            .modified_count,
+            .map(|r| r.modified_count)
+            .map_err(|e| format!("Failed to update document: {}", e)),
     };
-    Ok((modified, applied))
+    WriteOutcome { attempted, result }
 }
 
 #[derive(serde::Serialize)]
@@ -1260,14 +1348,27 @@ mod csv_import_tests {
         assert_eq!(update, doc_of(r#"{"$unset":{"address":""}}"#));
     }
 
+
     #[test]
-    fn removing_an_empty_subdocument_under_a_projection_writes_nothing() {
-        // `{}` on screen could be a genuinely empty object, or one whose fields
-        // the projection hid — so there is no leaf it is safe to unset.
+    fn removing_an_empty_projected_subdocument_is_refused_not_a_silent_no_op() {
+        // Emitting nothing closed the editor with a success message over a
+        // document that had not changed.
         let original = doc_of(r#"{"_id":"66a1","address":{}}"#);
         let edited = doc_of(r#"{"_id":"66a1"}"#);
-        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
-        assert!(update.is_empty(), "must not guess at hidden fields: {update:?}");
+        let err = build_field_update(&original, &edited, &nested_projection())
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("address"), "{err}");
+        assert!(err.contains("returned them empty"), "{err}");
+    }
+
+    #[test]
+    fn removing_a_subdocument_of_only_empty_objects_is_also_refused() {
+        // Nothing expressible any number of levels down, not just immediately.
+        let shape = ProjectionShape::parse(r#"{"a.b.c":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","a":{"b":{}}}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        assert!(build_field_update(&original, &edited, &shape).is_err());
     }
 
     #[test]
