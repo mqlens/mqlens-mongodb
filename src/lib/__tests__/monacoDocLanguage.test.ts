@@ -8,7 +8,8 @@ import {
 } from '../monacoDocLanguage';
 import { syntaxRules } from '../monacoAppTheme';
 
-type Rule = [RegExp, string];
+type Action = string | { token: string; next?: string };
+type Rule = [RegExp, Action];
 
 /** Capture what the module registers, without pulling in real Monaco. */
 type Pair = { open: string; close: string; notIn?: string[] };
@@ -23,7 +24,7 @@ type Config = {
 
 function fakeMonaco() {
   const registered: string[] = [];
-  let tokenizer: { root: Rule[] } | undefined;
+  let tokenizer: Record<string, Rule[]> | undefined;
   let postfix: string | undefined;
   let config: Config | undefined;
   return {
@@ -32,7 +33,7 @@ function fakeMonaco() {
         register: ({ id }: { id: string }) => registered.push(id),
         setMonarchTokensProvider: (
           _id: string,
-          provider: { tokenizer: { root: Rule[] }; tokenPostfix?: string },
+          provider: { tokenizer: Record<string, Rule[]>; tokenPostfix?: string },
         ) => {
           tokenizer = provider.tokenizer;
           postfix = provider.tokenPostfix;
@@ -43,7 +44,7 @@ function fakeMonaco() {
       },
     } as never,
     registered,
-    rules: () => tokenizer?.root ?? [],
+    rules: () => tokenizer ?? { root: [] },
     postfix: () => postfix,
     config: () => config,
   };
@@ -53,24 +54,34 @@ function fakeMonaco() {
  * Classify `text` the way Monarch would: walk left to right, taking the first
  * rule that matches at the current offset.
  */
-function tokenize(rules: Rule[], text: string): { text: string; token: string }[] {
+function tokenize(
+  tokenizer: Record<string, Rule[]>,
+  text: string,
+): { text: string; token: string }[] {
   const out: { text: string; token: string }[] = [];
+  const stack: string[] = [];
+  let state = 'root';
   let rest = text;
   while (rest.length > 0) {
     let matched = false;
-    for (const [pattern, token] of rules) {
+    for (const [pattern, action] of tokenizer[state] ?? []) {
       const anchored = new RegExp(`^(?:${pattern.source})`, pattern.flags.replace('g', ''));
       const m = anchored.exec(rest);
       if (m && m[0].length > 0) {
+        const token = typeof action === 'string' ? action : action.token;
+        const next = typeof action === 'string' ? undefined : action.next;
         out.push({ text: m[0], token });
         rest = rest.slice(m[0].length);
+        if (next === '@pop') state = stack.pop() ?? 'root';
+        else if (next) {
+          stack.push(state);
+          state = next.replace('@', '');
+        }
         matched = true;
         break;
       }
     }
-    if (!matched) {
-      rest = rest.slice(1);
-    }
+    if (!matched) rest = rest.slice(1);
   }
   return out;
 }
@@ -235,5 +246,49 @@ describe('document editor language', () => {
       // Hex without a leading '#', which is what Monaco expects.
       expect(rule.foreground).toMatch(/^[0-9a-f]{6}$/i);
     }
+  });
+
+  it('colours a quoted NumberLong argument as a number, matching the grid', () => {
+    // `docToShell` quotes it because a 64-bit value cannot survive as a JS
+    // number, but the grid renders it with `text-syntax-number`.
+    const f = fakeMonaco();
+    registerDocLanguage(f.monaco);
+    const tokens = tokenize(f.rules(), 'NumberLong("9007199254740993")');
+    expect(tokens[0]).toEqual({ text: 'NumberLong', token: 'constructor' });
+    expect(tokens.find((t) => t.text.includes('9007199254740993'))?.token).toBe('number');
+  });
+
+  it('leaves an unquoted NumberInt argument as a number too', () => {
+    // No special case needed: it is emitted unquoted and the grid agrees.
+    const f = fakeMonaco();
+    registerDocLanguage(f.monaco);
+    const tokens = tokenize(f.rules(), 'NumberInt(7)');
+    expect(tokens[0]).toEqual({ text: 'NumberInt', token: 'constructor' });
+    expect(tokens.find((t) => t.text === '7')?.token).toBe('number');
+  });
+
+  it('keeps string-valued constructors as strings, as the grid does', () => {
+    const f = fakeMonaco();
+    registerDocLanguage(f.monaco);
+    for (const src of [
+      'ObjectId("507f1f77bcf86cd799439011")',
+      'ISODate("2025-01-04T00:00:00.000Z")',
+      'NumberDecimal("12.50")',
+    ]) {
+      const tokens = tokenize(f.rules(), src);
+      expect(tokens[0]?.token).toBe('constructor');
+      expect(tokens.find((t) => t.token === 'string')).toBeDefined();
+      expect(tokens.find((t) => t.token === 'number')).toBeUndefined();
+    }
+  });
+
+  it('leaves the numeric-argument state on a half-typed call', () => {
+    // Otherwise an unterminated call would swallow the rest of the document
+    // while it is being written.
+    const f = fakeMonaco();
+    registerDocLanguage(f.monaco);
+    const tokens = tokenize(f.rules(), 'NumberLong(  , "later" : 1');
+    // The stray comma pops back to root, so the following text tokenizes normally.
+    expect(tokens.find((t) => t.text === '"later"')?.token).toBe('key');
   });
 });

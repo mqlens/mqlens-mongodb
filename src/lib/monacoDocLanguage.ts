@@ -72,7 +72,20 @@ const BSON_CONSTRUCTORS = [
   "Code",
   "Decimal128",
   "Date",
+  "Long",
 ] as const;
+
+/**
+ * Constructors whose argument the grid colours as a *number* even though
+ * `docToShell` writes it quoted.
+ *
+ * A 64-bit value cannot survive as a JavaScript number, so `docToShell` emits
+ * `NumberLong("42")` deliberately — but `DataGrid` renders the same value as
+ * `NumberLong(` + `text-syntax-number` + `)`. Colouring the quoted argument as a
+ * number keeps the two agreeing. `NumberInt` needs no special case: it is emitted
+ * unquoted, so the ordinary number rule already matches what the grid does.
+ */
+const NUMERIC_ARGUMENT_CONSTRUCTORS = ["NumberLong", "Long"] as const;
 
 let registered = false;
 
@@ -136,6 +149,14 @@ export function registerDocLanguage(monaco: Monaco): void {
     tokenPostfix: DOC_TOKEN_POSTFIX,
     tokenizer: {
       root: [
+        // Before the general rule, so the argument state is entered.
+        [
+          new RegExp(
+            `\\b(?:${NUMERIC_ARGUMENT_CONSTRUCTORS.join("|")})\\b(?=\\s*\\()`,
+          ),
+          { token: "constructor", next: "@numericArgument" },
+        ],
+
         // A constructor is a *call*, so require the parenthesis. Without it a
         // document with a bare field named `ObjectId` — `ObjectId: "legacy"` —
         // matched here before the bare-key rule and was coloured as a call.
@@ -166,6 +187,20 @@ export function registerDocLanguage(monaco: Monaco): void {
         // Matches the grid's `jsonPunct`. Parentheses are left alone because the
         // grid renders a constructor's own parens in the default foreground.
         [/[{}[\],:]/, "delimiter"],
+      ],
+
+      // Inside `NumberLong(...)`: the quoted 64-bit value is coloured as a
+      // number, which is what the grid shows.
+      numericArgument: [
+        [/\(/, ""],
+        [/\s+/, ""],
+        [/"(?:[^"\\]|\\.)*"/, "number"],
+        [/'(?:[^'\\]|\\.)*'/, "number"],
+        [/-?\d+/, "number"],
+        [/\)/, { token: "", next: "@pop" }],
+        // Leave on anything unexpected, so a half-typed call cannot swallow the
+        // rest of the document while it is being written.
+        [/./, { token: "", next: "@pop" }],
       ],
     },
   });
