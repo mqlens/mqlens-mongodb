@@ -1060,7 +1060,7 @@ mod tests {
             r#"{"_id":{"$oid":"507f1f77bcf86cd799439011"}}"#,
             r#"{"_id":{"$oid":"507f1f77bcf86cd799439011"},"name":"Original"}"#,
             r#"{"_id":{"$oid":"507f1f77bcf86cd799439011"},"name":"Edited"}"#,
-            false,
+            "{}",
         )
         .await
         .expect("update should succeed in mock mode");

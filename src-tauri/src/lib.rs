@@ -2187,13 +2187,14 @@ async fn update_document(
     filter: String,
     original: String,
     edited: String,
-    // `partial` is true when the document was loaded under a projection, so
-    // `original` is only a partial view — which decides whether falling back to
-    // a whole-document replacement is safe.
-    partial: bool,
+    // The find projection the row came back under, so the backend knows which
+    // parts of `original` are complete. `{"address": 1}` includes the whole
+    // sub-document while `{"address.city": 1}` does not, and a removal has to
+    // tell those apart.
+    projection: String,
 ) -> Result<u64, String> {
     update_document_impl(
-        &state, &id, &database, &collection, &filter, &original, &edited, partial,
+        &state, &id, &database, &collection, &filter, &original, &edited, &projection,
     )
     .await
 }

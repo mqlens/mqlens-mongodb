@@ -337,7 +337,7 @@ mod integration {
             r#"{"_id":"u1"}"#,
             r#"{"_id":"u1","name":"Ada","tier":"gold"}"#,
             r#"{"_id":"u1","name":"Ada Lovelace","tier":"platinum"}"#,
-            false,
+            "{}",
         )
         .await
         .expect("update");
@@ -374,7 +374,7 @@ mod integration {
             r#"{"_id":"p275"}"#,
             r#"{"_id":"p275","age":34}"#,
             r#"{"_id":"p275","age":35}"#,
-            true,
+            r#"{"age":1}"#,
         )
         .await
         .expect("update projected");
@@ -418,7 +418,7 @@ mod integration {
             r#"{"_id":"p275n","address":{"city":"Pforzheim"}}"#,
             // The user deleted the whole visible `address` object.
             r#"{"_id":"p275n"}"#,
-            true,
+            r#"{"address.city":1}"#,
         )
         .await
         .expect("update nested projection");
@@ -450,7 +450,7 @@ mod integration {
             r#"{"_id":"p275n"}"#,
             r#"{"_id":"p275n","address":{"street":"Maximilianstrasse 12","zip":"75172"}}"#,
             r#"{"_id":"p275n"}"#,
-            false,
+            "{}",
         )
         .await
         .expect("update whole document");

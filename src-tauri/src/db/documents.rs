@@ -398,6 +398,83 @@ fn path_is_unaddressable(key: &str) -> bool {
     key.contains('.') || key.starts_with('$')
 }
 
+/// Which parts of a document a find projection leaves incomplete.
+///
+/// A bare "was a projection used?" flag is not enough. `{"address": 1}` includes
+/// the whole sub-document, so deleting `address` should remove the field, while
+/// `{"address.city": 1}` loads only one leaf and deleting it must not touch the
+/// hidden siblings. The distinction is whether the projection names a path
+/// *strictly below* the one being written — which reads the same way for
+/// inclusions, exclusions (`{"address.zip": 0}` also yields a partial `address`)
+/// and operators (`{"roles": {"$slice": 2}}` yields a truncated array).
+#[derive(Debug, Default, Clone)]
+pub struct ProjectionShape {
+    /// Every path the projection names, flattened to dotted form.
+    paths: Vec<String>,
+    /// The projection could not be parsed, so nothing may be assumed complete.
+    opaque: bool,
+}
+
+impl ProjectionShape {
+    /// Parse a find projection. An unparseable one is treated as naming
+    /// everything, so nothing is assumed complete.
+    pub fn parse(projection: &str) -> Self {
+        let trimmed = projection.trim();
+        if trimmed.is_empty() || trimmed == "{}" {
+            return Self::default();
+        }
+        let Ok(serde_json::Value::Object(map)) = serde_json::from_str(trimmed) else {
+            return Self {
+                paths: Vec::new(),
+                opaque: true,
+            };
+        };
+        let mut paths = Vec::new();
+        flatten_projection("", &map, &mut paths);
+        Self {
+            paths,
+            opaque: false,
+        }
+    }
+
+    /// True when nothing was projected away, so the document is whole.
+    pub fn is_whole_document(&self) -> bool {
+        !self.opaque && self.paths.is_empty()
+    }
+
+    /// True when the value at `path` may hold parts that were not loaded.
+    fn is_partial_at(&self, path: &str) -> bool {
+        if self.opaque {
+            return true;
+        }
+        let prefix = format!("{path}.");
+        self.paths.iter().any(|p| p.starts_with(&prefix))
+    }
+}
+
+fn flatten_projection(
+    prefix: &str,
+    map: &serde_json::Map<String, serde_json::Value>,
+    out: &mut Vec<String>,
+) {
+    for (key, value) in map {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match value {
+            // `{"address": {"city": 1}}` is the nested spelling of
+            // `{"address.city": 1}`; `{"roles": {"$slice": 2}}` names a path
+            // below `roles` too, which is exactly what makes it partial.
+            serde_json::Value::Object(inner) if !inner.is_empty() => {
+                flatten_projection(&path, inner, out);
+            }
+            _ => out.push(path),
+        }
+    }
+}
+
 /// Build a field-level update from the document as it was loaded and as it was
 /// edited (#275).
 ///
@@ -410,28 +487,44 @@ fn path_is_unaddressable(key: &str) -> bool {
 /// Sub-documents are compared recursively and emitted as dotted paths, because a
 /// projection can target a nested path (`{"address.city": 1}`) — setting the
 /// whole `address` object would reproduce the same bug one level down. Removals
-/// follow the same rule: deleting a partially loaded `address` unsets the leaves
-/// that were visible, never the parent, which would take the hidden siblings
-/// with it.
-///
-/// `partial` says whether `original` came back under a projection. It only
-/// affects one otherwise-undecidable case: removing an empty sub-document, where
-/// `{}` on screen could be a genuinely empty object or one whose fields the
-/// projection hid.
+/// follow the same rule, but only where the projection actually left that
+/// sub-tree incomplete: see [`ProjectionShape`].
 ///
 /// Returns `Err` when a changed field cannot be addressed (see
-/// [`path_is_unaddressable`]); the caller decides what to do about it.
+/// [`path_is_unaddressable`]) or when it cannot be written without losing data
+/// the projection hid; the caller decides what to do about it.
 ///
 /// An empty `Ok` result means nothing changed.
 pub fn build_field_update(
     original: &Document,
     edited: &Document,
-    partial: bool,
+    shape: &ProjectionShape,
 ) -> Result<Document, String> {
+    // `_id` is immutable. The old replacement surfaced MongoDB's error; skipping
+    // the change silently would report a save that did not happen.
+    if let Some(original_id) = original.get("_id") {
+        match edited.get("_id") {
+            None => {
+                return Err("cannot remove _id: a document's _id is immutable. \
+                            Restore it and save again."
+                    .into())
+            }
+            Some(edited_id) if edited_id != original_id => {
+                return Err("cannot change _id: a document's _id is immutable. \
+                            Insert a new document instead."
+                    .into())
+            }
+            Some(_) => {}
+        }
+    }
+
     let mut set = Document::new();
     let mut unset = Document::new();
     let mut blocked: Vec<String> = Vec::new();
-    diff_documents("", original, edited, partial, &mut set, &mut unset, &mut blocked);
+    let mut truncated: Vec<String> = Vec::new();
+    diff_documents(
+        "", original, edited, shape, &mut set, &mut unset, &mut blocked, &mut truncated,
+    );
 
     if !blocked.is_empty() {
         blocked.sort();
@@ -441,6 +534,16 @@ pub fn build_field_update(
              separator and a leading \"$\" as an operator. Re-run the query without a \
              projection so the whole document can be saved.",
             blocked.join(", ")
+        ));
+    }
+    if !truncated.is_empty() {
+        truncated.sort();
+        truncated.dedup();
+        return Err(format!(
+            "cannot save field(s) {}: the projection returned only part of the array, so \
+             writing it back would discard the rest. Re-run the query without the \
+             projection to edit these.",
+            truncated.join(", ")
         ));
     }
 
@@ -459,10 +562,11 @@ fn diff_documents(
     prefix: &str,
     original: &Document,
     edited: &Document,
-    partial: bool,
+    shape: &ProjectionShape,
     set: &mut Document,
     unset: &mut Document,
     blocked: &mut Vec<String>,
+    truncated: &mut Vec<String>,
 ) {
     let path_of = |key: &str| {
         if prefix.is_empty() {
@@ -471,8 +575,8 @@ fn diff_documents(
             format!("{prefix}.{key}")
         }
     };
-    // `_id` is immutable, and only at the top level — a nested field may well be
-    // called `_id`.
+    // `_id` is immutable and validated by the caller; only at the top level, since
+    // a nested field may well be called `_id`.
     let is_immutable_id = |key: &str| prefix.is_empty() && key == "_id";
 
     for (key, new_value) in edited {
@@ -481,8 +585,18 @@ fn diff_documents(
         }
         let path = path_of(key);
         let old = original.get(key);
-        if old != Some(new_value) && path_is_unaddressable(key) {
+        let changed = old != Some(new_value);
+        if changed && path_is_unaddressable(key) {
             blocked.push(path);
+            continue;
+        }
+        // A `$slice`/`$elemMatch` projection returns part of an array. Writing it
+        // back as a whole value would silently discard the rest.
+        if changed
+            && matches!(new_value, mongodb::bson::Bson::Array(_))
+            && shape.is_partial_at(&path)
+        {
+            truncated.push(path);
             continue;
         }
         match old {
@@ -494,7 +608,9 @@ fn diff_documents(
                 // Both sides are sub-documents: recurse so only the fields that
                 // actually differ are written.
                 mongodb::bson::Bson::Document(new_doc) => {
-                    diff_documents(&path, old_doc, new_doc, partial, set, unset, blocked);
+                    diff_documents(
+                        &path, old_doc, new_doc, shape, set, unset, blocked, truncated,
+                    );
                 }
                 _ => {
                     set.insert(path, new_value.clone());
@@ -514,58 +630,50 @@ fn diff_documents(
             blocked.push(path_of(key));
             continue;
         }
-        // Removing a sub-document must unset the leaves that were on screen, not
-        // the parent: under a nested projection the parent also holds fields the
-        // user never saw, and unsetting it would delete them.
+        let path = path_of(key);
         match old_value {
             mongodb::bson::Bson::Document(old_doc) => {
-                if !partial {
-                    // The whole document was loaded, so nothing is hidden under
-                    // this key: remove the field itself. Unsetting leaf by leaf
-                    // would leave an empty `{}` behind, so the stored document
-                    // would differ from the editor and still satisfy
-                    // `{field: {$exists: true}}`.
-                    unset.insert(path_of(key), "");
-                } else if !old_doc.is_empty() {
-                    // Partial view: only the leaves that were actually visible
-                    // can safely go, or the projection's hidden siblings go too.
-                    unset_visible_leaves(&path_of(key), old_doc, unset, blocked);
-                }
-                // Partial *and* empty: `{}` on screen may be a genuinely empty
-                // object or one whose fields the projection hid, so there is no
-                // leaf it is safe to unset and nothing is emitted.
+                unset_removed_subtree(&path, old_doc, shape, unset, blocked);
             }
             _ => {
-                unset.insert(path_of(key), "");
+                unset.insert(path, "");
             }
         }
     }
 }
 
-/// Unset every leaf path under a removed sub-document.
+/// Unset a removed sub-document, descending only as far as the projection left
+/// it incomplete.
 ///
-/// An empty sub-document has no leaves, so nothing is emitted for it: what is on
-/// screen cannot tell a genuinely empty object apart from one whose fields a
-/// projection hid, and unsetting the parent on that guess is exactly how
-/// unprojected siblings get destroyed.
-fn unset_visible_leaves(
-    prefix: &str,
+/// At a path the projection loaded whole, the field itself is unset — going
+/// deeper would leave an empty `{}` behind. Where it loaded only part, the walk
+/// continues so the siblings it hid are not taken along. An empty sub-document
+/// inside a partial path yields nothing at all: `{}` on screen may be genuinely
+/// empty or hidden, and there is no leaf it is safe to unset.
+fn unset_removed_subtree(
+    path: &str,
     doc: &Document,
+    shape: &ProjectionShape,
     unset: &mut Document,
     blocked: &mut Vec<String>,
 ) {
+    if !shape.is_partial_at(path) {
+        unset.insert(path.to_string(), "");
+        return;
+    }
     for (key, value) in doc {
         if path_is_unaddressable(key) {
-            blocked.push(format!("{prefix}.{key}"));
+            blocked.push(format!("{path}.{key}"));
             continue;
         }
-        let path = format!("{prefix}.{key}");
+        let child = format!("{path}.{key}");
         match value {
             mongodb::bson::Bson::Document(inner) if !inner.is_empty() => {
-                unset_visible_leaves(&path, inner, unset, blocked);
+                unset_removed_subtree(&child, inner, shape, unset, blocked);
             }
+            mongodb::bson::Bson::Document(_) => {}
             _ => {
-                unset.insert(path, "");
+                unset.insert(child, "");
             }
         }
     }
@@ -579,11 +687,11 @@ pub async fn update_document_impl(
     filter: &str,
     original: &str,
     edited: &str,
-    partial: bool,
+    projection: &str,
 ) -> Result<u64, String> {
     let started = std::time::Instant::now();
     let result = update_document_inner(
-        state, id, database, collection, filter, original, edited, partial,
+        state, id, database, collection, filter, original, edited, projection,
     )
     .await;
     // Record the operation that actually ran and the operators it applied. The
@@ -642,7 +750,7 @@ async fn update_document_inner(
     filter: &str,
     original: &str,
     edited: &str,
-    partial: bool,
+    projection: &str,
 ) -> Result<(u64, AppliedWrite), String> {
     // Still `ReplaceOne`: this is the single-document edit from the grid, and
     // that variant is deliberately outside the confirm-required set. Only the
@@ -653,7 +761,8 @@ async fn update_document_inner(
     let original_doc = json_to_bson_document(original)?;
     let edited_doc = json_to_bson_document(edited)?;
 
-    let plan = match build_field_update(&original_doc, &edited_doc, partial) {
+    let shape = ProjectionShape::parse(projection);
+    let plan = match build_field_update(&original_doc, &edited_doc, &shape) {
         // Mongo rejects an empty update document, and there is nothing to do.
         Ok(update) if update.is_empty() => {
             return Ok((
@@ -666,7 +775,7 @@ async fn update_document_inner(
         }
         Ok(update) => WritePlan::Update(update),
         Err(e) => {
-            if partial {
+            if !shape.is_whole_document() {
                 // The document on screen is incomplete, so replacing it would
                 // delete whatever the projection hid. Nothing safe to do here.
                 return Err(e);
@@ -979,13 +1088,22 @@ mod csv_import_tests {
         crate::json_to_bson_document(json).expect("parse")
     }
 
+    fn no_projection() -> ProjectionShape {
+        ProjectionShape::parse("{}")
+    }
+
+    /// A projection that loads only one leaf of `address`.
+    fn nested_projection() -> ProjectionShape {
+        ProjectionShape::parse(r#"{"address.city":1}"#)
+    }
+
     #[test]
     fn editing_a_projected_field_touches_only_that_field() {
         // The bug: a projection returns {_id, age}, and replacing the document
         // with it deleted username, email, roles, address and the rest.
         let original = doc_of(r#"{"_id":"66a1","age":34}"#);
         let edited = doc_of(r#"{"_id":"66a1","age":35}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
 
         assert_eq!(update, doc_of(r#"{"$set":{"age":35}}"#));
         assert!(
@@ -997,14 +1115,14 @@ mod csv_import_tests {
     #[test]
     fn an_unchanged_document_produces_no_update() {
         let d = doc_of(r#"{"_id":"66a1","age":34}"#);
-        assert!(build_field_update(&d, &d, true).expect("addressable").is_empty());
+        assert!(build_field_update(&d, &d, &no_projection()).expect("addressable").is_empty());
     }
 
     #[test]
     fn removing_a_shown_field_unsets_it() {
         let original = doc_of(r#"{"_id":"66a1","age":34,"nickname":"nav"}"#);
         let edited = doc_of(r#"{"_id":"66a1","age":34}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$unset":{"nickname":""}}"#));
     }
 
@@ -1012,7 +1130,7 @@ mod csv_import_tests {
     fn adding_a_field_sets_it() {
         let original = doc_of(r#"{"_id":"66a1","age":34}"#);
         let edited = doc_of(r#"{"_id":"66a1","age":34,"city":"Pforzheim"}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"city":"Pforzheim"}}"#));
     }
 
@@ -1023,7 +1141,7 @@ mod csv_import_tests {
         // would delete street/zip/country — the same bug one level down.
         let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
         let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Berlin"}}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"address.city":"Berlin"}}"#));
     }
 
@@ -1031,7 +1149,7 @@ mod csv_import_tests {
     fn a_nested_removal_unsets_the_dotted_path() {
         let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim","zip":"75172"}}"#);
         let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$unset":{"address.zip":""}}"#));
     }
 
@@ -1042,16 +1160,19 @@ mod csv_import_tests {
         // with it, which is the very bug this change exists to prevent.
         let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
         let edited = doc_of(r#"{"_id":"66a1"}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$unset":{"address.city":""}}"#));
     }
 
     #[test]
     fn removing_a_nested_subdocument_unsets_its_leaves_recursively() {
+        // `{"a.b.c": 1}` leaves both `a` and `a.b` incomplete, so the walk has to
+        // reach the leaves.
+        let shape = ProjectionShape::parse(r#"{"a.b.c":1}"#);
         let original =
             doc_of(r#"{"_id":"66a1","a":{"b":{"c":1,"d":2},"e":3}}"#);
         let edited = doc_of(r#"{"_id":"66a1"}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
         assert_eq!(
             update,
             doc_of(r#"{"$unset":{"a.b.c":"","a.b.d":"","a.e":""}}"#)
@@ -1065,7 +1186,7 @@ mod csv_import_tests {
         // showed and still matches `{address: {$exists: true}}`.
         let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
         let edited = doc_of(r#"{"_id":"66a1"}"#);
-        let update = build_field_update(&original, &edited, false).expect("addressable");
+        let update = build_field_update(&original, &edited, &no_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$unset":{"address":""}}"#));
     }
 
@@ -1075,7 +1196,7 @@ mod csv_import_tests {
         // the projection hid — so there is no leaf it is safe to unset.
         let original = doc_of(r#"{"_id":"66a1","address":{}}"#);
         let edited = doc_of(r#"{"_id":"66a1"}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
         assert!(update.is_empty(), "must not guess at hidden fields: {update:?}");
     }
 
@@ -1084,8 +1205,87 @@ mod csv_import_tests {
         // Nothing was hidden, so `{}` really is empty and the removal applies.
         let original = doc_of(r#"{"_id":"66a1","address":{}}"#);
         let edited = doc_of(r#"{"_id":"66a1"}"#);
-        let update = build_field_update(&original, &edited, false).expect("addressable");
+        let update = build_field_update(&original, &edited, &no_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$unset":{"address":""}}"#));
+    }
+
+    #[test]
+    fn a_fully_included_subdocument_unsets_its_parent() {
+        // `{"address": 1}` loads the whole sub-document, so deleting it must
+        // remove the field — not leave `address: {}` behind.
+        let shape = ProjectionShape::parse(r#"{"address":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$unset":{"address":""}}"#));
+    }
+
+    #[test]
+    fn the_nested_spelling_of_a_projection_is_treated_the_same_as_dotted() {
+        // `{"address": {"city": 1}}` means the same as `{"address.city": 1}`.
+        let shape = ProjectionShape::parse(r#"{"address":{"city":1}}"#);
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$unset":{"address.city":""}}"#));
+    }
+
+    #[test]
+    fn a_nested_exclusion_also_makes_a_subdocument_partial() {
+        // `{"address.zip": 0}` returns address without zip, so a removal must
+        // still go leaf by leaf.
+        let shape = ProjectionShape::parse(r#"{"address.zip":0}"#);
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited = doc_of(r#"{"_id":"66a1"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$unset":{"address.city":""}}"#));
+    }
+
+    #[test]
+    fn a_sliced_array_is_refused_rather_than_truncating_the_stored_one() {
+        let shape = ProjectionShape::parse(r#"{"roles":{"$slice":2}}"#);
+        let original = doc_of(r#"{"_id":"66a1","roles":["admin","devops"]}"#);
+        let edited = doc_of(r#"{"_id":"66a1","roles":["admin","editor"]}"#);
+        let err = build_field_update(&original, &edited, &shape).expect_err("must refuse");
+        assert!(err.contains("roles"), "{err}");
+        assert!(err.contains("part of the array"), "{err}");
+    }
+
+    #[test]
+    fn a_fully_included_array_is_editable() {
+        let shape = ProjectionShape::parse(r#"{"roles":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","roles":["admin","devops"]}"#);
+        let edited = doc_of(r#"{"_id":"66a1","roles":["admin","editor"]}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"roles":["admin","editor"]}}"#));
+    }
+
+    #[test]
+    fn changing_the_id_is_refused_not_silently_dropped() {
+        // The old replacement surfaced MongoDB's immutable-field error; skipping
+        // the change would report a save that never happened.
+        let original = doc_of(r#"{"_id":"66a1","age":34}"#);
+        let edited = doc_of(r#"{"_id":"different","age":34}"#);
+        let err = build_field_update(&original, &edited, &no_projection())
+            .expect_err("must refuse");
+        assert!(err.contains("_id"), "{err}");
+        assert!(err.contains("immutable"), "{err}");
+    }
+
+    #[test]
+    fn removing_the_id_is_refused() {
+        let original = doc_of(r#"{"_id":"66a1","age":34}"#);
+        let edited = doc_of(r#"{"age":34}"#);
+        let err = build_field_update(&original, &edited, &no_projection())
+            .expect_err("must refuse");
+        assert!(err.contains("_id"), "{err}");
+    }
+
+    #[test]
+    fn an_unparseable_projection_assumes_nothing_is_complete() {
+        let shape = ProjectionShape::parse("{not json");
+        assert!(!shape.is_whole_document());
+        assert!(shape.is_partial_at("anything"));
     }
 
     #[test]
@@ -1094,7 +1294,7 @@ mod csv_import_tests {
         // MongoDB traverse into a `price` sub-document instead.
         let original = doc_of(r#"{"_id":"66a1","price.usd":10}"#);
         let edited = doc_of(r#"{"_id":"66a1","price.usd":11}"#);
-        let err = build_field_update(&original, &edited, true).expect_err("must refuse");
+        let err = build_field_update(&original, &edited, &nested_projection()).expect_err("must refuse");
         assert!(err.contains("price.usd"), "{err}");
         assert!(err.contains("projection"), "should say how to proceed: {err}");
     }
@@ -1103,7 +1303,7 @@ mod csv_import_tests {
     fn a_dollar_prefixed_field_name_is_refused() {
         let original = doc_of(r#"{"_id":"66a1","$weird":1}"#);
         let edited = doc_of(r#"{"_id":"66a1","$weird":2}"#);
-        assert!(build_field_update(&original, &edited, true).is_err());
+        assert!(build_field_update(&original, &edited, &nested_projection()).is_err());
     }
 
     #[test]
@@ -1112,24 +1312,16 @@ mod csv_import_tests {
         // such a name is still editable elsewhere.
         let original = doc_of(r#"{"_id":"66a1","price.usd":10,"age":34}"#);
         let edited = doc_of(r#"{"_id":"66a1","price.usd":10,"age":35}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"age":35}}"#));
     }
 
-    #[test]
-    fn the_id_is_never_written() {
-        // `_id` is immutable; an edit that changes it must not reach the update.
-        let original = doc_of(r#"{"_id":"66a1","age":34}"#);
-        let edited = doc_of(r#"{"_id":"different","age":35}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
-        assert_eq!(update, doc_of(r#"{"$set":{"age":35}}"#));
-    }
 
     #[test]
     fn arrays_are_replaced_as_a_whole_value() {
         let original = doc_of(r#"{"_id":"66a1","roles":["admin","devops"]}"#);
         let edited = doc_of(r#"{"_id":"66a1","roles":["admin","editor"]}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"roles":["admin","editor"]}}"#));
     }
 
@@ -1137,7 +1329,7 @@ mod csv_import_tests {
     fn replacing_a_document_with_a_scalar_sets_the_whole_path() {
         let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
         let edited = doc_of(r#"{"_id":"66a1","address":"unknown"}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"address":"unknown"}}"#));
     }
 
@@ -1145,7 +1337,7 @@ mod csv_import_tests {
     fn a_new_nested_document_is_set_whole() {
         let original = doc_of(r#"{"_id":"66a1"}"#);
         let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Berlin"}}"#);
-        let update = build_field_update(&original, &edited, true).expect("addressable");
+        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"address":{"city":"Berlin"}}}"#));
     }
 }
