@@ -480,9 +480,11 @@ impl ProjectionShape {
         let mut includes = false;
         let mut excludes = false;
         for (path, leaf) in &entries {
-            // `_id` is returned unless excluded and never restricts anything else,
-            // so `{"name": 1, "_id": 0}` is still a plain inclusion.
-            if path == "_id" {
+            // `_id: 0` is the idiom for dropping the id alongside an inclusion, and
+            // must not read as an exclusion projection. But `_id: 1` is a real
+            // inclusion — only `_id` comes back — so it may not be skipped, or an
+            // added field would look new when the document already has one.
+            if path == "_id" && matches!(leaf, Leaf::Exclude) {
                 continue;
             }
             match leaf {
@@ -1636,6 +1638,30 @@ mod csv_import_tests {
         let shape = ProjectionShape::parse(r#"{"roles":{"$slice":2}}"#);
         let original = doc_of(r#"{"_id":"66a1","roles":["a","b"]}"#);
         let edited = doc_of(r#"{"_id":"66a1","roles":["a","b"],"city":"Berlin"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"city":"Berlin"}}"#));
+    }
+
+    #[test]
+    fn an_id_only_inclusion_hides_every_other_field() {
+        // `{"_id": 1}` returns nothing but `_id`, so an added field may already
+        // exist in the stored document.
+        let shape = ProjectionShape::parse(r#"{"_id":1}"#);
+        let original = doc_of(r#"{"_id":"66a1"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Berlin"}}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("address"), "{err}");
+    }
+
+    #[test]
+    fn an_id_only_exclusion_still_returns_every_other_field() {
+        // `{"_id": 0}` withholds only the id, so anything else absent from the row
+        // really is absent.
+        let shape = ProjectionShape::parse(r#"{"_id":0}"#);
+        let original = doc_of(r#"{"name":"Grace"}"#);
+        let edited = doc_of(r#"{"name":"Grace","city":"Berlin"}"#);
         let update = build_field_update(&original, &edited, &shape).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"city":"Berlin"}}"#));
     }
