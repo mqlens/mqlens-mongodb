@@ -236,6 +236,12 @@ pub fn maybe_record_task_start(
     );
 }
 
+/// Apply the policy's retention window immediately.
+fn prune_now(session: &AuditSession, policy: AuditPolicy) {
+    let cutoff = super::retention_cutoff_ms(policy.retention_days, now_ms());
+    let _ = session.prune_before(cutoff);
+}
+
 /// Hold a terminal event until the audit session reopens.
 fn park_pending(pending: &PendingSlot, event: AuditEvent, outcome: &str) {
     let Ok(mut queue) = pending.lock() else {
@@ -270,9 +276,14 @@ pub fn flush_pending(slot: &SessionSlot, pending: &PendingSlot) -> usize {
     let Some(session) = guard.as_ref() else {
         return 0;
     };
+    let policy = session.policy();
     let mut written = 0;
     queue.retain(|event| match session.try_insert(event) {
         Ok(true) => {
+            // Same reason as `TaskAuditContext::write`: these inserts skip
+            // `record_into`, and a parked event's timestamp can already be past
+            // the retention cutoff by the time the vault reopens.
+            prune_now(session, policy);
             written += 1;
             false
         }
@@ -413,7 +424,15 @@ impl TaskAuditContext {
         let inserted = match self.slot.lock() {
             Ok(guard) => match guard.as_ref() {
                 Some(session) => match session.try_insert(&event) {
-                    Ok(done) => done,
+                    Ok(done) => {
+                        // This path bypasses `record_into`, so retention has to be
+                        // applied here too: a task queued before the cutoff — or
+                        // parked through a long lock — keeps its original
+                        // timestamp and would otherwise sit past its window until
+                        // some unrelated operation pruned it.
+                        prune_now(session, policy);
+                        done
+                    }
                     Err(e) => {
                         eprintln!("audit task record ({outcome}): {e}");
                         false

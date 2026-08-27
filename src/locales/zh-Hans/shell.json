@@ -538,11 +538,10 @@
   },
   "activity": {
     "actions": {
-      "clear": "清空日志",
+      "discardDamaged": "丢弃受损日志",
       "export": "导出…",
       "refresh": "刷新"
     },
-    "clearConfirm": "清除此密钥库中的全部活动事件？此操作无法撤销。",
     "columns": {
       "connection": "连接",
       "namespace": "命名空间",
@@ -560,6 +559,8 @@
       "error": "错误",
       "level": "记录时级别"
     },
+    "discardConfirm": "要丢弃这个受损的活动日志吗？其中无法校验的事件将无法恢复。系统会永久保留一条关于此次丢弃的记录。",
+    "discardDone_other": "已丢弃 {{count}} 条无法校验的事件。记录已恢复，日志中保留了本次丢弃的记录。",
     "droppedBanner_other": "本会话有 {{count}} 条事件因存储或加密失败而被丢弃。",
     "empty": "当前筛选条件下暂无活动记录。",
     "emptyLevelHint": "在审计级别 A（默认）下，仅记录写入和 shell 命令，不包括查询或浏览。",
@@ -580,10 +581,11 @@
       "subtitle": "本地、经密钥库加密的数据库操作日志。",
       "title": "活动"
     },
-    "integrityBanner": "活动日志完整性校验失败：{{reason}}。记录已停止，文件将被保留。使用“清空”可开始新的日志。",
+    "integrityBanner": "活动日志完整性校验失败：{{reason}}。记录已停止，文件将被保留。丢弃受损日志以恢复记录。",
     "loading": "正在加载活动…",
     "lockedBody": "解锁密钥库后即可查看和导出活动日志。",
     "lockedTitle": "密钥库已锁定",
+    "retentionNote": "旧事件会按保留期设置自动移除。完好的日志无法被清除。",
     "statusError": "失败",
     "statusOk": "成功"
   }

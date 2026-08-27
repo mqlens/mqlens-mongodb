@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use super::level::AuditLevel;
 use super::log::{AuditLog, LoadReport, RetainedLock};
-use super::store::{AuditEvent, AuditFilter, AuditStore};
+use super::store::{AuditEvent, AuditFilter, AuditStore, SCHEMA_VERSION, TOMBSTONE_OP};
 
 /// Cached audit settings for the open vault session (refreshed on unlock / save).
 #[derive(Clone, Copy, Debug)]
@@ -28,6 +28,45 @@ impl Default for AuditPolicy {
             include_payloads: false,
             retention_days: 30,
         }
+    }
+}
+
+/// Build the record left behind when a damaged log is discarded.
+///
+/// Everything that matters goes in `summary` and `error`, which are stored at
+/// every level and under any payload setting — unlike `args_json`, which the
+/// payload gate can drop.
+fn tombstone(
+    discarded: u64,
+    verified_count: u64,
+    verified_head: Option<&str>,
+    reason: &str,
+) -> AuditEvent {
+    let head = verified_head
+        .map(|h| &h[..h.len().min(16)])
+        .unwrap_or("unknown");
+    AuditEvent {
+        id: uuid::Uuid::new_v4().to_string(),
+        ts: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0),
+        connection_id: None,
+        profile_name: None,
+        database: None,
+        collection: None,
+        op: TOMBSTONE_OP.to_string(),
+        source: "ui".into(),
+        ok: false,
+        error: Some(reason.to_string()),
+        duration_ms: None,
+        summary: format!(
+            "damaged activity log discarded — {discarded} readable event(s) removed, \
+             the rest unverifiable; verified {verified_count} record(s) up to chain {head}"
+        ),
+        args_json: None,
+        level_at_record: "-".into(),
+        schema_version: SCHEMA_VERSION,
     }
 }
 
@@ -79,8 +118,16 @@ impl AuditSession {
     }
 
     /// Why the log stopped accepting events, if it has.
+    ///
+    /// Falls through to the log's own seal so a seal created *after* load — a
+    /// compaction that replaced the file but could not update its counter —
+    /// cannot leave status reporting healthy while every append is refused.
     pub fn integrity_error(&self) -> Option<String> {
-        self.integrity_error.lock().ok().and_then(|g| g.clone())
+        self.integrity_error
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .or_else(|| self.log.sealed_reason())
     }
 
     pub fn is_open(&self) -> bool {
@@ -163,7 +210,7 @@ impl AuditSession {
 
     /// Apply retention. A no-op on a sealed log: pruning compacts, and
     /// compaction would replace the very file being preserved as evidence and
-    /// clear its seal. Only an explicit [`Self::clear_all`] may do that.
+    /// clear its seal. Only an explicit [`Self::discard_damaged_log`] may do that.
     pub fn prune_before(&self, ts_ms: i64) -> Result<u64, String> {
         if let Some(reason) = self.integrity_error() {
             eprintln!("audit: skipping retention prune, log is sealed: {reason}");
@@ -183,20 +230,54 @@ impl AuditSession {
         Ok(n)
     }
 
-    pub fn clear_all(&self) -> Result<u64, String> {
-        let n = {
-            let guard = self.store.lock().map_err(|e| e.to_string())?;
-            match guard.as_ref() {
-                Some(store) => store.clear_all()?,
-                None => return Err("audit session is closed".into()),
-            }
+    /// Discard a *damaged* log and resume recording, leaving a permanent record
+    /// that it happened.
+    ///
+    /// Deliberately not a general "clear": retention is the only way a healthy
+    /// log shrinks. An audit trail with a one-click erase button defeats every
+    /// integrity check around it — those checks would then only defend against
+    /// someone *without* access to the app, which is the wrong adversary. So this
+    /// refuses unless the log is already sealed, and even then it writes a
+    /// tombstone as the first record of the new chain. Retention skips tombstones
+    /// and a discard preserves any that are still readable.
+    ///
+    /// The guarantee is therefore: a discard always leaves a record of itself, so
+    /// a discarded log can never be made to look like one that never was. It is
+    /// *not* that the full history of discards survives — damaging the file can
+    /// destroy earlier tombstones along with everything else, though doing so
+    /// seals the log again and so leaves a fresh one.
+    pub fn discard_damaged_log(&self) -> Result<u64, String> {
+        let Some(reason) = self.integrity_error() else {
+            return Err("the activity log is intact, so there is nothing to discard. \
+                        Old events are removed automatically by the retention setting."
+                .into());
         };
-        // Also the way out of a sealed log: compaction writes a fresh chain.
+
+        let verified_head = self.log.chain_head_hex();
+        let verified_count = self.log.record_count().unwrap_or(0);
+
+        let discarded = {
+            let guard = self.store.lock().map_err(|e| e.to_string())?;
+            let Some(store) = guard.as_ref() else {
+                return Err("audit session is closed".into());
+            };
+            let discarded = store.retain_tombstones_only()?;
+            store.insert(&tombstone(
+                discarded,
+                verified_count,
+                verified_head.as_deref(),
+                &reason,
+            ))?;
+            discarded
+        };
+
+        // Compaction is what actually replaces the sealed file, and it clears the
+        // log's own seal; the session's copy is cleared alongside it.
         self.compact_log_from_index()?;
         if let Ok(mut slot) = self.integrity_error.lock() {
             *slot = None;
         }
-        Ok(n)
+        Ok(discarded)
     }
 
     /// Rewrite the log to match the index exactly.
@@ -350,20 +431,17 @@ mod tests {
     }
 
     #[test]
-    fn clear_all_does_not_come_back_from_the_log() {
+    fn an_intact_log_cannot_be_erased() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("audit.log.enc");
-        let session = AuditSession::new(path.clone());
+        let session = AuditSession::new(dir.path().join("audit.log.enc"));
         session.open(KEY).expect("open");
         session.try_insert(&sample("e1", 100)).expect("insert");
-        session.try_insert(&sample("e2", 200)).expect("insert");
-        assert_eq!(session.clear_all().expect("clear"), 2);
-        session.close().expect("close");
 
-        let reopened = AuditSession::new(path);
-        let report = reopened.open(KEY).expect("reopen");
-        assert_eq!(report.records, 0);
-        assert!(ids(&reopened).is_empty());
+        // The whole point of the split: retention removes events, a human cannot.
+        let err = session.discard_damaged_log().expect_err("must refuse");
+        assert!(err.contains("intact"), "{err}");
+        assert!(err.contains("retention"), "{err}");
+        assert_eq!(ids(&session), ["e1"], "the event must survive");
     }
 
     #[test]
@@ -376,9 +454,11 @@ mod tests {
         session.try_insert(&sample("e2", 200)).expect("insert");
         session.close().expect("close");
 
+        // Damage the *last* record: earlier ones stay readable, which is the
+        // interesting case — a partial recovery followed by a discard.
         let mut bytes = std::fs::read(&path).unwrap();
         let len = bytes.len();
-        bytes[24] ^= 0xff; // inside the first record's ciphertext
+        *bytes.last_mut().unwrap() ^= 0xff;
         std::fs::write(&path, &bytes).unwrap();
 
         let reopened = AuditSession::new(path.clone());
@@ -390,39 +470,76 @@ mod tests {
         assert!(reopened.try_insert(&sample("e3", 300)).is_err());
         assert_eq!(std::fs::read(&path).unwrap().len(), len);
 
-        // Clearing is the documented way back to a working log.
-        reopened.clear_all().expect("clear");
-        assert!(reopened.integrity_error().is_none());
+        // Discarding is the documented way back to a working log — and it must
+        // leave a permanent record that it happened.
+        let discarded = reopened.discard_damaged_log().expect("discard");
+        assert_eq!(discarded, 1, "the readable event is removed with the rest");
+        assert!(reopened.integrity_error().is_none(), "seal must be cleared");
         assert!(reopened.try_insert(&sample("e4", 400)).expect("insert"));
+
+        let rows = reopened.query(&AuditFilter::default()).expect("query");
+        let tomb: Vec<_> = rows
+            .iter()
+            .filter(|e| e.op == crate::audit::store::TOMBSTONE_OP)
+            .collect();
+        assert_eq!(tomb.len(), 1, "exactly one tombstone");
+        assert!(!tomb[0].ok, "a discard is not a success");
+        assert!(tomb[0].summary.contains("discarded"), "{}", tomb[0].summary);
+        assert!(
+            tomb[0].error.as_deref().unwrap_or("").len() > 0,
+            "the tombstone must carry why the log was unverifiable"
+        );
     }
 
     #[test]
-    fn retention_never_prunes_a_sealed_log() {
+    fn a_tombstone_survives_retention_and_accumulates_across_discards() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("audit.log.enc");
+
+        let damage_last_record = || {
+            let mut bytes = std::fs::read(&path).unwrap();
+            *bytes.last_mut().unwrap() ^= 0xff;
+            std::fs::write(&path, &bytes).unwrap();
+        };
+
         let session = AuditSession::new(path.clone());
         session.open(KEY).expect("open");
-        session.try_insert(&sample("old", 1_000)).expect("insert");
-        session.try_insert(&sample("new", 5_000)).expect("insert");
+        session.try_insert(&sample("e1", 100)).expect("insert");
         session.close().expect("close");
+        damage_last_record();
 
-        // Tamper, then reopen: the log seals.
-        let mut bytes = std::fs::read(&path).unwrap();
-        bytes[24] ^= 0xff;
-        std::fs::write(&path, &bytes).unwrap();
-        let reopened = AuditSession::new(path.clone());
-        let report = reopened.open(KEY).expect("open damaged");
-        assert!(report.integrity_error.is_some(), "{report:?}");
+        let s1 = AuditSession::new(path.clone());
+        s1.open(KEY).expect("open damaged");
+        s1.discard_damaged_log().expect("discard");
 
-        // Pruning compacts, and compaction would replace the file and clear the
-        // seal — destroying the evidence sealing exists to keep.
+        // Retention must not put a deadline on the record that a discard happened.
         assert_eq!(
-            reopened.prune_before(9_999).expect("prune"),
+            s1.prune_before(i64::MAX).expect("prune"),
             0,
-            "a sealed log must not be pruned"
+            "a tombstone must not be pruned away"
         );
-        assert_eq!(std::fs::read(&path).unwrap(), bytes, "file must be untouched");
-        assert!(reopened.integrity_error().is_some(), "seal must remain");
+        assert_eq!(
+            s1.query(&AuditFilter::default()).expect("query").len(),
+            1,
+            "the tombstone remains"
+        );
+
+        // Record again, damage the new record, discard again: the earlier
+        // tombstone is still readable, so the two accumulate.
+        s1.try_insert(&sample("e2", 200)).expect("insert");
+        s1.close().expect("close");
+        damage_last_record();
+
+        let s2 = AuditSession::new(path);
+        s2.open(KEY).expect("open damaged again");
+        s2.discard_damaged_log().expect("second discard");
+
+        let rows = s2.query(&AuditFilter::default()).expect("query");
+        let tombs = rows
+            .iter()
+            .filter(|e| e.op == crate::audit::store::TOMBSTONE_OP)
+            .count();
+        assert_eq!(tombs, 2, "a readable earlier discard must stay on record");
     }
 
     #[test]

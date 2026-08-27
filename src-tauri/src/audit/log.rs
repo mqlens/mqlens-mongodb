@@ -452,8 +452,44 @@ impl AuditLog {
             .map_err(|e| format!("read {}: {e}", self.path.display()))?;
 
         if bytes.is_empty() {
-            // A brand new (or zero-length) log: lay down the header in place,
-            // keeping the handle and its lock.
+            // An empty file is only "brand new" if nothing was ever recorded.
+            // Deleting or truncating the log to zero would otherwise be the one
+            // way to erase history without detection, since there are no frames
+            // left to fail a check.
+            let sealed = match self.read_state(key) {
+                RecordedState::Known(expected, _) if expected > 0 => Some(format!(
+                    "the audit log is empty but {expected} event(s) were recorded — the file \
+                     was deleted or truncated. Discard the damaged log from Activity to \
+                     resume recording."
+                )),
+                RecordedState::Unreadable(why) => Some(format!(
+                    "the audit log is empty and its state file could not be read ({why}), so \
+                     it cannot be verified. Discard the damaged log from Activity to resume \
+                     recording."
+                )),
+                _ => None,
+            };
+            if let Some(reason) = sealed {
+                // Write nothing: the state file is the surviving evidence.
+                *slot = Some(Open {
+                    lock,
+                    file,
+                    seq: 0,
+                    head: GENESIS,
+                    sealed_reason: Some(reason.clone()),
+                });
+                return Ok((
+                    Vec::new(),
+                    LoadReport {
+                        records: 0,
+                        truncated_tail: false,
+                        integrity_error: Some(reason),
+                    },
+                ));
+            }
+
+            // Genuinely new: lay down the header in place, keeping the handle
+            // and its lock.
             let header = header_bytes();
             file.write_all(&header)
                 .map_err(|e| format!("write {}: {e}", self.path.display()))?;
@@ -500,15 +536,15 @@ impl AuditLog {
             RecordedState::Missing => {
                 decoded.report.integrity_error = Some(
                     "the audit log's state file is missing, so the log cannot be verified \
-                     against the number of events it should hold. Clear the log to start a \
-                     new one."
+                     against the number of events it should hold. Discard the damaged log \
+                     from Activity to resume recording."
                         .into(),
                 );
             }
             RecordedState::Unreadable(why) => {
                 decoded.report.integrity_error = Some(format!(
                     "the audit log's state file could not be read ({why}), so the log cannot \
-                     be verified. Clear the log to start a new one."
+                     be verified. Discard the damaged log from Activity to resume recording."
                 ));
             }
         }
@@ -628,8 +664,8 @@ impl AuditLog {
             if let Err(e) = self.write_state(key, seq, &head) {
                 sealed_reason = Some(format!(
                     "the audit log was compacted but its state file could not be updated \
-                     ({e}), so the log can no longer be verified. Clear the log to start a \
-                     new one."
+                     ({e}), so the log can no longer be verified. Discard the damaged log \
+                     from Activity to resume recording."
                 ));
                 state_error = Some(e);
             }
@@ -646,6 +682,14 @@ impl AuditLog {
             Some(e) => Err(e),
             None => replaced,
         }
+    }
+
+    /// Hex chain head, for recording what a discarded log was verified up to.
+    pub fn chain_head_hex(&self) -> Option<String> {
+        self.open
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|o| hex32(&o.head)))
     }
 
     /// Records written so far, or `None` when closed.

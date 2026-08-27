@@ -2492,11 +2492,15 @@ async fn audit_open_folder(app_handle: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Discard a log that failed verification, so recording can resume (#272).
+///
+/// There is deliberately no command to clear an intact log: retention is the
+/// only thing that removes events. See `AuditSession::discard_damaged_log`.
 #[tauri::command]
-async fn audit_clear(state: tauri::State<'_, AppState>) -> Result<u64, String> {
+async fn audit_discard_damaged_log(state: tauri::State<'_, AppState>) -> Result<u64, String> {
     let guard = state.audit.lock_safe()?;
     match guard.as_ref() {
-        Some(session) => session.clear_all(),
+        Some(session) => session.discard_damaged_log(),
         None => Err("vault is locked".into()),
     }
 }
@@ -2716,7 +2720,7 @@ pub fn run() {
             audit_list,
             audit_export,
             audit_open_folder,
-            audit_clear,
+            audit_discard_damaged_log,
             audit_reset,
             audit_dropped_count,
             audit_status,

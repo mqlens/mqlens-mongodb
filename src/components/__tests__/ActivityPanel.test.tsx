@@ -169,4 +169,48 @@ describe('ActivityPanel', () => {
     expect(detail).toHaveTextContent(longSummary);
     expect(detail).toHaveTextContent('sales.orders');
   });
+
+  it('offers no way to erase an intact log', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'audit_list') return Promise.resolve([sampleEvent]);
+      if (cmd === 'audit_status') return Promise.resolve(activeStatus);
+      return Promise.resolve(undefined);
+    });
+
+    render(<ActivityPanel />);
+    await screen.findByTestId('activity-row-ev-1');
+
+    // Retention is the only thing that removes events from a healthy log.
+    expect(screen.queryByTestId('activity-discard-btn')).not.toBeInTheDocument();
+  });
+
+  it('offers discard only for a damaged log, and reports what it removed', async () => {
+    const invoked: string[] = [];
+    mockInvoke.mockImplementation((cmd: string) => {
+      invoked.push(cmd);
+      if (cmd === 'audit_list') return Promise.resolve([]);
+      if (cmd === 'audit_status')
+        return Promise.resolve({
+          active: false,
+          degradedReason: null,
+          integrityError: 'hash chain broken at record 2',
+          droppedCount: 0,
+        });
+      if (cmd === 'audit_discard_damaged_log') return Promise.resolve(7);
+      return Promise.resolve(undefined);
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    render(<ActivityPanel />);
+    const btn = await screen.findByTestId('activity-discard-btn');
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(invoked).toContain('audit_discard_damaged_log'));
+    expect(confirmSpy).toHaveBeenCalled();
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('7')));
+
+    confirmSpy.mockRestore();
+    alertSpy.mockRestore();
+  });
 });

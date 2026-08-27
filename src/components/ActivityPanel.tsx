@@ -163,12 +163,16 @@ export const ActivityPanel: React.FC = () => {
     }
   };
 
-  const onClear = async () => {
-    if (!window.confirm(t('activity.clearConfirm'))) return;
+  // Only offered for a log that failed verification. There is deliberately no
+  // way to erase an intact log: retention removes old events on its own, and a
+  // one-click wipe would defeat the integrity checks it sits behind.
+  const onDiscardDamaged = async () => {
+    if (!window.confirm(t('activity.discardConfirm'))) return;
     setBusy(true);
     try {
-      await invoke('audit_clear');
+      const removed = await invoke<number>('audit_discard_damaged_log');
       await load();
+      window.alert(t('activity.discardDone', { count: removed }));
     } catch (err) {
       if (isVaultLockedError(err)) setLocked(true);
       else setError(String(err));
@@ -193,6 +197,8 @@ export const ActivityPanel: React.FC = () => {
           <div>
             <h2 className="text-sm font-semibold text-foreground">{t('activity.header.title')}</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">{t('activity.header.subtitle')}</p>
+            {/* Says why there is no "clear" button on an intact log. */}
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('activity.retentionNote')}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -217,18 +223,20 @@ export const ActivityPanel: React.FC = () => {
               <Download className="h-3.5 w-3.5" />
               {t('activity.actions.export')}
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void onClear()}
-              disabled={busy || loading}
-              data-testid="activity-clear-btn"
-              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              {t('activity.actions.clear')}
-            </Button>
+            {integrityError !== null && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void onDiscardDamaged()}
+                disabled={busy || loading}
+                data-testid="activity-discard-btn"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t('activity.actions.discardDamaged')}
+              </Button>
+            )}
           </div>
         </div>
 

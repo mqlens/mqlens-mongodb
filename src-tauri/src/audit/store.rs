@@ -7,6 +7,13 @@ use std::sync::Mutex;
 
 pub const SCHEMA_VERSION: i32 = 1;
 
+/// Op name of the record left behind when a damaged log is discarded.
+///
+/// These are the one kind of event that cannot be removed: retention skips them
+/// and discarding preserves the existing ones, so a log that was discarded can
+/// never be made to look like one that never was.
+pub const TOMBSTONE_OP: &str = "audit_log_discarded";
+
 /// One persisted audit row (matches `audit_events` table).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -235,21 +242,28 @@ impl AuditStore {
         Ok(out)
     }
 
+    /// Apply retention. Tombstones are exempt: letting them expire would put a
+    /// deadline on the record that a log was once discarded.
     pub fn prune_before(&self, ts_ms: i64) -> Result<u64, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let n = conn
             .execute(
-                "DELETE FROM audit_events WHERE ts < ?1",
-                params![ts_ms],
+                "DELETE FROM audit_events WHERE ts < ?1 AND op != ?2",
+                params![ts_ms, TOMBSTONE_OP],
             )
             .map_err(|e| e.to_string())?;
         Ok(n as u64)
     }
 
-    pub fn clear_all(&self) -> Result<u64, String> {
+    /// Delete every event except tombstones, returning how many were removed.
+    ///
+    /// Used when discarding a damaged log: the events are unverifiable and go,
+    /// but the record of previous discards stays so the history of erasures
+    /// accumulates rather than being overwritten.
+    pub fn retain_tombstones_only(&self) -> Result<u64, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let n = conn
-            .execute("DELETE FROM audit_events", [])
+            .execute("DELETE FROM audit_events WHERE op != ?1", params![TOMBSTONE_OP])
             .map_err(|e| e.to_string())?;
         Ok(n as u64)
     }

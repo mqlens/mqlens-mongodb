@@ -550,11 +550,10 @@
   },
   "activity": {
     "actions": {
-      "clear": "Protokoll leeren",
+      "discardDamaged": "Beschädigtes Protokoll verwerfen",
       "export": "Exportieren…",
       "refresh": "Aktualisieren"
     },
-    "clearConfirm": "Alle Aktivitätsereignisse in diesem Tresor löschen? Das kann nicht rückgängig gemacht werden.",
     "columns": {
       "connection": "Verbindung",
       "namespace": "Namensraum",
@@ -572,6 +571,9 @@
       "error": "Fehler",
       "level": "Stufe bei Aufzeichnung"
     },
+    "discardConfirm": "Dieses beschädigte Aktivitätsprotokoll verwerfen? Seine nicht überprüfbaren Ereignisse können nicht wiederhergestellt werden. Ein dauerhafter Vermerk über das Verwerfen bleibt erhalten.",
+    "discardDone_one": "1 nicht überprüfbares Ereignis verworfen. Die Aufzeichnung läuft wieder, und ein Vermerk über das Verwerfen bleibt im Protokoll.",
+    "discardDone_other": "{{count}} nicht überprüfbare Ereignisse verworfen. Die Aufzeichnung läuft wieder, und ein Vermerk über das Verwerfen bleibt im Protokoll.",
     "droppedBanner_one": "{{count}} Ereignis wurde in dieser Sitzung verworfen (Speicher- oder Verschlüsselungsfehler).",
     "droppedBanner_other": "{{count}} Ereignisse wurden in dieser Sitzung verworfen (Speicher- oder Verschlüsselungsfehler).",
     "empty": "Noch keine Aktivität für die aktuellen Filter.",
@@ -594,10 +596,11 @@
       "subtitle": "Lokales, tresorverschlüsseltes Protokoll von Datenbankoperationen.",
       "title": "Aktivität"
     },
-    "integrityBanner": "Integritätsprüfung des Aktivitätsprotokolls fehlgeschlagen: {{reason}}. Die Aufzeichnung wurde gestoppt und die Datei bleibt erhalten. Mit „Leeren“ ein neues Protokoll beginnen.",
+    "integrityBanner": "Integritätsprüfung des Aktivitätsprotokolls fehlgeschlagen: {{reason}}. Die Aufzeichnung wurde gestoppt und die Datei bleibt erhalten. Verwirf das beschädigte Protokoll, um die Aufzeichnung fortzusetzen.",
     "loading": "Aktivität wird geladen…",
     "lockedBody": "Entsperre den Tresor, um das Aktivitätsprotokoll anzuzeigen und zu exportieren.",
     "lockedTitle": "Tresor ist gesperrt",
+    "retentionNote": "Alte Ereignisse werden automatisch durch die Aufbewahrungseinstellung entfernt. Ein intaktes Protokoll kann nicht gelöscht werden.",
     "statusError": "Fehlgeschlagen",
     "statusOk": "Erfolgreich"
   }

@@ -1,11 +1,10 @@
 {
   "activity": {
     "actions": {
-      "clear": "Clear log",
+      "discardDamaged": "Discard damaged log",
       "export": "Export…",
       "refresh": "Refresh"
     },
-    "clearConfirm": "Clear all activity events from this vault? This cannot be undone.",
     "columns": {
       "connection": "Connection",
       "namespace": "Namespace",
@@ -23,6 +22,9 @@
       "error": "Error",
       "level": "Level at record"
     },
+    "discardConfirm": "Discard this damaged activity log? Its unverifiable events cannot be recovered. A permanent record that the log was discarded will be kept.",
+    "discardDone_one": "1 unverifiable event discarded. Recording has resumed, and a record of the discard is kept in the log.",
+    "discardDone_other": "{{count}} unverifiable events discarded. Recording has resumed, and a record of the discard is kept in the log.",
     "droppedBanner_one": "{{count}} event was dropped this session (storage or encryption failures).",
     "droppedBanner_other": "{{count}} events were dropped this session (storage or encryption failures).",
     "empty": "No activity recorded yet for the current filters.",
@@ -45,10 +47,11 @@
       "subtitle": "Local vault-encrypted log of database operations.",
       "title": "Activity"
     },
-    "integrityBanner": "Activity log integrity check failed: {{reason}}. Recording has stopped and the file is being preserved. Use Clear to start a new log.",
+    "integrityBanner": "Activity log integrity check failed: {{reason}}. Recording has stopped and the file is being preserved. Discard the damaged log to resume recording.",
     "loading": "Loading activity…",
     "lockedBody": "Unlock the vault to view and export the activity log.",
     "lockedTitle": "Vault is locked",
+    "retentionNote": "Old events are removed automatically by the retention setting. An intact log cannot be erased.",
     "statusError": "Failed",
     "statusOk": "OK"
   },

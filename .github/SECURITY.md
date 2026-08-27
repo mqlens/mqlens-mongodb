@@ -58,6 +58,12 @@ services you connect to.
   file instead of writing over it. A crash mid-write is distinguished from
   tampering: only when the recorded count confirms the trailing bytes were an
   interrupted write is that partial record discarded and logging continued.
+- **The activity log cannot be erased from the app** — there is no "clear"
+  action for an intact log; the retention setting is the only thing that removes
+  events, on the schedule you choose. A log that has *failed* verification can be
+  discarded so recording can resume, and that always leaves a permanent record
+  of the discard which retention will not remove. So a discarded log can never be
+  made to look like one that was never discarded.
   Note the limit: the log is encrypted with your own master password on your own
   machine, so it is tamper-**evident**, not tamper-**proof** — anyone holding
   that password can delete it and start fresh.

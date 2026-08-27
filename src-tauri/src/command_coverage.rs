@@ -141,7 +141,7 @@ const LOCAL_COMMANDS: &[&str] = &[
     "audit_list",
     "audit_export",
     "audit_open_folder",
-    "audit_clear",
+    "audit_discard_damaged_log",
     "audit_reset",
     "audit_dropped_count",
     "audit_status",
