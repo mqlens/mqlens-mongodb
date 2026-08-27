@@ -34,9 +34,12 @@
 //!
 //! A *torn tail* — a crash midway through an append — is a different thing from
 //! tampering and is handled differently: the trailing partial record is
-//! discarded and logging continues. Corruption anywhere earlier seals the log
-//! (see [`LoadReport::integrity_error`]): the file is left untouched as evidence
-//! and appends are refused rather than overwriting it.
+//! discarded and logging continues. The distinction is whether the frame is
+//! physically complete, not where it sits: an incomplete frame is a torn append,
+//! while any fully present frame that fails to authenticate means the file was
+//! altered, including the very last one. Tampering seals the log (see
+//! [`LoadReport::integrity_error`]): the file is left untouched as evidence and
+//! appends are refused rather than overwriting it.
 //!
 //! Note the honest limit: this log is encrypted with the user's own vault key on
 //! the user's own machine. It is tamper-*evident*, not tamper-*proof* — whoever
@@ -46,7 +49,8 @@ use crate::durable;
 use crate::vault;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{Seek, SeekFrom, Write};
+use fs4::fs_std::FileExt;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -198,31 +202,28 @@ fn decode_file(key: &[u8; 32], bytes: &[u8]) -> Result<Decoded, String> {
             break;
         }
         let body = &bytes[off + LEN_PREFIX..off + LEN_PREFIX + len as usize];
-        let is_last = off + LEN_PREFIX + len as usize == bytes.len();
 
+        // Only an *incomplete* frame is a torn append, and that is already
+        // handled by the length checks above. A frame that is entirely present
+        // reached the disk, so failing to authenticate means it was altered (or
+        // the key is wrong) — never truncate it away, or the last record of a
+        // tampered log would be silently erased.
         let plain = match vault::decrypt(key, body) {
             Ok(p) => p,
             Err(e) => {
-                // Only the final record can be a torn write; anything earlier
-                // means the file was altered.
-                if is_last {
-                    decoded.report.truncated_tail = true;
-                    break;
-                }
-                decoded.report.integrity_error =
-                    Some(format!("record {} failed to decrypt: {e}", decoded.seq + 1));
+                decoded.report.integrity_error = Some(format!(
+                    "audit log record {} failed to authenticate ({e}) — the file was \
+                     modified outside MQLens, or the vault key does not match",
+                    decoded.seq + 1
+                ));
                 break;
             }
         };
         let record: Record = match serde_json::from_slice(&plain) {
             Ok(r) => r,
             Err(e) => {
-                if is_last {
-                    decoded.report.truncated_tail = true;
-                    break;
-                }
                 decoded.report.integrity_error =
-                    Some(format!("record {} is malformed: {e}", decoded.seq + 1));
+                    Some(format!("audit log record {} is malformed: {e}", decoded.seq + 1));
                 break;
             }
         };
@@ -296,25 +297,26 @@ impl AuditLog {
     /// query index, plus a report describing what recovery had to do.
     pub fn open(&self, key: &[u8; 32]) -> Result<(Vec<AuditEvent>, LoadReport), String> {
         let mut slot = self.open.lock().map_err(|e| e.to_string())?;
+        // Drop any previous handle first, releasing its lock.
         *slot = None;
 
-        if !self.path.exists() {
-            durable::write_atomic(&self.path, &header_bytes())?;
-            *slot = Some(Open {
-                file: self.open_handle()?,
-                seq: 0,
-                head: GENESIS,
-                sealed_reason: None,
-            });
-            return Ok((Vec::new(), LoadReport::default()));
-        }
+        // Take the lock before reading, so no other instance can be appending
+        // while recovery decides what is a torn tail and what is tampering.
+        let mut file = self.open_handle()?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|e| format!("read {}: {e}", self.path.display()))?;
 
-        let bytes =
-            fs::read(&self.path).map_err(|e| format!("read {}: {e}", self.path.display()))?;
         if bytes.is_empty() {
-            durable::write_atomic(&self.path, &header_bytes())?;
+            // A brand new (or zero-length) log: lay down the header in place,
+            // keeping the handle and its lock.
+            let header = header_bytes();
+            file.write_all(&header)
+                .map_err(|e| format!("write {}: {e}", self.path.display()))?;
+            file.sync_all()
+                .map_err(|e| format!("fsync {}: {e}", self.path.display()))?;
             *slot = Some(Open {
-                file: self.open_handle()?,
+                file,
                 seq: 0,
                 head: GENESIS,
                 sealed_reason: None,
@@ -323,7 +325,6 @@ impl AuditLog {
         }
 
         let decoded = decode_file(key, &bytes)?;
-        let file = self.open_handle()?;
 
         if decoded.report.integrity_error.is_none() && decoded.report.truncated_tail {
             // Drop the partial record so the next append starts on a clean
@@ -343,12 +344,34 @@ impl AuditLog {
         Ok((decoded.events, decoded.report))
     }
 
+    /// Open the log and take an exclusive advisory lock on it.
+    ///
+    /// The lock is what keeps a second MQLens process from interleaving appends:
+    /// each process caches its own `seq` and `head`, so concurrent writers would
+    /// duplicate sequence numbers and break the hash chain, sealing the log on
+    /// the next unlock. There is no single-instance enforcement in the app, so
+    /// this has to be handled here. The lock is released when the handle drops.
     fn open_handle(&self) -> Result<fs::File, String> {
-        fs::OpenOptions::new()
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+        }
+        let file = fs::OpenOptions::new()
             .read(true)
             .write(true)
+            .create(true)
+            // Never truncate: the whole point is to append to existing history.
+            .truncate(false)
             .open(&self.path)
-            .map_err(|e| format!("open {}: {e}", self.path.display()))
+            .map_err(|e| format!("open {}: {e}", self.path.display()))?;
+        match file.try_lock_exclusive() {
+            Ok(true) => Ok(file),
+            Ok(false) => Err(format!(
+                "another MQLens instance is already recording to the activity log ({}) — \
+                 only one instance can record at a time",
+                self.path.display()
+            )),
+            Err(e) => Err(format!("lock {}: {e}", self.path.display())),
+        }
     }
 
     /// Append one event and fsync it. O(1) in the size of the existing log.
@@ -509,13 +532,25 @@ mod tests {
     fn every_append_is_durable_without_close() {
         let dir = tempdir().unwrap();
         let (log, path) = log_with(dir.path(), 2);
-        // Simulate a hard kill: abandon the live handle without closing.
-        std::mem::forget(log);
 
+        // Read the bytes straight off disk while the log is still open. A crash
+        // at this instant would leave exactly this file, because every append is
+        // fsynced — so decoding it is the durability guarantee.
+        //
+        // Deliberately not `mem::forget`: that would leak the handle and hold the
+        // advisory lock forever, which a dying process does not do — the OS
+        // releases it, the same way dropping the handle does below.
+        let on_disk = fs::read(&path).unwrap();
+        let decoded = decode_file(&KEY, &on_disk).expect("decode the on-disk image");
+        assert_eq!(decoded.events.len(), 2, "both events must already be on disk");
+        assert!(!decoded.report.truncated_tail, "{:?}", decoded.report);
+        assert!(decoded.report.integrity_error.is_none(), "{:?}", decoded.report);
+
+        drop(log);
         let reopened = AuditLog::new(path);
-        let (events, report) = reopened.open(&KEY).expect("reopen after crash");
-        assert_eq!(events.len(), 2, "both events must already be on disk");
-        assert!(!report.truncated_tail);
+        let (events, report) = reopened.open(&KEY).expect("reopen");
+        assert_eq!(events.len(), 2);
+        assert!(report.integrity_error.is_none(), "{report:?}");
     }
 
     #[test]
@@ -596,6 +631,51 @@ mod tests {
     }
 
     #[test]
+    fn a_modified_final_record_seals_the_log_instead_of_being_truncated_away() {
+        let dir = tempdir().unwrap();
+        let (log, path) = log_with(dir.path(), 3);
+        log.close();
+
+        // Flip a byte inside the *last* record. Its frame is complete and
+        // reaches EOF, so length checks cannot tell it apart from a good record
+        // — only the auth tag can, and it must not be mistaken for a torn write.
+        let mut bytes = fs::read(&path).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xff;
+        fs::write(&path, &bytes).unwrap();
+
+        let reopened = AuditLog::new(path.clone());
+        let (_, report) = reopened.open(&KEY).expect("load");
+        assert!(
+            report.integrity_error.is_some(),
+            "a complete-but-unauthentic final record is tampering, not a torn tail: {report:?}"
+        );
+        assert!(!report.truncated_tail, "{report:?}");
+        assert_eq!(
+            fs::read(&path).unwrap().len(),
+            bytes.len(),
+            "the evidence must not be truncated away"
+        );
+    }
+
+    #[test]
+    fn a_single_record_log_opened_with_the_wrong_key_is_not_silently_emptied() {
+        let dir = tempdir().unwrap();
+        let (log, path) = log_with(dir.path(), 1);
+        log.close();
+        let before = fs::read(&path).unwrap().len();
+
+        let reopened = AuditLog::new(path.clone());
+        let (events, report) = reopened.open(&[42u8; 32]).expect("load");
+        assert!(events.is_empty());
+        assert!(
+            report.integrity_error.is_some(),
+            "the only record must not be written off as a torn append: {report:?}"
+        );
+        assert_eq!(fs::read(&path).unwrap().len(), before, "file must be intact");
+    }
+
+    #[test]
     fn deleting_a_record_breaks_the_hash_chain() {
         let dir = tempdir().unwrap();
         let (log, path) = log_with(dir.path(), 3);
@@ -666,6 +746,59 @@ mod tests {
         let (events, report) = reopened.open(&[9u8; 32]).expect("load");
         assert!(events.is_empty());
         assert!(report.integrity_error.is_some());
+    }
+
+    #[test]
+    fn a_second_instance_cannot_open_the_same_log() {
+        let dir = tempdir().unwrap();
+        let (first, path) = log_with(dir.path(), 1);
+
+        // Concurrent appenders would each cache their own seq/head and break the
+        // chain, so the second must be refused outright rather than corrupting it.
+        let second = AuditLog::new(path.clone());
+        let err = second.open(&KEY).unwrap_err();
+        assert!(
+            err.contains("another MQLens instance"),
+            "expected a clear lock message, got: {err}"
+        );
+
+        // The first instance keeps working while it holds the lock.
+        first.append(&KEY, &event("e2", 2_000)).expect("append");
+
+        // Releasing the lock hands the log over cleanly.
+        first.close();
+        let (events, report) = second.open(&KEY).expect("open after release");
+        assert!(report.integrity_error.is_none(), "{report:?}");
+        assert_eq!(
+            events.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            ["e1", "e2"]
+        );
+    }
+
+    #[test]
+    fn reopening_in_the_same_instance_does_not_deadlock_on_its_own_lock() {
+        let dir = tempdir().unwrap();
+        let (log, _path) = log_with(dir.path(), 2);
+        // `open` must release the previous handle before taking the lock again.
+        let (events, report) = log.open(&KEY).expect("reopen in place");
+        assert!(report.integrity_error.is_none(), "{report:?}");
+        assert_eq!(events.len(), 2);
+        log.append(&KEY, &event("e3", 3_000)).expect("append after reopen");
+    }
+
+    #[test]
+    fn compaction_keeps_the_lock_held_afterwards() {
+        let dir = tempdir().unwrap();
+        let (log, path) = log_with(dir.path(), 3);
+        log.compact(&KEY, &[event("e3", 1_003)]).expect("compact");
+
+        // Compaction replaces the file, so it must re-acquire the lock.
+        let other = AuditLog::new(path);
+        assert!(
+            other.open(&KEY).is_err(),
+            "the lock must still be held after compaction"
+        );
+        log.append(&KEY, &event("e4", 1_004)).expect("append after compact");
     }
 
     #[test]

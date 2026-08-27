@@ -267,8 +267,11 @@ mod tests {
         session.open(KEY).expect("open");
         assert!(session.try_insert(&sample("e1", 100)).expect("insert"));
         assert!(session.try_insert(&sample("e2", 200)).expect("insert"));
-        // No close(): every append was already fsynced.
-        std::mem::forget(session);
+        // Dropped without close(): every append was already fsynced, so nothing
+        // depends on an orderly shutdown. Dropping rather than `mem::forget`ing
+        // because a dying process releases the log's advisory lock, and a leaked
+        // handle would not.
+        drop(session);
 
         let reopened = AuditSession::new(path);
         let report = reopened.open(KEY).expect("reopen");

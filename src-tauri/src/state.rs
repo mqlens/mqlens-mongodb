@@ -159,6 +159,11 @@ pub struct AppState {
     /// explicit degraded state the UI surfaces, so an unlogged destructive
     /// operation is never mistaken for an audited one.
     pub audit_degraded: Mutex<Option<String>>,
+    /// Terminal events from background tasks that finished while the vault was
+    /// locked (#272). `vault_lock` does not cancel those tasks, so without this
+    /// their operations would stay recorded as `running` forever. Drained on the
+    /// next unlock.
+    pub audit_pending: Arc<Mutex<Vec<crate::audit::AuditEvent>>>,
 }
 
 impl AppState {
@@ -185,6 +190,7 @@ impl AppState {
             mcp: Arc::new(Mutex::new(mcp::McpControl::new())),
             audit: Arc::new(Mutex::new(None)),
             audit_degraded: Mutex::new(None),
+            audit_pending: Arc::new(Mutex::new(Vec::new())),
         }
     }
 

@@ -4,7 +4,7 @@ use super::classify::classify_op;
 use super::level::{should_record, OpClass};
 use super::redact::{redact_error, redact_text, truncate_args, MAX_ARGS_BYTES};
 use super::store::{AuditEvent, SCHEMA_VERSION};
-use super::envelope::AuditSession;
+use super::envelope::{AuditPolicy, AuditSession};
 use crate::state::{AppState, LockExt};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -12,6 +12,13 @@ use uuid::Uuid;
 
 /// Shared handle to the audit session slot in `AppState`.
 pub type SessionSlot = Arc<Mutex<Option<AuditSession>>>;
+
+/// Terminal task events waiting for the audit session to reopen.
+pub type PendingSlot = Arc<Mutex<Vec<AuditEvent>>>;
+
+/// Cap the parked queue so a long-locked vault cannot grow it without bound.
+/// Far above any plausible number of background tasks in one lock window.
+const MAX_PENDING_EVENTS: usize = 1024;
 
 tokio::task_local! {
     /// Invoking surface for audit attribution, scoped around one tool call.
@@ -125,6 +132,21 @@ fn record_into(
         return Ok(());
     }
 
+    let event = build_event(&input, profile_name, source, policy);
+
+    let _ = session.try_insert(&event)?;
+    let cutoff = super::retention_cutoff_ms(policy.retention_days, now_ms());
+    let _ = session.prune_before(cutoff);
+    Ok(())
+}
+
+/// Assemble the stored row, applying the payload gate to both args and errors.
+fn build_event(
+    input: &RecordInput<'_>,
+    profile_name: Option<String>,
+    source: String,
+    policy: AuditPolicy,
+) -> AuditEvent {
     let args_json = if policy.include_payloads {
         input.args.map(|raw| {
             let redacted = redact_text(raw);
@@ -134,7 +156,7 @@ fn record_into(
         None
     };
 
-    let event = AuditEvent {
+    AuditEvent {
         id: input
             .event_id
             .map(|s| s.to_string())
@@ -158,12 +180,7 @@ fn record_into(
         args_json,
         level_at_record: policy.level.as_str().to_string(),
         schema_version: SCHEMA_VERSION,
-    };
-
-    let _ = session.try_insert(&event)?;
-    let cutoff = super::retention_cutoff_ms(policy.retention_days, now_ms());
-    let _ = session.prune_before(cutoff);
-    Ok(())
+    }
 }
 
 /// Record a background task's start only when no background task will record it.
@@ -219,6 +236,55 @@ pub fn maybe_record_task_start(
     );
 }
 
+/// Hold a terminal event until the audit session reopens.
+fn park_pending(pending: &PendingSlot, event: AuditEvent, outcome: &str) {
+    let Ok(mut queue) = pending.lock() else {
+        return;
+    };
+    // Same id supersedes, so replacing a parked event is correct rather than
+    // additive if a task somehow reports twice.
+    if let Some(existing) = queue.iter_mut().find(|e| e.id == event.id) {
+        *existing = event;
+        return;
+    }
+    if queue.len() >= MAX_PENDING_EVENTS {
+        eprintln!("audit: dropping parked {outcome} event, queue is full");
+        return;
+    }
+    queue.push(event);
+}
+
+/// Write every parked terminal event into a freshly opened session.
+///
+/// Returns how many were written. Events that cannot be written stay parked.
+pub fn flush_pending(slot: &SessionSlot, pending: &PendingSlot) -> usize {
+    let Ok(mut queue) = pending.lock() else {
+        return 0;
+    };
+    if queue.is_empty() {
+        return 0;
+    }
+    let Ok(guard) = slot.lock() else {
+        return 0;
+    };
+    let Some(session) = guard.as_ref() else {
+        return 0;
+    };
+    let mut written = 0;
+    queue.retain(|event| match session.try_insert(event) {
+        Ok(true) => {
+            written += 1;
+            false
+        }
+        Ok(false) => true,
+        Err(e) => {
+            eprintln!("audit: could not flush parked event {}: {e}", event.id);
+            true
+        }
+    });
+    written
+}
+
 /// Audit context captured when a background task is queued, so the task can
 /// record its own terminal outcome after the queuing command has returned.
 ///
@@ -228,6 +294,12 @@ pub fn maybe_record_task_start(
 #[derive(Clone)]
 pub struct TaskAuditContext {
     slot: SessionSlot,
+    /// Where a terminal event goes if the vault locked before the task finished.
+    pending: PendingSlot,
+    /// Policy in force when the task was queued. `None` means the `running`
+    /// event was never recorded (auditing off, or the level excluded it), and
+    /// the terminal event is skipped for the same reason.
+    policy: Option<AuditPolicy>,
     /// Stable across the `running` record and the terminal one, so the second
     /// replaces the first instead of adding a row.
     event_id: String,
@@ -259,8 +331,16 @@ impl TaskAuditContext {
         let source = scoped_source()
             .map(|s| s.to_string())
             .unwrap_or(inferred_source);
+        let policy = state
+            .audit
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.policy()))
+            .filter(|p| p.enabled && should_record(p.level, OpClass::Write));
         let ctx = Self {
             slot: Arc::clone(&state.audit),
+            pending: Arc::clone(&state.audit_pending),
+            policy,
             event_id: Uuid::new_v4().to_string(),
             ts: now_ms(),
             connection_id: connection_id.map(|s| s.to_string()),
@@ -282,6 +362,10 @@ impl TaskAuditContext {
     }
 
     fn write(&self, outcome: &str, ok: bool, error: Option<&str>, duration_ms: Option<i64>) {
+        // Nothing recorded the `running` event, so there is no row to supersede.
+        let Some(policy) = self.policy else {
+            return;
+        };
         let summary = format!("{} ({outcome})", self.summary);
         let input = RecordInput {
             event_id: Some(&self.event_id),
@@ -298,13 +382,35 @@ impl TaskAuditContext {
             summary: &summary,
             args: None,
         };
-        if let Err(e) = record_into(
-            &self.slot,
+        let event = build_event(
+            &input,
             self.profile_name.clone(),
             self.source.clone(),
-            input,
-        ) {
-            eprintln!("audit task record ({outcome}): {e}");
+            policy,
+        );
+
+        // `vault_lock` does not cancel background tasks, so a task can finish
+        // while the session is closed. Dropping the event here would leave the
+        // durable log claiming the operation is still running forever, so park
+        // it and let the next unlock write it.
+        let inserted = match self.slot.lock() {
+            Ok(guard) => match guard.as_ref() {
+                Some(session) => match session.try_insert(&event) {
+                    Ok(done) => done,
+                    Err(e) => {
+                        eprintln!("audit task record ({outcome}): {e}");
+                        false
+                    }
+                },
+                None => false,
+            },
+            Err(e) => {
+                eprintln!("audit task record ({outcome}): {e}");
+                false
+            }
+        };
+        if !inserted {
+            park_pending(&self.pending, event, outcome);
         }
     }
 }
@@ -644,6 +750,74 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(rows[0].ok);
         assert!(rows[0].summary.ends_with("(completed)"), "{}", rows[0].summary);
+    }
+
+    #[tokio::test]
+    async fn a_task_finishing_while_the_vault_is_locked_is_written_on_unlock() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        let ctx = TaskAuditContext::capture(
+            &state,
+            Some("c1"),
+            Some("shop"),
+            Some("orders"),
+            "start_import_task",
+            "import shop.orders (json, skip)",
+        );
+
+        // The user locks the vault; `vault_lock` does not cancel the task.
+        let session = state.audit.lock().unwrap().take().unwrap();
+        session.close().expect("close");
+
+        ctx.record_terminal("failed", Some("boom"), Some(11));
+        assert_eq!(
+            state.audit_pending.lock().unwrap().len(),
+            1,
+            "the outcome must be parked, not dropped"
+        );
+
+        // Unlock: the same session file, reopened.
+        session.open([5u8; 32]).expect("reopen");
+        *state.audit.lock().unwrap() = Some(session);
+        assert_eq!(flush_pending(&state.audit, &state.audit_pending), 1);
+        assert!(state.audit_pending.lock().unwrap().is_empty());
+
+        let rows = rows(&state);
+        assert_eq!(rows.len(), 1, "still one row, not a duplicate");
+        assert!(!rows[0].ok, "the failure must not stay recorded as running");
+        assert!(rows[0].summary.ends_with("(failed)"), "{}", rows[0].summary);
+        assert_eq!(rows[0].error.as_deref(), Some("boom"));
+    }
+
+    #[tokio::test]
+    async fn a_task_whose_level_excluded_it_records_nothing_at_either_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new();
+        let session = AuditSession::new(dir.path().join("audit.log.enc"));
+        session.open([5u8; 32]).expect("open");
+        session.set_policy(AuditPolicy {
+            enabled: false,
+            level: AuditLevel::C,
+            include_payloads: false,
+            retention_days: 30,
+        });
+        *state.audit.lock().unwrap() = Some(session);
+
+        let ctx = TaskAuditContext::capture(
+            &state,
+            Some("c1"),
+            Some("shop"),
+            None,
+            "start_database_copy",
+            "copy database a → shop",
+        );
+        ctx.record_terminal("completed", None, Some(5));
+
+        assert!(rows(&state).is_empty(), "auditing is disabled");
+        assert!(
+            state.audit_pending.lock().unwrap().is_empty(),
+            "a skipped event must not be parked either"
+        );
     }
 
     #[tokio::test]

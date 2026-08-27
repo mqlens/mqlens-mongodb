@@ -15,8 +15,8 @@ pub use envelope::{AuditPolicy, AuditSession};
 pub use log::{AuditLog, LoadReport};
 pub use level::{should_record, AuditLevel, OpClass};
 pub use record::{
-    maybe_record, maybe_record_result, maybe_record_task_start, with_source, RecordInput,
-    TaskAuditContext,
+    flush_pending, maybe_record, maybe_record_result, maybe_record_task_start, with_source,
+    RecordInput, TaskAuditContext,
 };
 pub use redact::{redact_error, redact_text, truncate_args, MAX_ARGS_BYTES, MAX_ERROR_BYTES};
 pub use store::{AuditEvent, AuditFilter, AuditStore, SCHEMA_VERSION};
@@ -123,6 +123,14 @@ fn open_on_unlock_inner(
     prune_for_policy(&session, session.policy());
 
     *slot = Some(session);
+    drop(slot);
+
+    // Background tasks that finished while the vault was locked parked their
+    // terminal events; write them now so nothing stays marked `running`.
+    let flushed = record::flush_pending(&state.audit, &state.audit_pending);
+    if flushed > 0 {
+        eprintln!("audit: wrote {flushed} task outcome(s) recorded while the vault was locked");
+    }
     Ok(())
 }
 

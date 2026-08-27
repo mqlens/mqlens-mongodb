@@ -65,6 +65,9 @@ rmcp = { version = "=2.2.0", features = ["server", "transport-streamable-http-se
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
 # Bundled SQLite for local audit log (#272) — no system libsqlite required.
 rusqlite = { version = "0.32", features = ["bundled"] }
+# Cross-process advisory lock on the audit log so two MQLens instances cannot
+# interleave appends and break its hash chain.
+fs4 = "0.13"
 
 [dev-dependencies]
 tiny_http = "0.12.0"

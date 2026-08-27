@@ -2394,21 +2394,36 @@ async fn vault_change_password(
     let settings_path = connections::get_settings_enc_path(&app_handle);
     let audit_log_path = connections::get_audit_log_path(&app_handle);
 
-    // Seal any open audit session under the old key before reading blobs.
+    // Close the audit session so the log is not being appended to while it is
+    // re-encrypted. Everything fallible after this point runs inside `rotate`, so
+    // a failure can reopen the session instead of leaving the app running
+    // unaudited until the next lock/unlock.
     let _ = audit::close_on_lock(&state);
 
-    // Prepare all re-encrypted payloads before overwriting any vault file.
-    let new_profiles =
-        connections::prepare_reencrypt_file(&old_key, &new_key, &profiles_path)?;
-    let new_settings =
-        connections::prepare_reencrypt_file(&old_key, &new_key, &settings_path)?;
-    let new_audit =
-        connections::prepare_reencrypt_audit_log(&old_key, &new_key, &audit_log_path)?;
+    let rotate = || -> Result<(), String> {
+        // Prepare every re-encrypted payload before overwriting any vault file:
+        // a failure here must not leave the files and the metadata disagreeing.
+        let new_profiles =
+            connections::prepare_reencrypt_file(&old_key, &new_key, &profiles_path)?;
+        let new_settings =
+            connections::prepare_reencrypt_file(&old_key, &new_key, &settings_path)?;
+        let new_audit =
+            connections::prepare_reencrypt_audit_log(&old_key, &new_key, &audit_log_path)?;
 
-    connections::write_prepared_file(&profiles_path, new_profiles)?;
-    connections::write_prepared_file(&settings_path, new_settings)?;
-    connections::write_prepared_file(&audit_log_path, new_audit)?;
-    connections::write_vault_meta(&meta_path, &new_meta)?;
+        connections::write_prepared_file(&profiles_path, new_profiles)?;
+        connections::write_prepared_file(&settings_path, new_settings)?;
+        connections::write_prepared_file(&audit_log_path, new_audit)?;
+        connections::write_vault_meta(&meta_path, &new_meta)?;
+        Ok(())
+    };
+
+    if let Err(e) = rotate() {
+        // The rotation was abandoned, so `old_key` is still the live vault key.
+        // Reopen auditing under it before surfacing the error.
+        let _ = audit::open_on_unlock(&app_handle, &state, old_key);
+        return Err(e);
+    }
+
     *state.vault_key.lock_safe()? = Some(new_key);
     let _ = audit::open_on_unlock(&app_handle, &state, new_key);
     // Approach A: a password change derives a new key; keep biometrics working transparently.
