@@ -422,6 +422,15 @@ pub struct ProjectionShape {
     /// Paths whose value the projection *computed*, so there is nothing in the
     /// stored document to write back to.
     computed: Vec<String>,
+    /// Embedded documents whose other fields may not have come back, because a
+    /// `$slice`/`$elemMatch` targeted something *inside* them.
+    ///
+    /// MongoDB's behaviour here has changed across releases: older servers return
+    /// only the sliced field within the embedded document, dropping its siblings.
+    /// MQLens targets servers that old (#232), and on newer ones the cost of
+    /// assuming siblings may be hidden is a refusal with a clear message rather
+    /// than a silent overwrite — so this is treated conservatively either way.
+    locally_hidden: Vec<String>,
     scope: Scope,
 }
 
@@ -493,6 +502,7 @@ impl ProjectionShape {
             None => Self {
                 paths: Vec::new(),
                 computed: Vec::new(),
+                locally_hidden: Vec::new(),
                 scope: Scope::Unknown,
             },
         }
@@ -509,6 +519,7 @@ impl ProjectionShape {
             return Self {
                 paths: Vec::new(),
                 computed: Vec::new(),
+                locally_hidden: Vec::new(),
                 scope: Scope::Unknown,
             };
         };
@@ -542,9 +553,22 @@ impl ProjectionShape {
             .filter(|(_, leaf)| !leaf.is_writable())
             .map(|(path, _)| path.clone())
             .collect();
+        // A `$slice`/`$elemMatch` inside an embedded document may have dropped
+        // that document's other fields. The entry path is `<field>.<$op>`, so the
+        // container is the field's parent.
+        let locally_hidden = entries
+            .iter()
+            .filter(|(_, leaf)| matches!(leaf, Leaf::Slice | Leaf::ElemMatch))
+            .filter_map(|(path, _)| {
+                let field = path.rsplit_once('.').map(|(head, _)| head)?;
+                field.rsplit_once('.').map(|(container, _)| container.to_string())
+            })
+            .collect();
+
         Self {
             paths: entries.into_iter().map(|(path, _)| path).collect(),
             computed,
+            locally_hidden,
             scope,
         }
     }
@@ -574,6 +598,15 @@ impl ProjectionShape {
     /// True when the stored document could hold a value at `path` that was never
     /// returned — so a field the editor appears to *add* might already exist.
     fn may_hide(&self, path: &str) -> bool {
+        // Inside an embedded document a nested `$slice` may have withheld the
+        // siblings, even when every top-level field came back.
+        if self
+            .locally_hidden
+            .iter()
+            .any(|container| path.starts_with(&format!("{container}.")))
+        {
+            return true;
+        }
         match self.scope {
             Scope::All => false,
             Scope::Unknown => true,
@@ -2064,6 +2097,42 @@ mod csv_import_tests {
             .expect_err("must refuse")
             .to_string();
         assert!(err.contains("address"), "{err}");
+    }
+
+    #[test]
+    fn a_nested_slice_may_have_hidden_its_containers_siblings() {
+        // `{"details.colors": {"$slice": 1}}` — older servers return only `colors`
+        // inside `details`, so `sizes` may exist unseen and must not be `$set`.
+        let shape = ProjectionShape::parse(r#"{"details.colors":{"$slice":1}}"#);
+        let original = doc_of(r#"{"_id":"66a1","details":{"colors":["red"]}}"#);
+        let edited =
+            doc_of(r#"{"_id":"66a1","details":{"colors":["red"],"sizes":["m"]}}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("details.sizes"), "{err}");
+    }
+
+    #[test]
+    fn a_nested_slice_leaves_unrelated_top_level_fields_addable() {
+        // Only the containing embedded document is suspect; the rest of the
+        // document came back in full.
+        let shape = ProjectionShape::parse(r#"{"details.colors":{"$slice":1}}"#);
+        let original = doc_of(r#"{"_id":"66a1","details":{"colors":["red"]}}"#);
+        let edited =
+            doc_of(r#"{"_id":"66a1","details":{"colors":["red"]},"city":"Berlin"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"city":"Berlin"}}"#));
+    }
+
+    #[test]
+    fn a_top_level_slice_hides_nothing() {
+        // No containing embedded document, so every field still came back.
+        let shape = ProjectionShape::parse(r#"{"roles":{"$slice":2}}"#);
+        let original = doc_of(r#"{"_id":"66a1","roles":["a","b"]}"#);
+        let edited = doc_of(r#"{"_id":"66a1","roles":["a","b"],"city":"Berlin"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"city":"Berlin"}}"#));
     }
 
     #[test]
