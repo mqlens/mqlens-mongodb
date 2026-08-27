@@ -76,6 +76,47 @@ export function registerDocLanguage(monaco: Monaco): void {
   registered = true;
 
   monaco.languages.register({ id: DOC_LANGUAGE_ID });
+
+  // A Monaco language carries editing behaviour as well as colours, and leaving
+  // `javascript` dropped all of it: auto-closing braces and quotes, surrounding
+  // a selection with a quote, bracket matching, bracket-based folding (which the
+  // dialog enables) and word selection. Restored here, matching what the
+  // JavaScript configuration provided for this content.
+  //
+  // Comments are deliberately not configured: the buffer is a document literal,
+  // not code, so offering comment toggling would invite text the save path has no
+  // reason to accept.
+  monaco.languages.setLanguageConfiguration(DOC_LANGUAGE_ID, {
+    brackets: [
+      ["{", "}"],
+      ["[", "]"],
+      ["(", ")"],
+    ],
+    autoClosingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      // `notIn: ["string"]` stops a quote auto-closing inside a string, which is
+      // why the tokenizer has to emit `string` for half-typed values too.
+      { open: '"', close: '"', notIn: ["string"] },
+      { open: "'", close: "'", notIn: ["string"] },
+      { open: "`", close: "`", notIn: ["string"] },
+    ],
+    surroundingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: "`", close: "`" },
+    ],
+    indentationRules: {
+      increaseIndentPattern: /[{[]\s*$/,
+      decreaseIndentPattern: /^\s*[}\]],?\s*$/,
+    },
+    // Without this, double-click selects across punctuation inside a document.
+    wordPattern: /(-?\d*\.\d\w*)|([^\s{}[\](),:"'`]+)/g,
+  });
   monaco.languages.setMonarchTokensProvider(DOC_LANGUAGE_ID, {
     defaultToken: "",
     tokenizer: {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FileJson } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { useTranslation } from 'react-i18next';
@@ -6,7 +6,7 @@ import type { TFunction } from 'i18next';
 import { shellToEjson } from '../lib/shellDoc';
 import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { DOC_LANGUAGE_ID, registerDocLanguage } from '../lib/monacoDocLanguage';
-import { registerMqlensMonacoThemes } from '../lib/monacoAppTheme';
+import { registerMqlensMonacoThemes, refreshMqlensMonacoTheme } from '../lib/monacoAppTheme';
 import { useEscapeClose } from '../lib/useEscapeClose';
 import {
   Dialog,
@@ -54,6 +54,30 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   const [saving, setSaving] = useState(false);
   const validationError = useMemo(() => validateDocument(json, t), [json, t]);
   const theme = useMonacoTheme();
+  const monacoRef = useRef<Parameters<
+    NonNullable<React.ComponentProps<typeof Editor>['onMount']>
+  >[1] | null>(null);
+
+  // `refreshMqlensMonacoTheme` builds *both* theme ids from whatever CSS
+  // variables are live at the time, so they are only correct immediately after a
+  // refresh. QueryEditor re-runs it on every theme change; without the same here
+  // the dialog kept the previous mode's colours — a dark editor in light mode —
+  // whenever the mode changed with no query editor mounted to refresh them.
+  //
+  // Gated on `isOpen`, and the handle is dropped on close: this component stays
+  // mounted while the dialog is shut, so an ungated effect redefined the global
+  // Monaco themes on every App render. That is wasted work, it can fight
+  // QueryEditor's own refresh, and it measurably destabilised unrelated tests.
+  useEffect(() => {
+    if (!isOpen) {
+      monacoRef.current = null;
+      return;
+    }
+    const monaco = monacoRef.current;
+    if (!monaco) return;
+    refreshMqlensMonacoTheme(monaco);
+    monaco.editor.setTheme(theme);
+  }, [isOpen, theme]);
   const monacoFontSize = useMonacoFontSize(12.5);
   useEscapeClose(isOpen, onClose);
 
@@ -124,10 +148,12 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
               onChange={(v) => setJson(v ?? '')}
               wrapperProps={{ 'data-testid': 'document-json-input' }}
               onMount={(_editor, monaco) => {
+                monacoRef.current = monaco;
                 registerDocLanguage(monaco);
                 // The theme's token colours come from the same design tokens the
                 // grid uses, so both must be registered before the editor paints.
                 registerMqlensMonacoThemes(monaco);
+                refreshMqlensMonacoTheme(monaco);
               }}
               options={{
                 minimap: { enabled: false },

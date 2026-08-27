@@ -9,9 +9,20 @@ import {
 type Rule = [RegExp, string];
 
 /** Capture what the module registers, without pulling in real Monaco. */
+type Pair = { open: string; close: string; notIn?: string[] };
+type Config = {
+  brackets?: [string, string][];
+  autoClosingPairs?: Pair[];
+  surroundingPairs?: Pair[];
+  indentationRules?: { increaseIndentPattern: RegExp; decreaseIndentPattern: RegExp };
+  wordPattern?: RegExp;
+  comments?: unknown;
+};
+
 function fakeMonaco() {
   const registered: string[] = [];
   let tokenizer: { root: Rule[] } | undefined;
+  let config: Config | undefined;
   return {
     monaco: {
       languages: {
@@ -19,10 +30,14 @@ function fakeMonaco() {
         setMonarchTokensProvider: (_id: string, provider: { tokenizer: { root: Rule[] } }) => {
           tokenizer = provider.tokenizer;
         },
+        setLanguageConfiguration: (_id: string, c: Config) => {
+          config = c;
+        },
       },
     } as never,
     registered,
     rules: () => tokenizer?.root ?? [],
+    config: () => config,
   };
 }
 
@@ -127,5 +142,44 @@ describe('document editor language', () => {
       expect(cssToken).toMatch(/^(syntax-|muted-foreground)/);
       expect(fallback).toMatch(/^#[0-9a-f]{6}$/i);
     }
+  });
+
+  it('keeps the editing behaviour the javascript language provided', () => {
+    // Switching language also drops its configuration, so auto-closing, bracket
+    // matching, folding and word selection have to be supplied here.
+    const f = fakeMonaco();
+    registerDocLanguage(f.monaco);
+    const config = f.config();
+    expect(config).toBeDefined();
+
+    expect(config?.brackets).toEqual([
+      ['{', '}'],
+      ['[', ']'],
+      ['(', ')'],
+    ]);
+
+    // All three JavaScript quotings auto-close, as they did under javascript.
+    const closing = (config?.autoClosingPairs ?? []).map((p) => p.open);
+    expect(closing).toEqual(expect.arrayContaining(['{', '[', '(', '"', "'", '`']));
+
+    // A quote must not auto-close inside a string.
+    for (const quote of ['"', "'", '`']) {
+      const pair = config?.autoClosingPairs?.find((p) => p.open === quote);
+      expect(pair?.notIn).toContain('string');
+    }
+
+    // Selecting text and typing a quote should wrap it.
+    const surrounding = (config?.surroundingPairs ?? []).map((p) => p.open);
+    expect(surrounding).toEqual(expect.arrayContaining(['{', '[', '(', '"', "'", '`']));
+
+    expect(config?.indentationRules?.increaseIndentPattern.test('  "a": {')).toBe(true);
+    expect(config?.indentationRules?.decreaseIndentPattern.test('  },')).toBe(true);
+    expect(config?.wordPattern).toBeInstanceOf(RegExp);
+  });
+
+  it('does not offer comment toggling for a document literal', () => {
+    const f = fakeMonaco();
+    registerDocLanguage(f.monaco);
+    expect(f.config()?.comments).toBeUndefined();
   });
 });
