@@ -395,6 +395,11 @@ const jsonKeyNode = (k: string) => (
 );
 const printableJsonString = jsonStringLiteral;
 
+// Row index for the table's header band. It is on screen and its field names are
+// searchable, but it is not a row in the virtualized list, so it addresses no
+// index there — stepping to it scrolls horizontally only.
+const TABLE_HEADER_ROW_INDEX = -1;
+
 // Width of the table's row-number gutter, ahead of the first data column.
 // Shared by the header, the rows, the body's minWidth and find's horizontal
 // scrolling, all of which have to agree on where a column starts.
@@ -1171,15 +1176,27 @@ export const DataGrid: React.FC<DataGridProps> = ({
       }));
     }
     if (viewMode === 'table') {
-      // The cell text only. The column name is in the header once, not in every
-      // cell, so including it would report a match per row for a heading that
-      // appears a single time.
-      return documents.flatMap((doc, index) =>
-        columns.map((col) => ({
-          rowIndex: index,
-          columnKey: col,
-          text: tableValueText((doc as Record<string, unknown>)?.[col]),
-        }))
+      // Each column header once, then the cell values. A field name shown only
+      // in the header has to be findable, but adding it to every cell's text
+      // would report a match per row for text that appears a single time — so it
+      // is indexed as the one thing it is, ahead of the rows it labels.
+      //
+      // The tree view's "Key"/"Value"/"Type" headings are deliberately not
+      // indexed: those are fixed chrome, whereas a table heading is a field name
+      // from the documents themselves.
+      const headers: FindCell[] = columns.map((col) => ({
+        rowIndex: TABLE_HEADER_ROW_INDEX,
+        columnKey: col,
+        text: col,
+      }));
+      return headers.concat(
+        documents.flatMap((doc, index) =>
+          columns.map((col) => ({
+            rowIndex: index,
+            columnKey: col,
+            text: tableValueText((doc as Record<string, unknown>)?.[col]),
+          }))
+        )
       );
     }
     // Chart has no text to search.
@@ -1380,7 +1397,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
   useEffect(() => {
     if (!activeFindMatch) return;
     if (viewMode === 'table') {
-      if (activeFindMatch.rowIndex < documents.length) {
+      if (
+        activeFindMatch.rowIndex >= 0 &&
+        activeFindMatch.rowIndex < documents.length
+      ) {
         tableListRef.current?.scrollToRow({ index: activeFindMatch.rowIndex, align: 'smart' });
       }
       if (activeFindMatch.columnKey) scrollTableColumnIntoView(activeFindMatch.columnKey);
@@ -1790,7 +1810,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 {columns.map((col) => (
                   <div
                     key={col}
-                    className="px-3 border-r border-border flex items-center truncate relative"
+                    className={cn(
+                      'px-3 border-r border-border flex items-center truncate relative',
+                      findHighlightClass(TABLE_HEADER_ROW_INDEX, col)
+                    )}
                     style={{ width: `${colWidth(col)}px`, flexShrink: 0 }}
                   >
                     {col}

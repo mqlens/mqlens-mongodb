@@ -906,14 +906,52 @@ describe('find indexes what each view actually displays (#280 review)', () => {
     expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 1');
   });
 
-  it('does not count the column name once per table cell', () => {
-    // The heading is in the header once, so matching it in every cell reported
-    // three matches for one visible occurrence.
+  it('finds a table column heading exactly once, not once per row', () => {
+    // Two defects met here: the heading was first counted in every cell (three
+    // matches for one visible occurrence), then not indexed at all (no matches
+    // for text plainly on screen). It is one cell, because it is one heading.
     render(<DataGrid documents={mockDocuments} />);
     fireEvent.click(screen.getByRole('button', { name: /table/i }));
     pressFind();
     search('category');
-    expect(screen.getByTestId('results-find-status')).toHaveTextContent(/no matches/i);
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 1');
+  });
+
+  it('lists a heading match ahead of the rows it labels', () => {
+    // `name` is a heading and appears in no value, so a heading-only match must
+    // not depend on any row matching. Stepping stays within the single match.
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    pressFind();
+    search('name');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 1');
+    fireEvent.click(screen.getByTestId('results-find-next'));
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 1');
+  });
+
+  it('highlights the matched heading in the header band', () => {
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    pressFind();
+    search('category');
+
+    const header = screen.getByTestId('table-header');
+    const matched = Array.from(header.querySelectorAll('div')).filter((el) =>
+      el.className.includes('bg-warning')
+    );
+    expect(matched.length).toBe(1);
+    expect(matched[0].textContent).toContain('category');
+  });
+
+  it('does not crash stepping to a heading, which addresses no row', () => {
+    // The header band is not a row in the virtualized list, and `scrollToRow`
+    // throws on an out-of-range index.
+    render(<DataGrid documents={mockDocuments} />);
+    fireEvent.click(screen.getByRole('button', { name: /table/i }));
+    pressFind();
+    search('price');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 1');
+    expect(screen.getByTestId('results-find-bar')).toBeInTheDocument();
   });
 
   it('finds the table view’s ObjectId by the bare hex it displays', () => {
