@@ -48,22 +48,50 @@ function eventBelongsToAnEditor(target: EventTarget | null): boolean {
   return target.closest('[contenteditable="true"]') !== null;
 }
 
+/** The registered pane containing `node`, if any. */
+function paneContaining(node: EventTarget | null): Pane | undefined {
+  if (!(node instanceof Node)) return undefined;
+  for (const pane of panes.values()) {
+    const el = pane.element();
+    if (el && el.contains(node)) return pane;
+  }
+  return undefined;
+}
+
 /**
  * The pane the keypress is meant for.
  *
- * Focus is the strongest signal; a pointer press is the next best, because
- * clicking a row is the usual thing to do before searching it. With neither, a
- * single mounted pane is unambiguous — but several are not, so nothing opens
- * rather than all of them.
+ * The event's own target comes first, and reading focus second is not a
+ * preference but a necessity: `Sidebar` has its own window-level Cmd/Ctrl+F that
+ * focuses the connection filter, so by the time another listener reads
+ * `document.activeElement` it can already have been moved out of every pane,
+ * leaving a real keypress from inside a pane unroutable. The target is the one
+ * signal no other handler can rewrite.
+ *
+ * The pointer fallback then applies only when the keypress came from nothing in
+ * particular — the body, meaning no focused control — because clicking a grid row
+ * focuses nothing. Restricting it that way is what lets the sidebar keep the key
+ * while the user is working in the sidebar: that keypress targets a sidebar
+ * element, matches no pane, and this returns undefined, so the shortcut is never
+ * claimed and the sidebar's own handler runs.
+ *
+ * With several panes and no signal at all, nothing opens rather than all of them.
  */
-function targetPane(): Pane | undefined {
-  const active = document.activeElement;
-  if (active) {
-    for (const pane of panes.values()) {
-      const el = pane.element();
-      if (el && el.contains(active)) return pane;
-    }
-  }
+function targetPane(event: KeyboardEvent): Pane | undefined {
+  const fromTarget = paneContaining(event.target);
+  if (fromTarget) return fromTarget;
+
+  const fromFocus = paneContaining(document.activeElement);
+  if (fromFocus) return fromFocus;
+
+  // Anything else focused belongs to another region, and the key is its business.
+  const unfocused =
+    event.target === null ||
+    event.target === document.body ||
+    event.target === document ||
+    event.target === window;
+  if (!unfocused) return undefined;
+
   if (lastPointedId !== null) {
     const pane = panes.get(lastPointedId);
     if (pane?.element()) return pane;
@@ -72,13 +100,16 @@ function targetPane(): Pane | undefined {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
+  // Someone ahead of us already claimed it.
+  if (event.defaultPrevented) return;
   if (event.key !== "f" && event.key !== "F") return;
   if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
   if (eventBelongsToAnEditor(event.target)) return;
 
-  const pane = targetPane();
+  const pane = targetPane(event);
   if (!pane) return;
-  // Only now: leaving the browser's own find available when no pane claims it.
+  // Only now: leaving the key to the browser — and to Sidebar's own Cmd/Ctrl+F,
+  // which stands down on defaultPrevented — when no pane claims it.
   event.preventDefault();
   pane.open();
 }
@@ -105,7 +136,11 @@ export function registerResultsFindTarget(pane: Pane): () => void {
   const id = nextId++;
   panes.set(id, pane);
   if (!listening && typeof window !== "undefined") {
-    window.addEventListener("keydown", onKeyDown);
+    // Capture: `Sidebar` registers its Cmd/Ctrl+F on window during app mount,
+    // long before any pane exists, so a bubble-phase listener here would always
+    // run second — after the sidebar had claimed the key and moved focus. In the
+    // capture phase this runs first, and the sidebar defers to defaultPrevented.
+    window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("pointerdown", onPointerDown, true);
     listening = true;
   }
@@ -113,7 +148,7 @@ export function registerResultsFindTarget(pane: Pane): () => void {
     panes.delete(id);
     if (lastPointedId === id) lastPointedId = null;
     if (panes.size === 0 && listening && typeof window !== "undefined") {
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("pointerdown", onPointerDown, true);
       listening = false;
     }
@@ -123,7 +158,7 @@ export function registerResultsFindTarget(pane: Pane): () => void {
 /** Reset module state between tests. */
 export function resetResultsFindShortcutForTests(): void {
   if (listening && typeof window !== "undefined") {
-    window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("pointerdown", onPointerDown, true);
   }
   panes.clear();

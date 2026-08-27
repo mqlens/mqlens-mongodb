@@ -51,6 +51,78 @@ describe('results find shortcut', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
+  it('routes from the event target even when focus was moved away', () => {
+    // Sidebar has its own window-level Cmd/Ctrl+F that focuses the connection
+    // filter, so `document.activeElement` can already have left the pane by the
+    // time this runs. The event's target cannot be rewritten that way.
+    const a = pane();
+    const b = pane();
+    const row = document.createElement('div');
+    b.el.appendChild(row);
+
+    const stealer = document.createElement('button');
+    document.body.appendChild(stealer);
+    stealer.focus();
+
+    const event = pressFind(row);
+    expect(b.open).toHaveBeenCalledTimes(1);
+    expect(a.open).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('leaves the key alone when it comes from outside every pane', () => {
+    // A keypress aimed at another region — the sidebar tree, say — is that
+    // region's business, so the shortcut must not claim it even though a pane
+    // was pointed at earlier.
+    const p = pane();
+    const inside = document.createElement('div');
+    p.el.appendChild(inside);
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+
+    // Point at the pane first, so only the target rule can rule it out.
+    outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    inside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    outside.focus();
+
+    const event = pressFind(outside);
+    expect(p.open).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('claims the key ahead of a window listener registered earlier', () => {
+    // Sidebar's handler is registered during app mount, long before any pane
+    // exists, and stands down on defaultPrevented — so this one has to see the
+    // event first. Capture phase beats any bubble-phase listener.
+    const seen: boolean[] = [];
+    const earlier = (e: Event) => seen.push(e.defaultPrevented);
+    window.addEventListener('keydown', earlier);
+    try {
+      const p = pane();
+      const row = document.createElement('div');
+      p.el.appendChild(row);
+
+      pressFind(row);
+      expect(p.open).toHaveBeenCalledTimes(1);
+      expect(seen).toEqual([true]);
+    } finally {
+      window.removeEventListener('keydown', earlier);
+    }
+  });
+
+  it('still falls back to the pointed pane when nothing is focused', () => {
+    // Clicking a grid row focuses nothing, so the keypress targets the body and
+    // the pointer history is the only signal left.
+    const a = pane();
+    const b = pane();
+    b.el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+
+    const event = pressFind();
+    expect(b.open).toHaveBeenCalledTimes(1);
+    expect(a.open).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it('routes back to the pane from the find bar’s own input', () => {
     // The find input is a text field, so the blanket suppression swallowed the
     // second press — the one that reselects the query — and the browser's find
