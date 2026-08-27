@@ -398,40 +398,71 @@ fn path_is_unaddressable(key: &str) -> bool {
     key.contains('.') || key.starts_with('$')
 }
 
-/// Which parts of a document a find projection leaves incomplete.
+/// What a find projection returned, and therefore what may be hidden.
 ///
-/// A bare "was a projection used?" flag is not enough. `{"address": 1}` includes
-/// the whole sub-document, so deleting `address` should remove the field, while
-/// `{"address.city": 1}` loads only one leaf and deleting it must not touch the
-/// hidden siblings. The distinction is whether the projection names a path
-/// *strictly below* the one being written — which reads the same way for
-/// inclusions, exclusions (`{"address.zip": 0}` also yields a partial `address`)
-/// and operators (`{"roles": {"$slice": 2}}` yields a truncated array).
+/// Two different questions have to be answered, and one predicate cannot do
+/// both:
+///
+/// * *Was the value at this path returned whole?* `{"address": 1}` includes the
+///   whole sub-document, so deleting `address` may remove the field; with
+///   `{"address.city": 1}` only one leaf was loaded, so a removal must not touch
+///   the siblings it hid. That is [`Self::is_partial_at`] — is any path named
+///   *strictly below* this one — and it reads the same for inclusions,
+///   exclusions (`{"address.zip": 0}` also yields a partial `address`) and
+///   operators (`{"roles": {"$slice": 2}}` yields a truncated array).
+///
+/// * *Was this path returned at all?* Under `{"name": 1}` a stored `address` is
+///   never shown, so a field the editor "adds" may already exist and be
+///   overwritten. That is [`Self::may_hide`], and it needs the projection's
+///   scope, not just its paths.
 #[derive(Debug, Default, Clone)]
 pub struct ProjectionShape {
     /// Every path the projection names, flattened to dotted form.
     paths: Vec<String>,
-    /// The projection could not be parsed, so nothing may be assumed complete.
-    opaque: bool,
+    scope: Scope,
+}
+
+/// Which fields a projection returned.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// Every field. No projection, or one made only of operators such as
+    /// `$slice`, which truncate a value without restricting the field list.
+    #[default]
+    All,
+    /// Only the named paths (plus `_id` unless excluded).
+    Included,
+    /// Everything except the named paths.
+    Excluded,
+    /// Unknowable: the rows came from an aggregation, the projection could not be
+    /// parsed, or it mixes inclusion and exclusion (which MongoDB rejects).
+    Unknown,
+}
+
+/// What a projection entry says about its path.
+enum Leaf {
+    Include,
+    Exclude,
+    /// `$slice`, `$elemMatch`, `$meta`: truncates a value, does not restrict the
+    /// field list.
+    Operator,
 }
 
 impl ProjectionShape {
     /// Parse a find projection, or `None` when the shape cannot be known — the
     /// rows came from an aggregation, whose `$project`/`$replaceRoot`/`$unset`
-    /// stages cannot be reduced to a field list. Treated as naming everything,
-    /// so nothing is assumed complete and no whole-value write is allowed.
+    /// stages cannot be reduced to a field list.
     pub fn parse_optional(projection: Option<&str>) -> Self {
         match projection {
             Some(p) => Self::parse(p),
             None => Self {
                 paths: Vec::new(),
-                opaque: true,
+                scope: Scope::Unknown,
             },
         }
     }
 
-    /// Parse a find projection. An unparseable one is treated as naming
-    /// everything, so nothing is assumed complete.
+    /// Parse a find projection. An unparseable one is treated as unknowable, so
+    /// nothing is assumed complete or absent.
     pub fn parse(projection: &str) -> Self {
         let trimmed = projection.trim();
         if trimmed.is_empty() || trimmed == "{}" {
@@ -440,36 +471,77 @@ impl ProjectionShape {
         let Ok(serde_json::Value::Object(map)) = serde_json::from_str(trimmed) else {
             return Self {
                 paths: Vec::new(),
-                opaque: true,
+                scope: Scope::Unknown,
             };
         };
-        let mut paths = Vec::new();
-        flatten_projection("", &map, &mut paths);
+        let mut entries = Vec::new();
+        flatten_projection("", &map, &mut entries);
+
+        let mut includes = false;
+        let mut excludes = false;
+        for (path, leaf) in &entries {
+            // `_id` is returned unless excluded and never restricts anything else,
+            // so `{"name": 1, "_id": 0}` is still a plain inclusion.
+            if path == "_id" {
+                continue;
+            }
+            match leaf {
+                Leaf::Include => includes = true,
+                Leaf::Exclude => excludes = true,
+                Leaf::Operator => {}
+            }
+        }
+        let scope = match (includes, excludes) {
+            (true, true) => Scope::Unknown,
+            (true, false) => Scope::Included,
+            (false, true) => Scope::Excluded,
+            (false, false) => Scope::All,
+        };
         Self {
-            paths,
-            opaque: false,
+            paths: entries.into_iter().map(|(path, _)| path).collect(),
+            scope,
         }
     }
 
     /// True when nothing was projected away, so the document is whole.
     pub fn is_whole_document(&self) -> bool {
-        !self.opaque && self.paths.is_empty()
+        self.scope == Scope::All && self.paths.is_empty()
     }
 
     /// True when the value at `path` may hold parts that were not loaded.
     fn is_partial_at(&self, path: &str) -> bool {
-        if self.opaque {
+        if self.scope == Scope::Unknown {
             return true;
         }
         let prefix = format!("{path}.");
         self.paths.iter().any(|p| p.starts_with(&prefix))
+    }
+
+    /// True when the stored document could hold a value at `path` that was never
+    /// returned — so a field the editor appears to *add* might already exist.
+    fn may_hide(&self, path: &str) -> bool {
+        match self.scope {
+            Scope::All => false,
+            Scope::Unknown => true,
+            // Only the named paths came back, so anything outside them is unseen.
+            Scope::Included => !self.names_self_or_ancestor(path),
+            // Everything came back except the named paths.
+            Scope::Excluded => self.names_self_or_ancestor(path),
+        }
+    }
+
+    /// Whether the projection names `path` itself or a path it sits under.
+    fn names_self_or_ancestor(&self, path: &str) -> bool {
+        self.paths
+            .iter()
+            .any(|p| p == path || path.starts_with(&format!("{p}.")))
     }
 }
 
 fn flatten_projection(
     prefix: &str,
     map: &serde_json::Map<String, serde_json::Value>,
-    out: &mut Vec<String>,
+    out: &mut Vec<(String, Leaf)>,
 ) {
     for (key, value) in map {
         let path = if prefix.is_empty() {
@@ -478,13 +550,24 @@ fn flatten_projection(
             format!("{prefix}.{key}")
         };
         match value {
-            // `{"address": {"city": 1}}` is the nested spelling of
-            // `{"address.city": 1}`; `{"roles": {"$slice": 2}}` names a path
-            // below `roles` too, which is exactly what makes it partial.
-            serde_json::Value::Object(inner) if !inner.is_empty() => {
-                flatten_projection(&path, inner, out);
+            serde_json::Value::Object(inner) if inner.is_empty() => {
+                out.push((path, Leaf::Include));
             }
-            _ => out.push(path),
+            // `{"roles": {"$slice": 2}}` truncates a value; it does not restrict
+            // which fields come back.
+            serde_json::Value::Object(inner) if inner.keys().all(|k| k.starts_with('$')) => {
+                for op in inner.keys() {
+                    out.push((format!("{path}.{op}"), Leaf::Operator));
+                }
+            }
+            // `{"address": {"city": 1}}` is the nested spelling of
+            // `{"address.city": 1}`.
+            serde_json::Value::Object(inner) => flatten_projection(&path, inner, out),
+            serde_json::Value::Bool(false) => out.push((path, Leaf::Exclude)),
+            serde_json::Value::Number(n) if n.as_f64() == Some(0.0) => {
+                out.push((path, Leaf::Exclude))
+            }
+            _ => out.push((path, Leaf::Include)),
         }
     }
 }
@@ -566,6 +649,7 @@ pub fn build_field_update(
     let mut blocked: Vec<String> = Vec::new();
     let mut partial_writes: Vec<String> = Vec::new();
     let mut ambiguous_removals: Vec<String> = Vec::new();
+    let mut hidden_additions: Vec<String> = Vec::new();
     diff_documents(
         "",
         original,
@@ -577,6 +661,7 @@ pub fn build_field_update(
             blocked: &mut blocked,
             partial_writes: &mut partial_writes,
             ambiguous_removals: &mut ambiguous_removals,
+            hidden_additions: &mut hidden_additions,
         },
     );
 
@@ -588,6 +673,16 @@ pub fn build_field_update(
              separator and a leading \"$\" as an operator. Re-run the query without a \
              projection so the whole document can be saved.",
             blocked.join(", ")
+        )));
+    }
+    if !hidden_additions.is_empty() {
+        hidden_additions.sort();
+        hidden_additions.dedup();
+        return Err(UpdateBuildError::PartialWrite(format!(
+            "cannot add field(s) {}: the projection did not return them, so a field that is \
+             genuinely new cannot be told apart from one that already exists and would be \
+             overwritten. Re-run the query without the projection to add these.",
+            hidden_additions.join(", ")
         )));
     }
     if !ambiguous_removals.is_empty() {
@@ -634,6 +729,9 @@ struct DiffSink<'a> {
     /// Removals that cannot be expressed at all, because the projection returned
     /// the object empty.
     ambiguous_removals: &'a mut Vec<String>,
+    /// Fields the editor appears to add, but which the projection may simply not
+    /// have returned — so writing them could overwrite an existing value.
+    hidden_additions: &'a mut Vec<String>,
 }
 
 fn diff_documents(
@@ -686,7 +784,14 @@ fn diff_documents(
         }
         match old {
             None => {
-                sink.set.insert(path, new_value.clone());
+                // Absent from the loaded row is not the same as absent from the
+                // document: under `{"name": 1}` a stored `address` is never shown,
+                // so `$set`ting it would replace whatever is really there.
+                if shape.may_hide(&path) {
+                    sink.hidden_additions.push(path);
+                } else {
+                    sink.set.insert(path, new_value.clone());
+                }
             }
             Some(old_value) if old_value == new_value => {}
             Some(mongodb::bson::Bson::Document(old_doc)) => match new_value {
@@ -1370,9 +1475,12 @@ mod csv_import_tests {
 
     #[test]
     fn adding_a_field_sets_it() {
+        // Without a projection, absent from the row really does mean absent from
+        // the document. The projected case is refused; see
+        // `adding_a_field_the_projection_did_not_return_is_refused`.
         let original = doc_of(r#"{"_id":"66a1","age":34}"#);
         let edited = doc_of(r#"{"_id":"66a1","age":34,"city":"Pforzheim"}"#);
-        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
+        let update = build_field_update(&original, &edited, &no_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"city":"Pforzheim"}}"#));
     }
 
@@ -1462,6 +1570,86 @@ mod csv_import_tests {
         let edited = doc_of(r#"{"_id":"66a1"}"#);
         let update = build_field_update(&original, &edited, &no_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$unset":{"address":""}}"#));
+    }
+
+    #[test]
+    fn adding_a_field_the_projection_did_not_return_is_refused() {
+        // Under `{"name": 1}` a stored `address` is never shown, so `$set`ting it
+        // would replace whatever is really there — street and zip included.
+        let shape = ProjectionShape::parse(r#"{"name":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","name":"Grace"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","name":"Grace","address":{"city":"Berlin"}}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("address"), "{err}");
+        assert!(err.contains("did not return"), "{err}");
+    }
+
+    #[test]
+    fn adding_a_field_the_projection_returned_is_allowed() {
+        // `{"address": 1}` did return `address`, so its absence from the row is
+        // real and adding it is safe.
+        let shape = ProjectionShape::parse(r#"{"name":1,"address":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","name":"Grace"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","name":"Grace","address":{"city":"Berlin"}}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"address":{"city":"Berlin"}}}"#));
+    }
+
+    #[test]
+    fn adding_an_excluded_field_is_refused() {
+        // `{"address": 0}` withheld it, so it may already exist.
+        let shape = ProjectionShape::parse(r#"{"address":0}"#);
+        let original = doc_of(r#"{"_id":"66a1","name":"Grace"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","name":"Grace","address":{"city":"Berlin"}}"#);
+        assert!(build_field_update(&original, &edited, &shape).is_err());
+    }
+
+    #[test]
+    fn adding_a_field_under_an_exclusion_that_did_not_hide_it_is_allowed() {
+        // Everything except `secret` came back, so `city` really is new.
+        let shape = ProjectionShape::parse(r#"{"secret":0}"#);
+        let original = doc_of(r#"{"_id":"66a1","name":"Grace"}"#);
+        let edited = doc_of(r#"{"_id":"66a1","name":"Grace","city":"Berlin"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"city":"Berlin"}}"#));
+    }
+
+    #[test]
+    fn adding_a_nested_field_the_projection_did_not_return_is_refused() {
+        // `{"address.city": 1}` never showed `address.street`, so it may exist.
+        let shape = ProjectionShape::parse(r#"{"address.city":1}"#);
+        let original = doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim"}}"#);
+        let edited =
+            doc_of(r#"{"_id":"66a1","address":{"city":"Pforzheim","street":"Haupt 1"}}"#);
+        let err = build_field_update(&original, &edited, &shape)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("address.street"), "{err}");
+    }
+
+    #[test]
+    fn a_slice_only_projection_still_returns_every_field() {
+        // `{"roles": {"$slice": 2}}` truncates an array without restricting the
+        // field list, so adding a field is safe even though `roles` is partial.
+        let shape = ProjectionShape::parse(r#"{"roles":{"$slice":2}}"#);
+        let original = doc_of(r#"{"_id":"66a1","roles":["a","b"]}"#);
+        let edited = doc_of(r#"{"_id":"66a1","roles":["a","b"],"city":"Berlin"}"#);
+        let update = build_field_update(&original, &edited, &shape).expect("addressable");
+        assert_eq!(update, doc_of(r#"{"$set":{"city":"Berlin"}}"#));
+    }
+
+    #[test]
+    fn an_id_only_exclusion_is_still_a_plain_inclusion() {
+        // `{"name": 1, "_id": 0}` must not read as a mixed projection.
+        let shape = ProjectionShape::parse(r#"{"name":1,"_id":0}"#);
+        let original = doc_of(r#"{"name":"Grace"}"#);
+        let edited = doc_of(r#"{"name":"Grace","city":"Berlin"}"#);
+        assert!(
+            build_field_update(&original, &edited, &shape).is_err(),
+            "city was outside an inclusion projection, so it may already exist"
+        );
     }
 
     #[test]
@@ -1712,7 +1900,7 @@ mod csv_import_tests {
     fn a_new_nested_document_is_set_whole() {
         let original = doc_of(r#"{"_id":"66a1"}"#);
         let edited = doc_of(r#"{"_id":"66a1","address":{"city":"Berlin"}}"#);
-        let update = build_field_update(&original, &edited, &nested_projection()).expect("addressable");
+        let update = build_field_update(&original, &edited, &no_projection()).expect("addressable");
         assert_eq!(update, doc_of(r#"{"$set":{"address":{"city":"Berlin"}}}"#));
     }
 }
