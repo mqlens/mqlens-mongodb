@@ -1132,3 +1132,76 @@ describe('find bar focus and type/value agreement (#280 review round 2)', () => 
     expect(screen.queryByText('Int64')).not.toBeInTheDocument();
   });
 });
+
+describe('find does not leak folds from a stale active index (#280 review round 5)', () => {
+  beforeEach(() => resetResultsFindShortcutForTests());
+
+  // Folds at depth >= 2 start collapsed, so these three containers are closed
+  // until a match inside one of them is revealed.
+  const nested = [
+    {
+      g: {
+        a: { akey: 'xx-one', az: 'zz-one' },
+        b: { bkey: 'xx-two' },
+        c: { cz: 'zz-two' },
+      },
+    },
+  ];
+
+  const pressFind = () => fireEvent.keyDown(document.body, { key: 'f', metaKey: true });
+  const search = (value: string) =>
+    fireEvent.change(screen.getByTestId('results-find-input'), { target: { value } });
+
+  // Read the fold's own state rather than looking for its children. The lists
+  // are virtualized, so a descendant can be missing because it fell outside the
+  // rendered window — an absence that says nothing about whether the fold is
+  // open. The toggle's label does say it.
+  const foldState = (keyName: string): 'open' | 'closed' => {
+    const row = screen.getByTitle(keyName).closest('[data-doc-even]');
+    if (!row) throw new Error(`row for ${keyName} is not rendered`);
+    const button = row.querySelector('[data-testid="tree-fold-btn"]');
+    if (!button) throw new Error(`${keyName} has no fold toggle`);
+    const label = button.getAttribute('aria-label') ?? '';
+    if (/expand/i.test(label)) return 'closed';
+    if (/collapse/i.test(label)) return 'open';
+    throw new Error(`unrecognised fold label: ${label}`);
+  };
+
+  it('starts with the nested folds closed, so a reveal is observable', () => {
+    render(<DataGrid documents={nested} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+    expect(foldState('a')).toBe('closed');
+    expect(foldState('b')).toBe('closed');
+  });
+
+  it('opens the fold holding the active match', () => {
+    render(<DataGrid documents={nested} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+    pressFind();
+    search('xx');
+    expect(foldState('a')).toBe('open');
+    expect(screen.getByText('akey')).toBeInTheDocument();
+  });
+
+  it('does not open the fold at the previous index when the query changes', () => {
+    // `xx` matches inside a and b; stepping selects the second (b). `zz` then
+    // matches inside a and c, so index 1 of the new list is inside c. Resetting
+    // the index in an effect let the reveal run once with that stale index, and
+    // c stayed open for the rest of the session.
+    render(<DataGrid documents={nested} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+    pressFind();
+
+    search('xx');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 2');
+    fireEvent.click(screen.getByTestId('results-find-next'));
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('2 of 2');
+
+    search('zz');
+    expect(screen.getByTestId('results-find-status')).toHaveTextContent('1 of 2');
+    // The first match is inside a, so a opens...
+    expect(foldState('a')).toBe('open');
+    // ...and c, which only the stale index pointed at, stays closed.
+    expect(foldState('c')).toBe('closed');
+  });
+});

@@ -1208,10 +1208,21 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   const findMatchList = useMemo(() => findMatches(findCells, findQuery), [findCells, findQuery]);
 
-  // A changed query starts from the first match rather than keeping a stale index.
-  useEffect(() => {
+  // A new match list starts from its first match. Done during render, not in an
+  // effect: an effect resets one render too late, and in that render the reveal
+  // effect below would take the *old* index into the *new* list and expand the
+  // folds around a match that is not the selected one. Nothing collapses those
+  // again, so they stayed open for the rest of the session.
+  //
+  // This is React's documented "adjusting state when props change" pattern — the
+  // render output is discarded and immediately retried, so no effect ever
+  // observes the stale index. Editing the query is the common way in, but a view
+  // switch or a new result set changes the list the same way.
+  const [matchListOfActive, setMatchListOfActive] = useState(findMatchList);
+  if (matchListOfActive !== findMatchList) {
+    setMatchListOfActive(findMatchList);
     setActiveMatch(findMatchList.length > 0 ? 0 : -1);
-  }, [findMatchList]);
+  }
 
   const activeFindMatch = activeMatch >= 0 ? findMatchList[activeMatch] : undefined;
 
