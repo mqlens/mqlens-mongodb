@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   DOC_LANGUAGE_ID,
   DOC_SYNTAX_TOKENS,
+  DOC_TOKEN_POSTFIX,
   registerDocLanguage,
   resetDocLanguageForTests,
 } from '../monacoDocLanguage';
+import { syntaxRules } from '../monacoAppTheme';
 
 type Rule = [RegExp, string];
 
@@ -22,13 +24,18 @@ type Config = {
 function fakeMonaco() {
   const registered: string[] = [];
   let tokenizer: { root: Rule[] } | undefined;
+  let postfix: string | undefined;
   let config: Config | undefined;
   return {
     monaco: {
       languages: {
         register: ({ id }: { id: string }) => registered.push(id),
-        setMonarchTokensProvider: (_id: string, provider: { tokenizer: { root: Rule[] } }) => {
+        setMonarchTokensProvider: (
+          _id: string,
+          provider: { tokenizer: { root: Rule[] }; tokenPostfix?: string },
+        ) => {
           tokenizer = provider.tokenizer;
+          postfix = provider.tokenPostfix;
         },
         setLanguageConfiguration: (_id: string, c: Config) => {
           config = c;
@@ -37,6 +44,7 @@ function fakeMonaco() {
     } as never,
     registered,
     rules: () => tokenizer?.root ?? [],
+    postfix: () => postfix,
     config: () => config,
   };
 }
@@ -207,5 +215,25 @@ describe('document editor language', () => {
     const f = fakeMonaco();
     registerDocLanguage(f.monaco);
     expect(f.config()?.comments).toBeUndefined();
+  });
+
+  it('scopes its tokens so theme rules cannot repaint other editors', () => {
+    // Monaco matches theme rules by token name across every language, so an
+    // unscoped `string` rule would also repaint the JavaScript query and shell
+    // editors. Monarch appends this suffix to each token.
+    const f = fakeMonaco();
+    registerDocLanguage(f.monaco);
+    expect(f.postfix()).toBe(DOC_TOKEN_POSTFIX);
+    expect(DOC_TOKEN_POSTFIX).toBe(`.${DOC_LANGUAGE_ID}`);
+  });
+
+  it('emits theme rules only for this language', () => {
+    const rules = syntaxRules();
+    expect(rules.length).toBe(DOC_SYNTAX_TOKENS.length);
+    for (const rule of rules) {
+      expect(rule.token.endsWith(DOC_TOKEN_POSTFIX)).toBe(true);
+      // Hex without a leading '#', which is what Monaco expects.
+      expect(rule.foreground).toMatch(/^[0-9a-f]{6}$/i);
+    }
   });
 });

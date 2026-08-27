@@ -1,6 +1,6 @@
 import type { Monaco } from "@monaco-editor/react";
 
-import { DOC_SYNTAX_TOKENS } from "./monacoDocLanguage";
+import { DOC_SYNTAX_TOKENS, DOC_TOKEN_POSTFIX } from "./monacoDocLanguage";
 
 export type MqlensMonacoThemeId = "mqlens-light" | "mqlens-dark";
 
@@ -74,11 +74,15 @@ export function getMqlensMonacoThemeId(): MqlensMonacoThemeId {
  *
  * These were previously `rules: []`, so Monaco fell back to VS Code's built-in
  * colours and the same document looked different in the grid and the editor.
- * Monaco wants hex without the leading `#`.
+ *
+ * Every selector is scoped with `DOC_TOKEN_POSTFIX`: Monaco matches theme rules
+ * by token name across all languages, so a bare `string` rule would also repaint
+ * the JavaScript query and shell editors, which are meant to keep the inherited
+ * VS/VS Dark palette. Monaco wants hex without the leading `#`.
  */
-function syntaxRules(): { token: string; foreground: string }[] {
+export function syntaxRules(): { token: string; foreground: string }[] {
   return DOC_SYNTAX_TOKENS.map(({ token, cssToken, fallback }) => ({
-    token,
+    token: `${token}${DOC_TOKEN_POSTFIX}`,
     foreground: readToken(cssToken, fallback).replace("#", ""),
   }));
 }

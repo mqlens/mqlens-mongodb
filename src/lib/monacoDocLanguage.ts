@@ -19,6 +19,20 @@ import type { Monaco } from "@monaco-editor/react";
 export const DOC_LANGUAGE_ID = "mqlens-doc";
 
 /**
+ * Suffix Monarch appends to every token this language emits, so `string` becomes
+ * `string.mqlens-doc`.
+ *
+ * Monaco theme rules match by token name across *all* languages, so unscoped
+ * rules for `string`/`number`/`delimiter` would also repaint the JavaScript query
+ * and shell editors, which inherit the VS/VS Dark palette. Scoping the rules to
+ * this suffix keeps them to the document editor.
+ *
+ * Monarch defaults `tokenPostfix` to `.<languageId>`; it is set explicitly below
+ * so the theme's dependency on it is visible rather than incidental.
+ */
+export const DOC_TOKEN_POSTFIX = `.${DOC_LANGUAGE_ID}`;
+
+/**
  * Monarch token → design token, with a fallback for when the CSS variable
  * cannot be read (SSR, tests).
  *
@@ -119,6 +133,7 @@ export function registerDocLanguage(monaco: Monaco): void {
   });
   monaco.languages.setMonarchTokensProvider(DOC_LANGUAGE_ID, {
     defaultToken: "",
+    tokenPostfix: DOC_TOKEN_POSTFIX,
     tokenizer: {
       root: [
         // A constructor is a *call*, so require the parenthesis. Without it a
