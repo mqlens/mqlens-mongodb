@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use super::level::AuditLevel;
-use super::log::{AuditLog, LoadReport};
+use super::log::{AuditLog, LoadReport, RetainedLock};
 use super::store::{AuditEvent, AuditFilter, AuditStore};
 
 /// Cached audit settings for the open vault session (refreshed on unlock / save).
@@ -90,6 +90,17 @@ impl AuditSession {
     /// Recover the log and rebuild the query index from it.
     pub fn open(&self, key: [u8; 32]) -> Result<LoadReport, String> {
         let (events, report) = self.log.open(&key)?;
+        self.seed_index(key, events, &report)?;
+        Ok(report)
+    }
+
+    /// Build the in-memory query index from recovered records.
+    fn seed_index(
+        &self,
+        key: [u8; 32],
+        events: Vec<AuditEvent>,
+        report: &LoadReport,
+    ) -> Result<(), String> {
         let store = AuditStore::open_memory()?;
         // Replay in write order: `insert` replaces by id, so a task's terminal
         // record supersedes the `running` one it wrote when it was queued.
@@ -109,7 +120,7 @@ impl AuditSession {
                 report.records
             );
         }
-        Ok(report)
+        Ok(())
     }
 
     /// Append when open; otherwise count the event as dropped and return `Ok(false)`.
@@ -150,7 +161,14 @@ impl AuditSession {
         }
     }
 
+    /// Apply retention. A no-op on a sealed log: pruning compacts, and
+    /// compaction would replace the very file being preserved as evidence and
+    /// clear its seal. Only an explicit [`Self::clear_all`] may do that.
     pub fn prune_before(&self, ts_ms: i64) -> Result<u64, String> {
+        if let Some(reason) = self.integrity_error() {
+            eprintln!("audit: skipping retention prune, log is sealed: {reason}");
+            return Ok(0);
+        }
         let n = {
             let guard = self.store.lock().map_err(|e| e.to_string())?;
             match guard.as_ref() {
@@ -205,6 +223,27 @@ impl AuditSession {
     pub fn close(&self) -> Result<(), String> {
         self.discard();
         Ok(())
+    }
+
+    /// Close the session but keep the log's cross-process lock held, so a key
+    /// rotation can replace the file with no window for another instance to
+    /// take it and append under the old key.
+    pub fn close_retaining_lock(&self) -> Option<RetainedLock> {
+        let retained = self.log.close_retaining_lock();
+        if let Ok(mut g) = self.store.lock() {
+            *g = None;
+        }
+        if let Ok(mut k) = self.key.lock() {
+            *k = None;
+        }
+        retained
+    }
+
+    /// Reopen using a lock handed over by [`Self::close_retaining_lock`].
+    pub fn open_retaining(&self, key: [u8; 32], lock: RetainedLock) -> Result<LoadReport, String> {
+        let (events, report) = self.log.open_retaining(&key, lock)?;
+        self.seed_index(key, events, &report)?;
+        Ok(report)
     }
 
     /// Drop the in-memory index, the key and the file handle.
@@ -355,6 +394,35 @@ mod tests {
         reopened.clear_all().expect("clear");
         assert!(reopened.integrity_error().is_none());
         assert!(reopened.try_insert(&sample("e4", 400)).expect("insert"));
+    }
+
+    #[test]
+    fn retention_never_prunes_a_sealed_log() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("audit.log.enc");
+        let session = AuditSession::new(path.clone());
+        session.open(KEY).expect("open");
+        session.try_insert(&sample("old", 1_000)).expect("insert");
+        session.try_insert(&sample("new", 5_000)).expect("insert");
+        session.close().expect("close");
+
+        // Tamper, then reopen: the log seals.
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[24] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        let reopened = AuditSession::new(path.clone());
+        let report = reopened.open(KEY).expect("open damaged");
+        assert!(report.integrity_error.is_some(), "{report:?}");
+
+        // Pruning compacts, and compaction would replace the file and clear the
+        // seal — destroying the evidence sealing exists to keep.
+        assert_eq!(
+            reopened.prune_before(9_999).expect("prune"),
+            0,
+            "a sealed log must not be pruned"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "file must be untouched");
+        assert!(reopened.integrity_error().is_some(), "seal must remain");
     }
 
     #[test]

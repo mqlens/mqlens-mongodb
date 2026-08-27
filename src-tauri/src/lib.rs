@@ -2395,10 +2395,11 @@ async fn vault_change_password(
     let audit_log_path = connections::get_audit_log_path(&app_handle);
 
     // Close the audit session so the log is not being appended to while it is
-    // re-encrypted. Everything fallible after this point runs inside `rotate`, so
-    // a failure can reopen the session instead of leaving the app running
-    // unaudited until the next lock/unlock.
-    let _ = audit::close_on_lock(&state);
+    // re-encrypted, but keep its cross-process lock: releasing it would let a
+    // second instance take the log and append under the old key mid-rotation.
+    // Everything fallible after this point runs inside `rotate`, so a failure
+    // can reopen the session instead of leaving the app running unaudited.
+    let retained_audit_lock = audit::suspend_for_rotation(&state);
 
     let rotate = || -> Result<(), String> {
         // Prepare every re-encrypted payload before overwriting any vault file:
@@ -2407,32 +2408,37 @@ async fn vault_change_password(
             connections::prepare_reencrypt_file(&old_key, &new_key, &profiles_path)?;
         let new_settings =
             connections::prepare_reencrypt_file(&old_key, &new_key, &settings_path)?;
-        let new_audit =
+        // Returns the log *and* its state sidecar; both are keyed and must land
+        // together or the new-key log would be checked against an old-key count.
+        let new_audit_files =
             connections::prepare_reencrypt_audit_log(&old_key, &new_key, &audit_log_path)?;
 
         // Commit all four files together: a partial rotation leaves data under
         // the new key while the metadata still derives the old one, which no
         // password can then open.
-        connections::commit_vault_rotation(
-            vec![
-                (profiles_path.clone(), new_profiles),
-                (settings_path.clone(), new_settings),
-                (audit_log_path.clone(), new_audit),
-            ],
-            &meta_path,
-            &new_meta,
-        )
+        let mut files = vec![
+            (profiles_path.clone(), new_profiles),
+            (settings_path.clone(), new_settings),
+        ];
+        files.extend(new_audit_files.into_iter().map(|(p, b)| (p, Some(b))));
+        connections::commit_vault_rotation(files, &meta_path, &new_meta)
     };
 
-    if let Err(e) = rotate() {
-        // The rotation was abandoned, so `old_key` is still the live vault key.
-        // Reopen auditing under it before surfacing the error.
-        let _ = audit::open_on_unlock(&app_handle, &state, old_key);
-        return Err(e);
+    let rotated = rotate();
+    // Reopen with the retained lock either way — on failure under `old_key`,
+    // which is still the live vault key because it is only swapped below.
+    let reopen_key = if rotated.is_ok() { new_key } else { old_key };
+    match retained_audit_lock {
+        Some(lock) => {
+            let _ = audit::resume_after_rotation(&app_handle, &state, reopen_key, lock);
+        }
+        None => {
+            let _ = audit::open_on_unlock(&app_handle, &state, reopen_key);
+        }
     }
+    rotated?;
 
     *state.vault_key.lock_safe()? = Some(new_key);
-    let _ = audit::open_on_unlock(&app_handle, &state, new_key);
     // Approach A: a password change derives a new key; keep biometrics working transparently.
     biometric::restore_key_if_enrolled(&app_handle, &new_key);
     Ok(())

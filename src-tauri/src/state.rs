@@ -164,6 +164,11 @@ pub struct AppState {
     /// their operations would stay recorded as `running` forever. Drained on the
     /// next unlock.
     pub audit_pending: Arc<Mutex<Vec<crate::audit::AuditEvent>>>,
+    /// Bumped by a vault reset (#272). A `TaskAuditContext` captures the value
+    /// current when its task was queued and refuses to record or park once it
+    /// no longer matches, so a task outlasting the vault it belonged to cannot
+    /// write into the next vault's history.
+    pub audit_generation: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -191,6 +196,7 @@ impl AppState {
             audit: Arc::new(Mutex::new(None)),
             audit_degraded: Mutex::new(None),
             audit_pending: Arc::new(Mutex::new(Vec::new())),
+            audit_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 

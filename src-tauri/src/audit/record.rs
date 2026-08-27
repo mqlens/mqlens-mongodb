@@ -296,6 +296,10 @@ pub struct TaskAuditContext {
     slot: SessionSlot,
     /// Where a terminal event goes if the vault locked before the task finished.
     pending: PendingSlot,
+    /// Vault generation this task belongs to, and the live counter to compare
+    /// against. A reset bumps the counter, which invalidates this context.
+    generation: u64,
+    generation_now: Arc<std::sync::atomic::AtomicU64>,
     /// Policy in force when the task was queued. `None` means the `running`
     /// event was never recorded (auditing off, or the level excluded it), and
     /// the terminal event is skipped for the same reason.
@@ -340,6 +344,10 @@ impl TaskAuditContext {
         let ctx = Self {
             slot: Arc::clone(&state.audit),
             pending: Arc::clone(&state.audit_pending),
+            generation: state
+                .audit_generation
+                .load(std::sync::atomic::Ordering::Acquire),
+            generation_now: Arc::clone(&state.audit_generation),
             policy,
             event_id: Uuid::new_v4().to_string(),
             ts: now_ms(),
@@ -366,6 +374,15 @@ impl TaskAuditContext {
         let Some(policy) = self.policy else {
             return;
         };
+        // The vault this task belonged to was reset; its history is gone and this
+        // event must not land in the replacement vault's log.
+        if self
+            .generation_now
+            .load(std::sync::atomic::Ordering::Acquire)
+            != self.generation
+        {
+            return;
+        }
         let summary = format!("{} ({outcome})", self.summary);
         let input = RecordInput {
             event_id: Some(&self.event_id),
@@ -817,6 +834,34 @@ mod tests {
         assert!(
             state.audit_pending.lock().unwrap().is_empty(),
             "a skipped event must not be parked either"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reset_vault_discards_a_parked_outcome() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_open_session(dir.path());
+        let ctx = TaskAuditContext::capture(
+            &state,
+            Some("c1"),
+            Some("shop"),
+            Some("orders"),
+            "start_import_task",
+            "import shop.orders (json, skip)",
+        );
+
+        // The vault is reset while the task is still running: its history is gone.
+        let session = state.audit.lock().unwrap().take().unwrap();
+        session.close().expect("close");
+        state.audit_pending.lock().unwrap().clear();
+        state
+            .audit_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+
+        ctx.record_terminal("completed", None, Some(5));
+        assert!(
+            state.audit_pending.lock().unwrap().is_empty(),
+            "an outcome from the reset vault must not be parked for the next one"
         );
     }
 

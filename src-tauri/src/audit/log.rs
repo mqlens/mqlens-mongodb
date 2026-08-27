@@ -69,6 +69,9 @@ const MAX_RECORD_BYTES: u32 = 8 * 1024 * 1024;
 
 const GENESIS: [u8; 32] = [0u8; 32];
 
+/// Size of the plaintext in the state sidecar: `u64` record count + chain head.
+const STATE_PLAINTEXT_LEN: usize = 8 + 32;
+
 /// AES-256-GCM framing overhead in a `vault::encrypt` blob: random nonce, then
 /// ciphertext (same length as the plaintext), then the authentication tag.
 const NONCE_BYTES: usize = 12;
@@ -290,6 +293,16 @@ struct Decoded {
     report: LoadReport,
 }
 
+/// What the state sidecar says the log should contain.
+enum RecordedState {
+    /// No sidecar on disk.
+    Missing,
+    /// Present but unreadable under this key.
+    Unreadable(String),
+    /// Records written, and the chain head after them.
+    Known(u64, [u8; 32]),
+}
+
 /// Open state: the append handle plus the chain position it continues from.
 struct Open {
     /// Held for the whole session. Kept on a sidecar path rather than the log
@@ -311,6 +324,7 @@ struct Open {
 pub struct AuditLog {
     path: PathBuf,
     lock_path: PathBuf,
+    state_path: PathBuf,
     open: Mutex<Option<Open>>,
 }
 
@@ -318,11 +332,61 @@ impl AuditLog {
     pub fn new(path: PathBuf) -> Self {
         let mut lock_path = path.clone().into_os_string();
         lock_path.push(".lock");
+        let mut state_path = path.clone().into_os_string();
+        state_path.push(".state");
         Self {
             path,
             lock_path: PathBuf::from(lock_path),
+            state_path: PathBuf::from(state_path),
             open: Mutex::new(None),
         }
+    }
+
+    /// Path of the state sidecar, so vault reset and rotation can handle it.
+    pub fn state_path(&self) -> &Path {
+        &self.state_path
+    }
+
+    /// Record the number of events the log should contain, and the chain head
+    /// after them.
+    ///
+    /// This is what makes recovery unambiguous. The leading length prefix is
+    /// unauthenticated, so an edited prefix and a genuinely interrupted append
+    /// look identical from the file alone — and truncating on that ambiguity
+    /// would delete real records. Comparing against a durably recorded count
+    /// separates the two: fewer records than expected means removal, the same
+    /// count means the trailing bytes really were a partial append. It closes
+    /// tail truncation for the same reason. Encrypted under the vault key so it
+    /// cannot be forged without it.
+    fn write_state(&self, key: &[u8; 32], seq: u64, head: &[u8; 32]) -> Result<(), String> {
+        let mut plain = Vec::with_capacity(STATE_PLAINTEXT_LEN);
+        plain.extend_from_slice(&seq.to_be_bytes());
+        plain.extend_from_slice(head);
+        let blob = vault::encrypt(key, &plain)?;
+        durable::write_atomic(&self.state_path, &blob)
+    }
+
+    fn read_state(&self, key: &[u8; 32]) -> RecordedState {
+        if !self.state_path.exists() {
+            return RecordedState::Missing;
+        }
+        let blob = match fs::read(&self.state_path) {
+            Ok(b) if !b.is_empty() => b,
+            Ok(_) => return RecordedState::Missing,
+            Err(e) => return RecordedState::Unreadable(e.to_string()),
+        };
+        let plain = match vault::decrypt(key, &blob) {
+            Ok(p) => p,
+            Err(e) => return RecordedState::Unreadable(e),
+        };
+        if plain.len() != STATE_PLAINTEXT_LEN {
+            return RecordedState::Unreadable("unexpected length".into());
+        }
+        let mut seq_bytes = [0u8; 8];
+        seq_bytes.copy_from_slice(&plain[..8]);
+        let mut head = [0u8; 32];
+        head.copy_from_slice(&plain[8..]);
+        RecordedState::Known(u64::from_be_bytes(seq_bytes), head)
     }
 
     /// Path of the sidecar lock file, so vault reset can clean it up.
@@ -362,13 +426,26 @@ impl AuditLog {
     /// Returns every verified event in write order so the caller can rebuild the
     /// query index, plus a report describing what recovery had to do.
     pub fn open(&self, key: &[u8; 32]) -> Result<(Vec<AuditEvent>, LoadReport), String> {
+        self.open_inner(key, None)
+    }
+
+    fn open_inner(
+        &self,
+        key: &[u8; 32],
+        held: Option<RetainedLock>,
+    ) -> Result<(Vec<AuditEvent>, LoadReport), String> {
         let mut slot = self.open.lock().map_err(|e| e.to_string())?;
         // Drop any previous handle first, releasing its lock.
-        *slot = None;
+        if held.is_none() {
+            *slot = None;
+        }
 
         // Take the lock before reading, so no other instance can be appending
         // while recovery decides what is a torn tail and what is tampering.
-        let lock = self.acquire_lock()?;
+        let lock = match held {
+            Some(RetainedLock(file)) => file,
+            None => self.acquire_lock()?,
+        };
         let mut file = self.open_handle()?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)
@@ -382,6 +459,7 @@ impl AuditLog {
                 .map_err(|e| format!("write {}: {e}", self.path.display()))?;
             file.sync_all()
                 .map_err(|e| format!("fsync {}: {e}", self.path.display()))?;
+            self.write_state(key, 0, &GENESIS)?;
             *slot = Some(Open {
                 lock,
                 file,
@@ -392,15 +470,63 @@ impl AuditLog {
             return Ok((Vec::new(), LoadReport::default()));
         }
 
-        let decoded = decode_file(key, &bytes)?;
+        let recorded = self.read_state(key);
+        let mut decoded = decode_file(key, &bytes)?;
+
+        // The framing alone cannot tell an edited length prefix from an
+        // interrupted append, so trust the durable count instead of guessing.
+        // Only when decoding found nothing wrong itself — a broken chain or a
+        // failed tag is a more specific diagnosis than a count mismatch.
+        if decoded.report.integrity_error.is_none() {
+        match recorded {
+            RecordedState::Known(expected_seq, expected_head) => {
+                if decoded.seq < expected_seq {
+                    decoded.report.integrity_error = Some(format!(
+                        "audit log is missing records: {} readable, {expected_seq} expected — \
+                         records were removed, or a frame header was altered",
+                        decoded.seq
+                    ));
+                } else if decoded.seq == expected_seq && decoded.head != expected_head {
+                    decoded.report.integrity_error = Some(
+                        "audit log contents do not match their recorded hash — the file was \
+                         modified outside MQLens"
+                            .into(),
+                    );
+                }
+                // `decoded.seq > expected_seq` is the ordinary crash between an
+                // append and its state write: those records authenticated and
+                // chained, so they are genuine and the state is refreshed below.
+            }
+            RecordedState::Missing => {
+                decoded.report.integrity_error = Some(
+                    "the audit log's state file is missing, so the log cannot be verified \
+                     against the number of events it should hold. Clear the log to start a \
+                     new one."
+                        .into(),
+                );
+            }
+            RecordedState::Unreadable(why) => {
+                decoded.report.integrity_error = Some(format!(
+                    "the audit log's state file could not be read ({why}), so the log cannot \
+                     be verified. Clear the log to start a new one."
+                ));
+            }
+        }
+        }
 
         if decoded.report.integrity_error.is_none() && decoded.report.truncated_tail {
-            // Drop the partial record so the next append starts on a clean
-            // boundary. Safe: it never decrypted, so it was never a whole event.
+            // Confirmed a partial append rather than a removal, so dropping it is
+            // safe and leaves the next append on a clean boundary.
             file.set_len(decoded.valid_len as u64)
                 .map_err(|e| format!("truncate {}: {e}", self.path.display()))?;
             file.sync_all()
                 .map_err(|e| format!("fsync {}: {e}", self.path.display()))?;
+        }
+
+        if decoded.report.integrity_error.is_none() {
+            // Re-anchor the counter to what the log actually holds, covering both
+            // a truncated tail and records that outran their state write.
+            self.write_state(key, decoded.seq, &decoded.head)?;
         }
 
         *slot = Some(Open {
@@ -451,6 +577,9 @@ impl AuditLog {
 
         open.seq += 1;
         open.head = next;
+        // After the record, so a crash between the two leaves the log ahead of
+        // the counter — which recovery treats as genuine, not as removal.
+        self.write_state(key, open.seq, &open.head)?;
         Ok(())
     }
 
@@ -483,6 +612,7 @@ impl AuditLog {
         // usable log rather than a closed one — with the chain state that
         // matches whichever file is actually on disk.
         let (seq, head, sealed_reason) = if replaced.is_ok() {
+            self.write_state(key, seq, &head)?;
             (seq, head, None)
         } else {
             (prev_seq, prev_head, prev_sealed)
@@ -521,6 +651,22 @@ impl AuditLog {
             *slot = None;
         }
     }
+
+    /// Close the log but keep its cross-process lock held, for handing to
+    /// [`Self::open_retaining`].
+    pub fn close_retaining_lock(&self) -> Option<RetainedLock> {
+        let mut slot = self.open.lock().ok()?;
+        slot.take().map(|open| RetainedLock(open.lock))
+    }
+
+    /// Recover the log using a lock that is already held.
+    pub fn open_retaining(
+        &self,
+        key: &[u8; 32],
+        lock: RetainedLock,
+    ) -> Result<(Vec<AuditEvent>, LoadReport), String> {
+        self.open_inner(key, Some(lock))
+    }
 }
 
 /// Re-encrypt a whole log from `old_key` to `new_key`, returning the new file
@@ -533,22 +679,44 @@ impl AuditLog {
 pub fn prepare_reencrypted(
     old_key: &[u8; 32],
     new_key: &[u8; 32],
-    path: &Path,
-) -> Result<Option<Vec<u8>>, String> {
-    if !path.exists() {
-        return Ok(None);
+    log_path: &Path,
+) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+    if !log_path.exists() {
+        return Ok(Vec::new());
     }
-    let bytes = fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let bytes = fs::read(log_path).map_err(|e| format!("read {}: {e}", log_path.display()))?;
     if bytes.is_empty() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let decoded = decode_file(old_key, &bytes)?;
     if let Some(reason) = decoded.report.integrity_error {
         return Err(format!("cannot re-encrypt a damaged audit log: {reason}"));
     }
-    let (out, _, _) = encode_file(new_key, &decoded.events)?;
-    Ok(Some(out))
+    let (log_bytes, head, seq) = encode_file(new_key, &decoded.events)?;
+
+    // The state sidecar is encrypted under the same key, so it has to be
+    // rotated in the same transaction — otherwise the new-key log would be
+    // checked against an old-key counter and seal itself on the next unlock.
+    let mut state_plain = Vec::with_capacity(STATE_PLAINTEXT_LEN);
+    state_plain.extend_from_slice(&seq.to_be_bytes());
+    state_plain.extend_from_slice(&head);
+    let state_bytes = vault::encrypt(new_key, &state_plain)?;
+
+    let mut state_path = log_path.to_path_buf().into_os_string();
+    state_path.push(".state");
+    Ok(vec![
+        (log_path.to_path_buf(), log_bytes),
+        (PathBuf::from(state_path), state_bytes),
+    ])
 }
+
+/// A held cross-process lock, kept alive across a close/reopen cycle.
+///
+/// Key rotation must read and replace the log while no other instance can touch
+/// it, but it also has to close the session to get a consistent snapshot.
+/// Handing the lock through instead of dropping it removes the window where a
+/// second instance could take the log and append under the old key.
+pub struct RetainedLock(fs::File);
 
 #[cfg(test)]
 mod tests {
@@ -648,16 +816,21 @@ mod tests {
     #[test]
     fn torn_tail_is_discarded_and_logging_continues() {
         let dir = tempdir().unwrap();
-        let (log, path) = log_with(dir.path(), 3);
+        let (log, path) = log_with(dir.path(), 2);
         log.close();
 
-        // Chop the final record in half, as a crash mid-append would.
-        let bytes = fs::read(&path).unwrap();
-        fs::write(&path, &bytes[..bytes.len() - 20]).unwrap();
+        // A real interrupted append leaves partial bytes *and* a counter that
+        // still reads 2, because the counter is written after the record. Appending
+        // a truncated frame by hand reproduces that; rewriting the file after a
+        // successful append would not, and would correctly look like removal.
+        let mut partial = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        partial.write_all(&[0, 0, 1, 0]).unwrap(); // declares 256 bytes...
+        partial.write_all(&[7u8; 40]).unwrap(); // ...but only 40 are present
+        drop(partial);
 
         let reopened = AuditLog::new(path.clone());
         let (events, report) = reopened.open(&KEY).expect("recover");
-        assert!(report.truncated_tail, "torn tail must be reported");
+        assert!(report.truncated_tail, "torn tail must be reported: {report:?}");
         assert!(
             report.integrity_error.is_none(),
             "a torn tail is a crash, not tampering: {report:?}"
@@ -673,6 +846,49 @@ mod tests {
         assert_eq!(
             events.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
             ["e1", "e2", "e4"]
+        );
+    }
+
+    #[test]
+    fn inflating_the_last_records_length_seals_instead_of_dropping_it() {
+        // The one case framing alone cannot classify: a complete record whose
+        // prefix is changed to more than the bytes remaining looks exactly like
+        // an interrupted append. The durable count is what separates them.
+        let dir = tempdir().unwrap();
+        let (log, path) = log_with(dir.path(), 3);
+        log.close();
+
+        let mut bytes = fs::read(&path).unwrap();
+        let last_start = {
+            let mut off = HEADER_LEN;
+            let mut prev = off;
+            while off < bytes.len() {
+                let len = u32::from_be_bytes([
+                    bytes[off],
+                    bytes[off + 1],
+                    bytes[off + 2],
+                    bytes[off + 3],
+                ]) as usize;
+                prev = off;
+                off += LEN_PREFIX + len;
+            }
+            prev
+        };
+        bytes[last_start..last_start + LEN_PREFIX]
+            .copy_from_slice(&(MAX_RECORD_BYTES - 1).to_be_bytes());
+        fs::write(&path, &bytes).unwrap();
+
+        let reopened = AuditLog::new(path.clone());
+        let (events, report) = reopened.open(&KEY).expect("load");
+        assert!(
+            report.integrity_error.is_some(),
+            "dropping a record must not pass as a torn append: {report:?}"
+        );
+        assert_eq!(events.len(), 2, "the intact prefix is still readable");
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            bytes,
+            "the altered record must be preserved as evidence"
         );
     }
 
@@ -970,10 +1186,12 @@ mod tests {
         log.close();
 
         let new_key = [4u8; 32];
-        let bytes = prepare_reencrypted(&KEY, &new_key, &path)
-            .expect("prepare")
-            .expect("some bytes");
-        fs::write(&path, &bytes).unwrap();
+        let files = prepare_reencrypted(&KEY, &new_key, &path).expect("prepare");
+        // The state sidecar is keyed too, so it must rotate alongside the log.
+        assert_eq!(files.len(), 2, "log and state sidecar");
+        for (target, bytes) in files {
+            fs::write(target, bytes).unwrap();
+        }
 
         let reopened = AuditLog::new(path);
         let (events, report) = reopened.open(&new_key).expect("open with new key");
@@ -981,6 +1199,27 @@ mod tests {
         assert_eq!(
             events.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
             ["e1", "e2", "e3"]
+        );
+    }
+
+    #[test]
+    fn reencrypting_only_the_log_and_not_its_state_would_seal_it() {
+        // Guards the pairing: rotating one without the other leaves a new-key log
+        // checked against an old-key counter.
+        let dir = tempdir().unwrap();
+        let (log, path) = log_with(dir.path(), 2);
+        log.close();
+
+        let new_key = [4u8; 32];
+        let files = prepare_reencrypted(&KEY, &new_key, &path).expect("prepare");
+        let (log_target, log_bytes) = files.into_iter().next().unwrap();
+        fs::write(log_target, log_bytes).unwrap();
+
+        let reopened = AuditLog::new(path);
+        let (_, report) = reopened.open(&new_key).expect("load");
+        assert!(
+            report.integrity_error.is_some(),
+            "a stale state sidecar must be caught: {report:?}"
         );
     }
 
@@ -1003,7 +1242,7 @@ mod tests {
         let absent = dir.path().join("nope.log.enc");
         assert!(prepare_reencrypted(&KEY, &[4u8; 32], &absent)
             .expect("prepare")
-            .is_none());
+            .is_empty());
     }
 
     #[test]

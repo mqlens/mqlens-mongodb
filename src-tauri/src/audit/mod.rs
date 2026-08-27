@@ -12,7 +12,7 @@ pub mod store;
 
 pub use classify::classify_op;
 pub use envelope::{AuditPolicy, AuditSession};
-pub use log::{AuditLog, LoadReport};
+pub use log::{AuditLog, LoadReport, RetainedLock};
 pub use level::{should_record, AuditLevel, OpClass};
 pub use record::{
     flush_pending, maybe_record, maybe_record_result, maybe_record_task_start, with_source,
@@ -120,7 +120,12 @@ fn open_on_unlock_inner(
     )
     .unwrap_or_default();
     session.set_policy(policy_from_settings(&settings));
-    prune_for_policy(&session, session.policy());
+    // Never prune a sealed log: retention compacts, and compaction rewrites the
+    // file and clears the seal, destroying the corrupted frame and everything
+    // after it — exactly what sealing exists to preserve.
+    if report.integrity_error.is_none() {
+        prune_for_policy(&session, session.policy());
+    }
 
     *slot = Some(session);
     drop(slot);
@@ -132,6 +137,50 @@ fn open_on_unlock_inner(
         eprintln!("audit: wrote {flushed} task outcome(s) recorded while the vault was locked");
     }
     Ok(())
+}
+
+/// Close the session for a key rotation, keeping the log's cross-process lock.
+///
+/// Releasing it would let a second instance take the log and append under the
+/// old key while rotation swaps in the new-key file — on Unix that second
+/// process keeps writing to the unlinked old inode, so those events vanish.
+pub fn suspend_for_rotation(state: &AppState) -> Option<RetainedLock> {
+    set_degraded(state, None);
+    let mut slot = state.audit.lock_safe().ok()?;
+    let session = slot.take()?;
+    session.close_retaining_lock()
+}
+
+/// Reopen after a rotation, reusing the lock held throughout it.
+pub fn resume_after_rotation(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    key: [u8; 32],
+    lock: RetainedLock,
+) -> Result<(), String> {
+    let result = (|| -> Result<(), String> {
+        let mut slot = state.audit.lock_safe()?;
+        let session = AuditSession::new(connections::get_audit_log_path(app));
+        let report = session.open_retaining(key, lock)?;
+        if let Some(err) = &report.integrity_error {
+            eprintln!("audit log integrity: {err}");
+        }
+        let settings = load_settings_for_key(app, &key);
+        session.set_policy(policy_from_settings(&settings));
+        if report.integrity_error.is_none() {
+            prune_for_policy(&session, session.policy());
+        }
+        *slot = Some(session);
+        Ok(())
+    })();
+    match &result {
+        Ok(()) => set_degraded(state, None),
+        Err(e) => {
+            eprintln!("audit resume_after_rotation: {e}");
+            set_degraded(state, Some(e.clone()));
+        }
+    }
+    result
 }
 
 /// Seal and drop the audit session on vault lock.
@@ -179,8 +228,35 @@ pub fn reset_store(app: &tauri::AppHandle, state: &AppState) -> Result<(), Strin
             session.discard();
         }
     }
+
+    // A reset destroys the vault this history belonged to. Anything still parked
+    // from it must not be flushed into the *next* vault's log — including errors
+    // that were sanitized under the old vault's payload policy. Bumping the
+    // generation also stops background tasks still holding an old
+    // `TaskAuditContext` from parking their outcome after the reset.
+    if let Ok(mut pending) = state.audit_pending.lock_safe() {
+        let dropped = pending.len();
+        pending.clear();
+        if dropped > 0 {
+            eprintln!("audit: discarded {dropped} parked event(s) belonging to the reset vault");
+        }
+    }
+    state
+        .audit_generation
+        .fetch_add(1, std::sync::atomic::Ordering::Release);
+
+    let log_path = connections::get_audit_log_path(app);
+    let sidecar = |suffix: &str| {
+        let mut p = log_path.clone().into_os_string();
+        p.push(suffix);
+        std::path::PathBuf::from(p)
+    };
     for path in [
-        connections::get_audit_log_path(app),
+        log_path.clone(),
+        // The state sidecar holds the expected record count; leaving it behind
+        // would make the next vault's fresh log look like records were removed.
+        sidecar(".state"),
+        sidecar(".lock"),
         connections::get_audit_enc_path(app),
     ] {
         if path.exists() {
@@ -197,6 +273,8 @@ pub fn refresh_policy_from_settings(state: &AppState, settings: &AppSettings) {
     if let Ok(guard) = state.audit.lock_safe() {
         if let Some(session) = guard.as_ref() {
             session.set_policy(policy);
+            // `prune_before` refuses on a sealed log; saving a shorter retention
+            // window must not become a way to overwrite preserved evidence.
             prune_for_policy(session, policy);
         }
     }

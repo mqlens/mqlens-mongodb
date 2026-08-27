@@ -52,10 +52,12 @@ services you connect to.
   explicit user action that writes **plaintext** outside the vault envelope —
   treat exported files as sensitive.
 - **Audit log integrity** — every record carries its sequence number and the
-  hash of the record before it, so deleting, reordering or editing entries is
+  hash of the record before it, and a companion file records how many events the
+  log should hold, so deleting, reordering, editing or truncating entries is
   detected when the log is opened; MQLens then stops recording and preserves the
   file instead of writing over it. A crash mid-write is distinguished from
-  tampering: the partial trailing record is discarded and logging continues.
+  tampering: only when the recorded count confirms the trailing bytes were an
+  interrupted write is that partial record discarded and logging continued.
   Note the limit: the log is encrypted with your own master password on your own
   machine, so it is tamper-**evident**, not tamper-**proof** — anyone holding
   that password can delete it and start fresh.

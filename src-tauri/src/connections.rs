@@ -696,16 +696,18 @@ pub fn reencrypt_data_files(
     Ok(())
 }
 
-/// Prepare the audit log re-encrypted from `old_key` to `new_key`.
+/// Prepare the audit log and its state sidecar, re-encrypted from `old_key` to
+/// `new_key`.
 ///
 /// Not `prepare_reencrypt_file`: the log encrypts each record separately, so
 /// rotation has to decrypt every record and rebuild the hash chain rather than
-/// re-wrap one blob.
+/// re-wrap one blob. The state sidecar is keyed the same way and must rotate in
+/// the same transaction, so both files come back together.
 pub fn prepare_reencrypt_audit_log(
     old_key: &[u8; 32],
     new_key: &[u8; 32],
     log_path: &Path,
-) -> Result<Option<Vec<u8>>, String> {
+) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     crate::audit::log::prepare_reencrypted(old_key, new_key, log_path)
 }
 
