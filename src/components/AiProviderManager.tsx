@@ -9,10 +9,10 @@
  * Presets come from Rust (`ai_provider_presets`) rather than being restated here,
  * because the same base URLs are what the request adapters build their URLs from.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
-import { Plus, Trash2, Check, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Check, AlertCircle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -34,6 +34,8 @@ export interface AiProvider {
   api_key: string;
   model: string;
   command: string;
+  /** For `local-cli`: a command whose stdout lists models, one per line. */
+  models_command: string;
 }
 
 interface ProviderPreset {
@@ -43,6 +45,7 @@ interface ProviderPreset {
   baseUrl: string;
   model: string;
   command: string;
+  modelsCommand: string;
   needsKey: boolean;
 }
 
@@ -61,6 +64,7 @@ export function emptyProvider(): AiProvider {
     api_key: '',
     model: '',
     command: '',
+    models_command: '',
   };
 }
 
@@ -98,6 +102,63 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
   const [draft, setDraft] = useState<AiProvider | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
 
+  // Models the provider says it offers. Purely a convenience layered on a plain
+  // text field: if the list cannot be fetched — no network, wrong key, CLI not
+  // installed — the field stays typeable and saving is unaffected.
+  const [models, setModels] = useState<string[]>([]);
+  const [modelsStatus, setModelsStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
+  const [modelsError, setModelsError] = useState<string>('');
+  const loadSeq = useRef(0);
+
+  const openDraft = useCallback((p: AiProvider) => {
+    setDraft(p);
+    setDraftError(null);
+    setModels([]);
+    setModelsStatus('idle');
+    setModelsError('');
+  }, []);
+
+  const loadModels = useCallback(async (p: AiProvider) => {
+    const seq = ++loadSeq.current;
+    setModelsStatus('loading');
+    setModelsError('');
+    try {
+      const list = await invoke<string[]>('list_ai_models', { provider: p });
+      if (seq !== loadSeq.current) return; // a newer request superseded this one
+      setModels(list);
+      setModelsStatus('loaded');
+    } catch (e) {
+      if (seq !== loadSeq.current) return;
+      setModels([]);
+      setModelsStatus('error');
+      setModelsError(String(e));
+    }
+  }, []);
+
+  // What the listing needs before it is worth asking: an endpoint for the HTTP
+  // kinds (a key too, unless the endpoint is local and wants none), or a
+  // listing command for a CLI.
+  const canLoadModels = (p: AiProvider | null): boolean => {
+    if (!p) return false;
+    if (p.kind === 'local-cli') return p.models_command.trim() !== '';
+    if (p.base_url.trim() === '') return false;
+    return p.api_key.trim() !== '' || /localhost|127\.0\.0\.1/.test(p.base_url);
+  };
+
+  // Auto-load once the inputs are there, debounced so a key being typed does
+  // not fire a request per keystroke.
+  const draftUrl = draft?.base_url ?? '';
+  const draftKey = draft?.api_key ?? '';
+  const draftModelsCommand = draft?.models_command ?? '';
+  const draftKind = draft?.kind;
+  useEffect(() => {
+    if (!draft || !canLoadModels(draft)) return;
+    const handle = window.setTimeout(() => void loadModels(draft), 600);
+    return () => window.clearTimeout(handle);
+    // Only the inputs that change what the request asks for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftUrl, draftKey, draftModelsCommand, draftKind]);
+
   useEffect(() => {
     invoke<ProviderPreset[]>('ai_provider_presets')
       .then(setPresets)
@@ -117,6 +178,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
         base_url: preset.baseUrl,
         model: preset.model,
         command: preset.command,
+        models_command: preset.modelsCommand,
       }));
       setDraftError(null);
     },
@@ -132,6 +194,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
       base_url: draft.base_url.trim(),
       model: draft.model.trim(),
       command: draft.command.trim(),
+      models_command: draft.models_command.trim(),
       id: draft.id || slugify(draft.name, taken),
     };
     try {
@@ -175,10 +238,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => {
-                    setDraft(p);
-                    setDraftError(null);
-                  }}
+                  onClick={() => openDraft(p)}
                   data-testid={`ai-provider-edit-${p.id}`}
                 >
                   {t('ai.providerEdit')}
@@ -203,10 +263,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
         <Button
           variant="outline"
           size="sm"
-          onClick={() => {
-            setDraft(emptyProvider());
-            setDraftError(null);
-          }}
+          onClick={() => openDraft(emptyProvider())}
           data-testid="ai-provider-add"
         >
           <Plus size={14} className="mr-1.5" />
@@ -266,18 +323,32 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
           </div>
 
           {isCli ? (
-            <div className="space-y-2">
-              <Label htmlFor="ai-provider-command">{t('ai.providerCommand')}</Label>
-              <Input
-                id="ai-provider-command"
-                className="font-mono"
-                value={draft.command}
-                onChange={(e) => setDraft({ ...draft, command: e.target.value })}
-                placeholder="opencode run {prompt}"
-                data-testid="ai-provider-command-input"
-              />
-              <p className="text-xs text-muted-foreground">{t('ai.providerCommandHint')}</p>
-            </div>
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="ai-provider-command">{t('ai.providerCommand')}</Label>
+                <Input
+                  id="ai-provider-command"
+                  className="font-mono"
+                  value={draft.command}
+                  onChange={(e) => setDraft({ ...draft, command: e.target.value })}
+                  placeholder="ollama run {model} {prompt}"
+                  data-testid="ai-provider-command-input"
+                />
+                <p className="text-xs text-muted-foreground">{t('ai.providerCommandHint')}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ai-provider-models-command">{t('ai.providerModelsCommand')}</Label>
+                <Input
+                  id="ai-provider-models-command"
+                  className="font-mono"
+                  value={draft.models_command}
+                  onChange={(e) => setDraft({ ...draft, models_command: e.target.value })}
+                  placeholder="ollama list"
+                  data-testid="ai-provider-models-command-input"
+                />
+                <p className="text-xs text-muted-foreground">{t('ai.providerModelsCommandHint')}</p>
+              </div>
+            </>
           ) : (
             <>
               <div className="space-y-2">
@@ -292,32 +363,57 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
                 />
                 <p className="text-xs text-muted-foreground">{t('ai.providerBaseUrlHint')}</p>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="ai-provider-model">{t('ai.providerModel')}</Label>
-                  <Input
-                    id="ai-provider-model"
-                    className="font-mono"
-                    value={draft.model}
-                    onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-                    placeholder="deepseek-chat"
-                    data-testid="ai-provider-model-input"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="ai-provider-key">{t('ai.providerApiKey')}</Label>
-                  <Input
-                    id="ai-provider-key"
-                    type="password"
-                    value={draft.api_key}
-                    onChange={(e) => setDraft({ ...draft, api_key: e.target.value })}
-                    data-testid="ai-provider-key-input"
-                  />
-                  <p className="text-xs text-muted-foreground">{t('ai.providerApiKeyHint')}</p>
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="ai-provider-key">{t('ai.providerApiKey')}</Label>
+                <Input
+                  id="ai-provider-key"
+                  type="password"
+                  value={draft.api_key}
+                  onChange={(e) => setDraft({ ...draft, api_key: e.target.value })}
+                  data-testid="ai-provider-key-input"
+                />
+                <p className="text-xs text-muted-foreground">{t('ai.providerApiKeyHint')}</p>
               </div>
             </>
           )}
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="ai-provider-model">{t('ai.providerModel')}</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 gap-1 px-2 text-xs"
+                disabled={!canLoadModels(draft) || modelsStatus === 'loading'}
+                onClick={() => void loadModels(draft)}
+                data-testid="ai-provider-models-load"
+              >
+                <RefreshCw size={12} className={modelsStatus === 'loading' ? 'animate-spin' : ''} />
+                {t('ai.providerModelsLoad')}
+              </Button>
+            </div>
+            <Input
+              id="ai-provider-model"
+              className="font-mono"
+              list="ai-provider-models"
+              value={draft.model}
+              onChange={(e) => setDraft({ ...draft, model: e.target.value })}
+              placeholder={isCli ? 'llama3' : 'deepseek-chat'}
+              data-testid="ai-provider-model-input"
+            />
+            <datalist id="ai-provider-models" data-testid="ai-provider-models-list">
+              {models.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+            <p className="text-xs text-muted-foreground" data-testid="ai-provider-models-status">
+              {modelsStatus === 'loading' && t('ai.providerModelsLoading')}
+              {modelsStatus === 'loaded' && t('ai.providerModelsLoaded', { count: models.length })}
+              {modelsStatus === 'error' && t('ai.providerModelsFailed', { error: modelsError })}
+              {modelsStatus === 'idle' && (isCli ? t('ai.providerModelCliHint') : t('ai.providerModelHint'))}
+            </p>
+          </div>
 
           {draftError && (
             <p

@@ -143,9 +143,12 @@ const EXEMPT_HITS: Record<string, string[]> = {
   // service's own documentation, not instructional copy: a CLI invocation, a
   // vendor base URL, and a model identifier.
   'src/components/AiProviderManager.tsx': [
-    'placeholder="opencode run {prompt}"',
+    'placeholder="ollama run {model} {prompt}"',
+    'placeholder="ollama list"',
     'placeholder="https://api.deepseek.com/v1"',
-    'placeholder="deepseek-chat"',
+    // Model-name placeholder, chosen per kind: a local model for a CLI, a
+    // vendor model id for HTTP.
+    "placeholder={isCli ? 'llama3' : 'deepseek-chat'}",
   ],
   'src/components/CreateViewView.tsx': [
     // Example view name shown as a placeholder, not an instructional hint —

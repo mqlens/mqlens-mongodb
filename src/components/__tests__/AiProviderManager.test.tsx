@@ -15,7 +15,18 @@ const PRESETS = [
     baseUrl: 'https://api.deepseek.com/v1',
     model: 'deepseek-chat',
     command: '',
+    modelsCommand: '',
     needsKey: true,
+  },
+  {
+    id: 'ollama-cli',
+    name: 'Ollama CLI (local)',
+    kind: 'local-cli',
+    baseUrl: '',
+    model: 'llama3',
+    command: 'ollama run {model} {prompt}',
+    modelsCommand: 'ollama list',
+    needsKey: false,
   },
   {
     id: 'opencode',
@@ -24,6 +35,7 @@ const PRESETS = [
     baseUrl: '',
     model: '',
     command: 'opencode run {prompt}',
+    modelsCommand: '',
     needsKey: false,
   },
 ];
@@ -33,6 +45,7 @@ beforeEach(() => {
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'ai_provider_presets') return Promise.resolve(PRESETS);
     if (cmd === 'validate_ai_provider') return Promise.resolve('ok');
+    if (cmd === 'list_ai_models') return Promise.resolve(['gpt-4o', 'gpt-4o-mini']);
     return Promise.resolve(null);
   });
 });
@@ -118,8 +131,10 @@ describe('AiProviderManager', () => {
     fireEvent.click(screen.getByTestId('ai-provider-edit-oc'));
 
     expect(screen.getByTestId('ai-provider-command-input')).toHaveValue('opencode run {prompt}');
+    expect(screen.getByTestId('ai-provider-models-command-input')).toBeInTheDocument();
+    // Model stays: it fills {model} in the command, and can be listed or typed.
+    expect(screen.getByTestId('ai-provider-model-input')).toBeInTheDocument();
     expect(screen.queryByTestId('ai-provider-url-input')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('ai-provider-model-input')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ai-provider-key-input')).not.toBeInTheDocument();
   });
 
@@ -186,6 +201,108 @@ describe('AiProviderManager', () => {
       name: 'Groq',
       base_url: 'https://api.groq.com/openai/v1',
       model: 'llama-3.1',
+    });
+  });
+
+  describe('model listing', () => {
+    const listedOptions = () =>
+      Array.from(screen.getByTestId('ai-provider-models-list').querySelectorAll('option')).map(
+        (o) => (o as HTMLOptionElement).value
+      );
+
+    it('loads models once the endpoint and key are set, without a click', async () => {
+      setup();
+      fireEvent.click(screen.getByTestId('ai-provider-add'));
+      fireEvent.change(screen.getByTestId('ai-provider-url-input'), {
+        target: { value: 'https://api.openai.com/v1' },
+      });
+      fireEvent.change(screen.getByTestId('ai-provider-key-input'), { target: { value: 'sk-test' } });
+
+      await waitFor(() => expect(listedOptions()).toEqual(['gpt-4o', 'gpt-4o-mini']));
+      expect(screen.getByTestId('ai-provider-models-status')).toHaveTextContent('2 models');
+      const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'list_ai_models');
+      expect(call![1].provider).toMatchObject({ base_url: 'https://api.openai.com/v1', api_key: 'sk-test' });
+    });
+
+    it('does not ask before there is a key, unless the endpoint is local', async () => {
+      setup();
+      fireEvent.click(screen.getByTestId('ai-provider-add'));
+      fireEvent.change(screen.getByTestId('ai-provider-url-input'), {
+        target: { value: 'https://api.openai.com/v1' },
+      });
+      // A remote endpoint with no key would only produce a 401 — not asked.
+      await new Promise((r) => setTimeout(r, 750));
+      expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_ai_models')).toBe(false);
+
+      // A local server ignores credentials, so it is asked straight away.
+      fireEvent.change(screen.getByTestId('ai-provider-url-input'), {
+        target: { value: 'http://localhost:11434/v1' },
+      });
+      await waitFor(() =>
+        expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_ai_models')).toBe(true)
+      );
+    });
+
+    it('keeps the model typeable and says why when the list cannot be loaded', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'ai_provider_presets') return Promise.resolve(PRESETS);
+        if (cmd === 'list_ai_models') return Promise.reject('DeepSeek error (401): invalid key');
+        return Promise.resolve('ok');
+      });
+      const onChange = setup();
+      fireEvent.click(screen.getByTestId('ai-provider-add'));
+      fireEvent.change(screen.getByTestId('ai-provider-name-input'), { target: { value: 'DeepSeek' } });
+      fireEvent.change(screen.getByTestId('ai-provider-url-input'), {
+        target: { value: 'https://api.deepseek.com/v1' },
+      });
+      fireEvent.change(screen.getByTestId('ai-provider-key-input'), { target: { value: 'bad' } });
+
+      await waitFor(() =>
+        expect(screen.getByTestId('ai-provider-models-status')).toHaveTextContent('invalid key')
+      );
+      expect(listedOptions()).toEqual([]);
+
+      // Nothing about the failure blocks the user.
+      fireEvent.change(screen.getByTestId('ai-provider-model-input'), { target: { value: 'deepseek-chat' } });
+      fireEvent.click(screen.getByTestId('ai-provider-save'));
+      await waitFor(() => expect(onChange).toHaveBeenCalled());
+      expect(onChange.mock.calls[0][0][0]).toMatchObject({ model: 'deepseek-chat' });
+    });
+
+    it('lists a CLI\'s models from its list command', async () => {
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'ai_provider_presets') return Promise.resolve(PRESETS);
+        if (cmd === 'list_ai_models') return Promise.resolve(['llama3:latest', 'mistral:7b']);
+        return Promise.resolve('ok');
+      });
+      setup([
+        { ...emptyProvider(), id: 'oc', name: 'Ollama', kind: 'local-cli', command: 'ollama run {model} {prompt}', models_command: 'ollama list', model: 'llama3' },
+      ]);
+      fireEvent.click(screen.getByTestId('ai-provider-edit-oc'));
+
+      await waitFor(() => expect(listedOptions()).toEqual(['llama3:latest', 'mistral:7b']));
+      const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'list_ai_models');
+      expect(call![1].provider).toMatchObject({ kind: 'local-cli', models_command: 'ollama list' });
+    });
+
+    it('offers a manual reload and disables it while nothing can be asked', () => {
+      setup();
+      fireEvent.click(screen.getByTestId('ai-provider-add'));
+      expect(screen.getByTestId('ai-provider-models-load')).toBeDisabled();
+      fireEvent.change(screen.getByTestId('ai-provider-url-input'), { target: { value: 'http://localhost:1234/v1' } });
+      expect(screen.getByTestId('ai-provider-models-load')).not.toBeDisabled();
+    });
+
+    it('carries models_command through save', async () => {
+      const onChange = setup();
+      fireEvent.click(screen.getByTestId('ai-provider-add'));
+      // Reach the CLI form via an existing CLI entry's shape: set fields directly.
+      fireEvent.change(screen.getByTestId('ai-provider-name-input'), { target: { value: 'Remote' } });
+      fireEvent.change(screen.getByTestId('ai-provider-url-input'), { target: { value: 'http://localhost:11434/v1' } });
+      fireEvent.change(screen.getByTestId('ai-provider-model-input'), { target: { value: ' llama3 ' } });
+      fireEvent.click(screen.getByTestId('ai-provider-save'));
+      await waitFor(() => expect(onChange).toHaveBeenCalled());
+      expect(onChange.mock.calls[0][0][0]).toMatchObject({ model: 'llama3', models_command: '' });
     });
   });
 });

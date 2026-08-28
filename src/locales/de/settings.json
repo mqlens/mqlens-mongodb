@@ -44,7 +44,16 @@
       "openai-compatible": "OpenAI-kompatibel",
       "anthropic-compatible": "Anthropic-kompatibel",
       "local-cli": "Lokaler Befehl"
-    }
+    },
+    "providerModelsCommand": "Befehl für Modellliste",
+    "providerModelsCommandHint": "Optional. Ein Befehl, der die verfügbaren Modelle zeilenweise ausgibt — seine Ausgabe füllt die Modellliste.",
+    "providerModelsLoad": "Modelle laden",
+    "providerModelsLoading": "Frage den Anbieter nach seinen Modellen…",
+    "providerModelsLoaded_one": "{{count}} Modell verfügbar — wähle eins oder tippe einen Namen.",
+    "providerModelsLoaded_other": "{{count}} Modelle verfügbar — wähle eins oder tippe einen Namen.",
+    "providerModelsFailed": "Modelle konnten nicht geladen werden: {{error}} Du kannst trotzdem einen Modellnamen eintippen.",
+    "providerModelHint": "Wird automatisch geladen, sobald Endpunkt und Schlüssel gesetzt sind. Einen Namen zu tippen geht auch.",
+    "providerModelCliHint": "Ersetzt {model} im Befehl. Wird aus dem Listenbefehl geladen, falls einer gesetzt ist; einen Namen zu tippen geht auch."
   },
   "audit": {
     "enabledDescription": "Aktiviert die Aufzeichnung ausgewählter Datenbankoperationen in einem tresorverschlüsselten lokalen Protokoll.",

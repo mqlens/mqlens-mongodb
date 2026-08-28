@@ -43,7 +43,15 @@
       "openai-compatible": "OpenAI 兼容",
       "anthropic-compatible": "Anthropic 兼容",
       "local-cli": "本地命令"
-    }
+    },
+    "providerModelsCommand": "模型列表命令",
+    "providerModelsCommandHint": "可选。一条逐行输出可用模型的命令——其输出会填充模型列表。",
+    "providerModelsLoad": "加载模型",
+    "providerModelsLoading": "正在向提供方查询模型…",
+    "providerModelsLoaded_other": "{{count}} 个模型可用——选择一个或输入名称。",
+    "providerModelsFailed": "无法加载模型：{{error}} 你仍可以输入模型名称。",
+    "providerModelHint": "设置好端点和密钥后自动加载。也可以直接输入名称。",
+    "providerModelCliHint": "填入命令中的 {model}。若设置了列表命令则从中加载；也可以直接输入名称。"
   },
   "audit": {
     "enabledDescription": "启用后，MQLens 会将选定的数据库操作记录到经密钥库加密的本地日志中。",
