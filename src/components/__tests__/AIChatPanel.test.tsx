@@ -1096,6 +1096,62 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     }
   });
 
+  it('does not let an abandoned batch release slots a later batch reserved', async () => {
+    // `dropPendingImages` clears the whole reservation counter. An abandoned batch
+    // that then ran its own release subtracted from whichever batch had reserved
+    // since, so a third paste could read four more files while the second was
+    // still in flight — the cap the reservation exists to enforce, defeated.
+    const read: string[] = [];
+    const pending: Array<() => void> = [];
+    const RealFileReader = globalThis.FileReader;
+    class HeldReader {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      error = null;
+      result = 'data:image/png;base64,AAAA';
+      readAsDataURL(file: File) {
+        read.push(file.name);
+        pending.push(() => this.onload?.());
+      }
+    }
+    (globalThis as unknown as { FileReader: unknown }).FileReader = HeldReader;
+    try {
+      mockPickerBackend({ query: '{}' });
+      renderPanel('editor');
+      await screen.findByTestId('ai-chat-provider-select');
+      const input = screen.getByTestId('chat-input');
+      const pasteMany = (tag: string, n: number) =>
+        fireEvent.paste(input, {
+          clipboardData: {
+            items: Array.from({ length: n }, (_, i) => {
+              const file = new File([new Uint8Array(3)], `${tag}${i}.png`, { type: 'image/png' });
+              return { kind: 'file', type: 'image/png', getAsFile: () => file };
+            }),
+          },
+        });
+
+      pasteMany('a', 4); // all four slots reserved, none settled
+      expect(read).toHaveLength(4);
+
+      // New chat abandons that batch and clears the counter wholesale.
+      fireEvent.click(screen.getByTestId('ai-chat-new-btn'));
+      pasteMany('b', 4); // the new conversation may claim all four
+      expect(read.filter((n) => n.startsWith('b'))).toHaveLength(4);
+
+      // Only the ABANDONED batch finishes — b is still in flight, so its four
+      // reserved slots must stay reserved. Firing b's readers too would put its
+      // images in state and make the next assertion hold for the wrong reason.
+      const abandoned = pending.slice(0, 4);
+      await act(async () => {
+        abandoned.forEach((fire) => fire());
+      });
+      pasteMany('c', 4);
+      expect(read.filter((n) => n.startsWith('c'))).toHaveLength(0);
+    } finally {
+      (globalThis as unknown as { FileReader: unknown }).FileReader = RealFileReader;
+    }
+  });
+
   it('re-reads its provider list when settings change elsewhere', async () => {
     // Settings can be open in another pane or window. The list was fetched once,
     // so deleting the selected provider there left its id selected here and the

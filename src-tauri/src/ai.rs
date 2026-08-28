@@ -494,15 +494,9 @@ pub fn extract_openai_text(resp: &serde_json::Value) -> String {
 /// servers are reached over `http://` by design and cannot leave the machine.
 /// Anything else stops the chain, which surfaces as a request error rather than a
 /// silent cleartext hop.
-/// Whether a redirect to `url` may be followed with the request's headers.
-///
-/// TLS, or a loopback address — local servers are reached over `http://` by
-/// design and their traffic cannot leave the machine. Everything else would put
-/// the key and the prompt on the network in clear text.
-pub(crate) fn redirect_is_safe(url: &reqwest::Url) -> bool {
-    if url.scheme() == "https" {
-        return true;
-    }
+/// Whether `url` is a loopback address — a local server, whose traffic cannot
+/// leave the machine, which is why `http://` is legitimate for one.
+fn is_loopback_url(url: &reqwest::Url) -> bool {
     match url.host_str() {
         Some(h) => {
             let h = h
@@ -519,12 +513,37 @@ pub(crate) fn redirect_is_safe(url: &reqwest::Url) -> bool {
     }
 }
 
+/// Whether a redirect from `original` to `target` may be followed *with the
+/// request's headers still on it*.
+///
+/// Two rules, and both are needed. The host must not change: `x-api-key` and
+/// `x-goog-api-key` are ordinary headers, so unlike `authorization` reqwest keeps
+/// them across origins, and an `https → https` hop to another host would hand the
+/// credential to whoever that host is. And the target must be TLS or loopback, so
+/// a same-host downgrade cannot put it on the wire in clear text.
+///
+/// A same-host upgrade to `https` is allowed — it is strictly better than the
+/// request that was made — and ports are deliberately not compared, since an
+/// upgrade normally changes the port and the host is what identifies the operator.
+pub(crate) fn redirect_is_safe(target: &reqwest::Url, original: &reqwest::Url) -> bool {
+    if target.host_str().is_none() || target.host_str() != original.host_str() {
+        return false;
+    }
+    target.scheme() == "https" || is_loopback_url(target)
+}
+
 fn http_client() -> reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
             let policy = reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() >= 5 || !redirect_is_safe(attempt.url()) {
+                // `previous()` starts at the URL the request was made to, which is
+                // what "the same host" has to mean — comparing against the previous
+                // hop would let a chain walk to another host one redirect at a time.
+                let Some(original) = attempt.previous().first() else {
+                    return attempt.stop();
+                };
+                if attempt.previous().len() >= 5 || !redirect_is_safe(attempt.url(), original) {
                     attempt.stop()
                 } else {
                     attempt.follow()

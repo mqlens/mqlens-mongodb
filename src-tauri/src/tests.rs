@@ -137,24 +137,60 @@ mod tests {
         // origins. Automatic model loading meant no further user action was needed.
         use crate::ai::redirect_is_safe;
         let url = |u: &str| reqwest::Url::parse(u).unwrap();
+
+        // From an https cloud endpoint: only the same host, and only over TLS.
+        let from = url("https://api.openai.com/v1/chat/completions");
         for good in [
-            "https://api.openai.com/v1/models",
-            "https://elsewhere.example/v1",
-            // Local servers are reached over http by design; nothing leaves the box.
-            "http://localhost:11434/v1",
-            "http://127.0.0.1:1234/v1",
-            "http://[::1]:8000/v1",
-            "http://ollama.localhost/v1",
+            "https://api.openai.com/v2/chat",
+            "https://api.openai.com:8443/v1",
         ] {
-            assert!(redirect_is_safe(&url(good)), "{good} should be followed");
+            assert!(redirect_is_safe(&url(good), &from), "{good} should be followed");
         }
         for bad in [
+            // Another host, even over TLS: `x-api-key` is an ordinary header, so
+            // reqwest keeps it across origins and the credential would go with it.
+            "https://elsewhere.example/v1",
+            "https://api.openai.com.attacker.example/v1",
+            // A downgrade on the same host puts it on the wire in clear text.
             "http://api.openai.com/v1",
             "http://attacker.example/collect",
-            "http://192.168.1.50:8000/v1",
         ] {
-            assert!(!redirect_is_safe(&url(bad)), "{bad} must not be followed");
+            assert!(!redirect_is_safe(&url(bad), &from), "{bad} must not be followed");
         }
+
+        // A local server is reached over http by design, and may stay there.
+        let local = url("http://localhost:11434/v1/models");
+        assert!(redirect_is_safe(&url("http://localhost:11434/api/tags"), &local));
+        // ...but not hop off the machine, TLS or not.
+        assert!(!redirect_is_safe(&url("https://elsewhere.example/v1"), &local));
+        assert!(!redirect_is_safe(&url("http://192.168.1.50:8000/v1"), &local));
+
+        // An upgrade on the same host is strictly better than what was asked for.
+        let plain = url("http://llm.internal.example/v1/models");
+        assert!(redirect_is_safe(&url("https://llm.internal.example/v1/models"), &plain));
+    }
+
+    #[test]
+    fn both_model_list_commands_share_the_transport_checked_path() {
+        // The check was in `list_ai_models` and not `list_ai_models_for`, so a
+        // provider saved with a key and an `http://` endpoint still reached the
+        // network — automatically, on opening the panel.
+        let src = include_str!("lib.rs");
+        assert_eq!(
+            src.matches("ai::list_models_http(").count(),
+            1,
+            "only `list_models_for_provider` may issue an HTTP model list"
+        );
+        assert_eq!(
+            src.matches("ai::list_models_cli(").count(),
+            1,
+            "only `list_models_for_provider` may run a CLI model list"
+        );
+        assert_eq!(
+            src.matches("list_models_for_provider(").count(),
+            3,
+            "the definition plus both commands — a new caller must come through it"
+        );
     }
 
     #[test]

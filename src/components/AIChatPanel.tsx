@@ -504,10 +504,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     const room = Math.max(0, MAX_PENDING_IMAGES - taken);
     const fits = files.slice(0, room);
     reservedSlotsRef.current += fits.length;
+    // The epoch this reservation belongs to. `dropPendingImages` clears the whole
+    // counter, so a batch abandoned by it must not subtract again on the way out —
+    // that took slots from whichever batch had reserved them since, letting a
+    // third paste read another four files while the second was still in flight.
+    const reservedIn = imageEpochRef.current;
     return {
       fits,
       overCap: files.length > room,
       release: () => {
+        if (imageEpochRef.current !== reservedIn) return; // already released wholesale
         reservedSlotsRef.current = Math.max(0, reservedSlotsRef.current - fits.length);
       },
     };

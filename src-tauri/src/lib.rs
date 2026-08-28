@@ -1175,21 +1175,38 @@ fn mcp_agent_instructions() -> &'static str {
 /// asked by running its `models_command`. Either way a failure is reported with
 /// the provider named, and the form keeps the model field typeable, so this can
 /// only ever help.
-#[tauri::command]
-async fn list_ai_models(provider: ai_providers::AiProvider) -> Result<Vec<String>, String> {
+/// List a provider's models, refusing first to put its key on the wire in clear
+/// text.
+///
+/// Shared by both listing commands. The check lived in one of them and not the
+/// other, which is how a provider saved with a key and a non-loopback `http://`
+/// endpoint still reached the network — automatically, from the chat panel, before
+/// the user sent anything. A test pins the number of callers so a third cannot be
+/// added without coming through here.
+async fn list_models_for_provider(
+    provider: &ai_providers::AiProvider,
+) -> Result<Vec<String>, String> {
     match provider.kind {
-        ai_providers::ProviderKind::LocalCli => {
-            ai::list_models_cli(&provider.models_command).await
-        }
+        ai_providers::ProviderKind::LocalCli => ai::list_models_cli(&provider.models_command).await,
         kind => {
-            // Before the request, not at Save: this runs automatically 600 ms
-            // after a key is typed, so Save is far too late to be the first
-            // check on whether the key can safely go out.
+            // Before the request, not at Save: listing runs on its own 600 ms after
+            // a key is typed, and for a saved provider on merely opening the panel,
+            // so Save is far too late to be the first check.
             provider.check_transport()?;
-            ai::list_models_http(kind, &provider.models_endpoint()?, &provider.api_key, &provider.name)
-                .await
+            ai::list_models_http(
+                kind,
+                &provider.models_endpoint()?,
+                &provider.api_key,
+                &provider.name,
+            )
+            .await
         }
     }
+}
+
+#[tauri::command]
+async fn list_ai_models(provider: ai_providers::AiProvider) -> Result<Vec<String>, String> {
+    list_models_for_provider(&provider).await
 }
 
 /// Check a provider's configuration without sending a prompt to it.
@@ -1383,13 +1400,7 @@ async fn list_ai_models_for(
     }
     settings.ai_provider = providerId;
     let provider = connections::resolve_ai_provider(&settings)?;
-    match provider.kind {
-        ai_providers::ProviderKind::LocalCli => ai::list_models_cli(&provider.models_command).await,
-        kind => {
-            ai::list_models_http(kind, &provider.models_endpoint()?, &provider.api_key, &provider.name)
-                .await
-        }
-    }
+    list_models_for_provider(&provider).await
 }
 
 #[tauri::command]
