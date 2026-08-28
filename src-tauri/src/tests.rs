@@ -181,6 +181,46 @@ mod tests {
         assert!(crate::ai::ANTHROPIC_URL.starts_with("https://api.anthropic.com/"));
     }
 
+    #[tokio::test]
+    async fn a_stalled_endpoint_gives_up_instead_of_hanging_the_chat() {
+        // A server that accepts the connection and then says nothing at all.
+        // Bounding only `send()` would not catch this once headers had arrived,
+        // and bounding neither left the chat disabled with no way out.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _accepting = tokio::spawn(async move {
+            // Hold every connection open, unanswered, for as long as the test runs.
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+
+        let request = reqwest::Client::new().post(format!("http://{addr}/v1/chat/completions"));
+        let err = crate::ai::send_json_within(
+            request,
+            "Stalled provider",
+            std::time::Duration::from_millis(250),
+        )
+        .await
+        .expect_err("a stalled endpoint must not be waited on forever");
+        assert!(err.contains("did not answer within"), "{err}");
+        assert!(err.contains("Stalled provider"), "{err}");
+    }
+
+    #[test]
+    fn every_request_in_ai_rs_goes_through_the_bounded_helper() {
+        // The deadline can only be verified per call site, and a new provider
+        // path is added by copying an existing one. Keeping `send()` in exactly
+        // one place is what makes "every request is bounded" checkable at all.
+        let src = include_str!("ai.rs");
+        assert_eq!(
+            src.matches(".send()").count(),
+            1,
+            "a request outside `send_json_within` would have no deadline; route it through the helper"
+        );
+    }
+
     #[test]
     fn a_quoted_path_survives_command_parsing() {
         // `split_whitespace` kept the quotes and split the path, so Python got

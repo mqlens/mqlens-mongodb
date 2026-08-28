@@ -273,10 +273,14 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
    * has moved on.
    */
   const imageEpochRef = useRef(0);
+  /** Reads not yet settled, so a switch to a CLI can still explain itself. */
+  const pendingReadsRef = useRef(0);
   /** Discard the pending attachments, and any read still in flight. */
   const dropPendingImages = () => {
     imageEpochRef.current += 1;
-    setPendingImages([]);
+    // Same array when there is nothing to clear: this is called on every switch
+    // to a CLI provider, and a fresh `[]` would re-render for no change.
+    setPendingImages((prev) => (prev.length === 0 ? prev : []));
   };
   const [imageNote, setImageNote] = useState<string | null>(null);
   const activeProvider = providerOptions.find((o) => o.id === chatProviderId) ?? null;
@@ -349,9 +353,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     // Each provider has its own model namespace; carrying one across would
     // send a model the new provider has never heard of.
     setChatModel(providerOptions.find((o) => o.id === id)?.model ?? '');
-    if (providerOptions.find((o) => o.id === id)?.kind === 'local-cli' && pendingImages.length > 0) {
+    // Not conditional on `pendingImages.length`: a read still in flight is not in
+    // state yet, so counting what is there left the epoch unbumped and the read
+    // attached its image *after* the CLI was selected — where it could not be
+    // sent, but was cleared by sending anyway.
+    if (providerOptions.find((o) => o.id === id)?.kind === 'local-cli') {
+      // A read in flight counts as an image the user chose: it is about to be
+      // discarded, and saying nothing would look like the app lost it.
+      const hadImages = pendingImages.length > 0 || pendingReadsRef.current > 0;
       dropPendingImages();
-      setImageNote(t('aiChatPanel.composer.noImagesForCli'));
+      if (hadImages) setImageNote(t('aiChatPanel.composer.noImagesForCli'));
     }
   };
 
@@ -405,10 +416,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       return;
     }
     const epoch = imageEpochRef.current;
-    void imagesFromFiles(accepted).then((imgs) => {
-      if (imageEpochRef.current !== epoch) return; // the composer moved on
-      addImages(imgs, reason);
-    });
+    pendingReadsRef.current += 1;
+    void (async () => {
+      try {
+        const imgs = await imagesFromFiles(accepted);
+        if (imageEpochRef.current !== epoch) return; // the composer moved on
+        addImages(imgs, reason);
+      } finally {
+        pendingReadsRef.current -= 1;
+      }
+    })();
   };
 
 
@@ -424,9 +441,14 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       return;
     }
     const epoch = imageEpochRef.current;
-    const images = await imagesFromFiles(accepted);
-    if (imageEpochRef.current !== epoch) return; // the composer moved on
-    addImages(images, reason);
+    pendingReadsRef.current += 1;
+    try {
+      const images = await imagesFromFiles(accepted);
+      if (imageEpochRef.current !== epoch) return; // the composer moved on
+      addImages(images, reason);
+    } finally {
+      pendingReadsRef.current -= 1;
+    }
   };
   const [isChatLoading, setIsChatLoading] = useState(false);
   // Persisted, not per-tab: a panel width is a UI preference, and remounting

@@ -461,6 +461,40 @@ pub fn extract_openai_text(resp: &serde_json::Value) -> String {
         .to_string()
 }
 
+/// The whole budget for one generation exchange — connect, headers and body.
+///
+/// Generous, because a reasoning model can think for a while; finite, because
+/// without it an endpoint that accepted the connection and then stalled left the
+/// chat disabled indefinitely, with no way out but restarting the app.
+const GENERATION_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Send `request` and read its JSON body under a single deadline.
+///
+/// One budget for the pair rather than one per step: wrapping only `send()`
+/// leaves the body read unbounded, and headers-then-silence is the stall that
+/// actually happens.
+pub(crate) async fn send_json_within(
+    request: reqwest::RequestBuilder,
+    label: &str,
+    budget: Duration,
+) -> Result<(reqwest::StatusCode, serde_json::Value), String> {
+    let exchange = async {
+        let resp = request
+            .send()
+            .await
+            .map_err(|e| format!("Failed to reach {}: {}", label, e))?;
+        let status = resp.status();
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid response from {}: {}", label, e))?;
+        Ok::<(reqwest::StatusCode, serde_json::Value), String>((status, json))
+    };
+    tokio::time::timeout(budget, exchange)
+        .await
+        .map_err(|_| format!("{} did not answer within {}s.", label, budget.as_secs()))?
+}
+
 pub async fn generate_openai(
     api_key: &str,
     model: &str,
@@ -478,19 +512,16 @@ pub async fn generate_openai(
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
     let client = reqwest::Client::new();
-    let resp = client
-        .post(OPENAI_URL)
-        .header("authorization", format!("Bearer {}", api_key))
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to reach OpenAI API: {}", e))?;
-    let status = resp.status();
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Invalid response from OpenAI API: {}", e))?;
+    let (status, json) = send_json_within(
+        client
+            .post(OPENAI_URL)
+            .header("authorization", format!("Bearer {}", api_key))
+            .header("content-type", "application/json")
+            .json(&body),
+        "OpenAI API",
+        GENERATION_TIMEOUT,
+    )
+    .await?;
     if !status.is_success() {
         let message = json
             .get("error")
@@ -545,16 +576,8 @@ pub async fn generate_openai_compatible(
     if !api_key.trim().is_empty() {
         request = request.header("authorization", format!("Bearer {}", api_key));
     }
-    let resp = request
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to reach {}: {}", provider_name, e))?;
-    let status = resp.status();
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Invalid response from {}: {}", provider_name, e))?;
+    let (status, json) =
+        send_json_within(request.json(&body), provider_name, GENERATION_TIMEOUT).await?;
     if !status.is_success() {
         return Err(format!(
             "{} error ({}): {}",
@@ -590,16 +613,8 @@ pub async fn generate_anthropic_compatible(
     if !api_key.trim().is_empty() {
         request = request.header("x-api-key", api_key);
     }
-    let resp = request
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to reach {}: {}", provider_name, e))?;
-    let status = resp.status();
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Invalid response from {}: {}", provider_name, e))?;
+    let (status, json) =
+        send_json_within(request.json(&body), provider_name, GENERATION_TIMEOUT).await?;
     if !status.is_success() {
         return Err(format!(
             "{} error ({}): {}",
@@ -731,24 +746,10 @@ pub async fn list_models_http(
     } else if kind == ProviderKind::AnthropicCompatible {
         request = request.header("anthropic-version", ANTHROPIC_VERSION);
     }
-    // One budget for the whole exchange. Wrapping only `send()` left the body
-    // read unbounded, so an endpoint that returned headers and then stalled held
-    // the picker in "loading" indefinitely and abandoned requests piled up.
-    let fetch = async {
-        let resp = request
-            .send()
-            .await
-            .map_err(|e| format!("Failed to reach {}: {}", provider_name, e))?;
-        let status = resp.status();
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("Invalid response from {}: {}", provider_name, e))?;
-        Ok::<(reqwest::StatusCode, serde_json::Value), String>((status, json))
-    };
-    let (status, json) = tokio::time::timeout(Duration::from_secs(20), fetch)
-        .await
-        .map_err(|_| format!("{} did not answer within 20s.", provider_name))??;
+    // Listing is a metadata call behind a picker, so it gets a much shorter
+    // budget than generation.
+    let (status, json) =
+        send_json_within(request, provider_name, Duration::from_secs(20)).await?;
     if !status.is_success() {
         return Err(format!(
             "{} error ({}): {}",
@@ -877,19 +878,16 @@ pub async fn generate_gemini(
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
     let client = reqwest::Client::new();
-    let resp = client
-        .post(gemini_url(model))
-        .header("x-goog-api-key", api_key)
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to reach Gemini API: {}", e))?;
-    let status = resp.status();
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Invalid response from Gemini API: {}", e))?;
+    let (status, json) = send_json_within(
+        client
+            .post(gemini_url(model))
+            .header("x-goog-api-key", api_key)
+            .header("content-type", "application/json")
+            .json(&body),
+        "Gemini API",
+        GENERATION_TIMEOUT,
+    )
+    .await?;
     if !status.is_success() {
         let message = json
             .get("error")
@@ -1081,20 +1079,17 @@ pub async fn generate_anthropic(
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
     let client = reqwest::Client::new();
-    let resp = client
-        .post(ANTHROPIC_URL)
-        .header("x-api-key", api_key)
-        .header("anthropic-version", ANTHROPIC_VERSION)
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to reach Anthropic API: {}", e))?;
-    let status = resp.status();
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Invalid response from Anthropic API: {}", e))?;
+    let (status, json) = send_json_within(
+        client
+            .post(ANTHROPIC_URL)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("content-type", "application/json")
+            .json(&body),
+        "Anthropic API",
+        GENERATION_TIMEOUT,
+    )
+    .await?;
     if !status.is_success() {
         let message = json
             .get("error")

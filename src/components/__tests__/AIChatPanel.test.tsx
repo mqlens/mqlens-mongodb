@@ -929,6 +929,43 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
   });
 
+  it('drops an image still being read when a local CLI provider is picked', async () => {
+    // Switching to a CLI cleared only the images already in state. A read still
+    // in flight is not in state, so nothing invalidated it and its callback —
+    // holding the previous render's "this provider takes images" — attached the
+    // image after the CLI was selected, where it could never be sent.
+    const readers: { onload: (() => void) | null; result: string }[] = [];
+    const RealFileReader = globalThis.FileReader;
+    class DeferredReader {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      error = null;
+      result = 'data:image/png;base64,AAAA';
+      readAsDataURL() {
+        readers.push(this);
+      }
+    }
+    (globalThis as unknown as { FileReader: unknown }).FileReader = DeferredReader;
+    try {
+      mockPickerBackend({ query: '{}' });
+      renderPanel('editor');
+      await screen.findByTestId('ai-chat-provider-select');
+
+      pasteImage(screen.getByTestId('chat-input'));
+      expect(readers).toHaveLength(1); // in flight, and not yet in state
+      await pickProvider('Claude Code (local)');
+
+      await act(async () => {
+        readers.forEach((r) => r.onload?.());
+      });
+      expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
+      // ...and the user is told why the image they chose is gone.
+      expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/cannot receive images/);
+    } finally {
+      (globalThis as unknown as { FileReader: unknown }).FileReader = RealFileReader;
+    }
+  });
+
   it('starts on the settings default and sends the picked provider and model', async () => {
     mockPickerBackend({ query: JSON.stringify({ explanation: 'ok', queryType: 'find', filter: {} }) }, ['deepseek-chat', 'deepseek-reasoner']);
     renderPanel('editor');
