@@ -739,13 +739,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   // this list are queued here, where the causal order is known; fields owned by
   // other components are disjoint, so ordering between components never arises.
   const settingsWrites = useRef<Promise<unknown>>(Promise.resolve());
-  const persistProviders = (next: AiProvider[], active: string) => {
-    const write = () =>
-      invoke('patch_app_settings', { patch: { ai_providers: next, ai_provider: active } });
+  /**
+   * Chain a patch after every earlier one from this form.
+   *
+   * Save goes through here too, not only the provider writes: both patch
+   * `ai_provider` and `ai_providers`, so a Save issued directly could overtake a
+   * queued provider patch that had captured the *previous* active provider, and
+   * that older patch would then land last and revert the choice just saved.
+   */
+  const queueSettingsPatch = (patch: Record<string, unknown>) => {
+    const write = () => invoke('patch_app_settings', { patch });
     const run = settingsWrites.current.then(write, write);
     settingsWrites.current = run.catch(() => {});
-    return run.catch((e) => setError(t('ai.providerSaveFailed', { error: String(e) })));
+    return run;
   };
+  const persistProviders = (next: AiProvider[], active: string) =>
+    queueSettingsPatch({ ai_providers: next, ai_provider: active }).catch((e) =>
+      setError(t('ai.providerSaveFailed', { error: String(e) }))
+    );
 
   const saveSettings = async () => {
     setSaving(true);
@@ -756,8 +767,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
       // used to echo back every field it does not own — appearance, locale —
       // so a theme or language change made while the form was open was undone
       // by pressing Save. The backend merges under its own lock.
-      await invoke('patch_app_settings', {
-        patch: {
+      await queueSettingsPatch({
           mongosh_path: mongoshPath.trim(),
           ai_provider: aiProvider,
           anthropic_api_key: anthropicKey.trim(),
@@ -775,7 +785,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
           audit_retention_days: auditRetentionDays,
           audit_include_payloads: auditIncludePayloads,
           update_channel: updateChannel,
-        },
       });
       saveAiHistoryRetentionMonths(historyRetentionMonths);
       setStatus(t('footer.settingsSaved'));

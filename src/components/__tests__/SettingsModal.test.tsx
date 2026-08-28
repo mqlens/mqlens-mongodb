@@ -536,6 +536,49 @@ describe('SettingsView Component', () => {
       expect(patches[1]).toEqual([]);
     });
 
+    it('holds the main Save behind a provider write still in flight', async () => {
+      // Both patch `ai_provider` and `ai_providers`, so a Save issued directly
+      // could overtake a queued provider patch carrying the *previous* active
+      // provider — and that older patch would land last and revert the choice
+      // just saved.
+      const patches: any[] = [];
+      let releaseFirst: (v?: unknown) => void = () => {};
+      let calls = 0;
+      mockInvoke.mockImplementation((cmd, args: any) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({ ai_providers: [] });
+        if (cmd === 'ai_provider_presets') return Promise.resolve([]);
+        if (cmd === 'validate_ai_provider') return Promise.resolve('ok');
+        if (cmd === 'patch_app_settings') {
+          patches.push(args.patch);
+          calls += 1;
+          if (calls === 1) return new Promise((res) => { releaseFirst = res; });
+          return Promise.resolve();
+        }
+        return Promise.resolve();
+      });
+      renderSettings();
+      await openTab('settings-tab-ai');
+
+      // A provider write starts and does not finish.
+      fireEvent.click(await screen.findByTestId('ai-provider-add'));
+      fireEvent.change(screen.getByTestId('ai-provider-name-input'), { target: { value: 'DeepSeek' } });
+      fireEvent.change(screen.getByTestId('ai-provider-url-input'), { target: { value: 'https://api.deepseek.com/v1' } });
+      fireEvent.change(screen.getByTestId('ai-provider-key-input'), { target: { value: 'k' } });
+      fireEvent.change(screen.getByTestId('ai-provider-model-input'), { target: { value: 'deepseek-chat' } });
+      fireEvent.click(screen.getByTestId('ai-provider-save'));
+      await waitFor(() => expect(patches).toHaveLength(1));
+
+      // Save is pressed while it is still in flight.
+      fireEvent.click(screen.getByTestId('settings-save-btn'));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(patches).toHaveLength(1); // queued behind the provider write
+
+      releaseFirst();
+      await waitFor(() => expect(patches).toHaveLength(2));
+      // Save is second, so its `ai_provider` is the value that survives.
+      expect(patches[1]).toHaveProperty('mongosh_path');
+    });
+
     it('does not leave a removed provider selected', async () => {
       // The backend rejects an unknown id, and that error would otherwise only
       // appear the next time the user asked for a query.
