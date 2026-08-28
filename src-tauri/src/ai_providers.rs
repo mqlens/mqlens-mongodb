@@ -270,20 +270,26 @@ fn strip_generation_suffix(path: &str) -> &str {
     base
 }
 
-/// `https://api.x.com:443/v1/chat` → `https://api.x.com`; None without a host.
+/// Lowercased host of `url`, or None when this app would not request over it.
 ///
-/// Default ports are dropped, matching what `URL` in the frontend reports, so the
-/// two sides agree on what "the same service" means.
-fn origin_of(url: &str) -> Option<String> {
+/// The scheme and port are deliberately excluded. A known service is known by
+/// *where* the request goes, and `http://api.openai.com/v1` is the same recipient
+/// as the https form — it simply reaches it without TLS. Comparing whole origins
+/// made those two mismatch, so a mistyped `http://` cloud endpoint read as "some
+/// unknown server", which is the reading that lets it past every rule.
+fn host_of(url: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(url.trim()).ok()?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return None;
     }
-    let host = parsed.host_str()?.to_ascii_lowercase();
-    Some(match parsed.port() {
-        Some(port) => format!("{}://{}:{}", parsed.scheme(), host, port),
-        None => format!("{}://{}", parsed.scheme(), host),
-    })
+    Some(parsed.host_str()?.to_ascii_lowercase())
+}
+
+/// Whether `url` is reached over TLS.
+fn uses_tls(url: &str) -> bool {
+    reqwest::Url::parse(url.trim())
+        .map(|u| u.scheme() == "https")
+        .unwrap_or(false)
 }
 
 /// The cloud services reached through the dedicated built-in fields rather than
@@ -314,16 +320,16 @@ const BUILT_IN_AUTHENTICATED: &[(&str, &str)] = &[
 /// Endpoints on neither list stay keyless: a private gateway or a LAN server must
 /// remain usable, so only origins this app knows to authenticate are held to it.
 fn authenticated_service(base_url: &str) -> Option<&'static str> {
-    let origin = origin_of(base_url)?;
-    let same_origin = |url: &str| origin_of(url).as_deref() == Some(origin.as_str());
+    let host = host_of(base_url)?;
+    let same_host = |url: &str| host_of(url).as_deref() == Some(host.as_str());
     PRESETS
         .iter()
-        .find(|p| p.needs_key && same_origin(p.base_url))
+        .find(|p| p.needs_key && same_host(p.base_url))
         .map(|p| p.name)
         .or_else(|| {
             BUILT_IN_AUTHENTICATED
                 .iter()
-                .find(|(url, _)| same_origin(url))
+                .find(|(url, _)| same_host(url))
                 .map(|(_, name)| *name)
         })
 }
@@ -402,8 +408,20 @@ impl AiProvider {
                 if self.model.trim().is_empty() {
                     return Err(format!("{} needs a model name.", self.name));
                 }
-                if self.api_key.trim().is_empty() {
-                    if let Some(service) = authenticated_service(&self.base_url) {
+                if let Some(service) = authenticated_service(&self.base_url) {
+                    // TLS first: reaching a cloud service over `http://` puts the
+                    // schema and the prompt on the network in clear text even with
+                    // no key set, and a redirect or an error arrives far too late
+                    // to have protected them.
+                    if !uses_tls(&self.base_url) {
+                        return Err(format!(
+                            "{} must reach {} over https://. Over http:// the collection \
+                             schema, your prompt and any API key would cross the network \
+                             in clear text.",
+                            self.name, service
+                        ));
+                    }
+                    if self.api_key.trim().is_empty() {
                         return Err(format!(
                             "{} needs an API key: {} authenticates every request, so without \
                              one the collection schema and your prompt would be sent to it \
@@ -433,6 +451,33 @@ mod tests {
             command: String::new(),
             models_command: String::new(),
         }
+    }
+
+    #[test]
+    fn a_known_cloud_service_cannot_be_reached_over_http() {
+        // Comparing whole origins let `http://api.openai.com/v1` read as an
+        // unknown server, so it passed with no key at all and the schema and
+        // prompt would have crossed the network in clear text.
+        for url in [
+            "http://api.openai.com/v1",
+            "http://api.anthropic.com/v1",
+            "http://api.deepseek.com/v1",
+            // A non-standard port on a known host is still that host.
+            "http://api.openai.com:8080/v1",
+        ] {
+            let mut p = provider(ProviderKind::OpenAiCompatible, url);
+            let err = p.validate().unwrap_err();
+            assert!(err.contains("https://"), "{url}: {err}");
+            // ...and a key does not make it acceptable either.
+            p.api_key = "sk-key".into();
+            let err = p.validate().unwrap_err();
+            assert!(err.contains("clear text"), "{url} with a key: {err}");
+        }
+
+        // A server this app knows nothing about is still reachable over http:
+        // a LAN vLLM or a private gateway must keep working.
+        let unknown = provider(ProviderKind::OpenAiCompatible, "http://192.168.1.50:8000/v1");
+        unknown.validate().expect("an unknown host over http is the user's call");
     }
 
     #[test]
