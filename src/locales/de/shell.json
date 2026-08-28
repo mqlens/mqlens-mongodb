@@ -11,6 +11,7 @@
       "send": "Senden",
       "noImagesForCli": "Dieser Anbieter ist ein lokaler Befehl und kann keine Bilder empfangen. Wähle einen HTTP-Anbieter, um nach einem Bild zu fragen.",
       "imageTooMany": "Höchstens {{max}} Bilder pro Nachricht.",
+      "imageUnreadable": "Einige Bilder konnten nicht gelesen werden und wurden ausgelassen.",
       "attach": "Bild anhängen",
       "imageUnsupported": "Es können nur PNG-, JPEG-, WebP- und GIF-Bilder gesendet werden.",
       "imageTooLarge": "Bilder müssen kleiner als {{limit}} MB sein."

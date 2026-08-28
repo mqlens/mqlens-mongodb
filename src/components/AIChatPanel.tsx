@@ -146,18 +146,34 @@ export function imageFilesFromClipboard(items: DataTransferItemList | null): Fil
   return files;
 }
 
-export async function imagesFromClipboard(items: DataTransferItemList | null): Promise<PendingImage[]> {
+export async function imagesFromClipboard(
+  items: DataTransferItemList | null
+): Promise<ReadImages> {
   return imagesFromFiles(imageFilesFromClipboard(items));
 }
 
-/** Image files as base64, for the attach button and for paste alike. */
-export async function imagesFromFiles(files: File[]): Promise<PendingImage[]> {
-  return Promise.all(
+/** What a batch of reads produced, and how many of them failed. */
+export interface ReadImages {
+  images: PendingImage[];
+  /** Files whose read failed — a file that became unreadable, say. */
+  failed: number;
+}
+
+/**
+ * Image files as base64, for the attach button and for paste alike.
+ *
+ * Settled independently rather than through `Promise.all`: one unreadable file
+ * used to reject the batch, which both discarded every image that *had* been read
+ * alongside it and left the rejection unhandled, so the user saw the attachment
+ * simply not appear with nothing said.
+ */
+export async function imagesFromFiles(files: File[]): Promise<ReadImages> {
+  const settled = await Promise.allSettled(
     files.map(
       (file) =>
         new Promise<PendingImage>((resolve, reject) => {
           const reader = new FileReader();
-          reader.onerror = () => reject(reader.error);
+          reader.onerror = () => reject(reader.error ?? new Error('read failed'));
           reader.onload = () => {
             const url = String(reader.result);
             resolve({
@@ -167,10 +183,18 @@ export async function imagesFromFiles(files: File[]): Promise<PendingImage[]> {
               previewUrl: url,
             });
           };
-          reader.readAsDataURL(file);
+          try {
+            reader.readAsDataURL(file);
+          } catch (e) {
+            reject(e);
+          }
         })
     )
   );
+  return {
+    images: settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : [])),
+    failed: settled.filter((r) => r.status === 'rejected').length,
+  };
 }
 
 interface AIChatPanelProps {
@@ -312,6 +336,24 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerOptions, chatProviderId]);
   const providerTakesImages = activeProvider ? activeProvider.kind !== 'local-cli' : true;
+
+  /**
+   * Drop attachments whenever the active provider cannot take them.
+   *
+   * Keyed on the *capability*, not on the click that changed it: the selection
+   * also moves on its own — the fallback that runs when Settings deletes the
+   * selected provider can land on a local CLI — and hanging this off
+   * `choosePane` covered only the user-driven half. A read still in flight is not
+   * in state yet, so it is counted too, and bumping the epoch is what stops its
+   * closure from attaching an image after the switch.
+   */
+  useEffect(() => {
+    if (providerTakesImages) return;
+    if (pendingImages.length === 0 && pendingReadsRef.current === 0) return;
+    dropPendingImages();
+    setImageNote(t('aiChatPanel.composer.noImagesForCli'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerTakesImages]);
   // Whether choosing a model here changes the request at all.
   const modelApplies = activeProvider ? activeProvider.kind !== 'local-cli' || activeProvider.usesModel : true;
 
@@ -411,17 +453,9 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     // Each provider has its own model namespace; carrying one across would
     // send a model the new provider has never heard of.
     setChatModel(providerOptions.find((o) => o.id === id)?.model ?? '');
-    // Not conditional on `pendingImages.length`: a read still in flight is not in
-    // state yet, so counting what is there left the epoch unbumped and the read
-    // attached its image *after* the CLI was selected — where it could not be
-    // sent, but was cleared by sending anyway.
-    if (providerOptions.find((o) => o.id === id)?.kind === 'local-cli') {
-      // A read in flight counts as an image the user chose: it is about to be
-      // discarded, and saying nothing would look like the app lost it.
-      const hadImages = pendingImages.length > 0 || pendingReadsRef.current > 0;
-      dropPendingImages();
-      if (hadImages) setImageNote(t('aiChatPanel.composer.noImagesForCli'));
-    }
+    // Attachments are invalidated by the effect below rather than here: the
+    // selection also changes programmatically — the fallback when Settings
+    // deletes the selected provider — and only this path was covered.
   };
 
   /**
@@ -482,7 +516,8 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const addImages = (
     images: PendingImage[],
     rejected: 'type' | 'size' | null = null,
-    overCap = false
+    overCap = false,
+    failed = 0
   ) => {
     if (!providerTakesImages) {
       setImageNote(t('aiChatPanel.composer.noImagesForCli'));
@@ -493,8 +528,13 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       // Over the count is the more actionable complaint, so it wins. `overCap`
       // comes from the caller because the files it dropped before reading are no
       // longer here to be counted.
+      // One note, in order of how actionable it is: the count cap the user can
+      // do something about, then a read that failed, then a file that was never
+      // eligible.
       if (overCap || images.length > room) {
         setImageNote(t('aiChatPanel.composer.imageTooMany', { max: MAX_PENDING_IMAGES }));
+      } else if (failed > 0) {
+        setImageNote(t('aiChatPanel.composer.imageUnreadable'));
       } else {
         setImageNote(rejected ? noteFor(rejected) : null);
       }
@@ -517,9 +557,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     pendingReadsRef.current += 1;
     void (async () => {
       try {
-        const imgs = await imagesFromFiles(fits);
+        const { images, failed } = await imagesFromFiles(fits);
         if (imageEpochRef.current !== epoch) return; // the composer moved on
-        addImages(imgs, reason, overCap);
+        addImages(images, reason, overCap, failed);
+      } catch {
+        // The batch settles per file, so reaching here means the read machinery
+        // itself failed. Detached from the event, so an unhandled rejection would
+        // surface only in the console — say it in the composer instead.
+        if (imageEpochRef.current === epoch) {
+          setImageNote(t('aiChatPanel.composer.imageUnreadable'));
+        }
       } finally {
         pendingReadsRef.current -= 1;
         release();
@@ -543,9 +590,13 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     const epoch = imageEpochRef.current;
     pendingReadsRef.current += 1;
     try {
-      const images = await imagesFromFiles(fits);
+      const { images, failed } = await imagesFromFiles(fits);
       if (imageEpochRef.current !== epoch) return; // the composer moved on
-      addImages(images, reason, overCap);
+      addImages(images, reason, overCap, failed);
+    } catch {
+      if (imageEpochRef.current === epoch) {
+        setImageNote(t('aiChatPanel.composer.imageUnreadable'));
+      }
     } finally {
       pendingReadsRef.current -= 1;
       release();

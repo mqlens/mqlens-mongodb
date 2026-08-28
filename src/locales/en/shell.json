@@ -70,6 +70,7 @@
       "attach": "Attach image",
       "imageTooLarge": "Images must be under {{limit}} MB.",
       "imageTooMany": "Up to {{max}} images per message.",
+      "imageUnreadable": "Some images could not be read and were left out.",
       "imageUnsupported": "Only PNG, JPEG, WebP and GIF images can be sent.",
       "noImagesForCli": "This provider is a local command and cannot receive images. Pick an HTTP provider to ask about an image.",
       "placeholder": "Describe a query… (Enter to send, Shift+Enter for newline)",

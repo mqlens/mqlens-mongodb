@@ -1023,6 +1023,79 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     expect(screen.queryByTestId('ai-chat-model-select')).not.toBeInTheDocument();
   });
 
+  it('drops attachments when the provider falls back to a CLI on its own', async () => {
+    // Deleting the selected provider in Settings makes the panel fall back to the
+    // default. If that default is a local CLI, the switch never went through the
+    // click handler, so the images stayed attached and the epoch was never bumped.
+    let options = OPTIONS;
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'ai_provider_options'
+        ? Promise.resolve(options)
+        : cmd.endsWith('_chat') || cmd.endsWith('_chats')
+          ? Promise.resolve(chatBackend(cmd, {}))
+          : cmd === 'list_ai_models_for'
+            ? Promise.resolve([])
+            : Promise.resolve({ query: '{}' }),
+    );
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    await pickProvider('DeepSeek');
+    pasteImage(screen.getByTestId('chat-input'));
+    await screen.findByTestId('chat-pending-images');
+
+    // DeepSeek is deleted and only the CLI remains as a default.
+    options = OPTIONS.filter((o) => o.kind === 'local-cli').map((o, i) => ({ ...o, isDefault: i === 0 }));
+    await act(async () => {
+      providerListeners.forEach((fn) => fn());
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/cannot receive images/);
+  });
+
+  it('keeps the images it could read when one file fails', async () => {
+    // `Promise.all` rejected the whole batch on one unreadable file, discarding
+    // images that had been read fine — and the paste task had no catch, so the
+    // rejection went to the console and the composer said nothing.
+    const RealFileReader = globalThis.FileReader;
+    class FlakyReader {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      error: unknown = null;
+      result = 'data:image/png;base64,AAAA';
+      readAsDataURL(file: File) {
+        // The middle file of the batch is unreadable.
+        if (file.name === 'shot1.png') setTimeout(() => this.onerror?.(), 0);
+        else setTimeout(() => this.onload?.(), 0);
+      }
+    }
+    (globalThis as unknown as { FileReader: unknown }).FileReader = FlakyReader;
+    try {
+      mockPickerBackend({ query: '{}' });
+      renderPanel('editor');
+      await screen.findByTestId('ai-chat-provider-select');
+
+      fireEvent.paste(screen.getByTestId('chat-input'), {
+        clipboardData: {
+          items: Array.from({ length: 3 }, (_, i) => {
+            const file = new File([new Uint8Array(3)], `shot${i}.png`, { type: 'image/png' });
+            return { kind: 'file', type: 'image/png', getAsFile: () => file };
+          }),
+        },
+      });
+
+      // The two that read fine are attached...
+      const chips = await screen.findByTestId('chat-pending-images');
+      await waitFor(() => expect(chips.querySelectorAll('img')).toHaveLength(2));
+      // ...and the failure is reported rather than swallowed.
+      expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/could not be read/);
+    } finally {
+      (globalThis as unknown as { FileReader: unknown }).FileReader = RealFileReader;
+    }
+  });
+
   it('re-reads its provider list when settings change elsewhere', async () => {
     // Settings can be open in another pane or window. The list was fetched once,
     // so deleting the selected provider there left its id selected here and the
