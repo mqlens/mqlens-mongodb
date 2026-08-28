@@ -73,6 +73,12 @@ interface ProviderOption {
   isDefault: boolean;
   /** For a local CLI: whether its command contains `{model}`. */
   usesModel: boolean;
+  /**
+   * Whether asking for a model list can work at all. False for a CLI with no
+   * listing command — every built-in agent, and any custom one that left the
+   * optional field blank — and for Gemini, whose list this app does not fetch.
+   */
+  canListModels: boolean;
 }
 
 /** A pasted image waiting to be sent. Kept in memory only. */
@@ -451,6 +457,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   useEffect(() => {
     if (!chatProviderId) return;
     setChatModels([]);
+    setModelsFailed(false);
     if (providerOptions.find((o) => o.id === chatProviderId)?.kind === 'local-cli') return;
     let live = true;
     invoke<unknown>('list_ai_models_for', { providerId: chatProviderId })
@@ -466,8 +473,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
   const [loadingCliModels, setLoadingCliModels] = useState(false);
   /** Run a CLI provider's models command, because the user asked for it. */
+  const [modelsFailed, setModelsFailed] = useState(false);
   const loadCliModels = async () => {
     if (!chatProviderId) return;
+    setModelsFailed(false);
     // The command can take a while, and the user can switch providers while it
     // runs. Without this the result repopulated the picker with the *previous*
     // provider's models, and one of them could then be sent to the new one.
@@ -477,7 +486,9 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       const list = await invoke<unknown>('list_ai_models_for', { providerId: askedFor });
       if (chatProviderIdRef.current === askedFor) applyModels(list);
     } catch {
-      /* Typing the model name still works, so this is not an error state. */
+      // Typing the model name still works, so this is not fatal — but the button
+      // was clicked, so silence made it look broken rather than unavailable.
+      if (chatProviderIdRef.current === askedFor) setModelsFailed(true);
     } finally {
       setLoadingCliModels(false);
     }
@@ -1537,7 +1548,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   {/* A CLI provider's model list comes from running its command,
                       so it stays behind a click — see the listing effect. Offered
                       only until a list arrives; after that the picker is there. */}
-                  {modelApplies && activeProvider?.kind === 'local-cli' && chatModels.length === 0 && (
+                  {modelApplies &&
+                    activeProvider?.kind === 'local-cli' &&
+                    activeProvider.canListModels &&
+                    chatModels.length === 0 && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -1551,6 +1565,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                       <RefreshCw size={11} className={loadingCliModels ? 'animate-spin' : ''} />
                       {t('aiChatPanel.header.loadModels')}
                     </Button>
+                  )}
+                  {/* The button was clicked and the command failed. Silence made
+                      that look broken rather than simply unavailable. */}
+                  {modelsFailed && (
+                    <span
+                      className="shrink-0 text-[10.5px] text-muted-foreground"
+                      data-testid="ai-chat-models-failed"
+                    >
+                      {t('aiChatPanel.header.modelsFailed')}
+                    </span>
                   )}
                 </div>
               ) : (

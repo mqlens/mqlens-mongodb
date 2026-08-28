@@ -1350,19 +1350,32 @@ async fn ai_provider_options(
     // HTTP provider always sends one, a local command only if its template slots
     // `{model}` in. Without it the panel would offer a model field that does
     // nothing for the built-in agents.
-    let entry = |id: &str, name: &str, kind: &str, model: &str, uses_model: bool| {
+    // `canListModels` tells the panel whether asking for a model list can work at
+    // all. Without it the composer offered a "Load models" button for a CLI with
+    // no listing command — every built-in agent, whose `models_command` is always
+    // empty, and any custom CLI that left the documented-optional field blank. The
+    // click ran an empty command, failed, and said nothing.
+    let entry = |id: &str,
+                 name: &str,
+                 kind: &str,
+                 model: &str,
+                 uses_model: bool,
+                 can_list_models: bool| {
         serde_json::json!({
             "id": id, "name": name, "kind": kind, "model": model,
-            "isDefault": id == default_id, "usesModel": uses_model
+            "isDefault": id == default_id, "usesModel": uses_model,
+            "canListModels": can_list_models
         })
     };
     let agent_uses_model = |agent: &str| {
         connections::resolve_local_command(&settings, agent).contains("{model}")
     };
     let mut out = vec![
-        entry("anthropic", "Anthropic (Claude)", "anthropic-compatible", &settings.anthropic_model, true),
-        entry("openai", "OpenAI (ChatGPT)", "openai-compatible", &settings.openai_model, true),
-        entry("gemini", "Google Gemini", "gemini", &settings.gemini_model, true),
+        entry("anthropic", "Anthropic (Claude)", "anthropic-compatible", &settings.anthropic_model, true, true),
+        entry("openai", "OpenAI (ChatGPT)", "openai-compatible", &settings.openai_model, true, true),
+        // Gemini is listed here for selection only: `list_ai_models_for` refuses it
+        // outright, so claiming otherwise would offer a button that cannot work.
+        entry("gemini", "Google Gemini", "gemini", &settings.gemini_model, true, false),
     ];
     for agent in ["claude-code", "codex", "cursor", "antigravity"] {
         let label = match agent {
@@ -1371,7 +1384,9 @@ async fn ai_provider_options(
             "cursor" => "Cursor (local)",
             _ => "Antigravity (local)",
         };
-        out.push(entry(agent, label, "local-cli", "", agent_uses_model(agent)));
+        // A built-in agent's `models_command` is always empty (see
+        // `resolve_ai_provider`), so listing can never work for one.
+        out.push(entry(agent, label, "local-cli", "", agent_uses_model(agent), false));
     }
     for p in &settings.ai_providers {
         let kind = serde_json::to_value(p.kind)
@@ -1379,7 +1394,12 @@ async fn ai_provider_options(
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_default();
         let uses_model = p.kind != ai_providers::ProviderKind::LocalCli || p.command.contains("{model}");
-        out.push(entry(&p.id, &p.name, &kind, &p.model, uses_model));
+        let can_list_models = if p.kind == ai_providers::ProviderKind::LocalCli {
+            !p.models_command.trim().is_empty()
+        } else {
+            true
+        };
+        out.push(entry(&p.id, &p.name, &kind, &p.model, uses_model, can_list_models));
     }
     Ok(out)
 }

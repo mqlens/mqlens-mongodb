@@ -27,6 +27,7 @@
       "loadModels": "Modelle laden",
       "model": "Modell",
       "modelPlaceholder": "Modell",
+      "modelsFailed": "Modelle konnten nicht geladen werden. Namen stattdessen eintippen.",
       "typeModel": "Modellnamen eintippen…"
     },
     "history": {

@@ -27,6 +27,7 @@
       "loadModels": "加载模型",
       "model": "模型",
       "modelPlaceholder": "模型",
+      "modelsFailed": "无法加载模型，请直接输入名称。",
       "typeModel": "输入模型名称…"
     },
     "history": {

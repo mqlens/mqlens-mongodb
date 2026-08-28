@@ -88,6 +88,7 @@
       "loadModels": "Load models",
     "model": "Model",
       "modelPlaceholder": "model",
+    "modelsFailed": "Could not load models. Type the name instead.",
       "provider": "Provider",
       "title": "AI Query Assistant",
       "typeModel": "Type a model name…"

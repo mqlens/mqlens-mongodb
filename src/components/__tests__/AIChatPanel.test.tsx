@@ -811,12 +811,15 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
   // ── thoughts, images, per-chat provider (#283 follow-up) ──────────────────
 
   const OPTIONS = [
-    { id: 'anthropic', name: 'Anthropic (Claude)', kind: 'anthropic-compatible', model: 'claude-opus-4-8', isDefault: true, usesModel: true },
-    { id: 'deepseek', name: 'DeepSeek', kind: 'openai-compatible', model: 'deepseek-chat', isDefault: false, usesModel: true },
+    { id: 'anthropic', name: 'Anthropic (Claude)', kind: 'anthropic-compatible', model: 'claude-opus-4-8', isDefault: true, usesModel: true, canListModels: true },
+    { id: 'deepseek', name: 'DeepSeek', kind: 'openai-compatible', model: 'deepseek-chat', isDefault: false, usesModel: true, canListModels: true },
     // A built-in agent whose command has no {model}: the panel must not offer one.
-    { id: 'claude-code', name: 'Claude Code (local)', kind: 'local-cli', model: '', isDefault: false, usesModel: false },
-    // A CLI whose template does slot the model in.
-    { id: 'my-ollama', name: 'My Ollama', kind: 'local-cli', model: 'llama3', isDefault: false, usesModel: true },
+    // Its `models_command` is always empty, so listing can never work either.
+    { id: 'claude-code', name: 'Claude Code (local)', kind: 'local-cli', model: '', isDefault: false, usesModel: false, canListModels: false },
+    // A CLI whose template does slot the model in, and which has a listing command.
+    { id: 'my-ollama', name: 'My Ollama', kind: 'local-cli', model: 'llama3', isDefault: false, usesModel: true, canListModels: true },
+    // ...and one that does not: `models_command` left blank, so no Load button.
+    { id: 'bare-cli', name: 'Bare CLI', kind: 'local-cli', model: 'm', isDefault: false, usesModel: true, canListModels: false },
   ];
   /** Like mockBackend, but with providers to pick from and a reply to return. */
   const mockPickerBackend = (reply: unknown, models: string[] = []) =>
@@ -1211,6 +1214,40 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     await waitFor(() => expect(screen.getByTestId('chat-attach-btn')).not.toBeDisabled());
     pasteImage(screen.getByTestId('chat-input'));
     await screen.findByTestId('chat-pending-images');
+  });
+
+  it('offers no Load models button for a CLI that cannot list them', async () => {
+    // A CLI with no listing command — every built-in agent, and any custom one
+    // that left the optional field blank — used to get an enabled button whose
+    // click ran an empty command, failed, and said nothing.
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+
+    await pickProvider('Bare CLI');
+    await screen.findByTestId('ai-chat-model-input');
+    expect(screen.queryByTestId('ai-chat-models-load')).not.toBeInTheDocument();
+
+    // The one that can list them still offers it.
+    await pickProvider('My Ollama');
+    await screen.findByTestId('ai-chat-models-load');
+  });
+
+  it('says so when a CLI model list command fails', async () => {
+    // The click was silent on failure, which read as broken rather than as a
+    // command that did not work.
+    invokeMock.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'ai_provider_options') return Promise.resolve(OPTIONS);
+      if (cmd === 'list_ai_models_for') return Promise.reject(new Error('ollama: not found'));
+      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, args));
+      return Promise.resolve({ query: '{}' });
+    });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    await pickProvider('My Ollama');
+
+    fireEvent.click(await screen.findByTestId('ai-chat-models-load'));
+    await screen.findByTestId('ai-chat-models-failed');
   });
 
   it('does not let an abandoned read block or unblock the next conversation', async () => {
