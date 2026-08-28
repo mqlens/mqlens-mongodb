@@ -90,7 +90,14 @@ export function formatBytes(n: number): string {
  * Images from a paste, as base64. Returns [] for a text paste, so the caller
  * can let the browser handle those normally.
  */
-export async function imagesFromClipboard(items: DataTransferItemList | null): Promise<PendingImage[]> {
+/**
+ * Image files on the clipboard. Synchronous on purpose: the DataTransfer is
+ * only valid during the event, and the caller must decide whether to prevent
+ * the default paste *before* yielding — a clipboard entry carrying both an
+ * image and text would otherwise have its text inserted into the prompt while
+ * the image was still being read.
+ */
+export function imageFilesFromClipboard(items: DataTransferItemList | null): File[] {
   if (!items) return [];
   const files: File[] = [];
   for (const item of Array.from(items)) {
@@ -99,7 +106,11 @@ export async function imagesFromClipboard(items: DataTransferItemList | null): P
       if (f) files.push(f);
     }
   }
-  return imagesFromFiles(files);
+  return files;
+}
+
+export async function imagesFromClipboard(items: DataTransferItemList | null): Promise<PendingImage[]> {
+  return imagesFromFiles(imageFilesFromClipboard(items));
 }
 
 /** Image files as base64, for the attach button and for paste alike. */
@@ -216,6 +227,8 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [imageNote, setImageNote] = useState<string | null>(null);
   const activeProvider = providerOptions.find((o) => o.id === chatProviderId) ?? null;
+  // `null` until the options arrive; their effect then fills in the default.
+  const defaultProviderId = () => providerOptions.find((o) => o.isDefault)?.id ?? providerOptions[0]?.id ?? null;
   const providerTakesImages = activeProvider ? activeProvider.kind !== 'local-cli' : true;
 
   useEffect(() => {
@@ -282,11 +295,12 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     });
   };
 
-  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const images = await imagesFromClipboard(e.clipboardData?.items ?? null);
-    if (images.length === 0) return; // plain text: let the textarea take it
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = imageFilesFromClipboard(e.clipboardData?.items ?? null);
+    if (files.length === 0) return; // plain text: let the textarea take it
+    // Before the first await, or the browser pastes any accompanying text.
     e.preventDefault();
-    addImages(images);
+    void imagesFromFiles(files).then(addImages);
   };
 
   const attachInputRef = useRef<HTMLInputElement>(null);
@@ -429,9 +443,11 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
           collection: stored.collection,
           variant: stored.variant,
         });
-        // A panel opened on an existing chat answers with that chat's provider.
-        if (stored.providerId) setChatProviderId(stored.providerId);
-        if (stored.model) setChatModel(stored.model);
+        // A panel opened on an existing chat answers with that chat's provider —
+        // and a chat saved with none means the default, not whatever the panel
+        // happened to be using before.
+        setChatProviderId(stored.providerId ?? defaultProviderId());
+        setChatModel(stored.model ?? '');
       }
       setScopeResolved(true);
     });
@@ -510,8 +526,9 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     releaseOpenChat(activeChatIdRef.current, ownerRef.current);
     setActiveChatId(stored.id, stored.createdAt, false);
     setChatMessages(stored.messages);
-    // The conversation remembers which provider answered it.
-    if (stored.providerId) setChatProviderId(stored.providerId);
+    // The conversation remembers which provider answered it; none saved means
+    // the default, not the provider the previous conversation was using.
+    setChatProviderId(stored.providerId ?? defaultProviderId());
     setChatModel(stored.model ?? '');
     chatIdRef.current = maxChatIdNum(stored.messages) + 1;
   };
@@ -662,6 +679,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         pipeline?: unknown[];
         script?: string;
       };
+      // `{}` would otherwise become a find with an empty filter — "everything".
+      // A reply that names no query type and carries no query is a bad reply.
+      if (
+        parsed.queryType === undefined &&
+        parsed.filter === undefined &&
+        parsed.pipeline === undefined &&
+        parsed.script === undefined
+      ) {
+        throw new Error(t('aiChatPanel.errors.noQuery'));
+      }
       const queryType: 'find' | 'aggregate' | 'script' =
         parsed.queryType === 'aggregate'
           ? 'aggregate'
@@ -1030,7 +1057,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
           >
             <textarea
               className={cn(composerClassName, 'border-0 bg-transparent shadow-none focus-visible:ring-0')}
-              onPaste={(e) => void handlePaste(e)}
+              onPaste={handlePaste}
               placeholder={
                 foreignChat
                   ? t('aiChatPanel.history.viewingOtherScopeShort')

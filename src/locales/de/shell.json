@@ -53,6 +53,9 @@
     "attachments": {
       "image": "Bild, {{size}}",
       "remove": "Bild entfernen"
+    },
+    "errors": {
+      "noQuery": "Das Modell hat keine Abfrage zurückgegeben. Formuliere um oder wähle ein anderes Modell."
     }
   },
   "commandPalette": {

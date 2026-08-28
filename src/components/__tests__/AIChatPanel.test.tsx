@@ -955,6 +955,41 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     await waitFor(() => expect(select).toHaveValue('deepseek'));
   });
 
+  it('opens a legacy conversation on the default provider, not the one last used', async () => {
+    // Chats saved before providers existed have no providerId; absence means
+    // "the default", and must not inherit whatever this panel was just using.
+    chatStore = [{
+      id: 'legacy', title: 'old', messages: [{ id: 'm1', role: 'user', text: 'hi' }],
+      connectionName: 'Local', database: 'db', collection: 'users', variant: 'editor',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    }];
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor', { chatId: 'legacy' });
+    const select = await screen.findByTestId('ai-chat-provider-select');
+    await waitFor(() => expect(select).toHaveValue('anthropic'));
+  });
+
+  it('prevents the default paste before reading images, so no stray text lands in the prompt', async () => {
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    const file = new File([new Uint8Array(3)], 'shot.png', { type: 'image/png' });
+    const event = new Event('paste', { bubbles: true, cancelable: true }) as any;
+    event.clipboardData = { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }, { kind: 'string', type: 'text/plain' }] };
+    screen.getByTestId('chat-input').dispatchEvent(event);
+    // Synchronously — before any FileReader work has had a chance to run.
+    expect(event.defaultPrevented).toBe(true);
+    await screen.findByTestId('chat-pending-images');
+  });
+
+  it('treats an empty reply object as an error rather than a match-all query', async () => {
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    send('adults');
+    await screen.findByText(/returned no query/);
+    expect(screen.queryByTestId('chat-query-card')).not.toBeInTheDocument();
+  });
+
   it('works without a picker when the provider list cannot be read', async () => {
     invokeMock.mockImplementation((cmd: string, args: any) =>
       cmd.endsWith('_chat') || cmd.endsWith('_chats')

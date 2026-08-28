@@ -341,18 +341,23 @@ pub fn split_json_object(text: &str) -> Result<(String, Option<String>), String>
                 }
             }
         }
-        let Some(end) = end else { break };
+        let Some(end) = end else {
+            // Unbalanced: a stray `{` in prose. Nothing to skip but the brace.
+            search_from = start + 1;
+            continue;
+        };
         let candidate = &text[start..=end];
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(candidate) {
             if parsed.is_object() {
                 let compact = serde_json::to_string(&parsed).map_err(|e| e.to_string())?;
                 best = Some((start, end, compact));
             }
-            search_from = end + 1;
-        } else {
-            // Not JSON (prose with braces, or a fence): step past this `{`.
-            search_from = start + 1;
         }
+        // Balanced but invalid — prose like `{ age: {$gt: 30} }`, or an answer
+        // with a trailing comma — is skipped as a *whole*. Stepping inside it
+        // would find its nested `{}` and hand that back as the reply, which the
+        // panel turns into a match-all query. A broken answer must be an error.
+        search_from = end + 1;
     }
     let Some((start, end, json)) = best else {
         return Err(if text.contains('{') {

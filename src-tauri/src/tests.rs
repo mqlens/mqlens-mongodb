@@ -417,6 +417,45 @@ mod tests {
     }
 
     #[test]
+    fn split_never_returns_a_fragment_of_a_malformed_answer() {
+        // A trailing comma makes the outer object invalid. The old scan stepped
+        // inside and returned the nested `{}` — which the panel read as "find
+        // everything". A broken answer has to surface as an error.
+        use crate::ai::split_json_object;
+        let bad = r#"{"queryType":"find","filter":{"age":{"$gt":30}},"sort":{},}"#;
+        let err = split_json_object(bad).unwrap_err();
+        assert!(err.contains("no valid JSON"), "{err}");
+        // ...even with notes around it that happen to contain a valid object.
+        let mixed = "Filter idea: {\"x\":1}\n{\"queryType\":\"find\",\"filter\":{},}";
+        let (json, _) = split_json_object(mixed).unwrap();
+        assert_eq!(json, "{\"x\":1}", "only a complete top-level object counts");
+    }
+
+    #[test]
+    fn split_survives_a_stray_brace_in_prose_before_the_answer() {
+        use crate::ai::split_json_object;
+        let (json, notes) = split_json_object("use { for grouping\n{\"a\":1}").unwrap();
+        assert_eq!(json, "{\"a\":1}");
+        assert!(notes.unwrap().contains("grouping"));
+    }
+
+    #[test]
+    fn settings_writes_are_atomic() {
+        // No `.tmp` left behind and a file that decrypts — the observable half of
+        // "written atomically".
+        use crate::connections::{load_settings_encrypted, save_settings_encrypted, AppSettings};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.enc");
+        let key = [3u8; 32];
+        let mut s = AppSettings::default();
+        s.ai_provider = "deepseek".into();
+        save_settings_encrypted(&path, &key, &s).unwrap();
+        assert!(path.exists());
+        assert!(!dir.path().join("settings.enc.tmp").exists(), "temp file left behind");
+        assert_eq!(load_settings_encrypted(&path, &key).unwrap().ai_provider, "deepseek");
+    }
+
+    #[test]
     fn split_distinguishes_no_json_from_invalid_json() {
         use crate::ai::split_json_object;
         assert!(split_json_object("no braces here").unwrap_err().contains("no JSON object"));

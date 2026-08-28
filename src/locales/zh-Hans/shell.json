@@ -53,6 +53,9 @@
     "attachments": {
       "image": "图片，{{size}}",
       "remove": "移除图片"
+    },
+    "errors": {
+      "noQuery": "模型未返回查询。请换一种说法，或选择其他模型。"
     }
   },
   "commandPalette": {

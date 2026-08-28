@@ -76,6 +76,9 @@
     "empty": {
       "body": "Ask for a query in plain language — e.g. <i>“active users older than 30, sorted by age”</i> or<i> “average order total per customer”</i>. I’ll explain what I’m doing and you can insert the result."
     },
+    "errors": {
+      "noQuery": "The model returned no query. Try rephrasing, or pick a different model."
+    },
     "fallbackExplanation": "Here is a query.",
     "header": {
       "closeTitle": "Close AI Assistant",
