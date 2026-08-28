@@ -413,6 +413,24 @@ impl AiProvider {
     }
 
     /// Reject a configuration before it produces a confusing HTTP or shell error.
+    /// Refuse to put a credential on the network in clear text.
+    ///
+    /// Its own method rather than a step inside `validate`, because the model
+    /// list is fetched from the draft before anything is saved: `list_ai_models`
+    /// never went through `validate`, so the auto-load 600 ms after a key was
+    /// typed sent it to a remote `http://` endpoint while the form still showed
+    /// no error. Every path that puts the key on the wire calls this.
+    pub fn check_transport(&self) -> Result<(), String> {
+        if !self.api_key.trim().is_empty() && is_cleartext_remote(&self.base_url) {
+            return Err(format!(
+                "{}'s API key would be sent in clear text, because its URL is http:// \
+                 and not on this machine. Use https://, or remove the key.",
+                self.name
+            ));
+        }
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.id.trim().is_empty() {
             return Err("A provider needs an id.".to_string());
@@ -464,13 +482,8 @@ impl AiProvider {
                             self.name, service
                         ));
                     }
-                } else if is_cleartext_remote(&self.base_url) {
-                    return Err(format!(
-                        "{}'s API key would be sent in clear text, because its URL is http:// \
-                         and not on this machine. Use https://, or remove the key.",
-                        self.name
-                    ));
                 }
+                self.check_transport()?;
                 Ok(())
             }
         }

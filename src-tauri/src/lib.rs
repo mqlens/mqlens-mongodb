@@ -1182,6 +1182,10 @@ async fn list_ai_models(provider: ai_providers::AiProvider) -> Result<Vec<String
             ai::list_models_cli(&provider.models_command).await
         }
         kind => {
+            // Before the request, not at Save: this runs automatically 600 ms
+            // after a key is typed, so Save is far too late to be the first
+            // check on whether the key can safely go out.
+            provider.check_transport()?;
             ai::list_models_http(kind, &provider.models_endpoint()?, &provider.api_key, &provider.name)
                 .await
         }

@@ -223,7 +223,7 @@ export async function deleteChat(id: string): Promise<void> {
  */
 export async function appendReplyToChat(
   chatId: string,
-  reply: { text: string; query?: unknown; error?: boolean }
+  reply: { text: string; query?: unknown; error?: boolean; thoughts?: string | null }
 ): Promise<void> {
   await invoke('append_chat_message', {
     chatId,
@@ -231,6 +231,9 @@ export async function appendReplyToChat(
     text: reply.text,
     query: reply.query ?? null,
     error: reply.error ?? null,
+    // Carried through, or a reply parked by a closing tab reaches History
+    // without the reasoning it was shown with.
+    thoughts: reply.thoughts ?? null,
     updatedAt: new Date().toISOString(),
   }).catch(() => undefined);
 }

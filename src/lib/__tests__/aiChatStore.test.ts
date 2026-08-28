@@ -122,6 +122,24 @@ describe('AI chat store', () => {
     expect(invokeMock).not.toHaveBeenCalledWith('save_chat', expect.anything());
   });
 
+  it('parks the reply\'s thoughts with it', async () => {
+    // A tab closing mid-generation parks the answer. The text and query survived
+    // that while the reasoning was dropped, so History showed a reply that had
+    // apparently never reasoned.
+    await appendReplyToChat('c1', { text: 'the answer', thoughts: 'weighed two indexes' });
+    expect(invokeMock).toHaveBeenCalledWith(
+      'append_chat_message',
+      expect.objectContaining({ thoughts: 'weighed two indexes' }),
+    );
+
+    // A reply without any is explicitly none, not undefined.
+    await appendReplyToChat('c1', { text: 'no reasoning' });
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'append_chat_message',
+      expect.objectContaining({ thoughts: null }),
+    );
+  });
+
   it('moves conversations to a renamed namespace', async () => {
     await retargetChatScope(
       { connectionName: 'Local', database: 'sales', collection: 'users', variant: 'editor' },

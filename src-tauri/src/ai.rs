@@ -305,6 +305,16 @@ pub fn extract_json_object(text: &str) -> Result<String, String> {
 /// about a query naturally contain braces — `{ age: {$gt: 30} }` is not valid
 /// JSON and must not be mistaken for the answer. Fences are stripped from the
 /// notes so a model that ignores the no-fences rule still reads cleanly.
+/// `{` followed by a quoted key — a real object rather than a brace in prose,
+/// whose keys are bare (`{ age: {$gt: 30} }`, `use { for grouping`).
+fn opens_like_json(text: &str) -> bool {
+    let mut chars = text.chars();
+    if chars.next() != Some('{') {
+        return false;
+    }
+    matches!(chars.find(|c| !c.is_whitespace()), Some('"'))
+}
+
 pub fn split_json_object(text: &str) -> Result<(String, Option<String>), String> {
     let bytes = text.as_bytes();
     let mut best: Option<(usize, usize, String)> = None;
@@ -346,7 +356,16 @@ pub fn split_json_object(text: &str) -> Result<(String, Option<String>), String>
             }
         }
         let Some(end) = end else {
-            // Unbalanced: a stray `{` in prose. Nothing to skip but the brace.
+            // An unbalanced `{` never closes, so everything after it sits inside
+            // an object with no end. When it opens like JSON — a quoted key —
+            // that is a truncated answer, and the objects nested in it are parts
+            // of it: returning one hands the panel a fragment of the reply, which
+            // is how `{"filter":{"tenant":"acme"}` became the query
+            // `{"tenant":"acme"}`. A brace in prose has no quoted key, so it is
+            // still just stepped over.
+            if opens_like_json(&text[start..]) {
+                return Err("Model response contains an unterminated JSON object".to_string());
+            }
             search_from = start + 1;
             continue;
         };

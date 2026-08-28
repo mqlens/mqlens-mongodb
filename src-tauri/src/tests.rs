@@ -105,6 +105,29 @@ mod tests {
         assert_eq!(args, ["run", "llama3:latest", "find users"]);
     }
 
+    #[test]
+    fn the_model_list_refuses_a_cleartext_key_before_any_request_leaves() {
+        // `list_ai_models` never went through `validate`, and it runs 600 ms
+        // after a key is typed — so Save was far too late to be the first check.
+        use crate::ai_providers::{AiProvider, ProviderKind};
+        let mut p = AiProvider {
+            id: "p".into(),
+            name: "Remote".into(),
+            kind: ProviderKind::OpenAiCompatible,
+            base_url: "http://api.example.com/v1".into(),
+            api_key: "sk-secret".into(),
+            model: "m".into(),
+            command: String::new(),
+            models_command: String::new(),
+        };
+        let err = p.check_transport().unwrap_err();
+        assert!(err.contains("clear text"), "{err}");
+        p.base_url = "https://api.example.com/v1".into();
+        p.check_transport().expect("TLS is fine");
+        p.base_url = "http://localhost:11434/v1".into();
+        p.check_transport().expect("this machine is fine");
+    }
+
     #[tokio::test]
     async fn a_pasted_key_is_trimmed_before_it_reaches_the_headers() {
         // Model loading runs on the uncommitted draft, so the trim on the save
@@ -465,6 +488,24 @@ mod tests {
         let bad = r#"{"queryType":"find","filter":{"age":{"$gt":30}},"sort":{},}"#;
         let err = split_json_object(bad).unwrap_err();
         assert!(err.contains("no valid JSON"), "{err}");
+    }
+
+    #[test]
+    fn split_refuses_a_truncated_answer_instead_of_returning_a_nested_part_of_it() {
+        // An answer cut off before its last brace never closes, so everything in
+        // it is nested inside an object with no end. Stepping past the opening
+        // brace and scanning inside handed back the nested filter as the whole
+        // reply, which the panel ran as a query of its own.
+        use crate::ai::split_json_object;
+        let err = split_json_object(r#"{"queryType":"find","filter":{"tenant":"acme"}"#)
+            .unwrap_err();
+        assert!(err.contains("unterminated"), "{err}");
+
+        // A brace in prose has no quoted key, so it is still just stepped over
+        // and the real answer after it is found.
+        let (json, notes) = split_json_object("use { for grouping\n{\"a\":1}").unwrap();
+        assert_eq!(json, "{\"a\":1}");
+        assert!(notes.unwrap().contains("grouping"));
     }
 
     #[test]

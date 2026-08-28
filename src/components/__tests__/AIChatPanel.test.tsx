@@ -929,6 +929,44 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
   });
 
+  it('reads only as many images as can be attached, and still says why', async () => {
+    // Reading is what allocates: base64-encoding a multi-select of files near the
+    // 5 MiB cap could run to hundreds of megabytes only for four to be kept.
+    const read: string[] = [];
+    const RealFileReader = globalThis.FileReader;
+    class CountingReader {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      error = null;
+      result = 'data:image/png;base64,AAAA';
+      readAsDataURL(file: File) {
+        read.push(file.name);
+        // Resolve on a later task, as a real reader does.
+        setTimeout(() => this.onload?.(), 0);
+      }
+    }
+    (globalThis as unknown as { FileReader: unknown }).FileReader = CountingReader;
+    try {
+      mockPickerBackend({ query: '{}' });
+      renderPanel('editor');
+      await screen.findByTestId('ai-chat-provider-select');
+
+      const items = Array.from({ length: 7 }, (_, i) => {
+        const file = new File([new Uint8Array(3)], `shot${i}.png`, { type: 'image/png' });
+        return { kind: 'file', type: 'image/png', getAsFile: () => file };
+      });
+      fireEvent.paste(screen.getByTestId('chat-input'), { clipboardData: { items } });
+
+      // Four is the allowance; the other three are never read at all.
+      expect(read).toHaveLength(4);
+      // ...and the user is told the count is what stopped them.
+      await waitFor(() => expect(screen.getByTestId('chat-image-note')).toBeInTheDocument());
+      expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/at most|4/);
+    } finally {
+      (globalThis as unknown as { FileReader: unknown }).FileReader = RealFileReader;
+    }
+  });
+
   it('drops an image still being read when a local CLI provider is picked', async () => {
     // Switching to a CLI cleared only the images already in state. A read still
     // in flight is not in state, so nothing invalidated it and its callback —

@@ -388,15 +388,34 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       ? t('aiChatPanel.composer.imageTooLarge', { limit: MAX_IMAGE_BYTES / (1024 * 1024) })
       : t('aiChatPanel.composer.imageUnsupported');
 
-  const addImages = (images: PendingImage[], rejected: 'type' | 'size' | null = null) => {
+  /**
+   * The files that fit the count cap, and whether any had to be left out.
+   *
+   * Applied *before* reading them: reading is what allocates, and a multi-select
+   * of files near the 5 MiB cap would base64 hundreds of megabytes only for
+   * `addImages` to discard all but four. The cap is still enforced there as well,
+   * against the current state rather than this render's.
+   */
+  const capToRoom = (files: File[]) => {
+    const room = Math.max(0, MAX_PENDING_IMAGES - pendingImages.length);
+    return { fits: files.slice(0, room), overCap: files.length > room };
+  };
+
+  const addImages = (
+    images: PendingImage[],
+    rejected: 'type' | 'size' | null = null,
+    overCap = false
+  ) => {
     if (!providerTakesImages) {
       setImageNote(t('aiChatPanel.composer.noImagesForCli'));
       return;
     }
     setPendingImages((prev) => {
       const room = Math.max(0, MAX_PENDING_IMAGES - prev.length);
-      // Over the count is the more actionable complaint, so it wins.
-      if (images.length > room) {
+      // Over the count is the more actionable complaint, so it wins. `overCap`
+      // comes from the caller because the files it dropped before reading are no
+      // longer here to be counted.
+      if (overCap || images.length > room) {
         setImageNote(t('aiChatPanel.composer.imageTooMany', { max: MAX_PENDING_IMAGES }));
       } else {
         setImageNote(rejected ? noteFor(rejected) : null);
@@ -415,13 +434,14 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       if (reason) setImageNote(noteFor(reason));
       return;
     }
+    const { fits, overCap } = capToRoom(accepted);
     const epoch = imageEpochRef.current;
     pendingReadsRef.current += 1;
     void (async () => {
       try {
-        const imgs = await imagesFromFiles(accepted);
+        const imgs = await imagesFromFiles(fits);
         if (imageEpochRef.current !== epoch) return; // the composer moved on
-        addImages(imgs, reason);
+        addImages(imgs, reason, overCap);
       } finally {
         pendingReadsRef.current -= 1;
       }
@@ -440,12 +460,13 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       if (reason) setImageNote(noteFor(reason));
       return;
     }
+    const { fits, overCap } = capToRoom(accepted);
     const epoch = imageEpochRef.current;
     pendingReadsRef.current += 1;
     try {
-      const images = await imagesFromFiles(accepted);
+      const images = await imagesFromFiles(fits);
       if (imageEpochRef.current !== epoch) return; // the composer moved on
-      addImages(images, reason);
+      addImages(images, reason, overCap);
     } finally {
       pendingReadsRef.current -= 1;
     }

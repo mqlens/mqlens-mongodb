@@ -395,6 +395,10 @@ pub async fn append_chat_message(
     text: String,
     query: Option<Value>,
     error: Option<bool>,
+    // The reply's reasoning, when it had any. Parking an in-flight answer used to
+    // drop it: the text and query survived the tab closing while the thoughts
+    // silently did not, so History showed a reply that had never reasoned.
+    thoughts: Option<String>,
     updated_at: String,
 ) -> Result<(), String> {
     let _guard = store_lock();
@@ -410,7 +414,7 @@ pub async fn append_chat_message(
         text,
         query,
         error,
-        thoughts: None,
+        thoughts,
         attachments: None,
     });
     if chat.messages.len() > MAX_MESSAGES {
