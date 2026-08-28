@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AIChatPanel } from '../AIChatPanel';
+import { ACCEPTED_IMAGE_TYPES, AIChatPanel } from '../AIChatPanel';
 import { resetChatRequests } from '../../lib/aiChatRequest';
 import { resetOpenChats } from '../../lib/aiChatStore';
 
@@ -1076,5 +1076,29 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     send('anything');
     await screen.findByText('ok');
     expect(lastGenerateArgs().providerId).toBe('anthropic');
+  });
+
+  it('refuses an image format the backend cannot send, before anything is lost', async () => {
+    // `image/*` accepted SVG and HEIC, which previewed fine and then failed
+    // validation after the prompt and attachment had already been cleared.
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    pasteImage(screen.getByTestId('chat-input'), 'image/svg+xml');
+    await screen.findByTestId('chat-image-note');
+    expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/PNG, JPEG, WebP and GIF/);
+    expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
+  });
+
+  it('accepts each format the backend allows', async () => {
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    for (const type of ACCEPTED_IMAGE_TYPES) {
+      pasteImage(screen.getByTestId('chat-input'), type);
+    }
+    await screen.findByTestId('chat-pending-images');
+    // Four formats, and the cap is four.
+    expect(screen.getAllByTestId(/chat-pending-image-remove-/)).toHaveLength(4);
   });
 });

@@ -84,6 +84,15 @@ interface PendingImage {
 }
 
 const MAX_PENDING_IMAGES = 4;
+/**
+ * The formats the backend will actually send.
+ *
+ * Must match `ALLOWED_IMAGE_TYPES` in src-tauri/src/ai.rs — a drift test in
+ * AIChatPanel.test.tsx reads that file and compares. `image/*` used to be
+ * accepted here, so an SVG or HEIC previewed happily and then failed validation
+ * *after* the prompt and the attachment had been cleared.
+ */
+export const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 /** Header model <select> sentinels; a real model id never starts with `__`. */
 const TYPE_MODEL = '__type_a_model__';
 const CURRENT_MODEL = '__current_model__';
@@ -110,7 +119,7 @@ export function imageFilesFromClipboard(items: DataTransferItemList | null): Fil
   if (!items) return [];
   const files: File[] = [];
   for (const item of Array.from(items)) {
-    if (item.kind === 'file' && item.type.startsWith('image/')) {
+    if (item.kind === 'file' && ACCEPTED_IMAGE_TYPES.includes(item.type)) {
       const f = item.getAsFile();
       if (f) files.push(f);
     }
@@ -326,7 +335,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = imageFilesFromClipboard(e.clipboardData?.items ?? null);
-    if (files.length === 0) return; // plain text: let the textarea take it
+    if (files.length === 0) {
+      // An image the backend cannot send is worth a word, rather than pasting
+      // its filename into the prompt and failing later.
+      const items = Array.from(e.clipboardData?.items ?? []);
+      if (items.some((i) => i.kind === 'file' && i.type.startsWith('image/'))) {
+        e.preventDefault();
+        setImageNote(t('aiChatPanel.composer.imageUnsupported'));
+      }
+      return; // plain text: let the textarea take it
+    }
     // Before the first await, or the browser pastes any accompanying text.
     e.preventDefault();
     void imagesFromFiles(files).then(addImages);
@@ -334,8 +352,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
   const attachInputRef = useRef<HTMLInputElement>(null);
   const handleAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith('image/'));
+    const picked = Array.from(e.target.files ?? []);
     e.target.value = ''; // so picking the same file again still fires change
+    const files = picked.filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
+    if (files.length < picked.length) setImageNote(t('aiChatPanel.composer.imageUnsupported'));
     if (files.length === 0) return;
     addImages(await imagesFromFiles(files));
   };
@@ -1183,7 +1203,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                 <input
                   ref={attachInputRef}
                   type="file"
-                  accept="image/*"
+                  accept={ACCEPTED_IMAGE_TYPES.join(',')}
                   multiple
                   className="hidden"
                   onChange={(e) => void handleAttach(e)}

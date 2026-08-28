@@ -69,6 +69,7 @@
     "composer": {
       "attach": "Attach image",
       "imageTooMany": "Up to {{max}} images per message.",
+      "imageUnsupported": "Only PNG, JPEG, WebP and GIF images can be sent.",
       "noImagesForCli": "This provider is a local command and cannot receive images. Pick an HTTP provider to ask about an image.",
       "placeholder": "Describe a query… (Enter to send, Shift+Enter for newline)",
       "send": "Send"
