@@ -443,6 +443,25 @@ describe('SettingsView Component', () => {
       });
     });
 
+    it('persists the list as soon as a provider is saved or removed, not only on the form Save', async () => {
+      // The reported bug: providers added, window closed, providers gone.
+      mockInvoke.mockImplementation((cmd) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({ ai_provider: 'anthropic', ai_providers: [deepseek] });
+        if (cmd === 'ai_provider_presets') return Promise.resolve([]);
+        return Promise.resolve();
+      });
+      renderSettings();
+      await openTab('settings-tab-ai');
+      await screen.findByTestId('ai-provider-row-deepseek');
+
+      fireEvent.click(screen.getByTestId('ai-provider-remove-deepseek'));
+      await waitFor(() => {
+        const save = mockInvoke.mock.calls.find(([cmd]) => cmd === 'save_app_settings');
+        expect(save).toBeTruthy();
+        expect(save![1].settings.ai_providers).toEqual([]);
+      });
+    });
+
     it('does not leave a removed provider selected', async () => {
       // The backend rejects an unknown id, and that error would otherwise only
       // appear the next time the user asked for a query.

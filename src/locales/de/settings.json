@@ -54,7 +54,8 @@
     "providerModelsFailed": "Modelle konnten nicht geladen werden: {{error}} Du kannst trotzdem einen Modellnamen eintippen.",
     "providerModelHint": "Wird automatisch geladen, sobald Endpunkt und Schlüssel gesetzt sind. Einen Namen zu tippen geht auch.",
     "providerModelCliHint": "Ersetzt {model} im Befehl. Wird aus dem Listenbefehl geladen, falls einer gesetzt ist; einen Namen zu tippen geht auch.",
-    "providerModelTypeOwn": "Modellnamen eintippen…"
+    "providerModelTypeOwn": "Modellnamen eintippen…",
+    "providerSaveFailed": "Anbieter konnte nicht gespeichert werden: {{error}}"
   },
   "audit": {
     "enabledDescription": "Aktiviert die Aufzeichnung ausgewählter Datenbankoperationen in einem tresorverschlüsselten lokalen Protokoll.",

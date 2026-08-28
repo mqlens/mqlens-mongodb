@@ -38,7 +38,7 @@ export interface AiProvider {
   models_command: string;
 }
 
-interface ProviderPreset {
+export interface ProviderPreset {
   id: string;
   name: string;
   kind: ProviderKind;
@@ -59,6 +59,28 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   'anthropic-compatible',
   'local-cli',
 ];
+
+/**
+ * A preset applied to the current draft.
+ *
+ * The key is kept only if the preset points at the same place the draft already
+ * does. Otherwise the auto-load that follows would send one vendor's secret to
+ * another vendor's endpoint 600 ms after the click — before anything is saved.
+ */
+export function applyPresetToDraft(prev: AiProvider, preset: ProviderPreset): AiProvider {
+  const sameEndpoint =
+    prev.kind === preset.kind && prev.base_url.trim().replace(/\/+$/, '') === preset.baseUrl.trim().replace(/\/+$/, '');
+  return {
+    ...prev,
+    name: preset.name,
+    kind: preset.kind,
+    base_url: preset.baseUrl,
+    model: preset.model,
+    command: preset.command,
+    models_command: preset.modelsCommand,
+    api_key: sameEndpoint ? prev.api_key : '',
+  };
+}
 
 export function emptyProvider(): AiProvider {
   return {
@@ -151,11 +173,19 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
   // What the listing needs before it is worth asking: an endpoint for the HTTP
   // kinds (a key too, unless the endpoint is local and wants none), or a
   // listing command for a CLI.
+  // Manual loading needs only an address to ask; automatic loading is stricter
+  // so a remote endpoint is not hit with no key just to receive a 401. A
+  // keyless server on a LAN host, IPv6 loopback or container alias is a valid
+  // setup, so the button never depends on the hostname.
   const canLoadModels = (p: AiProvider | null): boolean => {
     if (!p) return false;
     if (p.kind === 'local-cli') return p.models_command.trim() !== '';
-    if (p.base_url.trim() === '') return false;
-    return p.api_key.trim() !== '' || /localhost|127\.0\.0\.1/.test(p.base_url);
+    return p.base_url.trim() !== '';
+  };
+  const canAutoLoad = (p: AiProvider | null): boolean => {
+    if (!canLoadModels(p) || !p) return false;
+    if (p.kind === 'local-cli') return true;
+    return p.api_key.trim() !== '' || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(p.base_url.trim());
   };
 
   // Auto-load once the inputs are there, debounced so a key being typed does
@@ -165,7 +195,12 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
   const draftModelsCommand = draft?.models_command ?? '';
   const draftKind = draft?.kind;
   useEffect(() => {
-    if (!draft || !canLoadModels(draft)) return;
+    // Any change to what a request would ask makes an in-flight answer stale,
+    // whether or not a new request follows — otherwise a slow reply from the
+    // previous endpoint could populate the list for this one.
+    loadSeq.current += 1;
+    setModelsStatus((st) => (st === 'loading' ? 'idle' : st));
+    if (!draft || !canAutoLoad(draft)) return;
     const handle = window.setTimeout(() => void loadModels(draft), 600);
     return () => window.clearTimeout(handle);
     // Only the inputs that change what the request asks for.
@@ -184,15 +219,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
     (presetId: string) => {
       const preset = presets.find((p) => p.id === presetId);
       if (!preset) return;
-      setDraft((prev) => ({
-        ...(prev ?? emptyProvider()),
-        name: preset.name,
-        kind: preset.kind,
-        base_url: preset.baseUrl,
-        model: preset.model,
-        command: preset.command,
-        models_command: preset.modelsCommand,
-      }));
+      setDraft((prev) => applyPresetToDraft(prev ?? emptyProvider(), preset));
       setDraftError(null);
     },
     [presets]
@@ -208,6 +235,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
       model: draft.model.trim(),
       command: draft.command.trim(),
       models_command: draft.models_command.trim(),
+      api_key: draft.api_key.trim(),
       id: draft.id || slugify(draft.name, taken),
     };
     try {

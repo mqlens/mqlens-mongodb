@@ -722,6 +722,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   const localCommandFor = (agent: string) =>
     localCommands[agent] ?? DEFAULT_LOCAL_COMMANDS[agent] ?? '{prompt}';
 
+  // Writes the provider list (and the active choice) without waiting for the
+  // form's Save. Everything else on the form still saves the normal way.
+  const persistProviders = async (next: AiProvider[], active: string) => {
+    try {
+      const current = await invoke<AppSettings>('load_app_settings');
+      await invoke('save_app_settings', {
+        settings: { ...current, ai_providers: next, ai_provider: active },
+      });
+    } catch (e) {
+      setError(t('ai.providerSaveFailed', { error: String(e) }));
+    }
+  };
+
   const saveSettings = async () => {
     setSaving(true);
     setError(null);
@@ -1180,9 +1193,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                     // A removed provider must not stay selected: the backend would
                     // reject the id, and the message would arrive at generation
                     // time rather than here.
-                    if (!next.some((p) => p.id === aiProvider) && !PROVIDER_LABELS[aiProvider]) {
-                      setAiProvider('anthropic');
-                    }
+                    const stillValid = next.some((p) => p.id === aiProvider) || !!PROVIDER_LABELS[aiProvider];
+                    const active = stillValid ? aiProvider : 'anthropic';
+                    if (!stillValid) setAiProvider(active);
+                    // The button says "Save provider", so it saves. Until this the
+                    // list lived only in React state and vanished with the window
+                    // unless the form's own Save was also pressed.
+                    void persistProviders(next, active);
                   }}
                   reservedIds={[...CLOUD_PROVIDERS, ...LOCAL_AGENTS]}
                 />

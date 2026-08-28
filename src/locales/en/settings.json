@@ -50,6 +50,7 @@
     "providerPresetPlaceholder": "Pick a known service…",
     "providerRemove": "Remove provider",
     "providerSave": "Save provider",
+    "providerSaveFailed": "Could not save the provider: {{error}}",
     "providerTitle": "Provider",
     "tabDescription": "Cloud API keys, local agents, custom query instructions, and AI Helper history retention.",
     "tabLabel": "AI Assistant",

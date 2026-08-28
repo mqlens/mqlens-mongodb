@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { AiProviderManager, slugify, emptyProvider, type AiProvider } from '../AiProviderManager';
+import { AiProviderManager, applyPresetToDraft, slugify, emptyProvider, type AiProvider } from '../AiProviderManager';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -194,13 +194,16 @@ describe('AiProviderManager', () => {
       target: { value: '  https://api.groq.com/openai/v1  ' },
     });
     fireEvent.change(screen.getByTestId('ai-provider-model-input'), { target: { value: ' llama-3.1 ' } });
+    fireEvent.change(screen.getByTestId('ai-provider-key-input'), { target: { value: '  gsk_pasted  ' } });
     fireEvent.click(screen.getByTestId('ai-provider-save'));
 
-    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
     expect(onChange.mock.calls[0][0][0]).toMatchObject({
       name: 'Groq',
       base_url: 'https://api.groq.com/openai/v1',
       model: 'llama-3.1',
+      // The key goes into an Authorization header verbatim, so it is trimmed too.
+      api_key: 'gsk_pasted',
     });
   });
 
@@ -307,4 +310,63 @@ describe('AiProviderManager', () => {
       expect(onChange.mock.calls[0][0][0]).toMatchObject({ model: 'llama3', models_command: '' });
     });
   });
+
+describe('applyPresetToDraft', () => {
+  const deepseek = PRESETS[0] as any;
+  it('keeps a key only when the preset points at the same endpoint', () => {
+    const draft = { ...emptyProvider(), kind: 'openai-compatible' as const, base_url: 'https://api.deepseek.com/v1/', api_key: 'ds-secret' };
+    expect(applyPresetToDraft(draft, deepseek).api_key).toBe('ds-secret');
+  });
+  it('clears the key when the preset changes the endpoint or format', () => {
+    // Otherwise the auto-load 600 ms later sends one vendor's secret to another.
+    const draft = { ...emptyProvider(), kind: 'openai-compatible' as const, base_url: 'https://api.openai.com/v1', api_key: 'sk-openai' };
+    expect(applyPresetToDraft(draft, deepseek).api_key).toBe('');
+    const anthropicLike = { ...deepseek, kind: 'anthropic-compatible', baseUrl: 'https://api.deepseek.com/v1' };
+    const same = { ...emptyProvider(), kind: 'openai-compatible' as const, base_url: 'https://api.deepseek.com/v1', api_key: 'k' };
+    expect(applyPresetToDraft(same, anthropicLike).api_key).toBe('');
+  });
+  it('copies every other preset field', () => {
+    const out = applyPresetToDraft(emptyProvider(), deepseek);
+    expect(out).toMatchObject({ name: 'DeepSeek', base_url: 'https://api.deepseek.com/v1', model: 'deepseek-chat', models_command: '' });
+  });
+});
+
+describe('model loading rules', () => {
+  it('enables manual loading for a keyless remote endpoint, but does not auto-load it', async () => {
+    const onChange = vi.fn();
+    render(<AiProviderManager providers={[]} onChange={onChange} reservedIds={[]} />);
+    fireEvent.click(screen.getByTestId('ai-provider-add'));
+    fireEvent.change(screen.getByTestId('ai-provider-url-input'), { target: { value: 'http://ollama.lan:11434/v1' } });
+    // A LAN host with no key is a valid setup; the button must not depend on "localhost".
+    expect(screen.getByTestId('ai-provider-models-load')).not.toBeDisabled();
+    await new Promise((r) => setTimeout(r, 750));
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_ai_models')).toBe(false);
+    fireEvent.click(screen.getByTestId('ai-provider-models-load'));
+    await waitFor(() => expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_ai_models')).toBe(true));
+  });
+
+  it('ignores a slow reply from an endpoint the user has since changed', async () => {
+    let resolveFirst: (v: string[]) => void = () => {};
+    let calls = 0;
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'ai_provider_presets') return Promise.resolve(PRESETS);
+      if (cmd === 'list_ai_models') {
+        calls += 1;
+        if (calls === 1) return new Promise<string[]>((res) => { resolveFirst = res; });
+        return Promise.resolve([]);
+      }
+      return Promise.resolve('ok');
+    });
+    render(<AiProviderManager providers={[]} onChange={vi.fn()} reservedIds={[]} />);
+    fireEvent.click(screen.getByTestId('ai-provider-add'));
+    fireEvent.change(screen.getByTestId('ai-provider-url-input'), { target: { value: 'http://localhost:11434/v1' } });
+    await waitFor(() => expect(calls).toBe(1));
+    // The user moves to a remote endpoint with no key: nothing should load for it.
+    fireEvent.change(screen.getByTestId('ai-provider-url-input'), { target: { value: 'https://api.example.com/v1' } });
+    resolveFirst(['llama3']);                       // the OLD endpoint answers late
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId('ai-provider-model-select')).not.toBeInTheDocument();
+    expect(screen.getByTestId('ai-provider-model-input')).toBeInTheDocument();
+  });
+});
 });
