@@ -317,6 +317,11 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     imageEpochRef.current += 1;
     // Abandoned reads will never reach state, so their slots are free now.
     reservedSlotsRef.current = 0;
+    // ...and they no longer gate Send. Leaving the count up meant a read that
+    // belonged to the conversation the user just left blocked the next prompt
+    // until it settled, which for a slow or network-backed file is a visible
+    // stall on a message that has nothing to do with it.
+    setReadsInFlight(0);
     // Same array when there is nothing to clear: this is called on every switch
     // to a CLI provider, and a fresh `[]` would re-render for no change.
     setPendingImages((prev) => (prev.length === 0 ? prev : []));
@@ -626,7 +631,11 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
           setImageNote(t('aiChatPanel.composer.imageUnreadable'));
         }
       } finally {
-        setReadsInFlight((n) => Math.max(0, n - 1));
+        // Scoped to its epoch, like `release`: `dropPendingImages` already zeroed
+        // the count, so decrementing again would come out of a newer read's.
+        if (imageEpochRef.current === epoch) {
+          setReadsInFlight((n) => Math.max(0, n - 1));
+        }
         release();
       }
     })();
@@ -656,7 +665,9 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         setImageNote(t('aiChatPanel.composer.imageUnreadable'));
       }
     } finally {
-      setReadsInFlight((n) => Math.max(0, n - 1));
+      if (imageEpochRef.current === epoch) {
+        setReadsInFlight((n) => Math.max(0, n - 1));
+      }
       release();
     }
   };

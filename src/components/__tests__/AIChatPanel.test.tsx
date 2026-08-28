@@ -1213,6 +1213,59 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     await screen.findByTestId('chat-pending-images');
   });
 
+  it('does not let an abandoned read block or unblock the next conversation', async () => {
+    // A read belonging to the chat the user just left kept Send disabled until it
+    // settled, and zeroing the count without scoping its decrement would then let
+    // that stale cleanup rob a newer read's count.
+    const pending: Array<() => void> = [];
+    const RealFileReader = globalThis.FileReader;
+    class HeldReader {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      error = null;
+      result = 'data:image/png;base64,AAAA';
+      readAsDataURL() {
+        pending.push(() => this.onload?.());
+      }
+    }
+    (globalThis as unknown as { FileReader: unknown }).FileReader = HeldReader;
+    try {
+      mockPickerBackend({ query: '{}' });
+      renderPanel('editor');
+      await screen.findByTestId('ai-chat-provider-select');
+
+      pasteImage(screen.getByTestId('chat-input')); // read held, Send gated
+      fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'blocked' } });
+      await waitFor(() => expect(screen.getByTestId('chat-send-btn')).toBeDisabled());
+
+      // The conversation moves on; that read is no longer anyone's business.
+      fireEvent.click(screen.getByTestId('ai-chat-new-btn'));
+      fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'a text-only prompt' } });
+      await waitFor(() => expect(screen.getByTestId('chat-send-btn')).not.toBeDisabled());
+
+      // A NEW read starts in this conversation, gating Send again...
+      pasteImage(screen.getByTestId('chat-input'));
+      await waitFor(() => expect(screen.getByTestId('chat-send-btn')).toBeDisabled());
+
+      // ...and only now does the abandoned one settle. Order matters: its cleanup
+      // has to land *after* the new read incremented, or an unscoped decrement
+      // just hits the floor at zero and the bug stays hidden.
+      const abandoned = pending[0];
+      await act(async () => {
+        abandoned();
+      });
+      // The new read is still outstanding, so Send stays held.
+      expect(screen.getByTestId('chat-send-btn')).toBeDisabled();
+      // And when it does land, Send opens up — the count was not driven negative.
+      await act(async () => {
+        pending[1]();
+      });
+      await waitFor(() => expect(screen.getByTestId('chat-send-btn')).not.toBeDisabled());
+    } finally {
+      (globalThis as unknown as { FileReader: unknown }).FileReader = RealFileReader;
+    }
+  });
+
   it('will not send while an image is still being read', async () => {
     // Send captured only what was already in state, so an image pasted and sent
     // before its read finished went out missing from the prompt — and then
