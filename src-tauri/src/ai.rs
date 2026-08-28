@@ -308,6 +308,10 @@ pub fn extract_json_object(text: &str) -> Result<String, String> {
 pub fn split_json_object(text: &str) -> Result<(String, Option<String>), String> {
     let bytes = text.as_bytes();
     let mut best: Option<(usize, usize, String)> = None;
+    // Set when a balanced candidate after `best` failed to parse. That candidate
+    // sits where the answer is supposed to be, so `best` is no longer safely the
+    // answer — see the rejection below.
+    let mut malformed_after_best = false;
     let mut search_from = 0;
     while let Some(rel) = text[search_from..].find('{') {
         let start = search_from + rel;
@@ -347,16 +351,18 @@ pub fn split_json_object(text: &str) -> Result<(String, Option<String>), String>
             continue;
         };
         let candidate = &text[start..=end];
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(candidate) {
-            if parsed.is_object() {
+        match serde_json::from_str::<serde_json::Value>(candidate) {
+            Ok(parsed) if parsed.is_object() => {
                 let compact = serde_json::to_string(&parsed).map_err(|e| e.to_string())?;
                 best = Some((start, end, compact));
+                malformed_after_best = false;
             }
+            // Balanced but invalid — prose like `{ age: {$gt: 30} }`, or an
+            // answer with a trailing comma — is skipped as a *whole*. Stepping
+            // inside it would find its nested `{}` and hand that back as the
+            // reply, which the panel turns into a match-all query.
+            _ => malformed_after_best = true,
         }
-        // Balanced but invalid — prose like `{ age: {$gt: 30} }`, or an answer
-        // with a trailing comma — is skipped as a *whole*. Stepping inside it
-        // would find its nested `{}` and hand that back as the reply, which the
-        // panel turns into a match-all query. A broken answer must be an error.
         search_from = end + 1;
     }
     let Some((start, end, json)) = best else {
@@ -366,6 +372,16 @@ pub fn split_json_object(text: &str) -> Result<(String, Option<String>), String>
             "Model response contained no JSON object".to_string()
         });
     };
+    // The answer is the last balanced object, so a malformed one after `best`
+    // means the answer itself is broken and `best` is something the model wrote
+    // *about* the query. Returning it would hand the panel a filter the user
+    // never asked for, indistinguishable from a real one — so refuse the reply
+    // rather than guess which object was meant. The cost is that brace-bearing
+    // prose written *after* the JSON is rejected too; the prompts ask for notes
+    // first for exactly this reason, and a loud error beats a silent wrong query.
+    if malformed_after_best {
+        return Err("Model response ended with a malformed JSON object".to_string());
+    }
     let notes = format!("{}\n\n{}", text[..start].trim(), text[end + 1..].trim());
     let notes = strip_fences(&notes);
     let notes = notes.trim();

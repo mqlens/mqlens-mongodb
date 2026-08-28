@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ACCEPTED_IMAGE_TYPES, AIChatPanel } from '../AIChatPanel';
 import { resetChatRequests } from '../../lib/aiChatRequest';
@@ -1057,6 +1057,48 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     await waitFor(() =>
       expect(screen.getByTestId('ai-chat-provider-select')).toHaveTextContent('Anthropic')
     );
+  });
+
+  it('drops an image still being read when the conversation changes under it', async () => {
+    // Reading a file is asynchronous. Clicking New chat while a paste is still
+    // being read used to clear only what was already in state, so the read
+    // resolved afterwards and attached the old image to the new conversation,
+    // where it would be sent with an unrelated prompt.
+    //
+    // `FileReader` is stubbed rather than awaited: the point is that the read
+    // completes *after* the conversation changed, and a real reader gives no way
+    // to place it there. Waiting a tick instead proved nothing — jsdom had not
+    // finished reading by then, so the assertion held either way.
+    const readers: { onload: (() => void) | null; result: string }[] = [];
+    const RealFileReader = globalThis.FileReader;
+    class DeferredReader {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      error = null;
+      result = 'data:image/png;base64,AAAA';
+      readAsDataURL() {
+        readers.push(this);
+      }
+    }
+    (globalThis as unknown as { FileReader: unknown }).FileReader = DeferredReader;
+    try {
+      mockPickerBackend({ query: '{}' });
+      renderPanel('editor');
+      await screen.findByTestId('ai-chat-provider-select');
+
+      pasteImage(screen.getByTestId('chat-input'));
+      expect(readers).toHaveLength(1); // the read is in flight
+      fireEvent.click(screen.getByTestId('ai-chat-new-btn'));
+
+      // Only now does the read finish, with the image the user pasted into the
+      // conversation they have already left.
+      await act(async () => {
+        readers.forEach((r) => r.onload?.());
+      });
+      expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
+    } finally {
+      (globalThis as unknown as { FileReader: unknown }).FileReader = RealFileReader;
+    }
   });
 
   it('clears a pending image when another conversation is opened from History', async () => {

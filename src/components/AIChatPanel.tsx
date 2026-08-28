@@ -261,6 +261,23 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // surfaces <datalist>. "Type a name…" returns to the text box.
   const [typingModel, setTypingModel] = useState(false);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  /**
+   * Bumped whenever the pending attachments stop belonging to what the user is
+   * composing: a new chat, a History item, a sent message, or a provider that
+   * cannot take images.
+   *
+   * Reading a file is asynchronous, so clearing the state is not enough — a read
+   * started before one of those events would still resolve afterwards and append
+   * the old attachment to the new composer, where it would go out with an
+   * unrelated prompt. Each read captures this counter and drops its result if it
+   * has moved on.
+   */
+  const imageEpochRef = useRef(0);
+  /** Discard the pending attachments, and any read still in flight. */
+  const dropPendingImages = () => {
+    imageEpochRef.current += 1;
+    setPendingImages([]);
+  };
   const [imageNote, setImageNote] = useState<string | null>(null);
   const activeProvider = providerOptions.find((o) => o.id === chatProviderId) ?? null;
   // `null` until the options arrive; their effect then fills in the default.
@@ -333,7 +350,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     // send a model the new provider has never heard of.
     setChatModel(providerOptions.find((o) => o.id === id)?.model ?? '');
     if (providerOptions.find((o) => o.id === id)?.kind === 'local-cli' && pendingImages.length > 0) {
-      setPendingImages([]);
+      dropPendingImages();
       setImageNote(t('aiChatPanel.composer.noImagesForCli'));
     }
   };
@@ -387,7 +404,11 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       if (reason) setImageNote(noteFor(reason));
       return;
     }
-    void imagesFromFiles(accepted).then((imgs) => addImages(imgs, reason));
+    const epoch = imageEpochRef.current;
+    void imagesFromFiles(accepted).then((imgs) => {
+      if (imageEpochRef.current !== epoch) return; // the composer moved on
+      addImages(imgs, reason);
+    });
   };
 
 
@@ -402,7 +423,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       if (reason) setImageNote(noteFor(reason));
       return;
     }
-    addImages(await imagesFromFiles(accepted), reason);
+    const epoch = imageEpochRef.current;
+    const images = await imagesFromFiles(accepted);
+    if (imageEpochRef.current !== epoch) return; // the composer moved on
+    addImages(images, reason);
   };
   const [isChatLoading, setIsChatLoading] = useState(false);
   // Persisted, not per-tab: a panel width is a UI preference, and remounting
@@ -598,7 +622,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     // A new conversation starts clean: an attachment from the previous one must
     // not ride along with the next question, and the override belongs to the
     // conversation that chose it, not to the panel.
-    setPendingImages([]);
+    dropPendingImages();
     setImageNote(null);
     setChatProviderId(defaultProviderId());
     setChatModel('');
@@ -634,7 +658,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     // Same reasoning as New chat: an attachment belongs to the conversation it
     // was added to. Opening another from History left it in the composer, ready
     // to be sent with the next prompt in a different chat.
-    setPendingImages([]);
+    dropPendingImages();
     setImageNote(null);
     chatIdRef.current = maxChatIdNum(stored.messages) + 1;
   };
@@ -756,7 +780,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     };
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput('');
-    setPendingImages([]);
+    dropPendingImages();
     setImageNote(null);
     setIsChatLoading(true);
     // The conversation this question belongs to. New chat, opening a history

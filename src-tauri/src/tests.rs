@@ -425,10 +425,19 @@ mod tests {
         let bad = r#"{"queryType":"find","filter":{"age":{"$gt":30}},"sort":{},}"#;
         let err = split_json_object(bad).unwrap_err();
         assert!(err.contains("no valid JSON"), "{err}");
-        // ...even with notes around it that happen to contain a valid object.
-        let mixed = "Filter idea: {\"x\":1}\n{\"queryType\":\"find\",\"filter\":{},}";
-        let (json, _) = split_json_object(mixed).unwrap();
-        assert_eq!(json, "{\"x\":1}", "only a complete top-level object counts");
+    }
+
+    #[test]
+    fn split_refuses_a_malformed_final_object_rather_than_returning_note_json() {
+        // The model wrote a note containing a valid object, then its intended
+        // answer with a trailing comma. Skipping the broken answer and returning
+        // the note leaves the panel with a filter the user never asked for, and
+        // one that looks entirely valid — so the reply has to be refused.
+        use crate::ai::split_json_object;
+        let text = "Using {\"status\":\"active\"} as a starting point.\n\
+                    {\"queryType\":\"find\",\"filter\":{\"status\":\"active\"},}";
+        let err = split_json_object(text).unwrap_err();
+        assert!(err.contains("malformed"), "{err}");
     }
 
     #[test]
