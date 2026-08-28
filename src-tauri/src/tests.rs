@@ -28,6 +28,94 @@ mod tests {
     }
 
     /// Build test-only passwords without hard-coded string literals for static analysis.
+    /// Resolution has to keep working for the settings already in people's
+    /// vaults: the three original providers store their keys in dedicated fields,
+    /// not in the new list, and a stored `ai_provider` must keep selecting them.
+    #[test]
+    fn resolve_ai_provider_keeps_the_built_ins_working() {
+        use crate::ai_providers::ProviderKind;
+        use crate::connections::{resolve_ai_provider, AppSettings};
+
+        let mut settings = AppSettings::default();
+        settings.ai_provider = "openai".into();
+        settings.openai_api_key = test_secret(&["sk-", "test"]);
+        let p = resolve_ai_provider(&settings).expect("openai resolves");
+        assert_eq!(p.kind, ProviderKind::OpenAiCompatible);
+        assert_eq!(p.endpoint().unwrap(), "https://api.openai.com/v1/chat/completions");
+        assert_eq!(p.api_key, settings.openai_api_key);
+        assert_eq!(p.model, "gpt-4o", "an empty stored model falls back");
+
+        settings.ai_provider = "anthropic".into();
+        settings.anthropic_model = "claude-3-5-sonnet".into();
+        let p = resolve_ai_provider(&settings).expect("anthropic resolves");
+        assert_eq!(p.kind, ProviderKind::AnthropicCompatible);
+        assert_eq!(p.endpoint().unwrap(), "https://api.anthropic.com/v1/messages");
+        assert_eq!(p.model, "claude-3-5-sonnet", "a stored model is respected");
+    }
+
+    #[test]
+    fn resolve_ai_provider_keeps_the_built_in_local_agents_working() {
+        use crate::ai_providers::ProviderKind;
+        use crate::connections::{resolve_ai_provider, AppSettings};
+
+        let mut settings = AppSettings::default();
+        settings.ai_provider = "claude-code".into();
+        let p = resolve_ai_provider(&settings).expect("claude-code resolves");
+        assert_eq!(p.kind, ProviderKind::LocalCli);
+        assert_eq!(p.command, "claude -p {prompt}", "the built-in default template");
+
+        settings
+            .local_commands
+            .insert("claude-code".into(), "claude --model opus -p {prompt}".into());
+        let p = resolve_ai_provider(&settings).expect("resolves");
+        assert_eq!(p.command, "claude --model opus -p {prompt}", "user override wins");
+    }
+
+    #[test]
+    fn resolve_ai_provider_finds_a_user_added_provider() {
+        use crate::ai_providers::{AiProvider, ProviderKind};
+        use crate::connections::{resolve_ai_provider, AppSettings};
+
+        let mut settings = AppSettings::default();
+        settings.ai_providers.push(AiProvider {
+            id: "my-deepseek".into(),
+            name: "DeepSeek".into(),
+            kind: ProviderKind::OpenAiCompatible,
+            base_url: "https://api.deepseek.com/v1".into(),
+            api_key: test_secret(&["ds-", "key"]),
+            model: "deepseek-chat".into(),
+            command: String::new(),
+        });
+        settings.ai_provider = "my-deepseek".into();
+
+        let p = resolve_ai_provider(&settings).expect("custom provider resolves");
+        assert_eq!(p.name, "DeepSeek");
+        assert_eq!(p.endpoint().unwrap(), "https://api.deepseek.com/v1/chat/completions");
+        p.validate().expect("valid");
+    }
+
+    #[test]
+    fn resolve_ai_provider_names_the_provider_it_cannot_find() {
+        use crate::connections::{resolve_ai_provider, AppSettings};
+
+        let mut settings = AppSettings::default();
+        settings.ai_provider = "deleted-provider".into();
+        let err = resolve_ai_provider(&settings).unwrap_err();
+        assert!(err.contains("deleted-provider"), "{err}");
+        assert!(err.contains("Settings"), "should say where to fix it: {err}");
+    }
+
+    /// Settings written before this feature existed have no `ai_providers` key at
+    /// all; serde must read them rather than failing the whole vault load.
+    #[test]
+    fn settings_without_the_provider_list_still_deserialize() {
+        let json = r#"{"ai_provider":"openai","openai_api_key":"x","openai_model":"gpt-4o"}"#;
+        let settings: crate::connections::AppSettings =
+            serde_json::from_str(json).expect("older settings must still load");
+        assert_eq!(settings.ai_provider, "openai");
+        assert!(settings.ai_providers.is_empty());
+    }
+
     fn test_secret(parts: &[&str]) -> String {
         parts.concat()
     }

@@ -656,11 +656,66 @@ impl McpServer {
     }
 }
 
+/// What the server tells a client about how to work with it.
+///
+/// Each tool already documents itself; what a per-tool description cannot say is
+/// the *order*. Agents that skip discovery invent field names, filter on paths
+/// that do not exist, and get an empty result they then explain away — so this
+/// spells out that the schema and the indexes are readable, and that reading them
+/// first is cheaper than guessing.
+///
+/// Kept factual and short: it is prepended to the client's context on every
+/// session, so it earns its tokens by covering the things a model gets wrong
+/// unprompted — the opt-in connection model, the result caps, relaxed EJSON, and
+/// the confirmation protocol on writes.
+pub const AGENT_INSTRUCTIONS: &str = concat!(
+    "MQLens embedded MCP server: read and query the MongoDB connections the user has explicitly ",
+    "shared with agents.\n\n",
+
+    "WORK IN THIS ORDER. Skipping to a query means guessing field names, and a filter on a field ",
+    "that does not exist returns an empty result rather than an error.\n\n",
+
+    "1. `ping` — confirms the server is reachable and your token is valid.\n",
+    "2. `list_connections` for connections already live; `list_profiles` for profiles you may open. ",
+    "Only profiles the user opted in (Connection Manager -> \"Expose to MCP agents\") appear, and ",
+    "connection strings are never returned. If the profile you need is not listed, say so and ask ",
+    "the user to opt it in — do not look for another route.\n",
+    "3. `connect` with a profileId if it is not live yet; use the returned connectionId everywhere.\n",
+    "4. `list_databases`, then `list_collections` — note the type, since a view and a timeseries ",
+    "collection do not accept the same operations.\n",
+    "5. `schema_analysis` before writing any filter. It samples documents and reports per-field ",
+    "types, how many documents actually carry each field, and enum values for low-cardinality ",
+    "fields. Use the field names and types it returns; do not assume `_id`, `createdAt` or ",
+    "`userId` exist because they usually do.\n",
+    "6. `list_indexes` before a query you expect to be large. It reports usage stats, so it also ",
+    "tells you which indexes the workload already relies on.\n",
+    "7. `find` or `aggregate` to run it.\n",
+    "8. `explain` when the result is slow, large, or you are proposing a query the user will keep. ",
+    "It reports executionStats: check whether an index was used rather than asserting that one was.\n\n",
+
+    "RESULTS. Documents come back as relaxed EJSON, so an ObjectId reads as {\"$oid\": \"...\"} and ",
+    "a date as {\"$date\": \"...\"}; filters you send may use the same form. `find` returns at most ",
+    "50 documents or 1MB by default and `limit` itself caps at 200. A non-null `truncated` means ",
+    "you are seeing part of the result: narrow the filter or aggregate server-side instead of ",
+    "paging through it. Never present a truncated sample as a complete answer, and never compute ",
+    "a total by counting the documents you received.\n\n",
+
+    "WRITES. `insert_one`, `update_many`, `delete_many` and `create_index` require ",
+    "`_confirm: true`, and before you send it you must tell the user the exact namespace and what ",
+    "will change, then get their agreement. A connection the user marked read-only rejects writes ",
+    "regardless. `aggregate` refuses $out and $merge. Every call is recorded in the user's ",
+    "activity log.\n\n",
+
+    "WHEN SOMETHING IS MISSING. Report what you could not reach and what you would need. Do not ",
+    "substitute a different collection, widen a filter to produce output, or describe a query you ",
+    "did not run as though you had run it."
+);
+
 #[tool_handler]
 impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions("MQLens embedded MCP server. Call `ping` to verify connectivity.")
+            .with_instructions(AGENT_INSTRUCTIONS)
     }
 }
 
@@ -1410,5 +1465,107 @@ mod tests {
         assert_eq!(result["result"]["isError"], true);
 
         stop_if_running(&state).await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod agent_instruction_tests {
+    use super::AGENT_INSTRUCTIONS;
+
+    /// Tool names the instructions walk the agent through. Kept as data so the
+    /// test below can check both directions: the prose must not name a tool that
+    /// no longer exists, and it must not silently stop covering one.
+    const NAMED_TOOLS: &[&str] = &[
+        "ping",
+        "list_connections",
+        "list_profiles",
+        "connect",
+        "list_databases",
+        "list_collections",
+        "schema_analysis",
+        "list_indexes",
+        "find",
+        "aggregate",
+        "explain",
+        "insert_one",
+        "update_many",
+        "delete_many",
+        "create_index",
+    ];
+
+    #[test]
+    fn every_named_tool_is_a_real_tool() {
+        // The tool set is declared with `#[tool(...)]` attributes in this file,
+        // so the file itself is the source of truth. Reading it keeps the
+        // instructions honest without a second list to maintain.
+        let src = include_str!("mcp.rs");
+        for tool in NAMED_TOOLS {
+            let declared = format!("async fn {tool}(");
+            assert!(
+                src.contains(&declared),
+                "the instructions tell agents to call `{tool}`, but no such tool is declared"
+            );
+            assert!(
+                AGENT_INSTRUCTIONS.contains(tool),
+                "`{tool}` is listed here but missing from the instructions"
+            );
+        }
+    }
+
+    #[test]
+    fn every_destructive_tool_is_covered_by_the_confirmation_paragraph() {
+        // A write tool the instructions forget to mention is the dangerous
+        // direction: the agent meets `_confirm` only as a rejection, having
+        // already told the user it was about to write.
+        let tools_src = include_str!("mcp_tools.rs");
+        for args in [
+            "InsertOneArgs",
+            "UpdateManyArgs",
+            "DeleteManyArgs",
+            "CreateIndexArgs",
+        ] {
+            let start = tools_src
+                .find(&format!("pub struct {args} {{"))
+                .unwrap_or_else(|| panic!("{args} not found"));
+            let body = &tools_src[start..];
+            let end = body.find("\n}").expect("struct end");
+            assert!(
+                body[..end].contains("_confirm"),
+                "{args} no longer gates on _confirm — the instructions say it does"
+            );
+        }
+        assert!(AGENT_INSTRUCTIONS.contains("_confirm: true"));
+        for tool in ["insert_one", "update_many", "delete_many", "create_index"] {
+            assert!(
+                AGENT_INSTRUCTIONS.contains(tool),
+                "destructive tool `{tool}` is not named in the instructions"
+            );
+        }
+    }
+
+    #[test]
+    fn read_tools_are_not_described_as_needing_confirmation() {
+        let tools_src = include_str!("mcp_tools.rs");
+        for args in ["FindArgs", "AggregateArgs"] {
+            let start = tools_src.find(&format!("pub struct {args} {{")).unwrap();
+            let body = &tools_src[start..];
+            let end = body.find("\n}").unwrap();
+            assert!(
+                !body[..end].contains("_confirm"),
+                "{args} now gates on _confirm — the instructions imply reads do not"
+            );
+        }
+    }
+
+    #[test]
+    fn the_result_caps_match_the_find_tool() {
+        // Numbers in prose rot quietly. These are the ones an agent acts on.
+        let src = include_str!("mcp.rs");
+        assert!(
+            src.contains("default 50 docs / 1MB") && src.contains("caps at 200"),
+            "find's documented caps changed; the instructions still say 50 / 1MB / 200"
+        );
+        assert!(AGENT_INSTRUCTIONS.contains("50 documents or 1MB"));
+        assert!(AGENT_INSTRUCTIONS.contains("caps at 200"));
     }
 }

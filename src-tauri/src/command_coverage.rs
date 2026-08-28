@@ -75,6 +75,11 @@ const LOCAL_COMMANDS: &[&str] = &[
     "get_resource_usage",
     "generate_mql_query",
     "detect_local_agents",
+    // AI provider configuration (#283). All three read static data or validate a
+    // struct the caller passed in; none touches a connection.
+    "ai_provider_presets",
+    "mcp_agent_instructions",
+    "validate_ai_provider",
     "stop_mongosh_session", // kills the local child process, no DB write
     // Per-tab shell state (session id, scrollback). In-process only — no DB
     // access, and clearing a tab's entry deliberately does not stop its child.

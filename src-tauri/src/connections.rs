@@ -164,6 +164,15 @@ pub struct AppSettings {
     // Per-local-agent command templates (agent id -> template). Missing -> built-in default.
     #[serde(default)]
     pub local_commands: std::collections::HashMap<String, String>,
+    /// Providers the user added themselves (#283).
+    ///
+    /// Kept alongside the three original per-vendor key fields rather than
+    /// replacing them: those fields are already written into every existing
+    /// vault, and migrating them on read would rewrite an encrypted file just to
+    /// change its shape. `ai_provider` names either a built-in id or an entry
+    /// here, and `resolve_ai_provider` looks in both.
+    #[serde(default)]
+    pub ai_providers: Vec<crate::ai_providers::AiProvider>,
     // Extra instructions appended to the generated system prompt for any provider.
     #[serde(default)]
     pub ai_custom_instructions: String,
@@ -203,6 +212,7 @@ impl Default for AppSettings {
             gemini_api_key: String::new(),
             gemini_model: default_gemini_model(),
             local_commands: std::collections::HashMap::new(),
+            ai_providers: Vec::new(),
             ai_custom_instructions: String::new(),
             ai_history_retention_months: default_ai_history_retention_months(),
             audit_enabled: default_audit_enabled(),
@@ -223,6 +233,86 @@ pub fn default_local_command(agent: &str) -> &'static str {
         "cursor" => "cursor-agent -p {prompt}",
         "antigravity" => "antigravity {prompt}",
         _ => "{prompt}",
+    }
+}
+
+/// The provider `settings.ai_provider` names, in a single shape.
+///
+/// The three original providers keep their dedicated key/model fields, so they
+/// are described here rather than stored as list entries — that way an existing
+/// vault needs no migration and the settings UI can keep its familiar layout for
+/// them. Anything else is looked up among the user's own providers.
+pub fn resolve_ai_provider(
+    settings: &AppSettings,
+) -> Result<crate::ai_providers::AiProvider, String> {
+    use crate::ai_providers::{AiProvider, ProviderKind};
+    let id = settings.ai_provider.trim();
+
+    let built_in = |name: &str, kind, base_url: &str, api_key: &str, model: &str, fallback: &str| {
+        AiProvider {
+            id: id.to_string(),
+            name: name.to_string(),
+            kind,
+            base_url: base_url.to_string(),
+            api_key: api_key.to_string(),
+            model: if model.trim().is_empty() {
+                fallback.to_string()
+            } else {
+                model.trim().to_string()
+            },
+            command: String::new(),
+        }
+    };
+
+    match id {
+        "anthropic" => Ok(built_in(
+            "Anthropic",
+            ProviderKind::AnthropicCompatible,
+            "https://api.anthropic.com/v1",
+            &settings.anthropic_api_key,
+            &settings.anthropic_model,
+            "claude-opus-4-8",
+        )),
+        "openai" => Ok(built_in(
+            "OpenAI",
+            ProviderKind::OpenAiCompatible,
+            "https://api.openai.com/v1",
+            &settings.openai_api_key,
+            &settings.openai_model,
+            "gpt-4o",
+        )),
+        // Gemini keeps its own adapter: its request and response shapes are
+        // neither OpenAI's nor Anthropic's, so it cannot be expressed as either.
+        "gemini" => Ok(AiProvider {
+            id: id.to_string(),
+            name: "Google Gemini".to_string(),
+            kind: ProviderKind::OpenAiCompatible,
+            base_url: String::new(),
+            api_key: settings.gemini_api_key.clone(),
+            model: if settings.gemini_model.trim().is_empty() {
+                "gemini-1.5-flash".to_string()
+            } else {
+                settings.gemini_model.trim().to_string()
+            },
+            command: String::new(),
+        }),
+        agent @ ("claude-code" | "codex" | "cursor" | "antigravity") => Ok(AiProvider {
+            id: id.to_string(),
+            name: agent.to_string(),
+            kind: ProviderKind::LocalCli,
+            base_url: String::new(),
+            api_key: String::new(),
+            model: String::new(),
+            command: resolve_local_command(settings, agent),
+        }),
+        other => settings
+            .ai_providers
+            .iter()
+            .find(|p| p.id == other)
+            .cloned()
+            .ok_or_else(|| {
+                format!("Unknown AI provider: {other}. Choose one in Settings → AI.")
+            }),
     }
 }
 

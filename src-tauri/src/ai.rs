@@ -277,6 +277,115 @@ pub async fn generate_openai(
     extract_json_object(&extract_openai_text(&json))
 }
 
+/// Post a chat completion to any OpenAI-compatible endpoint.
+///
+/// The wire format is the same one `generate_openai` uses; only the URL and the
+/// name in error messages differ. Splitting it out is what lets DeepSeek,
+/// OpenRouter, Groq, Together, Mistral, xAI, Ollama, LM Studio and vLLM work
+/// without an adapter each.
+///
+/// `api_key` may be empty: local servers ignore credentials, and sending
+/// `Bearer ` with nothing after it makes some of them reject the request.
+pub async fn generate_openai_compatible(
+    endpoint: &str,
+    api_key: &str,
+    model: &str,
+    provider_name: &str,
+    system: &str,
+    history: &[ChatTurn],
+    user_prompt: &str,
+) -> Result<String, String> {
+    let body = build_openai_request(model, system, history, user_prompt);
+    let client = reqwest::Client::new();
+    let mut request = client
+        .post(endpoint)
+        .header("content-type", "application/json");
+    if !api_key.trim().is_empty() {
+        request = request.header("authorization", format!("Bearer {}", api_key));
+    }
+    let resp = request
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to reach {}: {}", provider_name, e))?;
+    let status = resp.status();
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Invalid response from {}: {}", provider_name, e))?;
+    if !status.is_success() {
+        return Err(format!(
+            "{} error ({}): {}",
+            provider_name,
+            status.as_u16(),
+            api_error_message(&json)
+        ));
+    }
+    extract_json_object(&extract_openai_text(&json))
+}
+
+/// Post a message request to any endpoint speaking Anthropic's format.
+pub async fn generate_anthropic_compatible(
+    endpoint: &str,
+    api_key: &str,
+    model: &str,
+    provider_name: &str,
+    system: &str,
+    history: &[ChatTurn],
+    user_prompt: &str,
+) -> Result<String, String> {
+    let body = build_query_gen_request(model, system, history, user_prompt);
+    let client = reqwest::Client::new();
+    let mut request = client
+        .post(endpoint)
+        .header("anthropic-version", ANTHROPIC_VERSION)
+        .header("content-type", "application/json");
+    if !api_key.trim().is_empty() {
+        request = request.header("x-api-key", api_key);
+    }
+    let resp = request
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to reach {}: {}", provider_name, e))?;
+    let status = resp.status();
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Invalid response from {}: {}", provider_name, e))?;
+    if !status.is_success() {
+        return Err(format!(
+            "{} error ({}): {}",
+            provider_name,
+            status.as_u16(),
+            api_error_message(&json)
+        ));
+    }
+    extract_json_object(&response_text(&json))
+}
+
+/// The human-readable half of an error body, for either wire format.
+///
+/// Both nest it under `error.message`, but gateways and local servers are looser:
+/// some send `error` as a bare string, some only `message`. Reaching for each in
+/// turn beats reporting "request failed" for a response that said why.
+fn api_error_message(json: &serde_json::Value) -> String {
+    if let Some(m) = json
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+    {
+        return m.to_string();
+    }
+    if let Some(m) = json.get("error").and_then(|e| e.as_str()) {
+        return m.to_string();
+    }
+    if let Some(m) = json.get("message").and_then(|m| m.as_str()) {
+        return m.to_string();
+    }
+    "request failed".to_string()
+}
+
 /// Endpoint for a Gemini model.
 ///
 /// Deliberately carries no credential. The key used to travel here as a `?key=`
