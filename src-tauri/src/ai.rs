@@ -386,6 +386,157 @@ fn api_error_message(json: &serde_json::Value) -> String {
     "request failed".to_string()
 }
 
+/// Model ids from a `GET .../models` response, in either HTTP format.
+///
+/// OpenAI and Anthropic both answer `{"data": [{"id": ...}]}`. Servers that
+/// only pretend to be OpenAI are looser — Ollama's native route is
+/// `{"models": [{"name": ...}]}` — so each likely container and key is tried
+/// before giving up, and the error says which shapes were looked for.
+pub fn parse_models_json(resp: &serde_json::Value) -> Result<Vec<String>, String> {
+    let items = resp
+        .get("data")
+        .or_else(|| resp.get("models"))
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            "No model list in the response: expected a `data` or `models` array.".to_string()
+        })?;
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for item in items {
+        let id = item
+            .get("id")
+            .or_else(|| item.get("name"))
+            .or_else(|| item.get("model"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(id) = id {
+            if seen.insert(id.to_string()) {
+                out.push(id.to_string());
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err("The model list was empty, or its entries had no `id`/`name`.".to_string());
+    }
+    Ok(out)
+}
+
+/// Model names from a CLI's listing output, one per line.
+///
+/// Two shapes are common. Table output (`ollama list`) puts the name in the
+/// first column under an uppercase header row; prose output (`llm models`)
+/// writes `Provider: model-id (aliases: ...)`. So a line containing `": "` is
+/// read after that separator, otherwise from its start, and a first token of
+/// bare uppercase letters is taken to be a header. Names keep their own colons
+/// — `llama3:latest` has one and is not a separator.
+pub fn parse_models_cli_output(stdout: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let candidate_region = match line.find(": ") {
+            Some(i) => &line[i + 2..],
+            None => line,
+        };
+        let Some(token) = candidate_region.split_whitespace().next() else {
+            continue;
+        };
+        let is_header = token.len() > 1
+            && token.chars().all(|c| c.is_ascii_uppercase() || c == '_');
+        if is_header {
+            continue;
+        }
+        if seen.insert(token.to_string()) {
+            out.push(token.to_string());
+        }
+    }
+    out
+}
+
+/// Ask an HTTP provider which models it offers.
+///
+/// Sends the same credential the generation call would, so a wrong key fails
+/// here — in Settings, with the provider named — rather than on the first query.
+pub async fn list_models_http(
+    kind: crate::ai_providers::ProviderKind,
+    endpoint: &str,
+    api_key: &str,
+    provider_name: &str,
+) -> Result<Vec<String>, String> {
+    use crate::ai_providers::ProviderKind;
+    let client = reqwest::Client::new();
+    let mut request = client.get(endpoint);
+    if !api_key.trim().is_empty() {
+        request = match kind {
+            ProviderKind::AnthropicCompatible => request
+                .header("x-api-key", api_key)
+                .header("anthropic-version", ANTHROPIC_VERSION),
+            _ => request.header("authorization", format!("Bearer {}", api_key)),
+        };
+    } else if kind == ProviderKind::AnthropicCompatible {
+        request = request.header("anthropic-version", ANTHROPIC_VERSION);
+    }
+    let resp = tokio::time::timeout(Duration::from_secs(20), request.send())
+        .await
+        .map_err(|_| format!("{} did not answer within 20s.", provider_name))?
+        .map_err(|e| format!("Failed to reach {}: {}", provider_name, e))?;
+    let status = resp.status();
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Invalid response from {}: {}", provider_name, e))?;
+    if !status.is_success() {
+        return Err(format!(
+            "{} error ({}): {}",
+            provider_name,
+            status.as_u16(),
+            api_error_message(&json)
+        ));
+    }
+    parse_models_json(&json)
+}
+
+/// Run a CLI's model-listing command and parse its output.
+///
+/// The template is split on whitespace and run as-is: there is no prompt to
+/// substitute, and `{model}` makes no sense in a command that produces the list.
+pub async fn list_models_cli(models_command: &str) -> Result<Vec<String>, String> {
+    let tokens: Vec<&str> = models_command.split_whitespace().collect();
+    let Some((program, args)) = tokens.split_first() else {
+        return Err("No model-listing command is set for this provider.".to_string());
+    };
+    let run = tokio::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output();
+    let output = tokio::time::timeout(Duration::from_secs(30), run)
+        .await
+        .map_err(|_| format!("'{}' did not finish within 30s.", program))?
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                format!("'{}' not found on PATH. Install it or fix the command in Settings.", program)
+            } else {
+                format!("Failed to run '{}': {}", program, e)
+            }
+        })?;
+    if !output.status.success() {
+        return Err(format!(
+            "'{}' failed: {}",
+            program,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let models = parse_models_cli_output(&String::from_utf8_lossy(&output.stdout));
+    if models.is_empty() {
+        return Err(format!("'{}' printed nothing that looks like a model name.", program));
+    }
+    Ok(models)
+}
+
 /// Endpoint for a Gemini model.
 ///
 /// Deliberately carries no credential. The key used to travel here as a `?key=`
@@ -480,10 +631,17 @@ pub async fn generate_gemini(
 /// token with the prompt as a single argv element. No shell is invoked, so prompt
 /// contents (spaces, quotes, ;, $(), etc.) cannot inject additional commands.
 /// If the template has no `{prompt}` token, the prompt is appended as the final arg.
-pub fn parse_command_template(template: &str, prompt: &str) -> Result<(String, Vec<String>), String> {
+pub fn parse_command_template(
+    template: &str,
+    prompt: &str,
+    model: &str,
+) -> Result<(String, Vec<String>), String> {
     let tokens: Vec<&str> = template.split_whitespace().collect();
     if tokens.is_empty() {
         return Err("Command template is empty".to_string());
+    }
+    if tokens.contains(&"{model}") && model.trim().is_empty() {
+        return Err("The command uses {model} but no model is set.".to_string());
     }
     let program = tokens[0].to_string();
     let mut args: Vec<String> = Vec::new();
@@ -492,6 +650,8 @@ pub fn parse_command_template(template: &str, prompt: &str) -> Result<(String, V
         if *tok == "{prompt}" {
             args.push(prompt.to_string());
             substituted = true;
+        } else if *tok == "{model}" {
+            args.push(model.trim().to_string());
         } else {
             args.push((*tok).to_string());
         }
@@ -504,8 +664,8 @@ pub fn parse_command_template(template: &str, prompt: &str) -> Result<(String, V
 
 /// Run a local agent CLI with the given prompt and extract the {filter, sort} JSON
 /// from its stdout. Uses the agent's own local auth; no API key involved.
-pub async fn generate_local(template: &str, prompt: &str) -> Result<String, String> {
-    let (program, args) = parse_command_template(template, prompt)?;
+pub async fn generate_local(template: &str, prompt: &str, model: &str) -> Result<String, String> {
+    let (program, args) = parse_command_template(template, prompt, model)?;
 
     let run = tokio::process::Command::new(&program)
         .args(&args)

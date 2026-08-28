@@ -80,6 +80,9 @@ const LOCAL_COMMANDS: &[&str] = &[
     "ai_provider_presets",
     "mcp_agent_instructions",
     "validate_ai_provider",
+    // Asks the user's own configured endpoint or CLI what it offers; no
+    // MongoDB connection is involved.
+    "list_ai_models",
     "stop_mongosh_session", // kills the local child process, no DB write
     // Per-tab shell state (session id, scrollback). In-process only — no DB
     // access, and clearing a tab's entry deliberately does not stop its child.

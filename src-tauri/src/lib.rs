@@ -1152,6 +1152,7 @@ fn ai_provider_presets() -> Vec<serde_json::Value> {
                 "baseUrl": p.base_url,
                 "model": p.model,
                 "command": p.command,
+                "modelsCommand": p.models_command,
                 "needsKey": p.needs_key,
             })
         })
@@ -1166,6 +1167,25 @@ fn ai_provider_presets() -> Vec<serde_json::Value> {
 #[tauri::command]
 fn mcp_agent_instructions() -> &'static str {
     mcp::AGENT_INSTRUCTIONS
+}
+
+/// The models a provider offers, for the settings form to pick from.
+///
+/// HTTP kinds are asked over `GET .../models` with the configured key; a CLI is
+/// asked by running its `models_command`. Either way a failure is reported with
+/// the provider named, and the form keeps the model field typeable, so this can
+/// only ever help.
+#[tauri::command]
+async fn list_ai_models(provider: ai_providers::AiProvider) -> Result<Vec<String>, String> {
+    match provider.kind {
+        ai_providers::ProviderKind::LocalCli => {
+            ai::list_models_cli(&provider.models_command).await
+        }
+        kind => {
+            ai::list_models_http(kind, &provider.models_endpoint()?, &provider.api_key, &provider.name)
+                .await
+        }
+    }
 }
 
 /// Check a provider's configuration without sending a prompt to it.
@@ -1255,7 +1275,7 @@ async fn generate_mql_query(
         }
         ai_providers::ProviderKind::LocalCli => {
             let one_prompt = ai::combined_prompt(&system, &history, &prompt);
-            ai::generate_local(&provider.command, &one_prompt).await
+            ai::generate_local(&provider.command, &one_prompt, &provider.model).await
         }
     }
 }
@@ -2726,6 +2746,7 @@ pub fn run() {
             ai_provider_presets,
             mcp_agent_instructions,
             validate_ai_provider,
+            list_ai_models,
             detect_local_agents,
             get_mongodb_version,
             start_mongosh_session,

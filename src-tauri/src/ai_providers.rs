@@ -50,8 +50,15 @@ pub struct AiProvider {
     #[serde(default)]
     pub model: String,
     /// Command template for [`ProviderKind::LocalCli`]; must contain `{prompt}`.
+    /// May also contain `{model}`, replaced with [`AiProvider::model`] so one
+    /// template serves every model the CLI offers.
     #[serde(default)]
     pub command: String,
+    /// For [`ProviderKind::LocalCli`]: a command whose stdout lists models, one
+    /// per line (`ollama list`, `llm models`). Optional — not every CLI has one,
+    /// and the model can always be typed.
+    #[serde(default)]
+    pub models_command: String,
 }
 
 /// A ready-made provider the settings form can prefill.
@@ -62,6 +69,9 @@ pub struct ProviderPreset {
     pub base_url: &'static str,
     pub model: &'static str,
     pub command: &'static str,
+    /// Lists models for a CLI preset; empty where the CLI has no such command
+    /// or its output format is not known well enough to parse.
+    pub models_command: &'static str,
     /// False for endpoints that ignore credentials, so the form can say so
     /// instead of demanding a key the server does not want.
     pub needs_key: bool,
@@ -81,6 +91,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.deepseek.com/v1",
         model: "deepseek-chat",
         command: "",
+        models_command: "",
         needs_key: true,
     },
     ProviderPreset {
@@ -90,6 +101,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "https://openrouter.ai/api/v1",
         model: "",
         command: "",
+        models_command: "",
         needs_key: true,
     },
     ProviderPreset {
@@ -99,6 +111,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.groq.com/openai/v1",
         model: "",
         command: "",
+        models_command: "",
         needs_key: true,
     },
     ProviderPreset {
@@ -108,6 +121,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.together.xyz/v1",
         model: "",
         command: "",
+        models_command: "",
         needs_key: true,
     },
     ProviderPreset {
@@ -117,6 +131,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.mistral.ai/v1",
         model: "",
         command: "",
+        models_command: "",
         needs_key: true,
     },
     ProviderPreset {
@@ -126,6 +141,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.x.ai/v1",
         model: "",
         command: "",
+        models_command: "",
         needs_key: true,
     },
     // Local servers: no credential, and the endpoint is on the loopback
@@ -137,6 +153,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "http://localhost:11434/v1",
         model: "",
         command: "",
+        models_command: "",
         needs_key: false,
     },
     ProviderPreset {
@@ -146,6 +163,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "http://localhost:1234/v1",
         model: "",
         command: "",
+        models_command: "",
         needs_key: false,
     },
     ProviderPreset {
@@ -155,6 +173,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "http://localhost:8000/v1",
         model: "",
         command: "",
+        models_command: "",
         needs_key: false,
     },
     // Anthropic's own API, and anything proxying its message format.
@@ -165,6 +184,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.anthropic.com/v1",
         model: "",
         command: "",
+        models_command: "",
         needs_key: true,
     },
     // Local agent CLIs. `{prompt}` is substituted with the full prompt.
@@ -174,7 +194,12 @@ pub const PRESETS: &[ProviderPreset] = &[
         kind: ProviderKind::LocalCli,
         base_url: "",
         model: "",
+        // No {model} slot and no models_command: opencode's model flag and its
+        // listing command are not known here with enough confidence to preset,
+        // and a guessed flag fails on the user's first request. Users who know
+        // their build can add `--model {model}` and a list command themselves.
         command: "opencode run {prompt}",
+        models_command: "",
         needs_key: false,
     },
     ProviderPreset {
@@ -182,8 +207,9 @@ pub const PRESETS: &[ProviderPreset] = &[
         name: "Ollama CLI (local)",
         kind: ProviderKind::LocalCli,
         base_url: "",
-        model: "",
-        command: "ollama run llama3 {prompt}",
+        model: "llama3",
+        command: "ollama run {model} {prompt}",
+        models_command: "ollama list",
         needs_key: false,
     },
     ProviderPreset {
@@ -192,7 +218,8 @@ pub const PRESETS: &[ProviderPreset] = &[
         kind: ProviderKind::LocalCli,
         base_url: "",
         model: "",
-        command: "llm {prompt}",
+        command: "llm -m {model} {prompt}",
+        models_command: "llm models",
         needs_key: false,
     },
 ];
@@ -230,6 +257,22 @@ impl AiProvider {
         }
     }
 
+    /// Where the provider lists its models. Both HTTP formats expose `GET
+    /// {base}/models`; the response shapes differ and `ai::parse_models_json`
+    /// accepts each.
+    pub fn models_endpoint(&self) -> Result<String, String> {
+        if self.base_url.trim().is_empty() {
+            return Err(format!(
+                "{} has no endpoint URL. Add one in Settings → AI.",
+                self.name
+            ));
+        }
+        match self.kind {
+            ProviderKind::LocalCli => Err(format!("{} is a local command, not a URL", self.name)),
+            _ => Ok(join_endpoint(&self.base_url, "models")),
+        }
+    }
+
     /// Reject a configuration before it produces a confusing HTTP or shell error.
     pub fn validate(&self) -> Result<(), String> {
         if self.id.trim().is_empty() {
@@ -246,6 +289,13 @@ impl AiProvider {
                 if !self.command.contains("{prompt}") {
                     return Err(format!(
                         "{}'s command must contain {{prompt}}, which is replaced with the request.",
+                        self.name
+                    ));
+                }
+                // A template that slots the model in needs one to slot.
+                if self.command.contains("{model}") && self.model.trim().is_empty() {
+                    return Err(format!(
+                        "{}'s command uses {{model}} but no model is set. Load the list or type one.",
                         self.name
                     ));
                 }
@@ -275,6 +325,7 @@ mod tests {
             api_key: String::new(),
             model: "some-model".into(),
             command: String::new(),
+            models_command: String::new(),
         }
     }
 
@@ -360,6 +411,41 @@ mod tests {
     }
 
     #[test]
+    fn the_models_endpoint_shares_the_base_url() {
+        assert_eq!(
+            provider(ProviderKind::OpenAiCompatible, "https://x/v1/").models_endpoint().unwrap(),
+            "https://x/v1/models"
+        );
+        assert_eq!(
+            provider(ProviderKind::AnthropicCompatible, "https://x/v1").models_endpoint().unwrap(),
+            "https://x/v1/models"
+        );
+        assert!(provider(ProviderKind::LocalCli, "").models_endpoint().is_err());
+    }
+
+    #[test]
+    fn a_command_that_slots_the_model_in_needs_one() {
+        let mut p = provider(ProviderKind::LocalCli, "");
+        p.command = "ollama run {model} {prompt}".into();
+        p.model = String::new();
+        let err = p.validate().unwrap_err();
+        assert!(err.contains("{model}"), "{err}");
+        assert!(err.contains("no model"), "{err}");
+
+        p.model = "llama3".into();
+        p.validate().expect("valid once a model is set");
+    }
+
+    #[test]
+    fn a_command_without_the_model_slot_does_not_demand_a_model() {
+        // The four original agents bake the model into the CLI's own config.
+        let mut p = provider(ProviderKind::LocalCli, "");
+        p.command = "claude -p {prompt}".into();
+        p.model = String::new();
+        p.validate().expect("no {model}, no requirement");
+    }
+
+    #[test]
     fn presets_are_internally_consistent() {
         let mut ids = std::collections::HashSet::new();
         for preset in PRESETS {
@@ -373,8 +459,29 @@ mod tests {
                         preset.id
                     );
                     assert!(preset.base_url.is_empty(), "{} is a CLI, not a URL", preset.id);
+                    // A preset that slots the model in must ship with one, or the
+                    // freshly-added provider fails validation before the user has
+                    // had a chance to load the list.
+                    if preset.command.contains("{model}") && preset.models_command.is_empty() {
+                        assert!(
+                            !preset.model.is_empty(),
+                            "{} uses {{model}} with no list command and no starting model",
+                            preset.id
+                        );
+                    }
+                    assert!(
+                        !preset.models_command.contains("{prompt}")
+                            && !preset.models_command.contains("{model}"),
+                        "{}'s models_command must not use placeholders",
+                        preset.id
+                    );
                 }
                 _ => {
+                    assert!(
+                        preset.models_command.is_empty(),
+                        "{} is HTTP; models come from GET /models, not a command",
+                        preset.id
+                    );
                     assert!(
                         preset.base_url.starts_with("http"),
                         "{} needs an http(s) base URL",
@@ -400,6 +507,7 @@ mod tests {
                 api_key: String::new(),
                 model: "m".into(),
                 command: String::new(),
+            models_command: String::new(),
             };
             let endpoint = p.endpoint().unwrap_or_else(|e| panic!("{}: {e}", preset.id));
             let expected = match preset.kind {

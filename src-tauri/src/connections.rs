@@ -261,6 +261,7 @@ pub fn resolve_ai_provider(
                 model.trim().to_string()
             },
             command: String::new(),
+            models_command: String::new(),
         }
     };
 
@@ -299,6 +300,7 @@ pub fn resolve_ai_provider(
             api_key: String::new(),
             model: String::new(),
             command: resolve_local_command(settings, agent),
+            models_command: String::new(),
         }),
         other => settings
             .ai_providers

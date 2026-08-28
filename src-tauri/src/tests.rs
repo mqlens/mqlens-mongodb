@@ -28,6 +28,100 @@ mod tests {
     }
 
     /// Build test-only passwords without hard-coded string literals for static analysis.
+    #[test]
+    fn model_listing_parses_both_http_shapes() {
+        use crate::ai::parse_models_json;
+        // OpenAI and Anthropic.
+        let openai = serde_json::json!({"object":"list","data":[
+            {"id":"gpt-4o","object":"model"},{"id":"gpt-4o-mini","object":"model"}]});
+        assert_eq!(parse_models_json(&openai).unwrap(), ["gpt-4o", "gpt-4o-mini"]);
+        let anthropic = serde_json::json!({"data":[
+            {"id":"claude-opus-4-8","display_name":"Claude Opus 4.8","type":"model"}]});
+        assert_eq!(parse_models_json(&anthropic).unwrap(), ["claude-opus-4-8"]);
+        // Ollama's native route, for servers that only half-pretend to be OpenAI.
+        let ollama = serde_json::json!({"models":[{"name":"llama3:latest"},{"name":"mistral:7b"}]});
+        assert_eq!(parse_models_json(&ollama).unwrap(), ["llama3:latest", "mistral:7b"]);
+    }
+
+    #[test]
+    fn model_listing_dedupes_and_skips_nameless_entries() {
+        use crate::ai::parse_models_json;
+        let v = serde_json::json!({"data":[{"id":"a"},{"id":"a"},{"object":"model"},{"id":"  "},{"id":"b"}]});
+        assert_eq!(parse_models_json(&v).unwrap(), ["a", "b"]);
+    }
+
+    #[test]
+    fn model_listing_explains_an_unrecognised_shape() {
+        use crate::ai::parse_models_json;
+        let err = parse_models_json(&serde_json::json!({"result":"ok"})).unwrap_err();
+        assert!(err.contains("`data`") && err.contains("`models`"), "{err}");
+        let err = parse_models_json(&serde_json::json!({"data":[]})).unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn cli_model_listing_reads_a_table_under_its_header() {
+        use crate::ai::parse_models_cli_output;
+        let ollama = "NAME              ID            SIZE    MODIFIED\n\
+                      llama3:latest     365c0bd3c000  4.7 GB  2 days ago\n\
+                      mistral:7b        f974a74358d6  4.1 GB  3 weeks ago\n";
+        assert_eq!(parse_models_cli_output(ollama), ["llama3:latest", "mistral:7b"]);
+    }
+
+    #[test]
+    fn cli_model_listing_reads_prose_after_the_provider_label() {
+        use crate::ai::parse_models_cli_output;
+        let llm = "OpenAI Chat: gpt-4o (aliases: 4o)\n\
+                   OpenAI Chat: gpt-4o-mini\n\
+                   Anthropic Messages: claude-3-5-sonnet-latest\n";
+        assert_eq!(
+            parse_models_cli_output(llm),
+            ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet-latest"]
+        );
+    }
+
+    #[test]
+    fn cli_model_listing_keeps_colons_inside_names() {
+        // `llama3:latest` has a colon and no space after it — that is a name, not a
+        // provider label.
+        use crate::ai::parse_models_cli_output;
+        assert_eq!(parse_models_cli_output("llama3:latest\n"), ["llama3:latest"]);
+    }
+
+    #[test]
+    fn cli_model_listing_ignores_blank_lines_and_duplicates() {
+        use crate::ai::parse_models_cli_output;
+        assert_eq!(parse_models_cli_output("\n  a  \n\na\nb\n\n"), ["a", "b"]);
+        assert!(parse_models_cli_output("").is_empty());
+        assert!(parse_models_cli_output("NAME SIZE\n").is_empty(), "header only = nothing");
+    }
+
+    #[test]
+    fn the_model_placeholder_is_substituted_as_its_own_argument() {
+        use crate::ai::parse_command_template;
+        let (prog, args) =
+            parse_command_template("ollama run {model} {prompt}", "find users", "llama3:latest").unwrap();
+        assert_eq!(prog, "ollama");
+        assert_eq!(args, ["run", "llama3:latest", "find users"]);
+    }
+
+    #[test]
+    fn the_model_placeholder_without_a_model_is_an_error_not_an_empty_argument() {
+        use crate::ai::parse_command_template;
+        // An empty argument would make the CLI run its default model silently,
+        // which is not what the user configured.
+        let err = parse_command_template("ollama run {model} {prompt}", "p", "").unwrap_err();
+        assert!(err.contains("{model}"), "{err}");
+    }
+
+    #[test]
+    fn templates_without_the_model_placeholder_are_unchanged() {
+        use crate::ai::parse_command_template;
+        let (prog, args) = parse_command_template("claude -p {prompt}", "find users", "ignored").unwrap();
+        assert_eq!(prog, "claude");
+        assert_eq!(args, ["-p", "find users"]);
+    }
+
     /// Resolution has to keep working for the settings already in people's
     /// vaults: the three original providers store their keys in dedicated fields,
     /// not in the new list, and a stored `ai_provider` must keep selecting them.
@@ -85,6 +179,7 @@ mod tests {
             api_key: test_secret(&["ds-", "key"]),
             model: "deepseek-chat".into(),
             command: String::new(),
+            models_command: String::new(),
         });
         settings.ai_provider = "my-deepseek".into();
 
@@ -3007,7 +3102,7 @@ mod tests {
 
         // {prompt} becomes a single argv element, even with spaces/quotes/shell metachars.
         let (prog, args) =
-            parse_command_template("claude -p {prompt}", "find users; rm -rf / $(whoami)").unwrap();
+            parse_command_template("claude -p {prompt}", "find users; rm -rf / $(whoami)", "").unwrap();
         assert_eq!(prog, "claude");
         assert_eq!(
             args,
@@ -3018,12 +3113,12 @@ mod tests {
         );
 
         // No {prompt} placeholder -> append prompt as final arg.
-        let (prog, args) = parse_command_template("codex exec", "hi there").unwrap();
+        let (prog, args) = parse_command_template("codex exec", "hi there", "").unwrap();
         assert_eq!(prog, "codex");
         assert_eq!(args, vec!["exec".to_string(), "hi there".to_string()]);
 
         // Empty template is an error.
-        assert!(parse_command_template("   ", "x").is_err());
+        assert!(parse_command_template("   ", "x", "").is_err());
     }
 
     #[tokio::test]
@@ -3033,6 +3128,7 @@ mod tests {
         let res = generate_local(
             "definitely-not-a-real-binary-xyz -p {prompt}",
             "find active users",
+            "", // no {model} in this template
         )
         .await;
         assert!(res.is_err());
