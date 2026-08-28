@@ -1078,10 +1078,18 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         void appendToStoredChat(askedIn, reply);
         return;
       }
-      // Sent and answered, so the bytes have done their job. On an error they
-      // stay attached: that is the retry the user would otherwise have to
-      // reconstruct by hand.
-      if (!reply.error) dropPendingImages();
+      // Sent and answered, so those bytes have done their job. Only the ones
+      // *this* request carried: the composer stays usable while a reply is
+      // pending, so anything pasted since belongs to the next prompt and a blanket
+      // clear deleted it unsent. On an error nothing is dropped — that is the
+      // retry the user would otherwise reconstruct by hand.
+      //
+      // Not `dropPendingImages`, deliberately: bumping the epoch here would
+      // invalidate a read still in flight for the *next* prompt, and the sent
+      // images were already in state so no reservation is outstanding for them.
+      if (!reply.error) {
+        setPendingImages((prev) => prev.filter((img) => !images.includes(img)));
+      }
       appendReply(reply);
     } finally {
       setIsChatLoading(false);

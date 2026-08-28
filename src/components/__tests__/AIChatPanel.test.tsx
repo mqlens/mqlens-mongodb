@@ -1009,7 +1009,7 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
           ? new Promise<string[]>((res) => { releaseList = res; })
           : Promise.resolve([]);
       }
-      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, {}));
+      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, args));
       return Promise.resolve({ query: '{}' });
     });
     renderPanel('editor');
@@ -1032,11 +1032,11 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     // default. If that default is a local CLI, the switch never went through the
     // click handler, so the images stayed attached and the epoch was never bumped.
     let options = OPTIONS;
-    invokeMock.mockImplementation((cmd: string) =>
+    invokeMock.mockImplementation((cmd: string, args: any) =>
       cmd === 'ai_provider_options'
         ? Promise.resolve(options)
         : cmd.endsWith('_chat') || cmd.endsWith('_chats')
-          ? Promise.resolve(chatBackend(cmd, {}))
+          ? Promise.resolve(chatBackend(cmd, args))
           : cmd === 'list_ai_models_for'
             ? Promise.resolve([])
             : Promise.resolve({ query: '{}' }),
@@ -1180,9 +1180,9 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     // could attach and send in that window — the backend refused, but the
     // composer had already been cleared and the bytes dropped.
     let releaseOptions: (v: unknown) => void = () => {};
-    invokeMock.mockImplementation((cmd: string) => {
+    invokeMock.mockImplementation((cmd: string, args: any) => {
       if (cmd === 'ai_provider_options') return new Promise((res) => { releaseOptions = res; });
-      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, {}));
+      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, args));
       return Promise.resolve({ query: '{}' });
     });
     renderPanel('editor');
@@ -1205,16 +1205,50 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     await screen.findByTestId('chat-pending-images');
   });
 
+  it('keeps an image pasted while a reply is still pending', async () => {
+    // The composer stays usable during generation, so a user can prepare the next
+    // prompt's attachment. Clearing everything on success deleted it unsent.
+    let releaseReply: (v: unknown) => void = () => {};
+    invokeMock.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'ai_provider_options') return Promise.resolve(OPTIONS);
+      if (cmd === 'list_ai_models_for') return Promise.resolve([]);
+      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, args));
+      if (cmd === 'generate_mql_query') return new Promise((res) => { releaseReply = res; });
+      return Promise.resolve(null);
+    });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+
+    pasteImage(screen.getByTestId('chat-input'));
+    await screen.findByTestId('chat-pending-images');
+    send('what query matches this');
+
+    // A second image is prepared while the first request is still running.
+    pasteImage(screen.getByTestId('chat-input'));
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-pending-images').querySelectorAll('img')).toHaveLength(1),
+    );
+
+    await act(async () => {
+      releaseReply({ query: JSON.stringify({ queryType: 'find', filter: {} }) });
+    });
+
+    // The sent one is gone; the one pasted since is still there for the next turn.
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-pending-images').querySelectorAll('img')).toHaveLength(1),
+    );
+  });
+
   it('keeps the attachment when the send fails, and drops it when it succeeds', async () => {
     // Whether a given HTTP model accepts an image is not knowable — no
     // OpenAI-compatible endpoint advertises vision support — so a text-only model
     // rejecting the payload is a real outcome. Clearing the composer first meant
     // the bytes were gone and the screenshot had to be found and pasted again.
     let fail = true;
-    invokeMock.mockImplementation((cmd: string) => {
+    invokeMock.mockImplementation((cmd: string, args: any) => {
       if (cmd === 'ai_provider_options') return Promise.resolve(OPTIONS);
       if (cmd === 'list_ai_models_for') return Promise.resolve([]);
-      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, {}));
+      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, args));
       if (cmd === 'generate_mql_query') {
         return fail
           ? Promise.reject(new Error('this model does not support images'))
@@ -1245,11 +1279,11 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     // so deleting the selected provider there left its id selected here and the
     // next request failed with "Unknown AI provider" until the panel remounted.
     let options = OPTIONS;
-    invokeMock.mockImplementation((cmd: string) =>
+    invokeMock.mockImplementation((cmd: string, args: any) =>
       cmd === 'ai_provider_options'
         ? Promise.resolve(options)
         : cmd.endsWith('_chat') || cmd.endsWith('_chats')
-          ? Promise.resolve(chatBackend(cmd, {}))
+          ? Promise.resolve(chatBackend(cmd, args))
           : cmd === 'list_ai_models_for'
             ? Promise.resolve([])
             : Promise.resolve({ query: '{}' }),
