@@ -649,11 +649,24 @@ pub async fn generate_gemini(
 ///
 /// `split_whitespace` kept the quote characters and broke a quoted path into
 /// pieces, so `python3 "/Users/me/My Scripts/models.py"` reached Python as two
-/// malformed arguments. This honours single quotes, double quotes and
-/// backslash escapes, and deliberately does not expand variables, globs,
-/// substitutions or `~`: the command is still executed directly, never through
-/// a shell, so nothing here can introduce shell injection.
+/// malformed arguments. This honours single quotes, double quotes and — off
+/// Windows — backslash escapes, and deliberately does not expand variables,
+/// globs, substitutions or `~`: the command is still executed directly, never
+/// through a shell, so nothing here can introduce shell injection.
 pub fn split_command_line(line: &str) -> Result<Vec<String>, String> {
+    split_command_line_for(line, cfg!(windows))
+}
+
+/// `split_command_line`, with the platform stated rather than compiled in, so
+/// both rules can be tested from either platform.
+///
+/// On Windows a backslash is a path separator, not an escape: `C:\tools\ollama.exe
+/// list` was becoming the program `C:toolsollama.exe`, because each backslash ate
+/// the character after it. Quotes still group, which is what a path with spaces
+/// needs, and dropping the escape also keeps `"C:\Program Files\Ollama\"` intact
+/// instead of reading its trailing separator as an escaped quote. Nothing is lost:
+/// a Windows filename cannot contain a quote, so there is no quote left to escape.
+pub fn split_command_line_for(line: &str, windows: bool) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut has_token = false;
@@ -666,6 +679,7 @@ pub fn split_command_line(line: &str) -> Result<Vec<String>, String> {
             (Some('\''), '\'') | (Some('"'), '"') => quote = None,
             // A backslash is literal inside single quotes, as in a shell.
             (Some('\''), _) => cur.push(c),
+            (Some('"'), '\\') if windows => cur.push(c),
             (Some('"'), '\\') => match chars.next() {
                 // Only these are special inside double quotes; anything else
                 // keeps its backslash, again matching shell behaviour.
@@ -679,6 +693,10 @@ pub fn split_command_line(line: &str) -> Result<Vec<String>, String> {
             (Some(_), _) => cur.push(c),
             (None, '\'' | '"') => {
                 quote = Some(c);
+                has_token = true;
+            }
+            (None, '\\') if windows => {
+                cur.push(c);
                 has_token = true;
             }
             (None, '\\') => match chars.next() {

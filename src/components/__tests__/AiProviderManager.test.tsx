@@ -488,6 +488,21 @@ describe('withEndpoint', () => {
     expect(originOf('https://')).toBeNull();
   });
 
+  it('clears the key for a host reqwest reaches but a regex pattern would miss', () => {
+    // `https:evil.example/v1` and `https:/evil.example/v1` are request-valid:
+    // WHATWG parsing — reqwest's and `URL`'s alike — normalizes both to
+    // `https://evil.example`. Matching `https?://host` instead read them as
+    // "no host yet", kept the key, and the model load 600 ms later sent it there.
+    for (const sneaky of ['https:evil.example/v1', 'https:/evil.example/v1']) {
+      expect(originOf(sneaky)).toBe('https://evil.example');
+      expect(withEndpoint(keyed, sneaky, ORIGIN).api_key).toBe('');
+    }
+    // The same form pointing back at the key's own host is not a change.
+    expect(withEndpoint(keyed, 'https:api.openai.com/v2', ORIGIN).api_key).toBe('sk-openai');
+    // Schemes this app never requests over have no origin to compare.
+    expect(originOf('file:///etc/passwd')).toBeNull();
+  });
+
   it('still clears the key when a new host arrives after an emptied field', () => {
     // The reported hole: comparing against the previous *field value* kept the
     // key through "clear, then paste elsewhere", because one side was null each

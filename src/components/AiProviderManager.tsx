@@ -67,10 +67,29 @@ export const PROVIDER_KINDS: ProviderKind[] = [
  * does. Otherwise the auto-load that follows would send one vendor's secret to
  * another vendor's endpoint 600 ms after the click — before anything is saved.
  */
-/** `https://api.x.com/v1/chat` → `https://api.x.com`; null while the URL is still being typed. */
+/**
+ * `https://api.x.com/v1/chat` → `https://api.x.com`; null while the URL is still
+ * being typed, or when nothing would send a request there anyway.
+ *
+ * Parsed rather than matched with a regex, because the origin decides whether a
+ * key follows the endpoint and a regex disagreed with the thing making the
+ * request. `https:evil.example/v1` and `https:/evil.example/v1` are request-valid
+ * — reqwest's URL parser normalizes both to `https://evil.example` — but matched
+ * no `https?://host` pattern, so the origin read as "still typing", the key was
+ * kept, and the model load then sent one vendor's secret to another host. `URL`
+ * is the same WHATWG parsing the backend applies, so the two now agree.
+ */
 export function originOf(url: string): string | null {
-  const m = url.trim().match(/^(https?:\/\/[^/?#]+)/i);
-  return m ? m[1].toLowerCase() : null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return null; // not a URL yet, and not one reqwest would accept either
+  }
+  // Only the schemes this app requests over, and only with a host to send to.
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+  if (parsed.host === '') return null;
+  return `${parsed.protocol}//${parsed.host}`.toLowerCase();
 }
 
 /**

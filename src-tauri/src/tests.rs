@@ -119,9 +119,9 @@ mod tests {
             ["llm", "my model", "--n", "5"]
         );
         // An escaped space needs no quotes, and a backslash is literal inside
-        // single quotes, as in a shell.
+        // single quotes, as in a shell. Off Windows: see the Windows test below.
         assert_eq!(
-            split_command_line(r"cmd /My\ Path/x").unwrap(),
+            crate::ai::split_command_line_for(r"cmd /My\ Path/x", false).unwrap(),
             ["cmd", "/My Path/x"]
         );
         assert_eq!(split_command_line(r"cmd 'a'").unwrap(), ["cmd", r"a"]);
@@ -135,11 +135,40 @@ mod tests {
         let err = split_command_line("python3 \"/My Scripts/x.py").unwrap_err();
         assert!(err.contains("unclosed"), "{err}");
         // A trailing backslash escapes nothing; guessing what was meant would be
-        // worse than saying so.
-        let err = split_command_line("cmd x\\").unwrap_err();
+        // worse than saying so. Off Windows, where a backslash is an escape.
+        let err = crate::ai::split_command_line_for("cmd x\\", false).unwrap_err();
         assert!(err.contains("dangling"), "{err}");
         // An escaped backslash is a literal one.
-        assert_eq!(split_command_line("cmd x\\\\").unwrap(), ["cmd", "x\\"]);
+        assert_eq!(
+            crate::ai::split_command_line_for("cmd x\\\\", false).unwrap(),
+            ["cmd", "x\\"]
+        );
+    }
+
+    #[test]
+    fn a_windows_path_keeps_its_separators_instead_of_being_eaten_as_escapes() {
+        // `C:\tools\ollama.exe list` was reaching the OS as the program
+        // `C:toolsollama.exe`: every unquoted backslash consumed the character
+        // after it, so an ordinary Windows command could not run at all.
+        use crate::ai::split_command_line_for;
+        assert_eq!(
+            split_command_line_for(r"C:\tools\ollama.exe list", true).unwrap(),
+            [r"C:\tools\ollama.exe", "list"]
+        );
+        // Quotes still group, which is what a path with spaces needs...
+        assert_eq!(
+            split_command_line_for(r#""C:\Program Files\Ollama\ollama.exe" list"#, true).unwrap(),
+            [r"C:\Program Files\Ollama\ollama.exe", "list"]
+        );
+        // ...and a trailing separator before the closing quote stays a separator
+        // rather than escaping the quote and swallowing the rest of the line.
+        assert_eq!(
+            split_command_line_for(r#""C:\Program Files\Ollama\" list"#, true).unwrap(),
+            [r"C:\Program Files\Ollama\", "list"]
+        );
+        // A lone trailing backslash is a path separator here, not a dangling
+        // escape, so there is nothing to refuse.
+        assert_eq!(split_command_line_for(r"cmd x\", true).unwrap(), ["cmd", r"x\"]);
     }
 
     #[test]
