@@ -94,6 +94,19 @@ mod tests {
         p.validate().expect("valid");
     }
 
+    /// Gemini is dispatched to its own adapter before the resolver runs. If a
+    /// future change routes it through here anyway, the error must say that —
+    /// not hand back a placeholder that fails validation for the wrong reason.
+    #[test]
+    fn resolve_ai_provider_refuses_gemini_with_the_real_reason() {
+        use crate::connections::{resolve_ai_provider, AppSettings};
+        let mut settings = AppSettings::default();
+        settings.ai_provider = "gemini".into();
+        let err = resolve_ai_provider(&settings).unwrap_err();
+        assert!(err.contains("own adapter"), "must name the real cause: {err}");
+        assert!(!err.contains("endpoint"), "must not blame the config: {err}");
+    }
+
     #[test]
     fn resolve_ai_provider_names_the_provider_it_cannot_find() {
         use crate::connections::{resolve_ai_provider, AppSettings};

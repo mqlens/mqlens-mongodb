@@ -281,21 +281,16 @@ pub fn resolve_ai_provider(
             &settings.openai_model,
             "gpt-4o",
         )),
-        // Gemini keeps its own adapter: its request and response shapes are
-        // neither OpenAI's nor Anthropic's, so it cannot be expressed as either.
-        "gemini" => Ok(AiProvider {
-            id: id.to_string(),
-            name: "Google Gemini".to_string(),
-            kind: ProviderKind::OpenAiCompatible,
-            base_url: String::new(),
-            api_key: settings.gemini_api_key.clone(),
-            model: if settings.gemini_model.trim().is_empty() {
-                "gemini-1.5-flash".to_string()
-            } else {
-                settings.gemini_model.trim().to_string()
-            },
-            command: String::new(),
-        }),
+        // Gemini is not a shape this type can describe: its request and response
+        // formats are neither OpenAI's nor Anthropic's, so `generate_mql_query`
+        // dispatches it to its own adapter *before* consulting this resolver. Saying
+        // so beats returning a placeholder struct whose `validate()` would fail
+        // with "no endpoint URL" — a message that points at the wrong problem.
+        "gemini" => Err(
+            "Gemini uses its own adapter and is dispatched before provider resolution; \
+             this is a bug in the caller, not a configuration problem."
+                .to_string(),
+        ),
         agent @ ("claude-code" | "codex" | "cursor" | "antigravity") => Ok(AiProvider {
             id: id.to_string(),
             name: agent.to_string(),
