@@ -752,17 +752,6 @@ pub fn write_prepared_file(path: &Path, blob: Option<Vec<u8>>) -> Result<(), Str
     }
 }
 
-/// Commit a whole vault key rotation, restoring the previous files if any write
-/// fails.
-///
-/// The rotation spans four files, and partial success bricks the vault: files
-/// re-encrypted under the new key while `vault.json` still derives the old one
-/// leave neither password able to open the complete vault. Preparing the blobs
-/// first (see `prepare_reencrypt_file`) removes the *encryption* failures from
-/// this window, but the writes themselves can still fail — a full disk being the
-/// obvious one — so every original is held in memory and put back on error.
-///
-/// `files` is `(path, Some(new_bytes))` per data file; `None` means "not
 /// Hold the cross-process settings lock for a whole load–merge–save.
 ///
 /// `AppState::settings_write` orders writers inside one process and says nothing
@@ -795,6 +784,17 @@ pub fn lock_settings_for_write(settings_path: &Path) -> Result<fs::File, String>
     Ok(file)
 }
 
+/// Commit a whole vault key rotation, restoring the previous files if any write
+/// fails.
+///
+/// The rotation spans four files, and partial success bricks the vault: files
+/// re-encrypted under the new key while `vault.json` still derives the old one
+/// leave neither password able to open the complete vault. Preparing the blobs
+/// first (see `prepare_reencrypt_file`) removes the *encryption* failures from
+/// this window, but the writes themselves can still fail — a full disk being the
+/// obvious one — so every original is held in memory and put back on error.
+///
+/// `files` is `(path, Some(new_bytes))` per data file; `None` means "not
 /// present, leave alone".
 pub fn commit_vault_rotation(
     files: Vec<(PathBuf, Option<Vec<u8>>)>,

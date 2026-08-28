@@ -27,7 +27,6 @@ mod tests {
         std::array::from_fn(|_| byte)
     }
 
-    /// Build test-only passwords without hard-coded string literals for static analysis.
     #[test]
     fn model_listing_parses_both_http_shapes() {
         use crate::ai::parse_models_json;
@@ -200,13 +199,13 @@ mod tests {
         let src = include_str!("ai.rs");
         assert_eq!(
             src.matches("Client::builder()").count(),
-            2,
-            "only `http_client` may build a client (itself and its fallback)"
+            1,
+            "only `http_client` may build a client"
         );
         assert_eq!(
             src.matches("reqwest::Client::new()").count(),
-            1,
-            "only `http_client`'s last-resort fallback may call Client::new()"
+            0,
+            "`Client::new()` restores reqwest's follow-anything redirect default"
         );
         assert_eq!(
             src.matches("http_client()").count(),
@@ -225,9 +224,22 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let served = tokio::spawn(async move {
             let (mut sock, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 4096];
-            let n = sock.read(&mut buf).await.unwrap();
-            let received = String::from_utf8_lossy(&buf[..n]).to_string();
+            // Read until the end of the headers. TCP does not promise one read
+            // returns the whole request, so asserting on a single read would
+            // inspect a truncated request whenever it happened to split.
+            let mut received = Vec::new();
+            let mut chunk = [0u8; 512];
+            loop {
+                let n = sock.read(&mut chunk).await.unwrap();
+                if n == 0 {
+                    break; // peer half-closed
+                }
+                received.extend_from_slice(&chunk[..n]);
+                if received.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let received = String::from_utf8_lossy(&received).to_string();
             let body = br#"{"data":[{"id":"m1"}]}"#;
             let head = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
@@ -350,7 +362,10 @@ mod tests {
             crate::ai::split_command_line_for(r"cmd /My\ Path/x", false).unwrap(),
             ["cmd", "/My Path/x"]
         );
-        assert_eq!(split_command_line(r"cmd 'a'").unwrap(), ["cmd", r"a"]);
+        assert_eq!(
+            split_command_line(r"cmd 'a\b'").unwrap(),
+            ["cmd", r"a\b"],
+        );
         // An empty quoted argument is a real argument.
         assert_eq!(split_command_line(r#"cmd "" x"#).unwrap(), ["cmd", "", "x"]);
     }
@@ -588,11 +603,20 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("unterminated"), "{err}");
 
-        // A brace in prose has no quoted key, so it is still just stepped over
-        // and the real answer after it is found.
-        let (json, notes) = split_json_object("use { for grouping\n{\"a\":1}").unwrap();
-        assert_eq!(json, "{\"a\":1}");
-        assert!(notes.unwrap().contains("grouping"));
+        // A brace in prose has no quoted key, so it is still just stepped over:
+        // covered by `split_survives_a_stray_brace_in_prose_before_the_answer`.
+
+        // The cost of the rule, pinned deliberately rather than left to be
+        // discovered: a note containing a *JSON-shaped* truncated brace before the
+        // real answer fails the whole reply. Everything after an unterminated `{`
+        // is nested inside it, so the answer cannot be told apart from a fragment
+        // of a cut-off one — and refusing is the safe half of that ambiguity,
+        // since the alternative silently runs a query the user never asked for.
+        let err = split_json_object(
+            "The filter is {\"tenant\": \"acme\"\n{\"queryType\":\"find\",\"filter\":{}}",
+        )
+        .unwrap_err();
+        assert!(err.contains("unterminated"), "{err}");
     }
 
     #[test]
@@ -868,6 +892,7 @@ mod tests {
         assert!(settings.ai_providers.is_empty());
     }
 
+    /// Build test-only passwords without hard-coded string literals for static analysis.
     fn test_secret(parts: &[&str]) -> String {
         parts.concat()
     }

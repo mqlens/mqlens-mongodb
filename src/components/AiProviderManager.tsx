@@ -287,14 +287,15 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
     (presetId: string) => {
       const preset = presets.find((p) => p.id === presetId);
       if (!preset) return;
-      setDraft((prev) => {
-        const next = applyPresetToDraft(prev ?? emptyProvider(), preset);
-        keyOriginRef.current = next.api_key ? originOf(next.base_url) : null;
-        return next;
-      });
+      // Computed here rather than inside the updater: React may run an updater
+      // during render and runs it twice under StrictMode, so writing the ref in
+      // there is a side effect in a function that has to be pure.
+      const next = applyPresetToDraft(draft ?? emptyProvider(), preset);
+      keyOriginRef.current = next.api_key ? originOf(next.base_url) : null;
+      setDraft(next);
       setDraftError(null);
     },
-    [presets]
+    [presets, draft]
   );
 
   const commit = useCallback(async () => {
@@ -315,8 +316,9 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
       candidate.api_key === '' &&
       keyRequiredFor(candidate.base_url, presets)
     ) {
-      // Rust cannot make this call: it has no way to know the endpoint came from
-      // a preset for a service that authenticates.
+      // Rust refuses this too (`authenticated_service` in `validate`), so this is
+      // not the only line of defence — it is here to name the provider and the
+      // field before a round trip, rather than surfacing as a backend error.
       setDraftError(t('ai.providerKeyRequired', { name: candidate.name }));
       return;
     }
@@ -336,7 +338,10 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
     onChange(next);
     setDraft(null);
     setDraftError(null);
-  }, [draft, onChange, providers, reservedIds]);
+    // `presets` included deliberately: `keyRequiredFor` reads it, and the list
+    // arrives asynchronously — without it this callback kept the initial empty
+    // array and a preset endpoint that requires a key could be saved without one.
+  }, [draft, onChange, providers, reservedIds, presets]);
 
   const kindLabel = (kind: ProviderKind) => t(`ai.providerKinds.${kind}`);
   const isCli = draft?.kind === 'local-cli';
@@ -370,7 +375,15 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
                   variant="ghost"
                   size="sm"
                   className="text-destructive"
-                  onClick={() => onChange(providers.filter((x) => x.id !== p.id))}
+                  onClick={() => {
+                    // Leaving the form open on a removed provider meant Save found
+                    // no match and pushed it back, silently undoing the removal.
+                    if (draft?.id === p.id) {
+                      setDraft(null);
+                      setDraftError(null);
+                    }
+                    onChange(providers.filter((x) => x.id !== p.id));
+                  }}
                   aria-label={t('ai.providerRemove')}
                   data-testid={`ai-provider-remove-${p.id}`}
                 >
@@ -529,7 +542,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
             </div>
             {modelMode === 'pick' && models.length > 0 ? (
               <Select
-                value={draft.model && models.includes(draft.model) ? draft.model : draft.model ? CURRENT_MODEL : ''}
+                value={draft.model && !models.includes(draft.model) ? CURRENT_MODEL : draft.model}
                 onValueChange={(v) => {
                   if (v === TYPE_MODEL) {
                     setModelMode('type');

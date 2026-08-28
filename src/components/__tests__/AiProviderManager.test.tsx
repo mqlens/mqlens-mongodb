@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { AiProviderManager, applyPresetToDraft, keyRequiredFor, withEndpoint, originOf, slugify, emptyProvider, type AiProvider } from '../AiProviderManager';
 
 const mockInvoke = vi.fn();
@@ -57,6 +57,59 @@ function setup(providers: AiProvider[] = []) {
   );
   return onChange;
 }
+
+describe('presets arriving after the draft is open', () => {
+  it('still requires a key for a preset endpoint', async () => {
+    // `commit` reads `presets` for `keyRequiredFor`, and the list is fetched. With
+    // `presets` missing from the callback's deps it kept the initial empty array
+    // whenever the list arrived after the last edit, so the check passed silently.
+    let releasePresets: (v: unknown) => void = () => {};
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'ai_provider_presets') return new Promise((res) => { releasePresets = res; });
+      if (cmd === 'validate_ai_provider') return Promise.resolve('ok');
+      return Promise.resolve(null);
+    });
+    const onChange = setup([]);
+
+    // Fill in DeepSeek's endpoint with no key. Every keystroke changes `draft`,
+    // so `commit` is rebuilt — the presets have to land *after* the last one.
+    fireEvent.click(await screen.findByTestId('ai-provider-add'));
+    fireEvent.change(screen.getByTestId('ai-provider-name-input'), { target: { value: 'DeepSeek' } });
+    fireEvent.change(screen.getByTestId('ai-provider-url-input'), { target: { value: 'https://api.deepseek.com/v1' } });
+    fireEvent.change(screen.getByTestId('ai-provider-model-input'), { target: { value: 'deepseek-chat' } });
+
+    await act(async () => {
+      releasePresets(PRESETS);
+    });
+
+    fireEvent.click(screen.getByTestId('ai-provider-save'));
+
+    // Named and refused here, rather than falling through to the backend.
+    await screen.findByTestId('ai-provider-error');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('editing a provider that is removed underneath it', () => {
+  it('closes the form instead of re-adding the provider on Save', async () => {
+    // The draft still pointed at the removed provider, so Save found no match in
+    // the list and pushed it back — silently undoing the removal.
+    const deepseek: AiProvider = {
+      id: 'deepseek', name: 'DeepSeek', kind: 'openai-compatible',
+      base_url: 'https://api.deepseek.com/v1', api_key: 'sk-k', model: 'deepseek-chat',
+      command: '', models_command: '',
+    };
+    const onChange = setup([deepseek]);
+
+    fireEvent.click(await screen.findByTestId('ai-provider-edit-deepseek'));
+    await screen.findByTestId('ai-provider-name-input');
+    fireEvent.click(screen.getByTestId('ai-provider-remove-deepseek'));
+
+    // The form is gone, so there is no Save left to undo the removal with.
+    expect(screen.queryByTestId('ai-provider-name-input')).not.toBeInTheDocument();
+    expect(onChange).toHaveBeenCalledWith([]);
+  });
+});
 
 describe('slugify', () => {
   it('derives a safe id from the display name', () => {

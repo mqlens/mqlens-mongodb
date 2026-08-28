@@ -1169,12 +1169,6 @@ fn mcp_agent_instructions() -> &'static str {
     mcp::AGENT_INSTRUCTIONS
 }
 
-/// The models a provider offers, for the settings form to pick from.
-///
-/// HTTP kinds are asked over `GET .../models` with the configured key; a CLI is
-/// asked by running its `models_command`. Either way a failure is reported with
-/// the provider named, and the form keeps the model field typeable, so this can
-/// only ever help.
 /// List a provider's models, refusing first to put its key on the wire in clear
 /// text.
 ///
@@ -1204,6 +1198,12 @@ async fn list_models_for_provider(
     }
 }
 
+/// The models a provider offers, for the settings form to pick from.
+///
+/// HTTP kinds are asked over `GET .../models` with the configured key; a CLI is
+/// asked by running its `models_command`. Either way a failure is reported with
+/// the provider named, and the form keeps the model field typeable, so this can
+/// only ever help.
 #[tauri::command]
 async fn list_ai_models(provider: ai_providers::AiProvider) -> Result<Vec<String>, String> {
     list_models_for_provider(&provider).await

@@ -1152,6 +1152,24 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     }
   });
 
+  it('clears the CLI warning when a provider that takes images is chosen again', async () => {
+    // Nothing cleared the note, so it stood over a composer whose attach button
+    // had started working again.
+    mockPickerBackend({ query: '{}' }, ['deepseek-chat']);
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+
+    await pickProvider('Claude Code (local)');
+    pasteImage(screen.getByTestId('chat-input'));
+    await screen.findByTestId('chat-image-note');
+    expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/cannot receive images/);
+
+    await pickProvider('DeepSeek');
+    await waitFor(() =>
+      expect(screen.queryByTestId('chat-image-note')).not.toBeInTheDocument(),
+    );
+  });
+
   it('re-reads its provider list when settings change elsewhere', async () => {
     // Settings can be open in another pane or window. The list was fetched once,
     // so deleting the selected provider there left its id selected here and the

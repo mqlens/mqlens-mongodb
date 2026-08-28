@@ -2,6 +2,7 @@
 // The app's backend holds the API key (kept out of the frontend bundle) and calls
 // https://api.anthropic.com/v1/messages over HTTPS (no official Rust SDK).
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -77,6 +78,19 @@ pub fn validate_images(images: &[ImageAttachment]) -> Result<(), String> {
         }
         if img.data.trim().is_empty() {
             return Err(format!("Image {} has no data.", i + 1));
+        }
+        // Decoded here, not just measured: this function exists so a file the
+        // provider would reject is refused with a message that says why, and a
+        // truncated or corrupted payload otherwise reached the provider and came
+        // back as an opaque transport error. The size cap above bounds the work.
+        if base64::engine::general_purpose::STANDARD
+            .decode(img.data.trim())
+            .is_err()
+        {
+            return Err(format!(
+                "Image {} could not be read; try attaching it again.",
+                i + 1
+            ));
         }
     }
     Ok(())
@@ -532,8 +546,8 @@ pub(crate) fn redirect_is_safe(target: &reqwest::Url, original: &reqwest::Url) -
     target.scheme() == "https" || is_loopback_url(target)
 }
 
-fn http_client() -> reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+fn http_client() -> Result<reqwest::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
             let policy = reqwest::redirect::Policy::custom(|attempt| {
@@ -549,17 +563,14 @@ fn http_client() -> reqwest::Client {
                     attempt.follow()
                 }
             });
+            // No fallback client: `Client::new()` would restore reqwest's
+            // follow-anything default, which is the behaviour this exists to
+            // prevent, and a build failure here is a TLS/connector failure that
+            // would fail every request anyway. Reported, not worked around.
             reqwest::Client::builder()
                 .redirect(policy)
                 .build()
-                // Refusing every redirect is the safe direction if the policy
-                // cannot be installed; a client that follows them is not.
-                .unwrap_or_else(|_| {
-                    reqwest::Client::builder()
-                        .redirect(reqwest::redirect::Policy::none())
-                        .build()
-                        .unwrap_or_else(|_| reqwest::Client::new())
-                })
+                .map_err(|e| format!("Could not start an HTTPS client: {e}"))
         })
         .clone()
 }
@@ -614,7 +625,7 @@ pub async fn generate_openai(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = http_client();
+    let client = http_client()?;
     let (status, json) = send_json_within(
         client
             .post(OPENAI_URL)
@@ -672,7 +683,7 @@ pub async fn generate_openai_compatible(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = http_client();
+    let client = http_client()?;
     let mut request = client
         .post(endpoint)
         .header("content-type", "application/json");
@@ -708,7 +719,7 @@ pub async fn generate_anthropic_compatible(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = http_client();
+    let client = http_client()?;
     let mut request = client
         .post(endpoint)
         .header("anthropic-version", ANTHROPIC_VERSION)
@@ -837,7 +848,7 @@ pub async fn list_models_http(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = http_client();
+    let client = http_client()?;
     let mut request = client.get(endpoint);
     if !api_key.trim().is_empty() {
         request = match kind {
@@ -980,7 +991,7 @@ pub async fn generate_gemini(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = http_client();
+    let client = http_client()?;
     let (status, json) = send_json_within(
         client
             .post(gemini_url(model))
@@ -1181,7 +1192,7 @@ pub async fn generate_anthropic(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = http_client();
+    let client = http_client()?;
     let (status, json) = send_json_within(
         client
             .post(ANTHROPIC_URL)

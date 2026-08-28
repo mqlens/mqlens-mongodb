@@ -32,12 +32,24 @@ globalThis.ResizeObserver = MockResizeObserver;
 // jsdom implements none of it, so the component throws before it can open and
 // its items are never rendered — which is why these menus looked undriveable in
 // tests. Same category as the ResizeObserver and scrollIntoView stubs below.
+//
+// Capture state is tracked rather than hard-coded to `false`: a constant would
+// mean any component that captures a pointer and then reads the state back sees
+// an answer that is simply wrong, and the real behaviour is masked instead of
+// stubbed. Per element, keyed by pointer id, which is what the DOM does.
 if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = function hasPointerCapture() {
-    return false;
+  const captured = new WeakMap<Element, Set<number>>();
+  Element.prototype.hasPointerCapture = function hasPointerCapture(pointerId: number) {
+    return captured.get(this)?.has(pointerId) ?? false;
   };
-  Element.prototype.setPointerCapture = function setPointerCapture() {};
-  Element.prototype.releasePointerCapture = function releasePointerCapture() {};
+  Element.prototype.setPointerCapture = function setPointerCapture(pointerId: number) {
+    const ids = captured.get(this) ?? new Set<number>();
+    ids.add(pointerId);
+    captured.set(this, ids);
+  };
+  Element.prototype.releasePointerCapture = function releasePointerCapture(pointerId: number) {
+    captured.get(this)?.delete(pointerId);
+  };
 }
 
 // cmdk and Radix scroll areas call scrollIntoView; jsdom does not implement it.

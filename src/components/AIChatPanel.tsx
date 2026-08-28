@@ -348,7 +348,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
    * closure from attaching an image after the switch.
    */
   useEffect(() => {
-    if (providerTakesImages) return;
+    if (providerTakesImages) {
+      // Nothing else clears this note, so switching back left "this provider
+      // cannot receive images" standing over a composer whose attach button had
+      // started working again. Only that note is cleared — a size or type
+      // complaint about a file the user just picked is still theirs to see.
+      setImageNote((note) =>
+        note === t('aiChatPanel.composer.noImagesForCli') ? null : note
+      );
+      return;
+    }
     if (pendingImages.length === 0 && pendingReadsRef.current === 0) return;
     dropPendingImages();
     setImageNote(t('aiChatPanel.composer.noImagesForCli'));
@@ -529,23 +538,28 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       setImageNote(t('aiChatPanel.composer.noImagesForCli'));
       return;
     }
-    setPendingImages((prev) => {
-      const room = Math.max(0, MAX_PENDING_IMAGES - prev.length);
-      // Over the count is the more actionable complaint, so it wins. `overCap`
-      // comes from the caller because the files it dropped before reading are no
-      // longer here to be counted.
-      // One note, in order of how actionable it is: the count cap the user can
-      // do something about, then a read that failed, then a file that was never
-      // eligible.
-      if (overCap || images.length > room) {
-        setImageNote(t('aiChatPanel.composer.imageTooMany', { max: MAX_PENDING_IMAGES }));
-      } else if (failed > 0) {
-        setImageNote(t('aiChatPanel.composer.imageUnreadable'));
-      } else {
-        setImageNote(rejected ? noteFor(rejected) : null);
-      }
-      return [...prev, ...images.slice(0, room)];
-    });
+    // The note is decided out here, not inside the updater: an updater has to be
+    // pure, and React may run one during render and runs it twice under
+    // StrictMode, so setting state from within it fired the note more than once.
+    //
+    // One note, in order of how actionable it is — the count cap the user can do
+    // something about, then a read that failed, then a file that was never
+    // eligible. `overCap` comes from the caller because the files it dropped
+    // before reading are no longer here to be counted.
+    const roomNow = Math.max(0, MAX_PENDING_IMAGES - pendingImages.length);
+    if (overCap || images.length > roomNow) {
+      setImageNote(t('aiChatPanel.composer.imageTooMany', { max: MAX_PENDING_IMAGES }));
+    } else if (failed > 0) {
+      setImageNote(t('aiChatPanel.composer.imageUnreadable'));
+    } else {
+      setImageNote(rejected ? noteFor(rejected) : null);
+    }
+    // The cap itself is still applied against `prev`, the only value guaranteed
+    // to be current at the moment the append happens.
+    setPendingImages((prev) => [
+      ...prev,
+      ...images.slice(0, Math.max(0, MAX_PENDING_IMAGES - prev.length)),
+    ]);
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1410,7 +1424,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   {modelApplies &&
                     (chatModels.length > 0 && !typingModel ? (
                       <Select
-                        value={chatModels.includes(chatModel) ? chatModel : chatModel ? CURRENT_MODEL : ''}
+                        value={chatModel && !chatModels.includes(chatModel) ? CURRENT_MODEL : chatModel}
                         onValueChange={(v) => {
                           if (v === TYPE_MODEL) setTypingModel(true);
                           else if (v !== CURRENT_MODEL) setChatModel(v);
