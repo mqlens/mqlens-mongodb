@@ -270,6 +270,37 @@ fn strip_generation_suffix(path: &str) -> &str {
     base
 }
 
+/// `https://api.x.com:443/v1/chat` → `https://api.x.com`; None without a host.
+///
+/// Default ports are dropped, matching what `URL` in the frontend reports, so the
+/// two sides agree on what "the same service" means.
+fn origin_of(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url.trim()).ok()?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return None;
+    }
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    Some(match parsed.port() {
+        Some(port) => format!("{}://{}:{}", parsed.scheme(), host, port),
+        None => format!("{}://{}", parsed.scheme(), host),
+    })
+}
+
+/// The preset serving `base_url`'s origin, if that service authenticates.
+///
+/// Checked here and not only in the form: the form derives the requirement from
+/// `ai_provider_presets`, which is fetched asynchronously and falls back to an
+/// empty list when the call fails, so the guard failed open exactly when it was
+/// least able to notice — a known cloud endpoint saved with no key, and the
+/// schema and prompt then sent to it unauthenticated. Unknown endpoints stay
+/// keyless: only origins this app ships a preset for are held to it.
+fn preset_needing_key(base_url: &str) -> Option<&'static ProviderPreset> {
+    let origin = origin_of(base_url)?;
+    PRESETS
+        .iter()
+        .find(|p| p.needs_key && origin_of(p.base_url).as_deref() == Some(origin.as_str()))
+}
+
 impl AiProvider {
     /// The URL a request should be posted to, or an error naming what is missing.
     pub fn endpoint(&self) -> Result<String, String> {
@@ -344,6 +375,16 @@ impl AiProvider {
                 if self.model.trim().is_empty() {
                     return Err(format!("{} needs a model name.", self.name));
                 }
+                if self.api_key.trim().is_empty() {
+                    if let Some(preset) = preset_needing_key(&self.base_url) {
+                        return Err(format!(
+                            "{} needs an API key: {} authenticates every request, so without \
+                             one the collection schema and your prompt would be sent to it \
+                             unauthenticated.",
+                            self.name, preset.name
+                        ));
+                    }
+                }
                 Ok(())
             }
         }
@@ -364,6 +405,51 @@ mod tests {
             model: "some-model".into(),
             command: String::new(),
             models_command: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_known_authenticated_endpoint_cannot_be_saved_without_a_key() {
+        // The form derives this from `ai_provider_presets`, which is fetched and
+        // falls back to an empty list on failure — so the guard failed open
+        // exactly when it could not tell, and DeepSeek could be saved keyless.
+        let deepseek = PRESETS
+            .iter()
+            .find(|p| p.id == "deepseek")
+            .expect("deepseek preset");
+        assert!(deepseek.needs_key);
+
+        let mut p = provider(ProviderKind::OpenAiCompatible, deepseek.base_url);
+        let err = p.validate().unwrap_err();
+        assert!(err.contains("needs an API key"), "{err}");
+        assert!(err.contains(deepseek.name), "the reason names the service: {err}");
+        p.api_key = "sk-key".into();
+        p.validate().expect("valid with a key");
+
+        // The same service reached by another path on the same origin, and with
+        // the default port spelled out, is still that service.
+        for url in [
+            "https://api.deepseek.com/v1/chat/completions",
+            "https://API.DeepSeek.com:443/v1",
+        ] {
+            let p = provider(ProviderKind::OpenAiCompatible, url);
+            assert!(p.validate().is_err(), "{url} should still require a key");
+        }
+    }
+
+    #[test]
+    fn an_endpoint_no_preset_covers_still_needs_no_key() {
+        // Only origins this app ships a preset for are held to a key. A private
+        // gateway or a LAN server must stay usable without one.
+        for url in ["https://llm.internal.example/v1", "http://192.168.1.50:8000/v1"] {
+            let p = provider(ProviderKind::OpenAiCompatible, url);
+            p.validate().unwrap_or_else(|e| panic!("{url}: {e}"));
+        }
+        // ...and so must the keyless presets, which is why they are marked.
+        for preset in PRESETS.iter().filter(|p| !p.needs_key && !p.base_url.is_empty()) {
+            let p = provider(ProviderKind::OpenAiCompatible, preset.base_url);
+            p.validate()
+                .unwrap_or_else(|e| panic!("{} should not need a key: {e}", preset.id));
         }
     }
 
