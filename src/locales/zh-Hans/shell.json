@@ -12,7 +12,8 @@
       "noImagesForCli": "该提供方是本地命令，无法接收图片。若要询问图片相关内容，请选择 HTTP 提供方。",
       "imageTooMany": "每条消息最多 {{max}} 张图片。",
       "attach": "附加图片",
-      "imageUnsupported": "仅支持发送 PNG、JPEG、WebP 和 GIF 图片。"
+      "imageUnsupported": "仅支持发送 PNG、JPEG、WebP 和 GIF 图片。",
+      "imageTooLarge": "图片必须小于 {{limit}} MB。"
     },
     "empty": {
       "body": "用日常语言描述你要的查询 —— 例如 <i>“年龄大于 30 的活跃用户，按年龄排序”</i> 或<i> “每位客户的平均订单金额”</i>。我会说明处理思路，你可以直接插入结果。"

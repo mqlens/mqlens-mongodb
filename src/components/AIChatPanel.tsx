@@ -93,6 +93,15 @@ const MAX_PENDING_IMAGES = 4;
  * *after* the prompt and the attachment had been cleared.
  */
 export const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+/**
+ * Largest image the backend will send, in bytes.
+ *
+ * Must match `MAX_IMAGE_BYTES` in src-tauri/src/ai.rs — the same drift test
+ * checks it. Enforced here so an oversized file is refused before it is read
+ * into a base64 string and held in state: the backend used to reject it only
+ * after the composer had been cleared, losing the question with it.
+ */
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /** Header model <select> sentinels; a real model id never starts with `__`. */
 const TYPE_MODEL = '__type_a_model__';
 const CURRENT_MODEL = '__current_model__';
@@ -115,11 +124,20 @@ export function formatBytes(n: number): string {
  * image and text would otherwise have its text inserted into the prompt while
  * the image was still being read.
  */
+/** Why a file cannot be attached, or null if it can. */
+export function imageRejectionReason(file: File): 'type' | 'size' | null {
+  if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) return 'type';
+  if (file.size > MAX_IMAGE_BYTES) return 'size';
+  return null;
+}
+
 export function imageFilesFromClipboard(items: DataTransferItemList | null): File[] {
   if (!items) return [];
   const files: File[] = [];
   for (const item of Array.from(items)) {
-    if (item.kind === 'file' && ACCEPTED_IMAGE_TYPES.includes(item.type)) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      // Collected regardless, then filtered by the caller — which needs to know
+      // an image *was* on the clipboard in order to explain why it was refused.
       const f = item.getAsFile();
       if (f) files.push(f);
     }
@@ -320,44 +338,71 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     }
   };
 
-  const addImages = (images: PendingImage[]) => {
+  /**
+   * Attach what fits and leave one explanation behind.
+   *
+   * `rejected` is why a file the caller had was not passed on. The note is
+   * decided in one place because two of them fought: the caller set "wrong
+   * format", then this cleared it while attaching the files that were fine.
+   */
+  /** Split files into what can be attached and the first reason one could not. */
+  const triageImages = (files: File[]) => {
+    const accepted: File[] = [];
+    let reason: 'type' | 'size' | null = null;
+    for (const f of files) {
+      const why = imageRejectionReason(f);
+      if (why) reason ??= why;
+      else accepted.push(f);
+    }
+    return { accepted, reason };
+  };  const noteFor = (reason: 'type' | 'size') =>
+    reason === 'size'
+      ? t('aiChatPanel.composer.imageTooLarge', { limit: MAX_IMAGE_BYTES / (1024 * 1024) })
+      : t('aiChatPanel.composer.imageUnsupported');
+
+  const addImages = (images: PendingImage[], rejected: 'type' | 'size' | null = null) => {
     if (!providerTakesImages) {
       setImageNote(t('aiChatPanel.composer.noImagesForCli'));
       return;
     }
     setPendingImages((prev) => {
-      const room = MAX_PENDING_IMAGES - prev.length;
-      if (images.length > room) setImageNote(t('aiChatPanel.composer.imageTooMany', { max: MAX_PENDING_IMAGES }));
-      else setImageNote(null);
-      return [...prev, ...images.slice(0, Math.max(0, room))];
+      const room = Math.max(0, MAX_PENDING_IMAGES - prev.length);
+      // Over the count is the more actionable complaint, so it wins.
+      if (images.length > room) {
+        setImageNote(t('aiChatPanel.composer.imageTooMany', { max: MAX_PENDING_IMAGES }));
+      } else {
+        setImageNote(rejected ? noteFor(rejected) : null);
+      }
+      return [...prev, ...images.slice(0, room)];
     });
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = imageFilesFromClipboard(e.clipboardData?.items ?? null);
-    if (files.length === 0) {
-      // An image the backend cannot send is worth a word, rather than pasting
-      // its filename into the prompt and failing later.
-      const items = Array.from(e.clipboardData?.items ?? []);
-      if (items.some((i) => i.kind === 'file' && i.type.startsWith('image/'))) {
-        e.preventDefault();
-        setImageNote(t('aiChatPanel.composer.imageUnsupported'));
-      }
-      return; // plain text: let the textarea take it
-    }
+    const onClipboard = imageFilesFromClipboard(e.clipboardData?.items ?? null);
+    if (onClipboard.length === 0) return; // plain text: let the textarea take it
     // Before the first await, or the browser pastes any accompanying text.
     e.preventDefault();
-    void imagesFromFiles(files).then(addImages);
+    const { accepted, reason } = triageImages(onClipboard);
+    if (accepted.length === 0) {
+      if (reason) setImageNote(noteFor(reason));
+      return;
+    }
+    void imagesFromFiles(accepted).then((imgs) => addImages(imgs, reason));
   };
+
+
 
   const attachInputRef = useRef<HTMLInputElement>(null);
   const handleAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(e.target.files ?? []);
     e.target.value = ''; // so picking the same file again still fires change
-    const files = picked.filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
-    if (files.length < picked.length) setImageNote(t('aiChatPanel.composer.imageUnsupported'));
-    if (files.length === 0) return;
-    addImages(await imagesFromFiles(files));
+    if (picked.length === 0) return;
+    const { accepted, reason } = triageImages(picked);
+    if (accepted.length === 0) {
+      if (reason) setImageNote(noteFor(reason));
+      return;
+    }
+    addImages(await imagesFromFiles(accepted), reason);
   };
   const [isChatLoading, setIsChatLoading] = useState(false);
   // Persisted, not per-tab: a panel width is a UI preference, and remounting

@@ -1101,4 +1101,33 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     // Four formats, and the cap is four.
     expect(screen.getAllByTestId(/chat-pending-image-remove-/)).toHaveLength(4);
   });
+
+  it('refuses an oversized image without reading or sending it', async () => {
+    // The backend rejected it only after the composer had been cleared, so the
+    // question was lost — and the whole file had been base64-encoded first.
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'what is this' } });
+
+    pasteImage(screen.getByTestId('chat-input'), 'image/png', 6 * 1024 * 1024);
+    await screen.findByTestId('chat-image-note');
+    expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/under 5 MB/);
+    expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
+    // The typed question is untouched.
+    expect(screen.getByTestId('chat-input')).toHaveValue('what is this');
+  });
+
+  it('attaches the acceptable images from a mixed selection and explains the rest', async () => {
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    const ok = new File([new Uint8Array(4)], 'a.png', { type: 'image/png' });
+    const huge = new File([new Uint8Array(6 * 1024 * 1024)], 'b.png', { type: 'image/png' });
+    fireEvent.change(screen.getByTestId('chat-attach-input'), { target: { files: [ok, huge] } });
+
+    await screen.findByTestId('chat-pending-images');
+    expect(screen.getAllByTestId(/chat-pending-image-remove-/)).toHaveLength(1);
+    expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/under 5 MB/);
+  });
 });

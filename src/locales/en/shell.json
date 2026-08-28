@@ -68,6 +68,7 @@
     },
     "composer": {
       "attach": "Attach image",
+      "imageTooLarge": "Images must be under {{limit}} MB.",
       "imageTooMany": "Up to {{max}} images per message.",
       "imageUnsupported": "Only PNG, JPEG, WebP and GIF images can be sent.",
       "noImagesForCli": "This provider is a local command and cannot receive images. Pick an HTTP provider to ask about an image.",
