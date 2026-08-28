@@ -20,7 +20,31 @@
     "historyRetentionMonths_one": "{{count}} Monat",
     "historyRetentionMonths_other": "{{count}} Monate",
     "tabDescription": "Cloud-API-Schlüssel, lokale Agenten, individuelle Abfrageanweisungen und KI-Helfer-Verlaufsdauer.",
-    "tabLabel": "KI-Assistent"
+    "tabLabel": "KI-Assistent",
+    "yourProvidersTitle": "Deine Anbieter",
+    "yourProvidersDescription": "Füge jeden Dienst hinzu, der die OpenAI- oder Anthropic-API spricht — DeepSeek, OpenRouter, Groq, ein lokales Ollama — oder einen lokalen Kommandozeilen-Agenten. Schlüssel liegen in deinem Vault.",
+    "providerAdd": "Anbieter hinzufügen",
+    "providerEdit": "Bearbeiten",
+    "providerRemove": "Anbieter entfernen",
+    "providerSave": "Anbieter speichern",
+    "providerCancel": "Abbrechen",
+    "providerPreset": "Ausgehen von",
+    "providerPresetPlaceholder": "Bekannten Dienst wählen…",
+    "providerPresetHint": "Füllt den Endpunkt für dich aus. Alle Felder bleiben änderbar.",
+    "providerName": "Name",
+    "providerKind": "API-Format",
+    "providerBaseUrl": "Endpunkt",
+    "providerBaseUrlHint": "Die Basis-URL, z. B. https://api.deepseek.com/v1. Der vollständige Pfad funktioniert auch.",
+    "providerModel": "Modell",
+    "providerApiKey": "API-Schlüssel",
+    "providerApiKeyHint": "Für lokale Server, die keine Zugangsdaten prüfen, leer lassen.",
+    "providerCommand": "Befehl",
+    "providerCommandHint": "Muss {prompt} enthalten — das wird durch die Anfrage ersetzt.",
+    "providerKinds": {
+      "openai-compatible": "OpenAI-kompatibel",
+      "anthropic-compatible": "Anthropic-kompatibel",
+      "local-cli": "Lokaler Befehl"
+    }
   },
   "audit": {
     "enabledDescription": "Aktiviert die Aufzeichnung ausgewählter Datenbankoperationen in einem tresorverschlüsselten lokalen Protokoll.",
@@ -141,7 +165,9 @@
     "tabDescription": "Model-Context-Protocol-Server für KI-Tool-Integrationen.",
     "tabLabel": "MCP",
     "title": "MCP-Server",
-    "tokenRegeneratedNote": "Token neu generiert — bestehende Clients müssen mit dem neuen Token aktualisiert werden."
+    "tokenRegeneratedNote": "Token neu generiert — bestehende Clients müssen mit dem neuen Token aktualisiert werden.",
+    "agentPromptTitle": "Agenten-Anweisungen",
+    "agentPromptDescription": "MQLens sendet diese an jeden verbundenen MCP-Client. Kopiere sie in einen externen Agenten, der sie nicht automatisch lesen kann."
   },
   "nav": {
     "sectionsAriaLabel": "Einstellungsbereiche",

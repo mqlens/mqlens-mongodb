@@ -44,6 +44,7 @@ const ALLOWED_IDENTICAL_VALUES = new Set([
   'settings:appearance.themeFallback', // Theme
   'sidebar:footer.themeLabel', // Theme
   'settings:mcp.port', // Port
+  'settings:ai.providerName', // Name — identical in German
   'settings:updates.resultValues.offline', // Offline — established loanword, matches shell:updatePrompt.toast.offline's "offline" usage
   'settings:tools.tabLabel', // Tools
   'shell:watch.status.running', // live — the loanword German uses for a running stream too

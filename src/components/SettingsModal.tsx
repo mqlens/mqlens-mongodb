@@ -40,6 +40,7 @@ import { AppearanceSettings } from '@/components/theme/AppearanceSettings';
 import { KeyboardShortcutsSettings } from '@/components/KeyboardShortcutsSettings';
 import type { AppearanceSettings as AppearanceSettingsType } from '@/lib/themes/schema';
 import { Button } from '@/components/ui/button';
+import { AiProviderManager, type AiProvider } from '@/components/AiProviderManager';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -73,6 +74,7 @@ interface AppSettings {
   gemini_api_key?: string;
   gemini_model?: string;
   local_commands?: Record<string, string>;
+  ai_providers?: AiProvider[];
   ai_custom_instructions?: string;
   ai_history_retention_months?: number;
   audit_enabled?: boolean;
@@ -233,6 +235,18 @@ const McpSettingsPanel: React.FC = () => {
   const [regenerated, setRegenerated] = useState(false);
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  // The instructions MQLens's own MCP server sends. Shown here so a user
+  // pointing an external client at MQLens can paste the same guidance instead of
+  // writing a system prompt themselves.
+  const [agentPrompt, setAgentPrompt] = useState('');
+
+  useEffect(() => {
+    invoke<string>('mcp_agent_instructions')
+      .then(setAgentPrompt)
+      // Purely informational: the embedded server sends these regardless, so a
+      // failure to display them changes nothing about how agents behave.
+      .catch(() => setAgentPrompt(''));
+  }, []);
 
   // Initial status fetch — separate from the poll effect below so the panel
   // renders a real state immediately instead of waiting on the 2s cadence.
@@ -489,6 +503,35 @@ const McpSettingsPanel: React.FC = () => {
         </>
       )}
 
+      {agentPrompt && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t('mcp.agentPromptTitle')}</CardTitle>
+            <CardDescription>{t('mcp.agentPromptDescription')}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <pre
+              className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-muted px-3 py-2 text-xs text-foreground"
+              data-testid="mcp-agent-prompt"
+            >
+              {agentPrompt}
+            </pre>
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => copy('agent-prompt', agentPrompt)}
+                data-testid="mcp-agent-prompt-copy"
+              >
+                <Copy className="h-3 w-3" />
+                {copiedKey === 'agent-prompt' ? t('mcp.copied') : t('mcp.copy')}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t('mcp.profilesTitle')}</CardTitle>
@@ -589,6 +632,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   const [geminiKey, setGeminiKey] = useState('');
   const [geminiModel, setGeminiModel] = useState('gemini-1.5-flash');
   const [localCommands, setLocalCommands] = useState<Record<string, string>>({});
+  const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
   const [customInstructions, setCustomInstructions] = useState('');
   const [historyRetentionMonths, setHistoryRetentionMonths] = useState<AiHistoryRetentionMonths>(
     DEFAULT_AI_HISTORY_RETENTION_MONTHS
@@ -641,6 +685,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
         setGeminiKey(s.gemini_api_key || '');
         setGeminiModel(s.gemini_model || 'gemini-1.5-flash');
         setLocalCommands(s.local_commands || {});
+        setAiProviders(s.ai_providers || []);
         setCustomInstructions(s.ai_custom_instructions || '');
         setHistoryRetentionMonths(
           normalizeAiHistoryRetentionMonths(s.ai_history_retention_months)
@@ -695,6 +740,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
           gemini_api_key: geminiKey.trim(),
           gemini_model: geminiModel.trim() || 'gemini-1.5-flash',
           local_commands: localCommands,
+          ai_providers: aiProviders,
           ai_custom_instructions: customInstructions,
           ai_history_retention_months: historyRetentionMonths,
           audit_enabled: auditEnabled,
@@ -979,6 +1025,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                       {[...CLOUD_PROVIDERS, ...LOCAL_AGENTS].map((p) => (
                         <SelectItem key={p} value={p}>{PROVIDER_LABELS[p]}</SelectItem>
                       ))}
+                      {aiProviders.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1117,6 +1166,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
                 </CardContent>
               </Card>
             )}
+
+            <Card className="xl:col-span-2">
+              <CardHeader>
+                <CardTitle className="text-base">{t('ai.yourProvidersTitle')}</CardTitle>
+                <CardDescription>{t('ai.yourProvidersDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <AiProviderManager
+                  providers={aiProviders}
+                  onChange={(next) => {
+                    setAiProviders(next);
+                    // A removed provider must not stay selected: the backend would
+                    // reject the id, and the message would arrive at generation
+                    // time rather than here.
+                    if (!next.some((p) => p.id === aiProvider) && !PROVIDER_LABELS[aiProvider]) {
+                      setAiProvider('anthropic');
+                    }
+                  }}
+                  reservedIds={[...CLOUD_PROVIDERS, ...LOCAL_AGENTS]}
+                />
+              </CardContent>
+            </Card>
 
             <Card className="xl:col-span-2">
               <CardHeader>

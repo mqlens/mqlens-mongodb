@@ -17,10 +17,34 @@
     "localCommandLabel": "Command (use {prompt} for the prompt)",
     "model": "Model",
     "notDetected": "✗ Not detected on PATH — install it or set an absolute path below.",
+    "providerAdd": "Add provider",
+    "providerApiKey": "API key",
+    "providerApiKeyHint": "Leave empty for local servers that do not check credentials.",
+    "providerBaseUrl": "Endpoint",
+    "providerBaseUrlHint": "The base URL, e.g. https://api.deepseek.com/v1. Pasting the full path also works.",
+    "providerCancel": "Cancel",
+    "providerCommand": "Command",
+    "providerCommandHint": "Must contain {prompt}, which is replaced with the request.",
     "providerDescription": "Choose a cloud API or a local agent CLI for the query assistant.",
+    "providerEdit": "Edit",
+    "providerKind": "API format",
+    "providerKinds": {
+      "anthropic-compatible": "Anthropic-compatible",
+      "local-cli": "Local command",
+      "openai-compatible": "OpenAI-compatible"
+    },
+    "providerModel": "Model",
+    "providerName": "Name",
+    "providerPreset": "Start from",
+    "providerPresetHint": "Fills in the endpoint for you. Every field stays editable.",
+    "providerPresetPlaceholder": "Pick a known service…",
+    "providerRemove": "Remove provider",
+    "providerSave": "Save provider",
     "providerTitle": "Provider",
     "tabDescription": "Cloud API keys, local agents, custom query instructions, and AI Helper history retention.",
-    "tabLabel": "AI Assistant"
+    "tabLabel": "AI Assistant",
+    "yourProvidersDescription": "Add any service that speaks the OpenAI or Anthropic API — DeepSeek, OpenRouter, Groq, a local Ollama — or a local command-line agent. Keys are stored in your vault.",
+    "yourProvidersTitle": "Your providers"
   },
   "appearance": {
     "colorMode": "Color mode",
@@ -116,6 +140,8 @@
     "tabLabel": "Language"
   },
   "mcp": {
+    "agentPromptDescription": "MQLens sends these to any connected MCP client. Copy them into an external agent that cannot read them automatically.",
+    "agentPromptTitle": "Agent instructions",
     "bearerToken": "Bearer token",
     "callLogDescription": "Last 200 tool calls, newest first.",
     "callLogEmpty": "No tool calls yet.",

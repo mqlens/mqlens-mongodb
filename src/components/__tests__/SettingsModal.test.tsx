@@ -395,4 +395,109 @@ describe('SettingsView Component', () => {
       expect(await screen.findByText(/falls back to English/i)).toBeInTheDocument();
     });
   });
+
+  describe('configurable AI providers (#283)', () => {
+    const deepseek = {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      kind: 'openai-compatible',
+      base_url: 'https://api.deepseek.com/v1',
+      api_key: 'k',
+      model: 'deepseek-chat',
+      command: '',
+    };
+
+    it('offers a saved provider alongside the built-ins', async () => {
+      mockInvoke.mockImplementation((cmd) => {
+        if (cmd === 'load_app_settings') {
+          return Promise.resolve({ ai_provider: 'deepseek', ai_providers: [deepseek] });
+        }
+        if (cmd === 'ai_provider_presets') return Promise.resolve([]);
+        return Promise.resolve();
+      });
+      renderSettings();
+      await openTab('settings-tab-ai');
+
+      // Listed for management...
+      expect(await screen.findByTestId('ai-provider-row-deepseek')).toHaveTextContent('DeepSeek');
+      // ...and selectable as the active provider.
+      expect(await screen.findByTestId('ai-provider-select')).toHaveTextContent('DeepSeek');
+    });
+
+    it('saves the provider list back into settings', async () => {
+      mockInvoke.mockImplementation((cmd) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({ ai_providers: [deepseek] });
+        if (cmd === 'ai_provider_presets') return Promise.resolve([]);
+        if (cmd === 'validate_ai_provider') return Promise.resolve('ok');
+        return Promise.resolve();
+      });
+      renderSettings();
+      await openTab('settings-tab-ai');
+      await screen.findByTestId('ai-provider-row-deepseek');
+
+      fireEvent.click(screen.getByTestId('settings-save-btn'));
+      await waitFor(() => {
+        const save = mockInvoke.mock.calls.find(([cmd]) => cmd === 'save_app_settings');
+        expect(save).toBeTruthy();
+        expect(save![1].settings.ai_providers).toEqual([deepseek]);
+      });
+    });
+
+    it('does not leave a removed provider selected', async () => {
+      // The backend rejects an unknown id, and that error would otherwise only
+      // appear the next time the user asked for a query.
+      mockInvoke.mockImplementation((cmd) => {
+        if (cmd === 'load_app_settings') {
+          return Promise.resolve({ ai_provider: 'deepseek', ai_providers: [deepseek] });
+        }
+        if (cmd === 'ai_provider_presets') return Promise.resolve([]);
+        return Promise.resolve();
+      });
+      renderSettings();
+      await openTab('settings-tab-ai');
+      await screen.findByTestId('ai-provider-row-deepseek');
+      expect(screen.getByTestId('ai-provider-select')).toHaveTextContent('DeepSeek');
+
+      fireEvent.click(screen.getByTestId('ai-provider-remove-deepseek'));
+      await waitFor(() =>
+        expect(screen.getByTestId('ai-provider-select')).not.toHaveTextContent('DeepSeek')
+      );
+    });
+  });
+
+  describe('MCP agent instructions (#283)', () => {
+    it('shows the instructions the server sends, for pasting elsewhere', async () => {
+      mockInvoke.mockImplementation((cmd) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({});
+        if (cmd === 'mcp_agent_instructions') {
+          return Promise.resolve('WORK IN THIS ORDER. 1. `ping`');
+        }
+        if (cmd === 'mcp_status') {
+          return Promise.resolve({ enabled: false, port: 8765, token: '', running: false });
+        }
+        return Promise.resolve();
+      });
+      renderSettings();
+      await openTab('settings-tab-mcp');
+
+      const prompt = await screen.findByTestId('mcp-agent-prompt');
+      expect(prompt).toHaveTextContent('WORK IN THIS ORDER');
+      expect(screen.getByTestId('mcp-agent-prompt-copy')).toBeInTheDocument();
+    });
+
+    it('hides the panel rather than showing an empty box when they cannot be read', async () => {
+      mockInvoke.mockImplementation((cmd) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({});
+        if (cmd === 'mcp_agent_instructions') return Promise.reject('nope');
+        if (cmd === 'mcp_status') {
+          return Promise.resolve({ enabled: false, port: 8765, token: '', running: false });
+        }
+        return Promise.resolve();
+      });
+      renderSettings();
+      await openTab('settings-tab-mcp');
+
+      await waitFor(() => expect(screen.queryByTestId('mcp-agent-prompt')).not.toBeInTheDocument());
+    });
+  });
 });

@@ -19,7 +19,31 @@
     "providerDescription": "为查询助手选择云端 API 或本地代理命令行工具。",
     "providerTitle": "服务商",
     "tabDescription": "云端 API 密钥、本地代理、自定义查询指令，以及 AI 助手历史记录的保留时长。",
-    "tabLabel": "AI 助手"
+    "tabLabel": "AI 助手",
+    "yourProvidersTitle": "你的提供方",
+    "yourProvidersDescription": "添加任何使用 OpenAI 或 Anthropic API 的服务——DeepSeek、OpenRouter、Groq、本地 Ollama——或本地命令行代理。密钥保存在你的保险库中。",
+    "providerAdd": "添加提供方",
+    "providerEdit": "编辑",
+    "providerRemove": "移除提供方",
+    "providerSave": "保存提供方",
+    "providerCancel": "取消",
+    "providerPreset": "以此为起点",
+    "providerPresetPlaceholder": "选择已知服务…",
+    "providerPresetHint": "自动填入端点。所有字段仍可编辑。",
+    "providerName": "名称",
+    "providerKind": "API 格式",
+    "providerBaseUrl": "端点",
+    "providerBaseUrlHint": "基础 URL，例如 https://api.deepseek.com/v1。粘贴完整路径也可以。",
+    "providerModel": "模型",
+    "providerApiKey": "API 密钥",
+    "providerApiKeyHint": "对于不校验凭据的本地服务器，可留空。",
+    "providerCommand": "命令",
+    "providerCommandHint": "必须包含 {prompt}，它会被替换为请求内容。",
+    "providerKinds": {
+      "openai-compatible": "OpenAI 兼容",
+      "anthropic-compatible": "Anthropic 兼容",
+      "local-cli": "本地命令"
+    }
   },
   "audit": {
     "enabledDescription": "启用后，MQLens 会将选定的数据库操作记录到经密钥库加密的本地日志中。",
@@ -139,7 +163,9 @@
     "tabDescription": "用于 AI 工具集成的 Model Context Protocol 服务器。",
     "tabLabel": "MCP",
     "title": "MCP 服务器",
-    "tokenRegeneratedNote": "令牌已重新生成 —— 现有客户端需要更新为新令牌。"
+    "tokenRegeneratedNote": "令牌已重新生成 —— 现有客户端需要更新为新令牌。",
+    "agentPromptTitle": "代理说明",
+    "agentPromptDescription": "MQLens 会将这些说明发送给任何已连接的 MCP 客户端。对于无法自动读取的外部代理，请复制粘贴。"
   },
   "nav": {
     "sectionsAriaLabel": "设置分区",
