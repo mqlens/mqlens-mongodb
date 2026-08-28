@@ -430,8 +430,11 @@ mod rotation_lock_tests {
             "the live reason must survive the refusal"
         );
 
-        // And once the other instance lets go, rotation can proceed.
-        owner.close();
+        // And once the other instance lets go, rotation can proceed. `close`
+        // returns a Result; a failure here must fail the test, or the assertion
+        // below could pass because the lock leaked rather than because it was
+        // released.
+        owner.close().expect("owner releases the log");
         assert!(hold_for_rotation_at(&state, path).is_ok());
     }
 }
