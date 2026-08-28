@@ -49,6 +49,11 @@ interface ProviderPreset {
   needsKey: boolean;
 }
 
+/** Select item that hands the field back to free typing. */
+const TYPE_MODEL = '__type_a_model__';
+/** Select item standing for a typed model the provider did not list. */
+const CURRENT_MODEL = '__current_model__';
+
 export const PROVIDER_KINDS: ProviderKind[] = [
   'openai-compatible',
   'anthropic-compatible',
@@ -108,6 +113,11 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
   const [models, setModels] = useState<string[]>([]);
   const [modelsStatus, setModelsStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
   const [modelsError, setModelsError] = useState<string>('');
+  // A real dropdown once models are known. `<datalist>` was tried first and is
+  // barely surfaced by WKWebView, which is what the app runs in — the user saw
+  // "3 models available" and nothing to pick from. Free typing is kept behind a
+  // "Type a name…" item so a model missing from the list is still reachable.
+  const [modelMode, setModelMode] = useState<'pick' | 'type'>('type');
   const loadSeq = useRef(0);
 
   const openDraft = useCallback((p: AiProvider) => {
@@ -116,6 +126,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
     setModels([]);
     setModelsStatus('idle');
     setModelsError('');
+    setModelMode('type');
   }, []);
 
   const loadModels = useCallback(async (p: AiProvider) => {
@@ -123,10 +134,12 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
     setModelsStatus('loading');
     setModelsError('');
     try {
-      const list = await invoke<string[]>('list_ai_models', { provider: p });
+      const raw = await invoke<unknown>('list_ai_models', { provider: p });
       if (seq !== loadSeq.current) return; // a newer request superseded this one
+      const list = Array.isArray(raw) ? raw.filter((m): m is string => typeof m === 'string') : [];
       setModels(list);
       setModelsStatus('loaded');
+      if (list.length > 0) setModelMode('pick');
     } catch (e) {
       if (seq !== loadSeq.current) return;
       setModels([]);
@@ -393,20 +406,48 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
                 {t('ai.providerModelsLoad')}
               </Button>
             </div>
-            <Input
-              id="ai-provider-model"
-              className="font-mono"
-              list="ai-provider-models"
-              value={draft.model}
-              onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-              placeholder={isCli ? 'llama3' : 'deepseek-chat'}
-              data-testid="ai-provider-model-input"
-            />
-            <datalist id="ai-provider-models" data-testid="ai-provider-models-list">
-              {models.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
+            {modelMode === 'pick' && models.length > 0 ? (
+              <Select
+                value={draft.model && models.includes(draft.model) ? draft.model : draft.model ? CURRENT_MODEL : ''}
+                onValueChange={(v) => {
+                  if (v === TYPE_MODEL) {
+                    setModelMode('type');
+                    return;
+                  }
+                  if (v === CURRENT_MODEL) return;
+                  setDraft({ ...draft, model: v });
+                }}
+              >
+                <SelectTrigger className="font-mono" data-testid="ai-provider-model-select">
+                  <SelectValue placeholder={isCli ? 'llama3' : 'deepseek-chat'} />
+                </SelectTrigger>
+                <SelectContent data-testid="ai-provider-model-options">
+                  {/* A model typed earlier that the provider did not list stays selectable. */}
+                  {draft.model && !models.includes(draft.model) && (
+                    <SelectItem value={CURRENT_MODEL} className="font-mono">
+                      {draft.model}
+                    </SelectItem>
+                  )}
+                  {models.map((m) => (
+                    <SelectItem key={m} value={m} className="font-mono">
+                      {m}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={TYPE_MODEL} data-testid="ai-provider-model-type-own">
+                    {t('ai.providerModelTypeOwn')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                id="ai-provider-model"
+                className="font-mono"
+                value={draft.model}
+                onChange={(e) => setDraft({ ...draft, model: e.target.value })}
+                placeholder={isCli ? 'llama3' : 'deepseek-chat'}
+                data-testid="ai-provider-model-input"
+              />
+            )}
             <p className="text-xs text-muted-foreground" data-testid="ai-provider-models-status">
               {modelsStatus === 'loading' && t('ai.providerModelsLoading')}
               {modelsStatus === 'loaded' && t('ai.providerModelsLoaded', { count: models.length })}

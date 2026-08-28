@@ -43,6 +43,7 @@
     "providerModelsLoaded_one": "{{count}} model available — pick one or type a name.",
     "providerModelsLoaded_other": "{{count}} models available — pick one or type a name.",
     "providerModelsLoading": "Asking the provider for its models…",
+    "providerModelTypeOwn": "Type a model name…",
     "providerName": "Name",
     "providerPreset": "Start from",
     "providerPresetHint": "Fills in the endpoint for you. Every field stays editable.",

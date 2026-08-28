@@ -205,10 +205,10 @@ describe('AiProviderManager', () => {
   });
 
   describe('model listing', () => {
-    const listedOptions = () =>
-      Array.from(screen.getByTestId('ai-provider-models-list').querySelectorAll('option')).map(
-        (o) => (o as HTMLOptionElement).value
-      );
+    // Radix Select renders its items only while open, and jsdom cannot open it,
+    // so "the models were offered" is observed as: the field became a dropdown
+    // and the status reports the count.
+    const dropdownShown = () => screen.queryByTestId('ai-provider-model-select') !== null;
 
     it('loads models once the endpoint and key are set, without a click', async () => {
       setup();
@@ -218,8 +218,9 @@ describe('AiProviderManager', () => {
       });
       fireEvent.change(screen.getByTestId('ai-provider-key-input'), { target: { value: 'sk-test' } });
 
-      await waitFor(() => expect(listedOptions()).toEqual(['gpt-4o', 'gpt-4o-mini']));
+      await waitFor(() => expect(dropdownShown()).toBe(true));
       expect(screen.getByTestId('ai-provider-models-status')).toHaveTextContent('2 models');
+      expect(screen.queryByTestId('ai-provider-model-input')).not.toBeInTheDocument();
       const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'list_ai_models');
       expect(call![1].provider).toMatchObject({ base_url: 'https://api.openai.com/v1', api_key: 'sk-test' });
     });
@@ -260,7 +261,7 @@ describe('AiProviderManager', () => {
       await waitFor(() =>
         expect(screen.getByTestId('ai-provider-models-status')).toHaveTextContent('invalid key')
       );
-      expect(listedOptions()).toEqual([]);
+      expect(dropdownShown()).toBe(false);
 
       // Nothing about the failure blocks the user.
       fireEvent.change(screen.getByTestId('ai-provider-model-input'), { target: { value: 'deepseek-chat' } });
@@ -280,7 +281,8 @@ describe('AiProviderManager', () => {
       ]);
       fireEvent.click(screen.getByTestId('ai-provider-edit-oc'));
 
-      await waitFor(() => expect(listedOptions()).toEqual(['llama3:latest', 'mistral:7b']));
+      await waitFor(() => expect(dropdownShown()).toBe(true));
+      expect(screen.getByTestId('ai-provider-model-select')).toHaveTextContent('llama3');
       const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'list_ai_models');
       expect(call![1].provider).toMatchObject({ kind: 'local-cli', models_command: 'ollama list' });
     });
