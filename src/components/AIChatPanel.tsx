@@ -582,6 +582,19 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const onClipboard = imageFilesFromClipboard(e.clipboardData?.items ?? null);
     if (onClipboard.length === 0) return; // plain text: let the textarea take it
+    // Decided before `preventDefault`, not after the read. Suppressing the paste
+    // and *then* discovering in the async continuation that images are not
+    // accepted swallowed it in silence — nothing attached and nothing said.
+    if (providerTakesImages !== true) {
+      if (providerTakesImages === false) {
+        // A known CLI: refusing is the answer, so take the paste and explain it.
+        e.preventDefault();
+        setImageNote(t('aiChatPanel.composer.noImagesForCli'));
+      }
+      // Capability still unknown: this paste is not ours to claim, and the attach
+      // control is disabled for the same reason. Left untouched rather than eaten.
+      return;
+    }
     // Before the first await, or the browser pastes any accompanying text.
     e.preventDefault();
     const { accepted, reason } = triageImages(onClipboard);

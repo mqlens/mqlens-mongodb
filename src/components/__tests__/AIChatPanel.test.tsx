@@ -1190,7 +1190,15 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
 
     // The attach control is disabled, and a paste attaches nothing.
     expect(screen.getByTestId('chat-attach-btn')).toBeDisabled();
-    pasteImage(screen.getByTestId('chat-input'));
+    // The paste is also left alone rather than swallowed: suppressing it and only
+    // then finding out images are not accepted lost it in silence.
+    const notOurs = new Event('paste', { bubbles: true, cancelable: true }) as any;
+    const held = new File([new Uint8Array(3)], 'shot.png', { type: 'image/png' });
+    notOurs.clipboardData = {
+      items: [{ kind: 'file', type: 'image/png', getAsFile: () => held }],
+    };
+    fireEvent(screen.getByTestId('chat-input'), notOurs);
+    expect(notOurs.defaultPrevented).toBe(false);
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
     // ...and no note either: the user was not offered anything to be refused.

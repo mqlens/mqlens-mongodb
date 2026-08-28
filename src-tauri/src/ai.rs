@@ -156,6 +156,15 @@ pub fn extract_openai_reasoning(resp: &serde_json::Value) -> Option<String> {
 }
 
 /// `thinking` blocks from an Anthropic response, joined.
+///
+/// Opportunistic: this request does **not** ask for extended thinking, so a
+/// stock Anthropic reply carries no `thinking` blocks and this returns `None`.
+/// It reads them when they are there — a gateway or proxy configured to enable
+/// thinking upstream — and the collapsible in the panel is populated from
+/// `notes` (the model's prose before the JSON) for every provider regardless.
+/// Enabling thinking here would mean sending a `thinking` field to arbitrary
+/// Anthropic-*compatible* endpoints, which is a change to make deliberately and
+/// against the current API contract, not as a side effect of adding a parser.
 pub fn extract_anthropic_thinking(resp: &serde_json::Value) -> Option<String> {
     let joined = resp
         .get("content")?
@@ -169,6 +178,10 @@ pub fn extract_anthropic_thinking(resp: &serde_json::Value) -> Option<String> {
 }
 
 /// Parts a Gemini response flags with `thought: true`, joined.
+///
+/// Opportunistic, for the same reason as `extract_anthropic_thinking`: this
+/// request does not enable thought summaries, so a stock reply carries no
+/// `thought` parts. The panel's collapsible is fed by `notes` in that case.
 pub fn extract_gemini_thoughts(resp: &serde_json::Value) -> Option<String> {
     let parts = resp
         .get("candidates")?
