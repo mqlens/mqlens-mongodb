@@ -7,6 +7,20 @@ import { resetOpenChats } from '../../lib/aiChatStore';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+// The panel re-reads its provider list on the backend's `ai-providers-changed`
+// broadcast. Captured here so a test can fire it, and so the real `listen` is
+// not reached in jsdom.
+const providerListeners: Array<() => void> = [];
+vi.mock('../../workspace/workspaceStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../workspace/workspaceStore')>()),
+  subscribeAiProvidersChanged: (fn: () => void) => {
+    providerListeners.push(fn);
+    return Promise.resolve(() => {
+      const i = providerListeners.indexOf(fn);
+      if (i >= 0) providerListeners.splice(i, 1);
+    });
+  },
+}));
 
 vi.mock('@/components/ui/dropdown-menu', () => {
   const Ctx = React.createContext<{ open: boolean; setOpen: (v: boolean) => void } | null>(null);
@@ -927,6 +941,41 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     await screen.findByTestId('chat-image-note');
     expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/cannot receive images/);
     expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
+  });
+
+  it('re-reads its provider list when settings change elsewhere', async () => {
+    // Settings can be open in another pane or window. The list was fetched once,
+    // so deleting the selected provider there left its id selected here and the
+    // next request failed with "Unknown AI provider" until the panel remounted.
+    let options = OPTIONS;
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'ai_provider_options'
+        ? Promise.resolve(options)
+        : cmd.endsWith('_chat') || cmd.endsWith('_chats')
+          ? Promise.resolve(chatBackend(cmd, {}))
+          : cmd === 'list_ai_models_for'
+            ? Promise.resolve([])
+            : Promise.resolve({ query: '{}' }),
+    );
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    await pickProvider('DeepSeek');
+    await waitFor(() =>
+      expect(screen.getByTestId('ai-chat-provider-select')).toHaveTextContent('DeepSeek'),
+    );
+
+    // DeepSeek is deleted in Settings, which broadcasts.
+    options = OPTIONS.filter((o) => o.name !== 'DeepSeek');
+    expect(providerListeners).not.toHaveLength(0);
+    await act(async () => {
+      providerListeners.forEach((fn) => fn());
+    });
+
+    // The selection falls back to the default rather than naming a provider the
+    // backend no longer knows.
+    await waitFor(() =>
+      expect(screen.getByTestId('ai-chat-provider-select')).not.toHaveTextContent('DeepSeek'),
+    );
   });
 
   it('reads only as many images as can be attached, and still says why', async () => {

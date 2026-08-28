@@ -119,6 +119,18 @@ export function subscribeWorkspaceChanged(
   return listen<WorkspaceChangedPayload>('workspace-changed', (event) => listener(event.payload));
 }
 
+/**
+ * Subscribe to the backend's `ai-providers-changed` broadcast, fired after every
+ * settings write. Same shape/contract as `subscribeWorkspaceChanged`.
+ *
+ * No payload: the listener re-reads `ai_provider_options`, which resolves the
+ * default and the per-provider `usesModel` flag backend-side. Sending the list
+ * would put a second, differently-shaped copy of that logic on the wire.
+ */
+export function subscribeAiProvidersChanged(listener: () => void): Promise<UnlistenFn> {
+  return listen('ai-providers-changed', () => listener());
+}
+
 /** Wire shape of the `connections-changed` broadcast (src-tauri/src/state.rs's `ConnectionsChangedPayload`). */
 export interface ConnectionEntry {
   id: string;

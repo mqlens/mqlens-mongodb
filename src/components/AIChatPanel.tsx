@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { subscribeAiProvidersChanged } from '../workspace/workspaceStore';
 import { buildRunnableCommand, type GeneratedQuery } from '../lib/mongoCommand';
 import {
   getPendingChatRequest,
@@ -308,24 +309,43 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // Whether choosing a model here changes the request at all.
   const modelApplies = activeProvider ? activeProvider.kind !== 'local-cli' || activeProvider.usesModel : true;
 
+  // Re-read on mount and after any settings write. One-shot was not enough:
+  // Settings can be open in another pane or window, and adding, removing or
+  // re-defaulting a provider there left this list stale — the removed provider
+  // stayed selectable and the next request failed with "Unknown AI provider"
+  // until the panel remounted. The fallback effect above then reconciles the
+  // selection, since it re-runs when this array changes.
   useEffect(() => {
     let live = true;
-    invoke<unknown>('ai_provider_options')
-      .then((raw) => {
-        if (!live) return;
-        // Guard the IPC boundary: a malformed reply should mean "no picker",
-        // never a panel that fails to render.
-        const opts = Array.isArray(raw) ? (raw as ProviderOption[]) : [];
-        setProviderOptions(opts);
-        // Only adopt the default when nothing has chosen one yet — a restored
-        // chat may already have set its own.
-        setChatProviderId((cur) => cur ?? opts.find((o) => o.isDefault)?.id ?? opts[0]?.id ?? null);
+    const load = () => {
+      invoke<unknown>('ai_provider_options')
+        .then((raw) => {
+          if (!live) return;
+          // Guard the IPC boundary: a malformed reply should mean "no picker",
+          // never a panel that fails to render.
+          const opts = Array.isArray(raw) ? (raw as ProviderOption[]) : [];
+          setProviderOptions(opts);
+          // Only adopt the default when nothing has chosen one yet — a restored
+          // chat may already have set its own.
+          setChatProviderId((cur) => cur ?? opts.find((o) => o.isDefault)?.id ?? opts[0]?.id ?? null);
+        })
+        // Without the list the panel still works on the settings default: the
+        // backend falls back to it whenever no providerId is sent.
+        .catch(() => {});
+    };
+    load();
+    // Unlisten immediately if this mount is already gone by the time the
+    // subscription resolves, as App.tsx's listeners do under StrictMode.
+    let unlisten: (() => void) | null = null;
+    subscribeAiProvidersChanged(load)
+      .then((off) => {
+        if (live) unlisten = off;
+        else off();
       })
-      // Without the list the panel still works on the settings default: the
-      // backend falls back to it whenever no providerId is sent.
       .catch(() => {});
     return () => {
       live = false;
+      unlisten?.();
     };
   }, []);
 

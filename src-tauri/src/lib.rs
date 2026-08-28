@@ -2483,6 +2483,13 @@ async fn patch_app_settings(
     let merged = connections::merge_settings_patch(&current, &patch)?;
     connections::save_settings_encrypted(&path, &key, &merged)?;
     audit::refresh_policy_from_settings(&state, &merged);
+    // Every window keeps its own copy of the provider list; without this, a panel
+    // in another pane or window holds a stale one, and deleting the provider it
+    // has selected leaves that id selectable until the panel remounts.
+    // Best-effort, like `connections-changed`: a window that misses it re-reads
+    // the list on its next mount.
+    use tauri::Emitter;
+    let _ = app_handle.emit("ai-providers-changed", ());
     Ok(merged)
 }
 
@@ -2502,6 +2509,14 @@ async fn save_app_settings(
         &settings,
     )?;
     audit::refresh_policy_from_settings(&state, &settings);
+    // Every window keeps its own copy of the provider list; without this, a panel
+    // in another pane or window holds a stale one, and deleting the provider it
+    // has selected leaves that id selectable until the panel remounts.
+    // Best-effort, like `connections-changed`: a window that misses it re-reads
+    // the list on its next mount.
+    use tauri::Emitter;
+    let _ = app_handle.emit("ai-providers-changed", ());
+
     Ok(())
 }
 
