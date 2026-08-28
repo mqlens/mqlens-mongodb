@@ -24,7 +24,7 @@
     "providerBaseUrlHint": "The base URL, e.g. https://api.deepseek.com/v1. Pasting the full path also works.",
     "providerCancel": "Cancel",
     "providerCommand": "Command",
-    "providerCommandHint": "Must contain {prompt}, which is replaced with the request.",
+    "providerCommandHint": "Where the request goes. If {prompt} is omitted, the request is appended as the last argument.",
     "providerDescription": "Choose a cloud API or a local agent CLI for the query assistant.",
     "providerEdit": "Edit",
     "providerKind": "API format",

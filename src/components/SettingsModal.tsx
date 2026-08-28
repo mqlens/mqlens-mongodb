@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState , useRef} from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import {
@@ -722,24 +722,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   const localCommandFor = (agent: string) =>
     localCommands[agent] ?? DEFAULT_LOCAL_COMMANDS[agent] ?? '{prompt}';
 
+  // Every settings write goes through one queue. Both the automatic provider
+  // persist and the form's Save do load → merge → write; run concurrently, the
+  // one that finishes last wins with whatever stale copy it loaded, resurrecting
+  // an old list or undoing an unrelated field the other had just changed.
+  const settingsWriteQueue = useRef<Promise<void>>(Promise.resolve());
+  const enqueueSettingsWrite = (write: () => Promise<void>) => {
+    const run = settingsWriteQueue.current.then(write, write);
+    settingsWriteQueue.current = run.catch(() => {});
+    return run;
+  };
+
   // Writes the provider list (and the active choice) without waiting for the
   // form's Save. Everything else on the form still saves the normal way.
-  const persistProviders = async (next: AiProvider[], active: string) => {
-    try {
-      const current = await invoke<AppSettings>('load_app_settings');
-      await invoke('save_app_settings', {
-        settings: { ...current, ai_providers: next, ai_provider: active },
-      });
-    } catch (e) {
-      setError(t('ai.providerSaveFailed', { error: String(e) }));
-    }
-  };
+  const persistProviders = (next: AiProvider[], active: string) =>
+    enqueueSettingsWrite(async () => {
+      try {
+        const current = await invoke<AppSettings>('load_app_settings');
+        await invoke('save_app_settings', {
+          settings: { ...current, ai_providers: next, ai_provider: active },
+        });
+      } catch (e) {
+        setError(t('ai.providerSaveFailed', { error: String(e) }));
+      }
+    });
 
   const saveSettings = async () => {
     setSaving(true);
     setError(null);
     setStatus(null);
     try {
+      await enqueueSettingsWrite(async () => {
       const current = await invoke<AppSettings>('load_app_settings');
       await invoke('save_app_settings', {
         settings: {
@@ -762,6 +775,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
           audit_include_payloads: auditIncludePayloads,
           update_channel: updateChannel,
         },
+      });
       });
       saveAiHistoryRetentionMonths(historyRetentionMonths);
       setStatus(t('footer.settingsSaved'));

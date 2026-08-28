@@ -38,7 +38,7 @@
     "providerApiKey": "API 密钥",
     "providerApiKeyHint": "对于不校验凭据的本地服务器，可留空。",
     "providerCommand": "命令",
-    "providerCommandHint": "必须包含 {prompt}，它会被替换为请求内容。",
+    "providerCommandHint": "请求插入的位置。若省略 {prompt}，请求会作为最后一个参数附加。",
     "providerKinds": {
       "openai-compatible": "OpenAI 兼容",
       "anthropic-compatible": "Anthropic 兼容",

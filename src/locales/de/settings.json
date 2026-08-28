@@ -39,7 +39,7 @@
     "providerApiKey": "API-Schlüssel",
     "providerApiKeyHint": "Für lokale Server, die keine Zugangsdaten prüfen, leer lassen.",
     "providerCommand": "Befehl",
-    "providerCommandHint": "Muss {prompt} enthalten — das wird durch die Anfrage ersetzt.",
+    "providerCommandHint": "Wo die Anfrage eingesetzt wird. Fehlt {prompt}, wird die Anfrage als letztes Argument angehängt.",
     "providerKinds": {
       "openai-compatible": "OpenAI-kompatibel",
       "anthropic-compatible": "Anthropic-kompatibel",

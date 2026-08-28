@@ -306,14 +306,10 @@ impl AiProvider {
                 if self.command.trim().is_empty() {
                     return Err(format!("{} needs a command.", self.name));
                 }
-                // Substitution happens inside a token too (`--prompt={prompt}`), so
-                // the check is a plain `contains`, matching what the parser does.
-                if !self.command.contains("{prompt}") {
-                    return Err(format!(
-                        "{}'s command must contain {{prompt}}, which is replaced with the request.",
-                        self.name
-                    ));
-                }
+                // No `{prompt}` requirement: the parser appends the request as the
+                // last argument when the placeholder is absent, and saved built-in
+                // overrides such as `codex exec` have relied on that since before
+                // placeholders existed. Requiring it here broke them on upgrade.
                 // A template that slots the model in needs one to slot.
                 if self.command.contains("{model}") && self.model.trim().is_empty() {
                     return Err(format!(
@@ -434,11 +430,13 @@ mod tests {
     }
 
     #[test]
-    fn a_command_without_the_placeholder_is_refused() {
+    fn a_command_without_the_placeholder_is_accepted_because_the_parser_appends() {
+        // `codex exec` is a real saved override from before placeholders existed.
         let mut p = provider(ProviderKind::LocalCli, "");
-        p.command = "opencode run".into();
-        let err = p.validate().unwrap_err();
-        assert!(err.contains("{prompt}"), "{err}");
+        p.command = "codex exec".into();
+        p.validate().expect("legacy template must keep working after upgrade");
+        let (prog, args) = crate::ai::parse_command_template(&p.command, "find users", "").unwrap();
+        assert_eq!((prog.as_str(), args), ("codex", vec!["exec".to_string(), "find users".to_string()]));
     }
 
     #[test]

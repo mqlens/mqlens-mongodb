@@ -67,6 +67,26 @@ export const PROVIDER_KINDS: ProviderKind[] = [
  * does. Otherwise the auto-load that follows would send one vendor's secret to
  * another vendor's endpoint 600 ms after the click — before anything is saved.
  */
+/** `https://api.x.com/v1/chat` → `https://api.x.com`; null while the URL is still being typed. */
+export function originOf(url: string): string | null {
+  const m = url.trim().match(/^(https?:\/\/[^/?#]+)/i);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * The draft with a new endpoint. The key is cleared when the *origin* changes:
+ * the auto-load 600 ms later would otherwise send the old host's key to the new
+ * one. Fixing a path on the same host keeps the key, and so does a URL that has
+ * no host yet — clearing while someone is still typing "https://" would be
+ * infuriating and protects nothing, since nothing loads without a host.
+ */
+export function withEndpoint(prev: AiProvider, base_url: string): AiProvider {
+  const before = originOf(prev.base_url);
+  const after = originOf(base_url);
+  const hostChanged = before !== null && after !== null && before !== after;
+  return { ...prev, base_url, api_key: hostChanged ? '' : prev.api_key };
+}
+
 export function applyPresetToDraft(prev: AiProvider, preset: ProviderPreset): AiProvider {
   const sameEndpoint =
     prev.kind === preset.kind && prev.base_url.trim().replace(/\/+$/, '') === preset.baseUrl.trim().replace(/\/+$/, '');
@@ -347,7 +367,9 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
               <Label>{t('ai.providerKind')}</Label>
               <Select
                 value={draft.kind}
-                onValueChange={(kind) => setDraft({ ...draft, kind: kind as ProviderKind })}
+                onValueChange={(kind) =>
+                  setDraft({ ...draft, kind: kind as ProviderKind, api_key: kind === draft.kind ? draft.api_key : '' })
+                }
               >
                 <SelectTrigger data-testid="ai-provider-kind-select">
                   <SelectValue />
@@ -398,7 +420,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
                   id="ai-provider-url"
                   className="font-mono"
                   value={draft.base_url}
-                  onChange={(e) => setDraft({ ...draft, base_url: e.target.value })}
+                  onChange={(e) => setDraft(withEndpoint(draft, e.target.value))}
                   placeholder="https://api.deepseek.com/v1"
                   data-testid="ai-provider-url-input"
                 />

@@ -462,6 +462,39 @@ describe('SettingsView Component', () => {
       });
     });
 
+    it('serializes the automatic persist behind the form Save so neither overwrites the other', async () => {
+      // Both do load → merge → write. Run concurrently, whichever finishes last
+      // wins with the stale copy it loaded. Here the first load is slow; the
+      // second write must still see the first write's result.
+      let releaseFirstLoad: (v: unknown) => void = () => {};
+      let loads = 0;
+      const writes: any[] = [];
+      let stored: any = { ai_provider: 'anthropic', ai_providers: [deepseek], mongosh_path: '' };
+      mockInvoke.mockImplementation((cmd, args: any) => {
+        if (cmd === 'load_app_settings') {
+          loads += 1;
+          if (loads === 2) return new Promise((res) => { releaseFirstLoad = res; }).then(() => stored);
+          return Promise.resolve(stored);
+        }
+        if (cmd === 'save_app_settings') { stored = args.settings; writes.push(args.settings); return Promise.resolve(); }
+        if (cmd === 'ai_provider_presets') return Promise.resolve([]);
+        return Promise.resolve();
+      });
+      renderSettings();
+      await openTab('settings-tab-ai');
+      await screen.findByTestId('ai-provider-row-deepseek');
+
+      fireEvent.click(screen.getByTestId('ai-provider-remove-deepseek'));   // queued write #1 (slow load)
+      fireEvent.click(screen.getByTestId('settings-save-btn'));            // queued write #2
+      await new Promise((r) => setTimeout(r, 30));
+      expect(writes).toHaveLength(0);                                       // #2 waits for #1
+      releaseFirstLoad(undefined);
+      await waitFor(() => expect(writes).toHaveLength(2));
+      expect(writes[0].ai_providers).toEqual([]);
+      // The form Save loaded AFTER the removal was written, so it keeps it.
+      expect(writes[1].ai_providers).toEqual([]);
+    });
+
     it('does not leave a removed provider selected', async () => {
       // The backend rejects an unknown id, and that error would otherwise only
       // appear the next time the user asked for a query.

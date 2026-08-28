@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { AiProviderManager, applyPresetToDraft, slugify, emptyProvider, type AiProvider } from '../AiProviderManager';
+import { AiProviderManager, applyPresetToDraft, withEndpoint, originOf, slugify, emptyProvider, type AiProvider } from '../AiProviderManager';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -367,6 +367,26 @@ describe('model loading rules', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByTestId('ai-provider-model-select')).not.toBeInTheDocument();
     expect(screen.getByTestId('ai-provider-model-input')).toBeInTheDocument();
+  });
+});
+
+describe('withEndpoint', () => {
+  const keyed = { ...emptyProvider(), base_url: 'https://api.openai.com/v1', api_key: 'sk-openai' };
+  it('clears the key when the host changes, so the auto-load cannot leak it', () => {
+    expect(withEndpoint(keyed, 'https://api.deepseek.com/v1').api_key).toBe('');
+    // The scheme and the port are part of the origin: each is a different recipient.
+    expect(withEndpoint(keyed, 'http://api.openai.com/v1').api_key).toBe('');
+    expect(withEndpoint(keyed, 'https://api.openai.com:8443/v1').api_key).toBe('');
+  });
+  it('keeps the key for a path edit on the same host', () => {
+    expect(withEndpoint(keyed, 'https://api.openai.com/v1/').api_key).toBe('sk-openai');
+    expect(withEndpoint(keyed, 'https://API.openai.com/v1/chat/completions').api_key).toBe('sk-openai');
+  });
+  it('keeps the key while the new URL has no host yet', () => {
+    // Clearing mid-keystroke protects nothing — nothing loads without a host.
+    expect(withEndpoint(keyed, 'https://').api_key).toBe('sk-openai');
+    expect(withEndpoint(keyed, '').api_key).toBe('sk-openai');
+    expect(originOf('https://')).toBeNull();
   });
 });
 });
