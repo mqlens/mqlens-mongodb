@@ -105,6 +105,82 @@ mod tests {
         assert_eq!(args, ["run", "llama3:latest", "find users"]);
     }
 
+    #[tokio::test]
+    async fn a_pasted_key_is_trimmed_before_it_reaches_the_headers() {
+        // Model loading runs on the uncommitted draft, so the trim on the save
+        // path came too late: a key pasted with a trailing newline went out raw
+        // and came back 401, while the same provider worked after saving.
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let served = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let n = sock.read(&mut buf).await.unwrap();
+            let received = String::from_utf8_lossy(&buf[..n]).to_string();
+            let body = br#"{"data":[{"id":"m1"}]}"#;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
+                 content-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            sock.write_all(head.as_bytes()).await.unwrap();
+            sock.write_all(body).await.unwrap();
+            sock.flush().await.unwrap();
+            received
+        });
+
+        let models = crate::ai::list_models_http(
+            crate::ai_providers::ProviderKind::OpenAiCompatible,
+            &format!("http://{addr}/v1/models"),
+            "  sk-padded\n",
+            "Test provider",
+        )
+        .await
+        .expect("the stub answers");
+        assert_eq!(models, ["m1"]);
+
+        let received = served.await.unwrap();
+        assert!(
+            received.contains("Bearer sk-padded\r\n"),
+            "the key must reach the header trimmed on both ends: {received}"
+        );
+    }
+
+    #[test]
+    fn a_custom_provider_aimed_at_a_built_in_cloud_service_still_needs_a_key() {
+        // The presets are what the form offers; OpenAI, Anthropic and Gemini are
+        // reached through their own settings fields and appear in no preset — so
+        // a custom provider pointed at `https://api.openai.com/v1` slipped past
+        // the preset lookup and posted the schema and prompt unauthenticated.
+        use crate::ai_providers::{AiProvider, ProviderKind};
+        let aimed_at = |url: &str| AiProvider {
+            id: "p".into(),
+            name: "My provider".into(),
+            kind: ProviderKind::OpenAiCompatible,
+            base_url: url.into(),
+            api_key: String::new(),
+            model: "m".into(),
+            command: String::new(),
+            models_command: String::new(),
+        };
+        for (url, service) in [
+            ("https://api.openai.com/v1", "OpenAI"),
+            ("https://api.anthropic.com/v1", "Anthropic"),
+            ("https://generativelanguage.googleapis.com/v1beta/models", "Google Gemini"),
+        ] {
+            let err = aimed_at(url).validate().unwrap_err();
+            assert!(err.contains("needs an API key"), "{url}: {err}");
+            assert!(err.contains(service), "the reason names the service: {err}");
+            let mut with_key = aimed_at(url);
+            with_key.api_key = "sk-key".into();
+            with_key.validate().unwrap_or_else(|e| panic!("{url} with a key: {e}"));
+        }
+        // The URLs are the built-in constants, not copies, so they cannot drift.
+        assert!(crate::ai::OPENAI_URL.starts_with("https://api.openai.com/"));
+        assert!(crate::ai::ANTHROPIC_URL.starts_with("https://api.anthropic.com/"));
+    }
+
     #[test]
     fn a_quoted_path_survives_command_parsing() {
         // `split_whitespace` kept the quotes and split the path, so Python got

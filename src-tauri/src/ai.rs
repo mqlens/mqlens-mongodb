@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
+pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// One prior turn of the chat conversation, threaded into the request for context.
@@ -212,7 +212,7 @@ pub fn combined_prompt(system: &str, history: &[ChatTurn], user: &str) -> String
     out
 }
 
-const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
+pub const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
 
 pub fn build_openai_request(
     model: &str,
@@ -254,6 +254,10 @@ pub async fn generate_openai(
         return Err("No OpenAI API key set. Add one in Settings.".to_string());
     }
     let body = build_openai_request(model, system, history, user_prompt);
+    // Trimmed once, here: a pasted key often carries whitespace, and model
+    // loading runs on the uncommitted draft — so the request went out with the
+    // raw value and came back 401 while the same provider worked after saving.
+    let api_key = api_key.trim();
     let client = reqwest::Client::new();
     let resp = client
         .post(OPENAI_URL)
@@ -298,6 +302,10 @@ pub async fn generate_openai_compatible(
     user_prompt: &str,
 ) -> Result<String, String> {
     let body = build_openai_request(model, system, history, user_prompt);
+    // Trimmed once, here: a pasted key often carries whitespace, and model
+    // loading runs on the uncommitted draft — so the request went out with the
+    // raw value and came back 401 while the same provider worked after saving.
+    let api_key = api_key.trim();
     let client = reqwest::Client::new();
     let mut request = client
         .post(endpoint)
@@ -337,6 +345,10 @@ pub async fn generate_anthropic_compatible(
     user_prompt: &str,
 ) -> Result<String, String> {
     let body = build_query_gen_request(model, system, history, user_prompt);
+    // Trimmed once, here: a pasted key often carries whitespace, and model
+    // loading runs on the uncommitted draft — so the request went out with the
+    // raw value and came back 401 while the same provider worked after saving.
+    let api_key = api_key.trim();
     let client = reqwest::Client::new();
     let mut request = client
         .post(endpoint)
@@ -470,6 +482,10 @@ pub async fn list_models_http(
     provider_name: &str,
 ) -> Result<Vec<String>, String> {
     use crate::ai_providers::ProviderKind;
+    // Trimmed once, here: a pasted key often carries whitespace, and model
+    // loading runs on the uncommitted draft — so the request went out with the
+    // raw value and came back 401 while the same provider worked after saving.
+    let api_key = api_key.trim();
     let client = reqwest::Client::new();
     let mut request = client.get(endpoint);
     if !api_key.trim().is_empty() {
@@ -616,6 +632,10 @@ pub async fn generate_gemini(
         return Err("No Google Gemini API key set. Add one in Settings.".to_string());
     }
     let body = build_gemini_request(system, history, user_prompt);
+    // Trimmed once, here: a pasted key often carries whitespace, and model
+    // loading runs on the uncommitted draft — so the request went out with the
+    // raw value and came back 401 while the same provider worked after saving.
+    let api_key = api_key.trim();
     let client = reqwest::Client::new();
     let resp = client
         .post(gemini_url(model))
@@ -813,6 +833,10 @@ pub async fn generate_anthropic(
         return Err("No Anthropic API key set. Add one in Settings to use the query assistant.".to_string());
     }
     let body = build_query_gen_request(model, system, history, user_prompt);
+    // Trimmed once, here: a pasted key often carries whitespace, and model
+    // loading runs on the uncommitted draft — so the request went out with the
+    // raw value and came back 401 while the same provider worked after saving.
+    let api_key = api_key.trim();
     let client = reqwest::Client::new();
     let resp = client
         .post(ANTHROPIC_URL)

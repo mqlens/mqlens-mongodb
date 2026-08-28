@@ -286,19 +286,46 @@ fn origin_of(url: &str) -> Option<String> {
     })
 }
 
-/// The preset serving `base_url`'s origin, if that service authenticates.
+/// The cloud services reached through the dedicated built-in fields rather than
+/// a preset, so a custom provider aimed at the same origin is held to the same
+/// rule. Referenced, not re-spelled, so the URLs cannot drift apart.
+const BUILT_IN_AUTHENTICATED: &[(&str, &str)] = &[
+    (crate::ai::OPENAI_URL, "OpenAI"),
+    (crate::ai::ANTHROPIC_URL, "Anthropic"),
+    (
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        "Google Gemini",
+    ),
+];
+
+/// The name of the service at `base_url`'s origin, if it authenticates requests.
 ///
-/// Checked here and not only in the form: the form derives the requirement from
-/// `ai_provider_presets`, which is fetched asynchronously and falls back to an
-/// empty list when the call fails, so the guard failed open exactly when it was
-/// least able to notice — a known cloud endpoint saved with no key, and the
-/// schema and prompt then sent to it unauthenticated. Unknown endpoints stay
-/// keyless: only origins this app ships a preset for are held to it.
-fn preset_needing_key(base_url: &str) -> Option<&'static ProviderPreset> {
+/// Checked in the backend and not only in the form: the form derives the
+/// requirement from `ai_provider_presets`, which is fetched asynchronously and
+/// falls back to an empty list when the call fails, so the guard failed open
+/// exactly when it was least able to notice — a known cloud endpoint saved with
+/// no key, and the schema and prompt then sent to it unauthenticated.
+///
+/// Both lists, because neither is complete on its own: the presets are what the
+/// form offers, while OpenAI, Anthropic and Gemini are reached through their own
+/// settings fields and appear in no preset. A custom provider pointed at
+/// `https://api.openai.com/v1` was therefore not covered by the preset lookup.
+///
+/// Endpoints on neither list stay keyless: a private gateway or a LAN server must
+/// remain usable, so only origins this app knows to authenticate are held to it.
+fn authenticated_service(base_url: &str) -> Option<&'static str> {
     let origin = origin_of(base_url)?;
+    let same_origin = |url: &str| origin_of(url).as_deref() == Some(origin.as_str());
     PRESETS
         .iter()
-        .find(|p| p.needs_key && origin_of(p.base_url).as_deref() == Some(origin.as_str()))
+        .find(|p| p.needs_key && same_origin(p.base_url))
+        .map(|p| p.name)
+        .or_else(|| {
+            BUILT_IN_AUTHENTICATED
+                .iter()
+                .find(|(url, _)| same_origin(url))
+                .map(|(_, name)| *name)
+        })
 }
 
 impl AiProvider {
@@ -376,12 +403,12 @@ impl AiProvider {
                     return Err(format!("{} needs a model name.", self.name));
                 }
                 if self.api_key.trim().is_empty() {
-                    if let Some(preset) = preset_needing_key(&self.base_url) {
+                    if let Some(service) = authenticated_service(&self.base_url) {
                         return Err(format!(
                             "{} needs an API key: {} authenticates every request, so without \
                              one the collection schema and your prompt would be sent to it \
                              unauthenticated.",
-                            self.name, preset.name
+                            self.name, service
                         ));
                     }
                 }
