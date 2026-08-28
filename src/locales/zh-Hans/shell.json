@@ -8,7 +8,10 @@
     },
     "composer": {
       "placeholder": "用自然语言描述查询…（Enter 发送，Shift+Enter 换行）",
-      "send": "发送"
+      "send": "发送",
+      "noImagesForCli": "该提供方是本地命令，无法接收图片。若要询问图片相关内容，请选择 HTTP 提供方。",
+      "imageTooMany": "每条消息最多 {{max}} 张图片。",
+      "attach": "附加图片"
     },
     "empty": {
       "body": "用日常语言描述你要的查询 —— 例如 <i>“年龄大于 30 的活跃用户，按年龄排序”</i> 或<i> “每位客户的平均订单金额”</i>。我会说明处理思路，你可以直接插入结果。"
@@ -16,7 +19,11 @@
     "fallbackExplanation": "这是一个查询。",
     "header": {
       "closeTitle": "关闭 AI 助手",
-      "title": "AI 查询助手"
+      "title": "AI 查询助手",
+      "provider": "提供方",
+      "model": "模型",
+      "modelPlaceholder": "模型",
+      "typeModel": "输入模型名称…"
     },
     "history": {
       "clearAll": "删除全部对话",
@@ -41,7 +48,12 @@
       "assistant": "助手",
       "you": "你"
     },
-    "thinking": "正在思考…"
+    "thinking": "正在思考…",
+    "thoughts": "思考过程",
+    "attachments": {
+      "image": "图片，{{size}}",
+      "remove": "移除图片"
+    }
   },
   "commandPalette": {
     "buckets": {

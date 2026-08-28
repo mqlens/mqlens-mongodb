@@ -25,6 +25,9 @@ export interface ChatScope {
 }
 
 export interface StoredChat extends ChatScope {
+  /** Provider chosen for this conversation in the panel; absent = settings default. */
+  providerId?: string;
+  model?: string;
   id: string;
   title: string;
   messages: ChatMessage[];

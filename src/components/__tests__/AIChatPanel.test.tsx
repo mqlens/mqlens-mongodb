@@ -134,7 +134,12 @@ const mockBackend = (generate?: unknown) =>
   invokeMock.mockImplementation((cmd: string, args: any) =>
     cmd.endsWith('_chat') || cmd.endsWith('_chats')
       ? Promise.resolve(chatBackend(cmd, args))
-      : Promise.resolve(generate)
+      // Picker support: no providers configured unless a test says otherwise.
+      : cmd === 'ai_provider_options' || cmd === 'list_ai_models_for'
+      ? Promise.resolve([])
+      // The backend now returns { query, thoughts?, notes? }; tests still hand in
+      // the bare query JSON, so wrap it the way the real command would.
+      : Promise.resolve(typeof generate === 'string' ? { query: generate } : generate)
   );
 
 describe('AIChatPanel', () => {
@@ -385,11 +390,13 @@ JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
     // New chat (and opening a history item, and deleting) move the panel on
     // while a request is still running. The answer must not appear in — and be
     // saved under — whichever conversation happens to be open when it lands.
-    let resolveGenerate: (v: string) => void = () => {};
+    let resolveGenerate: (v: { query: string }) => void = () => {};
     invokeMock.mockImplementation((cmd: string, args: any) =>
       cmd.endsWith('_chat') || cmd.endsWith('_chats')
         ? Promise.resolve(chatBackend(cmd, args))
-        : new Promise<string>((res) => {
+        : cmd === 'ai_provider_options' || cmd === 'list_ai_models_for'
+        ? Promise.resolve([])
+        : new Promise<{ query: string }>((res) => {
             resolveGenerate = res;
           })
     );
@@ -409,9 +416,7 @@ JSON.stringify({ explanation: 'x', queryType: 'find', filter: {}, sort: {} })
     fireEvent.click(screen.getByTestId('ai-chat-new-btn'));
     expect(screen.queryByText('the question')).toBeNull();
 
-    resolveGenerate(
-      JSON.stringify({ explanation: 'the answer', queryType: 'find', filter: {}, sort: {} })
-    );
+    resolveGenerate({ query: JSON.stringify({ explanation: 'the answer', queryType: 'find', filter: {}, sort: {} }) });
 
     // Not shown in the new, empty conversation...
     await waitFor(() => expect(chatStore.find((c) => c.id === 'chat-one')).toBeTruthy());
@@ -683,11 +688,13 @@ JSON.stringify({ explanation: 'Again.', queryType: 'find', filter: {}, sort: {} 
     // The request used to die with it: the user's question was cached, the
     // assistant's answer was silently dropped, and the tab came back showing a
     // question with no reply, no spinner and no error.
-    let resolveInvoke: (v: string) => void = () => {};
+    let resolveInvoke: (v: { query: string }) => void = () => {};
     invokeMock.mockImplementation((cmd: string, args: any) =>
       cmd.endsWith('_chat') || cmd.endsWith('_chats')
         ? Promise.resolve(chatBackend(cmd, args))
-        : new Promise<string>((res) => {
+        : cmd === 'ai_provider_options' || cmd === 'list_ai_models_for'
+        ? Promise.resolve([])
+        : new Promise<{ query: string }>((res) => {
             resolveInvoke = res;
           })
     );
@@ -704,7 +711,7 @@ JSON.stringify({ explanation: 'Again.', queryType: 'find', filter: {}, sort: {} 
     await waitFor(() => expect(screen.getByTestId('chat-thinking')).toBeInTheDocument());
 
     first.unmount();                                   // user switches tab
-    resolveInvoke(JSON.stringify({ explanation: 'Finds adults.', queryType: 'find', filter: {} }));
+    resolveInvoke({ query: JSON.stringify({ explanation: 'Finds adults.', queryType: 'find', filter: {} }) });
     await new Promise((r) => setTimeout(r, 0));
 
     render(                                            // user switches back
@@ -719,11 +726,13 @@ JSON.stringify({ explanation: 'Again.', queryType: 'find', filter: {}, sort: {} 
   });
 
   it('shows the spinner again when returning while the request is still running', async () => {
-    let resolveInvoke: (v: string) => void = () => {};
+    let resolveInvoke: (v: { query: string }) => void = () => {};
     invokeMock.mockImplementation((cmd: string, args: any) =>
       cmd.endsWith('_chat') || cmd.endsWith('_chats')
         ? Promise.resolve(chatBackend(cmd, args))
-        : new Promise<string>((res) => {
+        : cmd === 'ai_provider_options' || cmd === 'list_ai_models_for'
+        ? Promise.resolve([])
+        : new Promise<{ query: string }>((res) => {
             resolveInvoke = res;
           })
     );
@@ -750,7 +759,7 @@ JSON.stringify({ explanation: 'Again.', queryType: 'find', filter: {}, sort: {} 
     );
     expect(screen.getByTestId('chat-thinking')).toBeInTheDocument();
 
-    resolveInvoke(JSON.stringify({ explanation: 'Late but delivered.', queryType: 'find', filter: {} }));
+    resolveInvoke({ query: JSON.stringify({ explanation: 'Late but delivered.', queryType: 'find', filter: {} }) });
     expect(await screen.findByText('Late but delivered.')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByTestId('chat-thinking')).not.toBeInTheDocument());
   });
@@ -783,5 +792,182 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     fireEvent.click(screen.getByTestId('chat-send-btn'));
 
     expect(await screen.findByText('Here are the results.')).toBeInTheDocument();
+  });
+
+  // ── thoughts, images, per-chat provider (#283 follow-up) ──────────────────
+
+  const OPTIONS = [
+    { id: 'anthropic', name: 'Anthropic (Claude)', kind: 'anthropic-compatible', model: 'claude-opus-4-8', isDefault: true },
+    { id: 'deepseek', name: 'DeepSeek', kind: 'openai-compatible', model: 'deepseek-chat', isDefault: false },
+    { id: 'claude-code', name: 'Claude Code (local)', kind: 'local-cli', model: '', isDefault: false },
+  ];
+  /** Like mockBackend, but with providers to pick from and a reply to return. */
+  const mockPickerBackend = (reply: unknown, models: string[] = []) =>
+    invokeMock.mockImplementation((cmd: string, args: any) =>
+      cmd.endsWith('_chat') || cmd.endsWith('_chats')
+        ? Promise.resolve(chatBackend(cmd, args))
+        : cmd === 'ai_provider_options'
+          ? Promise.resolve(OPTIONS)
+          : cmd === 'list_ai_models_for'
+            ? Promise.resolve(models)
+            : Promise.resolve(reply)
+    );
+  const pasteImage = (el: HTMLElement, type = 'image/png', size = 3) => {
+    const file = new File([new Uint8Array(size)], 'shot.png', { type });
+    fireEvent.paste(el, {
+      clipboardData: { items: [{ kind: 'file', type, getAsFile: () => file }] },
+    });
+  };
+  const send = (text: string) => {
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: text } });
+    fireEvent.click(screen.getByTestId('chat-send-btn'));
+  };
+  const lastGenerateArgs = () =>
+    invokeMock.mock.calls.filter((c) => c[0] === 'generate_mql_query').at(-1)![1];
+
+  it('shows the model\'s thoughts collapsed under the reply, native reasoning first', async () => {
+    mockPickerBackend({
+      query: JSON.stringify({ explanation: 'Adults.', queryType: 'find', filter: {} }),
+      thoughts: 'age is numeric here',
+      notes: 'so a range filter works',
+    });
+    renderPanel('editor');
+    send('adults');
+    const details = await screen.findByTestId('chat-thoughts');
+    expect(details).not.toHaveAttribute('open');
+    expect(details).toHaveTextContent('age is numeric here');
+    expect(details).toHaveTextContent('so a range filter works');
+    expect(details.textContent!.indexOf('age is numeric')).toBeLessThan(details.textContent!.indexOf('range filter'));
+  });
+
+  it('shows no thoughts block when the model produced none', async () => {
+    mockPickerBackend({ query: JSON.stringify({ explanation: 'Adults.', queryType: 'find', filter: {} }) });
+    renderPanel('editor');
+    send('adults');
+    await screen.findByText('Adults.');
+    expect(screen.queryByTestId('chat-thoughts')).not.toBeInTheDocument();
+  });
+
+  it('sends a pasted image with the request and keeps only its shape in the transcript', async () => {
+    mockPickerBackend({ query: JSON.stringify({ explanation: 'From the screenshot.', queryType: 'find', filter: {} }) });
+    renderPanel('editor');
+    pasteImage(screen.getByTestId('chat-input'));
+    await screen.findByTestId('chat-pending-images');
+
+    send('what query matches this');
+    await screen.findByText('From the screenshot.');
+
+    const args = lastGenerateArgs();
+    expect(args.images).toHaveLength(1);
+    expect(args.images[0]).toMatchObject({ media_type: 'image/png' });
+    expect(typeof args.images[0].data).toBe('string');
+    expect(args.images[0].data.length).toBeGreaterThan(0);
+
+    // The transcript records that an image went with the question — not the bytes.
+    expect(screen.getByTestId('chat-attachments')).toHaveTextContent('Image, 3 B');
+    const saved = invokeMock.mock.calls.filter((c) => c[0] === 'save_chat').at(-1)![1].chat;
+    const userTurn = saved.messages.find((m: any) => m.role === 'user');
+    expect(userTurn.attachments).toEqual([{ mediaType: 'image/png', bytes: 3 }]);
+    expect(JSON.stringify(saved)).not.toContain('"data"');
+    // and the composer is clear for the next question
+    expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
+  });
+
+  it('attaches an image through the paperclip as well as by paste', async () => {
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    const file = new File([new Uint8Array(5)], 'shot.png', { type: 'image/png' });
+    const input = screen.getByTestId('chat-attach-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+    await screen.findByTestId('chat-pending-images');
+    // The picker is cleared so the same file can be chosen again later.
+    expect(input.value).toBe('');
+  });
+
+  it('disables the paperclip for a local command provider', async () => {
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    const select = await screen.findByTestId('ai-chat-provider-select');
+    expect(screen.getByTestId('chat-attach-btn')).not.toBeDisabled();
+    fireEvent.change(select, { target: { value: 'claude-code' } });
+    expect(screen.getByTestId('chat-attach-btn')).toBeDisabled();
+  });
+
+  it('lets a pasted image be removed before sending', async () => {
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    pasteImage(screen.getByTestId('chat-input'));
+    await screen.findByTestId('chat-pending-images');
+    fireEvent.click(screen.getByTestId('chat-pending-image-remove-0'));
+    expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
+  });
+
+  it('refuses images for a local command provider and says why', async () => {
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    const select = await screen.findByTestId('ai-chat-provider-select');
+    fireEvent.change(select, { target: { value: 'claude-code' } });
+
+    pasteImage(screen.getByTestId('chat-input'));
+    await screen.findByTestId('chat-image-note');
+    expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/cannot receive images/);
+    expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
+  });
+
+  it('starts on the settings default and sends the picked provider and model', async () => {
+    mockPickerBackend({ query: JSON.stringify({ explanation: 'ok', queryType: 'find', filter: {} }) }, ['deepseek-chat', 'deepseek-reasoner']);
+    renderPanel('editor');
+    const select = await screen.findByTestId('ai-chat-provider-select');
+    expect(select).toHaveValue('anthropic');
+
+    fireEvent.change(select, { target: { value: 'deepseek' } });
+    // The provider's models arrive and the model field becomes a dropdown.
+    const modelSelect = await screen.findByTestId('ai-chat-model-select');
+    fireEvent.change(modelSelect, { target: { value: 'deepseek-reasoner' } });
+
+    send('anything');
+    await screen.findByText('ok');
+    expect(lastGenerateArgs()).toMatchObject({ providerId: 'deepseek', model: 'deepseek-reasoner' });
+    // and the conversation remembers the choice
+    const saved = invokeMock.mock.calls.filter((c) => c[0] === 'save_chat').at(-1)![1].chat;
+    expect(saved).toMatchObject({ providerId: 'deepseek', model: 'deepseek-reasoner' });
+  });
+
+  it('falls back to a text box when the provider lists no models', async () => {
+    mockPickerBackend({ query: '{}' }, []);
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    expect(screen.getByTestId('ai-chat-model-input')).toBeInTheDocument();
+    expect(screen.queryByTestId('ai-chat-model-select')).not.toBeInTheDocument();
+  });
+
+  it('opens on an existing chat with the provider that chat used', async () => {
+    chatStore = [{
+      id: 'c9', title: 'old', messages: [{ id: 'm1', role: 'user', text: 'hi' }],
+      connectionName: 'Local', database: 'db', collection: 'users', variant: 'editor',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      providerId: 'deepseek', model: 'deepseek-chat',
+    }];
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor', { chatId: 'c9' });
+    const select = await screen.findByTestId('ai-chat-provider-select');
+    await waitFor(() => expect(select).toHaveValue('deepseek'));
+  });
+
+  it('works without a picker when the provider list cannot be read', async () => {
+    invokeMock.mockImplementation((cmd: string, args: any) =>
+      cmd.endsWith('_chat') || cmd.endsWith('_chats')
+        ? Promise.resolve(chatBackend(cmd, args))
+        : cmd === 'ai_provider_options'
+          ? Promise.reject('locked')
+          : Promise.resolve({ query: JSON.stringify({ explanation: 'still fine', queryType: 'find', filter: {} }) })
+    );
+    renderPanel('editor');
+    send('adults');
+    await screen.findByText('still fine');
+    expect(screen.queryByTestId('ai-chat-provider-picker')).not.toBeInTheDocument();
+    // No override is sent, so the backend uses the settings default.
+    expect(lastGenerateArgs().providerId).toBeUndefined();
   });
 });

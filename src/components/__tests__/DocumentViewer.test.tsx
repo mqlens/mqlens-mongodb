@@ -874,7 +874,7 @@ describe('DocumentViewer Component', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'generate_mql_query') {
         return Promise.resolve(
-          '{"explanation":"Finds users older than 25, newest first.","queryType":"find","filter":{"age":{"$gt":25}},"sort":{"age":-1},"pipeline":[]}'
+          { query: '{"explanation":"Finds users older than 25, newest first.","queryType":"find","filter":{"age":{"$gt":25}},"sort":{"age":-1},"pipeline":[]}' }
         );
       }
       return Promise.resolve(undefined);
@@ -930,7 +930,7 @@ describe('DocumentViewer Component', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'generate_mql_query') {
         return Promise.resolve(
-          '{"explanation":"Average order total per customer.","queryType":"aggregate","filter":{},"sort":{},"pipeline":[{"$group":{"_id":"$customer","avg":{"$avg":"$total"}}}]}'
+          { query: '{"explanation":"Average order total per customer.","queryType":"aggregate","filter":{},"sort":{},"pipeline":[{"$group":{"_id":"$customer","avg":{"$avg":"$total"}}}]}' }
         );
       }
       return Promise.resolve(undefined);
@@ -965,7 +965,7 @@ describe('DocumentViewer Component', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'generate_mql_query') {
         return Promise.resolve(
-          '{"explanation":"ok","queryType":"find","filter":{"a":1},"sort":{},"pipeline":[]}'
+          { query: '{"explanation":"ok","queryType":"find","filter":{"a":1},"sort":{},"pipeline":[]}' }
         );
       }
       return Promise.resolve(undefined);

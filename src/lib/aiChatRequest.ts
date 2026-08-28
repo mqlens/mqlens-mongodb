@@ -23,6 +23,8 @@ export interface PendingChatReply {
   text: string;
   query?: unknown;
   error?: boolean;
+  /** Reasoning or working notes the model produced alongside the answer. */
+  thoughts?: string;
 }
 
 interface PendingChat {

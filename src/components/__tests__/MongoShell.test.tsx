@@ -146,7 +146,7 @@ describe('MongoShell Component', () => {
       if (cmd === 'stop_mongosh_session') return Promise.resolve();
       if (cmd === 'generate_mql_query') {
         return Promise.resolve(
-          JSON.stringify({ explanation: 'Counts users.', queryType: 'aggregate', pipeline: [{ $count: 'n' }] })
+          { query: JSON.stringify({ explanation: 'Counts users.', queryType: 'aggregate', pipeline: [{ $count: 'n' }] }) }
         );
       }
       return Promise.resolve([]);
@@ -494,7 +494,7 @@ describe('MongoShell Component', () => {
           return Promise.resolve({ stdout: ['ok'], stderr: [] });
         case 'generate_mql_query':
           return Promise.resolve(
-            JSON.stringify({ explanation: 'Removes inactive users.', queryType: 'script', script })
+            { query: JSON.stringify({ explanation: 'Removes inactive users.', queryType: 'script', script }) }
           );
         default:
           return Promise.resolve(null);
@@ -562,7 +562,7 @@ describe('MongoShell Component', () => {
           return Promise.resolve({ stdout: [], stderr: [] });
         case 'generate_mql_query':
           return Promise.resolve(
-            JSON.stringify({ explanation: 'Drops the collection.', queryType: 'script', script })
+            { query: JSON.stringify({ explanation: 'Drops the collection.', queryType: 'script', script }) }
           );
         default:
           return Promise.resolve(null);

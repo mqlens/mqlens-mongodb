@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { History, Plus, Sparkles, Trash2, User, X } from 'lucide-react';
+import { History, Paperclip, Plus, Sparkles, Trash2, User, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -43,6 +43,86 @@ export interface ChatMessage {
   text: string;
   query?: GeneratedQuery;
   error?: boolean;
+  /** The model's reasoning or working notes, shown collapsed under the reply. */
+  thoughts?: string;
+  /** Images that went with a user turn — shape only, never the bytes. */
+  attachments?: { mediaType: string; bytes: number }[];
+}
+
+/** What `generate_mql_query` returns: the query JSON plus optional reasoning. */
+interface AiReply {
+  query: string;
+  thoughts?: string;
+  notes?: string;
+}
+
+/** One pickable provider from settings, keys withheld. */
+interface ProviderOption {
+  id: string;
+  name: string;
+  kind: 'openai-compatible' | 'anthropic-compatible' | 'gemini' | 'local-cli';
+  model: string;
+  isDefault: boolean;
+}
+
+/** A pasted image waiting to be sent. Kept in memory only. */
+interface PendingImage {
+  mediaType: string;
+  /** Base64 without the data: prefix — what the backend wants. */
+  data: string;
+  bytes: number;
+  previewUrl: string;
+}
+
+const MAX_PENDING_IMAGES = 4;
+/** Header model <select> sentinels; a real model id never starts with `__`. */
+const TYPE_MODEL = '__type_a_model__';
+const CURRENT_MODEL = '__current_model__';
+
+/** `123456` → `121 KB`, for attachment chips. */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Images from a paste, as base64. Returns [] for a text paste, so the caller
+ * can let the browser handle those normally.
+ */
+export async function imagesFromClipboard(items: DataTransferItemList | null): Promise<PendingImage[]> {
+  if (!items) return [];
+  const files: File[] = [];
+  for (const item of Array.from(items)) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  return imagesFromFiles(files);
+}
+
+/** Image files as base64, for the attach button and for paste alike. */
+export async function imagesFromFiles(files: File[]): Promise<PendingImage[]> {
+  return Promise.all(
+    files.map(
+      (file) =>
+        new Promise<PendingImage>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(reader.error);
+          reader.onload = () => {
+            const url = String(reader.result);
+            resolve({
+              mediaType: file.type,
+              data: url.slice(url.indexOf(',') + 1),
+              bytes: file.size,
+              previewUrl: url,
+            });
+          };
+          reader.readAsDataURL(file);
+        })
+    )
+  );
 }
 
 interface AIChatPanelProps {
@@ -122,6 +202,100 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // instead, in the effect below — that read has to be awaited, and gating the
   // first render on it would flash an empty panel.
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialMessages);
+  // Per-conversation provider choice. Starts on the settings default and is
+  // saved with the chat, so reopening it uses the same model; settings are
+  // never rewritten from here.
+  const [providerOptions, setProviderOptions] = useState<ProviderOption[]>([]);
+  const [chatProviderId, setChatProviderId] = useState<string | null>(null);
+  const [chatModel, setChatModel] = useState('');
+  const [chatModels, setChatModels] = useState<string[]>([]);
+  // Dropdown once the provider's models are known, text box otherwise — the
+  // same rule as the settings form, and for the same reason: WKWebView barely
+  // surfaces <datalist>. "Type a name…" returns to the text box.
+  const [typingModel, setTypingModel] = useState(false);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [imageNote, setImageNote] = useState<string | null>(null);
+  const activeProvider = providerOptions.find((o) => o.id === chatProviderId) ?? null;
+  const providerTakesImages = activeProvider ? activeProvider.kind !== 'local-cli' : true;
+
+  useEffect(() => {
+    let live = true;
+    invoke<unknown>('ai_provider_options')
+      .then((raw) => {
+        if (!live) return;
+        // Guard the IPC boundary: a malformed reply should mean "no picker",
+        // never a panel that fails to render.
+        const opts = Array.isArray(raw) ? (raw as ProviderOption[]) : [];
+        setProviderOptions(opts);
+        // Only adopt the default when nothing has chosen one yet — a restored
+        // chat may already have set its own.
+        setChatProviderId((cur) => cur ?? opts.find((o) => o.isDefault)?.id ?? opts[0]?.id ?? null);
+      })
+      // Without the list the panel still works on the settings default: the
+      // backend falls back to it whenever no providerId is sent.
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Offer the chosen provider's models. A failure here only means typing the
+  // model name instead, so it is not surfaced as an error.
+  useEffect(() => {
+    if (!chatProviderId) return;
+    let live = true;
+    setChatModels([]);
+    invoke<unknown>('list_ai_models_for', { providerId: chatProviderId })
+      .then((list) => {
+        if (!live) return;
+        const models = Array.isArray(list) ? list.filter((m): m is string => typeof m === 'string') : [];
+        setChatModels(models);
+        if (models.length > 0) setTypingModel(false);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [chatProviderId]);
+
+  const choosePane = (id: string) => {
+    setChatProviderId(id);
+    // Each provider has its own model namespace; carrying one across would
+    // send a model the new provider has never heard of.
+    setChatModel(providerOptions.find((o) => o.id === id)?.model ?? '');
+    if (providerOptions.find((o) => o.id === id)?.kind === 'local-cli' && pendingImages.length > 0) {
+      setPendingImages([]);
+      setImageNote(t('aiChatPanel.composer.noImagesForCli'));
+    }
+  };
+
+  const addImages = (images: PendingImage[]) => {
+    if (!providerTakesImages) {
+      setImageNote(t('aiChatPanel.composer.noImagesForCli'));
+      return;
+    }
+    setPendingImages((prev) => {
+      const room = MAX_PENDING_IMAGES - prev.length;
+      if (images.length > room) setImageNote(t('aiChatPanel.composer.imageTooMany', { max: MAX_PENDING_IMAGES }));
+      else setImageNote(null);
+      return [...prev, ...images.slice(0, Math.max(0, room))];
+    });
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = await imagesFromClipboard(e.clipboardData?.items ?? null);
+    if (images.length === 0) return; // plain text: let the textarea take it
+    e.preventDefault();
+    addImages(images);
+  };
+
+  const attachInputRef = useRef<HTMLInputElement>(null);
+  const handleAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith('image/'));
+    e.target.value = ''; // so picking the same file again still fires change
+    if (files.length === 0) return;
+    addImages(await imagesFromFiles(files));
+  };
   const [isChatLoading, setIsChatLoading] = useState(false);
   // Persisted, not per-tab: a panel width is a UI preference, and remounting
   // on every tab switch used to snap it back to the default. Mirrors
@@ -255,6 +429,9 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
           collection: stored.collection,
           variant: stored.variant,
         });
+        // A panel opened on an existing chat answers with that chat's provider.
+        if (stored.providerId) setChatProviderId(stored.providerId);
+        if (stored.model) setChatModel(stored.model);
       }
       setScopeResolved(true);
     });
@@ -289,8 +466,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       messages: chatMessages,
       createdAt: createdAtRef.current,
       updatedAt: new Date().toISOString(),
+      providerId: chatProviderId ?? undefined,
+      model: chatModel.trim() || undefined,
     });
-  }, [chatMessages, activeChatId, openScope, scopeResolved, scope, t]);
+  }, [chatMessages, activeChatId, openScope, scopeResolved, scope, t, chatProviderId, chatModel]);
 
   // Deliberately NO auto-adoption of the collection's most recent
   // conversation. A tab starts its own chat and the history is an explicit
@@ -331,6 +510,9 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     releaseOpenChat(activeChatIdRef.current, ownerRef.current);
     setActiveChatId(stored.id, stored.createdAt, false);
     setChatMessages(stored.messages);
+    // The conversation remembers which provider answered it.
+    if (stored.providerId) setChatProviderId(stored.providerId);
+    setChatModel(stored.model ?? '');
     chatIdRef.current = maxChatIdNum(stored.messages) + 1;
   };
 
@@ -375,6 +557,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       role: 'assistant',
       text: reply.text,
       ...(reply.error ? { error: true } : { query: reply.query as GeneratedQuery | undefined }),
+      ...(reply.thoughts ? { thoughts: reply.thoughts } : {}),
     };
     await saveChat({
       ...stored,
@@ -393,6 +576,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         role: 'assistant',
         text: reply.text,
         ...(reply.error ? { error: true } : { query: reply.query as GeneratedQuery | undefined }),
+        ...(reply.thoughts ? { thoughts: reply.thoughts } : {}),
       },
     ]);
   };
@@ -438,9 +622,19 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
           : m.text,
     }));
 
-    const userMsg: ChatMessage = { id: nextChatId(), role: 'user', text };
+    const images = pendingImages;
+    const userMsg: ChatMessage = {
+      id: nextChatId(),
+      role: 'user',
+      text,
+      ...(images.length > 0 && {
+        attachments: images.map((i) => ({ mediaType: i.mediaType, bytes: i.bytes })),
+      }),
+    };
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput('');
+    setPendingImages([]);
+    setImageNote(null);
     setIsChatLoading(true);
     // The conversation this question belongs to. New chat, opening a history
     // item, deleting or clearing all move `activeChatIdRef` on, and an answer
@@ -449,14 +643,17 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     const askedIn = activeChatIdRef.current;
 
     const run = async (): Promise<PendingChatReply> => {
-      const raw = await invoke<string>('generate_mql_query', {
+      const reply = await invoke<AiReply>('generate_mql_query', {
         prompt: text,
         collection: collectionName,
         fields,
         history,
         target: variant === 'shell' ? 'shell' : 'editor',
+        images: images.map((i) => ({ media_type: i.mediaType, data: i.data })),
+        providerId: chatProviderId ?? undefined,
+        model: chatModel.trim() || undefined,
       });
-      const parsed = JSON.parse(raw) as {
+      const parsed = JSON.parse(reply.query) as {
         explanation?: string;
         queryType?: 'find' | 'aggregate' | 'script';
         filter?: unknown;
@@ -481,7 +678,13 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       };
       // Keeps dev's translated fallback; the rest is the out-of-tree request
       // flow so a tab switch mid-request no longer discards the reply.
-      return { text: parsed.explanation ?? t('aiChatPanel.fallbackExplanation'), query };
+      // Native reasoning first, then the model's own notes; one collapsible block.
+      const thoughts = [reply.thoughts, reply.notes].filter((x): x is string => !!x?.trim()).join('\n\n');
+      return {
+        text: parsed.explanation ?? t('aiChatPanel.fallbackExplanation'),
+        query,
+        ...(thoughts && { thoughts }),
+      };
     };
 
     try {
@@ -687,6 +890,30 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   {m.text}
                 </div>
 
+                {m.attachments && m.attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-1" data-testid="chat-attachments">
+                    {m.attachments.map((a, i) => (
+                      <span
+                        key={i}
+                        className="rounded border border-border bg-muted px-1.5 py-0.5 text-[9.5px] text-muted-foreground"
+                      >
+                        {t('aiChatPanel.attachments.image', { size: formatBytes(a.bytes) })}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {m.thoughts && (
+                  <details className="w-[92%] text-[10.5px]" data-testid="chat-thoughts">
+                    <summary className="cursor-pointer select-none text-muted-foreground">
+                      {t('aiChatPanel.thoughts')}
+                    </summary>
+                    <pre className="mt-1 max-h-[200px] overflow-auto whitespace-pre-wrap rounded border border-border bg-muted/40 p-1.5 font-sans text-[10.5px] leading-relaxed text-muted-foreground">
+                      {m.thoughts}
+                    </pre>
+                  </details>
+                )}
+
                 {m.query && (
                   <div className="mt-0.5 flex w-[92%] flex-col gap-1" data-testid="chat-query-card">
                     <span className="font-mono text-[9px] uppercase text-primary">
@@ -770,36 +997,144 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         </div>
 
         <div className="flex flex-shrink-0 flex-col gap-2 border-t border-border p-2">
-          <textarea
-            className={composerClassName}
-            placeholder={
-              foreignChat
-                ? t('aiChatPanel.history.viewingOtherScopeShort')
-                : t('aiChatPanel.composer.placeholder')
-            }
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSendChat();
-              }
-            }}
-            disabled={foreignChat}
-            data-testid="chat-input"
-          />
-          <Button
-            type="button"
-            className="w-full"
-            size="sm"
-            onClick={handleSendChat}
-            disabled={isChatLoading || !chatInput.trim() || foreignChat}
-            title={foreignChat ? t('aiChatPanel.actions.foreignChat') : undefined}
-            data-testid="chat-send-btn"
+          {pendingImages.length > 0 && (
+            <div className="flex flex-wrap gap-1.5" data-testid="chat-pending-images">
+              {pendingImages.map((img, i) => (
+                <div key={i} className="relative">
+                  <img
+                    src={img.previewUrl}
+                    alt=""
+                    className="h-12 w-12 rounded border border-border object-cover"
+                  />
+                  <button
+                    type="button"
+                    className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full border border-border bg-background text-[10px] leading-none text-muted-foreground hover:text-foreground"
+                    onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
+                    aria-label={t('aiChatPanel.attachments.remove')}
+                    data-testid={`chat-pending-image-remove-${i}`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {imageNote && (
+            <p className="text-[10.5px] text-muted-foreground" data-testid="chat-image-note">
+              {imageNote}
+            </p>
+          )}
+          <div
+            className="flex flex-col rounded-lg border border-border bg-background focus-within:ring-1 focus-within:ring-ring"
+            data-testid="chat-composer"
           >
-            <Sparkles size={11} />
-            {isChatLoading ? t('aiChatPanel.thinking') : t('aiChatPanel.composer.send')}
-          </Button>
+            <textarea
+              className={cn(composerClassName, 'border-0 bg-transparent shadow-none focus-visible:ring-0')}
+              onPaste={(e) => void handlePaste(e)}
+              placeholder={
+                foreignChat
+                  ? t('aiChatPanel.history.viewingOtherScopeShort')
+                  : t('aiChatPanel.composer.placeholder')
+              }
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendChat();
+                }
+              }}
+              disabled={foreignChat}
+              data-testid="chat-input"
+            />
+            <div className="flex items-center justify-between gap-2 px-1.5 pb-1.5">
+              {/* Which model answers — chosen here, where the question is typed. */}
+              {providerOptions.length > 0 ? (
+                <div className="flex min-w-0 items-center gap-1" data-testid="ai-chat-provider-picker">
+                  <select
+                    className="h-6 max-w-[130px] truncate rounded-full border border-border bg-muted/60 px-2 text-[10.5px] text-foreground"
+                    value={chatProviderId ?? ''}
+                    onChange={(e) => choosePane(e.target.value)}
+                    aria-label={t('aiChatPanel.header.provider')}
+                    data-testid="ai-chat-provider-select"
+                  >
+                    {providerOptions.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.name}
+                      </option>
+                    ))}
+                  </select>
+                  {chatModels.length > 0 && !typingModel ? (
+                    <select
+                      className="h-6 max-w-[140px] truncate rounded-full border border-border bg-muted/60 px-2 font-mono text-[10.5px] text-foreground"
+                      value={chatModels.includes(chatModel) ? chatModel : chatModel ? CURRENT_MODEL : ''}
+                      onChange={(e) => {
+                        if (e.target.value === TYPE_MODEL) setTypingModel(true);
+                        else if (e.target.value !== CURRENT_MODEL) setChatModel(e.target.value);
+                      }}
+                      aria-label={t('aiChatPanel.header.model')}
+                      data-testid="ai-chat-model-select"
+                    >
+                      {chatModel && !chatModels.includes(chatModel) && <option value={CURRENT_MODEL}>{chatModel}</option>}
+                      {chatModels.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                      <option value={TYPE_MODEL}>{t('aiChatPanel.header.typeModel')}</option>
+                    </select>
+                  ) : (
+                    <input
+                      className="h-6 w-[110px] rounded-full border border-border bg-muted/60 px-2 font-mono text-[10.5px] text-foreground"
+                      value={chatModel}
+                      onChange={(e) => setChatModel(e.target.value)}
+                      placeholder={activeProvider?.model || t('aiChatPanel.header.modelPlaceholder')}
+                      aria-label={t('aiChatPanel.header.model')}
+                      data-testid="ai-chat-model-input"
+                    />
+                  )}
+                </div>
+              ) : (
+                <span />
+              )}
+              <div className="flex shrink-0 items-center gap-1">
+                <input
+                  ref={attachInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => void handleAttach(e)}
+                  data-testid="chat-attach-input"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  disabled={foreignChat || !providerTakesImages}
+                  onClick={() => attachInputRef.current?.click()}
+                  title={providerTakesImages ? t('aiChatPanel.composer.attach') : t('aiChatPanel.composer.noImagesForCli')}
+                  aria-label={t('aiChatPanel.composer.attach')}
+                  data-testid="chat-attach-btn"
+                >
+                  <Paperclip size={12} />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-6 gap-1 px-2.5 text-[11px]"
+                  onClick={handleSendChat}
+                  disabled={isChatLoading || !chatInput.trim() || foreignChat}
+                  title={foreignChat ? t('aiChatPanel.actions.foreignChat') : undefined}
+                  data-testid="chat-send-btn"
+                >
+                  <Sparkles size={11} />
+                  {isChatLoading ? t('aiChatPanel.thinking') : t('aiChatPanel.composer.send')}
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
     </>
   );

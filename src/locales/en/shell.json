@@ -62,7 +62,14 @@
       "insert": "Insert",
       "insertAndRun": "Insert & run"
     },
+    "attachments": {
+      "image": "Image, {{size}}",
+      "remove": "Remove image"
+    },
     "composer": {
+      "attach": "Attach image",
+      "imageTooMany": "Up to {{max}} images per message.",
+      "noImagesForCli": "This provider is a local command and cannot receive images. Pick an HTTP provider to ask about an image.",
       "placeholder": "Describe a query… (Enter to send, Shift+Enter for newline)",
       "send": "Send"
     },
@@ -72,7 +79,11 @@
     "fallbackExplanation": "Here is a query.",
     "header": {
       "closeTitle": "Close AI Assistant",
-      "title": "AI Query Assistant"
+      "model": "Model",
+      "modelPlaceholder": "model",
+      "provider": "Provider",
+      "title": "AI Query Assistant",
+      "typeModel": "Type a model name…"
     },
     "history": {
       "clearAll": "Delete all conversations",
@@ -97,7 +108,8 @@
       "assistant": "Assistant",
       "you": "You"
     },
-    "thinking": "Thinking…"
+    "thinking": "Thinking…",
+    "thoughts": "Thinking"
   },
   "commandPalette": {
     "buckets": {
