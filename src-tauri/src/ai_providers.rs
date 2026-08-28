@@ -26,11 +26,17 @@
 use serde::{Deserialize, Serialize};
 
 /// Which wire format a provider speaks.
+/// Wire names are part of the contract with the settings UI and the stored
+/// settings file, so each is written out rather than derived. `kebab-case`
+/// would split `OpenAiCompatible` at every capital into `open-ai-compatible`,
+/// which is not what the frontend sends and not how anyone writes it.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
 pub enum ProviderKind {
+    #[serde(rename = "openai-compatible")]
     OpenAiCompatible,
+    #[serde(rename = "anthropic-compatible")]
     AnthropicCompatible,
+    #[serde(rename = "local-cli")]
     LocalCli,
 }
 
@@ -327,6 +333,34 @@ mod tests {
             command: String::new(),
             models_command: String::new(),
         }
+    }
+
+    /// The frontend sends these exact strings and the settings file stores them.
+    /// This is the test that was missing: nothing serialized the enum before, so
+    /// `kebab-case` producing `open-ai-compatible` went unnoticed until a user
+    /// tried to save an OpenAI-compatible provider.
+    #[test]
+    fn provider_kinds_serialize_to_the_names_the_ui_uses() {
+        for (kind, wire) in [
+            (ProviderKind::OpenAiCompatible, "openai-compatible"),
+            (ProviderKind::AnthropicCompatible, "anthropic-compatible"),
+            (ProviderKind::LocalCli, "local-cli"),
+        ] {
+            assert_eq!(serde_json::to_string(&kind).unwrap(), format!("\"{wire}\""));
+            let back: ProviderKind = serde_json::from_str(&format!("\"{wire}\"")).unwrap();
+            assert_eq!(back, kind);
+        }
+        assert!(serde_json::from_str::<ProviderKind>("\"open-ai-compatible\"").is_err());
+    }
+
+    /// The same struct the form posts to `validate_ai_provider`/`list_ai_models`.
+    #[test]
+    fn a_provider_from_the_form_deserializes() {
+        let json = r#"{"id":"deepseek","name":"DeepSeek","kind":"openai-compatible",
+            "base_url":"https://api.deepseek.com/v1","api_key":"k","model":"deepseek-chat",
+            "command":"","models_command":""}"#;
+        let p: AiProvider = serde_json::from_str(json).expect("the form's own payload must parse");
+        assert_eq!(p.kind, ProviderKind::OpenAiCompatible);
     }
 
     #[test]
