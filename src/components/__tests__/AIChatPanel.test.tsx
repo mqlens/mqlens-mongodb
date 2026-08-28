@@ -1205,6 +1205,41 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     await screen.findByTestId('chat-pending-images');
   });
 
+  it('keeps the attachment when the send fails, and drops it when it succeeds', async () => {
+    // Whether a given HTTP model accepts an image is not knowable — no
+    // OpenAI-compatible endpoint advertises vision support — so a text-only model
+    // rejecting the payload is a real outcome. Clearing the composer first meant
+    // the bytes were gone and the screenshot had to be found and pasted again.
+    let fail = true;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'ai_provider_options') return Promise.resolve(OPTIONS);
+      if (cmd === 'list_ai_models_for') return Promise.resolve([]);
+      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, {}));
+      if (cmd === 'generate_mql_query') {
+        return fail
+          ? Promise.reject(new Error('this model does not support images'))
+          : Promise.resolve({ query: JSON.stringify({ queryType: 'find', filter: {} }) });
+      }
+      return Promise.resolve(null);
+    });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    pasteImage(screen.getByTestId('chat-input'));
+    await screen.findByTestId('chat-pending-images');
+
+    send('what query matches this');
+    // The provider refused it — the image is still attached, ready to retry.
+    await waitFor(() => expect(screen.getByText(/does not support images/)).toBeInTheDocument());
+    expect(screen.getByTestId('chat-pending-images')).toBeInTheDocument();
+
+    // Retried against a provider that accepts it: now the bytes are done.
+    fail = false;
+    send('try again');
+    await waitFor(() =>
+      expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument(),
+    );
+  });
+
   it('re-reads its provider list when settings change elsewhere', async () => {
     // Settings can be open in another pane or window. The list was fetched once,
     // so deleting the selected provider there left its id selected here and the

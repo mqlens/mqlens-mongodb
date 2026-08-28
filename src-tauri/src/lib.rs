@@ -2483,8 +2483,13 @@ async fn load_app_settings(
 /// that follows sends a *credentialed* request to the selected provider. An
 /// unrelated preference should not cause network traffic.
 ///
-/// These are exactly the fields `ai_provider_options` is built from; keys are not
-/// among them, since the option list does not expose one.
+/// The fields `ai_provider_options` is built from, plus the built-in credentials.
+///
+/// The keys are not *in* the options payload, but they decide whether a picker can
+/// load its model list at all: a panel whose first listing failed for want of a
+/// key stayed stuck on an empty list until it remounted, however many times the
+/// key was corrected. A key change is an AI-settings change, which is the line
+/// this predicate is drawing — not "does the payload differ byte for byte".
 fn ai_options_changed(
     before: &connections::AppSettings,
     after: &connections::AppSettings,
@@ -2495,6 +2500,9 @@ fn ai_options_changed(
         || before.openai_model != after.openai_model
         || before.gemini_model != after.gemini_model
         || before.local_commands != after.local_commands
+        || before.anthropic_api_key != after.anthropic_api_key
+        || before.openai_api_key != after.openai_api_key
+        || before.gemini_api_key != after.gemini_api_key
 }
 
 /// Change only the named fields, under the settings write lock.

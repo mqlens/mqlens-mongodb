@@ -991,7 +991,12 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     };
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput('');
-    dropPendingImages();
+    // Attachments are NOT dropped here. Whether a given HTTP model accepts an
+    // image is not something this app can know — no OpenAI-compatible endpoint
+    // advertises vision support — so a text-only model rejecting the payload is a
+    // real outcome, and clearing first meant the bytes were gone and the user had
+    // to find and paste the screenshot again. They are dropped once the reply
+    // comes back without an error; see the end of this function.
     setImageNote(null);
     setIsChatLoading(true);
     // The conversation this question belongs to. New chat, opening a history
@@ -1068,10 +1073,15 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       if (sessionKey) takeSettledChatRequest(sessionKey);
       if (activeChatIdRef.current !== askedIn) {
         // The user moved to a different conversation while this was running.
-        // File the answer with its question rather than dropping it.
+        // File the answer with its question rather than dropping it. The
+        // attachments went with that move already.
         void appendToStoredChat(askedIn, reply);
         return;
       }
+      // Sent and answered, so the bytes have done their job. On an error they
+      // stay attached: that is the retry the user would otherwise have to
+      // reconstruct by hand.
+      if (!reply.error) dropPendingImages();
       appendReply(reply);
     } finally {
       setIsChatLoading(false);

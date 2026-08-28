@@ -230,10 +230,18 @@ mod tests {
         let mut shell = base.clone();
         shell.mongosh_path = "/usr/local/bin/mongosh".into();
         assert!(!crate::ai_options_changed(&base, &shell), "mongosh path");
-        // A key is not on the option list, so changing one does not change it.
-        let mut keyed = base.clone();
-        keyed.anthropic_api_key = "sk-new".into();
-        assert!(!crate::ai_options_changed(&base, &keyed), "api key");
+        // A built-in key IS an AI-settings change, even though the options payload
+        // does not carry it: a picker whose first listing failed for want of a key
+        // stayed stuck on an empty list however often the key was corrected.
+        let mut anthropic = base.clone();
+        anthropic.anthropic_api_key = "sk-new".into();
+        assert!(crate::ai_options_changed(&base, &anthropic), "anthropic key");
+        let mut openai = base.clone();
+        openai.openai_api_key = "sk-new".into();
+        assert!(crate::ai_options_changed(&base, &openai), "openai key");
+        let mut gemini = base.clone();
+        gemini.gemini_api_key = "sk-new".into();
+        assert!(crate::ai_options_changed(&base, &gemini), "gemini key");
 
         // Everything the picker actually shows: refresh.
         let mut chosen = base.clone();
