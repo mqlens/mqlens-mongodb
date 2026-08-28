@@ -536,11 +536,24 @@ fn is_loopback_url(url: &reqwest::Url) -> bool {
 /// credential to whoever that host is. And the target must be TLS or loopback, so
 /// a same-host downgrade cannot put it on the wire in clear text.
 ///
-/// A same-host upgrade to `https` is allowed — it is strictly better than the
-/// request that was made — and ports are deliberately not compared, since an
-/// upgrade normally changes the port and the host is what identifies the operator.
+/// The port must match too. A different port on the same host is a different
+/// origin and, on loopback especially, a different program — Ollama on 11434 and
+/// something else on 1234 are not the same service, and neither is
+/// `api.example:443` and `api.example:8443`.
+///
+/// The one exception is a plain scheme upgrade, `http` on its default port to
+/// `https` on its default port: the port changes only because the scheme did, and
+/// the result is strictly better than the request that was made.
 pub(crate) fn redirect_is_safe(target: &reqwest::Url, original: &reqwest::Url) -> bool {
     if target.host_str().is_none() || target.host_str() != original.host_str() {
+        return false;
+    }
+    let same_port = target.port_or_known_default() == original.port_or_known_default();
+    let default_port_upgrade = original.scheme() == "http"
+        && target.scheme() == "https"
+        && original.port().is_none()
+        && target.port().is_none();
+    if !same_port && !default_port_upgrade {
         return false;
     }
     target.scheme() == "https" || is_loopback_url(target)

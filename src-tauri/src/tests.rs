@@ -139,12 +139,16 @@ mod tests {
 
         // From an https cloud endpoint: only the same host, and only over TLS.
         let from = url("https://api.openai.com/v1/chat/completions");
-        for good in [
-            "https://api.openai.com/v2/chat",
-            "https://api.openai.com:8443/v1",
-        ] {
-            assert!(redirect_is_safe(&url(good), &from), "{good} should be followed");
-        }
+        assert!(
+            redirect_is_safe(&url("https://api.openai.com/v2/chat"), &from),
+            "same origin, different path"
+        );
+        // A different port on the same host is a different origin, and may well be
+        // a different program listening there.
+        assert!(
+            !redirect_is_safe(&url("https://api.openai.com:8443/v1"), &from),
+            "a port change must not carry the key"
+        );
         for bad in [
             // Another host, even over TLS: `x-api-key` is an ordinary header, so
             // reqwest keeps it across origins and the credential would go with it.
@@ -160,13 +164,28 @@ mod tests {
         // A local server is reached over http by design, and may stay there.
         let local = url("http://localhost:11434/v1/models");
         assert!(redirect_is_safe(&url("http://localhost:11434/api/tags"), &local));
+        // ...but not hop to whatever else is listening on this machine: Ollama on
+        // 11434 and something else on 1234 are not the same service.
+        assert!(
+            !redirect_is_safe(&url("http://localhost:1234/v1"), &local),
+            "another loopback port is another program"
+        );
         // ...but not hop off the machine, TLS or not.
         assert!(!redirect_is_safe(&url("https://elsewhere.example/v1"), &local));
         assert!(!redirect_is_safe(&url("http://192.168.1.50:8000/v1"), &local));
 
-        // An upgrade on the same host is strictly better than what was asked for.
+        // A plain scheme upgrade on the same host is strictly better than what was
+        // asked for: the port changes only because the scheme did.
         let plain = url("http://llm.internal.example/v1/models");
         assert!(redirect_is_safe(&url("https://llm.internal.example/v1/models"), &plain));
+        // An upgrade that also moves to a non-default port is not that case.
+        assert!(
+            !redirect_is_safe(&url("https://llm.internal.example:8443/v1"), &plain),
+            "an upgrade may not also change the port"
+        );
+        // Explicit ports that agree are fine.
+        let explicit = url("https://llm.internal.example:8443/v1/models");
+        assert!(redirect_is_safe(&url("https://llm.internal.example:8443/v2"), &explicit));
     }
 
     #[test]
