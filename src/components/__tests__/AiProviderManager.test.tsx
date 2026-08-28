@@ -345,6 +345,24 @@ describe('model loading rules', () => {
     await waitFor(() => expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_ai_models')).toBe(true));
   });
 
+  it('drops an already-loaded list when the endpoint changes', async () => {
+    // Dropping only the in-flight request left a loaded dropdown offering the
+    // previous provider's models, and one could be saved against the new one.
+    render(<AiProviderManager providers={[]} onChange={vi.fn()} reservedIds={[]} />);
+    fireEvent.click(screen.getByTestId('ai-provider-add'));
+    fireEvent.change(screen.getByTestId('ai-provider-url-input'), { target: { value: 'http://localhost:11434/v1' } });
+    await waitFor(() => expect(screen.getByTestId('ai-provider-model-select')).toBeInTheDocument());
+
+    // A remote endpoint whose key is unknown cannot auto-load: the stale list
+    // must go, leaving a plain text box.
+    fireEvent.change(screen.getByTestId('ai-provider-url-input'), { target: { value: 'https://api.example.com/v1' } });
+    await waitFor(() => {
+      expect(screen.queryByTestId('ai-provider-model-select')).not.toBeInTheDocument();
+      expect(screen.getByTestId('ai-provider-model-input')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('ai-provider-models-status')).not.toHaveTextContent(/models available/);
+  });
+
   it('ignores a slow reply from an endpoint the user has since changed', async () => {
     let resolveFirst: (v: string[]) => void = () => {};
     let calls = 0;

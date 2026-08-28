@@ -221,11 +221,15 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
   const draftModelsCommand = draft?.models_command ?? '';
   const draftKind = draft?.kind;
   useEffect(() => {
-    // Any change to what a request would ask makes an in-flight answer stale,
-    // whether or not a new request follows — otherwise a slow reply from the
-    // previous endpoint could populate the list for this one.
+    // Any change to what a request would ask makes the previous answer stale —
+    // whether it is still in flight or already displayed. Dropping only the
+    // in-flight one left a loaded dropdown offering the *old* provider's models,
+    // and a model from it could be saved against the new one.
     loadSeq.current += 1;
-    setModelsStatus((st) => (st === 'loading' ? 'idle' : st));
+    setModels([]);
+    setModelsStatus('idle');
+    setModelsError('');
+    setModelMode('type');
     if (!draft || !canAutoLoad(draft)) return;
     const handle = window.setTimeout(() => void loadModels(draft), 600);
     return () => window.clearTimeout(handle);

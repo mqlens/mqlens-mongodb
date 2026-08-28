@@ -237,17 +237,31 @@ pub const PRESETS: &[ProviderPreset] = &[
 /// shows. Both are accepted rather than failing with a 404 that looks like a
 /// credential problem.
 pub fn join_endpoint(base_url: &str, path: &str) -> String {
-    let base = base_url.trim().trim_end_matches('/');
+    let (base, query) = split_query(base_url.trim());
+    let base = base.trim_end_matches('/');
     let want = path.trim_start_matches('/');
     if base.ends_with(want) {
-        return base.to_string();
+        return format!("{base}{query}");
     }
-    format!("{base}/{want}")
+    format!("{base}/{want}{query}")
+}
+
+/// A URL split into its path part and any `?query` / `#fragment` tail.
+///
+/// Gateways hand out endpoints carrying a query — Azure-style
+/// `?api-version=…` is the common one — and appending a route after the query
+/// produces a URL that cannot work. Everything that edits the path does so on
+/// the first half and reattaches the second.
+fn split_query(url: &str) -> (&str, &str) {
+    match url.find(['?', '#']) {
+        Some(i) => (&url[..i], &url[i..]),
+        None => (url, ""),
+    }
 }
 
 /// `…/v1/chat/completions` → `…/v1`, likewise for `…/messages`; unchanged otherwise.
-fn strip_generation_suffix(base_url: &str) -> &str {
-    let base = base_url.trim().trim_end_matches('/');
+fn strip_generation_suffix(path: &str) -> &str {
+    let base = path.trim_end_matches('/');
     for suffix in ["/chat/completions", "/messages"] {
         if let Some(prefix) = base.strip_suffix(suffix) {
             return prefix;
@@ -289,7 +303,13 @@ impl AiProvider {
             // The UI accepts a pasted *generation* URL (`…/v1/chat/completions`,
             // `…/v1/messages`) as the base; the models route hangs off the same
             // prefix, so that suffix is removed before joining.
-            _ => Ok(join_endpoint(strip_generation_suffix(&self.base_url), "models")),
+            _ => {
+                let (path, query) = split_query(self.base_url.trim());
+                Ok(join_endpoint(
+                    &format!("{}{}", strip_generation_suffix(path), query),
+                    "models",
+                ))
+            }
         }
     }
 
@@ -402,6 +422,33 @@ mod tests {
         assert_eq!(
             join_endpoint("https://gateway.example/v1/messages/", "messages"),
             "https://gateway.example/v1/messages"
+        );
+    }
+
+    #[test]
+    fn a_query_string_in_the_base_url_stays_at_the_end() {
+        // Gateways hand out `…?api-version=…`; appending the route after the
+        // query produced a URL that could never work, for generation or listing.
+        let base = "https://gw.example/v1/chat/completions?api-version=2026-01";
+        assert_eq!(
+            join_endpoint(base, "chat/completions"),
+            "https://gw.example/v1/chat/completions?api-version=2026-01"
+        );
+        let mut p = provider(ProviderKind::OpenAiCompatible, base);
+        assert_eq!(p.endpoint().unwrap(), base);
+        assert_eq!(
+            p.models_endpoint().unwrap(),
+            "https://gw.example/v1/models?api-version=2026-01"
+        );
+        // A plain base with a query gains the route before the query.
+        p.base_url = "https://gw.example/v1?api-version=2026-01".into();
+        assert_eq!(
+            p.endpoint().unwrap(),
+            "https://gw.example/v1/chat/completions?api-version=2026-01"
+        );
+        assert_eq!(
+            p.models_endpoint().unwrap(),
+            "https://gw.example/v1/models?api-version=2026-01"
         );
     }
 
