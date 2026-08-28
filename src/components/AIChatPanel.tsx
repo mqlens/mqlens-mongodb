@@ -2,6 +2,13 @@ import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { History, Paperclip, Plus, Sparkles, Trash2, User, X } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -63,6 +70,8 @@ interface ProviderOption {
   kind: 'openai-compatible' | 'anthropic-compatible' | 'gemini' | 'local-cli';
   model: string;
   isDefault: boolean;
+  /** For a local CLI: whether its command contains `{model}`. */
+  usesModel: boolean;
 }
 
 /** A pasted image waiting to be sent. Kept in memory only. */
@@ -229,7 +238,27 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const activeProvider = providerOptions.find((o) => o.id === chatProviderId) ?? null;
   // `null` until the options arrive; their effect then fills in the default.
   const defaultProviderId = () => providerOptions.find((o) => o.isDefault)?.id ?? providerOptions[0]?.id ?? null;
+  // A conversation can name a provider the user has since deleted in Settings.
+  // Sending that id fails with "Unknown AI provider" and the chat cannot
+  // continue until the picker is changed by hand, so it falls back once the
+  // options are known. Before they arrive nothing is dropped.
+  useEffect(() => {
+    if (providerOptions.length === 0) return;
+    if (chatProviderId === null) {
+      // Nothing chosen yet, or a restored chat that named no provider and was
+      // loaded before the options arrived.
+      setChatProviderId(defaultProviderId());
+      return;
+    }
+    if (!providerOptions.some((o) => o.id === chatProviderId)) {
+      setChatProviderId(defaultProviderId());
+      setChatModel('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerOptions, chatProviderId]);
   const providerTakesImages = activeProvider ? activeProvider.kind !== 'local-cli' : true;
+  // Whether choosing a model here changes the request at all.
+  const modelApplies = activeProvider ? activeProvider.kind !== 'local-cli' || activeProvider.usesModel : true;
 
   useEffect(() => {
     let live = true;
@@ -446,7 +475,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         // A panel opened on an existing chat answers with that chat's provider —
         // and a chat saved with none means the default, not whatever the panel
         // happened to be using before.
-        setChatProviderId(stored.providerId ?? defaultProviderId());
+        setChatProviderId(stored.providerId ?? ((cur) => defaultProviderId() ?? cur));
         setChatModel(stored.model ?? '');
       }
       setScopeResolved(true);
@@ -501,6 +530,13 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setActiveChatId(newChatId());
     setChatMessages([]);
     setChatInput('');
+    // A new conversation starts clean: an attachment from the previous one must
+    // not ride along with the next question, and the override belongs to the
+    // conversation that chose it, not to the panel.
+    setPendingImages([]);
+    setImageNote(null);
+    setChatProviderId(defaultProviderId());
+    setChatModel('');
     chatIdRef.current = 0;
   };
 
@@ -528,7 +564,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setChatMessages(stored.messages);
     // The conversation remembers which provider answered it; none saved means
     // the default, not the provider the previous conversation was using.
-    setChatProviderId(stored.providerId ?? defaultProviderId());
+    setChatProviderId(stored.providerId ?? ((cur) => defaultProviderId() ?? cur));
     setChatModel(stored.model ?? '');
     chatIdRef.current = maxChatIdNum(stored.messages) + 1;
   };
@@ -1077,49 +1113,68 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
             <div className="flex items-center justify-between gap-2 px-1.5 pb-1.5">
               {/* Which model answers — chosen here, where the question is typed. */}
               {providerOptions.length > 0 ? (
-                <div className="flex min-w-0 items-center gap-1" data-testid="ai-chat-provider-picker">
-                  <select
-                    className="h-6 max-w-[130px] truncate rounded-full border border-border bg-muted/60 px-2 text-[10.5px] text-foreground"
-                    value={chatProviderId ?? ''}
-                    onChange={(e) => choosePane(e.target.value)}
-                    aria-label={t('aiChatPanel.header.provider')}
-                    data-testid="ai-chat-provider-select"
-                  >
-                    {providerOptions.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.name}
-                      </option>
-                    ))}
-                  </select>
-                  {chatModels.length > 0 && !typingModel ? (
-                    <select
-                      className="h-6 max-w-[140px] truncate rounded-full border border-border bg-muted/60 px-2 font-mono text-[10.5px] text-foreground"
-                      value={chatModels.includes(chatModel) ? chatModel : chatModel ? CURRENT_MODEL : ''}
-                      onChange={(e) => {
-                        if (e.target.value === TYPE_MODEL) setTypingModel(true);
-                        else if (e.target.value !== CURRENT_MODEL) setChatModel(e.target.value);
-                      }}
-                      aria-label={t('aiChatPanel.header.model')}
-                      data-testid="ai-chat-model-select"
+                <div className="flex min-w-0 items-center gap-1.5" data-testid="ai-chat-provider-picker">
+                  <Select value={chatProviderId ?? ''} onValueChange={choosePane}>
+                    <SelectTrigger
+                      className="h-6 w-auto min-w-0 max-w-[150px] gap-1 rounded-full border-border bg-muted/60 px-2.5 text-[10.5px]"
+                      aria-label={t('aiChatPanel.header.provider')}
+                      data-testid="ai-chat-provider-select"
                     >
-                      {chatModel && !chatModels.includes(chatModel) && <option value={CURRENT_MODEL}>{chatModel}</option>}
-                      {chatModels.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent data-testid="ai-chat-provider-options">
+                      {providerOptions.map((o) => (
+                        <SelectItem key={o.id} value={o.id} className="text-xs">
+                          {o.name}
+                        </SelectItem>
                       ))}
-                      <option value={TYPE_MODEL}>{t('aiChatPanel.header.typeModel')}</option>
-                    </select>
-                  ) : (
-                    <input
-                      className="h-6 w-[110px] rounded-full border border-border bg-muted/60 px-2 font-mono text-[10.5px] text-foreground"
-                      value={chatModel}
-                      onChange={(e) => setChatModel(e.target.value)}
-                      placeholder={activeProvider?.model || t('aiChatPanel.header.modelPlaceholder')}
-                      aria-label={t('aiChatPanel.header.model')}
-                      data-testid="ai-chat-model-input"
-                    />
-                  )}
+                    </SelectContent>
+                  </Select>
+                  {/* Hidden where it cannot take effect: a built-in agent whose
+                      command has no {model} picks its model in its own config, so
+                      a field here would look like a setting and do nothing. */}
+                  {modelApplies &&
+                    (chatModels.length > 0 && !typingModel ? (
+                      <Select
+                        value={chatModels.includes(chatModel) ? chatModel : chatModel ? CURRENT_MODEL : ''}
+                        onValueChange={(v) => {
+                          if (v === TYPE_MODEL) setTypingModel(true);
+                          else if (v !== CURRENT_MODEL) setChatModel(v);
+                        }}
+                      >
+                        <SelectTrigger
+                          className="h-6 w-auto min-w-0 max-w-[160px] gap-1 rounded-full border-border bg-muted/60 px-2.5 font-mono text-[10.5px]"
+                          aria-label={t('aiChatPanel.header.model')}
+                          data-testid="ai-chat-model-select"
+                        >
+                          <SelectValue placeholder={activeProvider?.model || t('aiChatPanel.header.modelPlaceholder')} />
+                        </SelectTrigger>
+                        <SelectContent data-testid="ai-chat-model-options">
+                          {chatModel && !chatModels.includes(chatModel) && (
+                            <SelectItem value={CURRENT_MODEL} className="font-mono text-xs">
+                              {chatModel}
+                            </SelectItem>
+                          )}
+                          {chatModels.map((m) => (
+                            <SelectItem key={m} value={m} className="font-mono text-xs">
+                              {m}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value={TYPE_MODEL} className="text-xs">
+                            {t('aiChatPanel.header.typeModel')}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <input
+                        className="h-6 w-[110px] rounded-full border border-border bg-muted/60 px-2.5 font-mono text-[10.5px] text-foreground"
+                        value={chatModel}
+                        onChange={(e) => setChatModel(e.target.value)}
+                        placeholder={activeProvider?.model || t('aiChatPanel.header.modelPlaceholder')}
+                        aria-label={t('aiChatPanel.header.model')}
+                        data-testid="ai-chat-model-input"
+                      />
+                    ))}
                 </div>
               ) : (
                 <span />

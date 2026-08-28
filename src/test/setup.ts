@@ -28,6 +28,18 @@ class MockResizeObserver {
 
 globalThis.ResizeObserver = MockResizeObserver;
 
+// Radix Select/DropdownMenu call the Pointer Capture API on their triggers.
+// jsdom implements none of it, so the component throws before it can open and
+// its items are never rendered — which is why these menus looked undriveable in
+// tests. Same category as the ResizeObserver and scrollIntoView stubs below.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = function hasPointerCapture() {
+    return false;
+  };
+  Element.prototype.setPointerCapture = function setPointerCapture() {};
+  Element.prototype.releasePointerCapture = function releasePointerCapture() {};
+}
+
 // cmdk and Radix scroll areas call scrollIntoView; jsdom does not implement it.
 Element.prototype.scrollIntoView = function scrollIntoView() {};
 

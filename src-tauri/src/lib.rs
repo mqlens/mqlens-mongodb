@@ -1325,26 +1325,40 @@ async fn ai_provider_options(
         connections::load_settings_encrypted(&connections::get_settings_enc_path(&app_handle), &key)?
     };
     let default_id = settings.ai_provider.trim().to_string();
-    let entry = |id: &str, name: &str, kind: &str, model: &str| {
+    // `usesModel` tells the panel whether a model choice reaches the request: an
+    // HTTP provider always sends one, a local command only if its template slots
+    // `{model}` in. Without it the panel would offer a model field that does
+    // nothing for the built-in agents.
+    let entry = |id: &str, name: &str, kind: &str, model: &str, uses_model: bool| {
         serde_json::json!({
-            "id": id, "name": name, "kind": kind, "model": model, "isDefault": id == default_id
+            "id": id, "name": name, "kind": kind, "model": model,
+            "isDefault": id == default_id, "usesModel": uses_model
         })
     };
+    let agent_uses_model = |agent: &str| {
+        connections::resolve_local_command(&settings, agent).contains("{model}")
+    };
     let mut out = vec![
-        entry("anthropic", "Anthropic (Claude)", "anthropic-compatible", &settings.anthropic_model),
-        entry("openai", "OpenAI (ChatGPT)", "openai-compatible", &settings.openai_model),
-        entry("gemini", "Google Gemini", "gemini", &settings.gemini_model),
-        entry("claude-code", "Claude Code (local)", "local-cli", ""),
-        entry("codex", "Codex (local)", "local-cli", ""),
-        entry("cursor", "Cursor (local)", "local-cli", ""),
-        entry("antigravity", "Antigravity (local)", "local-cli", ""),
+        entry("anthropic", "Anthropic (Claude)", "anthropic-compatible", &settings.anthropic_model, true),
+        entry("openai", "OpenAI (ChatGPT)", "openai-compatible", &settings.openai_model, true),
+        entry("gemini", "Google Gemini", "gemini", &settings.gemini_model, true),
     ];
+    for agent in ["claude-code", "codex", "cursor", "antigravity"] {
+        let label = match agent {
+            "claude-code" => "Claude Code (local)",
+            "codex" => "Codex (local)",
+            "cursor" => "Cursor (local)",
+            _ => "Antigravity (local)",
+        };
+        out.push(entry(agent, label, "local-cli", "", agent_uses_model(agent)));
+    }
     for p in &settings.ai_providers {
         let kind = serde_json::to_value(p.kind)
             .ok()
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_default();
-        out.push(entry(&p.id, &p.name, &kind, &p.model));
+        let uses_model = p.kind != ai_providers::ProviderKind::LocalCli || p.command.contains("{model}");
+        out.push(entry(&p.id, &p.name, &kind, &p.model, uses_model));
     }
     Ok(out)
 }

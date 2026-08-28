@@ -705,8 +705,10 @@ pub const AGENT_INSTRUCTIONS: &str = concat!(
     "WRITES. `insert_one`, `update_many`, `delete_many` and `create_index` require ",
     "`_confirm: true`, and before you send it you must tell the user the exact namespace and what ",
     "will change, then get their agreement. A connection the user marked read-only rejects writes ",
-    "regardless. `aggregate` refuses $out and $merge. Every data call — everything except `ping` — ",
-    "is recorded in the user's activity log.\n\n",
+    "regardless. `aggregate` refuses $out and $merge. What reaches the user's activity ",
+    "log depends on their settings: writes and shell always, reads only at the higher verbosity ",
+    "levels, and nothing at all when logging is off. Do not tell the user an operation is recorded — ",
+    "you cannot see their settings.\n\n",
 
     "WHEN SOMETHING IS MISSING. Report what you could not reach and what you would need. Do not ",
     "substitute a different collection, widen a filter to produce output, or describe a query you ",
@@ -1570,12 +1572,24 @@ mod agent_instruction_tests {
     }
 
     #[test]
+    fn the_logging_claim_does_not_promise_more_than_the_gates_allow() {
+        // Level A is the default and `should_record` rejects ReadHigh there, and
+        // logging can be switched off entirely — so "every call is recorded" was
+        // false. The prose must not restate a guarantee the settings can revoke.
+        use crate::audit::level::{should_record, AuditLevel, OpClass};
+        assert!(!should_record(AuditLevel::A, OpClass::ReadHigh), "level A now logs reads?");
+        assert!(!AGENT_INSTRUCTIONS.contains("Every call is recorded"));
+        assert!(!AGENT_INSTRUCTIONS.contains("everything except `ping`"));
+        assert!(AGENT_INSTRUCTIONS.contains("depends on their settings"));
+    }
+
+    #[test]
     fn the_logging_claim_matches_what_ping_does() {
         let src = include_str!("mcp.rs");
         let start = src.find("async fn ping(&self)").unwrap();
         let ping = &src[start..start + 200];
         assert!(!ping.contains("log_call"), "ping now logs; tighten the prose instead");
-        assert!(AGENT_INSTRUCTIONS.contains("everything except `ping`"));
+        // `ping` remains unlogged; the prose no longer claims otherwise for anything.
         assert!(!AGENT_INSTRUCTIONS.contains("Every call is recorded"));
     }
 

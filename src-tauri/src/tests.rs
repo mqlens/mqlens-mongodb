@@ -554,6 +554,22 @@ mod tests {
     }
 
     #[test]
+    fn gemini_reasoning_is_not_also_returned_as_notes() {
+        // Both readers walk the same parts array; without filtering, a thought
+        // part landed in the answer text too and the panel printed it twice.
+        use crate::ai::{extract_gemini_text, extract_gemini_thoughts};
+        let resp = serde_json::json!({"candidates":[{"content":{"parts":[
+            {"text":"weighing an index scan","thought":true},
+            {"text":"{\"queryType\":\"find\",\"filter\":{}}"}]}}]});
+        assert_eq!(extract_gemini_thoughts(&resp).as_deref(), Some("weighing an index scan"));
+        let answer = extract_gemini_text(&resp);
+        assert!(!answer.contains("weighing"), "reasoning leaked into the answer: {answer}");
+        let (json, notes) = crate::ai::split_json_object(&answer).unwrap();
+        assert_eq!(json, "{\"queryType\":\"find\",\"filter\":{}}");
+        assert!(notes.is_none(), "notes should be empty, got {notes:?}");
+    }
+
+    #[test]
     fn a_reply_omits_what_it_does_not_have() {
         // The frontend treats a missing key and null the same, but the JSON the
         // panel stores should not carry `"thoughts": null` for every message.

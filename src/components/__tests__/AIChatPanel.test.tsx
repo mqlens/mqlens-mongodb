@@ -797,9 +797,12 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
   // ── thoughts, images, per-chat provider (#283 follow-up) ──────────────────
 
   const OPTIONS = [
-    { id: 'anthropic', name: 'Anthropic (Claude)', kind: 'anthropic-compatible', model: 'claude-opus-4-8', isDefault: true },
-    { id: 'deepseek', name: 'DeepSeek', kind: 'openai-compatible', model: 'deepseek-chat', isDefault: false },
-    { id: 'claude-code', name: 'Claude Code (local)', kind: 'local-cli', model: '', isDefault: false },
+    { id: 'anthropic', name: 'Anthropic (Claude)', kind: 'anthropic-compatible', model: 'claude-opus-4-8', isDefault: true, usesModel: true },
+    { id: 'deepseek', name: 'DeepSeek', kind: 'openai-compatible', model: 'deepseek-chat', isDefault: false, usesModel: true },
+    // A built-in agent whose command has no {model}: the panel must not offer one.
+    { id: 'claude-code', name: 'Claude Code (local)', kind: 'local-cli', model: '', isDefault: false, usesModel: false },
+    // A CLI whose template does slot the model in.
+    { id: 'my-ollama', name: 'My Ollama', kind: 'local-cli', model: 'llama3', isDefault: false, usesModel: true },
   ];
   /** Like mockBackend, but with providers to pick from and a reply to return. */
   const mockPickerBackend = (reply: unknown, models: string[] = []) =>
@@ -822,6 +825,17 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     fireEvent.change(screen.getByTestId('chat-input'), { target: { value: text } });
     fireEvent.click(screen.getByTestId('chat-send-btn'));
   };
+  // Radix Select opens on pointerdown and renders its items in a portal.
+  const pickFrom = async (triggerId: string, optionText: string) => {
+    // Keyboard rather than pointer: Radix opens on Enter/Space without needing
+    // the layout jsdom cannot provide.
+    fireEvent.keyDown(screen.getByTestId(triggerId), { key: 'Enter' });
+    const option = await screen.findByRole('option', { name: optionText });
+    fireEvent.click(option);
+  };
+  const pickProvider = (name: string) => pickFrom('ai-chat-provider-select', name);
+  const pickModel = (name: string) => pickFrom('ai-chat-model-select', name);
+
   const lastGenerateArgs = () =>
     invokeMock.mock.calls.filter((c) => c[0] === 'generate_mql_query').at(-1)![1];
 
@@ -888,9 +902,9 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
   it('disables the paperclip for a local command provider', async () => {
     mockPickerBackend({ query: '{}' });
     renderPanel('editor');
-    const select = await screen.findByTestId('ai-chat-provider-select');
+    await screen.findByTestId('ai-chat-provider-select');
     expect(screen.getByTestId('chat-attach-btn')).not.toBeDisabled();
-    fireEvent.change(select, { target: { value: 'claude-code' } });
+    await pickProvider('Claude Code (local)');
     expect(screen.getByTestId('chat-attach-btn')).toBeDisabled();
   });
 
@@ -906,8 +920,8 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
   it('refuses images for a local command provider and says why', async () => {
     mockPickerBackend({ query: '{}' });
     renderPanel('editor');
-    const select = await screen.findByTestId('ai-chat-provider-select');
-    fireEvent.change(select, { target: { value: 'claude-code' } });
+    await screen.findByTestId('ai-chat-provider-select');
+    await pickProvider('Claude Code (local)');
 
     pasteImage(screen.getByTestId('chat-input'));
     await screen.findByTestId('chat-image-note');
@@ -918,13 +932,13 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
   it('starts on the settings default and sends the picked provider and model', async () => {
     mockPickerBackend({ query: JSON.stringify({ explanation: 'ok', queryType: 'find', filter: {} }) }, ['deepseek-chat', 'deepseek-reasoner']);
     renderPanel('editor');
-    const select = await screen.findByTestId('ai-chat-provider-select');
-    expect(select).toHaveValue('anthropic');
+    const trigger = await screen.findByTestId('ai-chat-provider-select');
+    expect(trigger).toHaveTextContent('Anthropic');
 
-    fireEvent.change(select, { target: { value: 'deepseek' } });
+    await pickProvider('DeepSeek');
     // The provider's models arrive and the model field becomes a dropdown.
-    const modelSelect = await screen.findByTestId('ai-chat-model-select');
-    fireEvent.change(modelSelect, { target: { value: 'deepseek-reasoner' } });
+    await screen.findByTestId('ai-chat-model-select');
+    await pickModel('deepseek-reasoner');
 
     send('anything');
     await screen.findByText('ok');
@@ -945,14 +959,14 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
   it('opens on an existing chat with the provider that chat used', async () => {
     chatStore = [{
       id: 'c9', title: 'old', messages: [{ id: 'm1', role: 'user', text: 'hi' }],
-      connectionName: 'Local', database: 'db', collection: 'users', variant: 'editor',
+      connectionName: 'Local', database: 'test-db', collection: 'users', variant: 'editor',
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
       providerId: 'deepseek', model: 'deepseek-chat',
     }];
     mockPickerBackend({ query: '{}' });
     renderPanel('editor', { chatId: 'c9' });
-    const select = await screen.findByTestId('ai-chat-provider-select');
-    await waitFor(() => expect(select).toHaveValue('deepseek'));
+    const trigger = await screen.findByTestId('ai-chat-provider-select');
+    await waitFor(() => expect(trigger).toHaveTextContent('DeepSeek'));
   });
 
   it('opens a legacy conversation on the default provider, not the one last used', async () => {
@@ -960,13 +974,13 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     // "the default", and must not inherit whatever this panel was just using.
     chatStore = [{
       id: 'legacy', title: 'old', messages: [{ id: 'm1', role: 'user', text: 'hi' }],
-      connectionName: 'Local', database: 'db', collection: 'users', variant: 'editor',
+      connectionName: 'Local', database: 'test-db', collection: 'users', variant: 'editor',
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
     }];
     mockPickerBackend({ query: '{}' });
     renderPanel('editor', { chatId: 'legacy' });
-    const select = await screen.findByTestId('ai-chat-provider-select');
-    await waitFor(() => expect(select).toHaveValue('anthropic'));
+    const trigger = await screen.findByTestId('ai-chat-provider-select');
+    await waitFor(() => expect(trigger).toHaveTextContent('Anthropic'));
   });
 
   it('prevents the default paste before reading images, so no stray text lands in the prompt', async () => {
@@ -1004,5 +1018,63 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     expect(screen.queryByTestId('ai-chat-provider-picker')).not.toBeInTheDocument();
     // No override is sent, so the backend uses the settings default.
     expect(lastGenerateArgs().providerId).toBeUndefined();
+  });
+
+  it('offers no model for a built-in agent whose command does not use one', async () => {
+    // `claude -p {prompt}` has no {model}; a field here would look like a
+    // setting and change nothing about the request.
+    mockPickerBackend({ query: '{}' }, ['ignored']);
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    await pickProvider('Claude Code (local)');
+    await waitFor(() => {
+      expect(screen.queryByTestId('ai-chat-model-select')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('ai-chat-model-input')).not.toBeInTheDocument();
+    });
+  });
+
+  it('offers a model for a local CLI whose template slots one in', async () => {
+    mockPickerBackend({ query: '{}' }, ['llama3:latest', 'mistral:7b']);
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    await pickProvider('My Ollama');
+    await screen.findByTestId('ai-chat-model-select');
+  });
+
+  it('clears a pending image and the provider override when starting a new chat', async () => {
+    mockPickerBackend({ query: '{}' }, ['deepseek-chat']);
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    await pickProvider('DeepSeek');
+    pasteImage(screen.getByTestId('chat-input'));
+    await screen.findByTestId('chat-pending-images');
+
+    fireEvent.click(screen.getByTestId('ai-chat-new-btn'));
+
+    // The attachment belonged to the previous conversation.
+    expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
+    // ...and so did the override; a new chat starts on the default.
+    await waitFor(() =>
+      expect(screen.getByTestId('ai-chat-provider-select')).toHaveTextContent('Anthropic')
+    );
+  });
+
+  it('falls back to the default when the stored provider no longer exists', async () => {
+    // A conversation naming a provider the user has since deleted would send an
+    // id the backend rejects, and could not continue until changed by hand.
+    chatStore = [{
+      id: 'c-gone', title: 'old', messages: [{ id: 'm1', role: 'user', text: 'hi' }],
+      connectionName: 'Local', database: 'test-db', collection: 'users', variant: 'editor',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      providerId: 'deleted-provider', model: 'whatever',
+    }];
+    mockPickerBackend({ query: JSON.stringify({ explanation: 'ok', queryType: 'find', filter: {} }) });
+    renderPanel('editor', { chatId: 'c-gone' });
+    const trigger = await screen.findByTestId('ai-chat-provider-select');
+    await waitFor(() => expect(trigger).toHaveTextContent('Anthropic'));
+
+    send('anything');
+    await screen.findByText('ok');
+    expect(lastGenerateArgs().providerId).toBe('anthropic');
   });
 });

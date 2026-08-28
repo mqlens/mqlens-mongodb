@@ -832,6 +832,11 @@ pub fn extract_gemini_text(resp: &serde_json::Value) -> String {
         .map(|parts| {
             parts
                 .iter()
+                // Parts flagged `thought` are the model's reasoning, returned
+                // separately by `extract_gemini_thoughts`. Including them here
+                // put the same text in `notes` as well, so the panel showed
+                // Gemini's reasoning twice.
+                .filter(|p| p.get("thought").and_then(|t| t.as_bool()) != Some(true))
                 .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
                 .collect::<Vec<_>>()
                 .join("")
