@@ -47,3 +47,9 @@ src-tauri/Entitlements.dev.plist
 # keychain entitlements). Supplied via the APPLE_PROVISIONING_PROFILE secret in
 # CI and decoded to this path before bundling; keep it out of the repo.
 src-tauri/embedded.provisionprofile
+
+# Local scaffolding written by agent skills (open-code-review delegation, etc.).
+# Not project config: it is per-machine tool state, and a `git add -A` otherwise
+# sweeps it into whatever branch happens to be checked out.
+.agents/
+skills-lock.json
