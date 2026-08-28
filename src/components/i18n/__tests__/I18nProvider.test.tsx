@@ -52,9 +52,9 @@ describe('I18nProvider', () => {
     fireEvent.click(screen.getByText('to-de'));
     await waitFor(() => expect(screen.getByTestId('cancel')).toHaveTextContent('Abbrechen'));
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith('save_app_settings', expect.objectContaining({
-        settings: expect.objectContaining({ locale: 'de' }),
-      })),
+      expect(mockInvoke).toHaveBeenCalledWith('patch_app_settings', {
+        patch: { locale: 'de' },
+      }),
     );
   });
 

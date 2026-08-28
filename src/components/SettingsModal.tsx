@@ -1,4 +1,4 @@
-import React, { useEffect, useState , useRef} from 'react';
+import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import {
@@ -722,41 +722,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   const localCommandFor = (agent: string) =>
     localCommands[agent] ?? DEFAULT_LOCAL_COMMANDS[agent] ?? '{prompt}';
 
-  // Every settings write goes through one queue. Both the automatic provider
-  // persist and the form's Save do load → merge → write; run concurrently, the
-  // one that finishes last wins with whatever stale copy it loaded, resurrecting
-  // an old list or undoing an unrelated field the other had just changed.
-  const settingsWriteQueue = useRef<Promise<void>>(Promise.resolve());
-  const enqueueSettingsWrite = (write: () => Promise<void>) => {
-    const run = settingsWriteQueue.current.then(write, write);
-    settingsWriteQueue.current = run.catch(() => {});
-    return run;
-  };
-
   // Writes the provider list (and the active choice) without waiting for the
-  // form's Save. Everything else on the form still saves the normal way.
-  const persistProviders = (next: AiProvider[], active: string) =>
-    enqueueSettingsWrite(async () => {
-      try {
-        const current = await invoke<AppSettings>('load_app_settings');
-        await invoke('save_app_settings', {
-          settings: { ...current, ai_providers: next, ai_provider: active },
-        });
-      } catch (e) {
-        setError(t('ai.providerSaveFailed', { error: String(e) }));
-      }
-    });
+  // form's Save, since the button says "Save provider".
+  //
+  // No frontend queue: every settings write is now a single `patch_app_settings`
+  // call that loads, merges and saves inside one backend lock, so two writers
+  // cannot interleave a load with the other's save. That also covers the writers
+  // outside this component — theme, locale, shell path.
+  const persistProviders = async (next: AiProvider[], active: string) => {
+    try {
+      await invoke('patch_app_settings', { patch: { ai_providers: next, ai_provider: active } });
+    } catch (e) {
+      setError(t('ai.providerSaveFailed', { error: String(e) }));
+    }
+  };
 
   const saveSettings = async () => {
     setSaving(true);
     setError(null);
     setStatus(null);
     try {
-      await enqueueSettingsWrite(async () => {
-      const current = await invoke<AppSettings>('load_app_settings');
-      await invoke('save_app_settings', {
-        settings: {
-          ...current,
+      // A patch of exactly the fields this form owns. Spreading a loaded copy
+      // used to echo back every field it does not own — appearance, locale —
+      // so a theme or language change made while the form was open was undone
+      // by pressing Save. The backend merges under its own lock.
+      await invoke('patch_app_settings', {
+        patch: {
           mongosh_path: mongoshPath.trim(),
           ai_provider: aiProvider,
           anthropic_api_key: anthropicKey.trim(),
@@ -775,7 +766,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
           audit_include_payloads: auditIncludePayloads,
           update_channel: updateChannel,
         },
-      });
       });
       saveAiHistoryRetentionMonths(historyRetentionMonths);
       setStatus(t('footer.settingsSaved'));

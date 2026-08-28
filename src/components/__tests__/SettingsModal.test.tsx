@@ -54,7 +54,7 @@ describe('SettingsView Component', () => {
       if (cmd === 'load_app_settings') {
         return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
       }
-      if (cmd === 'save_app_settings') {
+      if (cmd === 'patch_app_settings' || cmd === 'save_app_settings') {
         return Promise.resolve();
       }
       if (cmd === 'test_mongosh_path') {
@@ -164,8 +164,8 @@ describe('SettingsView Component', () => {
 
     fireEvent.click(screen.getByTestId('settings-save-btn'));
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith('save_app_settings', {
-        settings: expect.objectContaining({
+      expect(mockInvoke).toHaveBeenCalledWith('patch_app_settings', {
+        patch: expect.objectContaining({
           mongosh_path: '/opt/homebrew/bin/mongosh',
           ai_provider: 'anthropic',
           anthropic_api_key: '',
@@ -257,12 +257,12 @@ describe('SettingsView Component', () => {
   });
 
   it('loads and saves AI Helper history retention duration', async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: { settings?: { ai_history_retention_months?: number } }) => {
+    mockInvoke.mockImplementation((cmd: string, args?: { patch?: { ai_history_retention_months?: number } }) => {
       if (cmd === 'load_app_settings') {
         return Promise.resolve({ mongosh_path: '', ai_history_retention_months: 6 });
       }
-      if (cmd === 'save_app_settings') {
-        expect(args?.settings?.ai_history_retention_months).toBe(12);
+      if (cmd === 'patch_app_settings' || cmd === 'save_app_settings') {
+        expect(args?.patch?.ai_history_retention_months).toBe(12);
         return Promise.resolve();
       }
       if (cmd === 'detect_local_agents') return Promise.resolve([]);
@@ -285,22 +285,16 @@ describe('SettingsView Component', () => {
     fireEvent.click(screen.getByRole('option', { name: /12 months/i }));
     fireEvent.click(screen.getByTestId('settings-save-btn'));
 
-    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('save_app_settings', expect.any(Object)));
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('patch_app_settings', expect.any(Object)));
     expect(localStorage.getItem('mqlens_ai_history_retention_months')).toBe('12');
   });
 
   it('loads and saves audit logging settings', async () => {
+    let auditPatch: Record<string, unknown> | undefined;
     mockInvoke.mockImplementation(
       (
         cmd: string,
-        args?: {
-          settings?: {
-            audit_enabled?: boolean;
-            audit_level?: string;
-            audit_retention_days?: number;
-            audit_include_payloads?: boolean;
-          };
-        }
+        args?: { patch?: Record<string, unknown> }
       ) => {
         if (cmd === 'load_app_settings') {
           return Promise.resolve({
@@ -311,11 +305,11 @@ describe('SettingsView Component', () => {
             audit_include_payloads: false,
           });
         }
-        if (cmd === 'save_app_settings') {
-          expect(args?.settings?.audit_enabled).toBe(true);
-          expect(args?.settings?.audit_level).toBe('C');
-          expect(args?.settings?.audit_retention_days).toBe(90);
-          expect(args?.settings?.audit_include_payloads).toBe(true);
+        if (cmd === 'patch_app_settings' || cmd === 'save_app_settings') {
+          // Recorded, not asserted here: an `expect` that throws inside the mock
+          // is swallowed by the component's own catch, so the test would pass
+          // whatever the values were. Checked after the await instead.
+          auditPatch = args?.patch;
           return Promise.resolve();
         }
         if (cmd === 'detect_local_agents') return Promise.resolve([]);
@@ -341,8 +335,15 @@ describe('SettingsView Component', () => {
     fireEvent.click(screen.getByTestId('settings-save-btn'));
 
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith('save_app_settings', expect.any(Object))
+      expect(mockInvoke).toHaveBeenCalledWith('patch_app_settings', expect.any(Object))
     );
+    await waitFor(() => expect(auditPatch).toBeTruthy());
+    expect(auditPatch).toMatchObject({
+      audit_enabled: true,
+      audit_level: 'C',
+      audit_retention_days: 90,
+      audit_include_payloads: true,
+    });
   });
 
   it('shows last update check status on the updates tab', async () => {
@@ -437,9 +438,9 @@ describe('SettingsView Component', () => {
 
       fireEvent.click(screen.getByTestId('settings-save-btn'));
       await waitFor(() => {
-        const save = mockInvoke.mock.calls.find(([cmd]) => cmd === 'save_app_settings');
+        const save = mockInvoke.mock.calls.find(([cmd]) => cmd === 'patch_app_settings');
         expect(save).toBeTruthy();
-        expect(save![1].settings.ai_providers).toEqual([deepseek]);
+        expect(save![1].patch.ai_providers).toEqual([deepseek]);
       });
     });
 
@@ -456,27 +457,19 @@ describe('SettingsView Component', () => {
 
       fireEvent.click(screen.getByTestId('ai-provider-remove-deepseek'));
       await waitFor(() => {
-        const save = mockInvoke.mock.calls.find(([cmd]) => cmd === 'save_app_settings');
-        expect(save).toBeTruthy();
-        expect(save![1].settings.ai_providers).toEqual([]);
+        const patch = mockInvoke.mock.calls.find(([cmd]) => cmd === 'patch_app_settings');
+        expect(patch).toBeTruthy();
+        expect(patch![1].patch.ai_providers).toEqual([]);
       });
     });
 
-    it('serializes the automatic persist behind the form Save so neither overwrites the other', async () => {
-      // Both do load → merge → write. Run concurrently, whichever finishes last
-      // wins with the stale copy it loaded. Here the first load is slow; the
-      // second write must still see the first write's result.
-      let releaseFirstLoad: (v: unknown) => void = () => {};
-      let loads = 0;
-      const writes: any[] = [];
-      let stored: any = { ai_provider: 'anthropic', ai_providers: [deepseek], mongosh_path: '' };
-      mockInvoke.mockImplementation((cmd, args: any) => {
-        if (cmd === 'load_app_settings') {
-          loads += 1;
-          if (loads === 2) return new Promise((res) => { releaseFirstLoad = res; }).then(() => stored);
-          return Promise.resolve(stored);
-        }
-        if (cmd === 'save_app_settings') { stored = args.settings; writes.push(args.settings); return Promise.resolve(); }
+    it('writes only the fields it owns, so a concurrent theme or locale change survives', async () => {
+      // The form used to load the whole settings object and write it back, which
+      // undid an appearance or locale change made while it was open. Ordering is
+      // no longer a frontend concern either: each write is one backend call that
+      // loads, merges and saves under a lock.
+      mockInvoke.mockImplementation((cmd) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({ ai_providers: [deepseek] });
         if (cmd === 'ai_provider_presets') return Promise.resolve([]);
         return Promise.resolve();
       });
@@ -484,15 +477,20 @@ describe('SettingsView Component', () => {
       await openTab('settings-tab-ai');
       await screen.findByTestId('ai-provider-row-deepseek');
 
-      fireEvent.click(screen.getByTestId('ai-provider-remove-deepseek'));   // queued write #1 (slow load)
-      fireEvent.click(screen.getByTestId('settings-save-btn'));            // queued write #2
-      await new Promise((r) => setTimeout(r, 30));
-      expect(writes).toHaveLength(0);                                       // #2 waits for #1
-      releaseFirstLoad(undefined);
-      await waitFor(() => expect(writes).toHaveLength(2));
-      expect(writes[0].ai_providers).toEqual([]);
-      // The form Save loaded AFTER the removal was written, so it keeps it.
-      expect(writes[1].ai_providers).toEqual([]);
+      fireEvent.click(screen.getByTestId('settings-save-btn'));
+      await waitFor(() => {
+        const patch = mockInvoke.mock.calls.find(([cmd]) => cmd === 'patch_app_settings');
+        expect(patch).toBeTruthy();
+        const fields = Object.keys(patch![1].patch);
+        expect(fields).toContain('ai_providers');
+        expect(fields).toContain('mongosh_path');
+        // Fields owned by other components are absent, so they cannot be echoed
+        // back over a newer value.
+        expect(fields).not.toContain('appearance');
+        expect(fields).not.toContain('locale');
+      });
+      // And nothing writes the whole object any more.
+      expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'save_app_settings')).toBe(false);
     });
 
     it('does not leave a removed provider selected', async () => {

@@ -134,6 +134,41 @@ mod tests {
         assert_eq!(args, ["-p", "find users"]);
     }
 
+    #[test]
+    fn a_settings_patch_replaces_only_its_own_fields() {
+        use crate::connections::{merge_settings_patch, AppSettings};
+        let mut current = AppSettings::default();
+        current.locale = "de".into();
+        current.mongosh_path = "/opt/mongosh".into();
+        let patch = serde_json::json!({ "ai_provider": "deepseek", "ai_providers": [] });
+        let merged = merge_settings_patch(&current, &patch).unwrap();
+        assert_eq!(merged.ai_provider, "deepseek");
+        assert_eq!(merged.locale, "de", "untouched field survives");
+        assert_eq!(merged.mongosh_path, "/opt/mongosh");
+    }
+
+    #[test]
+    fn a_settings_patch_rejects_unknown_fields_and_bad_values() {
+        use crate::connections::{merge_settings_patch, AppSettings};
+        let current = AppSettings::default();
+        let err = merge_settings_patch(&current, &serde_json::json!({ "ai_provdier": "x" })).unwrap_err();
+        assert!(err.contains("unknown settings field `ai_provdier`"), "{err}");
+        let err = merge_settings_patch(&current, &serde_json::json!({ "audit_retention_days": "thirty" })).unwrap_err();
+        assert!(err.contains("invalid settings patch"), "{err}");
+        assert!(merge_settings_patch(&current, &serde_json::json!([1])).is_err());
+    }
+
+    #[test]
+    fn the_prompt_text_is_never_scanned_for_placeholders() {
+        use crate::ai::parse_command_template;
+        // The prompt is user content and may say "{model}" literally.
+        let (_, args) = parse_command_template("agent --model={model} {prompt}", r#"find "{model}""#, "m1").unwrap();
+        assert_eq!(args, ["--model=m1", r#"find "{model}""#]);
+        // …and a prompt containing "{prompt}" is not re-expanded either.
+        let (_, args) = parse_command_template("agent {prompt}", "say {prompt}", "").unwrap();
+        assert_eq!(args, ["say {prompt}"]);
+    }
+
     /// Resolution has to keep working for the settings already in people's
     /// vaults: the three original providers store their keys in dedicated fields,
     /// not in the new list, and a stored `ai_provider` must keep selecting them.

@@ -146,6 +146,7 @@ const LOCAL_COMMANDS: &[&str] = &[
     "test_connection_uri", // ephemeral test connection, never tracked in connection_meta
     "load_app_settings",
     "save_app_settings",
+    "patch_app_settings",
     "audit_list",
     "audit_export",
     "audit_open_folder",

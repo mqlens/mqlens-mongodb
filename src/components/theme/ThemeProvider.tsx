@@ -137,14 +137,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const saveAppearance = useCallback(async () => {
     writeAppearanceCache(config);
     try {
-      const settings = await invoke<AppSettingsWithAppearance & Record<string, unknown>>(
-        "load_app_settings"
-      );
-      await invoke("save_app_settings", {
-        settings: {
-          ...settings,
-          appearance: themeConfigToAppearance(config),
-        },
+      // Only the field this provider owns; the backend merges under its lock, so
+      // a provider or locale write at the same moment is neither erased nor erasing.
+      await invoke("patch_app_settings", {
+        patch: { appearance: themeConfigToAppearance(config) },
       });
       localStorage.removeItem("mqlens-theme");
       localStorage.removeItem("mqlens-density");

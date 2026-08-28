@@ -372,21 +372,38 @@ describe('model loading rules', () => {
 
 describe('withEndpoint', () => {
   const keyed = { ...emptyProvider(), base_url: 'https://api.openai.com/v1', api_key: 'sk-openai' };
+  // The origin the key was entered for, tracked by the component — so "clear the
+  // field, then paste another host" is still recognised as a host change.
+  const ORIGIN = 'https://api.openai.com';
   it('clears the key when the host changes, so the auto-load cannot leak it', () => {
-    expect(withEndpoint(keyed, 'https://api.deepseek.com/v1').api_key).toBe('');
+    expect(withEndpoint(keyed, 'https://api.deepseek.com/v1', ORIGIN).api_key).toBe('');
     // The scheme and the port are part of the origin: each is a different recipient.
-    expect(withEndpoint(keyed, 'http://api.openai.com/v1').api_key).toBe('');
-    expect(withEndpoint(keyed, 'https://api.openai.com:8443/v1').api_key).toBe('');
+    expect(withEndpoint(keyed, 'http://api.openai.com/v1', ORIGIN).api_key).toBe('');
+    expect(withEndpoint(keyed, 'https://api.openai.com:8443/v1', ORIGIN).api_key).toBe('');
   });
   it('keeps the key for a path edit on the same host', () => {
-    expect(withEndpoint(keyed, 'https://api.openai.com/v1/').api_key).toBe('sk-openai');
-    expect(withEndpoint(keyed, 'https://API.openai.com/v1/chat/completions').api_key).toBe('sk-openai');
+    expect(withEndpoint(keyed, 'https://api.openai.com/v1/', ORIGIN).api_key).toBe('sk-openai');
+    expect(withEndpoint(keyed, 'https://API.openai.com/v1/chat/completions', ORIGIN).api_key).toBe('sk-openai');
   });
   it('keeps the key while the new URL has no host yet', () => {
     // Clearing mid-keystroke protects nothing — nothing loads without a host.
-    expect(withEndpoint(keyed, 'https://').api_key).toBe('sk-openai');
-    expect(withEndpoint(keyed, '').api_key).toBe('sk-openai');
+    expect(withEndpoint(keyed, 'https://', ORIGIN).api_key).toBe('sk-openai');
+    expect(withEndpoint(keyed, '', ORIGIN).api_key).toBe('sk-openai');
     expect(originOf('https://')).toBeNull();
+  });
+
+  it('still clears the key when a new host arrives after an emptied field', () => {
+    // The reported hole: comparing against the previous *field value* kept the
+    // key through "clear, then paste elsewhere", because one side was null each
+    // time. Comparing against the key's own origin closes it.
+    const emptied = withEndpoint(keyed, '', ORIGIN);
+    expect(emptied.api_key).toBe('sk-openai');
+    expect(withEndpoint(emptied, 'https://api.deepseek.com/v1', ORIGIN).api_key).toBe('');
+  });
+
+  it('keeps the key when no origin is recorded for it', () => {
+    // A keyless draft, or a key whose origin is not known: nothing to compare.
+    expect(withEndpoint(keyed, 'https://api.deepseek.com/v1', null).api_key).toBe('sk-openai');
   });
 });
 });

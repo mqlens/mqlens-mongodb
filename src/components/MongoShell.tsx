@@ -721,9 +721,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // (setMongoshPath alone would be a no-op state update, so no re-attempt).
   const saveMongoshPath = async (path: string) => {
     try {
-      const current = await invoke<AppSettings>('load_app_settings').catch(() => ({} as AppSettings));
-      await invoke('save_app_settings', {
-        settings: { ...current, mongosh_path: path },
+      await invoke('patch_app_settings', {
+        patch: { mongosh_path: path },
       });
     } catch {
       /* settings persistence is best-effort — still try the new path below */

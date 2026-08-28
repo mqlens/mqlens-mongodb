@@ -606,7 +606,7 @@ describe('MongoShell Component', () => {
         if (cmd === 'start_mongosh_session')
           return Promise.reject(new Error('Failed to start mongosh'));
         if (cmd === 'detect_mongosh_binary') return Promise.resolve(null);
-        if (cmd === 'save_app_settings') return Promise.resolve();
+        if (cmd === 'save_app_settings' || cmd === 'patch_app_settings') return Promise.resolve();
         return Promise.resolve([]);
       });
       render(
@@ -632,10 +632,8 @@ describe('MongoShell Component', () => {
 
       await waitFor(() => {
         expect(mockInvoke).toHaveBeenCalledWith(
-          'save_app_settings',
-          expect.objectContaining({
-            settings: expect.objectContaining({ mongosh_path: '/opt/homebrew/bin/mongosh' }),
-          })
+          'patch_app_settings',
+          { patch: { mongosh_path: '/opt/homebrew/bin/mongosh' } }
         );
       });
       // Saving retries the session.
@@ -655,10 +653,8 @@ describe('MongoShell Component', () => {
 
       await waitFor(() => {
         expect(mockInvoke).toHaveBeenCalledWith(
-          'save_app_settings',
-          expect.objectContaining({
-            settings: expect.objectContaining({ mongosh_path: '/custom/tools/mongosh' }),
-          })
+          'patch_app_settings',
+          { patch: { mongosh_path: '/custom/tools/mongosh' } }
         );
       });
     });

@@ -77,6 +77,11 @@ impl<T> LockExt<T> for std::sync::Mutex<T> {
 }
 
 pub struct AppState {
+    /// Held across every load → merge → save of the settings file. Several
+    /// components write settings independently (the form, theme, locale, shell
+    /// path, providers); without one lock the last writer wins with the stale
+    /// copy it loaded.
+    pub settings_write: Mutex<()>,
     pub connections: Mutex<HashMap<String, Client>>,
     pub mocks: Mutex<HashMap<String, bool>>,
     pub mock_indexes: Mutex<HashMap<String, Vec<IndexInfo>>>,
@@ -195,6 +200,7 @@ impl AppState {
             mcp: Arc::new(Mutex::new(mcp::McpControl::new())),
             audit: Arc::new(Mutex::new(None)),
             audit_degraded: Mutex::new(None),
+            settings_write: Mutex::new(()),
             audit_pending: Arc::new(Mutex::new(Vec::new())),
             audit_generation: Arc::new(AtomicU64::new(0)),
         }

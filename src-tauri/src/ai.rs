@@ -653,10 +653,17 @@ pub fn parse_command_template(
     // `--model={model}` work as well as bare `{prompt}`. Each token stays one
     // argument, so a prompt with spaces is never split by the shell.
     for tok in &tokens[1..] {
-        if tok.contains("{prompt}") {
+        // `{model}` is substituted in the *template's* text only. The prompt is
+        // user content and may itself contain the literal `{model}`; splitting on
+        // `{prompt}` first and substituting in the pieces keeps it untouched.
+        let pieces: Vec<String> = tok
+            .split("{prompt}")
+            .map(|piece| piece.replace("{model}", model.trim()))
+            .collect();
+        if pieces.len() > 1 {
             substituted = true;
         }
-        args.push(tok.replace("{prompt}", prompt).replace("{model}", model.trim()));
+        args.push(pieces.join(prompt));
     }
     if !substituted {
         args.push(prompt.to_string());

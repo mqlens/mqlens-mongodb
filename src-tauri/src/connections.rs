@@ -236,6 +236,30 @@ pub fn default_local_command(agent: &str) -> &'static str {
     }
 }
 
+/// `current` with the top-level fields in `patch` replaced.
+///
+/// A patch names only the fields its caller owns, so writers that run at the
+/// same time cannot erase each other's changes the way whole-object saves do.
+/// An unknown field is an error rather than silently ignored: a typo in a caller
+/// would otherwise look like a save that took effect.
+pub fn merge_settings_patch(
+    current: &AppSettings,
+    patch: &serde_json::Value,
+) -> Result<AppSettings, String> {
+    let serde_json::Value::Object(patch) = patch else {
+        return Err("settings patch must be a JSON object".into());
+    };
+    let mut merged = serde_json::to_value(current).map_err(|e| e.to_string())?;
+    let serde_json::Value::Object(map) = &mut merged else { unreachable!() };
+    for (k, v) in patch {
+        if !map.contains_key(k) {
+            return Err(format!("unknown settings field `{k}`"));
+        }
+        map.insert(k.clone(), v.clone());
+    }
+    serde_json::from_value(merged).map_err(|e| format!("invalid settings patch: {e}"))
+}
+
 /// The provider `settings.ai_provider` names, in a single shape.
 ///
 /// The three original providers keep their dedicated key/model fields, so they

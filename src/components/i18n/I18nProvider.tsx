@@ -99,8 +99,8 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
     void changeLocale(next);
     void (async () => {
       try {
-        const current = await invoke<Record<string, unknown>>('load_app_settings');
-        await invoke('save_app_settings', { settings: { ...current, locale: setting } });
+        // Only the field this provider owns; the backend merges under its lock.
+        await invoke('patch_app_settings', { patch: { locale: setting } });
       } catch {
         // A failed write leaves the session translated but unpersisted; not fatal.
       }

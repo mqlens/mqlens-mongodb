@@ -2353,6 +2353,27 @@ async fn load_app_settings(
     connections::load_settings_encrypted(&connections::get_settings_enc_path(&app_handle), &key)
 }
 
+/// Change only the named fields, under the settings write lock.
+///
+/// The load → merge → save happens here, on one side of the IPC boundary and
+/// inside one lock, so concurrent callers — the provider list, the locale, the
+/// theme, the shell path — serialize and each sees the other's write.
+#[tauri::command]
+async fn patch_app_settings(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    patch: serde_json::Value,
+) -> Result<connections::AppSettings, String> {
+    let key = state.require_key()?;
+    let path = connections::get_settings_enc_path(&app_handle);
+    let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
+    let current = connections::load_settings_encrypted(&path, &key)?;
+    let merged = connections::merge_settings_patch(&current, &patch)?;
+    connections::save_settings_encrypted(&path, &key, &merged)?;
+    audit::refresh_policy_from_settings(&state, &merged);
+    Ok(merged)
+}
+
 #[tauri::command]
 async fn save_app_settings(
     app_handle: tauri::AppHandle,
@@ -2360,6 +2381,9 @@ async fn save_app_settings(
     settings: connections::AppSettings,
 ) -> Result<(), String> {
     let key = state.require_key()?;
+    // Same lock as `patch_app_settings`, so a whole-object save cannot
+    // interleave with a field patch.
+    let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
     connections::save_settings_encrypted(
         &connections::get_settings_enc_path(&app_handle),
         &key,
@@ -2828,6 +2852,7 @@ pub fn run() {
             connections::test_connection_uri,
             load_app_settings,
             save_app_settings,
+            patch_app_settings,
             audit_list,
             audit_export,
             audit_open_folder,

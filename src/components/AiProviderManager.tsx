@@ -80,10 +80,12 @@ export function originOf(url: string): string | null {
  * no host yet — clearing while someone is still typing "https://" would be
  * infuriating and protects nothing, since nothing loads without a host.
  */
-export function withEndpoint(prev: AiProvider, base_url: string): AiProvider {
-  const before = originOf(prev.base_url);
+export function withEndpoint(prev: AiProvider, base_url: string, keyOrigin: string | null): AiProvider {
   const after = originOf(base_url);
-  const hostChanged = before !== null && after !== null && before !== after;
+  // Compared against the origin the *key* belongs to, not the previous field
+  // value: clearing the field and pasting another host is two edits, and
+  // comparing with the empty intermediate would keep the key through both.
+  const hostChanged = keyOrigin !== null && after !== null && after !== keyOrigin;
   return { ...prev, base_url, api_key: hostChanged ? '' : prev.api_key };
 }
 
@@ -160,9 +162,13 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
   // "3 models available" and nothing to pick from. Free typing is kept behind a
   // "Type a name…" item so a model missing from the list is still reachable.
   const [modelMode, setModelMode] = useState<'pick' | 'type'>('type');
+  // The origin the current key was entered for. Set when the key is typed, when
+  // a draft opens, and when a preset keeps the key; cleared with the key.
+  const keyOriginRef = useRef<string | null>(null);
   const loadSeq = useRef(0);
 
   const openDraft = useCallback((p: AiProvider) => {
+    keyOriginRef.current = p.api_key ? originOf(p.base_url) : null;
     setDraft(p);
     setDraftError(null);
     setModels([]);
@@ -239,7 +245,11 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
     (presetId: string) => {
       const preset = presets.find((p) => p.id === presetId);
       if (!preset) return;
-      setDraft((prev) => applyPresetToDraft(prev ?? emptyProvider(), preset));
+      setDraft((prev) => {
+        const next = applyPresetToDraft(prev ?? emptyProvider(), preset);
+        keyOriginRef.current = next.api_key ? originOf(next.base_url) : null;
+        return next;
+      });
       setDraftError(null);
     },
     [presets]
@@ -367,9 +377,10 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
               <Label>{t('ai.providerKind')}</Label>
               <Select
                 value={draft.kind}
-                onValueChange={(kind) =>
-                  setDraft({ ...draft, kind: kind as ProviderKind, api_key: kind === draft.kind ? draft.api_key : '' })
-                }
+                onValueChange={(kind) => {
+                  if (kind !== draft.kind) keyOriginRef.current = null;
+                  setDraft({ ...draft, kind: kind as ProviderKind, api_key: kind === draft.kind ? draft.api_key : '' });
+                }}
               >
                 <SelectTrigger data-testid="ai-provider-kind-select">
                   <SelectValue />
@@ -420,7 +431,11 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
                   id="ai-provider-url"
                   className="font-mono"
                   value={draft.base_url}
-                  onChange={(e) => setDraft(withEndpoint(draft, e.target.value))}
+                  onChange={(e) => {
+                    const next = withEndpoint(draft, e.target.value, keyOriginRef.current);
+                    if (!next.api_key) keyOriginRef.current = null;
+                    setDraft(next);
+                  }}
                   placeholder="https://api.deepseek.com/v1"
                   data-testid="ai-provider-url-input"
                 />
@@ -432,7 +447,11 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
                   id="ai-provider-key"
                   type="password"
                   value={draft.api_key}
-                  onChange={(e) => setDraft({ ...draft, api_key: e.target.value })}
+                  onChange={(e) => {
+                    // A key typed now belongs to the endpoint shown now.
+                    keyOriginRef.current = e.target.value ? originOf(draft.base_url) : null;
+                    setDraft({ ...draft, api_key: e.target.value });
+                  }}
                   data-testid="ai-provider-key-input"
                 />
                 <p className="text-xs text-muted-foreground">{t('ai.providerApiKeyHint')}</p>
