@@ -368,6 +368,178 @@ mod tests {
         assert_eq!(args, ["say {prompt}"]);
     }
 
+    // ── AiReply: thoughts, notes, images ─────────────────────────────────
+
+    #[test]
+    fn split_keeps_the_prose_around_the_json_as_notes() {
+        use crate::ai::split_json_object;
+        let text = "Looking at the fields, `age` is numeric so a range filter works.\n\
+                    {\"queryType\":\"find\",\"filter\":{\"age\":{\"$gt\":30}},\"sort\":{},\"pipeline\":[]}\n\
+                    That should be indexed.";
+        let (json, notes) = split_json_object(text).unwrap();
+        assert!(json.starts_with("{\"queryType\""), "{json}");
+        let notes = notes.expect("prose is kept");
+        assert!(notes.contains("range filter"), "{notes}");
+        assert!(notes.contains("should be indexed"), "{notes}");
+        assert!(!notes.contains("queryType"), "the JSON itself is not part of the notes: {notes}");
+    }
+
+    #[test]
+    fn split_takes_the_last_parsing_object_so_braces_in_notes_do_not_mislead() {
+        // Notes about a query naturally contain braces. `{ age: {$gt: 30} }` is
+        // not valid JSON (bare keys) and must not be mistaken for the answer.
+        use crate::ai::split_json_object;
+        let text = "I'll filter with { age: {$gt: 30} } and sort by name.\n\
+                    {\"queryType\":\"find\",\"filter\":{\"age\":{\"$gt\":30}},\"sort\":{\"name\":1}}";
+        let (json, notes) = split_json_object(text).unwrap();
+        assert!(json.contains("\"name\":1"), "picked the real answer: {json}");
+        assert!(notes.unwrap().contains("sort by name"));
+    }
+
+    #[test]
+    fn split_prefers_the_final_object_when_two_valid_ones_appear() {
+        // A model that "shows its work" with a draft object then a corrected one
+        // means the last one. The prompt asks for exactly that.
+        use crate::ai::split_json_object;
+        let text = "Draft: {\"a\":1}\nFinal:\n{\"a\":2}";
+        let (json, _) = split_json_object(text).unwrap();
+        assert_eq!(json, "{\"a\":2}");
+    }
+
+    #[test]
+    fn split_strips_fences_from_notes_and_reports_no_notes_when_there_are_none() {
+        use crate::ai::split_json_object;
+        let (json, notes) = split_json_object("```json\n{\"a\":1}\n```").unwrap();
+        assert_eq!(json, "{\"a\":1}");
+        assert!(notes.is_none(), "fences alone are not notes: {notes:?}");
+        let (_, notes) = split_json_object("{\"a\":1}").unwrap();
+        assert!(notes.is_none());
+    }
+
+    #[test]
+    fn split_distinguishes_no_json_from_invalid_json() {
+        use crate::ai::split_json_object;
+        assert!(split_json_object("no braces here").unwrap_err().contains("no JSON object"));
+        assert!(split_json_object("only { bare: keys }").unwrap_err().contains("no valid JSON"));
+    }
+
+    #[test]
+    fn the_prompts_now_allow_notes_but_still_demand_one_final_object() {
+        use crate::ai::{mql_shell_system_prompt, mql_system_prompt};
+        for p in [mql_system_prompt("c", &[]), mql_shell_system_prompt("c", &[])] {
+            assert!(p.contains("working notes"), "{p}");
+            assert!(p.contains("exactly one JSON object"), "{p}");
+            assert!(!p.contains("Output only that JSON"), "old rule must be gone: {p}");
+        }
+    }
+
+    fn png(data: &str) -> crate::ai::ImageAttachment {
+        crate::ai::ImageAttachment { media_type: "image/png".into(), data: data.into() }
+    }
+
+    #[test]
+    fn images_are_validated_before_any_request() {
+        use crate::ai::{validate_images, ImageAttachment, MAX_IMAGES};
+        validate_images(&[]).unwrap();
+        validate_images(&[png("aGVsbG8=")]).unwrap();
+        let too_many: Vec<_> = (0..=MAX_IMAGES).map(|_| png("aGVsbG8=")).collect();
+        assert!(validate_images(&too_many).unwrap_err().contains("At most"));
+        let bad_type = ImageAttachment { media_type: "image/tiff".into(), data: "x".into() };
+        assert!(validate_images(&[bad_type]).unwrap_err().contains("image/tiff"));
+        assert!(validate_images(&[png("   ")]).unwrap_err().contains("no data"));
+        // ~6 MB decoded, over the 5 MB cap.
+        let huge = "A".repeat(8 * 1024 * 1024);
+        assert!(validate_images(&[png(&huge)]).unwrap_err().contains("limit"));
+    }
+
+    #[test]
+    fn a_user_turn_stays_plain_text_until_an_image_is_attached() {
+        use crate::ai::{anthropic_user_content, gemini_user_parts, openai_user_content};
+        assert_eq!(openai_user_content("hi", &[]), serde_json::json!("hi"));
+        assert_eq!(anthropic_user_content("hi", &[]), serde_json::json!("hi"));
+        assert_eq!(gemini_user_parts("hi", &[]), vec![serde_json::json!({"text":"hi"})]);
+    }
+
+    #[test]
+    fn each_wire_format_carries_the_image_its_own_way() {
+        use crate::ai::{anthropic_user_content, gemini_user_parts, openai_user_content};
+        let img = [png("QUJD")];
+
+        let o = openai_user_content("what is this", &img);
+        assert_eq!(o[0]["type"], "text");
+        assert_eq!(o[1]["type"], "image_url");
+        assert_eq!(o[1]["image_url"]["url"], "data:image/png;base64,QUJD");
+
+        let a = anthropic_user_content("what is this", &img);
+        assert_eq!(a[0]["type"], "image", "Anthropic puts the image first");
+        assert_eq!(a[0]["source"]["media_type"], "image/png");
+        assert_eq!(a[0]["source"]["data"], "QUJD");
+        assert_eq!(a[1]["type"], "text");
+
+        let g = gemini_user_parts("what is this", &img);
+        assert_eq!(g[0]["inline_data"]["mime_type"], "image/png");
+        assert_eq!(g[1]["text"], "what is this");
+    }
+
+    #[test]
+    fn images_ride_in_the_last_user_message_only() {
+        use crate::ai::{build_openai_request, ChatTurn};
+        let history = vec![ChatTurn { role: "user".into(), content: "earlier".into() }];
+        let req = build_openai_request("m", "sys", &history, "now", &[png("QUJD")]);
+        let msgs = req["messages"].as_array().unwrap();
+        assert_eq!(msgs[1]["content"], "earlier", "history turns stay text");
+        assert!(msgs[2]["content"].is_array(), "the new turn carries the image");
+    }
+
+    #[test]
+    fn reasoning_is_read_from_each_format_and_absent_when_not_emitted() {
+        use crate::ai::{extract_anthropic_thinking, extract_gemini_thoughts, extract_openai_reasoning};
+        let ds = serde_json::json!({"choices":[{"message":{"content":"{}","reasoning_content":" thinking… "}}]});
+        assert_eq!(extract_openai_reasoning(&ds).as_deref(), Some("thinking…"));
+        let relay = serde_json::json!({"choices":[{"message":{"content":"{}","reasoning":"via gateway"}}]});
+        assert_eq!(extract_openai_reasoning(&relay).as_deref(), Some("via gateway"));
+        let plain = serde_json::json!({"choices":[{"message":{"content":"{}"}}]});
+        assert!(extract_openai_reasoning(&plain).is_none());
+
+        let a = serde_json::json!({"content":[
+            {"type":"thinking","thinking":"step one"},
+            {"type":"thinking","thinking":"step two"},
+            {"type":"text","text":"{}"}]});
+        assert_eq!(extract_anthropic_thinking(&a).as_deref(), Some("step one\nstep two"));
+        assert!(extract_anthropic_thinking(&serde_json::json!({"content":[{"type":"text","text":"{}"}]})).is_none());
+
+        let g = serde_json::json!({"candidates":[{"content":{"parts":[
+            {"text":"hmm","thought":true},{"text":"{}"}]}}]});
+        assert_eq!(extract_gemini_thoughts(&g).as_deref(), Some("hmm"));
+        assert!(extract_gemini_thoughts(&serde_json::json!({"candidates":[{"content":{"parts":[{"text":"{}"}]}}]})).is_none());
+    }
+
+    #[test]
+    fn a_reply_omits_what_it_does_not_have() {
+        // The frontend treats a missing key and null the same, but the JSON the
+        // panel stores should not carry `"thoughts": null` for every message.
+        let r = crate::ai::AiReply { query: "{}".into(), thoughts: None, notes: None };
+        assert_eq!(serde_json::to_string(&r).unwrap(), r#"{"query":"{}"}"#);
+        let r = crate::ai::AiReply { query: "{}".into(), thoughts: Some("t".into()), notes: None };
+        assert_eq!(serde_json::to_string(&r).unwrap(), r#"{"query":"{}","thoughts":"t"}"#);
+    }
+
+    #[test]
+    fn chat_records_round_trip_without_the_new_fields() {
+        // Chats saved before this change have neither field; they must load.
+        let old = r#"{"id":"m1","role":"user","text":"hi"}"#;
+        let m: crate::chats::ChatMessage = serde_json::from_str(old).unwrap();
+        assert!(m.thoughts.is_none() && m.attachments.is_none());
+        let with = crate::chats::ChatMessage {
+            thoughts: Some("why".into()),
+            attachments: Some(vec![crate::chats::AttachmentMeta { media_type: "image/png".into(), bytes: 1234 }]),
+            ..m.clone()
+        };
+        let json = serde_json::to_string(&with).unwrap();
+        assert!(json.contains(r#""mediaType":"image/png""#), "{json}");
+        assert!(!json.contains("data"), "no image bytes are ever stored: {json}");
+    }
+
     /// Resolution has to keep working for the settings already in people's
     /// vaults: the three original providers store their keys in dedicated fields,
     /// not in the new list, and a stored `ai_provider` must keep selecting them.
@@ -2775,7 +2947,7 @@ mod tests {
     #[test]
     fn test_build_query_gen_request_shape() {
         use crate::ai::build_query_gen_request;
-        let body = build_query_gen_request("claude-opus-4-8", "SYS", &[], "users older than 30");
+        let body = build_query_gen_request("claude-opus-4-8", "SYS", &[], "users older than 30", &[]);
         assert_eq!(body["model"], "claude-opus-4-8");
         assert_eq!(body["max_tokens"], 2048);
         assert_eq!(body["messages"][0]["role"], "user");
@@ -3233,7 +3405,7 @@ mod tests {
         ];
 
         // Anthropic: history messages precede the final user message.
-        let a = build_query_gen_request("claude-opus-4-8", "SYS", &history, "now sort by age");
+        let a = build_query_gen_request("claude-opus-4-8", "SYS", &history, "now sort by age", &[]);
         let msgs = a["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0]["role"], "user");
@@ -3241,14 +3413,14 @@ mod tests {
         assert_eq!(msgs[2]["content"], "now sort by age");
 
         // OpenAI: system first, then history, then final user.
-        let o = build_openai_request("gpt-4o", "SYS", &history, "now sort by age");
+        let o = build_openai_request("gpt-4o", "SYS", &history, "now sort by age", &[]);
         let omsgs = o["messages"].as_array().unwrap();
         assert_eq!(omsgs[0]["role"], "system");
         assert_eq!(omsgs.len(), 4);
         assert_eq!(omsgs[3]["content"], "now sort by age");
 
         // Gemini: assistant role maps to "model".
-        let g = build_gemini_request("SYS", &history, "now sort by age");
+        let g = build_gemini_request("SYS", &history, "now sort by age", &[]);
         let contents = g["contents"].as_array().unwrap();
         assert_eq!(contents[0]["role"], "user");
         assert_eq!(contents[1]["role"], "model");
@@ -3315,7 +3487,7 @@ mod tests {
     fn test_openai_request_and_extract() {
         use crate::ai::{build_openai_request, extract_openai_text};
 
-        let body = build_openai_request("gpt-4o", "SYS", &[], "users older than 30");
+        let body = build_openai_request("gpt-4o", "SYS", &[], "users older than 30", &[]);
         assert_eq!(body["model"], "gpt-4o");
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["messages"][0]["content"], "SYS");
@@ -3340,7 +3512,7 @@ mod tests {
         // by logs, crash reports and proxies, and is echoed in transport errors.
         assert!(!url.contains("key="), "credential in URL: {url}");
 
-        let body = build_gemini_request("SYS", &[], "active users");
+        let body = build_gemini_request("SYS", &[], "active users", &[]);
         assert_eq!(body["systemInstruction"]["parts"][0]["text"], "SYS");
         assert_eq!(body["contents"][0]["role"], "user");
         assert_eq!(body["contents"][0]["parts"][0]["text"], "active users");
@@ -3398,7 +3570,7 @@ mod tests {
     #[tokio::test]
     async fn test_generate_anthropic_requires_api_key() {
         use crate::ai::generate_anthropic;
-        let res = generate_anthropic("", "claude-opus-4-8", "SYS", &[], "active users").await;
+        let res = generate_anthropic("", "claude-opus-4-8", "SYS", &[], "active users", &[]).await;
         assert!(res.is_err());
         assert!(res.unwrap_err().contains("API key"));
     }
@@ -5156,6 +5328,8 @@ mod chat_store_tests {
             variant: "editor".to_string(),
             created_at: updated_at.to_string(),
             updated_at: updated_at.to_string(),
+            provider_id: None,
+            model: None,
         }
     }
 
@@ -5209,6 +5383,8 @@ mod chat_store_tests {
                 text: format!("msg {i}"),
                 query: None,
                 error: None,
+                thoughts: None,
+                attachments: None,
             })
             .collect();
 
@@ -5231,6 +5407,8 @@ mod chat_store_tests {
             text: "x".to_string(),
             query: None,
             error: None,
+            thoughts: None,
+            attachments: None,
         };
 
         assert_eq!(next_message_id(&[]), "m0");
@@ -5253,6 +5431,8 @@ mod chat_store_tests {
             text: id.to_string(),
             query: None,
             error: None,
+            thoughts: None,
+            attachments: None,
         };
         let mut stored = chat("c1", "users", "2026-01-01T00:00:00Z");
         stored.messages = vec![msg("m0"), msg("m1"), msg("m2")];
@@ -5276,6 +5456,8 @@ mod chat_store_tests {
             text: "x".to_string(),
             query: None,
             error: None,
+            thoughts: None,
+            attachments: None,
         };
         let mut stored = chat("c1", "users", "2026-01-01T00:00:00Z");
         stored.messages = vec![msg("m0")];
@@ -5361,6 +5543,8 @@ mod chat_store_tests {
             text: "hello".to_string(),
             query: None,
             error: None,
+            thoughts: None,
+            attachments: None,
         }];
 
         let out = summaries(&[c], None);

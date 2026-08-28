@@ -1207,14 +1207,26 @@ async fn generate_mql_query(
     fields: Vec<String>,
     #[allow(non_snake_case)] history: Option<Vec<ai::ChatTurn>>,
     target: Option<String>,
-) -> Result<String, String> {
-    let settings = {
+    images: Option<Vec<ai::ImageAttachment>>,
+    // Per-conversation override from the panel's picker; `None` uses the
+    // settings default. Only the id crosses from the frontend — the key is
+    // looked up here.
+    #[allow(non_snake_case)] providerId: Option<String>,
+    model: Option<String>,
+) -> Result<ai::AiReply, String> {
+    let mut settings = {
         let key = state.require_key()?;
         connections::load_settings_encrypted(
             &connections::get_settings_enc_path(&app_handle),
             &key,
         )?
     };
+    if let Some(id) = providerId.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        settings.ai_provider = id.to_string();
+    }
+    let model_override = model.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let images = images.unwrap_or_default();
+    ai::validate_images(&images)?;
 
     if prompt.trim().is_empty() {
         return Err("Describe the query you want in plain language.".to_string());
@@ -1235,18 +1247,25 @@ async fn generate_mql_query(
     // OpenAI's nor Anthropic's, so it is the one provider that cannot be
     // described as "an endpoint speaking a known format".
     if settings.ai_provider.trim() == "gemini" {
-        let model = if settings.gemini_model.trim().is_empty() {
-            "gemini-1.5-flash".to_string()
-        } else {
-            settings.gemini_model.clone()
-        };
-        return ai::generate_gemini(&settings.gemini_api_key, &model, &system, &history, &prompt)
+        let model = model_override
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if settings.gemini_model.trim().is_empty() {
+                    "gemini-1.5-flash".to_string()
+                } else {
+                    settings.gemini_model.clone()
+                }
+            });
+        return ai::generate_gemini(&settings.gemini_api_key, &model, &system, &history, &prompt, &images)
             .await;
     }
 
     // Everything else — the built-ins and anything the user added — is resolved
     // to one shape and dispatched on its wire format.
-    let provider = connections::resolve_ai_provider(&settings)?;
+    let mut provider = connections::resolve_ai_provider(&settings)?;
+    if let Some(m) = model_override {
+        provider.model = m.to_string();
+    }
     provider.validate()?;
     match provider.kind {
         ai_providers::ProviderKind::OpenAiCompatible => {
@@ -1258,6 +1277,7 @@ async fn generate_mql_query(
                 &system,
                 &history,
                 &prompt,
+                &images,
             )
             .await
         }
@@ -1270,12 +1290,86 @@ async fn generate_mql_query(
                 &system,
                 &history,
                 &prompt,
+                &images,
             )
             .await
         }
         ai_providers::ProviderKind::LocalCli => {
+            if !images.is_empty() {
+                // There is no standard way to hand an image to a command-line
+                // agent, and silently dropping it would answer a question the
+                // user did not ask.
+                return Err(format!(
+                    "{} is a local command and cannot receive images. Pick an HTTP provider for this question.",
+                    provider.name
+                ));
+            }
             let one_prompt = ai::combined_prompt(&system, &history, &prompt);
             ai::generate_local(&provider.command, &one_prompt, &provider.model).await
+        }
+    }
+}
+
+/// The providers the chat panel can pick from, keys withheld.
+///
+/// Built-ins and user-added providers in one list, each with its kind so the
+/// panel can disable image paste for a local command, and with the settings
+/// default flagged so the picker starts on it.
+#[tauri::command]
+async fn ai_provider_options(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let settings = {
+        let key = state.require_key()?;
+        connections::load_settings_encrypted(&connections::get_settings_enc_path(&app_handle), &key)?
+    };
+    let default_id = settings.ai_provider.trim().to_string();
+    let entry = |id: &str, name: &str, kind: &str, model: &str| {
+        serde_json::json!({
+            "id": id, "name": name, "kind": kind, "model": model, "isDefault": id == default_id
+        })
+    };
+    let mut out = vec![
+        entry("anthropic", "Anthropic (Claude)", "anthropic-compatible", &settings.anthropic_model),
+        entry("openai", "OpenAI (ChatGPT)", "openai-compatible", &settings.openai_model),
+        entry("gemini", "Google Gemini", "gemini", &settings.gemini_model),
+        entry("claude-code", "Claude Code (local)", "local-cli", ""),
+        entry("codex", "Codex (local)", "local-cli", ""),
+        entry("cursor", "Cursor (local)", "local-cli", ""),
+        entry("antigravity", "Antigravity (local)", "local-cli", ""),
+    ];
+    for p in &settings.ai_providers {
+        let kind = serde_json::to_value(p.kind)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        out.push(entry(&p.id, &p.name, &kind, &p.model));
+    }
+    Ok(out)
+}
+
+/// Models for a provider named by id, resolved here so the key never leaves Rust.
+#[tauri::command]
+async fn list_ai_models_for(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    #[allow(non_snake_case)] providerId: String,
+) -> Result<Vec<String>, String> {
+    let mut settings = {
+        let key = state.require_key()?;
+        connections::load_settings_encrypted(&connections::get_settings_enc_path(&app_handle), &key)?
+    };
+    if providerId.trim() == "gemini" {
+        return Err("Gemini's model list is not fetched here; type a model name.".to_string());
+    }
+    settings.ai_provider = providerId;
+    let provider = connections::resolve_ai_provider(&settings)?;
+    match provider.kind {
+        ai_providers::ProviderKind::LocalCli => ai::list_models_cli(&provider.models_command).await,
+        kind => {
+            ai::list_models_http(kind, &provider.models_endpoint()?, &provider.api_key, &provider.name)
+                .await
         }
     }
 }
@@ -2771,6 +2865,8 @@ pub fn run() {
             mcp_agent_instructions,
             validate_ai_provider,
             list_ai_models,
+            ai_provider_options,
+            list_ai_models_for,
             detect_local_agents,
             get_mongodb_version,
             start_mongosh_session,

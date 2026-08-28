@@ -2,6 +2,7 @@
 // The app's backend holds the API key (kept out of the frontend bundle) and calls
 // https://api.anthropic.com/v1/messages over HTTPS (no official Rust SDK).
 
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -12,6 +13,162 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub struct ChatTurn {
     pub role: String, // "user" | "assistant"
     pub content: String,
+}
+
+/// What the assistant hands back for one request.
+///
+/// `query` is the compact JSON object the panel inserts, exactly as before.
+/// The other two exist because the model's reasoning used to be discarded
+/// twice — once by a prompt that forbade any prose, once by
+/// `extract_json_object` throwing away everything around the JSON.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AiReply {
+    pub query: String,
+    /// Provider-native reasoning, when the model emits it: DeepSeek's and
+    /// o-series' `reasoning_content`, Anthropic `thinking` blocks, Gemini
+    /// `thought` parts. `None` for models that do not think out loud.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thoughts: Option<String>,
+    /// The model's own working notes written around the JSON, for every
+    /// provider — local CLIs included, which have no reasoning channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+/// An image pasted into the chat, sent with the request and never stored.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ImageAttachment {
+    /// `image/png`, `image/jpeg`, `image/webp` or `image/gif`.
+    pub media_type: String,
+    /// Base64 without a `data:` prefix.
+    pub data: String,
+}
+
+pub const MAX_IMAGES: usize = 4;
+/// Decoded size cap per image. Providers cap around here too, and a larger
+/// paste is almost always a whole-screen capture rather than the detail meant.
+pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+/// Reject attachments a provider would reject anyway, with a better message.
+pub fn validate_images(images: &[ImageAttachment]) -> Result<(), String> {
+    if images.len() > MAX_IMAGES {
+        return Err(format!("At most {MAX_IMAGES} images per message."));
+    }
+    for (i, img) in images.iter().enumerate() {
+        if !ALLOWED_IMAGE_TYPES.contains(&img.media_type.as_str()) {
+            return Err(format!(
+                "Image {} is {}; only PNG, JPEG, WebP and GIF are accepted.",
+                i + 1,
+                img.media_type
+            ));
+        }
+        // 4 base64 chars encode 3 bytes; padding makes this a slight overestimate,
+        // which is the safe direction.
+        let decoded = img.data.trim_end_matches('=').len() * 3 / 4;
+        if decoded > MAX_IMAGE_BYTES {
+            return Err(format!(
+                "Image {} is about {} MB; the limit is {} MB.",
+                i + 1,
+                decoded / (1024 * 1024),
+                MAX_IMAGE_BYTES / (1024 * 1024)
+            ));
+        }
+        if img.data.trim().is_empty() {
+            return Err(format!("Image {} has no data.", i + 1));
+        }
+    }
+    Ok(())
+}
+
+/// A user turn's content in OpenAI's format: plain text alone, or a parts array
+/// once images are attached. Text first, then images, in paste order.
+pub fn openai_user_content(prompt: &str, images: &[ImageAttachment]) -> serde_json::Value {
+    if images.is_empty() {
+        return serde_json::Value::String(prompt.to_string());
+    }
+    let mut parts = vec![serde_json::json!({ "type": "text", "text": prompt })];
+    for img in images {
+        parts.push(serde_json::json!({
+            "type": "image_url",
+            "image_url": { "url": format!("data:{};base64,{}", img.media_type, img.data) }
+        }));
+    }
+    serde_json::Value::Array(parts)
+}
+
+/// Anthropic's format. Images precede the text, which is the ordering the
+/// documentation uses for "look at this and then answer".
+pub fn anthropic_user_content(prompt: &str, images: &[ImageAttachment]) -> serde_json::Value {
+    if images.is_empty() {
+        return serde_json::Value::String(prompt.to_string());
+    }
+    let mut parts: Vec<serde_json::Value> = images
+        .iter()
+        .map(|img| {
+            serde_json::json!({
+                "type": "image",
+                "source": { "type": "base64", "media_type": img.media_type, "data": img.data }
+            })
+        })
+        .collect();
+    parts.push(serde_json::json!({ "type": "text", "text": prompt }));
+    serde_json::Value::Array(parts)
+}
+
+/// Gemini's `parts` for a user turn.
+pub fn gemini_user_parts(prompt: &str, images: &[ImageAttachment]) -> Vec<serde_json::Value> {
+    let mut parts: Vec<serde_json::Value> = images
+        .iter()
+        .map(|img| serde_json::json!({ "inline_data": { "mime_type": img.media_type, "data": img.data } }))
+        .collect();
+    parts.push(serde_json::json!({ "text": prompt }));
+    parts
+}
+
+/// Reasoning an OpenAI-format response carries alongside its answer.
+///
+/// DeepSeek documents `message.reasoning_content`; some gateways relay it as
+/// `message.reasoning`. Both are read, neither is required.
+pub fn extract_openai_reasoning(resp: &serde_json::Value) -> Option<String> {
+    let msg = resp.get("choices")?.as_array()?.first()?.get("message")?;
+    let text = msg
+        .get("reasoning_content")
+        .or_else(|| msg.get("reasoning"))?
+        .as_str()?
+        .trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// `thinking` blocks from an Anthropic response, joined.
+pub fn extract_anthropic_thinking(resp: &serde_json::Value) -> Option<String> {
+    let joined = resp
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("thinking"))
+        .filter_map(|b| b.get("thinking").and_then(|t| t.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!joined.trim().is_empty()).then(|| joined.trim().to_string())
+}
+
+/// Parts a Gemini response flags with `thought: true`, joined.
+pub fn extract_gemini_thoughts(resp: &serde_json::Value) -> Option<String> {
+    let parts = resp
+        .get("candidates")?
+        .as_array()?
+        .first()?
+        .get("content")?
+        .get("parts")?
+        .as_array()?;
+    let joined = parts
+        .iter()
+        .filter(|p| p.get("thought").and_then(|t| t.as_bool()) == Some(true))
+        .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!joined.trim().is_empty()).then(|| joined.trim().to_string())
 }
 
 /// System prompt instructing the model to translate a request into a MongoDB
@@ -35,7 +192,7 @@ then respond with ONLY a JSON object of this exact shape:\n\
   \"pipeline\": <array of MongoDB aggregation stages — for aggregate; [] otherwise>\n\
 }}\n\n\
 Rules:\n\
-- Output only that JSON object. No markdown code fences, no text outside the JSON.\n\
+- You may write a few short lines of working notes first — what you looked at, why find vs aggregate. Then finish with exactly one JSON object and nothing after it. No markdown code fences around the JSON.\n\
 - Use \"aggregate\" when the request needs $group, $lookup, $unwind, $project with computed \
 fields, faceting, or any multi-stage transformation; otherwise use \"find\".\n\
 - For \"find\": put criteria in \"filter\" and ordering in \"sort\"; leave \"pipeline\" as [].\n\
@@ -67,7 +224,7 @@ or a JavaScript script, then respond with ONLY a JSON object of this exact shape
   \"script\": <raw mongosh JavaScript string — for script; \"\" otherwise>\n\
 }}\n\n\
 Rules:\n\
-- Output only that JSON object. No markdown code fences, no text outside the JSON.\n\
+- You may write a few short lines of working notes first — what you looked at, why find vs aggregate. Then finish with exactly one JSON object and nothing after it. No markdown code fences around the JSON.\n\
 - Use \"script\" for writes (insertOne/insertMany/updateMany/deleteMany/bulkWrite), \
 multi-statement work, loops, variables, or anything a single find/aggregate cannot express. \
 The script is valid mongosh JavaScript that uses db.{collection} (and db.<other> as needed) \
@@ -95,6 +252,7 @@ pub fn build_query_gen_request(
     system: &str,
     history: &[ChatTurn],
     user_prompt: &str,
+    images: &[ImageAttachment],
 ) -> serde_json::Value {
     let mut messages: Vec<serde_json::Value> = history
         .iter()
@@ -105,7 +263,7 @@ pub fn build_query_gen_request(
             })
         })
         .collect();
-    messages.push(serde_json::json!({ "role": "user", "content": user_prompt }));
+    messages.push(serde_json::json!({ "role": "user", "content": anthropic_user_content(user_prompt, images) }));
     serde_json::json!({
         "model": model,
         "max_tokens": 2048,
@@ -136,47 +294,85 @@ pub fn response_text(resp: &serde_json::Value) -> String {
 /// Tolerates prose and Markdown code fences around the object, and braces
 /// inside string values.
 pub fn extract_json_object(text: &str) -> Result<String, String> {
-    let bytes = text.as_bytes();
-    let start = text
-        .find('{')
-        .ok_or_else(|| "Model response contained no JSON object".to_string())?;
+    split_json_object(text).map(|(json, _)| json)
+}
 
-    // Scan from the first '{', matching braces while skipping string contents.
-    // Structural chars ({ } " \) are ASCII, so byte scanning is UTF-8 safe.
-    let mut depth: i32 = 0;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut end: Option<usize> = None;
-    for (i, &b) in bytes.iter().enumerate().skip(start) {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if b == b'\\' {
-                escaped = true;
-            } else if b == b'"' {
-                in_string = false;
-            }
-        } else {
-            match b {
-                b'"' => in_string = true,
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = Some(i);
-                        break;
-                    }
+/// Separate the model's answer from what it wrote around it.
+///
+/// Returns the compact JSON object and, if any, the surrounding prose as notes.
+/// Where the old extractor took the FIRST `{`, this takes the LAST balanced
+/// object that parses: the prompt asks for notes *before* the JSON, and notes
+/// about a query naturally contain braces — `{ age: {$gt: 30} }` is not valid
+/// JSON and must not be mistaken for the answer. Fences are stripped from the
+/// notes so a model that ignores the no-fences rule still reads cleanly.
+pub fn split_json_object(text: &str) -> Result<(String, Option<String>), String> {
+    let bytes = text.as_bytes();
+    let mut best: Option<(usize, usize, String)> = None;
+    let mut search_from = 0;
+    while let Some(rel) = text[search_from..].find('{') {
+        let start = search_from + rel;
+        // Match braces from `start`, skipping string contents. Structural
+        // chars are ASCII, so byte scanning is UTF-8 safe.
+        let mut depth: i32 = 0;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut end: Option<usize> = None;
+        for (i, &b) in bytes.iter().enumerate().skip(start) {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if b == b'\\' {
+                    escaped = true;
+                } else if b == b'"' {
+                    in_string = false;
                 }
-                _ => {}
+            } else {
+                match b {
+                    b'"' => in_string = true,
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
+        let Some(end) = end else { break };
+        let candidate = &text[start..=end];
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(candidate) {
+            if parsed.is_object() {
+                let compact = serde_json::to_string(&parsed).map_err(|e| e.to_string())?;
+                best = Some((start, end, compact));
+            }
+            search_from = end + 1;
+        } else {
+            // Not JSON (prose with braces, or a fence): step past this `{`.
+            search_from = start + 1;
+        }
     }
+    let Some((start, end, json)) = best else {
+        return Err(if text.contains('{') {
+            "Model response contained no valid JSON object".to_string()
+        } else {
+            "Model response contained no JSON object".to_string()
+        });
+    };
+    let notes = format!("{}\n\n{}", text[..start].trim(), text[end + 1..].trim());
+    let notes = strip_fences(&notes);
+    let notes = notes.trim();
+    Ok((json, (!notes.is_empty()).then(|| notes.to_string())))
+}
 
-    let end = end.ok_or_else(|| "Model response contained an unterminated JSON object".to_string())?;
-    let candidate = &text[start..=end];
-    let parsed: serde_json::Value = serde_json::from_str(candidate)
-        .map_err(|e| format!("Model did not return valid JSON: {}", e))?;
-    serde_json::to_string(&parsed).map_err(|e| e.to_string())
+/// Remove ``` fence lines, keeping whatever was inside them.
+fn strip_fences(text: &str) -> String {
+    text.lines()
+        .filter(|l| !l.trim_start().starts_with("```"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Extract the generated `{filter, sort}` JSON from a successful API response.
@@ -219,6 +415,7 @@ pub fn build_openai_request(
     system: &str,
     history: &[ChatTurn],
     user_prompt: &str,
+    images: &[ImageAttachment],
 ) -> serde_json::Value {
     let mut messages: Vec<serde_json::Value> =
         vec![serde_json::json!({ "role": "system", "content": system })];
@@ -228,7 +425,7 @@ pub fn build_openai_request(
             "content": t.content,
         }));
     }
-    messages.push(serde_json::json!({ "role": "user", "content": user_prompt }));
+    messages.push(serde_json::json!({ "role": "user", "content": openai_user_content(user_prompt, images) }));
     serde_json::json!({ "model": model, "messages": messages })
 }
 
@@ -249,11 +446,12 @@ pub async fn generate_openai(
     system: &str,
     history: &[ChatTurn],
     user_prompt: &str,
-) -> Result<String, String> {
+    images: &[ImageAttachment],
+) -> Result<AiReply, String> {
     if api_key.trim().is_empty() {
         return Err("No OpenAI API key set. Add one in Settings.".to_string());
     }
-    let body = build_openai_request(model, system, history, user_prompt);
+    let body = build_openai_request(model, system, history, user_prompt, images);
     // Trimmed once, here: a pasted key often carries whitespace, and model
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
@@ -280,7 +478,19 @@ pub async fn generate_openai(
             .unwrap_or("request failed");
         return Err(format!("OpenAI API error ({}): {}", status.as_u16(), message));
     }
-    extract_json_object(&extract_openai_text(&json))
+    openai_reply(&json)
+}
+
+/// Build the reply from an OpenAI-format response body.
+fn openai_reply(json: &serde_json::Value) -> Result<AiReply, String> {
+    let (query, notes) = split_json_object(&extract_openai_text(json))?;
+    Ok(AiReply { query, thoughts: extract_openai_reasoning(json), notes })
+}
+
+/// Build the reply from an Anthropic-format response body.
+fn anthropic_reply(json: &serde_json::Value) -> Result<AiReply, String> {
+    let (query, notes) = split_json_object(&response_text(json))?;
+    Ok(AiReply { query, thoughts: extract_anthropic_thinking(json), notes })
 }
 
 /// Post a chat completion to any OpenAI-compatible endpoint.
@@ -300,8 +510,9 @@ pub async fn generate_openai_compatible(
     system: &str,
     history: &[ChatTurn],
     user_prompt: &str,
-) -> Result<String, String> {
-    let body = build_openai_request(model, system, history, user_prompt);
+    images: &[ImageAttachment],
+) -> Result<AiReply, String> {
+    let body = build_openai_request(model, system, history, user_prompt, images);
     // Trimmed once, here: a pasted key often carries whitespace, and model
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
@@ -331,7 +542,7 @@ pub async fn generate_openai_compatible(
             api_error_message(&json)
         ));
     }
-    extract_json_object(&extract_openai_text(&json))
+    openai_reply(&json)
 }
 
 /// Post a message request to any endpoint speaking Anthropic's format.
@@ -343,8 +554,9 @@ pub async fn generate_anthropic_compatible(
     system: &str,
     history: &[ChatTurn],
     user_prompt: &str,
-) -> Result<String, String> {
-    let body = build_query_gen_request(model, system, history, user_prompt);
+    images: &[ImageAttachment],
+) -> Result<AiReply, String> {
+    let body = build_query_gen_request(model, system, history, user_prompt, images);
     // Trimmed once, here: a pasted key often carries whitespace, and model
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
@@ -375,7 +587,7 @@ pub async fn generate_anthropic_compatible(
             api_error_message(&json)
         ));
     }
-    extract_json_object(&response_text(&json))
+    anthropic_reply(&json)
 }
 
 /// The human-readable half of an error body, for either wire format.
@@ -587,6 +799,7 @@ pub fn build_gemini_request(
     system: &str,
     history: &[ChatTurn],
     user_prompt: &str,
+    images: &[ImageAttachment],
 ) -> serde_json::Value {
     let mut contents: Vec<serde_json::Value> = history
         .iter()
@@ -597,7 +810,7 @@ pub fn build_gemini_request(
             })
         })
         .collect();
-    contents.push(serde_json::json!({ "role": "user", "parts": [{ "text": user_prompt }] }));
+    contents.push(serde_json::json!({ "role": "user", "parts": gemini_user_parts(user_prompt, images) }));
     serde_json::json!({
         "systemInstruction": { "parts": [{ "text": system }] },
         "contents": contents,
@@ -627,11 +840,12 @@ pub async fn generate_gemini(
     system: &str,
     history: &[ChatTurn],
     user_prompt: &str,
-) -> Result<String, String> {
+    images: &[ImageAttachment],
+) -> Result<AiReply, String> {
     if api_key.trim().is_empty() {
         return Err("No Google Gemini API key set. Add one in Settings.".to_string());
     }
-    let body = build_gemini_request(system, history, user_prompt);
+    let body = build_gemini_request(system, history, user_prompt, images);
     // Trimmed once, here: a pasted key often carries whitespace, and model
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
@@ -658,7 +872,8 @@ pub async fn generate_gemini(
             .unwrap_or("request failed");
         return Err(format!("Gemini API error ({}): {}", status.as_u16(), message));
     }
-    extract_json_object(&extract_gemini_text(&json))
+    let (query, notes) = split_json_object(&extract_gemini_text(&json))?;
+    Ok(AiReply { query, thoughts: extract_gemini_thoughts(&json), notes })
 }
 
 /// Parse a command template into (program, args), substituting the literal `{prompt}`
@@ -786,7 +1001,7 @@ pub fn parse_command_template(
 
 /// Run a local agent CLI with the given prompt and extract the {filter, sort} JSON
 /// from its stdout. Uses the agent's own local auth; no API key involved.
-pub async fn generate_local(template: &str, prompt: &str, model: &str) -> Result<String, String> {
+pub async fn generate_local(template: &str, prompt: &str, model: &str) -> Result<AiReply, String> {
     let (program, args) = parse_command_template(template, prompt, model)?;
 
     let run = tokio::process::Command::new(&program)
@@ -819,7 +1034,8 @@ pub async fn generate_local(template: &str, prompt: &str, model: &str) -> Result
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    extract_json_object(&stdout)
+    let (query, notes) = split_json_object(&stdout)?;
+    Ok(AiReply { query, thoughts: None, notes })
 }
 
 pub async fn generate_anthropic(
@@ -828,11 +1044,12 @@ pub async fn generate_anthropic(
     system: &str,
     history: &[ChatTurn],
     user_prompt: &str,
-) -> Result<String, String> {
+    images: &[ImageAttachment],
+) -> Result<AiReply, String> {
     if api_key.trim().is_empty() {
         return Err("No Anthropic API key set. Add one in Settings to use the query assistant.".to_string());
     }
-    let body = build_query_gen_request(model, system, history, user_prompt);
+    let body = build_query_gen_request(model, system, history, user_prompt, images);
     // Trimmed once, here: a pasted key often carries whitespace, and model
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
@@ -860,6 +1077,6 @@ pub async fn generate_anthropic(
             .unwrap_or("request failed");
         return Err(format!("Anthropic API error ({}): {}", status.as_u16(), message));
     }
-    extract_mql_from_response(&json)
+    anthropic_reply(&json)
 }
 

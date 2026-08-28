@@ -83,6 +83,9 @@ const LOCAL_COMMANDS: &[&str] = &[
     // Asks the user's own configured endpoint or CLI what it offers; no
     // MongoDB connection is involved.
     "list_ai_models",
+    // Chat-panel picker support: reads settings, asks the user's own provider.
+    "ai_provider_options",
+    "list_ai_models_for",
     "stop_mongosh_session", // kills the local child process, no DB write
     // Per-tab shell state (session id, scrollback). In-process only — no DB
     // access, and clearing a tab's entry deliberately does not stop its child.
