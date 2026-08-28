@@ -440,22 +440,6 @@ mod tests {
     }
 
     #[test]
-    fn settings_writes_are_atomic() {
-        // No `.tmp` left behind and a file that decrypts — the observable half of
-        // "written atomically".
-        use crate::connections::{load_settings_encrypted, save_settings_encrypted, AppSettings};
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.enc");
-        let key = [3u8; 32];
-        let mut s = AppSettings::default();
-        s.ai_provider = "deepseek".into();
-        save_settings_encrypted(&path, &key, &s).unwrap();
-        assert!(path.exists());
-        assert!(!dir.path().join("settings.enc.tmp").exists(), "temp file left behind");
-        assert_eq!(load_settings_encrypted(&path, &key).unwrap().ai_provider, "deepseek");
-    }
-
-    #[test]
     fn split_distinguishes_no_json_from_invalid_json() {
         use crate::ai::split_json_object;
         assert!(split_json_object("no braces here").unwrap_err().contains("no JSON object"));

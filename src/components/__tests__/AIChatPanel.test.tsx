@@ -1059,6 +1059,28 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     );
   });
 
+  it('clears a pending image when another conversation is opened from History', async () => {
+    // The attachment belongs to the chat it was added to; it must not be sent
+    // with the next prompt in a different conversation.
+    chatStore = [{
+      id: 'other', title: 'other chat', messages: [{ id: 'm1', role: 'user', text: 'hi' }],
+      connectionName: 'Local', database: 'test-db', collection: 'users', variant: 'editor',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    }];
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    pasteImage(screen.getByTestId('chat-input'));
+    await screen.findByTestId('chat-pending-images');
+
+    fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
+    fireEvent.click(await screen.findByText('other chat'));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument()
+    );
+  });
+
   it('falls back to the default when the stored provider no longer exists', async () => {
     // A conversation naming a provider the user has since deleted would send an
     // id the backend rejects, and could not continue until changed by hand.

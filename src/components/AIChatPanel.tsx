@@ -631,6 +631,11 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     // the default, not the provider the previous conversation was using.
     setChatProviderId(stored.providerId ?? ((cur) => defaultProviderId() ?? cur));
     setChatModel(stored.model ?? '');
+    // Same reasoning as New chat: an attachment belongs to the conversation it
+    // was added to. Opening another from History left it in the composer, ready
+    // to be sent with the next prompt in a different chat.
+    setPendingImages([]);
+    setImageNote(null);
     chatIdRef.current = maxChatIdNum(stored.messages) + 1;
   };
 
