@@ -302,8 +302,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
    * has moved on.
    */
   const imageEpochRef = useRef(0);
-  /** Reads not yet settled, so a switch to a CLI can still explain itself. */
-  const pendingReadsRef = useRef(0);
+  /**
+   * Reads not yet settled.
+   *
+   * State rather than a ref because it gates Send: an image selected and sent
+   * before its `FileReader` finished went out with the prompt missing, and the
+   * read then attached it to the *next* prompt's composer — the image silently
+   * moved one turn down. Also lets a switch to a CLI explain itself for an
+   * attachment that was only ever mid-read.
+   */
+  const [readsInFlight, setReadsInFlight] = useState(0);
   /** Discard the pending attachments, and any read still in flight. */
   const dropPendingImages = () => {
     imageEpochRef.current += 1;
@@ -371,7 +379,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       );
       return;
     }
-    if (pendingImages.length === 0 && pendingReadsRef.current === 0) return;
+    if (pendingImages.length === 0 && readsInFlight === 0) return;
     dropPendingImages();
     setImageNote(t('aiChatPanel.composer.noImagesForCli'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -604,7 +612,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     }
     const { fits, overCap, release } = capToRoom(accepted);
     const epoch = imageEpochRef.current;
-    pendingReadsRef.current += 1;
+    setReadsInFlight((n) => n + 1);
     void (async () => {
       try {
         const { images, failed } = await imagesFromFiles(fits);
@@ -618,7 +626,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
           setImageNote(t('aiChatPanel.composer.imageUnreadable'));
         }
       } finally {
-        pendingReadsRef.current -= 1;
+        setReadsInFlight((n) => Math.max(0, n - 1));
         release();
       }
     })();
@@ -638,7 +646,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     }
     const { fits, overCap, release } = capToRoom(accepted);
     const epoch = imageEpochRef.current;
-    pendingReadsRef.current += 1;
+    setReadsInFlight((n) => n + 1);
     try {
       const { images, failed } = await imagesFromFiles(fits);
       if (imageEpochRef.current !== epoch) return; // the composer moved on
@@ -648,7 +656,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         setImageNote(t('aiChatPanel.composer.imageUnreadable'));
       }
     } finally {
-      pendingReadsRef.current -= 1;
+      setReadsInFlight((n) => Math.max(0, n - 1));
       release();
     }
   };
@@ -984,6 +992,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const handleSendChat = async () => {
     const text = chatInput.trim();
     if (!text || isChatLoading || foreignChat) return;
+    // Enter reaches here without going through the disabled button. Sending while
+    // a read is in flight left the prompt without its image and moved that image
+    // to the next turn, which is worse than waiting the few ms the read takes.
+    if (readsInFlight > 0) return;
 
     const history = chatMessages.map((m) => ({
       role: m.role,
@@ -1567,7 +1579,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   size="sm"
                   className="h-6 gap-1 px-2.5 text-[11px]"
                   onClick={handleSendChat}
-                  disabled={isChatLoading || !chatInput.trim() || foreignChat}
+                  disabled={isChatLoading || !chatInput.trim() || foreignChat || readsInFlight > 0}
                   title={foreignChat ? t('aiChatPanel.actions.foreignChat') : undefined}
                   data-testid="chat-send-btn"
                 >

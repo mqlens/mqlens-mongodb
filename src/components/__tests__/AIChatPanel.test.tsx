@@ -1213,6 +1213,52 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     await screen.findByTestId('chat-pending-images');
   });
 
+  it('will not send while an image is still being read', async () => {
+    // Send captured only what was already in state, so an image pasted and sent
+    // before its read finished went out missing from the prompt — and then
+    // attached itself to the *next* prompt's composer, one turn late.
+    const pending: Array<() => void> = [];
+    const RealFileReader = globalThis.FileReader;
+    class HeldReader {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      error = null;
+      result = 'data:image/png;base64,AAAA';
+      readAsDataURL() {
+        pending.push(() => this.onload?.());
+      }
+    }
+    (globalThis as unknown as { FileReader: unknown }).FileReader = HeldReader;
+    try {
+      mockPickerBackend({ query: JSON.stringify({ queryType: 'find', filter: {} }) });
+      renderPanel('editor');
+      await screen.findByTestId('ai-chat-provider-select');
+
+      pasteImage(screen.getByTestId('chat-input'));
+      fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'what is this' } });
+      // The read has not settled, so Send is held.
+      await waitFor(() => expect(screen.getByTestId('chat-send-btn')).toBeDisabled());
+      fireEvent.click(screen.getByTestId('chat-send-btn'));
+      expect(invokeMock.mock.calls.filter(([c]) => c === 'generate_mql_query')).toHaveLength(0);
+
+      // Once it lands, the image is attached and Send opens up.
+      await act(async () => {
+        pending.forEach((fire) => fire());
+      });
+      await screen.findByTestId('chat-pending-images');
+      await waitFor(() => expect(screen.getByTestId('chat-send-btn')).not.toBeDisabled());
+      fireEvent.click(screen.getByTestId('chat-send-btn'));
+      await waitFor(() =>
+        expect(invokeMock.mock.calls.filter(([c]) => c === 'generate_mql_query')).toHaveLength(1),
+      );
+      // ...and it went WITH the prompt, not after it.
+      const args = invokeMock.mock.calls.filter(([c]) => c === 'generate_mql_query').at(-1)![1] as any;
+      expect(args.images).toHaveLength(1);
+    } finally {
+      (globalThis as unknown as { FileReader: unknown }).FileReader = RealFileReader;
+    }
+  });
+
   it('keeps an image pasted while a reply is still pending', async () => {
     // The composer stays usable during generation, so a user can prepare the next
     // prompt's attachment. Clearing everything on success deleted it unsent.
