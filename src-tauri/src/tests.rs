@@ -671,6 +671,13 @@ mod tests {
         let bad_type = ImageAttachment { media_type: "image/tiff".into(), data: "x".into() };
         assert!(validate_images(&[bad_type]).unwrap_err().contains("image/tiff"));
         assert!(validate_images(&[png("   ")]).unwrap_err().contains("no data"));
+        // Not just measured — decoded. A truncated or corrupted payload used to
+        // reach the provider and come back as an opaque transport error, which is
+        // exactly what this function exists to prevent.
+        for broken in ["not base64!!", "aGVsbG8", "####"] {
+            let err = validate_images(&[png(broken)]).unwrap_err();
+            assert!(err.contains("could not be read"), "{broken}: {err}");
+        }
         // ~6 MB decoded, over the 5 MB cap.
         let huge = "A".repeat(8 * 1024 * 1024);
         assert!(validate_images(&[png(&huge)]).unwrap_err().contains("limit"));

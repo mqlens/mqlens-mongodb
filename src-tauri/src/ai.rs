@@ -312,14 +312,6 @@ pub fn extract_json_object(text: &str) -> Result<String, String> {
     split_json_object(text).map(|(json, _)| json)
 }
 
-/// Separate the model's answer from what it wrote around it.
-///
-/// Returns the compact JSON object and, if any, the surrounding prose as notes.
-/// Where the old extractor took the FIRST `{`, this takes the LAST balanced
-/// object that parses: the prompt asks for notes *before* the JSON, and notes
-/// about a query naturally contain braces — `{ age: {$gt: 30} }` is not valid
-/// JSON and must not be mistaken for the answer. Fences are stripped from the
-/// notes so a model that ignores the no-fences rule still reads cleanly.
 /// `{` followed by a quoted key — a real object rather than a brace in prose,
 /// whose keys are bare (`{ age: {$gt: 30} }`, `use { for grouping`).
 fn opens_like_json(text: &str) -> bool {
@@ -330,6 +322,14 @@ fn opens_like_json(text: &str) -> bool {
     matches!(chars.find(|c| !c.is_whitespace()), Some('"'))
 }
 
+/// Separate the model's answer from what it wrote around it.
+///
+/// Returns the compact JSON object and, if any, the surrounding prose as notes.
+/// Where the old extractor took the FIRST `{`, this takes the LAST balanced
+/// object that parses: the prompt asks for notes *before* the JSON, and notes
+/// about a query naturally contain braces — `{ age: {$gt: 30} }` is not valid
+/// JSON and must not be mistaken for the answer. Fences are stripped from the
+/// notes so a model that ignores the no-fences rule still reads cleanly.
 pub fn split_json_object(text: &str) -> Result<(String, Option<String>), String> {
     let bytes = text.as_bytes();
     let mut best: Option<(usize, usize, String)> = None;
@@ -495,19 +495,6 @@ pub fn extract_openai_text(resp: &serde_json::Value) -> String {
         .to_string()
 }
 
-/// The one HTTP client for every provider request, with redirects constrained.
-///
-/// reqwest's default follows up to ten redirects, and `check_transport` had only
-/// judged the URL the user typed — so an `https://` endpoint answering `302` to an
-/// `http://` location got the key sent again over that hop. `x-api-key` is an
-/// ordinary header, so unlike `authorization` reqwest does not strip it across
-/// origins, and automatic model loading meant no further user action was needed
-/// for this to happen.
-///
-/// A redirect is followed only to `https://`, or to a loopback address — local
-/// servers are reached over `http://` by design and cannot leave the machine.
-/// Anything else stops the chain, which surfaces as a request error rather than a
-/// silent cleartext hop.
 /// Whether `url` is a loopback address — a local server, whose traffic cannot
 /// leave the machine, which is why `http://` is legitimate for one.
 fn is_loopback_url(url: &reqwest::Url) -> bool {
@@ -546,6 +533,18 @@ pub(crate) fn redirect_is_safe(target: &reqwest::Url, original: &reqwest::Url) -
     target.scheme() == "https" || is_loopback_url(target)
 }
 
+/// The one HTTP client for every provider request, with redirects constrained.
+///
+/// reqwest's default follows up to ten redirects, and `check_transport` had only
+/// judged the URL the user typed — so an `https://` endpoint answering `302` to an
+/// `http://` location got the key sent again over that hop. `x-api-key` is an
+/// ordinary header, so unlike `authorization` reqwest does not strip it across
+/// origins, and automatic model loading meant no further user action was needed
+/// for this to happen.
+///
+/// A redirect is followed only to the same host, and only over `https://` or to a
+/// loopback address; see `redirect_is_safe`. Anything else stops the chain, which
+/// surfaces as a request error rather than a silent cleartext hop.
 fn http_client() -> Result<reqwest::Client, String> {
     static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
     CLIENT
@@ -687,7 +686,7 @@ pub async fn generate_openai_compatible(
     let mut request = client
         .post(endpoint)
         .header("content-type", "application/json");
-    if !api_key.trim().is_empty() {
+    if !api_key.is_empty() {
         request = request.header("authorization", format!("Bearer {}", api_key));
     }
     let (status, json) =
@@ -724,7 +723,7 @@ pub async fn generate_anthropic_compatible(
         .post(endpoint)
         .header("anthropic-version", ANTHROPIC_VERSION)
         .header("content-type", "application/json");
-    if !api_key.trim().is_empty() {
+    if !api_key.is_empty() {
         request = request.header("x-api-key", api_key);
     }
     let (status, json) =
@@ -850,7 +849,7 @@ pub async fn list_models_http(
     let api_key = api_key.trim();
     let client = http_client()?;
     let mut request = client.get(endpoint);
-    if !api_key.trim().is_empty() {
+    if !api_key.is_empty() {
         request = match kind {
             ProviderKind::AnthropicCompatible => request
                 .header("x-api-key", api_key)
