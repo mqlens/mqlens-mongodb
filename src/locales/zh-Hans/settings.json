@@ -53,7 +53,8 @@
     "providerModelHint": "设置好端点和密钥后自动加载。也可以直接输入名称。",
     "providerModelCliHint": "填入命令中的 {model}。若设置了列表命令则从中加载；也可以直接输入名称。",
     "providerModelTypeOwn": "输入模型名称…",
-    "providerSaveFailed": "无法保存提供方：{{error}}"
+    "providerSaveFailed": "无法保存提供方：{{error}}",
+    "providerKeyRequired": "{{name}} 需要 API 密钥。请粘贴一个，或选择无需凭据的本地服务。"
   },
   "audit": {
     "enabledDescription": "启用后，MQLens 会将选定的数据库操作记录到经密钥库加密的本地日志中。",

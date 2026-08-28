@@ -27,6 +27,7 @@
     "providerCommandHint": "Where the request goes. If {prompt} is omitted, the request is appended as the last argument.",
     "providerDescription": "Choose a cloud API or a local agent CLI for the query assistant.",
     "providerEdit": "Edit",
+    "providerKeyRequired": "{{name}} needs an API key. Paste one, or pick a local service that does not require credentials.",
     "providerKind": "API format",
     "providerKinds": {
       "anthropic-compatible": "Anthropic-compatible",

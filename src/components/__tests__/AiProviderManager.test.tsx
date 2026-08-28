@@ -106,6 +106,39 @@ describe('AiProviderManager', () => {
     ]);
   });
 
+  it('refuses to save a key-requiring preset with no key', async () => {
+    // Rust deliberately allows a keyless provider for local servers, so it
+    // cannot catch this — a DeepSeek entry with no key saved fine and then sent
+    // the schema and prompt unauthenticated.
+    const onChange = setup();
+    fireEvent.click(screen.getByTestId('ai-provider-add'));
+    await waitFor(() => expect(screen.getByTestId('ai-provider-preset-select')).toBeInTheDocument());
+    fireEvent.keyDown(screen.getByTestId('ai-provider-preset-select'), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('option', { name: 'DeepSeek' }));
+
+    fireEvent.click(screen.getByTestId('ai-provider-save'));
+    await waitFor(() =>
+      expect(screen.getByTestId('ai-provider-error')).toHaveTextContent(/needs an API key/)
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'validate_ai_provider')).toBe(false);
+
+    // With a key it saves.
+    fireEvent.change(screen.getByTestId('ai-provider-key-input'), { target: { value: 'ds-key' } });
+    fireEvent.click(screen.getByTestId('ai-provider-save'));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+  });
+
+  it('does not demand a key for a keyless local preset', async () => {
+    const onChange = setup();
+    fireEvent.click(screen.getByTestId('ai-provider-add'));
+    await waitFor(() => expect(screen.getByTestId('ai-provider-preset-select')).toBeInTheDocument());
+    fireEvent.keyDown(screen.getByTestId('ai-provider-preset-select'), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('option', { name: 'Ollama CLI (local)' }));
+    fireEvent.click(screen.getByTestId('ai-provider-save'));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+  });
+
   it('validates through the backend rather than duplicating the rules', async () => {
     // The request path enforces these; checking here too would let the two drift.
     mockInvoke.mockImplementation((cmd: string) => {

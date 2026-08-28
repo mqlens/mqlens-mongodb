@@ -165,10 +165,18 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
   // The origin the current key was entered for. Set when the key is typed, when
   // a draft opens, and when a preset keeps the key; cleared with the key.
   const keyOriginRef = useRef<string | null>(null);
+  // Whether the service this draft came from requires a credential. Preset
+  // metadata, not part of the saved provider: Rust deliberately allows a keyless
+  // provider because local servers ignore credentials, so a remote vendor'"'"'s
+  // preset saved with no key would send the schema and prompt unauthenticated
+  // and fail on the first request.
+  const [requiresKey, setRequiresKey] = useState(false);
   const loadSeq = useRef(0);
 
   const openDraft = useCallback((p: AiProvider) => {
     keyOriginRef.current = p.api_key ? originOf(p.base_url) : null;
+    // No preset chosen yet; an existing provider is trusted as configured.
+    setRequiresKey(false);
     setDraft(p);
     setDraftError(null);
     setModels([]);
@@ -254,6 +262,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
         keyOriginRef.current = next.api_key ? originOf(next.base_url) : null;
         return next;
       });
+      setRequiresKey(preset.needsKey);
       setDraftError(null);
     },
     [presets]
@@ -272,6 +281,12 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
       api_key: draft.api_key.trim(),
       id: draft.id || slugify(draft.name, taken),
     };
+    if (requiresKey && candidate.kind !== 'local-cli' && candidate.api_key === '') {
+      // Rust cannot make this call: it has no way to know the endpoint came from
+      // a preset for a service that authenticates.
+      setDraftError(t('ai.providerKeyRequired', { name: candidate.name }));
+      return;
+    }
     try {
       // Validated in Rust so the rules cannot drift from the ones the request
       // path enforces — and so the user sees the problem before saving rather
@@ -382,7 +397,10 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
               <Select
                 value={draft.kind}
                 onValueChange={(kind) => {
-                  if (kind !== draft.kind) keyOriginRef.current = null;
+                  if (kind !== draft.kind) {
+                    keyOriginRef.current = null;
+                    if (kind === 'local-cli') setRequiresKey(false);
+                  }
                   setDraft({ ...draft, kind: kind as ProviderKind, api_key: kind === draft.kind ? draft.api_key : '' });
                 }}
               >

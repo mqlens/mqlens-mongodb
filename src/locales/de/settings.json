@@ -55,7 +55,8 @@
     "providerModelHint": "Wird automatisch geladen, sobald Endpunkt und Schlüssel gesetzt sind. Einen Namen zu tippen geht auch.",
     "providerModelCliHint": "Ersetzt {model} im Befehl. Wird aus dem Listenbefehl geladen, falls einer gesetzt ist; einen Namen zu tippen geht auch.",
     "providerModelTypeOwn": "Modellnamen eintippen…",
-    "providerSaveFailed": "Anbieter konnte nicht gespeichert werden: {{error}}"
+    "providerSaveFailed": "Anbieter konnte nicht gespeichert werden: {{error}}",
+    "providerKeyRequired": "{{name}} benötigt einen API-Schlüssel. Füge einen ein oder wähle einen lokalen Dienst ohne Zugangsdaten."
   },
   "audit": {
     "enabledDescription": "Aktiviert die Aufzeichnung ausgewählter Datenbankoperationen in einem tresorverschlüsselten lokalen Protokoll.",
