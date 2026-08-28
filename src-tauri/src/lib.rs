@@ -2476,6 +2476,27 @@ async fn load_app_settings(
     connections::load_settings_encrypted(&connections::get_settings_enc_path(&app_handle), &key)
 }
 
+/// Whether a settings change is one a chat panel's provider picker would show.
+///
+/// Every successful patch used to broadcast, so changing the interface language or
+/// the theme made every open panel re-read its options — and the model-list effect
+/// that follows sends a *credentialed* request to the selected provider. An
+/// unrelated preference should not cause network traffic.
+///
+/// These are exactly the fields `ai_provider_options` is built from; keys are not
+/// among them, since the option list does not expose one.
+fn ai_options_changed(
+    before: &connections::AppSettings,
+    after: &connections::AppSettings,
+) -> bool {
+    before.ai_provider != after.ai_provider
+        || before.ai_providers != after.ai_providers
+        || before.anthropic_model != after.anthropic_model
+        || before.openai_model != after.openai_model
+        || before.gemini_model != after.gemini_model
+        || before.local_commands != after.local_commands
+}
+
 /// Change only the named fields, under the settings write lock.
 ///
 /// The load → merge → save happens here, on one side of the IPC boundary and
@@ -2502,9 +2523,12 @@ async fn patch_app_settings(
     // in another pane or window holds a stale one, and deleting the provider it
     // has selected leaves that id selectable until the panel remounts.
     // Best-effort, like `connections-changed`: a window that misses it re-reads
-    // the list on its next mount.
-    use tauri::Emitter;
-    let _ = app_handle.emit("ai-providers-changed", ());
+    // the list on its next mount. Only when the picker would actually differ —
+    // see `ai_options_changed`.
+    if ai_options_changed(&current, &merged) {
+        use tauri::Emitter;
+        let _ = app_handle.emit("ai-providers-changed", ());
+    }
     Ok(merged)
 }
 
@@ -2520,19 +2544,22 @@ async fn save_app_settings(
     let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
     let settings_path = connections::get_settings_enc_path(&app_handle);
     let _file_lock = connections::lock_settings_for_write(&settings_path)?;
+    // Read first, under the same locks, only to answer "would the pickers differ".
+    let before = connections::load_settings_encrypted(&settings_path, &key).ok();
     connections::save_settings_encrypted(
         &settings_path,
         &key,
         &settings,
     )?;
     audit::refresh_policy_from_settings(&state, &settings);
-    // Every window keeps its own copy of the provider list; without this, a panel
-    // in another pane or window holds a stale one, and deleting the provider it
-    // has selected leaves that id selectable until the panel remounts.
     // Best-effort, like `connections-changed`: a window that misses it re-reads
-    // the list on its next mount.
-    use tauri::Emitter;
-    let _ = app_handle.emit("ai-providers-changed", ());
+    // the list on its next mount. Only when the picker would actually differ —
+    // and when the previous image could not be read, assume it would, since a
+    // stale picker is worse than one needless refresh.
+    if before.as_ref().is_none_or(|b| ai_options_changed(b, &settings)) {
+        use tauri::Emitter;
+        let _ = app_handle.emit("ai-providers-changed", ());
+    }
 
     Ok(())
 }

@@ -335,7 +335,18 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerOptions, chatProviderId]);
-  const providerTakesImages = activeProvider ? activeProvider.kind !== 'local-cli' : true;
+  /**
+   * Whether the active provider accepts images — `null` until that is known.
+   *
+   * Defaulting to `true` while `ai_provider_options` was still in flight meant a
+   * user whose default is a local CLI could attach and send in that window: the
+   * backend rejected it, but `handleSendChat` had already cleared the composer and
+   * dropped the bytes. Unknown is its own state, so the controls stay disabled
+   * rather than promising something that may not hold.
+   */
+  const providerTakesImages: boolean | null = activeProvider
+    ? activeProvider.kind !== 'local-cli'
+    : null;
 
   /**
    * Drop attachments whenever the active provider cannot take them.
@@ -348,6 +359,8 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
    * closure from attaching an image after the switch.
    */
   useEffect(() => {
+    // Not yet known: nothing to drop and nothing to explain.
+    if (providerTakesImages === null) return;
     if (providerTakesImages) {
       // Nothing else clears this note, so switching back left "this provider
       // cannot receive images" standing over a composer whose attach button had
@@ -534,8 +547,12 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     overCap = false,
     failed = 0
   ) => {
-    if (!providerTakesImages) {
-      setImageNote(t('aiChatPanel.composer.noImagesForCli'));
+    if (providerTakesImages !== true) {
+      // Only a known CLI earns the explanation; while the capability is unknown
+      // the controls are disabled, so there is nothing for the user to have done.
+      if (providerTakesImages === false) {
+        setImageNote(t('aiChatPanel.composer.noImagesForCli'));
+      }
       return;
     }
     // The note is decided out here, not inside the updater: an updater has to be
@@ -1500,9 +1517,15 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   variant="ghost"
                   size="icon"
                   className="h-6 w-6"
-                  disabled={foreignChat || !providerTakesImages}
+                  disabled={foreignChat || providerTakesImages !== true}
                   onClick={() => attachInputRef.current?.click()}
-                  title={providerTakesImages ? t('aiChatPanel.composer.attach') : t('aiChatPanel.composer.noImagesForCli')}
+                  title={
+                    providerTakesImages === true
+                      ? t('aiChatPanel.composer.attach')
+                      : providerTakesImages === false
+                        ? t('aiChatPanel.composer.noImagesForCli')
+                        : t('aiChatPanel.composer.attach')
+                  }
                   aria-label={t('aiChatPanel.composer.attach')}
                   data-testid="chat-attach-btn"
                 >

@@ -214,6 +214,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn only_provider_relevant_settings_changes_ask_the_panels_to_refresh() {
+        // Every successful patch used to broadcast, so changing the interface
+        // language or the theme made every open panel re-read its options — and
+        // the model-list effect that follows sends a *credentialed* request to the
+        // selected provider. An unrelated preference must not cause that.
+        use crate::ai_providers::{AiProvider, ProviderKind};
+        let base = crate::connections::AppSettings::default();
+
+        // Unrelated preferences: no refresh.
+        let mut themed = base.clone();
+        themed.update_channel = "beta".into();
+        assert!(!crate::ai_options_changed(&base, &themed), "update channel");
+        let mut shell = base.clone();
+        shell.mongosh_path = "/usr/local/bin/mongosh".into();
+        assert!(!crate::ai_options_changed(&base, &shell), "mongosh path");
+        // A key is not on the option list, so changing one does not change it.
+        let mut keyed = base.clone();
+        keyed.anthropic_api_key = "sk-new".into();
+        assert!(!crate::ai_options_changed(&base, &keyed), "api key");
+
+        // Everything the picker actually shows: refresh.
+        let mut chosen = base.clone();
+        chosen.ai_provider = "deepseek".into();
+        assert!(crate::ai_options_changed(&base, &chosen), "default provider");
+        let mut added = base.clone();
+        added.ai_providers = vec![AiProvider {
+            id: "deepseek".into(), name: "DeepSeek".into(), kind: ProviderKind::OpenAiCompatible,
+            base_url: "https://api.deepseek.com/v1".into(), api_key: "k".into(),
+            model: "deepseek-chat".into(), command: String::new(), models_command: String::new(),
+        }];
+        assert!(crate::ai_options_changed(&base, &added), "provider list");
+        let mut model = base.clone();
+        model.openai_model = "gpt-4o-mini".into();
+        assert!(crate::ai_options_changed(&base, &model), "built-in model");
+        let mut cmd = base.clone();
+        cmd.local_commands.insert("codex".into(), "codex exec {model} {prompt}".into());
+        assert!(crate::ai_options_changed(&base, &cmd), "local command");
+    }
+
     #[tokio::test]
     async fn a_pasted_key_is_trimmed_before_it_reaches_the_headers() {
         // Model loading runs on the uncommitted draft, so the trim on the save

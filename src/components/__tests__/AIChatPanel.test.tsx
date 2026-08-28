@@ -879,6 +879,9 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
   it('sends a pasted image with the request and keeps only its shape in the transcript', async () => {
     mockPickerBackend({ query: JSON.stringify({ explanation: 'From the screenshot.', queryType: 'find', filter: {} }) });
     renderPanel('editor');
+    // Wait for the options: until they arrive the panel does not know whether the
+    // provider takes images, and attaching is deliberately refused.
+    await screen.findByTestId('ai-chat-provider-select');
     pasteImage(screen.getByTestId('chat-input'));
     await screen.findByTestId('chat-pending-images');
 
@@ -925,6 +928,7 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
   it('lets a pasted image be removed before sending', async () => {
     mockPickerBackend({ query: '{}' });
     renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
     pasteImage(screen.getByTestId('chat-input'));
     await screen.findByTestId('chat-pending-images');
     fireEvent.click(screen.getByTestId('chat-pending-image-remove-0'));
@@ -1168,6 +1172,37 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     await waitFor(() =>
       expect(screen.queryByTestId('chat-image-note')).not.toBeInTheDocument(),
     );
+  });
+
+  it('refuses attachments until it knows whether the provider takes them', async () => {
+    // While `ai_provider_options` is in flight the panel has no capability to go
+    // on. Assuming images were fine meant a user whose default is a local CLI
+    // could attach and send in that window — the backend refused, but the
+    // composer had already been cleared and the bytes dropped.
+    let releaseOptions: (v: unknown) => void = () => {};
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'ai_provider_options') return new Promise((res) => { releaseOptions = res; });
+      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, {}));
+      return Promise.resolve({ query: '{}' });
+    });
+    renderPanel('editor');
+    await screen.findByTestId('chat-input');
+
+    // The attach control is disabled, and a paste attaches nothing.
+    expect(screen.getByTestId('chat-attach-btn')).toBeDisabled();
+    pasteImage(screen.getByTestId('chat-input'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
+    // ...and no note either: the user was not offered anything to be refused.
+    expect(screen.queryByTestId('chat-image-note')).not.toBeInTheDocument();
+
+    // Once the capability is known for an HTTP provider, attaching works.
+    await act(async () => {
+      releaseOptions(OPTIONS);
+    });
+    await waitFor(() => expect(screen.getByTestId('chat-attach-btn')).not.toBeDisabled());
+    pasteImage(screen.getByTestId('chat-input'));
+    await screen.findByTestId('chat-pending-images');
   });
 
   it('re-reads its provider list when settings change elsewhere', async () => {
