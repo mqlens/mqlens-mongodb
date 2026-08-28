@@ -135,6 +135,43 @@ mod tests {
     }
 
     #[test]
+    fn settings_writes_go_through_the_durable_helper() {
+        // Interrupting a write mid-call is not reproducible in-process, so the
+        // guard is at the source level — and this is the claim that was wrong
+        // once: the atomic call had been applied to the *profiles* writer while
+        // the settings writer, which every patch touches, still truncated in
+        // place. A behavioural test could not see the difference, which is why
+        // the first version of it passed.
+        let src = include_str!("connections.rs");
+        for writer in [
+            "pub fn save_settings_encrypted",
+            "pub fn save_profiles_encrypted",
+            "pub fn write_vault_meta",
+        ] {
+            let start = src.find(writer).unwrap_or_else(|| panic!("{writer} not found"));
+            let body = &src[start..start + src[start..].find("\n}").unwrap()];
+            assert!(
+                body.contains("durable::write_atomic"),
+                "{writer} must write atomically; found a bare write"
+            );
+            assert!(!body.contains("fs::write("), "{writer} still calls fs::write directly");
+        }
+    }
+
+    #[test]
+    fn settings_round_trip_through_the_encrypted_file() {
+        use crate::connections::{load_settings_encrypted, save_settings_encrypted, AppSettings};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.enc");
+        let key = [3u8; 32];
+        let mut st = AppSettings::default();
+        st.ai_provider = "deepseek".into();
+        save_settings_encrypted(&path, &key, &st).unwrap();
+        assert!(!dir.path().join("settings.enc.tmp").exists(), "temp file left behind");
+        assert_eq!(load_settings_encrypted(&path, &key).unwrap().ai_provider, "deepseek");
+    }
+
+    #[test]
     fn a_settings_patch_replaces_only_its_own_fields() {
         use crate::connections::{merge_settings_patch, AppSettings};
         let mut current = AppSettings::default();

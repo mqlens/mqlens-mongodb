@@ -218,7 +218,11 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
   };
   const canAutoLoad = (p: AiProvider | null): boolean => {
     if (!canLoadModels(p) || !p) return false;
-    if (p.kind === 'local-cli') return true;
+    // Never automatically. A CLI entry is an arbitrary shell command, and a
+    // debounce would run it while it was still being typed — a half-finished
+    // `touch …` has already happened by the time the user notices. Listing a
+    // CLI's models stays behind the explicit Load models click.
+    if (p.kind === 'local-cli') return false;
     return p.api_key.trim() !== '' || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(p.base_url.trim());
   };
 

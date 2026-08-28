@@ -316,6 +316,9 @@ describe('AiProviderManager', () => {
         { ...emptyProvider(), id: 'oc', name: 'Ollama', kind: 'local-cli', command: 'ollama run {model} {prompt}', models_command: 'ollama list', model: 'llama3' },
       ]);
       fireEvent.click(screen.getByTestId('ai-provider-edit-oc'));
+      // A CLI's command is never run automatically, so the list comes from the
+      // explicit click.
+      fireEvent.click(screen.getByTestId('ai-provider-models-load'));
 
       await waitFor(() => expect(dropdownShown()).toBe(true));
       expect(screen.getByTestId('ai-provider-model-select')).toHaveTextContent('llama3');
@@ -374,6 +377,31 @@ describe('model loading rules', () => {
     expect(screen.getByTestId('ai-provider-models-load')).not.toBeDisabled();
     await new Promise((r) => setTimeout(r, 750));
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_ai_models')).toBe(false);
+    fireEvent.click(screen.getByTestId('ai-provider-models-load'));
+    await waitFor(() => expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_ai_models')).toBe(true));
+  });
+
+  it('never runs a local command on its own', async () => {
+    // A CLI entry is an arbitrary shell command; a debounce would run it while
+    // it was still being typed, and a half-finished `touch …` has already
+    // happened by then. Opening an existing CLI provider must not run it either.
+    render(
+      <AiProviderManager
+        providers={[{ ...emptyProvider(), id: 'oc', name: 'Ollama', kind: 'local-cli', command: 'ollama run {model} {prompt}', models_command: 'ollama list', model: 'llama3' }]}
+        onChange={vi.fn()}
+        reservedIds={[]}
+      />
+    );
+    fireEvent.click(screen.getByTestId('ai-provider-edit-oc'));
+    await new Promise((r) => setTimeout(r, 750));
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_ai_models')).toBe(false);
+
+    // Editing the command does not run it either.
+    fireEvent.change(screen.getByTestId('ai-provider-models-command-input'), { target: { value: 'ollama lis' } });
+    await new Promise((r) => setTimeout(r, 750));
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_ai_models')).toBe(false);
+
+    // Only the explicit click does.
     fireEvent.click(screen.getByTestId('ai-provider-models-load'));
     await waitFor(() => expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_ai_models')).toBe(true));
   });

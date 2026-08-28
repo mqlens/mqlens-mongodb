@@ -630,7 +630,11 @@ pub fn read_vault_meta(path: &Path) -> Result<Option<VaultMeta>, String> {
 pub fn write_vault_meta(path: &Path, meta: &VaultMeta) -> Result<(), String> {
     let content =
         serde_json::to_string_pretty(meta).map_err(|e| format!("serialize vault.json: {e}"))?;
-    fs::write(path, content).map_err(|e| format!("write vault.json: {e}"))
+    // The most consequential of the three: this file holds the KDF parameters
+    // and the unlock verifier, so a truncated write leaves a vault no password
+    // can open. Written on unlock-password changes, which is exactly when a
+    // second instance may also be writing.
+    crate::durable::write_atomic(path, content.as_bytes())
 }
 
 pub fn save_profiles_encrypted(
@@ -641,7 +645,9 @@ pub fn save_profiles_encrypted(
     let json = serde_json::to_vec(profiles)
         .map_err(|e| format!("serialize connections: {e}"))?;
     let blob = crate::vault::encrypt(key, &json)?;
-    fs::write(path, blob).map_err(|e| format!("write {}: {e}", path.display()))
+    // Same reasoning as the settings writer, and the stake is higher: this file
+    // holds every saved connection, so a truncated write loses all of them.
+    crate::durable::write_atomic(path, &blob)
 }
 
 pub fn load_profiles_encrypted(
@@ -666,7 +672,10 @@ pub fn save_settings_encrypted(
 ) -> Result<(), String> {
     let json = serde_json::to_vec(settings).map_err(|e| format!("serialize settings: {e}"))?;
     let blob = crate::vault::encrypt(key, &json)?;
-    fs::write(path, blob).map_err(|e| format!("write {}: {e}", path.display()))
+    // Atomic: a bare `fs::write` truncates first, so an exit or a second
+    // instance writing at the same moment leaves a partial ciphertext that
+    // decrypts to nothing — and this file is written on every settings patch.
+    crate::durable::write_atomic(path, &blob)
 }
 
 pub fn load_settings_encrypted(path: &Path, key: &[u8; 32]) -> Result<AppSettings, String> {

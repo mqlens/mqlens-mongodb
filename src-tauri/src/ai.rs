@@ -480,15 +480,24 @@ pub async fn list_models_http(
     } else if kind == ProviderKind::AnthropicCompatible {
         request = request.header("anthropic-version", ANTHROPIC_VERSION);
     }
-    let resp = tokio::time::timeout(Duration::from_secs(20), request.send())
+    // One budget for the whole exchange. Wrapping only `send()` left the body
+    // read unbounded, so an endpoint that returned headers and then stalled held
+    // the picker in "loading" indefinitely and abandoned requests piled up.
+    let fetch = async {
+        let resp = request
+            .send()
+            .await
+            .map_err(|e| format!("Failed to reach {}: {}", provider_name, e))?;
+        let status = resp.status();
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid response from {}: {}", provider_name, e))?;
+        Ok::<(reqwest::StatusCode, serde_json::Value), String>((status, json))
+    };
+    let (status, json) = tokio::time::timeout(Duration::from_secs(20), fetch)
         .await
-        .map_err(|_| format!("{} did not answer within 20s.", provider_name))?
-        .map_err(|e| format!("Failed to reach {}: {}", provider_name, e))?;
-    let status = resp.status();
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Invalid response from {}: {}", provider_name, e))?;
+        .map_err(|_| format!("{} did not answer within 20s.", provider_name))??;
     if !status.is_success() {
         return Err(format!(
             "{} error ({}): {}",
