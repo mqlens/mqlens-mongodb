@@ -2479,6 +2479,10 @@ async fn patch_app_settings(
     let key = state.require_key()?;
     let path = connections::get_settings_enc_path(&app_handle);
     let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
+    // The in-process mutex above orders this window's writers; this orders them
+    // against a second MQLens, which would otherwise merge into the same image
+    // and have one patch discarded by the other's rename.
+    let _file_lock = connections::lock_settings_for_write(&path)?;
     let current = connections::load_settings_encrypted(&path, &key)?;
     let merged = connections::merge_settings_patch(&current, &patch)?;
     connections::save_settings_encrypted(&path, &key, &merged)?;
@@ -2500,11 +2504,13 @@ async fn save_app_settings(
     settings: connections::AppSettings,
 ) -> Result<(), String> {
     let key = state.require_key()?;
-    // Same lock as `patch_app_settings`, so a whole-object save cannot
-    // interleave with a field patch.
+    // Same locks as `patch_app_settings`, so a whole-object save cannot
+    // interleave with a field patch — in this process or another one.
     let _guard = state.settings_write.lock().map_err(|e| e.to_string())?;
+    let settings_path = connections::get_settings_enc_path(&app_handle);
+    let _file_lock = connections::lock_settings_for_write(&settings_path)?;
     connections::save_settings_encrypted(
-        &connections::get_settings_enc_path(&app_handle),
+        &settings_path,
         &key,
         &settings,
     )?;

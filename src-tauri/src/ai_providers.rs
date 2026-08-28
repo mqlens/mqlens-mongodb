@@ -471,7 +471,19 @@ impl AiProvider {
                 Ok(())
             }
             _ => {
-                self.endpoint()?;
+                let endpoint = self.endpoint()?;
+                // Parsed, not just concatenated: `endpoint()` only joins a path, so
+                // `not a url`, a bare path, or `ftp://host` was saved happily and
+                // failed later inside reqwest — an error the form could not attach
+                // to the field the user had got wrong.
+                if host_of(&endpoint).is_none() {
+                    return Err(format!(
+                        "{}'s URL must be an http:// or https:// address with a host. \
+                         `{}` is not one.",
+                        self.name,
+                        self.base_url.trim()
+                    ));
+                }
                 if self.model.trim().is_empty() {
                     return Err(format!("{} needs a model name.", self.name));
                 }
@@ -509,6 +521,21 @@ mod tests {
             command: String::new(),
             models_command: String::new(),
         }
+    }
+
+    #[test]
+    fn a_url_that_is_not_a_url_is_refused_at_save_rather_than_at_first_request() {
+        // `endpoint()` only joins a path, so these were saved happily and failed
+        // later inside reqwest — an error the form could not attach to the field.
+        for bad in ["not a url", "/v1/chat", "ftp://files.example/v1", "api.openai.com/v1"] {
+            let p = provider(ProviderKind::OpenAiCompatible, bad);
+            let err = p.validate().unwrap_err();
+            assert!(err.contains("http://"), "{bad}: {err}");
+        }
+        // ...and a real one still passes.
+        let mut ok = provider(ProviderKind::OpenAiCompatible, "https://llm.internal.example/v1");
+        ok.api_key = String::new();
+        ok.validate().expect("a well-formed URL is fine");
     }
 
     #[test]

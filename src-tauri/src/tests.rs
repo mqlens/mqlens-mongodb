@@ -128,6 +128,57 @@ mod tests {
         p.check_transport().expect("this machine is fine");
     }
 
+    #[test]
+    fn a_redirect_to_cleartext_is_not_followed() {
+        // `check_transport` judges the URL the user typed. reqwest then followed up
+        // to ten redirects on its own, so an https endpoint answering 302 with an
+        // http location got the key sent again over that hop — and `x-api-key` is
+        // an ordinary header, so unlike `authorization` it is not stripped across
+        // origins. Automatic model loading meant no further user action was needed.
+        use crate::ai::redirect_is_safe;
+        let url = |u: &str| reqwest::Url::parse(u).unwrap();
+        for good in [
+            "https://api.openai.com/v1/models",
+            "https://elsewhere.example/v1",
+            // Local servers are reached over http by design; nothing leaves the box.
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:1234/v1",
+            "http://[::1]:8000/v1",
+            "http://ollama.localhost/v1",
+        ] {
+            assert!(redirect_is_safe(&url(good)), "{good} should be followed");
+        }
+        for bad in [
+            "http://api.openai.com/v1",
+            "http://attacker.example/collect",
+            "http://192.168.1.50:8000/v1",
+        ] {
+            assert!(!redirect_is_safe(&url(bad)), "{bad} must not be followed");
+        }
+    }
+
+    #[test]
+    fn every_request_shares_the_one_redirect_constrained_client() {
+        // A new provider path is added by copying an existing one, and a bare
+        // `Client::new()` silently restores reqwest's follow-anything default.
+        let src = include_str!("ai.rs");
+        assert_eq!(
+            src.matches("Client::builder()").count(),
+            2,
+            "only `http_client` may build a client (itself and its fallback)"
+        );
+        assert_eq!(
+            src.matches("reqwest::Client::new()").count(),
+            1,
+            "only `http_client`'s last-resort fallback may call Client::new()"
+        );
+        assert_eq!(
+            src.matches("http_client()").count(),
+            7,
+            "six request paths plus the definition — a new one must go through it"
+        );
+    }
+
     #[tokio::test]
     async fn a_pasted_key_is_trimmed_before_it_reaches_the_headers() {
         // Model loading runs on the uncommitted draft, so the trim on the save

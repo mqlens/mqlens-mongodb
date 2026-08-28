@@ -993,6 +993,36 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     }
   });
 
+  it('ignores a CLI model list that arrives after the provider changed', async () => {
+    // The command can run for a while. Its result used to be applied whatever the
+    // selection had become, repopulating the picker with the previous provider's
+    // models — one of which could then be sent to the new provider.
+    let releaseList: (v: string[]) => void = () => {};
+    invokeMock.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'ai_provider_options') return Promise.resolve(OPTIONS);
+      if (cmd === 'list_ai_models_for') {
+        return args?.providerId === 'my-ollama'
+          ? new Promise<string[]>((res) => { releaseList = res; })
+          : Promise.resolve([]);
+      }
+      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, {}));
+      return Promise.resolve({ query: '{}' });
+    });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    await pickProvider('My Ollama');
+
+    // Ask for the CLI's models, then switch away before the command answers.
+    fireEvent.click(await screen.findByTestId('ai-chat-models-load'));
+    await pickProvider('DeepSeek');
+    await act(async () => {
+      releaseList(['llama3:latest', 'mistral:7b']);
+    });
+
+    // Ollama's models must not be offered for DeepSeek.
+    expect(screen.queryByTestId('ai-chat-model-select')).not.toBeInTheDocument();
+  });
+
   it('re-reads its provider list when settings change elsewhere', async () => {
     // Settings can be open in another pane or window. The list was fetched once,
     // so deleting the selected provider there left its id selected here and the

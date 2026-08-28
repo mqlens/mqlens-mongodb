@@ -3,6 +3,7 @@
 // https://api.anthropic.com/v1/messages over HTTPS (no official Rust SDK).
 
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -480,6 +481,70 @@ pub fn extract_openai_text(resp: &serde_json::Value) -> String {
         .to_string()
 }
 
+/// The one HTTP client for every provider request, with redirects constrained.
+///
+/// reqwest's default follows up to ten redirects, and `check_transport` had only
+/// judged the URL the user typed — so an `https://` endpoint answering `302` to an
+/// `http://` location got the key sent again over that hop. `x-api-key` is an
+/// ordinary header, so unlike `authorization` reqwest does not strip it across
+/// origins, and automatic model loading meant no further user action was needed
+/// for this to happen.
+///
+/// A redirect is followed only to `https://`, or to a loopback address — local
+/// servers are reached over `http://` by design and cannot leave the machine.
+/// Anything else stops the chain, which surfaces as a request error rather than a
+/// silent cleartext hop.
+/// Whether a redirect to `url` may be followed with the request's headers.
+///
+/// TLS, or a loopback address — local servers are reached over `http://` by
+/// design and their traffic cannot leave the machine. Everything else would put
+/// the key and the prompt on the network in clear text.
+pub(crate) fn redirect_is_safe(url: &reqwest::Url) -> bool {
+    if url.scheme() == "https" {
+        return true;
+    }
+    match url.host_str() {
+        Some(h) => {
+            let h = h
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_ascii_lowercase();
+            h == "localhost"
+                || h.ends_with(".localhost")
+                || h.parse::<std::net::IpAddr>()
+                    .map(|ip| ip.is_loopback())
+                    .unwrap_or(false)
+        }
+        None => false,
+    }
+}
+
+fn http_client() -> reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            let policy = reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 5 || !redirect_is_safe(attempt.url()) {
+                    attempt.stop()
+                } else {
+                    attempt.follow()
+                }
+            });
+            reqwest::Client::builder()
+                .redirect(policy)
+                .build()
+                // Refusing every redirect is the safe direction if the policy
+                // cannot be installed; a client that follows them is not.
+                .unwrap_or_else(|_| {
+                    reqwest::Client::builder()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .build()
+                        .unwrap_or_else(|_| reqwest::Client::new())
+                })
+        })
+        .clone()
+}
+
 /// The whole budget for one generation exchange — connect, headers and body.
 ///
 /// Generous, because a reasoning model can think for a while; finite, because
@@ -530,7 +595,7 @@ pub async fn generate_openai(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = reqwest::Client::new();
+    let client = http_client();
     let (status, json) = send_json_within(
         client
             .post(OPENAI_URL)
@@ -588,7 +653,7 @@ pub async fn generate_openai_compatible(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = reqwest::Client::new();
+    let client = http_client();
     let mut request = client
         .post(endpoint)
         .header("content-type", "application/json");
@@ -624,7 +689,7 @@ pub async fn generate_anthropic_compatible(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = reqwest::Client::new();
+    let client = http_client();
     let mut request = client
         .post(endpoint)
         .header("anthropic-version", ANTHROPIC_VERSION)
@@ -753,7 +818,7 @@ pub async fn list_models_http(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = reqwest::Client::new();
+    let client = http_client();
     let mut request = client.get(endpoint);
     if !api_key.trim().is_empty() {
         request = match kind {
@@ -896,7 +961,7 @@ pub async fn generate_gemini(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = reqwest::Client::new();
+    let client = http_client();
     let (status, json) = send_json_within(
         client
             .post(gemini_url(model))
@@ -1097,7 +1162,7 @@ pub async fn generate_anthropic(
     // loading runs on the uncommitted draft — so the request went out with the
     // raw value and came back 401 while the same provider worked after saving.
     let api_key = api_key.trim();
-    let client = reqwest::Client::new();
+    let client = http_client();
     let (status, json) = send_json_within(
         client
             .post(ANTHROPIC_URL)

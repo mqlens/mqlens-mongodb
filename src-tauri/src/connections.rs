@@ -763,6 +763,38 @@ pub fn write_prepared_file(path: &Path, blob: Option<Vec<u8>>) -> Result<(), Str
 /// obvious one — so every original is held in memory and put back on error.
 ///
 /// `files` is `(path, Some(new_bytes))` per data file; `None` means "not
+/// Hold the cross-process settings lock for a whole load–merge–save.
+///
+/// `AppState::settings_write` orders writers inside one process and says nothing
+/// about a second MQLens: two processes could each read the same settings image,
+/// merge a different field into it and save, and the later rename would silently
+/// discard the earlier patch — a provider just added, or another window's theme
+/// change. This is the advisory lock the audit log already uses, on a sidecar
+/// beside the settings file.
+///
+/// It blocks rather than failing: a settings patch that waits a moment is right,
+/// one that gives up because another window was saving is not. The lock is
+/// released when the returned handle drops, so callers hold it in a `let _guard`
+/// for the whole sequence.
+pub fn lock_settings_for_write(settings_path: &Path) -> Result<fs::File, String> {
+    use fs4::fs_std::FileExt;
+    let mut name = settings_path.file_name().unwrap_or_default().to_os_string();
+    name.push(".lock");
+    let lock_path = settings_path.with_file_name(name);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| format!("open {}: {e}", lock_path.display()))?;
+    FileExt::lock_exclusive(&file).map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
+    Ok(file)
+}
+
 /// present, leave alone".
 pub fn commit_vault_rotation(
     files: Vec<(PathBuf, Option<Vec<u8>>)>,
@@ -1130,6 +1162,45 @@ mod rotation_tests {
             fs::read(&meta_path).unwrap(),
             b"old-meta",
             "metadata must be untouched"
+        );
+    }
+
+    #[test]
+    fn the_settings_lock_excludes_a_second_writer() {
+        // `AppState::settings_write` is one process's mutex; two MQLens processes
+        // could both load the same image, merge different fields and save, and the
+        // later rename would discard the earlier patch. Two independent handles
+        // here stand in for those two processes — advisory locks are held per open
+        // file description, so they contend the same way.
+        use std::sync::{Arc, Mutex};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.enc");
+        let log: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let held = lock_settings_for_write(&path).expect("first writer takes the lock");
+        log.lock().unwrap().push("enter-a");
+
+        let second = {
+            let log = Arc::clone(&log);
+            let path = path.clone();
+            std::thread::spawn(move || {
+                // Blocks until the first writer is done, rather than failing.
+                let _lock = lock_settings_for_write(&path).expect("second writer waits");
+                log.lock().unwrap().push("enter-b");
+                log.lock().unwrap().push("exit-b");
+            })
+        };
+
+        // Long enough that a lock that did not exclude would have interleaved.
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        log.lock().unwrap().push("exit-a");
+        drop(held);
+        second.join().unwrap();
+
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["enter-a", "exit-a", "enter-b", "exit-b"],
+            "the second writer must not enter before the first has left"
         );
     }
 

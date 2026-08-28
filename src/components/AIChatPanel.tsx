@@ -255,6 +255,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // never rewritten from here.
   const [providerOptions, setProviderOptions] = useState<ProviderOption[]>([]);
   const [chatProviderId, setChatProviderId] = useState<string | null>(null);
+  // Read by callbacks that outlive the render they started in — a models command
+  // still running when the user switches providers must not apply its result.
+  const chatProviderIdRef = useRef(chatProviderId);
+  chatProviderIdRef.current = chatProviderId;
   const [chatModel, setChatModel] = useState('');
   const [chatModels, setChatModels] = useState<string[]>([]);
   // Dropdown once the provider's models are known, text box otherwise — the
@@ -387,9 +391,14 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   /** Run a CLI provider's models command, because the user asked for it. */
   const loadCliModels = async () => {
     if (!chatProviderId) return;
+    // The command can take a while, and the user can switch providers while it
+    // runs. Without this the result repopulated the picker with the *previous*
+    // provider's models, and one of them could then be sent to the new one.
+    const askedFor = chatProviderId;
     setLoadingCliModels(true);
     try {
-      applyModels(await invoke<unknown>('list_ai_models_for', { providerId: chatProviderId }));
+      const list = await invoke<unknown>('list_ai_models_for', { providerId: askedFor });
+      if (chatProviderIdRef.current === askedFor) applyModels(list);
     } catch {
       /* Typing the model name still works, so this is not an error state. */
     } finally {
