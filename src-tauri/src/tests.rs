@@ -106,6 +106,18 @@ mod tests {
     }
 
     #[test]
+    fn placeholders_are_substituted_inside_a_token_too() {
+        // `agent --prompt={prompt}` passed validation but the old parser only
+        // matched a whole-token `{prompt}`, so the CLI got the literal text plus
+        // the prompt appended as an extra argument.
+        use crate::ai::parse_command_template;
+        let (prog, args) =
+            parse_command_template("agent --model={model} --prompt={prompt}", "find users", "m1").unwrap();
+        assert_eq!(prog, "agent");
+        assert_eq!(args, ["--model=m1", "--prompt=find users"]);
+    }
+
+    #[test]
     fn the_model_placeholder_without_a_model_is_an_error_not_an_empty_argument() {
         use crate::ai::parse_command_template;
         // An empty argument would make the CLI run its default model silently,
@@ -132,6 +144,16 @@ mod tests {
 
         let mut settings = AppSettings::default();
         settings.ai_provider = "openai".into();
+        // A fresh install has no key; the old adapter refused before any request
+        // and the resolver must too, or the schema and prompt go to the cloud
+        // unauthenticated.
+        let err = resolve_ai_provider(&settings).unwrap_err();
+        assert!(err.contains("No OpenAI API key"), "{err}");
+        settings.ai_provider = "anthropic".into();
+        let err = resolve_ai_provider(&settings).unwrap_err();
+        assert!(err.contains("No Anthropic API key"), "{err}");
+        settings.anthropic_api_key = test_secret(&["sk-", "ant"]);
+        settings.ai_provider = "openai".into();
         settings.openai_api_key = test_secret(&["sk-", "test"]);
         let p = resolve_ai_provider(&settings).expect("openai resolves");
         assert_eq!(p.kind, ProviderKind::OpenAiCompatible);
@@ -141,7 +163,7 @@ mod tests {
 
         settings.ai_provider = "anthropic".into();
         settings.anthropic_model = "claude-3-5-sonnet".into();
-        let p = resolve_ai_provider(&settings).expect("anthropic resolves");
+        let p = resolve_ai_provider(&settings).expect("anthropic resolves with a key");
         assert_eq!(p.kind, ProviderKind::AnthropicCompatible);
         assert_eq!(p.endpoint().unwrap(), "https://api.anthropic.com/v1/messages");
         assert_eq!(p.model, "claude-3-5-sonnet", "a stored model is respected");

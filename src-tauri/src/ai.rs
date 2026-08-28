@@ -512,6 +512,9 @@ pub async fn list_models_cli(models_command: &str) -> Result<Vec<String>, String
     let run = tokio::process::Command::new(program)
         .args(args)
         .stdin(std::process::Stdio::null())
+        // Tokio does not kill a child when the future is dropped; without this a
+        // timed-out command keeps running after the UI has given up on it.
+        .kill_on_drop(true)
         .output();
     let output = tokio::time::timeout(Duration::from_secs(30), run)
         .await
@@ -640,21 +643,20 @@ pub fn parse_command_template(
     if tokens.is_empty() {
         return Err("Command template is empty".to_string());
     }
-    if tokens.contains(&"{model}") && model.trim().is_empty() {
+    if template.contains("{model}") && model.trim().is_empty() {
         return Err("The command uses {model} but no model is set.".to_string());
     }
     let program = tokens[0].to_string();
     let mut args: Vec<String> = Vec::new();
     let mut substituted = false;
+    // Placeholders are replaced *within* each token, so `--prompt={prompt}` and
+    // `--model={model}` work as well as bare `{prompt}`. Each token stays one
+    // argument, so a prompt with spaces is never split by the shell.
     for tok in &tokens[1..] {
-        if *tok == "{prompt}" {
-            args.push(prompt.to_string());
+        if tok.contains("{prompt}") {
             substituted = true;
-        } else if *tok == "{model}" {
-            args.push(model.trim().to_string());
-        } else {
-            args.push((*tok).to_string());
         }
+        args.push(tok.replace("{prompt}", prompt).replace("{model}", model.trim()));
     }
     if !substituted {
         args.push(prompt.to_string());
@@ -670,6 +672,9 @@ pub async fn generate_local(template: &str, prompt: &str, model: &str) -> Result
     let run = tokio::process::Command::new(&program)
         .args(&args)
         .stdin(std::process::Stdio::null())
+        // Tokio does not kill a child when the future is dropped; without this a
+        // timed-out command keeps running after the UI has given up on it.
+        .kill_on_drop(true)
         .output();
 
     // Local coding agents (claude-code, codex, …) can take a while to start up

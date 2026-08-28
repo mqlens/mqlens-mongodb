@@ -265,6 +265,27 @@ pub fn resolve_ai_provider(
         }
     };
 
+    // The two cloud built-ins are never keyless. The generic adapters allow an
+    // empty key because local servers ignore credentials — but for these two an
+    // empty key means "not set up", and the old adapters refused before making
+    // any request. Keep that: otherwise a fresh install posts the collection
+    // schema, the instructions and the prompt to the cloud unauthenticated.
+    let require_key = |vendor: &str, key: &str| -> Result<(), String> {
+        if key.trim().is_empty() {
+            Err(format!("No {vendor} API key set. Add one in Settings."))
+        } else {
+            Ok(())
+        }
+    };
+    match id {
+        "anthropic" => {
+            require_key("Anthropic", &settings.anthropic_api_key)?;
+        }
+        "openai" => {
+            require_key("OpenAI", &settings.openai_api_key)?;
+        }
+        _ => {}
+    }
     match id {
         "anthropic" => Ok(built_in(
             "Anthropic",

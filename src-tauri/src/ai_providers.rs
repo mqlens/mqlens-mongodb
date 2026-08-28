@@ -245,6 +245,17 @@ pub fn join_endpoint(base_url: &str, path: &str) -> String {
     format!("{base}/{want}")
 }
 
+/// `…/v1/chat/completions` → `…/v1`, likewise for `…/messages`; unchanged otherwise.
+fn strip_generation_suffix(base_url: &str) -> &str {
+    let base = base_url.trim().trim_end_matches('/');
+    for suffix in ["/chat/completions", "/messages"] {
+        if let Some(prefix) = base.strip_suffix(suffix) {
+            return prefix;
+        }
+    }
+    base
+}
+
 impl AiProvider {
     /// The URL a request should be posted to, or an error naming what is missing.
     pub fn endpoint(&self) -> Result<String, String> {
@@ -275,7 +286,10 @@ impl AiProvider {
         }
         match self.kind {
             ProviderKind::LocalCli => Err(format!("{} is a local command, not a URL", self.name)),
-            _ => Ok(join_endpoint(&self.base_url, "models")),
+            // The UI accepts a pasted *generation* URL (`…/v1/chat/completions`,
+            // `…/v1/messages`) as the base; the models route hangs off the same
+            // prefix, so that suffix is removed before joining.
+            _ => Ok(join_endpoint(strip_generation_suffix(&self.base_url), "models")),
         }
     }
 
@@ -292,6 +306,8 @@ impl AiProvider {
                 if self.command.trim().is_empty() {
                     return Err(format!("{} needs a command.", self.name));
                 }
+                // Substitution happens inside a token too (`--prompt={prompt}`), so
+                // the check is a plain `contains`, matching what the parser does.
                 if !self.command.contains("{prompt}") {
                     return Err(format!(
                         "{}'s command must contain {{prompt}}, which is replaced with the request.",
@@ -455,6 +471,22 @@ mod tests {
             "https://x/v1/models"
         );
         assert!(provider(ProviderKind::LocalCli, "").models_endpoint().is_err());
+    }
+
+    #[test]
+    fn the_models_endpoint_survives_a_pasted_generation_url() {
+        // The hint says pasting the full path works — so it has to work here too,
+        // not only for generation.
+        for (base, expect) in [
+            ("https://api.deepseek.com/v1/chat/completions", "https://api.deepseek.com/v1/models"),
+            ("https://api.deepseek.com/v1/chat/completions/", "https://api.deepseek.com/v1/models"),
+            ("https://gw.example/v1/messages", "https://gw.example/v1/models"),
+            ("https://api.deepseek.com/v1", "https://api.deepseek.com/v1/models"),
+        ] {
+            let mut p = provider(ProviderKind::OpenAiCompatible, base);
+            if base.contains("/messages") { p.kind = ProviderKind::AnthropicCompatible; }
+            assert_eq!(p.models_endpoint().unwrap(), expect, "base {base}");
+        }
     }
 
     #[test]

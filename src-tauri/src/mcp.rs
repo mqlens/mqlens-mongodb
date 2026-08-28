@@ -680,7 +680,9 @@ pub const AGENT_INSTRUCTIONS: &str = concat!(
     "Only profiles the user opted in (Connection Manager -> \"Expose to MCP agents\") appear, and ",
     "connection strings are never returned. If the profile you need is not listed, say so and ask ",
     "the user to opt it in — do not look for another route.\n",
-    "3. `connect` with a profileId if it is not live yet; use the returned connectionId everywhere.\n",
+    "3. `connect` with `profile_id` if it is not live yet. It returns {\"connectionId\": ...}; pass that ",
+    "value as `connection_id` to every other tool. Tool arguments are snake_case; only the response ",
+    "key is camelCase.\n",
     "4. `list_databases`, then `list_collections` — note the type, since a view and a timeseries ",
     "collection do not accept the same operations.\n",
     "5. `schema_analysis` before writing any filter. It samples documents and reports per-field ",
@@ -703,8 +705,8 @@ pub const AGENT_INSTRUCTIONS: &str = concat!(
     "WRITES. `insert_one`, `update_many`, `delete_many` and `create_index` require ",
     "`_confirm: true`, and before you send it you must tell the user the exact namespace and what ",
     "will change, then get their agreement. A connection the user marked read-only rejects writes ",
-    "regardless. `aggregate` refuses $out and $merge. Every call is recorded in the user's ",
-    "activity log.\n\n",
+    "regardless. `aggregate` refuses $out and $merge. Every data call — everything except `ping` — ",
+    "is recorded in the user's activity log.\n\n",
 
     "WHEN SOMETHING IS MISSING. Report what you could not reach and what you would need. Do not ",
     "substitute a different collection, widen a filter to produce output, or describe a query you ",
@@ -1555,6 +1557,26 @@ mod agent_instruction_tests {
                 "{args} now gates on _confirm — the instructions imply reads do not"
             );
         }
+    }
+
+    #[test]
+    fn argument_names_in_the_prose_are_the_schema_names() {
+        let tools = include_str!("mcp_tools.rs");
+        assert!(tools.contains("pub profile_id: String"), "ConnectArgs renamed?");
+        assert!(tools.contains("pub connection_id: String"), "connection_id renamed?");
+        assert!(AGENT_INSTRUCTIONS.contains("`profile_id`"));
+        assert!(AGENT_INSTRUCTIONS.contains("`connection_id`"));
+        assert!(!AGENT_INSTRUCTIONS.contains("with a profileId"), "old camelCase phrasing");
+    }
+
+    #[test]
+    fn the_logging_claim_matches_what_ping_does() {
+        let src = include_str!("mcp.rs");
+        let start = src.find("async fn ping(&self)").unwrap();
+        let ping = &src[start..start + 200];
+        assert!(!ping.contains("log_call"), "ping now logs; tighten the prose instead");
+        assert!(AGENT_INSTRUCTIONS.contains("everything except `ping`"));
+        assert!(!AGENT_INSTRUCTIONS.contains("Every call is recorded"));
     }
 
     #[test]
