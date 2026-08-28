@@ -493,6 +493,49 @@ describe('SettingsView Component', () => {
       expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'save_app_settings')).toBe(false);
     });
 
+    it('applies rapid provider writes in the order they were made', async () => {
+      // The backend mutex gives mutual exclusion, not ordering: add-then-remove
+      // could finish with the add last and the provider back.
+      const patches: any[] = [];
+      let releaseFirst: (v?: unknown) => void = () => {};
+      let calls = 0;
+      mockInvoke.mockImplementation((cmd, args: any) => {
+        if (cmd === 'load_app_settings') return Promise.resolve({ ai_providers: [] });
+        if (cmd === 'ai_provider_presets') return Promise.resolve([]);
+        if (cmd === 'validate_ai_provider') return Promise.resolve('ok');
+        if (cmd === 'patch_app_settings') {
+          patches.push(args.patch.ai_providers);
+          calls += 1;
+          // The first write is slow; the second must wait for it regardless.
+          if (calls === 1) return new Promise((res) => { releaseFirst = res; });
+          return Promise.resolve();
+        }
+        return Promise.resolve();
+      });
+      renderSettings();
+      await openTab('settings-tab-ai');
+
+      // Add one...
+      fireEvent.click(await screen.findByTestId('ai-provider-add'));
+      fireEvent.change(screen.getByTestId('ai-provider-name-input'), { target: { value: 'DeepSeek' } });
+      fireEvent.change(screen.getByTestId('ai-provider-url-input'), { target: { value: 'https://api.deepseek.com/v1' } });
+      fireEvent.change(screen.getByTestId('ai-provider-key-input'), { target: { value: 'k' } });
+      fireEvent.change(screen.getByTestId('ai-provider-model-input'), { target: { value: 'deepseek-chat' } });
+      fireEvent.click(screen.getByTestId('ai-provider-save'));
+      await waitFor(() => expect(patches).toHaveLength(1));
+
+      // ...then remove it before the add has finished writing.
+      fireEvent.click(await screen.findByTestId('ai-provider-remove-deepseek'));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(patches).toHaveLength(1);            // the removal is queued behind it
+      releaseFirst();
+      await waitFor(() => expect(patches).toHaveLength(2));
+
+      // The last write wins, and it is the removal.
+      expect(patches[0]).toHaveLength(1);
+      expect(patches[1]).toEqual([]);
+    });
+
     it('does not leave a removed provider selected', async () => {
       // The backend rejects an unknown id, and that error would otherwise only
       // appear the next time the user asked for a query.

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef} from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import {
@@ -729,12 +729,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ initialTab, onInstal
   // call that loads, merges and saves inside one backend lock, so two writers
   // cannot interleave a load with the other's save. That also covers the writers
   // outside this component — theme, locale, shell path.
-  const persistProviders = async (next: AiProvider[], active: string) => {
-    try {
-      await invoke('patch_app_settings', { patch: { ai_providers: next, ai_provider: active } });
-    } catch (e) {
-      setError(t('ai.providerSaveFailed', { error: String(e) }));
-    }
+  //
+  // Two mechanisms, two jobs, and both are needed. `patch_app_settings` merges
+  // under a backend lock, which is what stops one writer's save from erasing
+  // another's field — including writers in other components (theme, locale,
+  // shell path). What a mutex does not give is *order*: two patches of the same
+  // field can acquire it either way round, so adding a provider and quickly
+  // removing it could finish with the add last and the provider back. Writes of
+  // this list are queued here, where the causal order is known; fields owned by
+  // other components are disjoint, so ordering between components never arises.
+  const settingsWrites = useRef<Promise<unknown>>(Promise.resolve());
+  const persistProviders = (next: AiProvider[], active: string) => {
+    const write = () =>
+      invoke('patch_app_settings', { patch: { ai_providers: next, ai_provider: active } });
+    const run = settingsWrites.current.then(write, write);
+    settingsWrites.current = run.catch(() => {});
+    return run.catch((e) => setError(t('ai.providerSaveFailed', { error: String(e) })));
   };
 
   const saveSettings = async () => {

@@ -130,9 +130,11 @@ pub fn response_text(resp: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
-/// Pull the FIRST balanced JSON object out of free text — tolerates prose or
-/// ```json fences before/after it, and braces inside string values — then
-/// validate it parses. Returns compact JSON.
+/// Pull the FIRST balanced JSON object out of free text, then validate that it
+/// parses. Returns compact JSON.
+///
+/// Tolerates prose and Markdown code fences around the object, and braces
+/// inside string values.
 pub fn extract_json_object(text: &str) -> Result<String, String> {
     let bytes = text.as_bytes();
     let start = text
@@ -514,7 +516,7 @@ pub async fn list_models_http(
 /// The template is split on whitespace and run as-is: there is no prompt to
 /// substitute, and `{model}` makes no sense in a command that produces the list.
 pub async fn list_models_cli(models_command: &str) -> Result<Vec<String>, String> {
-    let tokens: Vec<&str> = models_command.split_whitespace().collect();
+    let tokens = split_command_line(models_command)?;
     let Some((program, args)) = tokens.split_first() else {
         return Err("No model-listing command is set for this provider.".to_string());
     };
@@ -643,12 +645,76 @@ pub async fn generate_gemini(
 /// token with the prompt as a single argv element. No shell is invoked, so prompt
 /// contents (spaces, quotes, ;, $(), etc.) cannot inject additional commands.
 /// If the template has no `{prompt}` token, the prompt is appended as the final arg.
+/// Split a command line the way a shell would *tokenise* it — and nothing more.
+///
+/// `split_whitespace` kept the quote characters and broke a quoted path into
+/// pieces, so `python3 "/Users/me/My Scripts/models.py"` reached Python as two
+/// malformed arguments. This honours single quotes, double quotes and
+/// backslash escapes, and deliberately does not expand variables, globs,
+/// substitutions or `~`: the command is still executed directly, never through
+/// a shell, so nothing here can introduce shell injection.
+pub fn split_command_line(line: &str) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut has_token = false;
+    let mut chars = line.chars().peekable();
+    // None outside quotes, else the quote character we are inside.
+    let mut quote: Option<char> = None;
+
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            // A backslash is literal inside single quotes, as in a shell.
+            (Some('\''), _) => cur.push(c),
+            (Some('"'), '\\') => match chars.next() {
+                // Only these are special inside double quotes; anything else
+                // keeps its backslash, again matching shell behaviour.
+                Some(n @ ('"' | '\\')) => cur.push(n),
+                Some(n) => {
+                    cur.push('\\');
+                    cur.push(n);
+                }
+                None => return Err("Command ends with a dangling backslash.".to_string()),
+            },
+            (Some(_), _) => cur.push(c),
+            (None, '\'' | '"') => {
+                quote = Some(c);
+                has_token = true;
+            }
+            (None, '\\') => match chars.next() {
+                Some(n) => {
+                    cur.push(n);
+                    has_token = true;
+                }
+                None => return Err("Command ends with a dangling backslash.".to_string()),
+            },
+            (None, c) if c.is_whitespace() => {
+                if has_token {
+                    out.push(std::mem::take(&mut cur));
+                    has_token = false;
+                }
+            }
+            (None, c) => {
+                cur.push(c);
+                has_token = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return Err("Command has an unclosed quote.".to_string());
+    }
+    if has_token {
+        out.push(cur);
+    }
+    Ok(out)
+}
+
 pub fn parse_command_template(
     template: &str,
     prompt: &str,
     model: &str,
 ) -> Result<(String, Vec<String>), String> {
-    let tokens: Vec<&str> = template.split_whitespace().collect();
+    let tokens = split_command_line(template)?;
     if tokens.is_empty() {
         return Err("Command template is empty".to_string());
     }

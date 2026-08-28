@@ -89,6 +89,21 @@ export function withEndpoint(prev: AiProvider, base_url: string, keyOrigin: stri
   return { ...prev, base_url, api_key: hostChanged ? '' : prev.api_key };
 }
 
+/**
+ * Whether the service at `baseUrl` authenticates, judged by the presets.
+ *
+ * Derived from the endpoint rather than remembered from the preset that was
+ * clicked, which was wrong in both directions: starting from DeepSeek and then
+ * pointing at a keyless LAN server could not be saved without inventing a key,
+ * and reopening a saved DeepSeek forgot the requirement entirely, so clearing
+ * its key and saving sent the schema and the prompt out unauthenticated.
+ */
+export function keyRequiredFor(baseUrl: string, presets: ProviderPreset[]): boolean {
+  const origin = originOf(baseUrl);
+  if (!origin) return false;
+  return presets.some((p) => p.needsKey && originOf(p.baseUrl) === origin);
+}
+
 export function applyPresetToDraft(prev: AiProvider, preset: ProviderPreset): AiProvider {
   const sameEndpoint =
     prev.kind === preset.kind && prev.base_url.trim().replace(/\/+$/, '') === preset.baseUrl.trim().replace(/\/+$/, '');
@@ -165,18 +180,10 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
   // The origin the current key was entered for. Set when the key is typed, when
   // a draft opens, and when a preset keeps the key; cleared with the key.
   const keyOriginRef = useRef<string | null>(null);
-  // Whether the service this draft came from requires a credential. Preset
-  // metadata, not part of the saved provider: Rust deliberately allows a keyless
-  // provider because local servers ignore credentials, so a remote vendor'"'"'s
-  // preset saved with no key would send the schema and prompt unauthenticated
-  // and fail on the first request.
-  const [requiresKey, setRequiresKey] = useState(false);
   const loadSeq = useRef(0);
 
   const openDraft = useCallback((p: AiProvider) => {
     keyOriginRef.current = p.api_key ? originOf(p.base_url) : null;
-    // No preset chosen yet; an existing provider is trusted as configured.
-    setRequiresKey(false);
     setDraft(p);
     setDraftError(null);
     setModels([]);
@@ -266,7 +273,6 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
         keyOriginRef.current = next.api_key ? originOf(next.base_url) : null;
         return next;
       });
-      setRequiresKey(preset.needsKey);
       setDraftError(null);
     },
     [presets]
@@ -285,7 +291,11 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
       api_key: draft.api_key.trim(),
       id: draft.id || slugify(draft.name, taken),
     };
-    if (requiresKey && candidate.kind !== 'local-cli' && candidate.api_key === '') {
+    if (
+      candidate.kind !== 'local-cli' &&
+      candidate.api_key === '' &&
+      keyRequiredFor(candidate.base_url, presets)
+    ) {
       // Rust cannot make this call: it has no way to know the endpoint came from
       // a preset for a service that authenticates.
       setDraftError(t('ai.providerKeyRequired', { name: candidate.name }));
@@ -401,10 +411,7 @@ export const AiProviderManager: React.FC<Props> = ({ providers, onChange, reserv
               <Select
                 value={draft.kind}
                 onValueChange={(kind) => {
-                  if (kind !== draft.kind) {
-                    keyOriginRef.current = null;
-                    if (kind === 'local-cli') setRequiresKey(false);
-                  }
+                  if (kind !== draft.kind) keyOriginRef.current = null;
                   setDraft({ ...draft, kind: kind as ProviderKind, api_key: kind === draft.kind ? draft.api_key : '' });
                 }}
               >

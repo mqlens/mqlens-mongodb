@@ -106,6 +106,63 @@ mod tests {
     }
 
     #[test]
+    fn a_quoted_path_survives_command_parsing() {
+        // `split_whitespace` kept the quotes and split the path, so Python got
+        // two malformed arguments and listing failed for a valid setup.
+        use crate::ai::split_command_line;
+        assert_eq!(
+            split_command_line(r#"python3 "/Users/me/My Scripts/models.py" --json"#).unwrap(),
+            ["python3", "/Users/me/My Scripts/models.py", "--json"]
+        );
+        assert_eq!(
+            split_command_line("llm 'my model' --n 5").unwrap(),
+            ["llm", "my model", "--n", "5"]
+        );
+        // An escaped space needs no quotes, and a backslash is literal inside
+        // single quotes, as in a shell.
+        assert_eq!(
+            split_command_line(r"cmd /My\ Path/x").unwrap(),
+            ["cmd", "/My Path/x"]
+        );
+        assert_eq!(split_command_line(r"cmd 'a'").unwrap(), ["cmd", r"a"]);
+        // An empty quoted argument is a real argument.
+        assert_eq!(split_command_line(r#"cmd "" x"#).unwrap(), ["cmd", "", "x"]);
+    }
+
+    #[test]
+    fn an_unclosed_quote_or_dangling_backslash_is_refused_rather_than_guessed() {
+        use crate::ai::split_command_line;
+        let err = split_command_line("python3 \"/My Scripts/x.py").unwrap_err();
+        assert!(err.contains("unclosed"), "{err}");
+        // A trailing backslash escapes nothing; guessing what was meant would be
+        // worse than saying so.
+        let err = split_command_line("cmd x\\").unwrap_err();
+        assert!(err.contains("dangling"), "{err}");
+        // An escaped backslash is a literal one.
+        assert_eq!(split_command_line("cmd x\\\\").unwrap(), ["cmd", "x\\"]);
+    }
+
+    #[test]
+    fn nothing_is_expanded_the_way_a_shell_would() {
+        // The command is executed directly, never through a shell, so these must
+        // arrive verbatim rather than being interpreted.
+        use crate::ai::split_command_line;
+        assert_eq!(
+            split_command_line("cmd $HOME *.py ~/x `id`").unwrap(),
+            ["cmd", "$HOME", "*.py", "~/x", "`id`"]
+        );
+    }
+
+    #[test]
+    fn a_quoted_template_keeps_its_argument_whole() {
+        use crate::ai::parse_command_template;
+        let (prog, args) =
+            parse_command_template(r#""/opt/My Agents/run" --prompt={prompt}"#, "find users", "").unwrap();
+        assert_eq!(prog, "/opt/My Agents/run");
+        assert_eq!(args, ["--prompt=find users"]);
+    }
+
+    #[test]
     fn placeholders_are_substituted_inside_a_token_too() {
         // `agent --prompt={prompt}` passed validation but the old parser only
         // matched a whole-token `{prompt}`, so the CLI got the literal text plus

@@ -1187,10 +1187,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let (log, path) = log_with(dir.path(), 3);
 
-        // Block only the state sidecar's staging path, so the data file is
-        // replaced but the counter cannot follow it.
-        let state_tmp = dir.path().join("audit.log.enc.state.tmp");
-        fs::create_dir(&state_tmp).unwrap();
+        // Block only the state sidecar, so the data file is replaced but the
+        // counter cannot follow it. Standing a directory in the sidecar's place
+        // makes its rename fail; the staging path is unpredictable by design, so
+        // a test must not reach for it.
+        let state = log.state_path().to_path_buf();
+        fs::remove_file(&state).unwrap();
+        fs::create_dir(&state).unwrap();
 
         let err = log
             .compact(&KEY, &[event("e3", 1_003)])

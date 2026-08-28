@@ -1087,6 +1087,19 @@ mod rotation_tests {
         assert!(meta_path.exists(), "metadata must be written last but written");
     }
 
+    /// A path whose write must fail, without depending on the staging name.
+    ///
+    /// The staging path is unpredictable by design, so a test cannot block it.
+    /// Instead the target sits *under a regular file*: `read_backup` sees nothing
+    /// there (so the pre-write snapshot succeeds, which is the point — the
+    /// rollback path is only reached when the write itself fails), and
+    /// `write_atomic`'s `create_dir_all` then fails on the non-directory parent.
+    fn blocked_path(dir: &Path) -> PathBuf {
+        let not_a_dir = dir.join("not-a-dir");
+        fs::write(&not_a_dir, b"regular file").unwrap();
+        not_a_dir.join("blocked.enc")
+    }
+
     #[test]
     fn a_failed_write_restores_every_earlier_file() {
         let dir = tempdir().unwrap();
@@ -1095,11 +1108,7 @@ mod rotation_tests {
         fs::write(&good, b"old-good").unwrap();
         fs::write(&meta_path, b"old-meta").unwrap();
 
-        // `write_atomic` stages through `<path>.tmp`; a directory there makes the
-        // *write* fail (not the pre-write snapshot), which is the path that has
-        // to roll back what it already committed.
-        let blocked = dir.path().join("blocked.enc");
-        fs::create_dir(dir.path().join("blocked.enc.tmp")).unwrap();
+        let blocked = blocked_path(dir.path());
 
         let err = commit_vault_rotation(
             vec![
@@ -1129,8 +1138,7 @@ mod rotation_tests {
         let dir = tempdir().unwrap();
         let fresh = dir.path().join("settings.json.enc");
         let meta_path = dir.path().join("vault.json");
-        let blocked = dir.path().join("blocked.enc");
-        fs::create_dir(dir.path().join("blocked.enc.tmp")).unwrap();
+        let blocked = blocked_path(dir.path());
 
         commit_vault_rotation(
             vec![

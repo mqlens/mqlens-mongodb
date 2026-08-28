@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { AiProviderManager, applyPresetToDraft, withEndpoint, originOf, slugify, emptyProvider, type AiProvider } from '../AiProviderManager';
+import { AiProviderManager, applyPresetToDraft, keyRequiredFor, withEndpoint, originOf, slugify, emptyProvider, type AiProvider } from '../AiProviderManager';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -125,6 +125,23 @@ describe('AiProviderManager', () => {
 
     // With a key it saves.
     fireEvent.change(screen.getByTestId('ai-provider-key-input'), { target: { value: 'ds-key' } });
+    fireEvent.click(screen.getByTestId('ai-provider-save'));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+  });
+
+  it('stops demanding a key once the endpoint is pointed elsewhere', async () => {
+    // DeepSeek as a starting point, then a keyless LAN server: previously this
+    // could not be saved without inventing a key.
+    const onChange = setup();
+    fireEvent.click(screen.getByTestId('ai-provider-add'));
+    await waitFor(() => expect(screen.getByTestId('ai-provider-preset-select')).toBeInTheDocument());
+    fireEvent.keyDown(screen.getByTestId('ai-provider-preset-select'), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('option', { name: 'DeepSeek' }));
+
+    fireEvent.change(screen.getByTestId('ai-provider-url-input'), {
+      target: { value: 'http://ollama.lan:11434/v1' },
+    });
+    fireEvent.change(screen.getByTestId('ai-provider-model-input'), { target: { value: 'llama3' } });
     fireEvent.click(screen.getByTestId('ai-provider-save'));
     await waitFor(() => expect(onChange).toHaveBeenCalled());
   });
@@ -483,6 +500,24 @@ describe('withEndpoint', () => {
   it('keeps the key when no origin is recorded for it', () => {
     // A keyless draft, or a key whose origin is not known: nothing to compare.
     expect(withEndpoint(keyed, 'https://api.deepseek.com/v1', null).api_key).toBe('sk-openai');
+  });
+});
+
+describe('keyRequiredFor', () => {
+  const presets = [
+    { id: 'deepseek', name: 'DeepSeek', kind: 'openai-compatible' as const, baseUrl: 'https://api.deepseek.com/v1', model: '', command: '', modelsCommand: '', needsKey: true },
+    { id: 'ollama', name: 'Ollama', kind: 'openai-compatible' as const, baseUrl: 'http://localhost:11434/v1', model: '', command: '', modelsCommand: '', needsKey: false },
+  ];
+  it('is judged by the endpoint, not by which preset was clicked', () => {
+    // Reopening a saved DeepSeek must still require its key: forgetting that let
+    // the key be cleared and the schema sent out unauthenticated.
+    expect(keyRequiredFor('https://api.deepseek.com/v1', presets)).toBe(true);
+    expect(keyRequiredFor('https://API.DeepSeek.com/v1/chat/completions', presets)).toBe(true);
+    // A different host is a different service, whatever it started from.
+    expect(keyRequiredFor('http://ollama.lan:11434/v1', presets)).toBe(false);
+    expect(keyRequiredFor('http://localhost:11434/v1', presets)).toBe(false);
+    expect(keyRequiredFor('', presets)).toBe(false);
+    expect(keyRequiredFor('https://api.deepseek.com/v1', [])).toBe(false);
   });
 });
 });

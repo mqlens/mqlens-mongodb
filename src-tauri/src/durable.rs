@@ -7,6 +7,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Write `bytes` to `path` atomically and durably: temp file → fsync → rename.
 ///
@@ -19,16 +20,23 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
     let tmp = tmp_path(path);
-    {
-        let mut file =
-            fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
-        file.write_all(bytes)
-            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
-        file.sync_all()
-            .map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
+    let result = (|| -> Result<(), String> {
+        {
+            let mut file =
+                fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
+            file.write_all(bytes)
+                .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+            file.sync_all()
+                .map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
+        }
+        fs::rename(&tmp, path)
+            .map_err(|e| format!("rename {} → {}: {e}", tmp.display(), path.display()))
+    })();
+    if result.is_err() {
+        // Leave nothing behind for the next writer to trip over.
+        let _ = fs::remove_file(&tmp);
+        return result;
     }
-    fs::rename(&tmp, path)
-        .map_err(|e| format!("rename {} → {}: {e}", tmp.display(), path.display()))?;
     sync_parent_dir(path);
     Ok(())
 }
@@ -46,9 +54,22 @@ pub fn sync_parent_dir(path: &Path) {
     let _ = path;
 }
 
+/// A temp path no other writer will pick.
+///
+/// A fixed `<target>.tmp` was not enough: two MQLens processes saving the same
+/// vault file both opened it, so one truncated the other's staging file and,
+/// after the first rename, the second kept writing to the inode now published as
+/// the real file before its own rename failed. The pid separates processes and
+/// the counter separates writes within one, so each write stages somewhere of
+/// its own and the rename stays the only publishing step.
 fn tmp_path(path: &Path) -> std::path::PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(".tmp");
+    name.push(format!(
+        ".{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     path.with_file_name(name)
 }
 
@@ -63,7 +84,7 @@ mod tests {
         let target = dir.path().join("nested").join("data.enc");
         write_atomic(&target, b"hello").expect("write");
         assert_eq!(fs::read(&target).unwrap(), b"hello");
-        assert!(!tmp_path(&target).exists(), "temp file must be renamed away");
+        assert!(!leftover_temps(target.parent().unwrap()), "temp file must be renamed away");
     }
 
     #[test]
@@ -75,11 +96,47 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), b"second");
     }
 
+    /// True when any staging file survives in `dir`.
+    fn leftover_temps(dir: &Path) -> bool {
+        fs::read_dir(dir)
+            .map(|entries| {
+                entries.filter_map(Result::ok).any(|e| {
+                    e.file_name().to_string_lossy().ends_with(".tmp")
+                })
+            })
+            .unwrap_or(false)
+    }
+
     #[test]
-    fn temp_path_keeps_the_full_name_so_it_never_collides_with_the_target() {
+    fn temp_path_keeps_the_full_target_name_as_its_prefix() {
         // `with_extension("tmp")` would turn `audit.log.enc` into `audit.log.tmp`,
         // which is a different file's name pattern; append instead.
         let p = Path::new("/x/audit.log.enc");
-        assert_eq!(tmp_path(p), Path::new("/x/audit.log.enc.tmp"));
+        let tmp = tmp_path(p);
+        let name = tmp.file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.starts_with("audit.log.enc."), "{name}");
+        assert!(name.ends_with(".tmp"), "{name}");
+        assert_eq!(tmp.parent(), p.parent());
+    }
+
+    #[test]
+    fn every_write_stages_under_its_own_name() {
+        // Two writers sharing `<target>.tmp` is what let one truncate the
+        // other's staging file and then publish a half-written inode.
+        let p = Path::new("/x/settings.enc");
+        let a = tmp_path(p);
+        let b = tmp_path(p);
+        assert_ne!(a, b, "two writes must not share a staging path");
+        assert!(a.to_string_lossy().contains(&std::process::id().to_string()));
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_staging_file() {
+        // The target is a directory, so the rename cannot succeed.
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("occupied");
+        fs::create_dir(&target).unwrap();
+        assert!(write_atomic(&target, b"x").is_err());
+        assert!(!leftover_temps(dir.path()), "staging file left behind after a failure");
     }
 }
