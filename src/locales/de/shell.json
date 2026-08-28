@@ -23,6 +23,7 @@
       "closeTitle": "KI-Assistent schließen",
       "title": "KI-Abfrageassistent",
       "provider": "Anbieter",
+      "loadModels": "Modelle laden",
       "model": "Modell",
       "modelPlaceholder": "Modell",
       "typeModel": "Modellnamen eintippen…"

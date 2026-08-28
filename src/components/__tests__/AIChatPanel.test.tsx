@@ -943,6 +943,56 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     expect(screen.queryByTestId('chat-pending-images')).not.toBeInTheDocument();
   });
 
+  it('does not read a second batch into slots the first batch already claimed', async () => {
+    // The per-batch cap looked only at `pendingImages`, which excludes a batch
+    // still being read — so a second paste saw the same empty allowance and read
+    // four more files. Rapid pastes therefore defeated the cap outright.
+    const read: string[] = [];
+    const pending: Array<() => void> = [];
+    const RealFileReader = globalThis.FileReader;
+    class HeldReader {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      error = null;
+      result = 'data:image/png;base64,AAAA';
+      readAsDataURL(file: File) {
+        read.push(file.name);
+        pending.push(() => this.onload?.());
+      }
+    }
+    (globalThis as unknown as { FileReader: unknown }).FileReader = HeldReader;
+    try {
+      mockPickerBackend({ query: '{}' });
+      renderPanel('editor');
+      await screen.findByTestId('ai-chat-provider-select');
+      const input = screen.getByTestId('chat-input');
+      const pasteMany = (tag: string, n: number) =>
+        fireEvent.paste(input, {
+          clipboardData: {
+            items: Array.from({ length: n }, (_, i) => {
+              const file = new File([new Uint8Array(3)], `${tag}${i}.png`, { type: 'image/png' });
+              return { kind: 'file', type: 'image/png', getAsFile: () => file };
+            }),
+          },
+        });
+
+      pasteMany('a', 3); // three of the four slots are now claimed
+      expect(read).toHaveLength(3);
+      pasteMany('b', 3); // ...so only one more may be read, not three
+      expect(read).toHaveLength(4);
+      expect(read.filter((n) => n.startsWith('b'))).toHaveLength(1);
+
+      await act(async () => {
+        pending.forEach((fire) => fire());
+      });
+      // And the cap still holds in state.
+      const chips = screen.getByTestId('chat-pending-images').querySelectorAll('img');
+      expect(chips.length).toBeLessThanOrEqual(4);
+    } finally {
+      (globalThis as unknown as { FileReader: unknown }).FileReader = RealFileReader;
+    }
+  });
+
   it('re-reads its provider list when settings change elsewhere', async () => {
     // Settings can be open in another pane or window. The list was fetched once,
     // so deleting the selected provider there left its id selected here and the
@@ -1157,12 +1207,30 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     });
   });
 
-  it('offers a model for a local CLI whose template slots one in', async () => {
+  it('offers a model for a local CLI, but only lists them when asked', async () => {
+    // Listing a CLI provider's models *runs its saved command*. Selecting the
+    // provider must not do that on its own, or opening the panel executes an
+    // arbitrary local program; Settings applies the same rule.
     mockPickerBackend({ query: '{}' }, ['llama3:latest', 'mistral:7b']);
     renderPanel('editor');
     await screen.findByTestId('ai-chat-provider-select');
     await pickProvider('My Ollama');
+
+    // The model can be typed, and nothing has been run.
+    await screen.findByTestId('ai-chat-model-input');
+    expect(screen.queryByTestId('ai-chat-model-select')).not.toBeInTheDocument();
+    // Scoped to this provider: the non-CLI default was listed on mount, which is
+    // fine — it makes an HTTP request, not a local process.
+    const cliListings = () =>
+      invokeMock.mock.calls.filter(
+        ([c, a]) => c === 'list_ai_models_for' && (a as { providerId?: string })?.providerId === 'my-ollama',
+      );
+    expect(cliListings()).toHaveLength(0);
+
+    // Asked for explicitly, the command runs and the picker appears.
+    fireEvent.click(screen.getByTestId('ai-chat-models-load'));
     await screen.findByTestId('ai-chat-model-select');
+    expect(cliListings()).toHaveLength(1);
   });
 
   it('clears a pending image and the provider override when starting a new chat', async () => {

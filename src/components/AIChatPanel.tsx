@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { History, Paperclip, Plus, Sparkles, Trash2, User, X } from 'lucide-react';
+import { History, Paperclip, Plus, RefreshCw, Sparkles, Trash2, User, X } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -279,6 +279,8 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   /** Discard the pending attachments, and any read still in flight. */
   const dropPendingImages = () => {
     imageEpochRef.current += 1;
+    // Abandoned reads will never reach state, so their slots are free now.
+    reservedSlotsRef.current = 0;
     // Same array when there is nothing to clear: this is called on every switch
     // to a CLI provider, and a fresh `[]` would re-render for no change.
     setPendingImages((prev) => (prev.length === 0 ? prev : []));
@@ -349,24 +351,51 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     };
   }, []);
 
-  // Offer the chosen provider's models. A failure here only means typing the
-  // model name instead, so it is not surfaced as an error.
+  const applyModels = (list: unknown) => {
+    const models = Array.isArray(list) ? list.filter((m): m is string => typeof m === 'string') : [];
+    setChatModels(models);
+    if (models.length > 0) setTypingModel(false);
+  };
+
+  /**
+   * Offer the chosen provider's models. A failure here only means typing the
+   * model name instead, so it is not surfaced as an error.
+   *
+   * Never automatic for a local CLI: listing its models *runs the saved command*,
+   * and merely opening the panel or selecting the provider would then execute an
+   * arbitrary local program — side effects and all. The Settings manager already
+   * refuses to auto-run one for exactly this reason; this is the same rule, so
+   * CLI providers get the explicit button below instead.
+   */
   useEffect(() => {
     if (!chatProviderId) return;
-    let live = true;
     setChatModels([]);
+    if (providerOptions.find((o) => o.id === chatProviderId)?.kind === 'local-cli') return;
+    let live = true;
     invoke<unknown>('list_ai_models_for', { providerId: chatProviderId })
       .then((list) => {
-        if (!live) return;
-        const models = Array.isArray(list) ? list.filter((m): m is string => typeof m === 'string') : [];
-        setChatModels(models);
-        if (models.length > 0) setTypingModel(false);
+        if (live) applyModels(list);
       })
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [chatProviderId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatProviderId, providerOptions]);
+
+  const [loadingCliModels, setLoadingCliModels] = useState(false);
+  /** Run a CLI provider's models command, because the user asked for it. */
+  const loadCliModels = async () => {
+    if (!chatProviderId) return;
+    setLoadingCliModels(true);
+    try {
+      applyModels(await invoke<unknown>('list_ai_models_for', { providerId: chatProviderId }));
+    } catch {
+      /* Typing the model name still works, so this is not an error state. */
+    } finally {
+      setLoadingCliModels(false);
+    }
+  };
 
   const choosePane = (id: string) => {
     setChatProviderId(id);
@@ -416,9 +445,29 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
    * `addImages` to discard all but four. The cap is still enforced there as well,
    * against the current state rather than this render's.
    */
+  /**
+   * Slots claimed by reads that have not landed in state yet.
+   *
+   * Counting only `pendingImages` was not enough: a second paste arriving while
+   * the first batch was still being read saw the same empty allowance and read
+   * four more files, so rapid pastes defeated the cap the reservation exists to
+   * enforce. Released when the batch settles — one render after its images are
+   * handed to state, which is as tight as a ref outside React's queue can be, and
+   * `addImages` remains the authority on the hard cap either way.
+   */
+  const reservedSlotsRef = useRef(0);
   const capToRoom = (files: File[]) => {
-    const room = Math.max(0, MAX_PENDING_IMAGES - pendingImages.length);
-    return { fits: files.slice(0, room), overCap: files.length > room };
+    const taken = pendingImages.length + reservedSlotsRef.current;
+    const room = Math.max(0, MAX_PENDING_IMAGES - taken);
+    const fits = files.slice(0, room);
+    reservedSlotsRef.current += fits.length;
+    return {
+      fits,
+      overCap: files.length > room,
+      release: () => {
+        reservedSlotsRef.current = Math.max(0, reservedSlotsRef.current - fits.length);
+      },
+    };
   };
 
   const addImages = (
@@ -454,7 +503,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       if (reason) setImageNote(noteFor(reason));
       return;
     }
-    const { fits, overCap } = capToRoom(accepted);
+    const { fits, overCap, release } = capToRoom(accepted);
     const epoch = imageEpochRef.current;
     pendingReadsRef.current += 1;
     void (async () => {
@@ -464,6 +513,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         addImages(imgs, reason, overCap);
       } finally {
         pendingReadsRef.current -= 1;
+        release();
       }
     })();
   };
@@ -480,7 +530,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       if (reason) setImageNote(noteFor(reason));
       return;
     }
-    const { fits, overCap } = capToRoom(accepted);
+    const { fits, overCap, release } = capToRoom(accepted);
     const epoch = imageEpochRef.current;
     pendingReadsRef.current += 1;
     try {
@@ -489,6 +539,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       addImages(images, reason, overCap);
     } finally {
       pendingReadsRef.current -= 1;
+      release();
     }
   };
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -1332,6 +1383,24 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                         data-testid="ai-chat-model-input"
                       />
                     ))}
+                  {/* A CLI provider's model list comes from running its command,
+                      so it stays behind a click — see the listing effect. Offered
+                      only until a list arrives; after that the picker is there. */}
+                  {modelApplies && activeProvider?.kind === 'local-cli' && chatModels.length === 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 shrink-0 gap-1 rounded-full px-2 text-[10.5px]"
+                      disabled={loadingCliModels}
+                      onClick={() => void loadCliModels()}
+                      title={t('aiChatPanel.header.loadModels')}
+                      data-testid="ai-chat-models-load"
+                    >
+                      <RefreshCw size={11} className={loadingCliModels ? 'animate-spin' : ''} />
+                      {t('aiChatPanel.header.loadModels')}
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <span />

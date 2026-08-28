@@ -23,6 +23,7 @@
       "closeTitle": "关闭 AI 助手",
       "title": "AI 查询助手",
       "provider": "提供方",
+      "loadModels": "加载模型",
       "model": "模型",
       "modelPlaceholder": "模型",
       "typeModel": "输入模型名称…"

@@ -84,7 +84,8 @@
     "fallbackExplanation": "Here is a query.",
     "header": {
       "closeTitle": "Close AI Assistant",
-      "model": "Model",
+      "loadModels": "Load models",
+    "model": "Model",
       "modelPlaceholder": "model",
       "provider": "Provider",
       "title": "AI Query Assistant",
