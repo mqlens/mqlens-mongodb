@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useContext } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { DocumentViewerContext } from './DocumentViewer';
 import { List } from 'react-window';
-import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, Table2, BarChart3, Lightbulb, GitCompareArrows } from 'lucide-react';
+import { Table, Braces, ChevronRight, ChevronDown, ListFilter, Copy, Check, Edit, Trash2, Plus, BarChart3, Lightbulb, GitCompareArrows } from 'lucide-react';
 import { ChartView } from './ChartView';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { DocumentDiffModal } from './DocumentDiffModal';
@@ -1531,6 +1531,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
       >
 
         <div className="flex items-center gap-0.5 rounded-lg bg-muted/50 p-0.5">
+          {onAnalyzeSchema && (
+            <button
+              type="button"
+              onClick={onAnalyzeSchema}
+              className="rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground transition-all hover:text-foreground"
+              data-testid="analyze-schema-btn"
+            >
+              {t('dataGrid.actions.schema')}
+            </button>
+          )}
           <button
             onClick={() => setActiveTab('results')}
             className={cn(
@@ -1569,6 +1579,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
           )}
         </div>
 
+        {onPageChange && onPageSizeChange && typeof limit === 'number' && (
+          <span className="ml-2 text-[11px] font-semibold text-foreground" data-testid="pager-page-top">
+            {typeof totalCount === 'number'
+              ? t('dataGrid.labels.pageOf', {
+                  page: Math.floor((skip || 0) / (limit || 50)) + 1,
+                  totalPages: Math.max(1, Math.ceil(totalCount / (limit || 50))),
+                })
+              : t('dataGrid.labels.page', { page: Math.floor((skip || 0) / (limit || 50)) + 1 })}
+          </span>
+        )}
+
         {/* Right Side Controls */}
         <div className="flex items-center gap-2">
           {activeTab === 'results' && onInsertDocument && (
@@ -1583,20 +1604,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
             >
               <Plus size={12} />
               {t('dataGrid.actions.insert')}
-            </Button>
-          )}
-          {activeTab === 'results' && onAnalyzeSchema && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onAnalyzeSchema}
-              className="h-7 gap-1.5 text-[11px]"
-              title={t('dataGrid.tooltips.analyzeSchema')}
-              data-testid="analyze-schema-btn"
-            >
-              <Table2 size={12} />
-              {t('dataGrid.actions.schema')}
             </Button>
           )}
           {activeTab === 'results' && onUpdateMany && (

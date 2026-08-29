@@ -291,16 +291,6 @@ interface ActiveConnection {
   mode?: 'normal' | 'read_only' | 'confirm_destructive';
 }
 
-/** Extract the auth username from a MongoDB connection URI; '' when there are no credentials. */
-function usernameFromUri(uri: string): string {
-  try {
-    const { username } = new URL(uri);
-    return username ? decodeURIComponent(username) : '';
-  } catch {
-    return '';
-  }
-}
-
 const QUICK_START_TAB_ID = 'quickstart';
 
 const createQuickStartTab = (): QueryTab => ({
@@ -4114,13 +4104,11 @@ function Workspace() {
         {tab.type === 'collection' && (() => {
           const activeConnection = activeConnections.find(c => c.id === tab.connectionId);
           const connectionName = activeConnection ? activeConnection.name : 'cmi-dev';
-          const connectionUser = activeConnection ? usernameFromUri(activeConnection.uri) : '';
           return (
             <DocumentViewer
               key={tab.id}
               connectionId={tab.connectionId}
               connectionName={connectionName}
-              connectionUser={connectionUser}
               databaseName={tab.db}
               collectionName={tab.collection}
               initialBuilderState={

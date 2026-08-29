@@ -307,6 +307,8 @@ describe('DataGrid Component', () => {
     // Page 3 of 27 (skip 100 / limit 50 => page 3; ceil(1312/50)=27)
     expect(screen.getByTestId('pager-page')).toHaveTextContent('3');
     expect(screen.getByTestId('pager-page')).toHaveTextContent('27');
+    expect(screen.getByTestId('pager-page-top')).toHaveTextContent('3');
+    expect(screen.getByTestId('pager-page-top')).toHaveTextContent('27');
     expect(screen.getByTestId('pager-total')).toHaveTextContent('1312');
 
     fireEvent.click(screen.getByTestId('pager-next'));

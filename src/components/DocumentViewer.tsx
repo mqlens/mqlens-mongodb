@@ -39,23 +39,17 @@ import {
 } from '@/components/ui/resizable';
 import { useDefaultLayout, type Layout } from 'react-resizable-panels';
 import { cn } from '@/lib/utils';
-import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
   Play, 
   AlertCircle,
   Cpu,
-  User,
-  Server,
-  Database,
   ChevronRight,
   ChevronUp,
   FolderOpen,
-  Layers,
   Save, 
   History, 
   Anchor, 
   ExternalLink, 
-  Sparkles, 
   DatabaseZap,
   Trash2,
   Check,
@@ -70,6 +64,7 @@ import {
   Undo2,
   Redo2,
   Heart,
+  MoreHorizontal,
 } from 'lucide-react';
 
 interface VisualRule {
@@ -193,8 +188,6 @@ export function builderStateToQuery(state: BuilderState): GeneratedQuery {
 interface DocumentViewerProps {
   connectionId?: string;
   connectionName: string;
-  /** Auth username parsed from the connection URI; empty when the connection has no credentials. */
-  connectionUser?: string;
   databaseName: string;
   collectionName: string;
   onExecute: (query: { filter: string; sort: string; projection: string; limit: number; skip: number }) => void;
@@ -547,7 +540,6 @@ export const DocumentViewerContext = React.createContext<DocumentViewerContextTy
 export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   connectionId,
   connectionName,
-  connectionUser,
   databaseName,
   collectionName,
   onExecute,
@@ -1470,78 +1462,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col min-w-0">
-      
-      {/* 1. Breadcrumbs Bar */}
-      <div className="flex select-none items-center justify-between border-b border-border bg-muted/30 px-3.5 py-1.5 text-xs text-muted-foreground">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <div className={cn('inline-flex items-center gap-1', connectionUser ? 'text-primary' : 'text-muted-foreground')}>
-            <User size={12} className="shrink-0" />
-            <span
-              className={cn('truncate font-semibold', !connectionUser && 'italic')}
-              title={connectionUser ? td('documentViewer.breadcrumbs.authenticatedAs', { user: connectionUser }) : td('documentViewer.breadcrumbs.noAuthentication')}
-            >
-              {connectionUser || td('documentViewer.breadcrumbs.noAuth')}
-            </span>
-          </div>
-          <ChevronRight size={10} className="shrink-0 text-muted-foreground" />
-
-          <div className="inline-flex items-center gap-1 text-foreground">
-            <Server size={12} className="shrink-0 text-primary" />
-            <span className="truncate font-mono font-medium" title={connectionName}>{connectionName}</span>
-          </div>
-          <ChevronRight size={10} className="shrink-0 text-muted-foreground" />
-
-          <div className="inline-flex items-center gap-1 text-foreground">
-            <Database size={12} className="shrink-0 text-warning" />
-            <span className="truncate font-semibold" title={databaseName}>{databaseName}</span>
-          </div>
-          <ChevronRight size={10} className="shrink-0 text-muted-foreground" />
-
-          <div className="inline-flex items-center gap-1 text-foreground">
-            <Layers size={12} className="shrink-0 text-success" />
-            <span className="truncate font-mono font-medium" title={collectionName}>{collectionName}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Toolbar */}
-      <div className="flex select-none flex-wrap items-center justify-between gap-2 border-b border-border bg-card/50 px-3.5 py-1.5">
+      {/* Infrequent actions live behind one compact menu; the query and AI
+          actions stay beside the editor where they are used. */}
+      <details className="group absolute right-2 top-1 z-40" data-testid="query-more-actions-menu">
+        <summary className="flex h-7 w-fit cursor-pointer list-none select-none items-center gap-1.5 rounded-md border border-border px-2.5 text-[11px] font-medium hover:bg-accent" data-testid="query-more-actions">
+          <MoreHorizontal size={12} />
+          {td('documentViewer.actions.moreActions')}
+        </summary>
+        <div className="absolute right-0 top-9 flex max-h-[70vh] min-w-[280px] flex-col gap-2 overflow-auto rounded-md border border-border bg-popover p-2 shadow-lg">
         <div className="flex flex-wrap items-center gap-1.5">
-          <div className="flex overflow-hidden rounded-md shadow-sm">
-            <Button
-              onClick={handleRun}
-              disabled={loading || explainLoading || !canRun}
-              size="sm"
-              className="h-7 rounded-r-none px-2.5 text-[11px]"
-              title={!canRun ? td('documentViewer.tooltips.runDisabled') : td('documentViewer.tooltips.executeQuery', { shortcut: formatShortcut(shortcutById('run-query')!) })}
-            >
-              <Play size={11} fill="currentColor" />
-              {td('documentViewer.actions.run')}
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  disabled={loading || explainLoading}
-                  size="sm"
-                  variant="default"
-                  className="h-7 rounded-l-none border-l border-primary-foreground/20 px-1.5"
-                >
-                  <ChevronDown size={10} />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="min-w-[120px]">
-                <DropdownMenuItem onClick={handleRun}>
-                  <Play size={11} />
-                  {td('documentViewer.actions.runQuery')}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleExplain}>
-                  <Cpu size={11} />
-                  {td('documentViewer.actions.runExplain')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]">
@@ -1736,21 +1665,6 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             </Button>
           )}
           <Button
-            variant={isAIHelperOpen ? 'secondary' : 'outline'}
-            size="sm"
-            onClick={() => {
-              const newOpen = !isAIHelperOpen;
-              setIsAIHelperOpen(newOpen);
-              if (newOpen) setIsQueryBuilderOpen(false);
-            }}
-            className={cn('h-7 gap-1.5 text-[11px]', isAIHelperOpen && 'border-primary text-primary')}
-            data-testid="toggle-ai-helper"
-          >
-            <Sparkles size={11} className="text-primary" />
-            <span className="font-semibold text-primary">{td('documentViewer.actions.aiHelper')}</span>
-          </Button>
-
-          <Button
             variant={isQueryBuilderOpen ? 'secondary' : 'outline'}
             size="sm"
             onClick={() => {
@@ -1790,7 +1704,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             {td('documentViewer.actions.visualQueryBuilder')}
           </Button>
         </div>
-      </div>
+        </div>
+      </details>
 
       {/* 3. Main Workspace Split Area */}
       <ResizablePanelGroup
@@ -1803,7 +1718,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         <ResizablePanel id="document-main" minSize="30%" className="flex min-h-0 flex-col">
         <div className="flex h-full min-h-0 min-w-0 flex-col">
             <div className="shrink-0">
-            <div className="flex gap-0.5 border-b border-border bg-muted/20 px-3.5 pt-1.5">
+            <div className="flex gap-0.5 border-b border-border bg-muted/20 px-3.5 pt-1.5 pr-32">
               <button
                 type="button"
                 onClick={() => setQueryMode('find')}
@@ -1856,6 +1771,12 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 fields={fields}
                 schema={schema}
                 onRun={handleRun}
+                runDisabled={loading || explainLoading || !canRun}
+                onOpenAI={() => {
+                  const newOpen = !isAIHelperOpen;
+                  setIsAIHelperOpen(newOpen);
+                  if (newOpen) setIsQueryBuilderOpen(false);
+                }}
                 onClearFilter={() => handleClearField('filter')}
                 onClearProjection={() => handleClearField('projection')}
                 onClearSort={() => handleClearField('sort')}
@@ -1996,6 +1917,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   );
                 })}
               </div>
+            </div>
+            <div className="flex justify-end gap-1.5 border-t border-border px-2 py-1.5">
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]" onClick={handleExplain} disabled={loading || explainLoading}>
+                <Cpu size={11} /> {td('documentViewer.actions.runExplain')}
+              </Button>
+              <Button size="sm" className="h-7 gap-1.5 text-[11px]" onClick={handleRun} disabled={loading || explainLoading || !canRun}>
+                <Play size={11} fill="currentColor" /> {td('documentViewer.actions.run')}
+              </Button>
             </div>
             </div>
           </div>

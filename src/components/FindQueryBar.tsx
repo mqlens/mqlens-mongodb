@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, ArrowUpDown, ChevronDown, ChevronRight, Eraser } from 'lucide-react';
+import { AlertCircle, ArrowUpDown, ChevronDown, ChevronRight, Eraser, Play, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -44,6 +44,8 @@ export interface FindQueryBarProps {
   onOptionsOpenChange?: (open: boolean) => void;
   /** Run handler (⌘/Ctrl+Enter in the editors, Enter in skip/limit). */
   onRun?: () => void;
+  runDisabled?: boolean;
+  onOpenAI?: () => void;
   /** Clear handlers — default to resetting the field to '{}' when omitted. */
   onClearFilter?: () => void;
   onClearProjection?: () => void;
@@ -97,6 +99,8 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
   optionsOpen: optionsOpenProp,
   onOptionsOpenChange,
   onRun,
+  runDisabled = false,
+  onOpenAI,
   onClearFilter,
   onClearProjection,
   onClearSort,
@@ -190,19 +194,29 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
   const invalidBadge = badge();
 
   return (
-    <div className="flex flex-col border-b border-border bg-muted/20">
-      <div className="flex w-full border-b border-border">
-        <div className={queryColClass(filterInvalid)}>
-          <span
-            className={cn(fieldBadgeClass(filterInvalid), 'self-stretch')}
-            style={queryRowStyle}
-          >
-            {t('findQueryBar.labels.query')}
-          </span>
+    <div className="border-b border-border bg-card/40">
+      <div
+        data-testid={collapsibleOptions ? 'query-composer-body' : undefined}
+        className={cn(collapsibleOptions ? 'flex items-stretch' : 'flex flex-col')}
+      >
+      <div className={cn(collapsibleOptions && 'min-w-0 flex-[7] p-2')}>
+      <div className={cn('flex w-full', !collapsibleOptions && 'border-b border-border')}>
+        <div className={cn(queryColClass(filterInvalid), collapsibleOptions && 'rounded-md border border-border bg-input/60 shadow-sm')}>
+          {!collapsibleOptions && (
+            <span className={cn(fieldBadgeClass(filterInvalid), 'self-stretch')} style={queryRowStyle}>
+              {t('findQueryBar.labels.query')}
+            </span>
+          )}
+          {collapsibleOptions && !filter && (
+            <span className="pointer-events-none absolute left-3 top-2 z-10 text-xs italic text-muted-foreground/60">
+              {t('findQueryBar.labels.query')}
+            </span>
+          )}
           <QueryEditor
             singleLine
             large={collapsibleOptions}
             growWithContent
+            height={collapsibleOptions ? 84 : undefined}
             surface="filter"
             shellSyntax={shellSyntax}
             onRun={onRun}
@@ -223,40 +237,26 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
           >
             <Eraser size={11} />
           </Button>
-          {collapsibleOptions && (
-            <button
-              type="button"
-              data-testid="query-options-toggle"
-              aria-expanded={optionsOpen}
-              aria-controls={optionsRegionId}
-              aria-label={optionsOpen ? t('findQueryBar.tooltips.fewerOptions') : t('findQueryBar.tooltips.moreOptions')}
-              onClick={() => setOptionsOpen(!optionsOpen)}
-              title={optionsOpen ? t('findQueryBar.tooltips.hideOptions') : t('findQueryBar.tooltips.showOptions')}
-              className="mr-1 flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              {optionsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-              {t('findQueryBar.labels.options')}
-              {!optionsOpen && hasOptionValues && (
-                <span
-                  data-testid="query-options-dot"
-                  title={t('findQueryBar.tooltips.optionsSet')}
-                  className="ml-0.5 h-1.5 w-1.5 rounded-full bg-primary"
-                />
-              )}
-            </button>
-          )}
         </div>
+      </div>
+
       </div>
 
       <div
         id={optionsRegionId}
         data-testid="query-options-section"
-        className={cn(!optionsVisible && 'hidden')}
+        className={cn(
+          collapsibleOptions && 'min-w-0 flex-[3] space-y-2 border-l border-border bg-muted/15 p-2',
+          !optionsVisible && 'hidden'
+        )}
       >
 
-      <div className="flex w-full border-b border-border">
-        <div className={queryColClass(projectionInvalid)}>
-          <span className={fieldBadgeClass(projectionInvalid)} style={optionRowStyle}>{t('findQueryBar.labels.projection')}</span>
+      <div className={cn('flex w-full', !collapsibleOptions && 'border-b border-border')}>
+        <div
+          data-testid={collapsibleOptions ? 'projection-option-field' : undefined}
+          className={cn(queryColClass(projectionInvalid), collapsibleOptions && 'rounded-md border border-border bg-input/60')}
+        >
+          <span className={cn(fieldBadgeClass(projectionInvalid), collapsibleOptions && 'min-w-[72px] rounded-l-md px-2')} style={optionRowStyle}>{t('findQueryBar.labels.projection')}</span>
           <QueryEditor
             singleLine
             surface="projection"
@@ -281,11 +281,12 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
         </div>
       </div>
 
-      {/* Sort shares a row with skip/limit, the way Compass groups its
-          smaller options after giving `project` a row of its own. */}
       <div className="flex w-full">
-        <div className={queryColClass(sortInvalid)}>
-          <span className={fieldBadgeClass(sortInvalid)} style={optionRowStyle}>{t('findQueryBar.labels.sort')}</span>
+        <div
+          data-testid={collapsibleOptions ? 'sort-option-field' : undefined}
+          className={cn(queryColClass(sortInvalid), collapsibleOptions && 'rounded-md border border-border bg-input/60')}
+        >
+          <span className={cn(fieldBadgeClass(sortInvalid), collapsibleOptions && 'min-w-[72px] rounded-l-md px-2')} style={optionRowStyle}>{t('findQueryBar.labels.sort')}</span>
           <QueryEditor
             singleLine
             surface="sort"
@@ -318,10 +319,12 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
           </Button>
         </div>
 
+      </div>
+
         {showPagination && (
-          <>
-          <div className={queryColClass(false)}>
-            <span className={fieldBadgeClass(false)} style={optionRowStyle}>{t('findQueryBar.labels.skip')}</span>
+          <div className={cn('grid grid-cols-2 gap-2', !collapsibleOptions && 'flex')}>
+          <div className={cn(queryColClass(false), collapsibleOptions && 'rounded-md border border-border bg-input/60')}>
+            <span className={cn(fieldBadgeClass(false), collapsibleOptions && 'min-w-[44px] rounded-l-md px-1.5')} style={optionRowStyle}>{t('findQueryBar.labels.skip')}</span>
             <Input
               type="number"
               value={skip}
@@ -345,8 +348,8 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
             )}
           </div>
 
-          <div className={queryColClass(false)}>
-            <span className={fieldBadgeClass(false)} style={optionRowStyle}>{t('findQueryBar.labels.limit')}</span>
+          <div className={cn(queryColClass(false), collapsibleOptions && 'rounded-md border border-border bg-input/60')}>
+            <span className={cn(fieldBadgeClass(false), collapsibleOptions && 'min-w-[44px] rounded-l-md px-1.5')} style={optionRowStyle}>{t('findQueryBar.labels.limit')}</span>
             <Input
               type="number"
               value={limit}
@@ -369,10 +372,40 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
               </Button>
             )}
           </div>
-          </>
+          </div>
         )}
       </div>
       </div>
+
+      {collapsibleOptions && (
+        <div data-testid="query-composer-footer" className="flex items-center justify-between gap-2 border-t border-border bg-muted/20 px-2 py-1.5">
+          <button
+            type="button"
+            data-testid="query-options-toggle"
+            aria-expanded={optionsOpen}
+            aria-controls={optionsRegionId}
+            aria-label={optionsOpen ? t('findQueryBar.tooltips.fewerOptions') : t('findQueryBar.tooltips.moreOptions')}
+            onClick={() => setOptionsOpen(!optionsOpen)}
+            className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            {optionsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {t('findQueryBar.labels.addProjectionSort')}
+            {!optionsOpen && hasOptionValues && <span data-testid="query-options-dot" className="h-1.5 w-1.5 rounded-full bg-primary" />}
+          </button>
+          <div className="flex items-center gap-1.5">
+            {onOpenAI && (
+              <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-[11px] text-muted-foreground" onClick={onOpenAI} data-testid="toggle-ai-helper">
+                <Sparkles size={11} className="text-primary" />
+                {t('findQueryBar.actions.generateWithAI')}
+              </Button>
+            )}
+            <Button type="button" size="sm" className="h-7 min-w-[64px] gap-1.5 text-[11px]" onClick={onRun} disabled={runDisabled} data-testid="query-run-below">
+              <Play size={11} fill="currentColor" />
+              {t('findQueryBar.actions.run')}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
