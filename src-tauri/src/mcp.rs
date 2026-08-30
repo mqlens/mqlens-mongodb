@@ -875,17 +875,52 @@ async fn confirm_write(
     let answer = tokio::time::timeout(WRITE_CONFIRM_TIMEOUT, rx).await;
     // Dropped either way: a decision that arrives later has nothing to resolve.
     state.mcp_write_confirms.lock_safe()?.remove(&id);
-    match answer {
-        Ok(Ok(true)) => Ok(()),
-        Ok(Ok(false)) => Err(format!(
-            "{tool} was refused by the user. Do not retry it; explain what you were \
-             going to change and let them decide."
-        )),
+
+    let (approved, refusal) = match answer {
+        Ok(Ok(true)) => (true, None),
+        Ok(Ok(false)) => (
+            false,
+            Some(format!(
+                "{tool} was refused by the user. Do not retry it; explain what you were \
+                 going to change and let them decide."
+            )),
+        ),
         // The sender was dropped, or nobody answered in time.
-        _ => Err(format!(
-            "{tool} was not confirmed by the user in time, so nothing was changed. \
-             Ask again in your reply rather than retrying the tool."
-        )),
+        _ => (
+            false,
+            Some(format!(
+                "{tool} was not confirmed by the user in time, so nothing was changed. \
+                 Ask again in your reply rather than retrying the tool."
+            )),
+        ),
+    };
+
+    // Recorded whichever way it went. The write's own audit entry only exists if
+    // it ran, so a refusal would otherwise leave no trace — and "the agent asked
+    // to delete and was told no" is exactly what a trail is for.
+    let asked = format!("{tool}: {summary}");
+    crate::audit::maybe_record(
+        &state,
+        crate::audit::RecordInput {
+            event_id: None,
+            ts: None,
+            connection_id: None,
+            database: None,
+            collection: None,
+            op: "agent_write_request",
+            class: None,
+            source: Some("mcp"),
+            ok: approved,
+            error: refusal.as_deref(),
+            duration_ms: None,
+            summary: &asked,
+            args: None,
+        },
+    );
+
+    match refusal {
+        None => Ok(()),
+        Some(reason) => Err(reason),
     }
 }
 

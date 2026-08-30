@@ -70,6 +70,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_agents_write_request_is_classed_as_a_write() {
+        // `confirm_write` records the request under this op and relies on the
+        // fall-through: a write asked for is a write attempt, and Write is the
+        // class that survives the strictest level worth recording at. If the
+        // default ever became something quieter, refusals would stop appearing.
+        assert_eq!(classify_op("agent_write_request"), OpClass::Write);
+    }
+
+    #[test]
     fn writes_and_shell() {
         assert_eq!(classify_op("delete_many"), OpClass::Write);
         assert_eq!(classify_op("drop_collection"), OpClass::Write);
