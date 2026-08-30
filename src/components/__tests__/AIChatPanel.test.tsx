@@ -846,6 +846,11 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
       clipboardData: { items: [{ kind: 'file', type, getAsFile: () => file }] },
     });
   };
+  /** The id this panel identifies itself with, taken from its last request. */
+  const lastRequesterId = () =>
+    (invokeMock.mock.calls.filter((c) => c[0] === 'generate_mql_query').at(-1)?.[1] as any)
+      ?.requesterId as string;
+
   const send = (text: string) => {
     fireEvent.change(screen.getByTestId('chat-input'), { target: { value: text } });
     fireEvent.click(screen.getByTestId('chat-send-btn'));
@@ -1465,10 +1470,15 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     renderPanel('editor');
     await screen.findByTestId('ai-chat-provider-select');
     expect(writeRequestListeners).not.toHaveLength(0);
+    // A write only happens while the agent is running, and the panel identifies
+    // itself when it starts one — so a request has to have been made first.
+    send('which orders are old');
+    await waitFor(() => expect(lastRequesterId()).toBeTruthy());
 
     await act(async () => {
+      const mine = lastRequesterId();
       writeRequestListeners.forEach((fn) =>
-        fn({ id: 'w1', tool: 'delete_many', summary: 'shop.orders where {"state":"OLD"}' }),
+        fn({ id: 'w1', tool: 'delete_many', summary: 'shop.orders where {"state":"OLD"}', requester: mine }),
       );
     });
 
@@ -1484,16 +1494,36 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     expect(screen.queryByTestId('chat-write-request')).not.toBeInTheDocument();
   });
 
+  it('ignores a write request addressed to another panel', async () => {
+    // Every webview receives the event; only the panel whose agent asked should
+    // offer it. Otherwise someone looking at a different connection can approve a
+    // delete they had no part in asking for.
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+
+    await act(async () => {
+      writeRequestListeners.forEach((fn) =>
+        fn({ id: 'w9', tool: 'delete_many', summary: 'someone else\'s', requester: 'another-panel' }),
+      );
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId('chat-write-request')).not.toBeInTheDocument();
+  });
+
   it('queues a second write request rather than losing it', async () => {
     // Two can arrive close together; replacing the first would leave its tool
     // call parked until it timed out with nobody having seen it.
     mockPickerBackend({ query: '{}' });
     renderPanel('editor');
     await screen.findByTestId('ai-chat-provider-select');
+    send('which orders are old');
+    await waitFor(() => expect(lastRequesterId()).toBeTruthy());
 
     await act(async () => {
-      writeRequestListeners.forEach((fn) => fn({ id: 'w1', tool: 'delete_many', summary: 'first' }));
-      writeRequestListeners.forEach((fn) => fn({ id: 'w2', tool: 'insert_one', summary: 'second' }));
+      const mine = lastRequesterId();
+      writeRequestListeners.forEach((fn) => fn({ id: 'w1', tool: 'delete_many', summary: 'first', requester: mine }));
+      writeRequestListeners.forEach((fn) => fn({ id: 'w2', tool: 'insert_one', summary: 'second', requester: mine }));
     });
 
     expect(await screen.findByTestId('chat-write-request')).toHaveTextContent('first');

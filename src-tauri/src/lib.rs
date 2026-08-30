@@ -1219,6 +1219,28 @@ fn validate_ai_provider(provider: ai_providers::AiProvider) -> Result<String, St
     }
 }
 
+/// Marks which panel's agent is running, and clears it however the run ends.
+struct RequesterGuard<'a> {
+    state: &'a AppState,
+}
+
+impl<'a> RequesterGuard<'a> {
+    fn set(state: &'a AppState, requester: Option<String>) -> Self {
+        if let Ok(mut slot) = state.mcp_helper_requester.lock() {
+            *slot = requester;
+        }
+        Self { state }
+    }
+}
+
+impl Drop for RequesterGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.state.mcp_helper_requester.lock() {
+            *slot = None;
+        }
+    }
+}
+
 #[tauri::command]
 async fn generate_mql_query(
     app_handle: tauri::AppHandle,
@@ -1232,6 +1254,9 @@ async fn generate_mql_query(
     // built from someone else's data.
     database: Option<String>,
     #[allow(non_snake_case)] connectionName: Option<String>,
+    // Identifies the panel making this request, so a write its agent asks for is
+    // put to that panel and not to every other one on screen.
+    #[allow(non_snake_case)] requesterId: Option<String>,
     #[allow(non_snake_case)] history: Option<Vec<ai::ChatTurn>>,
     target: Option<String>,
     images: Option<Vec<ai::ImageAttachment>>,
@@ -1356,6 +1381,11 @@ async fn generate_mql_query(
                 )
             );
             let one_prompt = ai::combined_prompt(&system, &history, &prompt);
+            // Set for the length of the run and cleared after, so a write arriving
+            // between runs is refused rather than offered to whoever is looking.
+            // A guard, not a plain assignment: an early return would otherwise
+            // leave a stale panel owning confirmations it never asked for.
+            let _requester = RequesterGuard::set(&state, requesterId.clone());
             ai::generate_local(
                 &provider.command,
                 &one_prompt,

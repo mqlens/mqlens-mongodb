@@ -136,6 +136,8 @@ export interface McpWriteRequest {
   id: string;
   tool: string;
   summary: string;
+  /** The panel that asked. Others ignore it — see `subscribeMcpWriteRequest`. */
+  requester: string;
 }
 
 /**
@@ -144,6 +146,11 @@ export interface McpWriteRequest {
  * The tool call is parked in the backend until `mcp_resolve_write` carries an
  * answer back, and refuses on its own after two minutes — so a missed event
  * costs a refusal, never an unintended write.
+ *
+ * Every webview receives it: that is what `emit` does. The request carries the id
+ * of the panel that asked, and panels ignore the rest — deterministic in a way
+ * that picking the right `EventTarget` variant is not, and able to tell apart two
+ * panes of one window, which a window label cannot.
  */
 export function subscribeMcpWriteRequest(
   listener: (request: McpWriteRequest) => void

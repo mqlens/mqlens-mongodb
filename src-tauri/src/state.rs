@@ -86,6 +86,14 @@ pub struct AppState {
     /// keyed by request id. The MCP tool call is parked on the receiving half
     /// until the panel sends a decision or the wait times out.
     pub mcp_write_confirms: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+    /// The panel whose agent is running right now, so a write it asks for is put
+    /// to *that* panel rather than to every one that happens to be mounted.
+    ///
+    /// `rmcp` gives a tool handler no view of the request, so the write cannot be
+    /// traced back to a panel on its own; the run is the link, and the panel
+    /// identifies itself when it starts one. `None` between runs, and a write
+    /// arriving then is refused rather than offered to whoever is looking.
+    pub mcp_helper_requester: Mutex<Option<String>>,
     pub connections: Mutex<HashMap<String, Client>>,
     pub mocks: Mutex<HashMap<String, bool>>,
     pub mock_indexes: Mutex<HashMap<String, Vec<IndexInfo>>>,
@@ -206,6 +214,7 @@ impl AppState {
             audit_degraded: Mutex::new(None),
             settings_write: Mutex::new(()),
             mcp_write_confirms: Mutex::new(HashMap::new()),
+            mcp_helper_requester: Mutex::new(None),
             audit_pending: Arc::new(Mutex::new(Vec::new())),
             audit_generation: Arc::new(AtomicU64::new(0)),
         }

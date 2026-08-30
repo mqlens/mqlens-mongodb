@@ -497,10 +497,22 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
    * nobody having seen what it wanted to do.
    */
   const [writeRequests, setWriteRequests] = useState<McpWriteRequest[]>([]);
+  /**
+   * This panel's own id, sent with every request its agent makes.
+   *
+   * Stable for the life of the mount and unique per panel, so two panes of the
+   * same window are told apart — a window label cannot do that, and a prompt
+   * shown in the wrong pane can be answered by someone looking at another
+   * connection entirely.
+   */
+  const panelIdRef = useRef(`panel-${Math.random().toString(36).slice(2)}-${Date.now()}`);
   useEffect(() => {
     let live = true;
     let unlisten: (() => void) | null = null;
     subscribeMcpWriteRequest((request) => {
+      // Addressed to somebody else: the backend still has it parked, and their
+      // panel is showing it.
+      if (request.requester !== panelIdRef.current) return;
       if (live) setWriteRequests((prev) => [...prev, request]);
     })
       .then((off) => {
@@ -1109,6 +1121,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         // the user is actually looking at rather than one of the same name elsewhere.
         database: databaseName ?? undefined,
         connectionName: connectionName ?? undefined,
+        requesterId: panelIdRef.current,
         history,
         target: variant === 'shell' ? 'shell' : 'editor',
         images: images.map((i) => ({ media_type: i.mediaType, data: i.data })),

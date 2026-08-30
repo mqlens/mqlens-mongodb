@@ -884,9 +884,22 @@ async fn confirm_write(
     // `{"state":"OLD"}` and `{}` are both "34 bytes", and one of them empties the
     // collection. Whoever is approving has to see what will actually run.
     let shown = serde_json::to_string_pretty(&details).unwrap_or_else(|_| details.to_string());
+
+    // Addressed to the panel whose agent asked. The event reaches every webview —
+    // that is what `emit` does — so the address is carried *in* the payload and
+    // the panels filter on it, which is deterministic in a way that guessing at
+    // the right `EventTarget` variant is not, and works for two panes of one
+    // window where a window label cannot tell them apart.
+    let requester = state
+        .mcp_helper_requester
+        .lock_safe()?
+        .clone()
+        .ok_or_else(|| {
+            format!("{tool} was asked for outside a chat request, so there is nobody to ask.")
+        })?;
     let emitted = app_handle.emit(
         "mcp-write-request",
-        serde_json::json!({ "id": id, "tool": tool, "summary": shown }),
+        serde_json::json!({ "id": id, "tool": tool, "summary": shown, "requester": requester }),
     );
     if emitted.is_err() {
         // Nobody can be asked, so nobody has agreed.
