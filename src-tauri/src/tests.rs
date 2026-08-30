@@ -810,13 +810,26 @@ mod tests {
     #[test]
     fn the_agent_is_told_whether_mqlens_tools_are_reachable() {
         use crate::ai::mcp_availability_note;
-        let on = mcp_availability_note(true);
+        let on = mcp_availability_note(true, Some("prod"), Some("shop"), "orders");
         assert!(on.contains("schema_analysis"), "{on}");
         assert!(on.contains("not observed data") || on.contains("observed"), "{on}");
-        let off = mcp_availability_note(false);
+        let off = mcp_availability_note(false, Some("prod"), Some("shop"), "orders");
         assert!(off.contains("switched off"), "{off}");
         // ...and told to say what it could not check, rather than implying it did.
         assert!(off.contains("could not verify"), "{off}");
+
+        // Both name the namespace outright: told to inspect but not *where*, an
+        // agent picks one itself, and two connections can hold `shop.orders`.
+        for note in [&on, &off] {
+            assert!(note.contains("`shop.orders`"), "{note}");
+            assert!(note.contains("`prod`"), "{note}");
+        }
+        // Without a connection name it still says which collection is meant.
+        let partial = mcp_availability_note(true, None, Some("shop"), "orders");
+        assert!(partial.contains("`shop.orders`"), "{partial}");
+        // And says nothing misleading when the tab has no database yet.
+        let bare = mcp_availability_note(true, None, None, "orders");
+        assert!(!bare.contains("Use exactly that namespace"), "{bare}");
     }
 
     #[test]

@@ -1225,8 +1225,28 @@ pub async fn generate_gemini(
 /// alone and cannot say why it might be wrong; one that does not know they are
 /// *missing* can imply it checked. Both states are stated outright so the answer
 /// says which it was.
-pub fn mcp_availability_note(available: bool) -> &'static str {
-    if available {
+pub fn mcp_availability_note(
+    available: bool,
+    connection: Option<&str>,
+    database: Option<&str>,
+    collection: &str,
+) -> String {
+    // Named outright. Told to inspect but not *where*, an agent picks a namespace
+    // itself, and two connections can hold collections of the same name — so the
+    // query comes back looking right and built from another environment's data.
+    let namespace = match (connection, database) {
+        (Some(c), Some(d)) if !c.is_empty() && !d.is_empty() => format!(
+            "\n\nThe question is about `{d}.{collection}` on the connection named \
+             `{c}`, which is the one open in front of the user. Use exactly that \
+             namespace; do not pick another connection or database, and if the tools \
+             show more than one candidate, say so rather than guessing."
+        ),
+        (_, Some(d)) if !d.is_empty() => format!(
+            "\n\nThe question is about `{d}.{collection}`. Use exactly that namespace."
+        ),
+        _ => String::new(),
+    };
+    let body = if available {
         "\n\nMQLens's own tools are available to you over MCP as the `mqlens` server: \
          list_connections, list_profiles, connect, list_databases, list_collections, \
          schema_analysis, list_indexes, find, aggregate and explain. Use them before \
@@ -1238,7 +1258,10 @@ pub fn mcp_availability_note(available: bool) -> &'static str {
          you have the field names above and nothing else. Write the query from them, and \
          say plainly in your notes which parts you could not verify — an enum value or a \
          date format you assumed, for instance — so the user knows what to check."
-    }
+    };
+    // The namespace matters either way: without the tools it still tells the agent
+    // which collection the field list belongs to.
+    format!("{body}{namespace}")
 }
 
 /// Where MQLens's own MCP server is listening, for an agent that can reach it.

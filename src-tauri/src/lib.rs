@@ -1226,6 +1226,12 @@ async fn generate_mql_query(
     prompt: String,
     collection: String,
     fields: Vec<String>,
+    // The tab's own namespace. An agent told to inspect the collection has to
+    // know *which* one: two connections can hold same-named collections, and
+    // sampling the wrong environment produces a query that looks right and was
+    // built from someone else's data.
+    database: Option<String>,
+    #[allow(non_snake_case)] connectionName: Option<String>,
     #[allow(non_snake_case)] history: Option<Vec<ai::ChatTurn>>,
     target: Option<String>,
     images: Option<Vec<ai::ImageAttachment>>,
@@ -1336,7 +1342,16 @@ async fn generate_mql_query(
             // agent the tools are there invites it to imply it checked something
             // it never could — which is the failure this note exists to prevent.
             let reachable = mcp.is_some() && provider.command.contains("{mcp_config}");
-            let system = format!("{}{}", system, ai::mcp_availability_note(reachable));
+            let system = format!(
+                "{}{}",
+                system,
+                ai::mcp_availability_note(
+                    reachable,
+                    connectionName.as_deref(),
+                    database.as_deref(),
+                    &collection,
+                )
+            );
             let one_prompt = ai::combined_prompt(&system, &history, &prompt);
             ai::generate_local(
                 &provider.command,

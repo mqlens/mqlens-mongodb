@@ -1070,6 +1070,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         prompt: text,
         collection: collectionName,
         fields,
+        // The tab's namespace, so an agent with the tools inspects the collection
+        // the user is actually looking at rather than one of the same name elsewhere.
+        database: databaseName ?? undefined,
+        connectionName: connectionName ?? undefined,
         history,
         target: variant === 'shell' ? 'shell' : 'editor',
         images: images.map((i) => ({ media_type: i.mediaType, data: i.data })),
