@@ -632,11 +632,18 @@ impl McpServer {
         // MQLens's own agent asks the user; an external client keeps the
         // `_confirm` contract its operator opted into.
         if self.helper {
-            confirm_write(&app_handle, "insert_one", serde_json::json!({
+            match confirm_write(&app_handle, "insert_one", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
                 "document": args.document,
-            })).await?;
+            })).await
+            {
+                // Through the finishing path, not `?`: that is the only place a
+                // call is logged, so a refused delete would otherwise vanish from
+                // the MCP log entirely rather than appear as a failed call.
+                Err(e) => return finish_json::<()>(&state, "insert_one", Some(connection_id), &summary, Err(e)),
+                Ok(()) => {}
+            }
         }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::insert_one_impl(&state, &path, args)).await;
         finish_json(&state, "insert_one", Some(connection_id), &summary, result)
@@ -656,12 +663,19 @@ impl McpServer {
         // MQLens's own agent asks the user; an external client keeps the
         // `_confirm` contract its operator opted into.
         if self.helper {
-            confirm_write(&app_handle, "update_many", serde_json::json!({
+            match confirm_write(&app_handle, "update_many", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
                 "filter": args.filter,
                 "update": args.update,
-            })).await?;
+            })).await
+            {
+                // Through the finishing path, not `?`: that is the only place a
+                // call is logged, so a refused delete would otherwise vanish from
+                // the MCP log entirely rather than appear as a failed call.
+                Err(e) => return finish_json::<()>(&state, "update_many", Some(connection_id), &summary, Err(e)),
+                Ok(()) => {}
+            }
         }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::update_many_tool_impl(&state, &path, args)).await;
         finish_json(&state, "update_many", Some(connection_id), &summary, result)
@@ -678,11 +692,18 @@ impl McpServer {
         // MQLens's own agent asks the user; an external client keeps the
         // `_confirm` contract its operator opted into.
         if self.helper {
-            confirm_write(&app_handle, "delete_many", serde_json::json!({
+            match confirm_write(&app_handle, "delete_many", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
                 "filter": args.filter,
-            })).await?;
+            })).await
+            {
+                // Through the finishing path, not `?`: that is the only place a
+                // call is logged, so a refused delete would otherwise vanish from
+                // the MCP log entirely rather than appear as a failed call.
+                Err(e) => return finish_json::<()>(&state, "delete_many", Some(connection_id), &summary, Err(e)),
+                Ok(()) => {}
+            }
         }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::delete_many_tool_impl(&state, &path, args)).await;
         finish_json(&state, "delete_many", Some(connection_id), &summary, result)
@@ -710,13 +731,20 @@ impl McpServer {
         // MQLens's own agent asks the user; an external client keeps the
         // `_confirm` contract its operator opted into.
         if self.helper {
-            confirm_write(&app_handle, "create_index", serde_json::json!({
+            match confirm_write(&app_handle, "create_index", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
                 "keys": args.keys,
                 "name": args.name,
                 "unique": args.unique,
-            })).await?;
+            })).await
+            {
+                // Through the finishing path, not `?`: that is the only place a
+                // call is logged, so a refused delete would otherwise vanish from
+                // the MCP log entirely rather than appear as a failed call.
+                Err(e) => return finish_json::<()>(&state, "create_index", Some(connection_id), &summary, Err(e)),
+                Ok(()) => {}
+            }
         }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::create_index_tool_impl(&state, &path, args)).await;
         finish_json(&state, "create_index", Some(connection_id), &summary, result)
@@ -1074,6 +1102,32 @@ mod tests {
             format!("Bearer {token}").parse().unwrap(),
         );
         h
+    }
+
+    #[test]
+    fn a_refused_write_is_still_logged_as_a_call() {
+        // `finish_json` is the only path that logs, so `confirm_write(..).await?`
+        // made a refused delete vanish from the MCP log rather than appear as a
+        // failed call. Exercising it needs a live AppHandle, so this holds the
+        // shape: no write handler may take the early return again.
+        // Only the code, not this module: `include_str!` pulls in the test file
+        // too, and the assertions below mention the very strings they count.
+        let whole = include_str!("mcp.rs");
+        let src = &whole[..whole.find("\n#[cfg(test)]").unwrap_or(whole.len())];
+        let confirmations = src.matches("confirm_write(&app_handle").count();
+        assert_eq!(confirmations, 4, "one per write tool");
+        assert_eq!(
+            src.matches("finish_json::<()>").count(),
+            4,
+            "each refusal returns through the finishing path"
+        );
+        // The `?` form is what dropped them.
+        for line in src.lines() {
+            assert!(
+                !(line.contains("confirm_write(") && line.trim_end().ends_with(".await?;")),
+                "a refusal must not skip the log: {line}"
+            );
+        }
     }
 
     #[test]
