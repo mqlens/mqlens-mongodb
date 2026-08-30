@@ -758,11 +758,14 @@ mod tests {
         // The stub prints the file's mode to STDOUT, where the reply can see it.
         // An earlier version sent it to stderr, which `generate_local` discards on
         // success — so the test claimed to check 0600 and checked nothing.
-        // `stat` differs between macOS and Linux; both spellings are tried.
+        // `stat` differs between macOS and Linux, and the ORDER matters: GNU's
+        // `-f` means "filesystem status" and *succeeds*, printing filesystem info,
+        // so trying it first never falls through on Linux. macOS rejects `-c`
+        // outright, so asking for the GNU spelling first fails cleanly there.
         std::fs::write(
             &stub,
             "#!/bin/sh\nCFG=\"$1\"\n\
-             echo \"mode=$(stat -f %Lp \"$CFG\" 2>/dev/null || stat -c %a \"$CFG\")\"\n\
+             echo \"mode=$(stat -c %a \"$CFG\" 2>/dev/null || stat -f %Lp \"$CFG\")\"\n\
              cat \"$CFG\"\necho '{\"queryType\":\"find\",\"filter\":{}}'\n",
         )
         .unwrap();
