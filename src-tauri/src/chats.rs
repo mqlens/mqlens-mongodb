@@ -52,15 +52,36 @@ pub struct ChatMessage {
     /// The model's reasoning or working notes, shown collapsed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thoughts: Option<String>,
-    /// What a local agent ran to produce this answer. Kept with the message so
-    /// reopening the conversation shows the same working, not just the result.
+    /// What a local agent ran to produce this answer — names and outcomes only.
     #[serde(rename = "toolCalls", default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_calls: Vec<crate::ai::AgentToolCall>,
+    pub tool_calls: Vec<ToolCallMeta>,
     /// What was attached to a user turn. Metadata only: this store is plain
     /// JSON on disk, and screenshots of the user's own data do not belong in
     /// it. The bytes go to the provider once and are then dropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<AttachmentMeta>>,
+}
+
+/// A tool call, remembered by name rather than by what it returned.
+///
+/// Deliberately *narrower* than `ai::AgentToolCall`: a `find` the agent ran comes
+/// back holding real documents, and this store is plain JSON on disk. Giving the
+/// stored type nowhere to put the arguments or the output means serde drops them
+/// on the way in, rather than every call site having to remember to strip them.
+/// The same reason attachments keep an image's shape and never its bytes.
+///
+/// The panel still shows the full detail for the turn it happened in; it is the
+/// durable copy that is trimmed.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallMeta {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "is_not_set")]
+    pub failed: bool,
+}
+
+fn is_not_set(b: &bool) -> bool {
+    !*b
 }
 
 /// A pasted image, remembered by shape rather than by content.
@@ -404,7 +425,7 @@ pub async fn append_chat_message(
     // silently did not, so History showed a reply that had never reasoned.
     thoughts: Option<String>,
     // ...and what it ran, for the same reason.
-    #[allow(non_snake_case)] toolCalls: Option<Vec<crate::ai::AgentToolCall>>,
+    #[allow(non_snake_case)] toolCalls: Option<Vec<ToolCallMeta>>,
     updated_at: String,
 ) -> Result<(), String> {
     let _guard = store_lock();

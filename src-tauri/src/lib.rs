@@ -1331,7 +1331,12 @@ async fn generate_mql_query(
                 .ok()
                 .filter(|s| s.enabled)
                 .map(|s| ai::McpEndpoint { port: s.port, token: s.token });
-            let system = format!("{}{}", system, ai::mcp_availability_note(mcp.is_some()));
+            // Available means *reachable by this command*, not merely running. A
+            // command without {mcp_config} is handed no config, so telling its
+            // agent the tools are there invites it to imply it checked something
+            // it never could — which is the failure this note exists to prevent.
+            let reachable = mcp.is_some() && provider.command.contains("{mcp_config}");
+            let system = format!("{}{}", system, ai::mcp_availability_note(reachable));
             let one_prompt = ai::combined_prompt(&system, &history, &prompt);
             ai::generate_local(
                 &provider.command,

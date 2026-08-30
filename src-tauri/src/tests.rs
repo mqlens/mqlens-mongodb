@@ -849,6 +849,31 @@ mod tests {
     }
 
     #[test]
+    fn the_chat_store_cannot_hold_what_a_tool_returned() {
+        // An agent told to sample the collection runs `find`, and the result holds
+        // real documents. `chats.json` is plain JSON on disk, so the stored shape
+        // has nowhere to put them — the same rule attachments follow.
+        let from_panel = serde_json::json!({
+            "id": "m1", "role": "assistant", "text": "ok",
+            "toolCalls": [{
+                "name": "find",
+                "input": "{\"filter\":{\"email\":\"real.person@example.com\"}}",
+                "output": "[{\"_id\":1,\"email\":\"real.person@example.com\",\"ssn\":\"123-45-6789\"}]",
+                "failed": false
+            }]
+        });
+        let msg: crate::chats::ChatMessage = serde_json::from_value(from_panel).unwrap();
+        assert_eq!(msg.tool_calls.len(), 1);
+        assert_eq!(msg.tool_calls[0].name, "find");
+
+        let on_disk = serde_json::to_string(&msg).unwrap();
+        assert!(on_disk.contains("find"), "the call itself is still recorded");
+        for leaked in ["real.person@example.com", "123-45-6789", "ssn", "filter"] {
+            assert!(!on_disk.contains(leaked), "{leaked} must not reach the store: {on_disk}");
+        }
+    }
+
+    #[test]
     fn a_long_agent_run_is_bounded_in_what_it_keeps() {
         // A transcript entry, not a log: an agent that ran hundreds of tools, or
         // one whose tool returned a whole file, must not put either in the panel.

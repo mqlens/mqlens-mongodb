@@ -970,6 +970,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       text: reply.text,
       ...(reply.error ? { error: true } : { query: reply.query as GeneratedQuery | undefined }),
       ...(reply.thoughts ? { thoughts: reply.thoughts } : {}),
+      ...(reply.toolCalls?.length ? { toolCalls: reply.toolCalls } : {}),
     };
     await saveChat({
       ...stored,
