@@ -75,6 +75,8 @@ pub struct AgentRun {
 /// return a whole file, and the panel has to stay readable.
 const MAX_TOOL_CALLS: usize = 50;
 const MAX_TOOL_TEXT: usize = 2000;
+/// Far above any real turn, so it only ever catches a runaway stream.
+const MAX_EVENTS: usize = 10_000;
 
 /// `text` clipped to `max` characters, on a character boundary.
 fn clip(text: &str, max: usize) -> String {
@@ -87,28 +89,21 @@ fn clip(text: &str, max: usize) -> String {
 
 /// Parse a local agent's structured event stream into its answer and tool calls.
 ///
-/// `None` when the output is not an event stream, which is the ordinary case: the
-/// built-in commands only ask for one where the format has been verified, and a
-/// user's own command emits whatever it emits. The caller then treats the output
-/// as text exactly as before, so nothing that works today stops working.
+/// `None` when the output is not an event stream, which is the ordinary case: no
+/// built-in command asks for one, so this only sees events when the user has put
+/// the flags in the command themselves. The caller then treats the output as text
+/// exactly as before, so nothing that works today stops working.
 ///
 /// The shape handled here is Claude Code's `--output-format stream-json`, checked
 /// against a real run rather than assumed — see the fixture in `tests/fixtures`.
 /// Codex and cursor-agent have structured modes too, but with different envelopes
 /// that are not implemented until they can be verified the same way.
 pub fn parse_agent_events(stdout: &str) -> Option<AgentRun> {
-    let events: Vec<serde_json::Value> = stdout
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.starts_with('{'))
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter(|v| v.get("type").and_then(|t| t.as_str()).is_some())
-        .collect();
-    // One stray JSON line in ordinary prose is not an event stream.
-    if events.len() < 2 {
-        return None;
-    }
-
+    // Streamed rather than collected: a long agent run emits megabytes, and
+    // holding every parsed event as well as the string they came from doubles
+    // that for no gain — each is read once and thrown away. `MAX_TOOL_CALLS`
+    // bounds what is *kept*; this bounds what is *parsed*.
+    let mut parsed_events = 0usize;
     let mut calls: Vec<AgentToolCall> = Vec::new();
     // Where each `tool_use_id` landed, so its result can be attached later.
     let mut by_id: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -116,8 +111,21 @@ pub fn parse_agent_events(stdout: &str) -> Option<AgentRun> {
     let mut final_text: Option<String> = None;
     let mut saw_known = false;
 
-    for event in &events {
-        let kind = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    for line in stdout.lines().map(str::trim) {
+        if parsed_events >= MAX_EVENTS {
+            break;
+        }
+        if !line.starts_with('{') {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(kind) = event.get("type").and_then(|t| t.as_str()) else {
+            continue;
+        };
+        parsed_events += 1;
+        let event = &event;
         match kind {
             "assistant" | "user" => {
                 saw_known = true;
@@ -199,7 +207,8 @@ pub fn parse_agent_events(stdout: &str) -> Option<AgentRun> {
         }
     }
 
-    if !saw_known {
+    // One stray JSON line in ordinary prose is not an event stream.
+    if !saw_known || parsed_events < 2 {
         return None;
     }
     Some(AgentRun {
@@ -1262,9 +1271,14 @@ pub fn mcp_config_json(endpoint: &McpEndpoint) -> String {
 
 /// A temp file holding that config, removed when this drops.
 ///
-/// It contains the bearer token, so it is created `0600` *before* a byte is
-/// written — widening it afterwards would leave a window where any local user
+/// It contains the bearer token, so on Unix it is created `0600` *before* a byte
+/// is written — widening it afterwards would leave a window where any local user
 /// could read the token — and it is deleted however the run ends.
+///
+/// Windows has no equivalent here and inherits the directory's ACLs, which for the
+/// per-user temp directory means the owner alone. That is weaker than an explicit
+/// mode: a machine whose temp directory has been opened up would expose the token,
+/// and this does not defend against that.
 pub struct McpConfigFile(std::path::PathBuf);
 
 impl McpConfigFile {

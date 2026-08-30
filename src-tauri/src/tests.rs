@@ -846,6 +846,31 @@ mod tests {
     }
 
     #[test]
+    fn a_long_agent_run_is_bounded_in_what_it_keeps() {
+        // A transcript entry, not a log: an agent that ran hundreds of tools, or
+        // one whose tool returned a whole file, must not put either in the panel.
+        use crate::ai::parse_agent_events;
+        let mut stream = String::new();
+        for i in 0..60 {
+            stream.push_str(&format!(
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"t{i}","name":"Bash","input":{{"n":{i}}}}}]}}}}"#
+            ));
+            stream.push('\n');
+            // A result far larger than anything worth showing.
+            stream.push_str(&format!(
+                r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"t{i}","content":"{}"}}]}}}}"#,
+                "x".repeat(9000)
+            ));
+            stream.push('\n');
+        }
+        let run = parse_agent_events(&stream).expect("a stream");
+        assert_eq!(run.tool_calls.len(), 50, "kept calls are capped");
+        let out = run.tool_calls[0].output.as_deref().unwrap();
+        assert!(out.chars().count() <= 2_001, "output clipped: {} chars", out.chars().count());
+        assert!(out.ends_with('…'), "clipping is visible rather than silent");
+    }
+
+    #[test]
     fn ordinary_agent_output_is_left_as_text() {
         // A custom command emits whatever it emits, and today that is prose with
         // a JSON object in it. Treating that as an event stream would break every
