@@ -82,6 +82,10 @@ pub struct AppState {
     /// path, providers); without one lock the last writer wins with the stale
     /// copy it loaded.
     pub settings_write: Mutex<()>,
+    /// Writes MQLens's own agent has asked for and the user has not answered yet,
+    /// keyed by request id. The MCP tool call is parked on the receiving half
+    /// until the panel sends a decision or the wait times out.
+    pub mcp_write_confirms: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
     pub connections: Mutex<HashMap<String, Client>>,
     pub mocks: Mutex<HashMap<String, bool>>,
     pub mock_indexes: Mutex<HashMap<String, Vec<IndexInfo>>>,
@@ -201,6 +205,7 @@ impl AppState {
             audit: Arc::new(Mutex::new(None)),
             audit_degraded: Mutex::new(None),
             settings_write: Mutex::new(()),
+            mcp_write_confirms: Mutex::new(HashMap::new()),
             audit_pending: Arc::new(Mutex::new(Vec::new())),
             audit_generation: Arc::new(AtomicU64::new(0)),
         }

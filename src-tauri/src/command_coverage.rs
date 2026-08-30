@@ -83,6 +83,9 @@ const LOCAL_COMMANDS: &[&str] = &[
     // Asks the user's own configured endpoint or CLI what it offers; no
     // MongoDB connection is involved.
     "list_ai_models",
+    // The user's yes/no to a write the local agent asked for. Touches no
+    // connection itself: it only releases or refuses the parked MCP call.
+    "mcp_resolve_write",
     // Chat-panel picker support: reads settings, asks the user's own provider.
     "ai_provider_options",
     "list_ai_models_for",

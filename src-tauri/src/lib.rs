@@ -2935,6 +2935,16 @@ async fn mcp_set_enabled(
     mcp::set_enabled_impl(&state, enabled, port, Some(app_handle)).await
 }
 
+/// The user's answer to a write MQLens's own agent asked to make.
+#[tauri::command]
+async fn mcp_resolve_write(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    approved: bool,
+) -> Result<(), String> {
+    mcp::resolve_write_impl(&state, &id, approved)
+}
+
 #[tauri::command]
 async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<mcp::McpStatusUi, String> {
     mcp::regenerate_token_impl(&state)
@@ -3076,6 +3086,7 @@ pub fn run() {
             mcp_get_status,
             mcp_set_enabled,
             mcp_regenerate_token,
+            mcp_resolve_write,
             biometric::biometric_status,
             biometric::biometric_enable,
             biometric::biometric_unlock,

@@ -629,6 +629,11 @@ impl McpServer {
         let connection_id = args.connection_id.clone();
         let summary =
             crate::mcp_tools::truncate_summary(&crate::mcp_tools::insert_one_summary(&args.database, &args.collection, &args.document, args._confirm), 200);
+        // MQLens's own agent asks the user; an external client keeps the
+        // `_confirm` contract its operator opted into.
+        if self.helper {
+            confirm_write(&app_handle, "insert_one", &summary).await?;
+        }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::insert_one_impl(&state, &path, args)).await;
         finish_json(&state, "insert_one", Some(connection_id), &summary, result)
     }
@@ -644,6 +649,11 @@ impl McpServer {
             &crate::mcp_tools::update_many_summary(&args.database, &args.collection, &args.filter, &args.update, args._confirm),
             200,
         );
+        // MQLens's own agent asks the user; an external client keeps the
+        // `_confirm` contract its operator opted into.
+        if self.helper {
+            confirm_write(&app_handle, "update_many", &summary).await?;
+        }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::update_many_tool_impl(&state, &path, args)).await;
         finish_json(&state, "update_many", Some(connection_id), &summary, result)
     }
@@ -656,6 +666,11 @@ impl McpServer {
         let state = app_handle.state::<AppState>();
         let connection_id = args.connection_id.clone();
         let summary = crate::mcp_tools::truncate_summary(&crate::mcp_tools::delete_many_summary(&args.database, &args.collection, &args.filter, args._confirm), 200);
+        // MQLens's own agent asks the user; an external client keeps the
+        // `_confirm` contract its operator opted into.
+        if self.helper {
+            confirm_write(&app_handle, "delete_many", &summary).await?;
+        }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::delete_many_tool_impl(&state, &path, args)).await;
         finish_json(&state, "delete_many", Some(connection_id), &summary, result)
     }
@@ -679,6 +694,11 @@ impl McpServer {
             ),
             200,
         );
+        // MQLens's own agent asks the user; an external client keeps the
+        // `_confirm` contract its operator opted into.
+        if self.helper {
+            confirm_write(&app_handle, "create_index", &summary).await?;
+        }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::create_index_tool_impl(&state, &path, args)).await;
         finish_json(&state, "create_index", Some(connection_id), &summary, result)
     }
@@ -782,6 +802,75 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// are always the same fixed length (32 bytes), so `constant_time_eq`'s own
 /// length check never itself becomes a side channel on the real token's
 /// length.
+/// The user's answer to one of those requests, from the panel.
+///
+/// Unknown ids are accepted quietly: the request may have already timed out, and
+/// a late click is not an error worth showing anyone.
+pub fn resolve_write_impl(state: &AppState, id: &str, approved: bool) -> Result<(), String> {
+    let sender = state.mcp_write_confirms.lock_safe()?.remove(id);
+    if let Some(sender) = sender {
+        let _ = sender.send(approved);
+    }
+    Ok(())
+}
+
+/// How long a write waits for the user before it is refused.
+///
+/// Generous, because the user may be reading what the agent proposes; finite and
+/// fail-closed, because an unanswered prompt must not become an approval — an
+/// abandoned window would otherwise hold a write open indefinitely.
+const WRITE_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Ask the user, in the app, before MQLens's own agent writes.
+///
+/// The write tools are gated on a `_confirm` boolean the caller supplies, which
+/// for an external client is a reasonable contract — the operator chose to connect
+/// it. For MQLens's own agent it is not: the agent supplies that boolean itself,
+/// so "delete inactive users" typed into the chat, or a prompt injected through a
+/// document the agent sampled, is one hop from a live connection. This asks the
+/// person instead, and refuses on silence.
+async fn confirm_write(
+    app_handle: &tauri::AppHandle,
+    tool: &str,
+    summary: &str,
+) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+    let state = app_handle.state::<AppState>();
+    let id = new_token();
+    let (tx, rx) = oneshot::channel::<bool>();
+    {
+        let mut pending = state.mcp_write_confirms.lock_safe()?;
+        pending.insert(id.clone(), tx);
+    }
+    let emitted = app_handle.emit(
+        "mcp-write-request",
+        serde_json::json!({ "id": id, "tool": tool, "summary": summary }),
+    );
+    if emitted.is_err() {
+        // Nobody can be asked, so nobody has agreed.
+        state.mcp_write_confirms.lock_safe()?.remove(&id);
+        return Err(format!(
+            "{tool} needs the user's confirmation and MQLens could not ask for it."
+        ));
+    }
+
+    let answer = tokio::time::timeout(WRITE_CONFIRM_TIMEOUT, rx).await;
+    // Dropped either way: a decision that arrives later has nothing to resolve.
+    state.mcp_write_confirms.lock_safe()?.remove(&id);
+    match answer {
+        Ok(Ok(true)) => Ok(()),
+        Ok(Ok(false)) => Err(format!(
+            "{tool} was refused by the user. Do not retry it; explain what you were \
+             going to change and let them decide."
+        )),
+        // The sender was dropped, or nobody answered in time.
+        _ => Err(format!(
+            "{tool} was not confirmed by the user in time, so nothing was changed. \
+             Ask again in your reply rather than retrying the tool."
+        )),
+    }
+}
+
 fn bearer_token_matches(
     control: &StdMutex<McpControl>,
     headers: &axum::http::HeaderMap,
@@ -895,6 +984,46 @@ mod tests {
             format!("Bearer {token}").parse().unwrap(),
         );
         h
+    }
+
+    #[tokio::test]
+    async fn a_users_decision_reaches_the_parked_write() {
+        let state = AppState::new();
+        let (tx, rx) = oneshot::channel::<bool>();
+        state.mcp_write_confirms.lock().unwrap().insert("req-1".into(), tx);
+
+        resolve_write_impl(&state, "req-1", true).unwrap();
+        assert_eq!(rx.await, Ok(true), "the approval reaches the waiting tool");
+        // Taken out on the way, so a second click has nothing to resolve.
+        assert!(state.mcp_write_confirms.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_carried_as_a_refusal() {
+        let state = AppState::new();
+        let (tx, rx) = oneshot::channel::<bool>();
+        state.mcp_write_confirms.lock().unwrap().insert("req-2".into(), tx);
+        resolve_write_impl(&state, "req-2", false).unwrap();
+        assert_eq!(rx.await, Ok(false));
+    }
+
+    #[test]
+    fn a_late_or_unknown_decision_is_not_an_error() {
+        // The request may have already timed out; a late click is not worth
+        // showing anyone an error for.
+        let state = AppState::new();
+        resolve_write_impl(&state, "never-existed", true).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_dropped_request_reads_as_refusal_not_approval() {
+        // Fail-closed: whatever goes wrong — a closed window, a cleared map — the
+        // waiting write must not take silence for a yes.
+        let state = AppState::new();
+        let (tx, rx) = oneshot::channel::<bool>();
+        state.mcp_write_confirms.lock().unwrap().insert("req-3".into(), tx);
+        state.mcp_write_confirms.lock().unwrap().clear(); // sender dropped
+        assert!(rx.await.is_err(), "a dropped sender must not resolve to true");
     }
 
     #[test]
