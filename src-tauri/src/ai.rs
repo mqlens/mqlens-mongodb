@@ -1225,8 +1225,25 @@ pub async fn generate_gemini(
 /// alone and cannot say why it might be wrong; one that does not know they are
 /// *missing* can imply it checked. Both states are stated outright so the answer
 /// says which it was.
+/// What can honestly be said about the agent's reach to MQLens's own tools.
+///
+/// Three states, not two. "The server is off" and "I did not hand this command a
+/// config" are different facts: a user who followed the `claude mcp add` flow in
+/// Settings has an agent that reaches `mqlens` without `{mcp_config}`, and telling
+/// it the server is switched off would talk it out of an inspection it could
+/// actually do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum McpReach {
+    /// The server is not running. Nothing can reach it.
+    Off,
+    /// This command was handed a config, so the tools are there.
+    Injected,
+    /// The server is up, but whether *this* agent can see it is unknown.
+    Unknown,
+}
+
 pub fn mcp_availability_note(
-    available: bool,
+    reach: McpReach,
     connection: Option<&str>,
     connection_id: Option<&str>,
     database: Option<&str>,
@@ -1255,18 +1272,26 @@ pub fn mcp_availability_note(
         ),
         _ => String::new(),
     };
-    let body = if available {
+    let body = match reach {
+        McpReach::Injected =>
         "\n\nMQLens's own tools are available to you over MCP as the `mqlens` server: \
          list_connections, list_profiles, connect, list_databases, list_collections, \
          schema_analysis, list_indexes, find, aggregate and explain. Use them before \
          writing the query — the field list above is a summary of names, not observed \
          data, so check the real types, indexes and actual values with schema_analysis \
-         and a small find rather than guessing at enum values or formats."
-    } else {
+         and a small find rather than guessing at enum values or formats.",
+        McpReach::Unknown =>
+            "\n\nMQLens may be available to you as the `mqlens` MCP server, if you have \
+             it configured — this request did not hand you a configuration, so it \
+             cannot tell. Check whether those tools are there; if they are, use \
+             schema_analysis and a small find to confirm the real types and values \
+             before writing the query, and if they are not, say in your notes which \
+             parts you could not verify.",
+        McpReach::Off =>
         "\n\nMQLens's MCP server is switched off, so you cannot sample the collection: \
          you have the field names above and nothing else. Write the query from them, and \
          say plainly in your notes which parts you could not verify — an enum value or a \
-         date format you assumed, for instance — so the user knows what to check."
+         date format you assumed, for instance — so the user knows what to check.",
     };
     // The namespace matters either way: without the tools it still tells the agent
     // which collection the field list belongs to.

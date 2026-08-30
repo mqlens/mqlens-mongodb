@@ -1372,12 +1372,23 @@ async fn generate_mql_query(
             // command without {mcp_config} is handed no config, so telling its
             // agent the tools are there invites it to imply it checked something
             // it never could — which is the failure this note exists to prevent.
-            let reachable = mcp.is_some() && provider.command.contains("{mcp_config}");
+            // Three states. "The server is off" and "I did not hand this command a
+            // config" are different facts, and a user who followed the
+            // `claude mcp add` flow in Settings has an agent that reaches `mqlens`
+            // without `{mcp_config}` — telling it the server is off would talk it
+            // out of an inspection it could actually do.
+            let reach = if mcp.is_none() {
+                ai::McpReach::Off
+            } else if provider.command.contains("{mcp_config}") {
+                ai::McpReach::Injected
+            } else {
+                ai::McpReach::Unknown
+            };
             let system = format!(
                 "{}{}",
                 system,
                 ai::mcp_availability_note(
-                    reachable,
+                    reach,
                     connectionName.as_deref(),
                     connectionId.as_deref(),
                     database.as_deref(),

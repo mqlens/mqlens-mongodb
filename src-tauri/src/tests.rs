@@ -729,6 +729,26 @@ mod tests {
     }
 
     #[test]
+    fn the_dispatch_distinguishes_all_three_reaches() {
+        // `mcp_availability_note` is tested on its own, and passed while the call
+        // site collapsed "no config injected" back into "server off" — the same
+        // shape of gap as the credentials wiring. Computing the reach needs a live
+        // AppHandle, so this pins the call site.
+        let src = include_str!("lib.rs");
+        let call = src.find("ai::mcp_availability_note(").expect("the note's call site");
+        let arm = src[..call].rfind("LocalCli =>").expect("its match arm");
+        let dispatch = &src[arm..call];
+        for state in ["McpReach::Off", "McpReach::Injected", "McpReach::Unknown"] {
+            assert!(dispatch.contains(state), "the dispatch must distinguish {state}");
+        }
+        // Injected is the only one that may be concluded from the command text.
+        assert!(
+            dispatch.contains("contains(\"{mcp_config}\")"),
+            "injection is decided by the command carrying the placeholder"
+        );
+    }
+
+    #[test]
     fn the_agents_endpoint_is_wired_to_the_helper_credentials() {
         // `helper_access` and `mcp_config_json` are each tested on their own, and
         // both passed while `lib.rs` still handed over the *external* token — the
@@ -851,13 +871,32 @@ mod tests {
     #[test]
     fn the_agent_is_told_whether_mqlens_tools_are_reachable() {
         use crate::ai::mcp_availability_note;
-        let on = mcp_availability_note(true, Some("prod"), Some("conn-7"), Some("shop"), "orders");
+        let on = mcp_availability_note(crate::ai::McpReach::Injected, Some("prod"), Some("conn-7"), Some("shop"), "orders");
         assert!(on.contains("schema_analysis"), "{on}");
         assert!(on.contains("not observed data") || on.contains("observed"), "{on}");
-        let off = mcp_availability_note(false, Some("prod"), Some("conn-7"), Some("shop"), "orders");
+        let off = mcp_availability_note(crate::ai::McpReach::Off, Some("prod"), Some("conn-7"), Some("shop"), "orders");
         assert!(off.contains("switched off"), "{off}");
         // ...and told to say what it could not check, rather than implying it did.
         assert!(off.contains("could not verify"), "{off}");
+
+        // The third state, which is the honest one when the server is up but this
+        // command was handed no config: the user may have configured the agent
+        // globally via `claude mcp add`, and claiming the server is off would talk
+        // it out of an inspection it can actually do.
+        let unknown = mcp_availability_note(
+            crate::ai::McpReach::Unknown,
+            Some("prod"),
+            Some("conn-7"),
+            Some("shop"),
+            "orders",
+        );
+        assert!(unknown.contains("may be available"), "{unknown}");
+        assert!(!unknown.contains("switched off"), "must not claim it is off: {unknown}");
+        // Still told to report what it could not check, either way.
+        assert!(unknown.contains("could not verify"), "{unknown}");
+        // ...and only the genuinely-off case says so.
+        assert!(off.contains("switched off"), "{off}");
+        assert!(!on.contains("switched off"), "{on}");
 
         // Both name the namespace outright: told to inspect but not *where*, an
         // agent picks one itself, and two connections can hold `shop.orders`.
@@ -869,10 +908,10 @@ mod tests {
             assert!(note.contains("`conn-7`"), "{note}");
         }
         // Without a connection name it still says which collection is meant.
-        let partial = mcp_availability_note(true, None, Some("conn-7"), Some("shop"), "orders");
+        let partial = mcp_availability_note(crate::ai::McpReach::Injected, None, Some("conn-7"), Some("shop"), "orders");
         assert!(partial.contains("`shop.orders`"), "{partial}");
         // And says nothing misleading when the tab has no database yet.
-        let bare = mcp_availability_note(true, None, None, None, "orders");
+        let bare = mcp_availability_note(crate::ai::McpReach::Injected, None, None, None, "orders");
         assert!(!bare.contains("Use exactly that namespace"), "{bare}");
     }
 
