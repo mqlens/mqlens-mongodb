@@ -802,6 +802,24 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// are always the same fixed length (32 bytes), so `constant_time_eq`'s own
 /// length check never itself becomes a side channel on the real token's
 /// length.
+/// Where MQLens's own agent should connect, when the server is running.
+///
+/// Deliberately not part of `McpStatusUi`: that goes to the frontend for display,
+/// and the helper token has no business there. Only the backend, handing it to an
+/// agent it is about to run, ever needs it.
+pub fn helper_access(state: &AppState) -> Option<(u16, String)> {
+    let control = state.mcp.lock().ok()?;
+    if !control.enabled || control.helper_token.is_empty() {
+        return None;
+    }
+    Some((control.port, control.helper_token.clone()))
+}
+
+/// The path MQLens's own agent connects on. See `MCP_HELPER_PATH`.
+pub fn helper_path() -> &'static str {
+    MCP_HELPER_PATH
+}
+
 /// The user's answer to one of those requests, from the panel.
 ///
 /// Unknown ids are accepted quietly: the request may have already timed out, and
@@ -1024,6 +1042,41 @@ mod tests {
         state.mcp_write_confirms.lock().unwrap().insert("req-3".into(), tx);
         state.mcp_write_confirms.lock().unwrap().clear(); // sender dropped
         assert!(rx.await.is_err(), "a dropped sender must not resolve to true");
+    }
+
+    #[test]
+    fn the_agent_is_never_handed_the_external_token() {
+        // The whole point: MQLens's own agent gets credentials that route through
+        // the confirmation, and never the ones an external client uses — which
+        // would take it straight back to the `_confirm` honour system.
+        let state = AppState::new();
+        {
+            let mut control = state.mcp.lock().unwrap();
+            control.enabled = true;
+            control.port = 8765;
+            control.token = "external".into();
+            control.helper_token = "helper".into();
+        }
+        let (port, token) = helper_access(&state).expect("running server");
+        assert_eq!(port, 8765);
+        assert_eq!(token, "helper");
+        assert_ne!(token, "external");
+        assert_eq!(helper_path(), "/helper/mcp");
+    }
+
+    #[test]
+    fn a_disabled_server_offers_the_agent_nothing() {
+        // No credentials at all rather than stale ones: `generate_local` then
+        // refuses a command asking for {mcp_config} instead of quietly running
+        // without the tools.
+        let state = AppState::new();
+        assert!(helper_access(&state).is_none(), "disabled");
+
+        let mut control = state.mcp.lock().unwrap();
+        control.enabled = true;
+        control.helper_token = String::new();
+        drop(control);
+        assert!(helper_access(&state).is_none(), "enabled but no token minted yet");
     }
 
     #[test]

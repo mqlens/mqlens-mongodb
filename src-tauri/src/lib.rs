@@ -1333,10 +1333,13 @@ async fn generate_mql_query(
             }
             // Only a local agent can reach MQLens's own MCP server; an HTTP
             // provider is asked for one completion and calls nothing.
-            let mcp = mcp::get_status_impl(&state)
-                .ok()
-                .filter(|s| s.enabled)
-                .map(|s| ai::McpEndpoint { port: s.port, token: s.token });
+            // The helper token and path, never the ones an external client uses:
+            // a write asked for on this route has to be confirmed by the user.
+            let mcp = mcp::helper_access(&state).map(|(port, token)| ai::McpEndpoint {
+                port,
+                token,
+                path: mcp::helper_path().to_string(),
+            });
             // Available means *reachable by this command*, not merely running. A
             // command without {mcp_config} is handed no config, so telling its
             // agent the tools are there invites it to imply it checked something

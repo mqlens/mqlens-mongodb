@@ -1268,9 +1268,14 @@ pub fn mcp_availability_note(
 ///
 /// Loopback only: the server binds `127.0.0.1`, and the token is the whole of its
 /// authentication, so this never belongs anywhere but on this machine.
+///
+/// `token` is the *helper* token and `path` the helper path, never the ones an
+/// external client uses. That separation is what makes the agent's writes go
+/// through the user instead of through a boolean the agent sets itself.
 pub struct McpEndpoint {
     pub port: u16,
     pub token: String,
+    pub path: String,
 }
 
 /// The MCP client config for MQLens's own server.
@@ -1284,7 +1289,7 @@ pub fn mcp_config_json(endpoint: &McpEndpoint) -> String {
         "mcpServers": {
             "mqlens": {
                 "type": "http",
-                "url": format!("http://127.0.0.1:{}/mcp", endpoint.port),
+                "url": format!("http://127.0.0.1:{}{}", endpoint.port, endpoint.path),
                 "headers": { "Authorization": format!("Bearer {}", endpoint.token) }
             }
         }

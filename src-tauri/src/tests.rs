@@ -729,6 +729,38 @@ mod tests {
     }
 
     #[test]
+    fn the_agents_endpoint_is_wired_to_the_helper_credentials() {
+        // `helper_access` and `mcp_config_json` are each tested on their own, and
+        // both passed while `lib.rs` still handed over the *external* token — the
+        // wiring between them was the untested part, and it is the part that was
+        // vulnerable. Exercising it properly needs a live `AppHandle`, so this
+        // pins the call site instead.
+        let src = include_str!("lib.rs");
+        // Anchored on the call itself: `ProviderKind::LocalCli` also appears in
+        // the model-listing helper, and matching that one proves nothing.
+        let call = src.find("ai::generate_local(").expect("the local-agent dispatch");
+        // From the arm that precedes the call to the call itself — a fixed window
+        // of characters was not enough, and `ProviderKind::LocalCli` also appears
+        // in the model-listing helper, so matching the first one proves nothing.
+        let arm = src[..call].rfind("LocalCli =>").expect("its match arm");
+        let dispatch = &src[arm..call];
+        assert!(
+            dispatch.contains("mcp::helper_access("),
+            "the agent's endpoint must come from helper_access"
+        );
+        assert!(
+            dispatch.contains("mcp::helper_path()"),
+            "and its path from helper_path"
+        );
+        // The external token reaches the frontend for display; it must never be
+        // what the agent is handed.
+        assert!(
+            !dispatch.contains("get_status_impl"),
+            "the agent must not be given the external token"
+        );
+    }
+
+    #[test]
     fn the_mcp_config_is_the_shape_the_agent_expects() {
         // Not inferred: this is what `claude mcp add --transport http` writes
         // itself. A config an agent cannot parse fails by silently having no
@@ -736,15 +768,20 @@ mod tests {
         use crate::ai::{mcp_config_json, McpEndpoint};
         let json: serde_json::Value = serde_json::from_str(&mcp_config_json(&McpEndpoint {
             port: 8765,
-            token: "tok-123".into(),
+            token: "helper-tok".into(),
+            path: crate::mcp::helper_path().to_string(),
         }))
         .unwrap();
         let server = &json["mcpServers"]["mqlens"];
         assert_eq!(server["type"], "http");
-        assert_eq!(server["url"], "http://127.0.0.1:8765/mcp");
-        assert_eq!(server["headers"]["Authorization"], "Bearer tok-123");
+        assert_eq!(server["headers"]["Authorization"], "Bearer helper-tok");
         // Loopback, always: the token is the whole of the server's authentication.
-        assert!(server["url"].as_str().unwrap().starts_with("http://127.0.0.1:"));
+        let url = server["url"].as_str().unwrap();
+        assert!(url.starts_with("http://127.0.0.1:8765"), "{url}");
+        // The helper route, never the one external clients use — that separation
+        // is what puts the agent's writes in front of the user.
+        assert!(url.ends_with("/helper/mcp"), "{url}");
+        assert_ne!(url, "http://127.0.0.1:8765/mcp");
     }
 
     #[cfg(unix)]
@@ -771,7 +808,11 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let endpoint = crate::ai::McpEndpoint { port: 8765, token: "tok-abc".into() };
+        let endpoint = crate::ai::McpEndpoint {
+            port: 8765,
+            token: "tok-abc".into(),
+            path: crate::mcp::helper_path().to_string(),
+        };
         let reply = crate::ai::generate_local(
             &format!("{} {{mcp_config}} {{prompt}}", stub.to_string_lossy()),
             "anything",
