@@ -59,6 +59,9 @@ pub const DEFAULT_PORT: u16 = 8765;
 
 /// HTTP path the streamable-HTTP service is nested under.
 const MCP_PATH: &str = "/mcp";
+/// Where MQLens's own agent connects. A separate path rather than a flag on the
+/// request, because `rmcp` builds its server per session with no view of it.
+const MCP_HELPER_PATH: &str = "/helper/mcp";
 
 /// How long `stop_if_running` waits for the server task's graceful shutdown
 /// (in-flight requests finishing, then `axum::serve` returning) before
@@ -116,6 +119,14 @@ pub struct McpControl {
     /// disconnect what it connected, never a connection a human opened by
     /// hand, even if that connection's profile happens to be opted in.
     pub session_connections: std::collections::HashSet<String>,
+    /// A second token, for MQLens's own query-generation agent.
+    ///
+    /// It reaches the same tools on a separate path, so the server can tell the
+    /// two apart without threading per-request state through `rmcp`: an external
+    /// client keeps exactly today's behaviour, while a write asked for by the
+    /// helper has to be confirmed by the user in the app first. The agent is
+    /// handed this one and never the token an external client uses.
+    pub helper_token: String,
 }
 
 impl McpControl {
@@ -127,6 +138,7 @@ impl McpControl {
             log: VecDeque::new(),
             server: None,
             session_connections: std::collections::HashSet::new(),
+            helper_token: String::new(),
         }
     }
 }
@@ -269,11 +281,14 @@ pub async fn set_enabled_impl(
     // stale) value. Storing the token first means the very first request
     // the new task can possibly serve already sees the right one.
     let token = new_token();
+    let helper_token = new_token();
     {
         let mut control = state.mcp.lock_safe()?;
         control.enabled = true;
         control.port = port;
         control.token = token;
+        // Minted with it and, like it, distinct every time the server starts.
+        control.helper_token = helper_token;
     }
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -316,6 +331,9 @@ pub async fn stop_if_running(state: &AppState) -> Result<(), String> {
         // defense in depth, not the only thing preventing a stale-token
         // auth bypass).
         control.token = String::new();
+        // Fail-closed alongside it: a helper token surviving a disable would be a
+        // way back in to a server the user has switched off.
+        control.helper_token = String::new();
         control.server.take()
     }; // guard dropped here, before the await below.
 
@@ -338,6 +356,8 @@ pub async fn stop_if_running(state: &AppState) -> Result<(), String> {
 pub fn regenerate_token_impl(state: &AppState) -> Result<McpStatusUi, String> {
     let mut control = state.mcp.lock_safe()?;
     control.token = new_token();
+    // Both, or "regenerate" would leave the older of the two still working.
+    control.helper_token = new_token();
     Ok(status_from(&control))
 }
 
@@ -354,6 +374,8 @@ struct McpServer {
     /// `rmcp-2.2.0/tests/test_progress_subscriber.rs`).
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
+    /// True for MQLens's own query-generation agent. See `MCP_HELPER_PATH`.
+    helper: bool,
     /// `Some` for every server actually spawned by `set_enabled_impl` (see
     /// its doc comment); `None` only for the bare `McpServer` values the
     /// golden-snapshot test below builds to introspect `tool_router()`
@@ -366,7 +388,13 @@ struct McpServer {
 
 impl McpServer {
     fn new(app_handle: Option<tauri::AppHandle>) -> Self {
-        Self { tool_router: Self::tool_router(), app_handle }
+        Self { tool_router: Self::tool_router(), app_handle, helper: false }
+    }
+
+    /// A server for MQLens's own agent: same tools, but a write must be confirmed
+    /// by the user in the app rather than by the agent asserting it asked.
+    fn new_helper(app_handle: Option<tauri::AppHandle>) -> Self {
+        Self { tool_router: Self::tool_router(), app_handle, helper: true }
     }
 
     /// Resolves `self.app_handle` into `(AppHandle, encrypted-profiles-path)`
@@ -754,7 +782,11 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// are always the same fixed length (32 bytes), so `constant_time_eq`'s own
 /// length check never itself becomes a side channel on the real token's
 /// length.
-fn bearer_token_matches(control: &StdMutex<McpControl>, headers: &axum::http::HeaderMap) -> bool {
+fn bearer_token_matches(
+    control: &StdMutex<McpControl>,
+    headers: &axum::http::HeaderMap,
+    helper_path: bool,
+) -> bool {
     let Some(header_value) = headers.get(axum::http::header::AUTHORIZATION) else {
         return false;
     };
@@ -770,7 +802,9 @@ fn bearer_token_matches(control: &StdMutex<McpControl>, headers: &axum::http::He
     // Fail-closed: an empty stored token (server never enabled, or between
     // `stop_if_running` clearing it and a future re-enable minting a fresh
     // one) must never match anything, no matter what's presented.
-    if guard.token.is_empty() {
+    // The token for *this* path, and only this one.
+    let expected = if helper_path { &guard.helper_token } else { &guard.token };
+    if expected.is_empty() {
         return false;
     }
 
@@ -779,7 +813,7 @@ fn bearer_token_matches(control: &StdMutex<McpControl>, headers: &axum::http::He
     let presented_digest = presented_hasher.finalize();
 
     let mut expected_hasher = Sha256::new();
-    expected_hasher.update(guard.token.as_bytes());
+    expected_hasher.update(expected.as_bytes());
     let expected_digest = expected_hasher.finalize();
 
     constant_time_eq(&presented_digest, &expected_digest)
@@ -804,22 +838,40 @@ fn unauthorized_response() -> axum::response::Response {
 /// bounds how long a caller waits for that.
 async fn run_server(listener: TcpListener, mcp: Arc<StdMutex<McpControl>>, app_handle: Option<tauri::AppHandle>, shutdown_rx: oneshot::Receiver<()>) {
     let session_manager: Arc<LocalSessionManager> = Default::default();
+    let helper_handle = app_handle.clone();
     let http_service: StreamableHttpService<McpServer, LocalSessionManager> =
         StreamableHttpService::new(move || Ok(McpServer::new(app_handle.clone())), session_manager, StreamableHttpServerConfig::default());
+    // MQLens's own agent, on its own path with its own token and its own rules
+    // for writes. Same tools; `rmcp` builds a server per session with no view of
+    // the request, so the path is what tells them apart.
+    let helper_service: StreamableHttpService<McpServer, LocalSessionManager> =
+        StreamableHttpService::new(
+            move || Ok(McpServer::new_helper(helper_handle.clone())),
+            Default::default(),
+            StreamableHttpServerConfig::default(),
+        );
 
     let auth_mcp = Arc::clone(&mcp);
-    let router = axum::Router::new().nest_service(MCP_PATH, http_service).layer(axum::middleware::from_fn(
-        move |req: axum::extract::Request, next: axum::middleware::Next| {
-            let mcp = Arc::clone(&auth_mcp);
-            async move {
-                if bearer_token_matches(&mcp, req.headers()) {
-                    next.run(req).await
-                } else {
-                    unauthorized_response()
+    let router = axum::Router::new()
+        .nest_service(MCP_HELPER_PATH, helper_service)
+        .nest_service(MCP_PATH, http_service)
+        .layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| {
+                let mcp = Arc::clone(&auth_mcp);
+                async move {
+                    // Each token is accepted only on its own path. Accepting
+                    // either on both would make the split cosmetic: an external
+                    // client could take the helper's route and its write rules,
+                    // or the agent could take the external one and escape them.
+                    let helper_path = req.uri().path().starts_with(MCP_HELPER_PATH);
+                    if bearer_token_matches(&mcp, req.headers(), helper_path) {
+                        next.run(req).await
+                    } else {
+                        unauthorized_response()
+                    }
                 }
-            }
-        },
-    ));
+            },
+        ));
 
     if let Err(e) = axum::serve(listener, router.into_make_service())
         .with_graceful_shutdown(async move {
@@ -835,6 +887,44 @@ async fn run_server(listener: TcpListener, mcp: Arc<StdMutex<McpControl>>, app_h
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+
+    fn headers_with(token: &str) -> axum::http::HeaderMap {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        h
+    }
+
+    #[test]
+    fn each_token_works_only_on_its_own_path() {
+        // The split is the whole basis of the helper's stricter write rules. If
+        // either token were accepted on both paths it would be cosmetic: an
+        // external client could take the helper's route, or the agent could take
+        // the external one and escape the confirmation.
+        let control = StdMutex::new(McpControl {
+            token: "outside".into(),
+            helper_token: "inside".into(),
+            ..McpControl::new()
+        });
+
+        assert!(bearer_token_matches(&control, &headers_with("outside"), false));
+        assert!(!bearer_token_matches(&control, &headers_with("outside"), true));
+        assert!(bearer_token_matches(&control, &headers_with("inside"), true));
+        assert!(!bearer_token_matches(&control, &headers_with("inside"), false));
+        assert!(!bearer_token_matches(&control, &headers_with("neither"), true));
+    }
+
+    #[test]
+    fn a_stopped_server_accepts_neither_token() {
+        // Fail-closed on both, or a stale helper token would be a way back in to
+        // a server the user has switched off.
+        let control = StdMutex::new(McpControl::new());
+        assert!(!bearer_token_matches(&control, &headers_with(""), false));
+        assert!(!bearer_token_matches(&control, &headers_with(""), true));
+        assert!(!bearer_token_matches(&control, &headers_with("anything"), true));
+    }
 
     /// Binds a *real, currently-occupied* ephemeral port and returns both
     /// the listener (keep it alive — dropping it frees the port) and its
