@@ -632,7 +632,11 @@ impl McpServer {
         // MQLens's own agent asks the user; an external client keeps the
         // `_confirm` contract its operator opted into.
         if self.helper {
-            confirm_write(&app_handle, "insert_one", &summary).await?;
+            confirm_write(&app_handle, "insert_one", serde_json::json!({
+                "connectionId": args.connection_id,
+                "namespace": format!("{}.{}", args.database, args.collection),
+                "document": args.document,
+            })).await?;
         }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::insert_one_impl(&state, &path, args)).await;
         finish_json(&state, "insert_one", Some(connection_id), &summary, result)
@@ -652,7 +656,12 @@ impl McpServer {
         // MQLens's own agent asks the user; an external client keeps the
         // `_confirm` contract its operator opted into.
         if self.helper {
-            confirm_write(&app_handle, "update_many", &summary).await?;
+            confirm_write(&app_handle, "update_many", serde_json::json!({
+                "connectionId": args.connection_id,
+                "namespace": format!("{}.{}", args.database, args.collection),
+                "filter": args.filter,
+                "update": args.update,
+            })).await?;
         }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::update_many_tool_impl(&state, &path, args)).await;
         finish_json(&state, "update_many", Some(connection_id), &summary, result)
@@ -669,7 +678,11 @@ impl McpServer {
         // MQLens's own agent asks the user; an external client keeps the
         // `_confirm` contract its operator opted into.
         if self.helper {
-            confirm_write(&app_handle, "delete_many", &summary).await?;
+            confirm_write(&app_handle, "delete_many", serde_json::json!({
+                "connectionId": args.connection_id,
+                "namespace": format!("{}.{}", args.database, args.collection),
+                "filter": args.filter,
+            })).await?;
         }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::delete_many_tool_impl(&state, &path, args)).await;
         finish_json(&state, "delete_many", Some(connection_id), &summary, result)
@@ -697,7 +710,13 @@ impl McpServer {
         // MQLens's own agent asks the user; an external client keeps the
         // `_confirm` contract its operator opted into.
         if self.helper {
-            confirm_write(&app_handle, "create_index", &summary).await?;
+            confirm_write(&app_handle, "create_index", serde_json::json!({
+                "connectionId": args.connection_id,
+                "namespace": format!("{}.{}", args.database, args.collection),
+                "keys": args.keys,
+                "name": args.name,
+                "unique": args.unique,
+            })).await?;
         }
         let result = crate::audit::with_source("mcp", crate::mcp_tools::create_index_tool_impl(&state, &path, args)).await;
         finish_json(&state, "create_index", Some(connection_id), &summary, result)
@@ -850,7 +869,7 @@ const WRITE_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 async fn confirm_write(
     app_handle: &tauri::AppHandle,
     tool: &str,
-    summary: &str,
+    details: serde_json::Value,
 ) -> Result<(), String> {
     use tauri::{Emitter, Manager};
     let state = app_handle.state::<AppState>();
@@ -860,9 +879,14 @@ async fn confirm_write(
         let mut pending = state.mcp_write_confirms.lock_safe()?;
         pending.insert(id.clone(), tx);
     }
+    // The operation itself, not the call-log summary. That summary reports a
+    // filter as a byte count — enough for a log line, useless for a decision:
+    // `{"state":"OLD"}` and `{}` are both "34 bytes", and one of them empties the
+    // collection. Whoever is approving has to see what will actually run.
+    let shown = serde_json::to_string_pretty(&details).unwrap_or_else(|_| details.to_string());
     let emitted = app_handle.emit(
         "mcp-write-request",
-        serde_json::json!({ "id": id, "tool": tool, "summary": summary }),
+        serde_json::json!({ "id": id, "tool": tool, "summary": shown }),
     );
     if emitted.is_err() {
         // Nobody can be asked, so nobody has agreed.
@@ -898,7 +922,7 @@ async fn confirm_write(
     // Recorded whichever way it went. The write's own audit entry only exists if
     // it ran, so a refusal would otherwise leave no trace — and "the agent asked
     // to delete and was told no" is exactly what a trail is for.
-    let asked = format!("{tool}: {summary}");
+    let asked = format!("{tool}: {}", details);
     crate::audit::maybe_record(
         &state,
         crate::audit::RecordInput {
@@ -1037,6 +1061,26 @@ mod tests {
             format!("Bearer {token}").parse().unwrap(),
         );
         h
+    }
+
+    #[test]
+    fn the_approval_prompt_shows_what_would_actually_run() {
+        // The call-log summary reports a filter as a byte count. `{"state":"OLD"}`
+        // and `{}` are both "34 bytes", and one of them empties the collection —
+        // so approving from that summary is approving blind.
+        let details = serde_json::json!({
+            "connectionId": "conn-1",
+            "namespace": "shop.orders",
+            "filter": { "state": "OLD" },
+        });
+        let shown = serde_json::to_string_pretty(&details).unwrap();
+        assert!(shown.contains("\"state\""), "{shown}");
+        assert!(shown.contains("OLD"), "{shown}");
+        assert!(shown.contains("shop.orders"), "{shown}");
+        // The connection is named too: two profiles can share a display name.
+        assert!(shown.contains("conn-1"), "{shown}");
+        // And nothing is reduced to a size.
+        assert!(!shown.contains("filter_bytes"), "{shown}");
     }
 
     #[tokio::test]

@@ -1556,8 +1556,12 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   {t('aiChatPanel.writeRequestTitle')}
                 </span>
               </div>
-              <pre className="max-h-[120px] overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-relaxed text-muted-foreground">
-                {writeRequests[0].tool}: {writeRequests[0].summary}
+              {/* The operation itself, pretty-printed. Taller than a one-line
+                  summary on purpose: the filter is the thing that has to be read
+                  before answering, not scrolled past. */}
+              <div className="font-mono text-[10px] text-foreground">{writeRequests[0].tool}</div>
+              <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-relaxed text-muted-foreground">
+                {writeRequests[0].summary}
               </pre>
               <div className="flex gap-1.5">
                 <Button
