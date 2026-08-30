@@ -1228,21 +1228,30 @@ pub async fn generate_gemini(
 pub fn mcp_availability_note(
     available: bool,
     connection: Option<&str>,
+    connection_id: Option<&str>,
     database: Option<&str>,
     collection: &str,
 ) -> String {
     // Named outright. Told to inspect but not *where*, an agent picks a namespace
     // itself, and two connections can hold collections of the same name — so the
     // query comes back looking right and built from another environment's data.
+    // The id, not just the name: two profiles may share a display name, and the
+    // tools take an id anyway — so naming it removes the guess entirely rather
+    // than asking the agent to resolve a label that may match two connections.
+    let identified = match connection_id {
+        Some(id) if !id.is_empty() => format!(" Its connection_id is `{id}` — pass that."),
+        _ => String::new(),
+    };
     let namespace = match (connection, database) {
         (Some(c), Some(d)) if !c.is_empty() && !d.is_empty() => format!(
             "\n\nThe question is about `{d}.{collection}` on the connection named \
-             `{c}`, which is the one open in front of the user. Use exactly that \
-             namespace; do not pick another connection or database, and if the tools \
-             show more than one candidate, say so rather than guessing."
+             `{c}`, which is the one open in front of the user.{identified} Use exactly \
+             that namespace; do not pick another connection or database, and if the \
+             tools show more than one candidate, say so rather than guessing."
         ),
         (_, Some(d)) if !d.is_empty() => format!(
-            "\n\nThe question is about `{d}.{collection}`. Use exactly that namespace."
+            "\n\nThe question is about `{d}.{collection}`.{identified} Use exactly that \
+             namespace."
         ),
         _ => String::new(),
     };

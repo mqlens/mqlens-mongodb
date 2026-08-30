@@ -11,7 +11,9 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock
 // broadcast. Captured here so a test can fire it, and so the real `listen` is
 // not reached in jsdom.
 const providerListeners: Array<() => void> = [];
-const writeRequestListeners: Array<(r: { id: string; tool: string; summary: string }) => void> = [];
+const writeRequestListeners: Array<
+  (r: { id: string; tool: string; summary: string; requester: string }) => void
+> = [];
 vi.mock('../../workspace/workspaceStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../workspace/workspaceStore')>()),
   subscribeMcpWriteRequest: (fn: (r: any) => void) => {

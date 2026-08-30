@@ -851,10 +851,10 @@ mod tests {
     #[test]
     fn the_agent_is_told_whether_mqlens_tools_are_reachable() {
         use crate::ai::mcp_availability_note;
-        let on = mcp_availability_note(true, Some("prod"), Some("shop"), "orders");
+        let on = mcp_availability_note(true, Some("prod"), Some("conn-7"), Some("shop"), "orders");
         assert!(on.contains("schema_analysis"), "{on}");
         assert!(on.contains("not observed data") || on.contains("observed"), "{on}");
-        let off = mcp_availability_note(false, Some("prod"), Some("shop"), "orders");
+        let off = mcp_availability_note(false, Some("prod"), Some("conn-7"), Some("shop"), "orders");
         assert!(off.contains("switched off"), "{off}");
         // ...and told to say what it could not check, rather than implying it did.
         assert!(off.contains("could not verify"), "{off}");
@@ -864,12 +864,15 @@ mod tests {
         for note in [&on, &off] {
             assert!(note.contains("`shop.orders`"), "{note}");
             assert!(note.contains("`prod`"), "{note}");
+            // The id as well as the name: two profiles can share a display name,
+            // and the tools take an id, so this is the value the agent can use.
+            assert!(note.contains("`conn-7`"), "{note}");
         }
         // Without a connection name it still says which collection is meant.
-        let partial = mcp_availability_note(true, None, Some("shop"), "orders");
+        let partial = mcp_availability_note(true, None, Some("conn-7"), Some("shop"), "orders");
         assert!(partial.contains("`shop.orders`"), "{partial}");
         // And says nothing misleading when the tab has no database yet.
-        let bare = mcp_availability_note(true, None, None, "orders");
+        let bare = mcp_availability_note(true, None, None, None, "orders");
         assert!(!bare.contains("Use exactly that namespace"), "{bare}");
     }
 

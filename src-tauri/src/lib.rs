@@ -1254,6 +1254,9 @@ async fn generate_mql_query(
     // built from someone else's data.
     database: Option<String>,
     #[allow(non_snake_case)] connectionName: Option<String>,
+    // The id as well as the name: two profiles may share a display name, and the
+    // MCP tools take an id, so the agent can use this one directly.
+    #[allow(non_snake_case)] connectionId: Option<String>,
     // Identifies the panel making this request, so a write its agent asks for is
     // put to that panel and not to every other one on screen.
     #[allow(non_snake_case)] requesterId: Option<String>,
@@ -1376,6 +1379,7 @@ async fn generate_mql_query(
                 ai::mcp_availability_note(
                     reachable,
                     connectionName.as_deref(),
+                    connectionId.as_deref(),
                     database.as_deref(),
                     &collection,
                 )

@@ -272,6 +272,7 @@ const composerClassName = cn(
 );
 
 export const AIChatPanel: React.FC<AIChatPanelProps> = ({
+  connectionId,
   connectionName,
   databaseName,
   collectionName,
@@ -1121,6 +1122,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         // the user is actually looking at rather than one of the same name elsewhere.
         database: databaseName ?? undefined,
         connectionName: connectionName ?? undefined,
+        connectionId: connectionId ?? undefined,
         requesterId: panelIdRef.current,
         history,
         target: variant === 'shell' ? 'shell' : 'editor',
