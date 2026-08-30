@@ -11,8 +11,16 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock
 // broadcast. Captured here so a test can fire it, and so the real `listen` is
 // not reached in jsdom.
 const providerListeners: Array<() => void> = [];
+const writeRequestListeners: Array<(r: { id: string; tool: string; summary: string }) => void> = [];
 vi.mock('../../workspace/workspaceStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../workspace/workspaceStore')>()),
+  subscribeMcpWriteRequest: (fn: (r: any) => void) => {
+    writeRequestListeners.push(fn);
+    return Promise.resolve(() => {
+      const i = writeRequestListeners.indexOf(fn);
+      if (i >= 0) writeRequestListeners.splice(i, 1);
+    });
+  },
   subscribeAiProvidersChanged: (fn: () => void) => {
     providerListeners.push(fn);
     return Promise.resolve(() => {
@@ -1447,6 +1455,56 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     // A failed call is marked as one rather than looking like it worked.
     expect(screen.getByTestId('chat-tool-call-1')).toHaveTextContent('list_indexes');
     expect(screen.getByTestId('chat-tool-call-1')).toHaveTextContent(/failed/i);
+  });
+
+  it('asks before the agent writes, and carries a refusal as a refusal', async () => {
+    // The write tools are gated on a flag the agent supplies itself, so for
+    // MQLens's own agent the person has to answer. A prompt that quietly approved
+    // would look identical on screen — hence asserting the payload, not the click.
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    expect(writeRequestListeners).not.toHaveLength(0);
+
+    await act(async () => {
+      writeRequestListeners.forEach((fn) =>
+        fn({ id: 'w1', tool: 'delete_many', summary: 'shop.orders where {"state":"OLD"}' }),
+      );
+    });
+
+    const prompt = await screen.findByTestId('chat-write-request');
+    // MQLens's own description of the call, so the agent cannot relabel it.
+    expect(prompt).toHaveTextContent('delete_many');
+    expect(prompt).toHaveTextContent('shop.orders');
+
+    fireEvent.click(screen.getByTestId('chat-write-refuse'));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('mcp_resolve_write', { id: 'w1', approved: false }),
+    );
+    expect(screen.queryByTestId('chat-write-request')).not.toBeInTheDocument();
+  });
+
+  it('queues a second write request rather than losing it', async () => {
+    // Two can arrive close together; replacing the first would leave its tool
+    // call parked until it timed out with nobody having seen it.
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+
+    await act(async () => {
+      writeRequestListeners.forEach((fn) => fn({ id: 'w1', tool: 'delete_many', summary: 'first' }));
+      writeRequestListeners.forEach((fn) => fn({ id: 'w2', tool: 'insert_one', summary: 'second' }));
+    });
+
+    expect(await screen.findByTestId('chat-write-request')).toHaveTextContent('first');
+    fireEvent.click(screen.getByTestId('chat-write-allow'));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('mcp_resolve_write', { id: 'w1', approved: true }),
+    );
+    // The second is still there to be answered.
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-write-request')).toHaveTextContent('second'),
+    );
   });
 
   it('re-reads its provider list when settings change elsewhere', async () => {

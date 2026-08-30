@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { History, Paperclip, Plus, RefreshCw, Sparkles, Trash2, User, Wrench, X } from 'lucide-react';
+import { AlertCircle, History, Paperclip, Plus, RefreshCw, Sparkles, Trash2, User, Wrench, X } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -19,7 +19,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { subscribeAiProvidersChanged } from '../workspace/workspaceStore';
+import {
+  subscribeAiProvidersChanged,
+  subscribeMcpWriteRequest,
+  type McpWriteRequest,
+} from '../workspace/workspaceStore';
 import { buildRunnableCommand, type GeneratedQuery } from '../lib/mongoCommand';
 import {
   getPendingChatRequest,
@@ -485,6 +489,37 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [loadingCliModels, setLoadingCliModels] = useState(false);
   /** Run a CLI provider's models command, because the user asked for it. */
   const [modelsFailed, setModelsFailed] = useState(false);
+  /**
+   * Writes the agent has asked for and the user has not answered.
+   *
+   * A queue rather than one slot: two requests can arrive close together, and
+   * replacing the first would leave its tool call parked until it times out with
+   * nobody having seen what it wanted to do.
+   */
+  const [writeRequests, setWriteRequests] = useState<McpWriteRequest[]>([]);
+  useEffect(() => {
+    let live = true;
+    let unlisten: (() => void) | null = null;
+    subscribeMcpWriteRequest((request) => {
+      if (live) setWriteRequests((prev) => [...prev, request]);
+    })
+      .then((off) => {
+        if (live) unlisten = off;
+        else off();
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+      unlisten?.();
+    };
+  }, []);
+
+  const answerWrite = (id: string, approved: boolean) => {
+    setWriteRequests((prev) => prev.filter((r) => r.id !== id));
+    // The backend refuses on its own if this never lands, so a failure here costs
+    // a refusal rather than an unintended write.
+    void invoke('mcp_resolve_write', { id, approved }).catch(() => {});
+  };
   const loadCliModels = async () => {
     if (!chatProviderId) return;
     setModelsFailed(false);
@@ -1505,6 +1540,47 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+          {/* What the agent wants to change, described by MQLens from the call
+              itself rather than by the agent — an agent that can be talked into
+              a delete can be talked into describing it as something else. */}
+          {writeRequests.length > 0 && (
+            <div
+              className="flex flex-col gap-1.5 rounded-lg border border-destructive/40 bg-destructive/5 p-2"
+              data-testid="chat-write-request"
+            >
+              <div className="flex items-center gap-1.5">
+                <AlertCircle size={12} className="shrink-0 text-destructive" />
+                <span className="text-[11px] font-medium text-foreground">
+                  {t('aiChatPanel.writeRequestTitle')}
+                </span>
+              </div>
+              <pre className="max-h-[120px] overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-relaxed text-muted-foreground">
+                {writeRequests[0].tool}: {writeRequests[0].summary}
+              </pre>
+              <div className="flex gap-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  className="h-6 px-2 text-[10.5px]"
+                  onClick={() => answerWrite(writeRequests[0].id, true)}
+                  data-testid="chat-write-allow"
+                >
+                  {t('aiChatPanel.writeRequestAllow')}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-[10.5px]"
+                  onClick={() => answerWrite(writeRequests[0].id, false)}
+                  data-testid="chat-write-refuse"
+                >
+                  {t('aiChatPanel.writeRequestRefuse')}
+                </Button>
+              </div>
             </div>
           )}
           {imageNote && (

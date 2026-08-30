@@ -63,7 +63,10 @@
     "thinking": "正在思考…",
     "thoughts": "思考过程",
     "toolCalls_other": "调用了 {{count}} 个工具",
-    "toolFailed": "失败"
+    "toolFailed": "失败",
+    "writeRequestAllow": "允许",
+    "writeRequestRefuse": "拒绝",
+    "writeRequestTitle": "助手想要修改数据"
   },
   "commandPalette": {
     "buckets": {

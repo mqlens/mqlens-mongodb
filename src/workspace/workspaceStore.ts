@@ -131,6 +131,26 @@ export function subscribeAiProvidersChanged(listener: () => void): Promise<Unlis
   return listen('ai-providers-changed', () => listener());
 }
 
+/** A write MQLens's own agent has asked to make, awaiting the user's answer. */
+export interface McpWriteRequest {
+  id: string;
+  tool: string;
+  summary: string;
+}
+
+/**
+ * Subscribe to writes MQLens's own agent asks for.
+ *
+ * The tool call is parked in the backend until `mcp_resolve_write` carries an
+ * answer back, and refuses on its own after two minutes — so a missed event
+ * costs a refusal, never an unintended write.
+ */
+export function subscribeMcpWriteRequest(
+  listener: (request: McpWriteRequest) => void
+): Promise<UnlistenFn> {
+  return listen<McpWriteRequest>('mcp-write-request', (event) => listener(event.payload));
+}
+
 /** Wire shape of the `connections-changed` broadcast (src-tauri/src/state.rs's `ConnectionsChangedPayload`). */
 export interface ConnectionEntry {
   id: string;

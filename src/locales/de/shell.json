@@ -64,7 +64,10 @@
     "thoughts": "Überlegung",
     "toolCalls_one": "{{count}} Tool ausgeführt",
     "toolCalls_other": "{{count}} Tools ausgeführt",
-    "toolFailed": "fehlgeschlagen"
+    "toolFailed": "fehlgeschlagen",
+    "writeRequestAllow": "Zulassen",
+    "writeRequestRefuse": "Ablehnen",
+    "writeRequestTitle": "Der Assistent möchte Daten ändern"
   },
   "commandPalette": {
     "buckets": {
