@@ -1325,8 +1325,21 @@ async fn generate_mql_query(
                     provider.name
                 ));
             }
+            // Only a local agent can reach MQLens's own MCP server; an HTTP
+            // provider is asked for one completion and calls nothing.
+            let mcp = mcp::get_status_impl(&state)
+                .ok()
+                .filter(|s| s.enabled)
+                .map(|s| ai::McpEndpoint { port: s.port, token: s.token });
+            let system = format!("{}{}", system, ai::mcp_availability_note(mcp.is_some()));
             let one_prompt = ai::combined_prompt(&system, &history, &prompt);
-            ai::generate_local(&provider.command, &one_prompt, &provider.model).await
+            ai::generate_local(
+                &provider.command,
+                &one_prompt,
+                &provider.model,
+                mcp.as_ref(),
+            )
+            .await
         }
     }
 }

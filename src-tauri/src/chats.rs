@@ -52,6 +52,10 @@ pub struct ChatMessage {
     /// The model's reasoning or working notes, shown collapsed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thoughts: Option<String>,
+    /// What a local agent ran to produce this answer. Kept with the message so
+    /// reopening the conversation shows the same working, not just the result.
+    #[serde(rename = "toolCalls", default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<crate::ai::AgentToolCall>,
     /// What was attached to a user turn. Metadata only: this store is plain
     /// JSON on disk, and screenshots of the user's own data do not belong in
     /// it. The bytes go to the provider once and are then dropped.
@@ -399,6 +403,8 @@ pub async fn append_chat_message(
     // drop it: the text and query survived the tab closing while the thoughts
     // silently did not, so History showed a reply that had never reasoned.
     thoughts: Option<String>,
+    // ...and what it ran, for the same reason.
+    #[allow(non_snake_case)] toolCalls: Option<Vec<crate::ai::AgentToolCall>>,
     updated_at: String,
 ) -> Result<(), String> {
     let _guard = store_lock();
@@ -415,6 +421,7 @@ pub async fn append_chat_message(
         query,
         error,
         thoughts,
+        tool_calls: toolCalls.unwrap_or_default(),
         attachments: None,
     });
     if chat.messages.len() > MAX_MESSAGES {

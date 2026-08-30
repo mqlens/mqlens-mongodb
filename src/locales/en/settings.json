@@ -13,7 +13,7 @@
     "historyRetentionMonths_other": "{{count}} months",
     "historyRetentionTitle": "AI Helper history",
     "localAgentTitle": "Local agent",
-    "localCommandHint": "Runs the agent locally using its own auth — no API key stored.",
+    "localCommandHint": "Runs the agent locally using its own auth — no API key stored. If the agent can print a structured event stream (Claude Code: --output-format stream-json --verbose), the tools it runs are shown with its reply. Add {mcp_config} where the agent takes an MCP config file (Claude Code: --mcp-config {mcp_config}) to give it MQLens's own tools — schema, indexes and sample values for the collection you are asking about.",
     "localCommandLabel": "Command (use {prompt} for the prompt)",
     "model": "Model",
     "notDetected": "✗ Not detected on PATH — install it or set an absolute path below.",

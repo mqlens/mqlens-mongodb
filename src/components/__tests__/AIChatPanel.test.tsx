@@ -1418,6 +1418,37 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     );
   });
 
+  it('shows what a local agent ran, above its thinking', async () => {
+    // A local agent does real work before answering. That used to arrive as
+    // undifferentiated prose in the Thinking block; now the calls are their own.
+    invokeMock.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'ai_provider_options') return Promise.resolve(OPTIONS);
+      if (cmd === 'list_ai_models_for') return Promise.resolve([]);
+      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, args));
+      if (cmd === 'generate_mql_query') {
+        return Promise.resolve({
+          query: JSON.stringify({ explanation: 'From the schema.', queryType: 'find', filter: { state: 'DONE' } }),
+          toolCalls: [
+            { name: 'schema_analysis', input: '{"collection":"orders"}', output: 'state: DONE | PENDING' },
+            { name: 'list_indexes', output: 'none', failed: true },
+          ],
+        });
+      }
+      return Promise.resolve(null);
+    });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    send('which orders are done');
+
+    const block = await screen.findByTestId('chat-tool-calls');
+    expect(block).toHaveTextContent(/2 tools/);
+    expect(screen.getByTestId('chat-tool-call-0')).toHaveTextContent('schema_analysis');
+    expect(screen.getByTestId('chat-tool-call-0')).toHaveTextContent('DONE | PENDING');
+    // A failed call is marked as one rather than looking like it worked.
+    expect(screen.getByTestId('chat-tool-call-1')).toHaveTextContent('list_indexes');
+    expect(screen.getByTestId('chat-tool-call-1')).toHaveTextContent(/failed/i);
+  });
+
   it('re-reads its provider list when settings change elsewhere', async () => {
     // Settings can be open in another pane or window. The list was fetched once,
     // so deleting the selected provider there left its id selected here and the

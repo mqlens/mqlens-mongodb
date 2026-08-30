@@ -8,7 +8,7 @@
     "detectedInstalled": "✓ Installiert",
     "detectedInstalledWithVersion": "✓ Installiert — {{version}}",
     "localAgentTitle": "Lokaler Agent",
-    "localCommandHint": "Führt den Agenten lokal mit seiner eigenen Authentifizierung aus — es wird kein API-Schlüssel gespeichert.",
+    "localCommandHint": "Führt den Agenten lokal mit seiner eigenen Anmeldung aus — kein API-Schlüssel gespeichert. Kann der Agent einen strukturierten Ereignisstrom ausgeben (Claude Code: --output-format stream-json --verbose), werden die von ihm ausgeführten Tools zur Antwort angezeigt. Mit {mcp_config} an der Stelle, an der der Agent eine MCP-Konfigurationsdatei erwartet (Claude Code: --mcp-config {mcp_config}), erhält er MQLens' eigene Tools — Schema, Indizes und Beispielwerte der gefragten Collection.",
     "localCommandLabel": "Befehl (verwende {prompt} für den Prompt)",
     "model": "Modell",
     "notDetected": "✗ Nicht im PATH gefunden — installiere es oder gib unten einen absoluten Pfad an.",

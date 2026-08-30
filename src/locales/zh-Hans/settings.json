@@ -12,7 +12,7 @@
     "historyRetentionMonths_other": "{{count}} 个月",
     "historyRetentionTitle": "AI 助手历史记录",
     "localAgentTitle": "本地代理",
-    "localCommandHint": "使用代理自身的凭据在本地运行 —— 不会保存 API 密钥。",
+    "localCommandHint": "使用代理自身的登录信息在本地运行 — 不存储 API 密钥。若代理能输出结构化事件流（Claude Code：--output-format stream-json --verbose），其调用的工具会随回复一并显示。在代理接受 MCP 配置文件的位置加入 {mcp_config}（Claude Code：--mcp-config {mcp_config}），即可让它使用 MQLens 自带的工具 — 所查询集合的结构、索引与示例值。",
     "localCommandLabel": "命令（用 {prompt} 表示提示词）",
     "model": "模型",
     "notDetected": "✗ 未在 PATH 中找到 —— 请先安装，或在下方填写绝对路径。",

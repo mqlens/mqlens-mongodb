@@ -86,9 +86,9 @@
     "header": {
       "closeTitle": "Close AI Assistant",
       "loadModels": "Load models",
-    "model": "Model",
+      "model": "Model",
       "modelPlaceholder": "model",
-    "modelsFailed": "Could not load models. Type the name instead.",
+      "modelsFailed": "Could not load models. Type the name instead.",
       "provider": "Provider",
       "title": "AI Query Assistant",
       "typeModel": "Type a model name…"
@@ -117,7 +117,10 @@
       "you": "You"
     },
     "thinking": "Thinking…",
-    "thoughts": "Thinking"
+    "thoughts": "Thinking",
+    "toolCalls_one": "Ran {{count}} tool",
+    "toolCalls_other": "Ran {{count}} tools",
+    "toolFailed": "failed"
   },
   "commandPalette": {
     "buckets": {

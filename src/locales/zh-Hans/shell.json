@@ -6,6 +6,10 @@
       "insert": "插入",
       "insertAndRun": "插入并运行"
     },
+    "attachments": {
+      "image": "图片，{{size}}",
+      "remove": "移除图片"
+    },
     "composer": {
       "placeholder": "用自然语言描述查询…（Enter 发送，Shift+Enter 换行）",
       "send": "发送",
@@ -18,6 +22,9 @@
     },
     "empty": {
       "body": "用日常语言描述你要的查询 —— 例如 <i>“年龄大于 30 的活跃用户，按年龄排序”</i> 或<i> “每位客户的平均订单金额”</i>。我会说明处理思路，你可以直接插入结果。"
+    },
+    "errors": {
+      "noQuery": "模型未返回查询。请换一种说法，或选择其他模型。"
     },
     "fallbackExplanation": "这是一个查询。",
     "header": {
@@ -55,13 +62,8 @@
     },
     "thinking": "正在思考…",
     "thoughts": "思考过程",
-    "attachments": {
-      "image": "图片，{{size}}",
-      "remove": "移除图片"
-    },
-    "errors": {
-      "noQuery": "模型未返回查询。请换一种说法，或选择其他模型。"
-    }
+    "toolCalls_other": "调用了 {{count}} 个工具",
+    "toolFailed": "失败"
   },
   "commandPalette": {
     "buckets": {

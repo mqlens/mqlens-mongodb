@@ -6,6 +6,10 @@
       "insert": "Einfügen",
       "insertAndRun": "Einfügen & ausführen"
     },
+    "attachments": {
+      "image": "Bild, {{size}}",
+      "remove": "Bild entfernen"
+    },
     "composer": {
       "placeholder": "Beschreibe eine Abfrage… (Enter zum Senden, Umschalt+Enter für Zeilenumbruch)",
       "send": "Senden",
@@ -18,6 +22,9 @@
     },
     "empty": {
       "body": "Formuliere eine Abfrage in normaler Sprache — z. B. <i>„aktive Nutzer über 30, sortiert nach Alter“</i> oder<i> „durchschnittlicher Bestellwert pro Kunde“</i>. Ich erkläre, was ich tue, und du kannst das Ergebnis einfügen."
+    },
+    "errors": {
+      "noQuery": "Das Modell hat keine Abfrage zurückgegeben. Formuliere um oder wähle ein anderes Modell."
     },
     "fallbackExplanation": "Hier ist eine Abfrage.",
     "header": {
@@ -55,13 +62,9 @@
     },
     "thinking": "Denke nach…",
     "thoughts": "Überlegung",
-    "attachments": {
-      "image": "Bild, {{size}}",
-      "remove": "Bild entfernen"
-    },
-    "errors": {
-      "noQuery": "Das Modell hat keine Abfrage zurückgegeben. Formuliere um oder wähle ein anderes Modell."
-    }
+    "toolCalls_one": "{{count}} Tool ausgeführt",
+    "toolCalls_other": "{{count}} Tools ausgeführt",
+    "toolFailed": "fehlgeschlagen"
   },
   "commandPalette": {
     "buckets": {

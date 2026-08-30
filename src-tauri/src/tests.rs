@@ -99,7 +99,7 @@ mod tests {
     fn the_model_placeholder_is_substituted_as_its_own_argument() {
         use crate::ai::parse_command_template;
         let (prog, args) =
-            parse_command_template("ollama run {model} {prompt}", "find users", "llama3:latest").unwrap();
+            parse_command_template("ollama run {model} {prompt}", "find users", "llama3:latest", None).unwrap();
         assert_eq!(prog, "ollama");
         assert_eq!(args, ["run", "llama3:latest", "find users"]);
     }
@@ -494,7 +494,7 @@ mod tests {
     fn a_quoted_template_keeps_its_argument_whole() {
         use crate::ai::parse_command_template;
         let (prog, args) =
-            parse_command_template(r#""/opt/My Agents/run" --prompt={prompt}"#, "find users", "").unwrap();
+            parse_command_template(r#""/opt/My Agents/run" --prompt={prompt}"#, "find users", "", None).unwrap();
         assert_eq!(prog, "/opt/My Agents/run");
         assert_eq!(args, ["--prompt=find users"]);
     }
@@ -506,7 +506,7 @@ mod tests {
         // the prompt appended as an extra argument.
         use crate::ai::parse_command_template;
         let (prog, args) =
-            parse_command_template("agent --model={model} --prompt={prompt}", "find users", "m1").unwrap();
+            parse_command_template("agent --model={model} --prompt={prompt}", "find users", "m1", None).unwrap();
         assert_eq!(prog, "agent");
         assert_eq!(args, ["--model=m1", "--prompt=find users"]);
     }
@@ -516,14 +516,14 @@ mod tests {
         use crate::ai::parse_command_template;
         // An empty argument would make the CLI run its default model silently,
         // which is not what the user configured.
-        let err = parse_command_template("ollama run {model} {prompt}", "p", "").unwrap_err();
+        let err = parse_command_template("ollama run {model} {prompt}", "p", "", None).unwrap_err();
         assert!(err.contains("{model}"), "{err}");
     }
 
     #[test]
     fn templates_without_the_model_placeholder_are_unchanged() {
         use crate::ai::parse_command_template;
-        let (prog, args) = parse_command_template("claude -p {prompt}", "find users", "ignored").unwrap();
+        let (prog, args) = parse_command_template("claude -p {prompt}", "find users", "ignored", None).unwrap();
         assert_eq!(prog, "claude");
         assert_eq!(args, ["-p", "find users"]);
     }
@@ -593,10 +593,10 @@ mod tests {
     fn the_prompt_text_is_never_scanned_for_placeholders() {
         use crate::ai::parse_command_template;
         // The prompt is user content and may say "{model}" literally.
-        let (_, args) = parse_command_template("agent --model={model} {prompt}", r#"find "{model}""#, "m1").unwrap();
+        let (_, args) = parse_command_template("agent --model={model} {prompt}", r#"find "{model}""#, "m1", None).unwrap();
         assert_eq!(args, ["--model=m1", r#"find "{model}""#]);
         // …and a prompt containing "{prompt}" is not re-expanded either.
-        let (_, args) = parse_command_template("agent {prompt}", "say {prompt}", "").unwrap();
+        let (_, args) = parse_command_template("agent {prompt}", "say {prompt}", "", None).unwrap();
         assert_eq!(args, ["say {prompt}"]);
     }
 
@@ -729,6 +729,187 @@ mod tests {
     }
 
     #[test]
+    fn the_mcp_config_is_the_shape_the_agent_expects() {
+        // Not inferred: this is what `claude mcp add --transport http` writes
+        // itself. A config an agent cannot parse fails by silently having no
+        // tools, which looks exactly like the problem it is meant to solve.
+        use crate::ai::{mcp_config_json, McpEndpoint};
+        let json: serde_json::Value = serde_json::from_str(&mcp_config_json(&McpEndpoint {
+            port: 8765,
+            token: "tok-123".into(),
+        }))
+        .unwrap();
+        let server = &json["mcpServers"]["mqlens"];
+        assert_eq!(server["type"], "http");
+        assert_eq!(server["url"], "http://127.0.0.1:8765/mcp");
+        assert_eq!(server["headers"]["Authorization"], "Bearer tok-123");
+        // Loopback, always: the token is the whole of the server's authentication.
+        assert!(server["url"].as_str().unwrap().starts_with("http://127.0.0.1:"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_mcp_config_file_is_private_and_does_not_outlive_the_run() {
+        // It holds the bearer token, so it is created 0600 before a byte is
+        // written and removed however the run ends.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let stub = dir.path().join("agent");
+        // The stub prints the file's mode to STDOUT, where the reply can see it.
+        // An earlier version sent it to stderr, which `generate_local` discards on
+        // success — so the test claimed to check 0600 and checked nothing.
+        // `stat` differs between macOS and Linux; both spellings are tried.
+        std::fs::write(
+            &stub,
+            "#!/bin/sh\nCFG=\"$1\"\n\
+             echo \"mode=$(stat -f %Lp \"$CFG\" 2>/dev/null || stat -c %a \"$CFG\")\"\n\
+             cat \"$CFG\"\necho '{\"queryType\":\"find\",\"filter\":{}}'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let endpoint = crate::ai::McpEndpoint { port: 8765, token: "tok-abc".into() };
+        let reply = crate::ai::generate_local(
+            &format!("{} {{mcp_config}} {{prompt}}", stub.to_string_lossy()),
+            "anything",
+            "",
+            Some(&endpoint),
+        )
+        .await
+        .expect("the stub answers");
+        let notes = reply.notes.as_deref().unwrap_or("").to_string();
+        // The agent really received the config: it echoed it back...
+        assert!(notes.contains("mqlens"), "{notes}");
+        assert!(notes.contains("Bearer tok-abc"), "the token reaches the agent: {notes}");
+        // ...and it was readable by nobody else.
+        assert!(notes.contains("mode=600"), "config must be 0600: {notes}");
+
+        // Nothing of ours is left afterwards. The prefix is distinctive on purpose:
+        // an earlier draft used `mqlens-mcp-` and matched another test's directory.
+        let leftovers: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("mqlens-agent-mcp-"))
+            .collect();
+        assert!(leftovers.is_empty(), "config file left behind: {leftovers:?}");
+    }
+
+    #[tokio::test]
+    async fn a_command_wanting_mcp_says_so_when_the_server_is_off() {
+        // Silently running without the tools is how an agent ends up guessing at
+        // values it never sampled.
+        let err = crate::ai::generate_local("some-agent {mcp_config} {prompt}", "hi", "", None)
+            .await
+            .unwrap_err();
+        assert!(err.contains("switched off"), "{err}");
+    }
+
+    #[test]
+    fn the_agent_is_told_whether_mqlens_tools_are_reachable() {
+        use crate::ai::mcp_availability_note;
+        let on = mcp_availability_note(true);
+        assert!(on.contains("schema_analysis"), "{on}");
+        assert!(on.contains("not observed data") || on.contains("observed"), "{on}");
+        let off = mcp_availability_note(false);
+        assert!(off.contains("switched off"), "{off}");
+        // ...and told to say what it could not check, rather than implying it did.
+        assert!(off.contains("could not verify"), "{off}");
+    }
+
+    #[test]
+    fn an_agents_event_stream_yields_its_answer_and_what_it_ran() {
+        // The fixture is a real `claude -p --output-format stream-json` run,
+        // captured rather than hand-written: a parser tested only against output
+        // invented to match it proves nothing about the format it will meet.
+        use crate::ai::parse_agent_events;
+        let run = parse_agent_events(include_str!("../tests/fixtures/claude_stream_json.jsonl"))
+            .expect("a stream of events is recognised as one");
+
+        // The agent's own summary of the turn is the answer.
+        assert_eq!(run.text, "6");
+
+        assert_eq!(run.tool_calls.len(), 1, "{:?}", run.tool_calls);
+        let call = &run.tool_calls[0];
+        assert_eq!(call.name, "Bash");
+        assert!(
+            call.input.as_deref().unwrap_or("").contains("ls -A"),
+            "{:?}",
+            call.input
+        );
+        // The result is matched back to the call it belongs to by `tool_use_id`.
+        assert!(
+            call.output.as_deref().unwrap_or("").contains('6'),
+            "{:?}",
+            call.output
+        );
+        assert!(!call.failed);
+    }
+
+    #[test]
+    fn ordinary_agent_output_is_left_as_text() {
+        // A custom command emits whatever it emits, and today that is prose with
+        // a JSON object in it. Treating that as an event stream would break every
+        // setup that works now.
+        use crate::ai::parse_agent_events;
+        assert!(parse_agent_events("Looking at the fields...\n{\"queryType\":\"find\"}").is_none());
+        assert!(parse_agent_events("").is_none());
+        // A single JSON line is an answer, not a stream.
+        assert!(parse_agent_events("{\"type\":\"find\",\"filter\":{}}").is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_local_agent_reporting_events_has_its_tool_calls_carried_through() {
+        // End to end through the subprocess path: the fixture test above pins the
+        // *format*, this pins that `generate_local` actually routes through it.
+        // The captured run answered "6", which is not a query object, so the stub
+        // emits the same verified shapes with a JSON answer instead.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let stub = dir.path().join("agent");
+        let stream = concat!(
+            r#"{"type":"system","subtype":"init"}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"schema_analysis","input":{"collection":"orders"}}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":false,"content":"state: DONE | PENDING"}]}}"#,
+            "\n",
+            r#"{"type":"result","subtype":"success","result":"{\"queryType\":\"find\",\"filter\":{\"state\":\"DONE\"}}"}"#,
+            "\n",
+        );
+        std::fs::write(&stub, format!("#!/bin/sh\ncat <<'EOF'\n{stream}EOF\n")).unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let reply = crate::ai::generate_local(
+            &format!("{} {{prompt}}", stub.to_string_lossy()),
+            "which orders are done",
+            "",
+            None,
+        )
+        .await
+        .expect("the stub answers");
+
+        assert!(
+            reply.query.contains("\"state\":\"DONE\""),
+            "{}",
+            reply.query
+        );
+        assert_eq!(reply.tool_calls.len(), 1, "{:?}", reply.tool_calls);
+        assert_eq!(reply.tool_calls[0].name, "schema_analysis");
+        assert!(reply.tool_calls[0]
+            .output
+            .as_deref()
+            .unwrap_or("")
+            .contains("DONE"));
+        // The events are not left in `notes` as prose once they are understood.
+        assert!(
+            reply.notes.as_deref().unwrap_or("").is_empty(),
+            "events should not also arrive as prose: {:?}",
+            reply.notes
+        );
+    }
+
+    #[test]
     fn images_are_validated_before_any_request() {
         use crate::ai::{validate_images, ImageAttachment, MAX_IMAGES};
         validate_images(&[]).unwrap();
@@ -832,9 +1013,9 @@ mod tests {
     fn a_reply_omits_what_it_does_not_have() {
         // The frontend treats a missing key and null the same, but the JSON the
         // panel stores should not carry `"thoughts": null` for every message.
-        let r = crate::ai::AiReply { query: "{}".into(), thoughts: None, notes: None };
+        let r = crate::ai::AiReply { query: "{}".into(), thoughts: None, notes: None, tool_calls: Vec::new() };
         assert_eq!(serde_json::to_string(&r).unwrap(), r#"{"query":"{}"}"#);
-        let r = crate::ai::AiReply { query: "{}".into(), thoughts: Some("t".into()), notes: None };
+        let r = crate::ai::AiReply { query: "{}".into(), thoughts: Some("t".into()), notes: None, tool_calls: Vec::new() };
         assert_eq!(serde_json::to_string(&r).unwrap(), r#"{"query":"{}","thoughts":"t"}"#);
     }
 
@@ -3845,7 +4026,7 @@ mod tests {
 
         // {prompt} becomes a single argv element, even with spaces/quotes/shell metachars.
         let (prog, args) =
-            parse_command_template("claude -p {prompt}", "find users; rm -rf / $(whoami)", "").unwrap();
+            parse_command_template("claude -p {prompt}", "find users; rm -rf / $(whoami)", "", None).unwrap();
         assert_eq!(prog, "claude");
         assert_eq!(
             args,
@@ -3856,12 +4037,12 @@ mod tests {
         );
 
         // No {prompt} placeholder -> append prompt as final arg.
-        let (prog, args) = parse_command_template("codex exec", "hi there", "").unwrap();
+        let (prog, args) = parse_command_template("codex exec", "hi there", "", None).unwrap();
         assert_eq!(prog, "codex");
         assert_eq!(args, vec!["exec".to_string(), "hi there".to_string()]);
 
         // Empty template is an error.
-        assert!(parse_command_template("   ", "x", "").is_err());
+        assert!(parse_command_template("   ", "x", "", None).is_err());
     }
 
     #[tokio::test]
@@ -3872,6 +4053,7 @@ mod tests {
             "definitely-not-a-real-binary-xyz -p {prompt}",
             "find active users",
             "", // no {model} in this template
+            None,
         )
         .await;
         assert!(res.is_err());
@@ -5699,6 +5881,7 @@ mod chat_store_tests {
                 query: None,
                 error: None,
                 thoughts: None,
+                tool_calls: Vec::new(),
                 attachments: None,
             })
             .collect();
@@ -5723,6 +5906,7 @@ mod chat_store_tests {
             query: None,
             error: None,
             thoughts: None,
+            tool_calls: Vec::new(),
             attachments: None,
         };
 
@@ -5747,6 +5931,7 @@ mod chat_store_tests {
             query: None,
             error: None,
             thoughts: None,
+            tool_calls: Vec::new(),
             attachments: None,
         };
         let mut stored = chat("c1", "users", "2026-01-01T00:00:00Z");
@@ -5772,6 +5957,7 @@ mod chat_store_tests {
             query: None,
             error: None,
             thoughts: None,
+            tool_calls: Vec::new(),
             attachments: None,
         };
         let mut stored = chat("c1", "users", "2026-01-01T00:00:00Z");
@@ -5859,6 +6045,7 @@ mod chat_store_tests {
             query: None,
             error: None,
             thoughts: None,
+            tool_calls: Vec::new(),
             attachments: None,
         }];
 

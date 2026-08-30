@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { History, Paperclip, Plus, RefreshCw, Sparkles, Trash2, User, X } from 'lucide-react';
+import { History, Paperclip, Plus, RefreshCw, Sparkles, Trash2, User, Wrench, X } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -55,6 +55,16 @@ export interface ChatMessage {
   thoughts?: string;
   /** Images that went with a user turn — shape only, never the bytes. */
   attachments?: { mediaType: string; bytes: number }[];
+  /** What a local agent ran to produce this answer. */
+  toolCalls?: AgentToolCall[];
+}
+
+/** One tool a local agent ran, as reported by its own event stream. */
+export interface AgentToolCall {
+  name: string;
+  input?: string;
+  output?: string;
+  failed?: boolean;
 }
 
 /** What `generate_mql_query` returns: the query JSON plus optional reasoning. */
@@ -62,6 +72,7 @@ interface AiReply {
   query: string;
   thoughts?: string;
   notes?: string;
+  toolCalls?: AgentToolCall[];
 }
 
 /** One pickable provider from settings, keys withheld. */
@@ -978,6 +989,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         text: reply.text,
         ...(reply.error ? { error: true } : { query: reply.query as GeneratedQuery | undefined }),
         ...(reply.thoughts ? { thoughts: reply.thoughts } : {}),
+        ...(reply.toolCalls?.length ? { toolCalls: reply.toolCalls } : {}),
       },
     ]);
   };
@@ -1104,6 +1116,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         text: parsed.explanation ?? t('aiChatPanel.fallbackExplanation'),
         query,
         ...(thoughts && { thoughts }),
+        ...(reply.toolCalls?.length && { toolCalls: reply.toolCalls }),
       };
     };
 
@@ -1334,6 +1347,43 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                       </span>
                     ))}
                   </div>
+                )}
+
+                {m.toolCalls && m.toolCalls.length > 0 && (
+                  <details className="w-[92%] text-[10.5px]" data-testid="chat-tool-calls">
+                    <summary className="cursor-pointer select-none text-muted-foreground">
+                      {t('aiChatPanel.toolCalls', { count: m.toolCalls.length })}
+                    </summary>
+                    <div className="mt-1 flex flex-col gap-1">
+                      {m.toolCalls.map((call, i) => (
+                        <div
+                          key={i}
+                          className="rounded border border-border bg-muted/40 p-1.5"
+                          data-testid={`chat-tool-call-${i}`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <Wrench size={10} className="shrink-0 text-muted-foreground" />
+                            <span className="font-mono text-[10.5px] text-foreground">{call.name}</span>
+                            {call.failed && (
+                              <span className="text-[9px] uppercase text-destructive">
+                                {t('aiChatPanel.toolFailed')}
+                              </span>
+                            )}
+                          </div>
+                          {call.input && (
+                            <pre className="mt-1 max-h-[120px] overflow-auto whitespace-pre-wrap font-mono text-[9.5px] leading-relaxed text-muted-foreground">
+                              {call.input}
+                            </pre>
+                          )}
+                          {call.output && (
+                            <pre className="mt-1 max-h-[120px] overflow-auto whitespace-pre-wrap border-t border-border pt-1 font-sans text-[9.5px] leading-relaxed text-muted-foreground">
+                              {call.output}
+                            </pre>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 )}
 
                 {m.thoughts && (

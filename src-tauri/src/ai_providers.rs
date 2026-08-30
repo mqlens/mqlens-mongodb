@@ -775,7 +775,7 @@ mod tests {
         let mut p = provider(ProviderKind::LocalCli, "");
         p.command = "codex exec".into();
         p.validate().expect("legacy template must keep working after upgrade");
-        let (prog, args) = crate::ai::parse_command_template(&p.command, "find users", "").unwrap();
+        let (prog, args) = crate::ai::parse_command_template(&p.command, "find users", "", None).unwrap();
         assert_eq!((prog.as_str(), args), ("codex", vec!["exec".to_string(), "find users".to_string()]));
     }
 
