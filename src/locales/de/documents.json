@@ -74,7 +74,8 @@
     "errors": {
       "invalidJsonSyntax": "Ungültige JSON-Syntax: {{message}}",
       "invalidQuery": "Ungültige Abfrage",
-      "queryMustBeObject": "Die Abfrage muss ein Objekt sein"
+      "queryMustBeObject": "Die Abfrage muss ein Objekt sein",
+      "unsupportedRegexFlag": "MongoDB unterstützt das Regex-Flag {{flag}} nicht."
     },
     "history": {
       "aggregateSummary_one": "aggregate · {{count}} Stufe",

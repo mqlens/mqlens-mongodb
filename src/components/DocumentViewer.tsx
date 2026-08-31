@@ -5,7 +5,7 @@ import { QueryEditor } from './QueryEditor';
 import { FindQueryBar } from './FindQueryBar';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
 import { collectionRef, type GeneratedQuery } from '../lib/mongoCommand';
-import { parseShellJson, parseQueryObject, shellDocErrorKey, type ShellDocNotices } from '../lib/shellDoc';
+import { parseShellJson, parseQueryObject, shellDocErrorKey, shellDocErrorParams, type ShellDocNotices } from '../lib/shellDoc';
 import {
   loadCollectionQueries,
   saveQuery,
@@ -793,7 +793,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         // Our own parse failures carry a code and get a translated message;
         // errors from the underlying parser only have an English message.
         shellDocErrorKey(e)
-          ? td(shellDocErrorKey(e)!)
+          ? td(shellDocErrorKey(e)!, shellDocErrorParams(e))
           : td('documentViewer.errors.invalidJsonSyntax', { message: e.message }),
       );
     }
@@ -935,7 +935,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       // the Run and Explain paths follow.
       const key = shellDocErrorKey(err);
       setFilterError(
-        key ? td(key) : err instanceof Error ? err.message : String(err)
+        key ? td(key, shellDocErrorParams(err)) : err instanceof Error ? err.message : String(err)
       );
     }
     // `td` too: switching the interface language re-renders this component but
@@ -1362,7 +1362,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         // Our own parse failures carry a code and get a translated message;
         // errors from the underlying parser only have an English message.
         shellDocErrorKey(e)
-          ? td(shellDocErrorKey(e)!)
+          ? td(shellDocErrorKey(e)!, shellDocErrorParams(e))
           : td('documentViewer.errors.invalidJsonSyntax', { message: e.message }),
       );
     }
@@ -1433,7 +1433,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       // `disabled` guard, only the trigger does — so this path has to map our
       // own parse errors to a translated message like the two above it.
       const key = shellDocErrorKey(e);
-      setError(key ? td(key) : e.message || String(e));
+      setError(key ? td(key, shellDocErrorParams(e)) : e.message || String(e));
     } finally {
       setExplainLoading(false);
     }

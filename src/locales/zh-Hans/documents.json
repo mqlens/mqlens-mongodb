@@ -269,7 +269,8 @@
     "errors": {
       "invalidJsonSyntax": "JSON 语法无效：{{message}}",
       "invalidQuery": "查询无效",
-      "queryMustBeObject": "查询必须是一个对象"
+      "queryMustBeObject": "查询必须是一个对象",
+      "unsupportedRegexFlag": "MongoDB 不支持正则表达式标志 {{flag}}。"
     },
     "history": {
       "aggregateSummary_other": "聚合 · {{count}} 个阶段",

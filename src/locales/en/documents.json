@@ -282,7 +282,8 @@
     "errors": {
       "invalidJsonSyntax": "Invalid JSON syntax: {{message}}",
       "invalidQuery": "Invalid query",
-      "queryMustBeObject": "The query must be an object"
+      "queryMustBeObject": "The query must be an object",
+      "unsupportedRegexFlag": "MongoDB does not support the regex flag {{flag}}."
     },
     "history": {
       "aggregateSummary_one": "aggregate · {{count}} stage",

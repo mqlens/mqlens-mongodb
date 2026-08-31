@@ -324,6 +324,15 @@ const EXEMPT_HITS: Record<string, string[]> = {
     'label: "Double"',
     'label: "Binary"',
   ],
+  'src/lib/shellDoc.ts': [
+    // ShellDocError messages are deliberately English: they are what lands in
+    // logs and stack traces, and the UI never shows them. Each error instead
+    // carries a stable `code` (plus interpolation params) that the query bar
+    // maps to a catalog key via shellDocErrorKey/shellDocErrorParams — see the
+    // ShellDocErrorCode doc comment. The catalog value is
+    // documents:documentViewer.errors.unsupportedRegexFlag.
+    'MongoDB does not support the regular expression flag [${unsafe}]',
+  ],
   'src/lib/clusterHealth.ts': [
     // A backtick-quoted `new URL` inside a JSDoc comment, read as a template
     // literal — the comment blindness this file's header warns about.

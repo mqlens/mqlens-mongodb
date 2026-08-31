@@ -105,9 +105,40 @@ function containsLong(v: any): boolean {
   return Object.values(v).some(containsLong);
 }
 
-// Regex options MongoDB understands. JavaScript accepts several more — `g`,
-// `y`, and the newer `d`/`v` — that have no BSON representation at all.
+// Regex options MongoDB understands, passed through untouched.
 const BSON_REGEX_FLAGS = 'imxlsu';
+
+// JS-only flags that cannot change which documents match, so dropping them is
+// safe. `g` ("keep scanning after the first hit") and `d` (capture-index
+// metadata) both describe how a JS engine walks a string, not what the pattern
+// accepts — the set of strings the regex matches is identical without them.
+//
+// Every other JS-only flag is NOT safe to drop, and is rejected below instead.
+// `y` (sticky) anchors the match at lastIndex, so a fresh `/foo/y` matches only
+// at position 0 while the reconstructed `/foo/` matches anywhere — silently
+// running a BROADER query than the user wrote. `v` (unicodeSets) changes how
+// character classes parse, so removing it can reinterpret the pattern outright.
+// Quietly widening a filter is the failure mode this whole path exists to
+// avoid, so where the semantics cannot be preserved we refuse rather than
+// guess. Rejecting is no worse than before: these already failed, just with a
+// BSON error nobody could act on.
+//
+// Of these only `y` is reachable today — the parser's own regex lexer rejects
+// `d` and `v` as invalid flags before we ever see them. They are listed anyway
+// so that a parser upgrade cannot silently turn `d` into a rejection or `v`
+// into a semantics change.
+const DROPPABLE_REGEX_FLAGS = 'gd';
+
+// Real BSON instances, by their `_bsontype` tag. Checked against this set
+// rather than for any truthy `_bsontype`, because a user's own document may
+// legitimately contain a field called `_bsontype` — `{meta: {_bsontype: "x",
+// name: /a/g}}` would otherwise be mistaken for a BSON scalar and skipped,
+// leaving the nested regex unnormalised for EJSON to reject. (UUID reports as
+// Binary, which it subclasses.)
+const BSON_TYPE_NAMES = new Set([
+  'Binary', 'BSONRegExp', 'BSONSymbol', 'Code', 'DBRef', 'Decimal128',
+  'Double', 'Int32', 'Long', 'MaxKey', 'MinKey', 'ObjectId', 'Timestamp',
+]);
 
 /**
  * Drop regex flags BSON cannot carry, reporting which ones went.
@@ -141,13 +172,26 @@ function normalizeRegexFlags(v: any, dropped: Set<string>): any {
     const flags: unknown = (v as RegExp).flags;
     // No flag string to reason about — leave it exactly as it is.
     if (typeof flags !== 'string') return v;
+    const unsafe = [...flags].find(
+      (f) => !BSON_REGEX_FLAGS.includes(f) && !DROPPABLE_REGEX_FLAGS.includes(f)
+    );
+    if (unsafe) {
+      throw new ShellDocError(
+        'unsupportedRegexFlag',
+        `MongoDB does not support the regular expression flag [${unsafe}]`,
+        { flag: unsafe }
+      );
+    }
     const kept = [...flags].filter((f) => BSON_REGEX_FLAGS.includes(f)).join('');
     if (kept === flags) return v;
     for (const f of flags) if (!kept.includes(f)) dropped.add(f);
     // `kept` is a subset of flags JS already accepted, so this cannot throw.
     return new RegExp((v as RegExp).source, kept);
   }
-  if (tag === '[object Date]' || (v as { _bsontype?: string })._bsontype) return v;
+  const bsontype: unknown = (v as { _bsontype?: unknown })._bsontype;
+  if (tag === '[object Date]' || (typeof bsontype === 'string' && BSON_TYPE_NAMES.has(bsontype))) {
+    return v;
+  }
   if (Array.isArray(v)) {
     let changed = false;
     const out = v.map((item) => {
@@ -193,14 +237,20 @@ function serializeQuery(v: any, dropped: Set<string>): any {
  * come from the underlying parser carry no code and still fall back to their
  * own message, which no amount of work here can localise.
  */
-export type ShellDocErrorCode = 'invalidQuery' | 'queryMustBeObject';
+export type ShellDocErrorCode =
+  | 'invalidQuery'
+  | 'queryMustBeObject'
+  | 'unsupportedRegexFlag';
 
 export class ShellDocError extends SyntaxError {
   readonly code: ShellDocErrorCode;
-  constructor(code: ShellDocErrorCode, message: string) {
+  /** Interpolation values for the translated message, e.g. `{ flag: 'y' }`. */
+  readonly params?: Record<string, string>;
+  constructor(code: ShellDocErrorCode, message: string, params?: Record<string, string>) {
     super(message);
     this.name = 'ShellDocError';
     this.code = code;
+    this.params = params;
   }
 }
 
@@ -209,7 +259,13 @@ export function shellDocErrorKey(err: unknown): string | null {
   const code = (err as ShellDocError | undefined)?.code;
   if (code === 'invalidQuery') return 'documentViewer.errors.invalidQuery';
   if (code === 'queryMustBeObject') return 'documentViewer.errors.queryMustBeObject';
+  if (code === 'unsupportedRegexFlag') return 'documentViewer.errors.unsupportedRegexFlag';
   return null;
+}
+
+/** Interpolation values to pass alongside `shellDocErrorKey`, if any. */
+export function shellDocErrorParams(err: unknown): Record<string, string> | undefined {
+  return (err as ShellDocError | undefined)?.params;
 }
 
 /**
@@ -465,8 +521,18 @@ export function parseShellJson(text: string, notices?: ShellDocNotices): any {
         const out = serializeQuery(attempt(`{${trimmed}}`), dropped);
         commit();
         return out;
-      } catch {
-        /* fall through to re-throw the original error */
+      } catch (retryErr) {
+        // The wrapped retry got further than the original attempt: it parsed,
+        // and failed only because the value cannot be represented in BSON.
+        // That is the diagnosis worth showing — re-throwing the original
+        // "not a valid expression" error would hide the real reason.
+        if (
+          retryErr instanceof ShellDocError &&
+          retryErr.code === 'unsupportedRegexFlag'
+        ) {
+          throw retryErr;
+        }
+        /* otherwise fall through to re-throw the original error */
       }
     }
     throw err;
