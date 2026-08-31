@@ -576,3 +576,29 @@ describe('preserveBigIntegers — comments (#318 review)', () => {
     expect(parsed.b.$numberLong).toBe('9007199254740993');
   });
 });
+
+// #318 review, round 3: the key check only skipped whitespace, so a comment
+// before the colon hid the fact that the digits were a property name.
+describe('preserveBigIntegers — numeric keys with comments (#318 review)', () => {
+  it('leaves a numeric key alone when a comment precedes its colon', () => {
+    // Rewrote to `NumberLong("…"): 1`, which is not a property key, so a valid
+    // query stopped parsing. The value-position guard hid this at the start of
+    // an object; after a comma there is nothing else to catch it.
+    const text = '{a: 1, 9007199254740992 /* note */: 1}';
+    expect(preserveBigIntegers(text)).toBe(text);
+    expect(parseShellJson(text)).toEqual({ a: 1, '9007199254740992': 1 });
+  });
+
+  it('does the same for a line comment before the colon', () => {
+    const text = '{a: 1, 9007199254740992 // n\n: 1}';
+    expect(preserveBigIntegers(text)).toBe(text);
+    expect(parseShellJson(text)).toEqual({ a: 1, '9007199254740992': 1 });
+  });
+
+  it('still rewrites a value that follows a comma and a comment', () => {
+    // The key fix must not swallow the value case that shares the position.
+    expect(
+      parseShellJson('{a: 1, counter: /* c */ 9007199254740993}').counter.$numberLong
+    ).toBe('9007199254740993');
+  });
+});

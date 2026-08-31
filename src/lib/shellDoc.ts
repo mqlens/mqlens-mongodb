@@ -534,6 +534,38 @@ function classifyNumberPlacement(
   return startsValue(last) ? 'plain' : 'skip';
 }
 
+/** End of the comment starting at `i`, or -1 when none starts there. */
+function endOfComment(text: string, i: number): number {
+  if (text[i] !== '/') return -1;
+  if (text[i + 1] === '/') {
+    const nl = text.indexOf('\n', i);
+    return nl === -1 ? text.length : nl;
+  }
+  if (text[i + 1] === '*') {
+    const end = text.indexOf('*/', i + 2);
+    return end === -1 ? text.length : end + 2;
+  }
+  return -1;
+}
+
+/**
+ * First index at or after `from` holding something syntactically meaningful —
+ * whitespace and comments are both skipped.
+ *
+ * Looking only past whitespace is what let `{a: 1, 9007199254740992 /* n *\/: 1}`
+ * be mistaken for a value and rewritten into `NumberLong("…"): 1`, which is not
+ * a property key and stopped the query parsing (#318 review).
+ */
+function skipTrivia(text: string, from: number): number {
+  let k = from;
+  for (;;) {
+    while (k < text.length && /\s/.test(text[k])) k++;
+    const end = endOfComment(text, k);
+    if (end === -1) return k;
+    k = end;
+  }
+}
+
 export function preserveBigIntegers(text: string): string {
   let out = '';
   let i = 0;
@@ -575,13 +607,10 @@ export function preserveBigIntegers(text: string): string {
     // opener, and the closing `/` then looks like the token before the value,
     // which left `{counter: /* note */ 9007199254740993}` unrewritten and
     // still rounding (#318 review).
-    if (c === '/' && (text[i + 1] === '/' || text[i + 1] === '*')) {
-      const end =
-        text[i + 1] === '/'
-          ? (text.indexOf('\n', i) === -1 ? text.length : text.indexOf('\n', i))
-          : (text.indexOf('*/', i + 2) === -1 ? text.length : text.indexOf('*/', i + 2) + 2);
-      out += text.slice(i, end);
-      i = end;
+    const commentEnd = endOfComment(text, i);
+    if (commentEnd !== -1) {
+      out += text.slice(i, commentEnd);
+      i = commentEnd;
       continue;
     }
     // Verbatim: digits inside a pattern are part of the pattern.
@@ -605,7 +634,7 @@ export function preserveBigIntegers(text: string): string {
         const after = text[j] ?? '';
         const isPlainInteger = !/[.eExXbBoOn_]/.test(after);
         // A key, not a value: `{123: 1}`.
-        const isKey = /^\s*:/.test(text.slice(j));
+        const isKey = text[skipTrivia(text, j)] === ':';
         if (isPlainInteger && !isKey && !Number.isSafeInteger(Number(digits))) {
           const placement = classifyNumberPlacement(lastMeaningful, prevMeaningful, out);
           if (placement !== 'skip') {
