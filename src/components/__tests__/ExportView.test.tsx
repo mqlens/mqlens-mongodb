@@ -273,7 +273,7 @@ describe('ExportView', () => {
       target: { value: '{bad' },
     });
     expect(screen.getByTestId('export-filtered-btn')).toBeDisabled();
-    expect(screen.getAllByText('Invalid JSON').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Invalid query').length).toBeGreaterThan(0);
   });
 
   it('counts matches only when the Count button is clicked', async () => {

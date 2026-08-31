@@ -104,8 +104,83 @@ function containsLong(v: any): boolean {
   if (Array.isArray(v)) return v.some(containsLong);
   return Object.values(v).some(containsLong);
 }
-function serializeQuery(v: any): any {
-  return EJSON.serialize(v, { relaxed: !containsLong(v) });
+
+// Regex options MongoDB understands. JavaScript accepts several more — `g`,
+// `y`, and the newer `d`/`v` — that have no BSON representation at all.
+const BSON_REGEX_FLAGS = 'imxlsu';
+
+/**
+ * Drop regex flags BSON cannot carry, reporting which ones went.
+ *
+ * `{name: /test/g}` is the query a user brings over from mongosh or Compass,
+ * and it used to fail the whole find with "The regular expression option [g]
+ * is not supported" — thrown by EJSON, the only strict validator in the stack.
+ *
+ * Compass runs that query by handing the native RegExp straight to the driver,
+ * whose serializer rewrites `g` to `s` (dotAll). So it runs, but matches by
+ * different rules than it reads — `.` starts crossing newlines — and Compass
+ * then fails to save it to history for exactly the reason we failed here,
+ * swallowing that error into a debug log.
+ *
+ * Neither behaviour is worth copying. `g` means "keep scanning after the first
+ * hit", which is meaningless when the server is selecting documents, so the
+ * flag is dropped rather than translated: the pattern keeps the semantics the
+ * user wrote. The caller gets the dropped flags so the query bar can say so,
+ * instead of the query quietly meaning something else.
+ *
+ * Only plain containers are rebuilt. BSON instances (ObjectId, Long, Binary,
+ * …) and Dates pass through by reference, and an untouched subtree keeps its
+ * original identity, so `containsLong` still walks the same graph.
+ */
+function normalizeRegexFlags(v: any, dropped: Set<string>): any {
+  if (v === null || typeof v !== 'object') return v;
+  // Tag-based, not `instanceof`: the query parser evaluates in a sandbox, so a
+  // value coming back out of it need not share this realm's prototypes.
+  const tag = Object.prototype.toString.call(v);
+  if (tag === '[object RegExp]') {
+    const flags: unknown = (v as RegExp).flags;
+    // No flag string to reason about — leave it exactly as it is.
+    if (typeof flags !== 'string') return v;
+    const kept = [...flags].filter((f) => BSON_REGEX_FLAGS.includes(f)).join('');
+    if (kept === flags) return v;
+    for (const f of flags) if (!kept.includes(f)) dropped.add(f);
+    // `kept` is a subset of flags JS already accepted, so this cannot throw.
+    return new RegExp((v as RegExp).source, kept);
+  }
+  if (tag === '[object Date]' || (v as { _bsontype?: string })._bsontype) return v;
+  if (Array.isArray(v)) {
+    let changed = false;
+    const out = v.map((item) => {
+      const next = normalizeRegexFlags(item, dropped);
+      if (next !== item) changed = true;
+      return next;
+    });
+    return changed ? out : v;
+  }
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(v)) {
+    const next = normalizeRegexFlags(val, dropped);
+    if (next !== val) changed = true;
+    out[k] = next;
+  }
+  return changed ? out : v;
+}
+
+/**
+ * What the parser had to change to make a query expressible as BSON.
+ *
+ * Not errors — the query still runs — but the user is told rather than left
+ * with a filter that means something slightly different from what they typed.
+ */
+export interface ShellDocNotices {
+  /** Regex flags dropped because BSON has no equivalent, e.g. `['g']`. */
+  droppedRegexFlags: string[];
+}
+
+function serializeQuery(v: any, dropped: Set<string>): any {
+  const normalized = normalizeRegexFlags(v, dropped);
+  return EJSON.serialize(normalized, { relaxed: !containsLong(normalized) });
 }
 /**
  * The two parse failures this module raises ITSELF, as stable codes.
@@ -354,7 +429,7 @@ function stripTrailingSemicolons(text: string): string {
   return cut === text.length ? text : text.slice(0, cut);
 }
 
-export function parseShellJson(text: string): any {
+export function parseShellJson(text: string, notices?: ShellDocNotices): any {
   const trimmed = normalizePastedQuery(text).trim();
   if (!trimmed) return {};
   // parseFilter signals "unparseable / not a valid query" by returning an empty
@@ -369,16 +444,27 @@ export function parseShellJson(text: string): any {
     }
     return result;
   };
+  // Collected per attempt: the braceless retry below re-parses from scratch, so
+  // notices from an attempt that then failed must not leak into the result.
+  const dropped = new Set<string>();
+  const commit = () => {
+    if (notices) notices.droppedRegexFlags = [...dropped];
+  };
   try {
-    return serializeQuery(attempt(trimmed));
+    const out = serializeQuery(attempt(trimmed), dropped);
+    commit();
+    return out;
   } catch (err) {
     // A braceless field list like `foo: 1` isn't a valid standalone expression;
     // wrap it into an object and retry. Bare values (a `$count` stage body of
     // `"n"`, a number, an array) parse on the first try, so they never reach
     // here. Anything still unparseable re-throws the original error.
     if (!/^[{[]/.test(trimmed)) {
+      dropped.clear();
       try {
-        return serializeQuery(attempt(`{${trimmed}}`));
+        const out = serializeQuery(attempt(`{${trimmed}}`), dropped);
+        commit();
+        return out;
       } catch {
         /* fall through to re-throw the original error */
       }
@@ -394,9 +480,12 @@ export function parseShellJson(text: string): any {
 // here lets the live validation flag the field and Run stay disabled. Empty
 // input is a valid empty query ({}). Not for aggregation stage bodies, which
 // can legitimately be non-objects (e.g. a `$count` body of "n").
-export function parseQueryObject(text: string): any {
-  const parsed = parseShellJson(text);
+export function parseQueryObject(text: string, notices?: ShellDocNotices): any {
+  const parsed = parseShellJson(text, notices);
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    // The query is rejected, so anything we noticed about it is moot — leaving
+    // it set would caption a filter that never ran.
+    if (notices) notices.droppedRegexFlags = [];
     throw new ShellDocError('queryMustBeObject', 'Query must be an object');
   }
   return parsed;

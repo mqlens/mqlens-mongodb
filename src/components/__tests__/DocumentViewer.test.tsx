@@ -159,7 +159,7 @@ describe('DocumentViewer Component', () => {
 
   it('accepts a query pasted with smart quotes, and says why when one will not parse', async () => {
     // The bug: a query copied out of a browser or a chat arrives with `“ ”`,
-    // which reads as correct on screen and was rejected as "Invalid JSON" with
+    // which reads as correct on screen and was rejected as "Invalid query" with
     // no reason given.
     render(
       <DocumentViewer
@@ -175,21 +175,58 @@ describe('DocumentViewer Component', () => {
     const filterInput = screen.getByTestId('query-filter-input');
     fireEvent.change(filterInput, { target: { value: 'domain: “account.test.com”' } });
     await waitFor(() => {
-      expect(screen.queryByText('Invalid JSON')).not.toBeInTheDocument();
+      expect(screen.queryByText('Invalid query')).not.toBeInTheDocument();
     });
 
     // And when something really is wrong, the badge carries the reason.
     fireEvent.change(filterInput, { target: { value: '{invalid' } });
-    const badge = await screen.findByText('Invalid JSON');
+    const badge = await screen.findByText('Invalid query');
     await waitFor(() => expect(badge.getAttribute('title')).toBeTruthy());
 
     // Our own failures have a translated message; only the parser's are stuck
     // in English. A bare `5` is not a query object.
     fireEvent.change(filterInput, { target: { value: '5' } });
     await waitFor(() =>
-      expect(screen.getByText('Invalid JSON').getAttribute('title')).not.toBe(
+      expect(screen.getByText('Invalid query').getAttribute('title')).not.toBe(
         'Query must be an object'
       )
+    );
+  });
+
+  it('runs a /g regex query and says the flag was ignored (#312)', async () => {
+    // The bug: `{"name": /test/g}` was rejected outright, and the badge said
+    // "Invalid JSON" — so the reporter concluded regex was unsupported. It runs
+    // now; `g` just cannot survive the trip to BSON, and the bar says so.
+    render(
+      <DocumentViewer
+        connectionName="test-conn"
+        databaseName="test-db"
+        collectionName="test-coll"
+        onExecute={mockOnExecute}
+        onExplain={mockOnExplain}
+        loading={false}
+      />
+    );
+
+    const filterInput = screen.getByTestId('query-filter-input');
+    fireEvent.change(filterInput, { target: { value: '{"name": /test/g}' } });
+
+    // Advisory, not an error: the query stays valid and Run stays enabled.
+    const notice = await screen.findByTestId('query-notice-badge');
+    expect(notice.getAttribute('title')).toContain('g');
+    expect(screen.queryByTestId('query-invalid-badge')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    await waitFor(() => expect(mockOnExecute).toHaveBeenCalled());
+    const [{ filter }] = mockOnExecute.mock.calls.at(-1)!;
+    expect(JSON.parse(filter)).toEqual({
+      name: { $regularExpression: { pattern: 'test', options: '' } },
+    });
+
+    // A regex with only supported flags draws no notice at all.
+    fireEvent.change(filterInput, { target: { value: '{"name": /test/i}' } });
+    await waitFor(() =>
+      expect(screen.queryByTestId('query-notice-badge')).not.toBeInTheDocument()
     );
   });
 
@@ -210,13 +247,13 @@ describe('DocumentViewer Component', () => {
     // Type invalid JSON
     fireEvent.change(filterInput, { target: { value: '{invalid' } });
     await waitFor(() => {
-      expect(screen.getByText('Invalid JSON')).toBeInTheDocument();
+      expect(screen.getByText('Invalid query')).toBeInTheDocument();
     });
 
     // Fix to valid JSON
     fireEvent.change(filterInput, { target: { value: '{"key": "value"}' } });
     await waitFor(() => {
-      expect(screen.queryByText('Invalid JSON')).not.toBeInTheDocument();
+      expect(screen.queryByText('Invalid query')).not.toBeInTheDocument();
     });
   });
 

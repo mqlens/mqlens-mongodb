@@ -118,6 +118,9 @@
       "runDisabled": "Abfragesyntax korrigieren, um sie auszuführen",
       "runPipelineToStage": "Pipeline bis Stufe {{n}} ausführen",
       "undoPipelineChange": "Pipeline-Änderung rückgängig machen"
+    },
+    "notices": {
+      "regexFlagsIgnored": "Das Regex-Flag {{flags}} hat in MongoDB keine Wirkung und wurde ignoriert."
     }
   },
   "findQueryBar": {
@@ -130,7 +133,7 @@
       "sort": "Sortierung"
     },
     "errors": {
-      "invalidJson": "Ungültiges JSON"
+      "invalidQuery": "Ungültige Abfrage"
     },
     "tooltips": {
       "clearFilter": "Filter leeren",
@@ -144,6 +147,9 @@
       "resetLimit": "Limit zurücksetzen",
       "resetSkip": "Skip zurücksetzen",
       "showOptions": "Projektion, Sortierung, Skip und Limit anzeigen"
+    },
+    "notices": {
+      "flagIgnored": "Flag ignoriert"
     }
   },
   "diffModal": {

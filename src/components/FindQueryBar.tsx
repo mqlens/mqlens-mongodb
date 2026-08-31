@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, ArrowUpDown, ChevronDown, ChevronRight, Eraser } from 'lucide-react';
+import { AlertCircle, AlertTriangle, ArrowUpDown, ChevronDown, ChevronRight, Eraser } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -21,14 +21,19 @@ export interface FindQueryBarProps {
   onFilterChange: (v: string) => void;
   onProjectionChange: (v: string) => void;
   onSortChange: (v: string) => void;
-  /** Mark a field's cell invalid (shows the destructive ring + "Invalid JSON"). */
+  /** Mark a field's cell invalid (shows the destructive ring + "Invalid query"). */
   filterInvalid?: boolean;
   projectionInvalid?: boolean;
   sortInvalid?: boolean;
   /** Why the filter would not parse. Shown on hover over the badge — the badge
-   *  itself has no room for it, and "Invalid JSON" on its own leaves a user
+   *  itself has no room for it, and "Invalid query" on its own leaves a user
    *  staring at a query that looks perfectly correct. */
   filterError?: string | null;
+  /** The filter parses and will run, but it had to be changed to be expressible
+   *  as BSON (a dropped regex flag). Advisory, never blocking — it renders as a
+   *  warning badge instead of the destructive one, and only when the filter is
+   *  otherwise valid. */
+  filterNotice?: string | null;
   fields: string[];
   schema?: SchemaMap;
   /** Emit mongosh-style completions (bare keys + ISODate()/ObjectId()) instead
@@ -88,6 +93,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
   onSortChange,
   filterInvalid = false,
   filterError,
+  filterNotice,
   projectionInvalid = false,
   sortInvalid = false,
   fields,
@@ -184,10 +190,22 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
       // look for its text.
       data-testid="query-invalid-badge"
     >
-      <AlertCircle size={10} /> {t('findQueryBar.errors.invalidJson')}
+      <AlertCircle size={10} /> {t('findQueryBar.errors.invalidQuery')}
     </span>
   );
   const invalidBadge = badge();
+
+  // Advisory sibling of `badge`: the query runs, so this is warning-coloured
+  // rather than destructive, and the detail lives in the tooltip the same way.
+  const noticeBadge = (message: string) => (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 pr-1.5 font-mono text-[10px] text-warning whitespace-nowrap"
+      title={message}
+      data-testid="query-notice-badge"
+    >
+      <AlertTriangle size={10} /> {t('findQueryBar.notices.flagIgnored')}
+    </span>
+  );
 
   return (
     <div className="flex flex-col border-b border-border bg-muted/20">
@@ -212,7 +230,7 @@ export const FindQueryBar: React.FC<FindQueryBarProps> = ({
             schema={schema}
             data-testid="query-filter-input"
           />
-          {filterInvalid && badge(filterError)}
+          {filterInvalid ? badge(filterError) : filterNotice ? noticeBadge(filterNotice) : null}
           <Button
             variant="ghost"
             size="icon"

@@ -275,6 +275,9 @@
       "aggregateSummary_other": "聚合 · {{count}} 个阶段",
       "findSummary": "查询 · {{filter}}"
     },
+    "notices": {
+      "regexFlagsIgnored": "正则表达式标志 {{flags}} 在 MongoDB 中不起作用，已被忽略。"
+    },
     "pipeline": {
       "stageCount_other": "{{count}} 个阶段",
       "stageGroups": {
@@ -342,7 +345,7 @@
   },
   "findQueryBar": {
     "errors": {
-      "invalidJson": "JSON 无效"
+      "invalidQuery": "查询无效"
     },
     "labels": {
       "limit": "限制",
@@ -351,6 +354,9 @@
       "query": "查询",
       "skip": "跳过",
       "sort": "排序"
+    },
+    "notices": {
+      "flagIgnored": "已忽略标志"
     },
     "tooltips": {
       "clearFilter": "清除筛选条件",

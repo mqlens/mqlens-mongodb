@@ -289,6 +289,9 @@
       "aggregateSummary_other": "aggregate · {{count}} stages",
       "findSummary": "find · {{filter}}"
     },
+    "notices": {
+      "regexFlagsIgnored": "Regex flag {{flags}} has no effect in MongoDB and was ignored."
+    },
     "pipeline": {
       "stageCount_one": "{{count}} stage",
       "stageCount_other": "{{count}} stages",
@@ -357,7 +360,7 @@
   },
   "findQueryBar": {
     "errors": {
-      "invalidJson": "Invalid JSON"
+      "invalidQuery": "Invalid query"
     },
     "labels": {
       "limit": "Limit",
@@ -366,6 +369,9 @@
       "query": "Query",
       "skip": "Skip",
       "sort": "Sort"
+    },
+    "notices": {
+      "flagIgnored": "Flag ignored"
     },
     "tooltips": {
       "clearFilter": "Clear Filter",
