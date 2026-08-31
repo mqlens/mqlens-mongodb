@@ -400,3 +400,81 @@ describe('parseShellJson — regex flags BSON cannot carry (#312)', () => {
     expect(notices.droppedRegexFlags).toEqual([]);
   });
 });
+
+// #317: a bare integer past 2^53 was evaluated as a JS number during parsing,
+// so it reached the server rounded — `{counter: 9007199254740993}` became
+// ...992 and matched a different document, with no error and nothing on screen.
+describe('parseShellJson — 64-bit integer literals (#317)', () => {
+  const longAt = (text: string, key = 'counter') =>
+    parseShellJson(text)[key].$numberLong;
+
+  it('keeps an integer past 2^53 exact, in strict JSON and in shell syntax', () => {
+    expect(longAt('{"counter": 9007199254740993}')).toBe('9007199254740993');
+    expect(longAt('{counter: 9007199254740993}')).toBe('9007199254740993');
+  });
+
+  it('keeps a negative one exact, sign and all', () => {
+    expect(longAt('{counter: -9007199254740993}')).toBe('-9007199254740993');
+  });
+
+  it('reaches values nested in arrays and operators', () => {
+    expect(parseShellJson('{a: {$gt: 9007199254740993}}').a.$gt.$numberLong).toBe(
+      '9007199254740993'
+    );
+    expect(parseShellJson('{a: [9007199254740993]}').a[0].$numberLong).toBe(
+      '9007199254740993'
+    );
+  });
+
+  it('works alongside other shell syntax in the same query', () => {
+    // The mixed case is the one a strict-JSON fast path cannot reach, which is
+    // why this is fixed in the parser's input rather than at a call site.
+    const parsed = parseShellJson('{a: 9007199254740993, name: /x/i}');
+    expect(parsed.a.$numberLong).toBe('9007199254740993');
+    expect(parsed.name.$regularExpression.pattern).toBe('x');
+  });
+
+  it('handles the extremes of the 64-bit range', () => {
+    expect(longAt('{counter: 9223372036854775807}')).toBe('9223372036854775807');
+    expect(longAt('{counter: -9223372036854775808}')).toBe('-9223372036854775808');
+  });
+
+  it('leaves ordinary numbers exactly as they were', () => {
+    // The rewrite must be invisible to every query that does not need it —
+    // no `{a: 42}` quietly becoming a long.
+    expect(parseShellJson('{a: 42}')).toEqual({ a: 42 });
+    expect(parseShellJson('{a: 0}')).toEqual({ a: 0 });
+    expect(parseShellJson('{a: 1.5}')).toEqual({ a: 1.5 });
+    expect(parseShellJson('{a: 9007199254740991}')).toEqual({ a: 9007199254740991 });
+  });
+
+  it('leaves values that deliberately spell a double alone', () => {
+    // A fraction or an exponent is the user choosing a double; rewriting it
+    // would change the type they asked for.
+    expect(parseShellJson('{a: 1e30}').a).toBe(1e30);
+    expect(typeof parseShellJson('{a: 9007199254740993.5}').a).toBe('number');
+  });
+
+  it('does not touch digits inside strings or regexes', () => {
+    expect(parseShellJson('{note: "9007199254740993"}')).toEqual({
+      note: '9007199254740993',
+    });
+    expect(parseShellJson('{p: /9007199254740993/}').p.$regularExpression.pattern).toBe(
+      '9007199254740993'
+    );
+  });
+
+  it('leaves a value too large for a 64-bit long alone', () => {
+    // There is no lossless form to rewrite into, so it stays as it is rather
+    // than being truncated into a different wrong number.
+    expect(typeof parseShellJson('{a: 99999999999999999999999999}').a).toBe('number');
+  });
+
+  it('rewrites the value, not a numeric key', () => {
+    // `NumberLong("…")` is not valid in key position. A field name that long
+    // is written quoted in practice, and that path is exact.
+    expect(Object.keys(parseShellJson('{"9007199254740993": 1}'))).toEqual([
+      '9007199254740993',
+    ]);
+  });
+});

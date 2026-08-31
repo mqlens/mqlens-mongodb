@@ -453,6 +453,107 @@ function endOfRegex(text: string, start: number): number {
   return -1;
 }
 
+/** The range a BSON 64-bit long can hold. Outside it, there is nothing to preserve into. */
+const I64_MAX = 9223372036854775807n;
+const I64_MIN = -9223372036854775808n;
+
+/**
+ * Rewrite integer literals a JS number cannot hold into `NumberLong("…")`.
+ *
+ * The query parser evaluates a bare literal as a JS `number`, so anything past
+ * 2^53 is rounded before we ever see it: `{counter: 9007199254740993}` reached
+ * the server as `…992` and matched a different document, with no error and
+ * nothing on screen to say so (#317). The loss happens during parsing, so the
+ * only place to fix it is before parsing — hence a text pass.
+ *
+ * `NumberLong` is the right target rather than a workaround: the backend
+ * already produces a BSON Int64 for such a literal (serde_json reads it
+ * exactly, then bson maps it to Int64), so this restores the type the query
+ * always should have had. shellDoc then serializes canonically, because
+ * `containsLong` sees a Long, and the value survives to the server intact.
+ *
+ * Deliberately narrow — it only touches literals that are BOTH unrepresentable
+ * as a double AND expressible as a long:
+ *
+ * - Values inside strings and regex literals are the user's data, so those are
+ *   copied verbatim, exactly as `normalizePastedQuery` treats them.
+ * - Anything with a `.`, an exponent, or a `0x`/`0b`/`0o`/`n` suffix is left
+ *   alone. Those spell a double (or a form the parser handles itself) on
+ *   purpose, and rewriting them would change the user's chosen type.
+ * - Safe integers are left alone, so ordinary numbers keep serializing as they
+ *   always have — no `{a: 42}` suddenly becoming a long.
+ * - Object keys (`{123: 1}`) are skipped: a key is not a value, and
+ *   `NumberLong("…")` is not valid there.
+ * - Values beyond the i64 range are left alone. They cannot be a BSON long, so
+ *   there is no lossless form to rewrite them into; they stay as they are
+ *   rather than being silently truncated into a different wrong number.
+ */
+export function preserveBigIntegers(text: string): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    // Verbatim: a string's contents are data, not syntax.
+    if (c === '"' || c === "'") {
+      out += c;
+      i++;
+      while (i < text.length) {
+        if (text[i] === '\\') {
+          out += text[i] + (text[i + 1] ?? '');
+          i += 2;
+          continue;
+        }
+        out += text[i];
+        if (text[i] === c) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    // Verbatim: digits inside a pattern are part of the pattern.
+    if (c === '/' && startsRegex(out)) {
+      const end = endOfRegex(text, i);
+      if (end !== -1) {
+        out += text.slice(i, end);
+        i = end;
+        continue;
+      }
+    }
+    if (c >= '0' && c <= '9') {
+      const prev = out[out.length - 1] ?? '';
+      // A digit run only starts a literal at a token boundary — `a1` and
+      // `1.5`'s tail are continuations, not new numbers.
+      if (!/[A-Za-z0-9_$.]/.test(prev)) {
+        let j = i;
+        while (j < text.length && text[j] >= '0' && text[j] <= '9') j++;
+        const digits = text.slice(i, j);
+        const after = text[j] ?? '';
+        const isPlainInteger = !/[.eExXbBoOn_]/.test(after);
+        // A key, not a value: `{123: 1}`.
+        const isKey = /^\s*:/.test(text.slice(j));
+        if (isPlainInteger && !isKey && !Number.isSafeInteger(Number(digits))) {
+          // Pull a unary minus in with the digits, so the long carries the
+          // sign rather than the parser negating a Long object.
+          const signed = /(^|[:,[(\s])-\s*$/.test(out);
+          const literal = (signed ? '-' : '') + digits;
+          const value = BigInt(literal);
+          if (value >= I64_MIN && value <= I64_MAX) {
+            if (signed) out = out.replace(/-\s*$/, '');
+            out += `NumberLong("${literal}")`;
+            i = j;
+            continue;
+          }
+        }
+      }
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 /** Drop `;` off the end, but only when it is not inside a string. */
 function stripTrailingSemicolons(text: string): string {
   let cut = text.length;
@@ -486,7 +587,7 @@ function stripTrailingSemicolons(text: string): string {
 }
 
 export function parseShellJson(text: string, notices?: ShellDocNotices): any {
-  const trimmed = normalizePastedQuery(text).trim();
+  const trimmed = preserveBigIntegers(normalizePastedQuery(text)).trim();
   if (!trimmed) return {};
   // parseFilter signals "unparseable / not a valid query" by returning an empty
   // string rather than throwing (e.g. `{ _id }`, a half-typed field). Surface
