@@ -114,9 +114,8 @@
     },
     "errors": {
       "delimiterAscii": "分隔符必须是单个 ASCII 字符。",
-      "invalidJson": "JSON 无效",
-      "mustBeObject": "必须是一个 JSON 对象",
-      "pipelineMustBeArray": "管道必须是由阶段组成的 JSON 数组"
+      "pipelineMustBeArray": "管道必须是由阶段组成的数组",
+      "invalidQuery": "查询无效"
     },
     "fields": {
       "filterPlaceholder": "筛选字段",

@@ -44,9 +44,8 @@
     },
     "errors": {
       "delimiterAscii": "Das Trennzeichen muss ein einzelnes ASCII-Zeichen sein.",
-      "mustBeObject": "Muss ein JSON-Objekt sein",
-      "invalidJson": "Ungültiges JSON",
-      "pipelineMustBeArray": "Pipeline muss ein JSON-Array von Stufen sein"
+      "pipelineMustBeArray": "Pipeline muss ein Array von Stufen sein",
+      "invalidQuery": "Ungültige Abfrage"
     },
     "fields": {
       "title": "Felder",

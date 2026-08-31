@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { QueryEditor } from './QueryEditor';
 import { FindQueryBar } from './FindQueryBar';
 import { useCollectionSchema } from '../lib/useCollectionSchema';
+import { parseQueryObject, parseShellJson, shellDocErrorKey, shellDocErrorParams } from '../lib/shellDoc';
 
 /** File formats the export view can produce. */
 export type ExportFormat = 'json' | 'ndjson' | 'bson' | 'csv' | 'xlsx';
@@ -105,33 +106,74 @@ interface ExportViewProps {
 
 // Pure, module-scope validators — they can't call the useTranslation hook, so
 // the component passes its `t` in at each call site.
-type TFunc = (key: string) => string;
+type TFunc = (key: string, opts?: Record<string, unknown>) => string;
 
-/** Validate a JSON object string ('' and '{}' count as the empty object). */
-function checkJsonObject(raw: string, t: TFunc): { ok: boolean; error?: string } {
+/** What a validator reports: whether it parsed, why not, and the value to send. */
+interface FieldCheck {
+  ok: boolean;
+  error?: string;
+  /** Normalized Extended JSON for the backend — NOT the text the user typed. */
+  value: string;
+}
+
+/**
+ * Turn a parse failure into a message, preferring our own translated codes.
+ *
+ * Mirrors what the document view does with shellDocErrorKey: errors we raise
+ * ourselves carry a code with a catalog entry (in the `documents` namespace,
+ * which is where the shared parser's messages live), while the underlying
+ * parser's own errors are only available in English.
+ */
+function parseErrorMessage(e: unknown, t: TFunc): string {
+  const key = shellDocErrorKey(e);
+  if (key) return t(`documents:${key}`, shellDocErrorParams(e));
+  const message = e instanceof Error ? e.message : String(e);
+  return message || t('transfer:exportView.errors.invalidQuery');
+}
+
+/**
+ * Validate a find field the way the main query bar does.
+ *
+ * These were JSON.parse'd, so the export view rejected the very syntax the
+ * document view accepts — regex literals, ObjectId(…), unquoted keys, pasted
+ * smart quotes — and a filter that had just run could not be carried into an
+ * export (#314). Parsing with the shared shell parser closes that gap.
+ *
+ * The parsed result is returned as Extended JSON, because that is what has to
+ * reach the backend: the raw text used to be forwarded verbatim, which is why
+ * only strict JSON could work end to end. The backend already reads Extended
+ * JSON here (build_source → serde_json → BSON), the same as the find path, so
+ * this needs no change on that side.
+ *
+ * '' and '{}' both mean "no filter", matching the query bar's convention.
+ */
+function checkQueryObject(raw: string, t: TFunc): FieldCheck {
   const trimmed = raw.trim();
-  if (trimmed === '' || trimmed === '{}') return { ok: true };
+  if (trimmed === '' || trimmed === '{}') return { ok: true, value: '{}' };
   try {
-    const value = JSON.parse(trimmed);
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-      return { ok: false, error: t('transfer:exportView.errors.mustBeObject') };
-    }
-    return { ok: true };
-  } catch {
-    return { ok: false, error: t('transfer:exportView.errors.invalidJson') };
+    return { ok: true, value: JSON.stringify(parseQueryObject(trimmed)) };
+  } catch (e) {
+    return { ok: false, error: parseErrorMessage(e, t), value: '{}' };
   }
 }
 
-/** Validate a JSON array string ('' and '[]' count as the empty pipeline). */
-function checkJsonArray(raw: string, t: TFunc): { ok: boolean; error?: string } {
+/**
+ * Same, for the aggregation pipeline, which must be an array of stages.
+ *
+ * parseQueryObject is deliberately not reused: it rejects anything that is not
+ * a plain object, which is right for a filter and wrong for a pipeline.
+ */
+function checkPipeline(raw: string, t: TFunc): FieldCheck {
   const trimmed = raw.trim();
-  if (trimmed === '' || trimmed === '[]') return { ok: true };
+  if (trimmed === '' || trimmed === '[]') return { ok: true, value: '[]' };
   try {
-    const value = JSON.parse(trimmed);
-    if (!Array.isArray(value)) return { ok: false, error: t('transfer:exportView.errors.pipelineMustBeArray') };
-    return { ok: true };
-  } catch {
-    return { ok: false, error: t('transfer:exportView.errors.invalidJson') };
+    const value = parseShellJson(trimmed);
+    if (!Array.isArray(value)) {
+      return { ok: false, error: t('transfer:exportView.errors.pipelineMustBeArray'), value: '[]' };
+    }
+    return { ok: true, value: JSON.stringify(value) };
+  } catch (e) {
+    return { ok: false, error: parseErrorMessage(e, t), value: '[]' };
   }
 }
 
@@ -203,10 +245,10 @@ export const ExportView: React.FC<ExportViewProps> = ({
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewing, setPreviewing] = React.useState(false);
 
-  const filterCheck = checkJsonObject(filter, t);
-  const sortCheck = checkJsonObject(sort, t);
-  const projectionCheck = checkJsonObject(projection, t);
-  const pipelineCheck = checkJsonArray(pipeline, t);
+  const filterCheck = checkQueryObject(filter, t);
+  const sortCheck = checkQueryObject(sort, t);
+  const projectionCheck = checkQueryObject(projection, t);
+  const pipelineCheck = checkPipeline(pipeline, t);
   const canExportFiltered =
     mode === 'aggregate'
       ? pipelineCheck.ok
@@ -236,7 +278,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
     if (!onCountFilter || !filterCheck.ok) return;
     setCounting(true);
     setCountError(null);
-    onCountFilter(filter)
+    onCountFilter(filterCheck.value)
       .then((n) => setCount(n))
       .catch(() => setCountError(t('exportView.filtered.countFailed')))
       .finally(() => setCounting(false));
@@ -251,15 +293,20 @@ export const ExportView: React.FC<ExportViewProps> = ({
     return t('exportView.filtered.countNotRun');
   })();
 
+  // Ship the PARSED value, not the text in the editor. The backend reads
+  // Extended JSON, so forwarding raw text is what limited these fields to
+  // strict JSON (#314) — `{name: /a/i}` is a valid query but not valid JSON.
+  // Callers only reach this when the matching check is ok, so `value` is the
+  // real parse rather than the empty-object fallback.
   const buildQuery = (): FilteredExportQuery =>
     mode === 'aggregate'
-      ? { kind: 'aggregate', pipeline }
+      ? { kind: 'aggregate', pipeline: pipelineCheck.value }
       : {
           kind: 'find',
-          filter,
-          sort,
+          filter: filterCheck.value,
+          sort: sortCheck.value,
           // A field selection replaces the projection editor entirely.
-          projection: fieldSelectionActive ? '{}' : projection,
+          projection: fieldSelectionActive ? '{}' : projectionCheck.value,
           skip,
           limit,
         };
@@ -710,6 +757,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
               <div className={editorShell(pipelineCheck.ok)}>
                 <QueryEditor
                   surface="aggStage"
+                  shellSyntax
                   value={pipeline}
                   onChange={setPipeline}
                   fields={fields}
@@ -732,10 +780,15 @@ export const ExportView: React.FC<ExportViewProps> = ({
                 onProjectionChange={setProjection}
                 onSortChange={setSort}
                 filterInvalid={!filterCheck.ok}
+                filterError={filterCheck.error}
                 projectionInvalid={!projectionCheck.ok}
                 sortInvalid={!sortCheck.ok}
                 fields={fields}
                 schema={schema}
+                // These fields parse mongosh syntax now, so the completions
+                // must offer it too — bare keys and ObjectId()/ISODate()
+                // rather than EJSON wrappers, matching the document view.
+                shellSyntax
               />
             </div>
           )}

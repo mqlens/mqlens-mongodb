@@ -116,9 +116,8 @@
     },
     "errors": {
       "delimiterAscii": "Delimiter must be a single ASCII character.",
-      "invalidJson": "Invalid JSON",
-      "mustBeObject": "Must be a JSON object",
-      "pipelineMustBeArray": "Pipeline must be a JSON array of stages"
+      "invalidQuery": "Invalid query",
+      "pipelineMustBeArray": "Pipeline must be an array of stages"
     },
     "fields": {
       "filterPlaceholder": "Filter fields",
