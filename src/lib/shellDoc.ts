@@ -498,6 +498,21 @@ const I64_MIN = -9223372036854775808n;
 const VALUE_STARTS_AFTER = ':,[';
 
 /**
+ * Characters that can follow a complete value: `{a: N}`, `[N]`, `[N, 1]`.
+ *
+ * The mirror of VALUE_STARTS_AFTER, and needed for the same reason from the
+ * other side. Checking only what precedes a literal caught `{a: 1 + N}` but
+ * not `{a: N + 1}`, where the literal is the LEFT operand — that became
+ * `NumberLong("…") + 1`, and JS concatenated the long's toString into the
+ * string "90071992547409931", turning a numeric query into a string one
+ * without a word (#318 review).
+ *
+ * It also subsumes the property-key case: `:` is not here, so `{123: 1}` is
+ * left alone by the same rule rather than a second special case.
+ */
+const VALUE_ENDS_BEFORE = ',}])';
+
+/**
  * Where does the literal we are about to read sit, and may we rewrite it?
  *
  * Rewriting anywhere a big integer appears is wrong, because the text around
@@ -633,9 +648,12 @@ export function preserveBigIntegers(text: string): string {
         const digits = text.slice(i, j);
         const after = text[j] ?? '';
         const isPlainInteger = !/[.eExXbBoOn_]/.test(after);
-        // A key, not a value: `{123: 1}`.
-        const isKey = text[skipTrivia(text, j)] === ':';
-        if (isPlainInteger && !isKey && !Number.isSafeInteger(Number(digits))) {
+        // Whatever follows must be able to end a value. One rule covers both a
+        // property key (`{123: 1}` — `:` cannot end a value) and a literal used
+        // as the left operand of an expression (`{a: N + 1}` — nor can `+`).
+        const next = text[skipTrivia(text, j)] ?? '';
+        const endsValue = next === '' || VALUE_ENDS_BEFORE.includes(next);
+        if (isPlainInteger && endsValue && !Number.isSafeInteger(Number(digits))) {
           const placement = classifyNumberPlacement(lastMeaningful, prevMeaningful, out);
           if (placement !== 'skip') {
             // A unary minus comes along inside the long, so the parser is

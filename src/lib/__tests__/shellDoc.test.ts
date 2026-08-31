@@ -602,3 +602,40 @@ describe('preserveBigIntegers — numeric keys with comments (#318 review)', () 
     ).toBe('9007199254740993');
   });
 });
+
+// #318 review, round 4: the mirror of the binary-minus case. Checking only what
+// PRECEDES a literal caught `{a: 1 + N}` but not `{a: N + 1}`.
+describe('preserveBigIntegers — literal as a left-hand operand (#318 review)', () => {
+  it('leaves a literal that an operator follows alone', () => {
+    // Rewriting made this `NumberLong("…") + 1`, and JS concatenated the long's
+    // toString — the query silently became the STRING "90071992547409931".
+    expect(preserveBigIntegers('{limit: 9007199254740993 + 1}')).toBe(
+      '{limit: 9007199254740993 + 1}'
+    );
+    expect(typeof parseShellJson('{limit: 9007199254740993 + 1}').limit).toBe('number');
+  });
+
+  it('does the same when a comment sits before the operator', () => {
+    expect(preserveBigIntegers('{a: 9007199254740993 /* c */ + 1}')).toBe(
+      '{a: 9007199254740993 /* c */ + 1}'
+    );
+  });
+
+  it('still rewrites where a value legitimately ends', () => {
+    // `}`, `]`, `,` and end-of-input all end a value; a trailing comment is
+    // skipped to find them.
+    expect(parseShellJson('{a: 9007199254740993}').a.$numberLong).toBe('9007199254740993');
+    expect(parseShellJson('{a: [9007199254740993, 1]}').a[0].$numberLong).toBe(
+      '9007199254740993'
+    );
+    expect(parseShellJson('{a: 9007199254740993, b: 1}').a.$numberLong).toBe(
+      '9007199254740993'
+    );
+    expect(parseShellJson('counter: 9007199254740993').counter.$numberLong).toBe(
+      '9007199254740993'
+    );
+    expect(parseShellJson('{a: 9007199254740993 /* trailing */}').a.$numberLong).toBe(
+      '9007199254740993'
+    );
+  });
+});
