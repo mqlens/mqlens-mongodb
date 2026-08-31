@@ -644,7 +644,15 @@ impl McpServer {
         // supplies, so it was never a gate — and a CLI that found the external
         // route through its own global config reached these tools with no prompt
         // at all, which is the hole the helper path alone could not close.
-        {
+        //
+        // Gated on `_confirm` only so the *documented first pass* never reaches
+        // the user: `_confirm: false` is rejected by `require_confirm` in the impl
+        // below without touching the collection, so prompting for it asked someone
+        // to approve an operation that could not run, and the agent's retry with
+        // `true` then asked them a second time. This gives up nothing — an
+        // unconfirmed call never writes, and every call that does write still
+        // passes through the prompt, on every route.
+        if args._confirm {
             match confirm_write(&app_handle, "insert_one", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
@@ -677,7 +685,15 @@ impl McpServer {
         // supplies, so it was never a gate — and a CLI that found the external
         // route through its own global config reached these tools with no prompt
         // at all, which is the hole the helper path alone could not close.
-        {
+        //
+        // Gated on `_confirm` only so the *documented first pass* never reaches
+        // the user: `_confirm: false` is rejected by `require_confirm` in the impl
+        // below without touching the collection, so prompting for it asked someone
+        // to approve an operation that could not run, and the agent's retry with
+        // `true` then asked them a second time. This gives up nothing — an
+        // unconfirmed call never writes, and every call that does write still
+        // passes through the prompt, on every route.
+        if args._confirm {
             match confirm_write(&app_handle, "update_many", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
@@ -708,7 +724,15 @@ impl McpServer {
         // supplies, so it was never a gate — and a CLI that found the external
         // route through its own global config reached these tools with no prompt
         // at all, which is the hole the helper path alone could not close.
-        {
+        //
+        // Gated on `_confirm` only so the *documented first pass* never reaches
+        // the user: `_confirm: false` is rejected by `require_confirm` in the impl
+        // below without touching the collection, so prompting for it asked someone
+        // to approve an operation that could not run, and the agent's retry with
+        // `true` then asked them a second time. This gives up nothing — an
+        // unconfirmed call never writes, and every call that does write still
+        // passes through the prompt, on every route.
+        if args._confirm {
             match confirm_write(&app_handle, "delete_many", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
@@ -749,7 +773,15 @@ impl McpServer {
         // supplies, so it was never a gate — and a CLI that found the external
         // route through its own global config reached these tools with no prompt
         // at all, which is the hole the helper path alone could not close.
-        {
+        //
+        // Gated on `_confirm` only so the *documented first pass* never reaches
+        // the user: `_confirm: false` is rejected by `require_confirm` in the impl
+        // below without touching the collection, so prompting for it asked someone
+        // to approve an operation that could not run, and the agent's retry with
+        // `true` then asked them a second time. This gives up nothing — an
+        // unconfirmed call never writes, and every call that does write still
+        // passes through the prompt, on every route.
+        if args._confirm {
             match confirm_write(&app_handle, "create_index", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
@@ -1218,6 +1250,40 @@ mod tests {
                 "a refusal must not skip the log: {line}"
             );
         }
+    }
+
+    #[test]
+    fn the_documented_first_pass_is_not_put_in_front_of_the_user() {
+        // `_confirm: false` is the pass the tool descriptions tell the agent to
+        // make first, and `require_confirm` rejects it without touching the
+        // collection. Prompting before that check asked someone to approve an
+        // operation that then could not run, and the agent's retry with `true`
+        // asked them again. Needs a live AppHandle to exercise, so this pins the
+        // order instead.
+        let whole = include_str!("mcp.rs");
+        let src = &whole[..whole.find("\n#[cfg(test)]").unwrap_or(whole.len())];
+        for tool in ["insert_one", "update_many", "delete_many", "create_index"] {
+            let fn_at = src
+                .find(&format!("async fn {tool}(&self"))
+                .unwrap_or_else(|| panic!("{tool} handler"));
+            let call = src[fn_at..]
+                .find(&format!("confirm_write(&app_handle, \"{tool}\""))
+                .unwrap_or_else(|| panic!("{tool} must confirm"));
+            let preamble = &src[fn_at..fn_at + call];
+            assert!(
+                preamble.contains("if args._confirm {"),
+                "{tool} must not prompt for a call it is about to reject: {preamble}"
+            );
+        }
+        // The fall-through this relies on: the impls still reject an unconfirmed
+        // call, so skipping the prompt cannot become skipping the check.
+        let tools = include_str!("mcp_tools.rs");
+        let body = &tools[..tools.find("\n#[cfg(test)]").unwrap_or(tools.len())];
+        assert_eq!(
+            body.matches("require_confirm(args._confirm").count(),
+            4,
+            "one per write impl"
+        );
     }
 
     #[test]
