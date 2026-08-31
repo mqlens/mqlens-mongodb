@@ -17,6 +17,7 @@ import {
   takeSettledChatRequest,
 } from './lib/aiChatRequest';
 import { stopChangeStream } from './lib/changeStream';
+import { startWriteRequests } from './lib/mcpWriteRequests';
 import {
   appendReplyToChat,
   releaseChatsForTab,
@@ -1129,6 +1130,14 @@ function Workspace() {
       active = false;
       clearInterval(id);
     };
+  }, []);
+
+  // Writes the agent has asked for are held outside the tree, and the listener
+  // has to exist before there is any panel to show them in: an external MCP
+  // client's write is confirmed too, and it does not come from a panel. Started
+  // here because `App` is mounted for the life of the webview.
+  useEffect(() => {
+    startWriteRequests();
   }, []);
 
   // App + connected MongoDB versions for the status bar.

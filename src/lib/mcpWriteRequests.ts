@@ -9,7 +9,11 @@
  * request behind it.
  */
 import { invoke } from '@tauri-apps/api/core';
-import { subscribeMcpWriteRequest, type McpWriteRequest } from '../workspace/workspaceStore';
+import {
+  subscribeMcpWriteRequest,
+  subscribeMcpWriteSettled,
+  type McpWriteRequest,
+} from '../workspace/workspaceStore';
 
 /** Matches the backend's `WRITE_CONFIRM_TIMEOUT`; see `mcp::confirm_write`. */
 export const WRITE_REQUEST_TTL_MS = 120_000;
@@ -43,6 +47,17 @@ function start() {
     // Without the subscription nothing can be approved, which is the safe
     // direction: the backend refuses on silence.
   });
+  // The request reaches every webview and is answered in one of them, so the
+  // rest have to be told. Without this they went on offering a prompt that was
+  // already decided, and because only the oldest is shown that stale entry hid
+  // live requests behind it for the full two minutes.
+  void subscribeMcpWriteSettled((id) => {
+    const before = held.length;
+    held = held.filter((r) => r.id !== id);
+    if (held.length !== before) notify();
+  }).catch(() => {
+    // Only costs the stale prompt the sweep below would clear anyway.
+  });
   // Swept rather than timed per entry: one interval is enough at this cadence,
   // and a prompt that lingers a few seconds past its deadline is harmless — the
   // backend has already refused it.
@@ -74,6 +89,20 @@ export function endRun(runId: string): void {
 /** The conversation a run was asked in, or `undefined` if it is not ours. */
 export function conversationForRun(runId: string): string | undefined {
   return runs.get(runId);
+}
+
+/**
+ * Begin listening, before anything is on screen to ask.
+ *
+ * Called by `App`, which is mounted for the lifetime of the webview, because the
+ * subscription cannot belong to the confirmation UI: an external MCP client's
+ * write is confirmed on every route now, and it does not originate from a panel.
+ * With the listener started lazily by the panel, a write arriving before any
+ * panel had ever mounted was broadcast to nobody, could not be recovered by
+ * opening the chat afterwards, and could only fail when the backend gave up.
+ */
+export function startWriteRequests(): void {
+  start();
 }
 
 /**

@@ -981,6 +981,13 @@ async fn confirm_write(
     let answer = tokio::time::timeout(WRITE_CONFIRM_TIMEOUT, rx).await;
     // Dropped either way: a decision that arrives later has nothing to resolve.
     state.mcp_write_confirms.lock_safe()?.remove(&id);
+    // Every webview received the request; only the one that answered drops it
+    // locally. The others went on showing a prompt that had already been decided,
+    // and because each panel displays the oldest request first, that dead prompt
+    // hid live ones behind it until its own TTL ran out. Emitted for every
+    // outcome — approved, refused, and timed out — which is what makes this the
+    // mechanism and leaves the frontend's sweep as a backstop for a lost event.
+    let _ = app_handle.emit("mcp-write-settled", serde_json::json!({ "id": id }));
 
     let (approved, refusal) = match answer {
         Ok(Ok(true)) => (true, None),

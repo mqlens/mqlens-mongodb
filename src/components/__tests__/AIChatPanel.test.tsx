@@ -6,6 +6,7 @@ import { resetChatRequests } from '../../lib/aiChatRequest';
 import { resetOpenChats } from '../../lib/aiChatStore';
 import {
   resetWriteRequestsForTests,
+  startWriteRequests,
   WRITE_REQUEST_TTL_MS,
 } from '../../lib/mcpWriteRequests';
 
@@ -16,8 +17,9 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock
 // not reached in jsdom.
 const providerListeners: Array<() => void> = [];
 const writeRequestListeners: Array<
-  (r: { id: string; tool: string; summary: string; requester: string }) => void
+  (r: { id: string; tool: string; summary: string; requester: string | null }) => void
 > = [];
+const writeSettledListeners: Array<(id: string) => void> = [];
 vi.mock('../../workspace/workspaceStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../workspace/workspaceStore')>()),
   subscribeMcpWriteRequest: (fn: (r: any) => void) => {
@@ -25,6 +27,13 @@ vi.mock('../../workspace/workspaceStore', async (importOriginal) => ({
     return Promise.resolve(() => {
       const i = writeRequestListeners.indexOf(fn);
       if (i >= 0) writeRequestListeners.splice(i, 1);
+    });
+  },
+  subscribeMcpWriteSettled: (fn: (id: string) => void) => {
+    writeSettledListeners.push(fn);
+    return Promise.resolve(() => {
+      const i = writeSettledListeners.indexOf(fn);
+      if (i >= 0) writeSettledListeners.splice(i, 1);
     });
   },
   subscribeAiProvidersChanged: (fn: () => void) => {
@@ -202,6 +211,7 @@ describe('AIChatPanel', () => {
     // Module state, so it outlives a test unless it is cleared.
     resetWriteRequestsForTests();
     writeRequestListeners.length = 0;
+    writeSettledListeners.length = 0;
     chatStore = [];
     chatClaims = {};
     localStorage.clear();
@@ -1630,6 +1640,60 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     // The second is still there to be answered.
     await waitFor(() =>
       expect(screen.getByTestId('chat-write-request')).toHaveTextContent('second'),
+    );
+  });
+
+  it('drops a request another window has answered, revealing the live one', async () => {
+    // The request reaches every webview and is answered in one. The others kept
+    // showing it, and since only the oldest is displayed that already-decided
+    // prompt hid the next live request behind it until its TTL ran out.
+    heldRun();
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    send('which orders are old');
+    await waitFor(() => expect(lastRequesterId()).toBeTruthy());
+
+    await act(async () => {
+      const mine = lastRequesterId();
+      writeRequestListeners.forEach((fn) => fn({ id: 'w1', tool: 'delete_many', summary: 'answered elsewhere', requester: mine }));
+      writeRequestListeners.forEach((fn) => fn({ id: 'w2', tool: 'insert_one', summary: 'still waiting', requester: mine }));
+    });
+    expect(await screen.findByTestId('chat-write-request')).toHaveTextContent('answered elsewhere');
+
+    // Answered in the other window: this one is only told it is settled, and
+    // must not have called the backend itself.
+    expect(writeSettledListeners).not.toHaveLength(0);
+    await act(async () => {
+      writeSettledListeners.forEach((fn) => fn('w1'));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-write-request')).toHaveTextContent('still waiting'),
+    );
+    expect(invokeMock).not.toHaveBeenCalledWith('mcp_resolve_write', expect.anything());
+  });
+
+  it('recovers a write that arrived before any panel was mounted', async () => {
+    // An external MCP client's write is confirmed too, and it does not come from
+    // a panel. With the listener started lazily by the panel, such a request was
+    // broadcast to nobody and could only fail when the backend gave up two
+    // minutes later. `App` starts it instead, so opening the chat still finds it.
+    startWriteRequests();
+    await act(async () => {});
+    expect(writeRequestListeners).not.toHaveLength(0);
+
+    // Unaddressed, as an external client's write always is.
+    await act(async () => {
+      writeRequestListeners.forEach((fn) =>
+        fn({ id: 'ext1', tool: 'delete_many', summary: 'from an external client', requester: null }),
+      );
+    });
+
+    // Only now does any UI exist. The prompt does not depend on a provider
+    // being configured — the write is already parked in the backend.
+    renderPanel('editor');
+    expect(await screen.findByTestId('chat-write-request')).toHaveTextContent(
+      'from an external client',
     );
   });
 

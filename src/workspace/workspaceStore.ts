@@ -163,6 +163,20 @@ export function subscribeMcpWriteRequest(
   return listen<McpWriteRequest>('mcp-write-request', (event) => listener(event.payload));
 }
 
+/**
+ * Subscribe to a request the backend has finished with, however it ended.
+ *
+ * The request goes to every webview but is answered in one, so the others held a
+ * prompt that had already been decided — and since a panel shows the oldest
+ * first, that dead prompt hid live ones behind it. Emitted for a refusal and a
+ * timeout too, so this clears them rather than waiting out the local TTL.
+ */
+export function subscribeMcpWriteSettled(
+  listener: (id: string) => void
+): Promise<UnlistenFn> {
+  return listen<{ id: string }>('mcp-write-settled', (event) => listener(event.payload.id));
+}
+
 /** Wire shape of the `connections-changed` broadcast (src-tauri/src/state.rs's `ConnectionsChangedPayload`). */
 export interface ConnectionEntry {
   id: string;
