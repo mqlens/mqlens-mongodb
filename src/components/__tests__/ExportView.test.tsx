@@ -302,6 +302,35 @@ describe('ExportView', () => {
       expect(screen.getByText('Pipeline must be an array of stages')).toBeInTheDocument();
     });
 
+    it('forwards strict JSON untouched, preserving 64-bit integers (#316 review)', () => {
+      // A bare integer past 2^53 cannot survive a JS number. Strict JSON is
+      // what the backend read before these fields learned mongosh syntax, so
+      // it is handed over verbatim rather than re-serialized — otherwise
+      // 9007199254740993 silently becomes ...992 and matches another document.
+      const onExport = exportWith('{"counter":9007199254740993}');
+      expect(onExport.mock.calls[0][3].filter).toBe('{"counter":9007199254740993}');
+    });
+
+    it('preserves 64-bit integers in a strict-JSON pipeline too', () => {
+      const onExport = vi.fn();
+      renderExportView({ onExport, filtered: { kind: 'aggregate', pipeline: '[]' } });
+      const raw = '[{"$match":{"counter":9007199254740993}}]';
+      fireEvent.change(screen.getByTestId('export-filtered-pipeline-input'), {
+        target: { value: raw },
+      });
+      fireEvent.click(screen.getByTestId('export-filtered-btn'));
+      expect(onExport.mock.calls[0][3].pipeline).toBe(raw);
+    });
+
+    it('keeps NumberLong exact on the shell path as well', () => {
+      // The shell parser serializes canonically when a Long is present, so the
+      // mongosh spelling of a big integer is lossless through that route too.
+      const onExport = exportWith('{counter: NumberLong("9007199254740993")}');
+      expect(JSON.parse(onExport.mock.calls[0][3].filter)).toEqual({
+        counter: { $numberLong: '9007199254740993' },
+      });
+    });
+
     it('blocks preview and field scan while the query is malformed (#316 review)', async () => {
       // A failed check has no value, so nothing can fall back to `{}` — which
       // is a filter that matches everything. Before this, an invalid filter

@@ -128,6 +128,32 @@ type FieldCheck =
   | { ok: false; value?: never; error: string };
 
 /**
+ * Does this text parse as strict JSON of the wanted shape?
+ *
+ * The parsed value is deliberately thrown away — only the answer is used, and
+ * the caller forwards the ORIGINAL TEXT. That is the whole point: `JSON.parse`
+ * is itself lossy for 64-bit integers, so round-tripping through it would
+ * corrupt the very values this check exists to protect.
+ *
+ * Text that is already strict JSON is exactly what the backend read before the
+ * fields learned mongosh syntax, so handing it over untouched keeps that path
+ * lossless. Routing it through the JS shell parser instead would silently
+ * round an unwrapped integer past 2^53 — `{"counter": 9007199254740993}`
+ * becomes `…992` and matches a different document (#316 review). Values the
+ * shell parser produces are unaffected: `NumberLong("…")` survives, because
+ * shellDoc serializes canonically whenever a Long is present.
+ */
+function isStrictJson(text: string, shape: 'object' | 'array'): boolean {
+  try {
+    const value = JSON.parse(text);
+    if (value === null || typeof value !== 'object') return false;
+    return shape === 'array' ? Array.isArray(value) : !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Turn a parse failure into a message, preferring our own translated codes.
  *
  * Mirrors what the document view does with shellDocErrorKey: errors we raise
@@ -161,6 +187,7 @@ function parseErrorMessage(e: unknown, t: TFunc): string {
 function checkQueryObject(raw: string, t: TFunc): FieldCheck {
   const trimmed = raw.trim();
   if (trimmed === '' || trimmed === '{}') return { ok: true, value: '{}' };
+  if (isStrictJson(trimmed, 'object')) return { ok: true, value: trimmed };
   try {
     return { ok: true, value: JSON.stringify(parseQueryObject(trimmed)) };
   } catch (e) {
@@ -177,6 +204,7 @@ function checkQueryObject(raw: string, t: TFunc): FieldCheck {
 function checkPipeline(raw: string, t: TFunc): FieldCheck {
   const trimmed = raw.trim();
   if (trimmed === '' || trimmed === '[]') return { ok: true, value: '[]' };
+  if (isStrictJson(trimmed, 'array')) return { ok: true, value: trimmed };
   try {
     const value = parseShellJson(trimmed);
     if (!Array.isArray(value)) {
