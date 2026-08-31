@@ -108,13 +108,24 @@ interface ExportViewProps {
 // the component passes its `t` in at each call site.
 type TFunc = (key: string, opts?: Record<string, unknown>) => string;
 
-/** What a validator reports: whether it parsed, why not, and the value to send. */
-interface FieldCheck {
-  ok: boolean;
-  error?: string;
-  /** Normalized Extended JSON for the backend — NOT the text the user typed. */
-  value: string;
-}
+/**
+ * What a validator reports: whether it parsed, why not, and the value to send.
+ *
+ * Deliberately a union rather than a struct with an always-present `value`. A
+ * failed check has NO value — an earlier version handed back `{}`/`[]` as a
+ * fallback, which reads as harmless and is not: `{}` is a filter that matches
+ * everything, so a malformed query silently became "the whole collection"
+ * instead of an error (#316 review). Making the field absent on failure means
+ * the type stops anyone reaching for it without checking `ok` first.
+ */
+type FieldCheck =
+  | {
+      ok: true;
+      /** Normalized Extended JSON for the backend — NOT the text the user typed. */
+      value: string;
+      error?: never;
+    }
+  | { ok: false; value?: never; error: string };
 
 /**
  * Turn a parse failure into a message, preferring our own translated codes.
@@ -153,7 +164,7 @@ function checkQueryObject(raw: string, t: TFunc): FieldCheck {
   try {
     return { ok: true, value: JSON.stringify(parseQueryObject(trimmed)) };
   } catch (e) {
-    return { ok: false, error: parseErrorMessage(e, t), value: '{}' };
+    return { ok: false, error: parseErrorMessage(e, t) };
   }
 }
 
@@ -169,11 +180,11 @@ function checkPipeline(raw: string, t: TFunc): FieldCheck {
   try {
     const value = parseShellJson(trimmed);
     if (!Array.isArray(value)) {
-      return { ok: false, error: t('transfer:exportView.errors.pipelineMustBeArray'), value: '[]' };
+      return { ok: false, error: t('transfer:exportView.errors.pipelineMustBeArray') };
     }
     return { ok: true, value: JSON.stringify(value) };
   } catch (e) {
-    return { ok: false, error: parseErrorMessage(e, t), value: '[]' };
+    return { ok: false, error: parseErrorMessage(e, t) };
   }
 }
 
@@ -249,7 +260,10 @@ export const ExportView: React.FC<ExportViewProps> = ({
   const sortCheck = checkQueryObject(sort, t);
   const projectionCheck = checkQueryObject(projection, t);
   const pipelineCheck = checkPipeline(pipeline, t);
-  const canExportFiltered =
+  // Gates every action that runs the filtered query — export, preview and
+  // field scan alike. Preview and scan used to ignore it, so a malformed
+  // query silently ran against the whole collection (#316 review).
+  const filteredQueryValid =
     mode === 'aggregate'
       ? pipelineCheck.ok
       : filterCheck.ok && sortCheck.ok && projectionCheck.ok;
@@ -296,20 +310,26 @@ export const ExportView: React.FC<ExportViewProps> = ({
   // Ship the PARSED value, not the text in the editor. The backend reads
   // Extended JSON, so forwarding raw text is what limited these fields to
   // strict JSON (#314) — `{name: /a/i}` is a valid query but not valid JSON.
-  // Callers only reach this when the matching check is ok, so `value` is the
-  // real parse rather than the empty-object fallback.
-  const buildQuery = (): FilteredExportQuery =>
-    mode === 'aggregate'
-      ? { kind: 'aggregate', pipeline: pipelineCheck.value }
-      : {
-          kind: 'find',
-          filter: filterCheck.value,
-          sort: sortCheck.value,
-          // A field selection replaces the projection editor entirely.
-          projection: fieldSelectionActive ? '{}' : projectionCheck.value,
-          skip,
-          limit,
-        };
+  //
+  // Returns undefined when the query does not parse, so a caller cannot get a
+  // runnable query out of unrunnable input. Every caller is already gated on
+  // `filteredQueryValid`; this is the backstop that makes a missed gate fail
+  // closed instead of quietly running against the whole collection.
+  const buildQuery = (): FilteredExportQuery | undefined => {
+    if (mode === 'aggregate') {
+      return pipelineCheck.ok ? { kind: 'aggregate', pipeline: pipelineCheck.value } : undefined;
+    }
+    if (!filterCheck.ok || !sortCheck.ok || !projectionCheck.ok) return undefined;
+    return {
+      kind: 'find',
+      filter: filterCheck.value,
+      sort: sortCheck.value,
+      // A field selection replaces the projection editor entirely.
+      projection: fieldSelectionActive ? '{}' : projectionCheck.value,
+      skip,
+      limit,
+    };
+  };
 
   const toggleField = (field: string) => {
     setSelectedFields((prev) => {
@@ -322,8 +342,13 @@ export const ExportView: React.FC<ExportViewProps> = ({
 
   const runScanFields = () => {
     if (!onScanFields) return;
+    // `mode` is always find or aggregate, so this always sends a query. Bail
+    // rather than fall back to undefined, which the scan reads as "sample the
+    // whole collection" — the opposite of what a malformed filter should do.
+    const query = buildQuery();
+    if (!query) return;
     setScanning(true);
-    onScanFields(mode === 'find' || mode === 'aggregate' ? buildQuery() : undefined)
+    onScanFields(query)
       .then((fs) => {
         setScannedFields(fs);
         setSelectedFields(new Set(fs));
@@ -339,10 +364,15 @@ export const ExportView: React.FC<ExportViewProps> = ({
 
   const runPreview = () => {
     if (!onPreview) return;
+    const scope: 'current' | 'full' | 'filtered' = filtered ? 'filtered' : 'full';
+    // A filtered preview without a parseable query would fall back to the
+    // whole collection, which is exactly the wrong answer to show someone.
+    // A 'full' preview has no query and is unaffected.
+    const query = scope === 'filtered' ? buildQuery() : undefined;
+    if (scope === 'filtered' && !query) return;
     setPreviewing(true);
     setPreviewError(null);
-    const scope: 'current' | 'full' | 'filtered' = filtered ? 'filtered' : 'full';
-    onPreview(format, scope, effectiveOptions, scope === 'filtered' ? buildQuery() : undefined)
+    onPreview(format, scope, effectiveOptions, query)
       .then((out) => setPreviewOutput(out))
       .catch((err) => setPreviewError(err instanceof Error ? err.message : String(err)))
       .finally(() => setPreviewing(false));
@@ -606,7 +636,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
               type="button"
               variant="outline"
               size="sm"
-              disabled={!onScanFields || scanning}
+              disabled={!onScanFields || scanning || !filteredQueryValid}
               onClick={runScanFields}
               data-testid="export-scan-fields-btn"
             >
@@ -840,7 +870,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
             <Button
               type="button"
               size="sm"
-              disabled={!canExportFiltered || !delimiterValid || noFieldsSelected}
+              disabled={!filteredQueryValid || !delimiterValid || noFieldsSelected}
               onClick={() => onExport(format, 'filtered', effectiveOptions, buildQuery())}
               data-testid="export-filtered-btn"
             >
@@ -866,7 +896,7 @@ export const ExportView: React.FC<ExportViewProps> = ({
             type="button"
             variant="outline"
             size="sm"
-            disabled={!onPreview || format === 'bson' || format === 'xlsx' || previewing}
+            disabled={!onPreview || format === 'bson' || format === 'xlsx' || previewing || (!!filtered && !filteredQueryValid)}
             onClick={runPreview}
             data-testid="export-preview-btn"
           >

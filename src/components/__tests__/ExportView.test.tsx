@@ -302,6 +302,53 @@ describe('ExportView', () => {
       expect(screen.getByText('Pipeline must be an array of stages')).toBeInTheDocument();
     });
 
+    it('blocks preview and field scan while the query is malformed (#316 review)', async () => {
+      // A failed check has no value, so nothing can fall back to `{}` — which
+      // is a filter that matches everything. Before this, an invalid filter
+      // silently previewed and scanned the ENTIRE collection.
+      const onPreview = vi.fn().mockResolvedValue('[]');
+      const onScanFields = vi.fn().mockResolvedValue(['a']);
+      renderExportView({ onPreview, onScanFields, filtered: { kind: 'find', filter: '{}' } });
+
+      fireEvent.change(screen.getByTestId('query-filter-input'), { target: { value: '{bad' } });
+
+      expect(screen.getByTestId('export-preview-btn')).toBeDisabled();
+      expect(screen.getByTestId('export-scan-fields-btn')).toBeDisabled();
+
+      // Even if a gate were missed, the handlers must refuse rather than run
+      // against everything.
+      fireEvent.click(screen.getByTestId('export-preview-btn'));
+      fireEvent.click(screen.getByTestId('export-scan-fields-btn'));
+      await waitFor(() => expect(screen.getByTestId('export-filtered-btn')).toBeDisabled());
+      expect(onPreview).not.toHaveBeenCalled();
+      expect(onScanFields).not.toHaveBeenCalled();
+    });
+
+    it('blocks preview and field scan on a malformed pipeline too', () => {
+      const onPreview = vi.fn().mockResolvedValue('[]');
+      const onScanFields = vi.fn().mockResolvedValue(['a']);
+      renderExportView({ onPreview, onScanFields, filtered: { kind: 'aggregate', pipeline: '[]' } });
+      fireEvent.change(screen.getByTestId('export-filtered-pipeline-input'), {
+        target: { value: '[{$match: ' },
+      });
+      expect(screen.getByTestId('export-preview-btn')).toBeDisabled();
+      expect(screen.getByTestId('export-scan-fields-btn')).toBeDisabled();
+    });
+
+    it('still previews and scans once the query parses', async () => {
+      const onPreview = vi.fn().mockResolvedValue('[]');
+      const onScanFields = vi.fn().mockResolvedValue(['a']);
+      renderExportView({ onPreview, onScanFields, filtered: { kind: 'find', filter: '{}' } });
+      fireEvent.change(screen.getByTestId('query-filter-input'), {
+        target: { value: '{name: /acme/i}' },
+      });
+      fireEvent.click(screen.getByTestId('export-scan-fields-btn'));
+      await waitFor(() => expect(onScanFields).toHaveBeenCalled());
+      expect(JSON.parse(onScanFields.mock.calls[0][0].filter)).toEqual({
+        name: { $regularExpression: { pattern: 'acme', options: 'i' } },
+      });
+    });
+
     it('reports an unsupported regex flag using the shared translated message', () => {
       // Cross-namespace lookup: the parser's error codes live in `documents`,
       // while this view's own catalog is `transfer`.
