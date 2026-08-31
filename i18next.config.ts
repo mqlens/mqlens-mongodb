@@ -67,6 +67,11 @@ import { defineConfig } from 'i18next-cli';
  * `t(updateCheckResultLabel(updateCheck.result))` in SettingsModal.tsx — the
  * key comes from a function's return value, not a string literal the
  * extractor's static analysis can see.
+ *
+ * `documents:documentViewer.errors.unsupportedRegexFlag` is the same story as
+ * its two siblings at the end of the list: reached through `shellDocErrorKey`,
+ * with its `{{flag}}` filled in from `shellDocErrorParams`. Any future
+ * ShellDocErrorCode needs an entry here too, or extraction prunes it.
  */
 export default defineConfig({
   locales: ['en'],
@@ -275,6 +280,7 @@ export default defineConfig({
       // wrapper.
       'documents:documentViewer.errors.invalidQuery',
       'documents:documentViewer.errors.queryMustBeObject',
+      'documents:documentViewer.errors.unsupportedRegexFlag',
     ],
   },
 });
