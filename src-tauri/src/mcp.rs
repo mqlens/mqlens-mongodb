@@ -1043,10 +1043,14 @@ async fn confirm_write(
     // an external client is never attributed to a conversation, however many chats
     // happen to be generating — inferring one from app-wide activity presented
     // somebody else's operation as belonging to a chat that never asked for it.
+    // The *conversation*, not the run: a tab can be moved or detached to another
+    // window mid-run, and a run id means nothing to the webview it moves to — the
+    // destination filtered the prompt out and the source no longer mounted the
+    // tab, so nobody could answer. The conversation travels with the tab.
     let requester = if from_helper {
         let live = state.mcp_helper_requesters.lock_safe()?;
         match live.as_slice() {
-            [only] => Some(only.clone()),
+            [only] => Some(only.conversation.clone()),
             // Two runs, and no way to tell which asked.
             _ => None,
         }
@@ -1425,6 +1429,28 @@ mod tests {
             settled.lock().unwrap().as_slice(),
             ["w2"],
             "released, then dropped — settled exactly once"
+        );
+    }
+
+    #[test]
+    fn the_prompt_is_addressed_by_conversation_not_by_run() {
+        // A run id is minted in one webview and means nothing in another, so a tab
+        // moved to a second window took its pending write out of reach of every
+        // panel. The conversation travels with the tab.
+        let src = include_str!("mcp.rs");
+        let body = &src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())];
+        let confirm = body
+            .split("async fn confirm_write")
+            .nth(1)
+            .expect("confirm_write");
+        let decision = &confirm[..confirm.find("let emitted").unwrap_or(confirm.len())];
+        assert!(
+            decision.contains("only.conversation.clone()"),
+            "the address must be the conversation: {decision}"
+        );
+        assert!(
+            !decision.contains("only.run"),
+            "the run id is not an address any other webview can resolve"
         );
     }
 

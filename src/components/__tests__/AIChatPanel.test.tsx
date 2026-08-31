@@ -881,10 +881,14 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     return () => release({ query: JSON.stringify({ queryType: 'find', filter: {} }) });
   };
 
-  /** The id this panel identifies itself with, taken from its last request. */
+  /**
+   * The address a write from this panel's run is put to: the conversation it was
+   * asked in, taken from its last request. Not the run id — that identifies the
+   * run to the backend and means nothing to a webview the tab may move to.
+   */
   const lastRequesterId = () =>
     (invokeMock.mock.calls.filter((c) => c[0] === 'generate_mql_query').at(-1)?.[1] as any)
-      ?.requesterId as string;
+      ?.conversationId as string;
 
   const send = (text: string) => {
     fireEvent.change(screen.getByTestId('chat-input'), { target: { value: text } });
@@ -1671,6 +1675,29 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
       expect(screen.getByTestId('chat-write-request')).toHaveTextContent('still waiting'),
     );
     expect(invokeMock).not.toHaveBeenCalledWith('mcp_resolve_write', expect.anything());
+  });
+
+  it('lets a panel that never started the run answer for its conversation', async () => {
+    // A tab can be moved or detached to another window while its agent is still
+    // going. Addressed by run, the destination panel did not recognise the id and
+    // filtered the prompt out, while the source no longer mounted the tab — so no
+    // window could approve the write and it timed out. This panel stands in for
+    // the destination: it shows the conversation but never sent the request.
+    chatStore = [{
+      id: 'chat-42', title: 'moved chat', messages: [{ id: 'm1', role: 'user', text: 'hi' }],
+      connectionName: 'Local', database: 'test-db', collection: 'users', variant: 'editor',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    }];
+    startWriteRequests();
+    await act(async () => {});
+    await act(async () => {
+      writeRequestListeners.forEach((fn) =>
+        fn({ id: 'w7', tool: 'delete_many', summary: 'shop.orders', requester: 'chat-42' }),
+      );
+    });
+
+    renderPanel('editor', { chatId: 'chat-42' });
+    expect(await screen.findByTestId('chat-write-request')).toHaveTextContent('shop.orders');
   });
 
   it('recovers a write that arrived before any panel was mounted', async () => {

@@ -5480,6 +5480,7 @@ mod shell_tab_state_tests {
         AppState::new()
     }
 
+
     #[test]
     fn a_closed_window_is_remembered_so_a_pending_start_can_abandon_itself() {
         // Closing a window destroys the renderer that would have cancelled a
@@ -5881,6 +5882,68 @@ mod shell_tab_state_tests {
     }
 }
 
+
+/// Which conversation a live local-agent run belongs to, so a write the agent
+/// asks for can be put to whichever window is showing that chat.
+mod requester_tests {
+    use crate::state::AppState;
+
+    #[test]
+    fn a_live_run_is_recorded_under_the_conversation_that_asked() {
+        // The conversation is the address a write is put to. A run id is only
+        // meaningful to the webview that minted it, and a tab can be moved or
+        // detached to another window mid-run — so the destination panel could not
+        // recognise it, the source no longer mounted the tab, and the write timed
+        // out with nobody able to approve it.
+        let st = AppState::new();
+        {
+            let _run =
+                crate::RequesterGuard::set(&st, Some("run-1".into()), Some("chat-42".into()));
+            let live = st.mcp_helper_requesters.lock().unwrap();
+            assert_eq!(live.len(), 1);
+            assert_eq!(live[0].run, "run-1");
+            assert_eq!(live[0].conversation, "chat-42");
+        }
+        assert!(
+            st.mcp_helper_requesters.lock().unwrap().is_empty(),
+            "the guard retires its own entry however the run ends"
+        );
+    }
+
+    #[test]
+    fn two_runs_in_one_conversation_retire_independently() {
+        // Tracking by conversation instead of by run would strand a live run:
+        // whichever guard dropped would retire the *first* entry for that chat,
+        // not its own. The second guard is the one dropped here for exactly that
+        // reason — dropping the first cannot tell the two apart, since removing
+        // either the first-matching or its own entry leaves the same list.
+        let st = AppState::new();
+        let _first = crate::RequesterGuard::set(&st, Some("run-a".into()), Some("chat-42".into()));
+        let second = crate::RequesterGuard::set(&st, Some("run-b".into()), Some("chat-42".into()));
+        assert_eq!(st.mcp_helper_requesters.lock().unwrap().len(), 2);
+        drop(second);
+        let live = st.mcp_helper_requesters.lock().unwrap();
+        assert_eq!(live.len(), 1, "only its own entry");
+        assert_eq!(
+            live[0].run, "run-a",
+            "the run still going must keep its entry"
+        );
+    }
+
+    #[test]
+    fn a_run_with_no_conversation_is_left_unaddressed() {
+        // Recording the run alone would make it the single live requester while
+        // giving `confirm_write` no address to emit. Leaving the list empty falls
+        // through to the unaddressed case, where any window may answer — the same
+        // place two concurrent runs land.
+        let st = AppState::new();
+        let _run = crate::RequesterGuard::set(&st, Some("run-1".into()), None);
+        assert!(
+            st.mcp_helper_requesters.lock().unwrap().is_empty(),
+            "a run that cannot be addressed must not claim to be the requester"
+        );
+    }
+}
 
 mod chat_claim_tests {
     use crate::chats::{claim_chat, release_chat, release_window_chats};

@@ -1219,18 +1219,42 @@ fn validate_ai_provider(provider: ai_providers::AiProvider) -> Result<String, St
     }
 }
 
-/// Marks which panel's agent is running, and clears it however the run ends.
+/// Marks which conversation's agent is running, and clears it however the run
+/// ends.
 struct RequesterGuard<'a> {
     state: &'a AppState,
     entry: Option<String>,
 }
 
 impl<'a> RequesterGuard<'a> {
-    fn set(state: &'a AppState, requester: Option<String>) -> Self {
-        let entry = requester.filter(|r| !r.is_empty());
-        if let (Some(id), Ok(mut live)) = (entry.clone(), state.mcp_helper_requesters.lock()) {
-            live.push(id);
-        }
+    /// Records the run under the conversation that started it.
+    ///
+    /// Both or neither: with no conversation there is no address to put a write
+    /// to, and recording the run alone would make it the single live requester
+    /// while giving `confirm_write` nothing to emit. Leaving the list empty
+    /// instead falls through to the unaddressed case, where any window may
+    /// answer — the same place two concurrent runs land, and safe for the same
+    /// reason. In practice only the panel calls this and it sends both; a
+    /// frontend that sends neither simply gets unaddressed prompts.
+    fn set(
+        state: &'a AppState,
+        requester: Option<String>,
+        conversation: Option<String>,
+    ) -> Self {
+        let run = requester.filter(|r| !r.is_empty());
+        let conversation = conversation.filter(|c| !c.is_empty());
+        let entry = match (run, conversation) {
+            (Some(run), Some(conversation)) => {
+                if let Ok(mut live) = state.mcp_helper_requesters.lock() {
+                    live.push(crate::state::HelperRun {
+                        run: run.clone(),
+                        conversation,
+                    });
+                }
+                Some(run)
+            }
+            _ => None,
+        };
         Self { state, entry }
     }
 }
@@ -1240,8 +1264,10 @@ impl Drop for RequesterGuard<'_> {
         // Only this run's entry. Clearing the list would strand a panel whose run
         // is still going, unable to confirm anything for the rest of its life.
         let Some(id) = self.entry.as_ref() else { return };
+        // By run, not by conversation: two runs in one conversation would
+        // otherwise let the first to finish retire the other's entry.
         if let Ok(mut live) = self.state.mcp_helper_requesters.lock() {
-            if let Some(pos) = live.iter().position(|r| r == id) {
+            if let Some(pos) = live.iter().position(|r| &r.run == id) {
                 live.remove(pos);
             }
         }
@@ -1264,9 +1290,12 @@ async fn generate_mql_query(
     // The id as well as the name: two profiles may share a display name, and the
     // MCP tools take an id, so the agent can use this one directly.
     #[allow(non_snake_case)] connectionId: Option<String>,
-    // Identifies the panel making this request, so a write its agent asks for is
-    // put to that panel and not to every other one on screen.
+    // Identifies this run, so its own entry can be retired when it ends.
     #[allow(non_snake_case)] requesterId: Option<String>,
+    // The conversation that asked, which is what a write its agent requests is
+    // addressed to. Not the run: a tab can move to another window mid-run, and a
+    // run id means nothing to the webview it moves to.
+    #[allow(non_snake_case)] conversationId: Option<String>,
     #[allow(non_snake_case)] history: Option<Vec<ai::ChatTurn>>,
     target: Option<String>,
     images: Option<Vec<ai::ImageAttachment>>,
@@ -1407,7 +1436,8 @@ async fn generate_mql_query(
             // between runs is refused rather than offered to whoever is looking.
             // A guard, not a plain assignment: an early return would otherwise
             // leave a stale panel owning confirmations it never asked for.
-            let _requester = RequesterGuard::set(&state, requesterId.clone());
+            let _requester =
+                RequesterGuard::set(&state, requesterId.clone(), conversationId.clone());
             ai::generate_local(
                 &provider.command,
                 &one_prompt,

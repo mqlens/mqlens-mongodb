@@ -21,9 +21,6 @@ import {
 import { cn } from '@/lib/utils';
 import {
   answerWriteRequest,
-  beginRun,
-  conversationForRun,
-  endRun,
   subscribeWriteRequests,
   writeRequestsWhere,
 } from '../lib/mcpWriteRequests';
@@ -827,9 +824,9 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
           // Nobody in particular: an external client, or two runs at once. Any
           // window may answer — it is the app asking, not a conversation.
           if (requester === null) return true;
-          const askedIn = conversationForRun(requester);
-          if (askedIn === undefined) return false; // another panel's run
-          return askedIn === activeChatIdRef.current;
+          // Addressed by conversation, so this holds in whichever window is
+          // showing that chat — including one the tab was moved to mid-run.
+          return requester === activeChatIdRef.current;
         })
       );
     refresh();
@@ -1115,11 +1112,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     // must not land in whichever conversation happens to be open when it
     // arrives — it would be shown there AND persisted under that chat's id.
     const askedIn = activeChatIdRef.current;
-    // Identifies this run for the length of it. Independent of the tab, which can
-    // be renamed mid-run, and paired with the conversation so a write it asks for
-    // cannot be approved from a different one.
+    // Identifies this run to the backend for the length of it, so its entry is
+    // retired when it ends and two runs in one conversation stay distinguishable.
+    // The conversation, sent alongside, is what a write is addressed to.
     const runId = `run-${Math.random().toString(36).slice(2)}-${Date.now()}`;
-    beginRun(runId, askedIn);
 
     const run = async (): Promise<PendingChatReply> => {
       const reply = await invoke<AiReply>('generate_mql_query', {
@@ -1132,6 +1128,10 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         connectionName: connectionName ?? undefined,
         connectionId: connectionId ?? undefined,
         requesterId: runId,
+        // What a write is addressed to. The run id identifies this run to the
+        // backend; the conversation is what any window showing it can recognise,
+        // including one the tab is moved to while the agent is still going.
+        conversationId: askedIn,
         history,
         target: variant === 'shell' ? 'shell' : 'editor',
         images: images.map((i) => ({ media_type: i.mediaType, data: i.data })),
@@ -1215,9 +1215,9 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       }
       appendReply(reply);
     } finally {
-      // The run is over, so nothing more can arrive for it. A write already
-      // waiting is refused by the backend on silence.
-      endRun(runId);
+      // The backend retires the run's own entry when the command returns, so
+      // nothing more can be addressed to it. A write already waiting is refused
+      // by the backend on silence.
       setIsChatLoading(false);
     }
   };

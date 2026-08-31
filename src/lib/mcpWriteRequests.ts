@@ -67,31 +67,6 @@ function start() {
 }
 
 /**
- * Which conversation each live run belongs to, kept out of the tree for the same
- * reason the requests are: `AIChatPanel` is unmounted when the user switches tabs
- * while its run continues, and a component-local map came back empty on remount —
- * so the panel could not recognise its own run and filtered its own write out
- * until the backend gave up.
- */
-const runs = new Map<string, string>();
-
-/** Record a run this app started, and the conversation that asked. */
-export function beginRun(runId: string, askedIn: string): void {
-  runs.set(runId, askedIn);
-  notify();
-}
-
-/** Forget it once the run is over; nothing more can arrive for it. */
-export function endRun(runId: string): void {
-  if (runs.delete(runId)) notify();
-}
-
-/** The conversation a run was asked in, or `undefined` if it is not ours. */
-export function conversationForRun(runId: string): string | undefined {
-  return runs.get(runId);
-}
-
-/**
  * Begin listening, before anything is on screen to ask.
  *
  * Called by `App`, which is mounted for the lifetime of the webview, because the
@@ -108,10 +83,11 @@ export function startWriteRequests(): void {
 /**
  * Live requests this caller may answer, oldest first.
  *
- * The caller decides: a panel accepts its own runs and unaddressed requests, and
- * a run it started but whose conversation the user has since left is refused by
- * showing it to nobody — the answer would be filed under a chat that is no longer
- * on screen.
+ * The caller decides: a panel accepts unaddressed requests and those addressed to
+ * the conversation it is showing. A request for a conversation the user has since
+ * left is shown to nobody — the answer would be filed under a chat that is no
+ * longer on screen — but it becomes answerable again wherever that chat is opened,
+ * including in another window.
  */
 export function writeRequestsWhere(
   accepts: (requester: string | null) => boolean
@@ -139,7 +115,6 @@ export function answerWriteRequest(id: string, approved: boolean): void {
 /** Test seam: forget everything and re-subscribe on next use. */
 export function resetWriteRequestsForTests(): void {
   held = [];
-  runs.clear();
   listeners.clear();
   started = false;
 }
