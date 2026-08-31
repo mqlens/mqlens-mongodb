@@ -933,18 +933,27 @@ pub fn resolve_write_impl(state: &AppState, id: &str, approved: bool) -> Result<
     Ok(())
 }
 
-/// Owns one entry in `mcp_write_confirms` for as long as its handler lives.
+/// Owns one pending confirmation: its entry in `mcp_write_confirms`, and the
+/// `mcp-write-settled` broadcast that retires the prompt in every webview.
 ///
-/// Removing the entry after the `await` covers an answer and a timeout. It does
-/// not cover *cancellation*: `rmcp` drops the handler future when the client goes
-/// away, and `stop_if_running` aborts the server task once
+/// Both belong here for the same reason. Doing either after the `await` covers an
+/// answer and a timeout but not *cancellation*: `rmcp` drops the handler future
+/// when the client goes away, and `stop_if_running` aborts the server task once
 /// `GRACEFUL_SHUTDOWN_TIMEOUT` is up. A dropped future never runs the line after
-/// its await, so before this every cancelled write left its sender in app-wide
-/// state for the life of the process.
+/// its await — which first left the sender in app-wide state for the life of the
+/// process, and then, once that was fixed here, left every webview holding a
+/// prompt for a request that no longer existed until its local TTL ran out. One
+/// owner for both means there is no fourth outcome to forget.
 struct ConfirmEntry<'a> {
     state: &'a AppState,
-    /// Taken on release, so `Drop` cannot remove an id that a later request with
-    /// the same handler position has since registered.
+    /// Retires the prompt in every webview.
+    ///
+    /// Injected rather than reached through a stored `AppHandle` so that the
+    /// cancellation path can be tested for what it actually does. Holding a handle
+    /// would have made this guard unconstructible without a running app, leaving
+    /// the one outcome nothing else covers pinned by a source guard alone.
+    settled: Box<dyn Fn(&str) + Send + 'static>,
+    /// Taken on release, so `Drop` cannot settle the same id twice.
     id: Option<String>,
 }
 
@@ -953,29 +962,35 @@ impl<'a> ConfirmEntry<'a> {
         state: &'a AppState,
         id: String,
         tx: oneshot::Sender<bool>,
+        settled: Box<dyn Fn(&str) + Send + 'static>,
     ) -> Result<Self, String> {
         state.mcp_write_confirms.lock_safe()?.insert(id.clone(), tx);
-        Ok(Self { state, id: Some(id) })
+        Ok(Self {
+            state,
+            settled,
+            id: Some(id),
+        })
     }
 
-    /// Drop the entry now, on the ordinary path, before the audit write.
+    /// Retire it now, on the ordinary path, before the audit write.
     fn release(mut self) {
-        self.remove();
+        self.settle();
     }
 
-    fn remove(&mut self) {
+    fn settle(&mut self) {
         let Some(id) = self.id.take() else { return };
         // No `lock_safe` here: this runs from `Drop`, where there is nothing to
         // return an error to, and a poisoned lock must not panic a second time.
         if let Ok(mut live) = self.state.mcp_write_confirms.lock() {
             live.remove(&id);
         }
+        (self.settled)(&id);
     }
 }
 
 impl Drop for ConfirmEntry<'_> {
     fn drop(&mut self) {
-        self.remove();
+        self.settle();
     }
 }
 
@@ -1048,7 +1063,15 @@ async fn confirm_write(
     // or `stop_if_running` aborts the task once `GRACEFUL_SHUTDOWN_TIMEOUT` is up
     // — and a dropped future never reaches the line after the await, so every
     // cancelled write left its sender in app-wide state for the life of the app.
-    let entry = ConfirmEntry::register(&state, id.clone(), tx)?;
+    let emitter = app_handle.clone();
+    let entry = ConfirmEntry::register(
+        &state,
+        id.clone(),
+        tx,
+        Box::new(move |settled| {
+            let _ = emitter.emit("mcp-write-settled", serde_json::json!({ "id": settled }));
+        }),
+    )?;
 
     let emitted = app_handle.emit(
         "mcp-write-request",
@@ -1062,17 +1085,11 @@ async fn confirm_write(
     }
 
     let answer = tokio::time::timeout(WRITE_CONFIRM_TIMEOUT, rx).await;
-    // Dropped either way: a decision that arrives later has nothing to resolve.
-    // Explicit rather than left to the end of the function, so the entry is gone
-    // before the audit write below — but the guard is what makes it unconditional.
+    // Retired either way: a decision that arrives later has nothing to resolve,
+    // and the prompt must leave every webview. Explicit rather than left to the
+    // end of the function so both happen before the audit write below — but the
+    // guard is what makes them unconditional, cancellation included.
     entry.release();
-    // Every webview received the request; only the one that answered drops it
-    // locally. The others went on showing a prompt that had already been decided,
-    // and because each panel displays the oldest request first, that dead prompt
-    // hid live ones behind it until its own TTL ran out. Emitted for every
-    // outcome — approved, refused, and timed out — which is what makes this the
-    // mechanism and leaves the frontend's sweep as a backstop for a lost event.
-    let _ = app_handle.emit("mcp-write-settled", serde_json::json!({ "id": id }));
 
     let (approved, refusal) = match answer {
         Ok(Ok(true)) => (true, None),
@@ -1339,20 +1356,45 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_cancelled_confirmation_does_not_leak_its_entry() {
-        // The removal after the `await` never runs if the handler future is
-        // dropped instead of polled to completion — the client disconnects, or
-        // `stop_if_running` aborts the task after `GRACEFUL_SHUTDOWN_TIMEOUT`. Each
-        // such write used to leave its sender in app-wide state permanently.
-        let state = AppState::new();
+    /// A `ConfirmEntry` plus the ids it settled, so a test can watch both halves.
+    fn recording_entry<'a>(
+        state: &'a AppState,
+        id: &str,
+    ) -> (ConfirmEntry<'a>, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = seen.clone();
         let (tx, _rx) = oneshot::channel::<bool>();
+        let entry = ConfirmEntry::register(
+            state,
+            id.to_string(),
+            tx,
+            Box::new(move |settled| sink.lock().unwrap().push(settled.to_string())),
+        )
+        .expect("register");
+        (entry, seen)
+    }
+
+    #[test]
+    fn a_cancelled_confirmation_is_both_removed_and_settled() {
+        // Nothing after the `await` runs if the handler future is dropped instead
+        // of polled to completion — the client disconnects, or `stop_if_running`
+        // aborts the task after `GRACEFUL_SHUTDOWN_TIMEOUT`. That first stranded
+        // the sender in app-wide state, and then, once the map was cleaned up,
+        // left every webview holding a prompt for a request that no longer existed
+        // until its local TTL ran out. Both have to happen on this path.
+        let state = AppState::new();
+        let settled;
         {
-            let _entry = ConfirmEntry::register(&state, "w1".to_string(), tx).expect("register");
+            let (_entry, seen) = recording_entry(&state, "w1");
+            settled = seen;
             assert_eq!(
                 state.mcp_write_confirms.lock_safe().unwrap().len(),
                 1,
                 "registered while the prompt is up"
+            );
+            assert!(
+                settled.lock().unwrap().is_empty(),
+                "not settled while the user can still answer"
             );
             // Scope end stands in for the dropped future: nothing here awaits or
             // releases, exactly as a cancelled handler does not.
@@ -1361,26 +1403,35 @@ mod tests {
             state.mcp_write_confirms.lock_safe().unwrap().is_empty(),
             "a cancelled confirmation must not leave its sender behind"
         );
+        assert_eq!(
+            settled.lock().unwrap().as_slice(),
+            ["w1"],
+            "a cancelled confirmation must retire its prompt in every webview"
+        );
     }
 
     #[test]
-    fn an_answered_confirmation_releases_before_the_audit_write() {
-        // The ordinary path still removes the entry at the same point it always
-        // did, rather than holding it until the function returns.
+    fn an_answered_confirmation_settles_once() {
+        // The ordinary path retires the entry at the same point it always did, and
+        // the id is taken so the guard's own `Drop` cannot settle it a second time.
         let state = AppState::new();
-        let (tx, _rx) = oneshot::channel::<bool>();
-        let entry = ConfirmEntry::register(&state, "w2".to_string(), tx).expect("register");
+        let (entry, settled) = recording_entry(&state, "w2");
         entry.release();
         assert!(
             state.mcp_write_confirms.lock_safe().unwrap().is_empty(),
             "release must remove the entry"
         );
+        assert_eq!(
+            settled.lock().unwrap().as_slice(),
+            ["w2"],
+            "released, then dropped — settled exactly once"
+        );
     }
 
     #[test]
-    fn the_confirmation_entry_is_owned_by_the_guard() {
-        // Both the bare insert and the bare removal are what made cancellation a
-        // leak; neither may come back.
+    fn the_confirmation_is_owned_by_the_guard() {
+        // The bare insert, the bare removal, and a settle emitted outside the
+        // guard are each what made a cancelled write go unnoticed. None may return.
         let whole = include_str!("mcp.rs");
         let src = &whole[..whole.find("\n#[cfg(test)]").unwrap_or(whole.len())];
         let confirm = src
@@ -1398,6 +1449,20 @@ mod tests {
         assert!(
             !confirm.contains("mcp_write_confirms.lock_safe()?.remove"),
             "a bare removal is skipped when the future is dropped"
+        );
+        // The one emit confirm_write still makes is the request itself; settling is
+        // the guard's, so it cannot be skipped by cancellation.
+        assert!(
+            !confirm.contains(r#"app_handle.emit("mcp-write-settled""#),
+            "settling must belong to the guard, not to the happy path"
+        );
+        let guard = src
+            .split("impl<'a> ConfirmEntry<'a>")
+            .nth(1)
+            .expect("ConfirmEntry impl");
+        assert!(
+            guard.contains("(self.settled)(&id);"),
+            "settle must run wherever the entry is retired"
         );
     }
 
