@@ -86,14 +86,19 @@ pub struct AppState {
     /// keyed by request id. The MCP tool call is parked on the receiving half
     /// until the panel sends a decision or the wait times out.
     pub mcp_write_confirms: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
-    /// The panel whose agent is running right now, so a write it asks for is put
-    /// to *that* panel rather than to every one that happens to be mounted.
+    /// The panels whose agents are running right now, one entry per run.
     ///
-    /// `rmcp` gives a tool handler no view of the request, so the write cannot be
-    /// traced back to a panel on its own; the run is the link, and the panel
-    /// identifies itself when it starts one. `None` between runs, and a write
-    /// arriving then is refused rather than offered to whoever is looking.
-    pub mcp_helper_requester: Mutex<Option<String>>,
+    /// `rmcp` gives a tool handler no view of the request, so a write cannot be
+    /// traced back to a run on its own — the set of live runs is all there is. One
+    /// run means the write belongs to it. None means no agent is running and the
+    /// write is refused. More than one cannot be attributed, and is refused too:
+    /// picking a panel would put someone else's delete in front of the wrong
+    /// person, which is worse than making the agent ask in its reply.
+    ///
+    /// A list rather than a single slot: two panels can run at once, and a slot
+    /// let the later run overwrite the earlier and then clear it on the way out,
+    /// leaving the survivor unable to confirm anything.
+    pub mcp_helper_requesters: Mutex<Vec<String>>,
     pub connections: Mutex<HashMap<String, Client>>,
     pub mocks: Mutex<HashMap<String, bool>>,
     pub mock_indexes: Mutex<HashMap<String, Vec<IndexInfo>>>,
@@ -214,7 +219,7 @@ impl AppState {
             audit_degraded: Mutex::new(None),
             settings_write: Mutex::new(()),
             mcp_write_confirms: Mutex::new(HashMap::new()),
-            mcp_helper_requester: Mutex::new(None),
+            mcp_helper_requesters: Mutex::new(Vec::new()),
             audit_pending: Arc::new(Mutex::new(Vec::new())),
             audit_generation: Arc::new(AtomicU64::new(0)),
         }

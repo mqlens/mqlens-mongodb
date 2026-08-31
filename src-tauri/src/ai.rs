@@ -71,6 +71,19 @@ pub struct AgentRun {
     pub tool_calls: Vec<AgentToolCall>,
 }
 
+/// How much of an agent's output is read at all.
+///
+/// `MAX_EVENTS`, `MAX_TOOL_CALLS` and `MAX_TOOL_TEXT` bound the *transcript*;
+/// none of them bounds memory, because `Command::output()` has already buffered
+/// the whole of stdout before any of them is consulted. A structured run whose
+/// tool returned a 1 MB document per call, or read a large file, could exhaust
+/// the app before parsing began. Generous — a long agent turn is nowhere near
+/// this — and the excess is reported rather than silently dropped.
+const MAX_AGENT_STDOUT: usize = 8 * 1024 * 1024;
+/// Enough for a stack trace and a message; stderr is drained mainly so a chatty
+/// child does not block on a full pipe while stdout is being read.
+const MAX_AGENT_STDERR: usize = 256 * 1024;
+
 /// Kept small on purpose: this is a transcript entry, not a log. A tool can
 /// return a whole file, and the panel has to stay readable.
 const MAX_TOOL_CALLS: usize = 50;
@@ -1538,19 +1551,19 @@ pub async fn generate_local(
     let config_path = config.as_ref().map(|c| c.path().to_string_lossy().to_string());
     let (program, args) = parse_command_template(template, prompt, model, config_path.as_deref())?;
 
-    let run = tokio::process::Command::new(&program)
+    // Piped and read under a cap rather than collected with `output()`. That
+    // buffers the whole of stdout before any limit can be consulted, so a tool
+    // returning a megabyte per call could exhaust the app before parsing began —
+    // a cap applied afterwards bounds the transcript, not the memory.
+    let mut child = tokio::process::Command::new(&program)
         .args(&args)
         .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         // Tokio does not kill a child when the future is dropped; without this a
         // timed-out command keeps running after the UI has given up on it.
         .kill_on_drop(true)
-        .output();
-
-    // Local coding agents (claude-code, codex, …) can take a while to start up
-    // and respond — allow a generous window before giving up.
-    let output = tokio::time::timeout(Duration::from_secs(180), run)
-        .await
-        .map_err(|_| "Local agent timed out after 180s".to_string())?
+        .spawn()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 format!("'{}' not found on PATH. Install it or fix the command in Settings.", program)
@@ -1559,15 +1572,63 @@ pub async fn generate_local(
             }
         })?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut stdout_pipe = child.stdout.take().ok_or("no stdout pipe")?;
+    let mut stderr_pipe = child.stderr.take().ok_or("no stderr pipe")?;
+
+    // Both concurrently: a child writing a lot to stderr blocks on a full pipe if
+    // only stdout is being drained, and then nothing finishes.
+    let gather = async {
+        use tokio::io::AsyncReadExt;
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        // `take` consumes the reader, which is fine — nothing else reads these.
+        let mut capped_out = (&mut stdout_pipe).take(MAX_AGENT_STDOUT as u64 + 1);
+        let mut capped_err = (&mut stderr_pipe).take(MAX_AGENT_STDERR as u64);
+        tokio::try_join!(capped_out.read_to_end(&mut out), capped_err.read_to_end(&mut err))?;
+        let status = child.wait().await?;
+        Ok::<_, std::io::Error>((status, out, err))
+    };
+
+    // Local coding agents (claude-code, codex, …) can take a while to start up
+    // and respond — allow a generous window before giving up.
+    let (status, stdout_bytes, stderr_bytes) =
+        tokio::time::timeout(Duration::from_secs(180), gather)
+            .await
+            .map_err(|_| "Local agent timed out after 180s".to_string())?
+            .map_err(|e| format!("Failed to read from '{}': {}", program, e))?;
+
+    if stdout_bytes.len() > MAX_AGENT_STDOUT {
         return Err(format!(
-            "Local agent '{}' failed: {}",
+            "Local agent '{}' produced more than {} MB of output, which is past what \
+             this reads. Nothing was applied. If its tools are returning whole \
+             documents, narrow what it is asked to inspect.",
             program,
-            stderr.trim()
+            MAX_AGENT_STDOUT / (1024 * 1024)
         ));
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let output = std::process::Output { status, stdout: stdout_bytes, stderr: stderr_bytes };
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let failure = format!("Local agent '{}' failed: {}", program, stderr.trim());
+        // A run that failed *after* running tools is exactly when the transcript
+        // matters: those calls happened, some with side effects, and returning
+        // only stderr threw the record of them away. The failure is still an
+        // error — it is reported with the activity attached rather than instead
+        // of it.
+        return match parse_agent_events(&stdout_text) {
+            Some(run) if !run.tool_calls.is_empty() => Err(format!(
+                "{failure}\n\nIt had already run: {}",
+                run.tool_calls
+                    .iter()
+                    .map(|c| c.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+            _ => Err(failure),
+        };
+    }
+    let stdout = stdout_text;
     // An agent asked for structured output reports what it ran; everything else
     // is prose with a JSON object in it, exactly as before.
     match parse_agent_events(&stdout) {

@@ -1222,21 +1222,28 @@ fn validate_ai_provider(provider: ai_providers::AiProvider) -> Result<String, St
 /// Marks which panel's agent is running, and clears it however the run ends.
 struct RequesterGuard<'a> {
     state: &'a AppState,
+    entry: Option<String>,
 }
 
 impl<'a> RequesterGuard<'a> {
     fn set(state: &'a AppState, requester: Option<String>) -> Self {
-        if let Ok(mut slot) = state.mcp_helper_requester.lock() {
-            *slot = requester;
+        let entry = requester.filter(|r| !r.is_empty());
+        if let (Some(id), Ok(mut live)) = (entry.clone(), state.mcp_helper_requesters.lock()) {
+            live.push(id);
         }
-        Self { state }
+        Self { state, entry }
     }
 }
 
 impl Drop for RequesterGuard<'_> {
     fn drop(&mut self) {
-        if let Ok(mut slot) = self.state.mcp_helper_requester.lock() {
-            *slot = None;
+        // Only this run's entry. Clearing the list would strand a panel whose run
+        // is still going, unable to confirm anything for the rest of its life.
+        let Some(id) = self.entry.as_ref() else { return };
+        if let Ok(mut live) = self.state.mcp_helper_requesters.lock() {
+            if let Some(pos) = live.iter().position(|r| r == id) {
+                live.remove(pos);
+            }
         }
     }
 }

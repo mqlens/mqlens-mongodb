@@ -509,6 +509,17 @@ impl McpServer {
         let _ = &path; // disconnect needs no profile lookup; kept for a uniform `resolve()` call site.
         let state = app_handle.state::<AppState>();
         let summary = crate::mcp_tools::truncate_summary(&format!("connectionId={}", args.connection_id), 200);
+        // Not for MQLens's own agent. `disconnect_impl` authorises against the
+        // app-wide set of connections opened over MCP, not against this session, so
+        // the agent could close one another client opened and is doing so outside
+        // the write-confirmation path. It has no business managing connection
+        // lifecycle either way: it is here to read a schema, not to tidy up.
+        if self.helper {
+            let refusal = "disconnect is not available to MQLens's query assistant. Leave \
+                           connections alone; the user manages them."
+                .to_string();
+            return finish_json::<()>(&state, "disconnect", Some(args.connection_id), &summary, Err(refusal));
+        }
         match crate::mcp_tools::disconnect_impl(&state, &args.connection_id).await {
             Ok(()) => {
                 if let Ok(connections) = crate::connection_list_impl(&state) {
@@ -737,6 +748,9 @@ impl McpServer {
                 "keys": args.keys,
                 "name": args.name,
                 "unique": args.unique,
+                // Shown because it changes which documents are indexed at all, and
+                // with `unique` it changes what uniqueness is enforced over.
+                "sparse": args.sparse,
             })).await
             {
                 // Through the finishing path, not `?`: that is the only place a
@@ -902,11 +916,6 @@ async fn confirm_write(
     use tauri::{Emitter, Manager};
     let state = app_handle.state::<AppState>();
     let id = new_token();
-    let (tx, rx) = oneshot::channel::<bool>();
-    {
-        let mut pending = state.mcp_write_confirms.lock_safe()?;
-        pending.insert(id.clone(), tx);
-    }
     // The operation itself, not the call-log summary. That summary reports a
     // filter as a byte count — enough for a log line, useless for a decision:
     // `{"state":"OLD"}` and `{}` are both "34 bytes", and one of them empties the
@@ -918,13 +927,34 @@ async fn confirm_write(
     // the panels filter on it, which is deterministic in a way that guessing at
     // the right `EventTarget` variant is not, and works for two panes of one
     // window where a window label cannot tell them apart.
-    let requester = state
-        .mcp_helper_requester
-        .lock_safe()?
-        .clone()
-        .ok_or_else(|| {
-            format!("{tool} was asked for outside a chat request, so there is nobody to ask.")
-        })?;
+    // Exactly one run, or nobody is asked. `rmcp` gives this handler no view of
+    // the request, so with two agents running the write cannot be attributed —
+    // and putting one panel's delete in front of whoever else is looking is worse
+    // than making the agent ask in its reply.
+    let requester = {
+        let live = state.mcp_helper_requesters.lock_safe()?;
+        match live.as_slice() {
+            [only] => only.clone(),
+            [] => {
+                return Err(format!(
+                    "{tool} was asked for outside a chat request, so there is nobody to ask."
+                ))
+            }
+            _ => {
+                return Err(format!(
+                    "{tool} cannot be confirmed while more than one chat is generating, \
+                     because MQLens cannot tell which of them asked. Describe the change \
+                     in your reply and let the user make it."
+                ))
+            }
+        }
+    };
+    // Registered only once there is somebody to ask and something to ask about.
+    // Inserting earlier left an unreachable sender behind on every failure above,
+    // and repeated attempts grew the map without bound.
+    let (tx, rx) = oneshot::channel::<bool>();
+    state.mcp_write_confirms.lock_safe()?.insert(id.clone(), tx);
+
     let emitted = app_handle.emit(
         "mcp-write-request",
         serde_json::json!({ "id": id, "tool": tool, "summary": shown, "requester": requester }),
@@ -1151,8 +1181,8 @@ mod tests {
         assert_eq!(confirmations, 4, "one per write tool");
         assert_eq!(
             src.matches("finish_json::<()>").count(),
-            4,
-            "each refusal returns through the finishing path"
+            5,
+            "four write refusals plus the helper's disconnect refusal, all logged"
         );
         // The `?` form is what dropped them.
         for line in src.lines() {
