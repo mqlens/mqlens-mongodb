@@ -933,6 +933,52 @@ pub fn resolve_write_impl(state: &AppState, id: &str, approved: bool) -> Result<
     Ok(())
 }
 
+/// Owns one entry in `mcp_write_confirms` for as long as its handler lives.
+///
+/// Removing the entry after the `await` covers an answer and a timeout. It does
+/// not cover *cancellation*: `rmcp` drops the handler future when the client goes
+/// away, and `stop_if_running` aborts the server task once
+/// `GRACEFUL_SHUTDOWN_TIMEOUT` is up. A dropped future never runs the line after
+/// its await, so before this every cancelled write left its sender in app-wide
+/// state for the life of the process.
+struct ConfirmEntry<'a> {
+    state: &'a AppState,
+    /// Taken on release, so `Drop` cannot remove an id that a later request with
+    /// the same handler position has since registered.
+    id: Option<String>,
+}
+
+impl<'a> ConfirmEntry<'a> {
+    fn register(
+        state: &'a AppState,
+        id: String,
+        tx: oneshot::Sender<bool>,
+    ) -> Result<Self, String> {
+        state.mcp_write_confirms.lock_safe()?.insert(id.clone(), tx);
+        Ok(Self { state, id: Some(id) })
+    }
+
+    /// Drop the entry now, on the ordinary path, before the audit write.
+    fn release(mut self) {
+        self.remove();
+    }
+
+    fn remove(&mut self) {
+        let Some(id) = self.id.take() else { return };
+        // No `lock_safe` here: this runs from `Drop`, where there is nothing to
+        // return an error to, and a poisoned lock must not panic a second time.
+        if let Ok(mut live) = self.state.mcp_write_confirms.lock() {
+            live.remove(&id);
+        }
+    }
+}
+
+impl Drop for ConfirmEntry<'_> {
+    fn drop(&mut self) {
+        self.remove();
+    }
+}
+
 /// How long a write waits for the user before it is refused.
 ///
 /// Generous, because the user may be reading what the agent proposes; finite and
@@ -996,15 +1042,20 @@ async fn confirm_write(
     // Inserting earlier left an unreachable sender behind on every failure above,
     // and repeated attempts grew the map without bound.
     let (tx, rx) = oneshot::channel::<bool>();
-    state.mcp_write_confirms.lock_safe()?.insert(id.clone(), tx);
+    // The entry is owned by this guard from here on, so it goes whichever way the
+    // handler ends. Removing it after the `await` is not enough on its own: the
+    // request can be *cancelled* while the prompt is up — the client disconnects,
+    // or `stop_if_running` aborts the task once `GRACEFUL_SHUTDOWN_TIMEOUT` is up
+    // — and a dropped future never reaches the line after the await, so every
+    // cancelled write left its sender in app-wide state for the life of the app.
+    let entry = ConfirmEntry::register(&state, id.clone(), tx)?;
 
     let emitted = app_handle.emit(
         "mcp-write-request",
         serde_json::json!({ "id": id, "tool": tool, "summary": shown, "requester": requester }),
     );
     if emitted.is_err() {
-        // Nobody can be asked, so nobody has agreed.
-        state.mcp_write_confirms.lock_safe()?.remove(&id);
+        // Nobody can be asked, so nobody has agreed. The guard takes the entry.
         return Err(format!(
             "{tool} needs the user's confirmation and MQLens could not ask for it."
         ));
@@ -1012,7 +1063,9 @@ async fn confirm_write(
 
     let answer = tokio::time::timeout(WRITE_CONFIRM_TIMEOUT, rx).await;
     // Dropped either way: a decision that arrives later has nothing to resolve.
-    state.mcp_write_confirms.lock_safe()?.remove(&id);
+    // Explicit rather than left to the end of the function, so the entry is gone
+    // before the audit write below — but the guard is what makes it unconditional.
+    entry.release();
     // Every webview received the request; only the one that answered drops it
     // locally. The others went on showing a prompt that had already been decided,
     // and because each panel displays the oldest request first, that dead prompt
@@ -1283,6 +1336,68 @@ mod tests {
             body.matches("require_confirm(args._confirm").count(),
             4,
             "one per write impl"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_confirmation_does_not_leak_its_entry() {
+        // The removal after the `await` never runs if the handler future is
+        // dropped instead of polled to completion — the client disconnects, or
+        // `stop_if_running` aborts the task after `GRACEFUL_SHUTDOWN_TIMEOUT`. Each
+        // such write used to leave its sender in app-wide state permanently.
+        let state = AppState::new();
+        let (tx, _rx) = oneshot::channel::<bool>();
+        {
+            let _entry = ConfirmEntry::register(&state, "w1".to_string(), tx).expect("register");
+            assert_eq!(
+                state.mcp_write_confirms.lock_safe().unwrap().len(),
+                1,
+                "registered while the prompt is up"
+            );
+            // Scope end stands in for the dropped future: nothing here awaits or
+            // releases, exactly as a cancelled handler does not.
+        }
+        assert!(
+            state.mcp_write_confirms.lock_safe().unwrap().is_empty(),
+            "a cancelled confirmation must not leave its sender behind"
+        );
+    }
+
+    #[test]
+    fn an_answered_confirmation_releases_before_the_audit_write() {
+        // The ordinary path still removes the entry at the same point it always
+        // did, rather than holding it until the function returns.
+        let state = AppState::new();
+        let (tx, _rx) = oneshot::channel::<bool>();
+        let entry = ConfirmEntry::register(&state, "w2".to_string(), tx).expect("register");
+        entry.release();
+        assert!(
+            state.mcp_write_confirms.lock_safe().unwrap().is_empty(),
+            "release must remove the entry"
+        );
+    }
+
+    #[test]
+    fn the_confirmation_entry_is_owned_by_the_guard() {
+        // Both the bare insert and the bare removal are what made cancellation a
+        // leak; neither may come back.
+        let whole = include_str!("mcp.rs");
+        let src = &whole[..whole.find("\n#[cfg(test)]").unwrap_or(whole.len())];
+        let confirm = src
+            .split("async fn confirm_write")
+            .nth(1)
+            .expect("confirm_write");
+        assert!(
+            confirm.contains("ConfirmEntry::register("),
+            "the entry must be registered through the guard"
+        );
+        assert!(
+            !confirm.contains("mcp_write_confirms.lock_safe()?.insert"),
+            "a bare insert is not owned by anything"
+        );
+        assert!(
+            !confirm.contains("mcp_write_confirms.lock_safe()?.remove"),
+            "a bare removal is skipped when the future is dropped"
         );
     }
 
