@@ -21,6 +21,9 @@ import {
 import { cn } from '@/lib/utils';
 import {
   answerWriteRequest,
+  beginRun,
+  conversationForRun,
+  endRun,
   subscribeWriteRequests,
   writeRequestsWhere,
 } from '../lib/mcpWriteRequests';
@@ -508,18 +511,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
    * running, and the backend gives up after two minutes — neither of which a
    * queue inside the component can survive or notice. See `mcpWriteRequests`.
    */
-  /**
-   * Runs this panel has started, and the conversation each was asked in.
-   *
-   * Keyed by a per-run id rather than by the tab: a rename changes the tab id
-   * mid-run — `App` migrates the pending reply — and a tab-derived address left
-   * the run registered under the old one, so its writes were held for an address
-   * nobody was watching. The chat id travels with it because opening a History
-   * item during a run does not stop the run: the answer is still filed under the
-   * conversation that asked, so a prompt belonging to it must not be answerable
-   * from a different one.
-   */
-  const myRunsRef = useRef(new Map<string, string>());
+
   const [writeRequests, setWriteRequests] = useState<McpWriteRequest[]>([]);
 
 
@@ -835,7 +827,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
           // Nobody in particular: an external client, or two runs at once. Any
           // window may answer — it is the app asking, not a conversation.
           if (requester === null) return true;
-          const askedIn = myRunsRef.current.get(requester);
+          const askedIn = conversationForRun(requester);
           if (askedIn === undefined) return false; // another panel's run
           return askedIn === activeChatIdRef.current;
         })
@@ -1127,7 +1119,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     // be renamed mid-run, and paired with the conversation so a write it asks for
     // cannot be approved from a different one.
     const runId = `run-${Math.random().toString(36).slice(2)}-${Date.now()}`;
-    myRunsRef.current.set(runId, askedIn);
+    beginRun(runId, askedIn);
 
     const run = async (): Promise<PendingChatReply> => {
       const reply = await invoke<AiReply>('generate_mql_query', {
@@ -1225,7 +1217,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     } finally {
       // The run is over, so nothing more can arrive for it. A write already
       // waiting is refused by the backend on silence.
-      myRunsRef.current.delete(runId);
+      endRun(runId);
       setIsChatLoading(false);
     }
   };

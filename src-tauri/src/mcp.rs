@@ -649,7 +649,7 @@ impl McpServer {
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
                 "document": args.document,
-            })).await
+            }), self.helper).await
             {
                 // Through the finishing path, not `?`: that is the only place a
                 // call is logged, so a refused delete would otherwise vanish from
@@ -683,7 +683,7 @@ impl McpServer {
                 "namespace": format!("{}.{}", args.database, args.collection),
                 "filter": args.filter,
                 "update": args.update,
-            })).await
+            }), self.helper).await
             {
                 // Through the finishing path, not `?`: that is the only place a
                 // call is logged, so a refused delete would otherwise vanish from
@@ -713,7 +713,7 @@ impl McpServer {
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
                 "filter": args.filter,
-            })).await
+            }), self.helper).await
             {
                 // Through the finishing path, not `?`: that is the only place a
                 // call is logged, so a refused delete would otherwise vanish from
@@ -759,7 +759,7 @@ impl McpServer {
                 // Shown because it changes which documents are indexed at all, and
                 // with `unique` it changes what uniqueness is enforced over.
                 "sparse": args.sparse,
-            })).await
+            }), self.helper).await
             {
                 // Through the finishing path, not `?`: that is the only place a
                 // call is logged, so a refused delete would otherwise vanish from
@@ -920,6 +920,7 @@ async fn confirm_write(
     app_handle: &tauri::AppHandle,
     tool: &str,
     details: serde_json::Value,
+    from_helper: bool,
 ) -> Result<(), String> {
     use tauri::{Emitter, Manager};
     let state = app_handle.state::<AppState>();
@@ -943,12 +944,21 @@ async fn confirm_write(
     // panel. With none — an external client — or with several, which `rmcp` gives
     // no way to tell apart, it is addressed to nobody in particular and any window
     // may answer: still a person deciding, just not a known conversation.
-    let requester = {
+    // The route is the only identity available: `rmcp` builds its server per
+    // session and hands the tool no view of the request, so the session itself
+    // cannot be carried through. What that rules out is *guessing*: a write from
+    // an external client is never attributed to a conversation, however many chats
+    // happen to be generating — inferring one from app-wide activity presented
+    // somebody else's operation as belonging to a chat that never asked for it.
+    let requester = if from_helper {
         let live = state.mcp_helper_requesters.lock_safe()?;
         match live.as_slice() {
             [only] => Some(only.clone()),
+            // Two runs, and no way to tell which asked.
             _ => None,
         }
+    } else {
+        None
     };
     // Registered only once there is somebody to ask and something to ask about.
     // Inserting earlier left an unreachable sender behind on every failure above,
@@ -1201,6 +1211,26 @@ mod tests {
                 "a refusal must not skip the log: {line}"
             );
         }
+    }
+
+    #[test]
+    fn an_external_write_is_never_attributed_to_a_conversation() {
+        // The route is the only identity available — `rmcp` hands the tool no view
+        // of the request — and what that rules out is guessing. Inferring the
+        // requester from app-wide activity presented an external client's write as
+        // belonging to whichever chat happened to be generating.
+        let src = include_str!("mcp.rs");
+        let body = &src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())];
+        let confirm = body.split("async fn confirm_write").nth(1).expect("confirm_write");
+        let decision = &confirm[..confirm.find("let emitted").unwrap_or(confirm.len())];
+        // The helper route may address a single live run; nothing else may.
+        assert!(decision.contains("if from_helper"), "the route decides: {decision}");
+        assert!(
+            decision.contains("} else {\n        None\n    };"),
+            "an external write is addressed to nobody"
+        );
+        // Every call site passes its route rather than assuming one.
+        assert_eq!(body.matches("self.helper).await").count(), 4, "one per write tool");
     }
 
     #[test]

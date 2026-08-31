@@ -1581,29 +1581,60 @@ pub async fn generate_local(
         use tokio::io::AsyncReadExt;
         let mut out = Vec::new();
         let mut err = Vec::new();
-        // `take` consumes the reader, which is fine — nothing else reads these.
-        let mut capped_out = (&mut stdout_pipe).take(MAX_AGENT_STDOUT as u64 + 1);
-        let mut capped_err = (&mut stderr_pipe).take(MAX_AGENT_STDERR as u64);
-        tokio::try_join!(capped_out.read_to_end(&mut out), capped_err.read_to_end(&mut err))?;
-        // Killed, not waited for, once a cap is hit. Stopping the read leaves the
-        // child blocked writing into a full pipe, and `wait` would then sit there
-        // until the 180s timeout and report the wrong thing — a hang, not a size.
-        if out.len() > MAX_AGENT_STDOUT || err.len() >= MAX_AGENT_STDERR {
+        let mut buf_out = vec![0u8; 64 * 1024];
+        let mut buf_err = vec![0u8; 8 * 1024];
+        let (mut out_done, mut err_done, mut over_cap) = (false, false, false);
+
+        // Both pipes are drained until each reaches EOF, and the cap is checked as
+        // the bytes arrive. Reading them with `try_join!` and killing afterwards
+        // did not work: the join waits for *both* to finish, so a child that
+        // capped stdout and kept writing blocked on the pipe nobody was draining
+        // and the kill was never reached — the run lasted until the 180s timeout
+        // and reported a hang instead of a size.
+        while !(out_done && err_done) {
+            tokio::select! {
+                read = stdout_pipe.read(&mut buf_out), if !out_done => {
+                    let n = read?;
+                    if n == 0 {
+                        out_done = true;
+                    } else if out.len() + n > MAX_AGENT_STDOUT {
+                        over_cap = true;
+                        break;
+                    } else {
+                        out.extend_from_slice(&buf_out[..n]);
+                    }
+                }
+                read = stderr_pipe.read(&mut buf_err), if !err_done => {
+                    let n = read?;
+                    if n == 0 {
+                        err_done = true;
+                    } else if err.len() < MAX_AGENT_STDERR {
+                        // Kept up to the cap and read past it regardless: a child
+                        // blocked on a full stderr pipe never exits either.
+                        let room = MAX_AGENT_STDERR - err.len();
+                        err.extend_from_slice(&buf_err[..n.min(room)]);
+                    }
+                }
+            }
+        }
+
+        if over_cap {
+            // Immediately, while it is still blocked on the pipe we stopped reading.
             let _ = child.kill().await;
         }
         let status = child.wait().await?;
-        Ok::<_, std::io::Error>((status, out, err))
+        Ok::<_, std::io::Error>((status, out, err, over_cap))
     };
 
     // Local coding agents (claude-code, codex, …) can take a while to start up
     // and respond — allow a generous window before giving up.
-    let (status, stdout_bytes, stderr_bytes) =
+    let (status, stdout_bytes, stderr_bytes, over_cap) =
         tokio::time::timeout(Duration::from_secs(180), gather)
             .await
             .map_err(|_| "Local agent timed out after 180s".to_string())?
             .map_err(|e| format!("Failed to read from '{}': {}", program, e))?;
 
-    if stdout_bytes.len() > MAX_AGENT_STDOUT {
+    if over_cap {
         // No claim about side effects. The agent may already have completed a write
         // the user approved, and the truncated stream is not evidence either way —
         // saying "nothing was applied" would be an assurance this cannot make. What
