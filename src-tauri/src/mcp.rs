@@ -963,7 +963,15 @@ async fn confirm_write(
     // Recorded whichever way it went. The write's own audit entry only exists if
     // it ran, so a refusal would otherwise leave no trace — and "the agent asked
     // to delete and was told no" is exactly what a trail is for.
-    let asked = format!("{tool}: {}", details);
+    // Metadata only. `summary` is stored verbatim; only `args` passes the payload
+    // gate and the redactor, so putting the document or filter here would keep and
+    // export production values from a user who switched payloads off.
+    let namespace = details
+        .get("namespace")
+        .and_then(|n| n.as_str())
+        .unwrap_or("an unknown namespace");
+    let asked = format!("{tool} on {namespace}");
+    let payload = details.to_string();
     crate::audit::maybe_record(
         &state,
         crate::audit::RecordInput {
@@ -979,7 +987,8 @@ async fn confirm_write(
             error: refusal.as_deref(),
             duration_ms: None,
             summary: &asked,
-            args: None,
+            // Through the gate, so it is kept only if the user asked for payloads.
+            args: Some(&payload),
         },
     );
 
@@ -1102,6 +1111,30 @@ mod tests {
             format!("Bearer {token}").parse().unwrap(),
         );
         h
+    }
+
+    #[test]
+    fn the_audit_summary_carries_no_write_payload() {
+        // `summary` is stored verbatim; only `args` passes the payload gate and the
+        // redactor. Putting the document or filter in the summary kept and exported
+        // production values from a user who had switched payloads off.
+        let src = include_str!("mcp.rs");
+        let body = &src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())];
+        let confirm = body
+            .split("async fn confirm_write")
+            .nth(1)
+            .expect("confirm_write");
+        // The summary is built from the namespace, not from the details.
+        assert!(
+            confirm.contains(r#"format!("{tool} on {namespace}")"#),
+            "the summary must be metadata only"
+        );
+        assert!(
+            !confirm.contains(r#"format!("{tool}: {}", details)"#),
+            "the details must not be interpolated into the summary"
+        );
+        // ...and the details go through the gated field.
+        assert!(confirm.contains("args: Some(&payload)"), "details belong in args");
     }
 
     #[test]
