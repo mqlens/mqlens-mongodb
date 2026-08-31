@@ -20,8 +20,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import {
+  answerWriteRequest,
+  subscribeWriteRequests,
+  writeRequestsFor,
+} from '../lib/mcpWriteRequests';
+import {
   subscribeAiProvidersChanged,
-  subscribeMcpWriteRequest,
   type McpWriteRequest,
 } from '../workspace/workspaceStore';
 import { buildRunnableCommand, type GeneratedQuery } from '../lib/mongoCommand';
@@ -497,42 +501,27 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
    * replacing the first would leave its tool call parked until it times out with
    * nobody having seen what it wanted to do.
    */
-  const [writeRequests, setWriteRequests] = useState<McpWriteRequest[]>([]);
   /**
-   * This panel's own id, sent with every request its agent makes.
+   * Writes the agent has asked for, read from the store rather than held here.
    *
-   * Stable for the life of the mount and unique per panel, so two panes of the
-   * same window are told apart — a window label cannot do that, and a prompt
-   * shown in the wrong pane can be answered by someone looking at another
-   * connection entirely.
+   * The panel is unmounted when the user switches tabs while its request keeps
+   * running, and the backend gives up after two minutes — neither of which a
+   * queue inside the component can survive or notice. See `mcpWriteRequests`.
    */
-  const panelIdRef = useRef(`panel-${Math.random().toString(36).slice(2)}-${Date.now()}`);
+  const panelIdRef = useRef(
+    // Derived from the tab, not minted per mount. App unmounts this panel when the
+    // user switches tabs while `startChatRequest` deliberately keeps the request
+    // alive, and a fresh random id meant the remounted panel could not claim a
+    // request its own run had made — every such write timed out unanswered.
+    sessionKey ? `panel-${sessionKey}` : `panel-${Math.random().toString(36).slice(2)}`
+  );
+  const [writeRequests, setWriteRequests] = useState<McpWriteRequest[]>([]);
   useEffect(() => {
-    let live = true;
-    let unlisten: (() => void) | null = null;
-    subscribeMcpWriteRequest((request) => {
-      // Addressed to somebody else: the backend still has it parked, and their
-      // panel is showing it.
-      if (request.requester !== panelIdRef.current) return;
-      if (live) setWriteRequests((prev) => [...prev, request]);
-    })
-      .then((off) => {
-        if (live) unlisten = off;
-        else off();
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-      unlisten?.();
-    };
+    const refresh = () => setWriteRequests(writeRequestsFor(panelIdRef.current));
+    refresh();
+    return subscribeWriteRequests(refresh);
   }, []);
 
-  const answerWrite = (id: string, approved: boolean) => {
-    setWriteRequests((prev) => prev.filter((r) => r.id !== id));
-    // The backend refuses on its own if this never lands, so a failure here costs
-    // a refusal rather than an unintended write.
-    void invoke('mcp_resolve_write', { id, approved }).catch(() => {});
-  };
   const loadCliModels = async () => {
     if (!chatProviderId) return;
     setModelsFailed(false);
@@ -1584,7 +1573,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   size="sm"
                   variant="destructive"
                   className="h-6 px-2 text-[10.5px]"
-                  onClick={() => answerWrite(writeRequests[0].id, true)}
+                  onClick={() => answerWriteRequest(writeRequests[0].id, true)}
                   data-testid="chat-write-allow"
                 >
                   {t('aiChatPanel.writeRequestAllow')}
@@ -1594,7 +1583,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   size="sm"
                   variant="ghost"
                   className="h-6 px-2 text-[10.5px]"
-                  onClick={() => answerWrite(writeRequests[0].id, false)}
+                  onClick={() => answerWriteRequest(writeRequests[0].id, false)}
                   data-testid="chat-write-refuse"
                 >
                   {t('aiChatPanel.writeRequestRefuse')}

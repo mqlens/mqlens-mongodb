@@ -4,6 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ACCEPTED_IMAGE_TYPES, AIChatPanel } from '../AIChatPanel';
 import { resetChatRequests } from '../../lib/aiChatRequest';
 import { resetOpenChats } from '../../lib/aiChatStore';
+import {
+  resetWriteRequestsForTests,
+  WRITE_REQUEST_TTL_MS,
+} from '../../lib/mcpWriteRequests';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
@@ -195,6 +199,9 @@ describe('AIChatPanel', () => {
   beforeEach(() => {
     resetChatRequests();
     resetOpenChats();
+    // Module state, so it outlives a test unless it is cleared.
+    resetWriteRequestsForTests();
+    writeRequestListeners.length = 0;
     chatStore = [];
     chatClaims = {};
     localStorage.clear();
@@ -1494,6 +1501,45 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
       expect(invokeMock).toHaveBeenCalledWith('mcp_resolve_write', { id: 'w1', approved: false }),
     );
     expect(screen.queryByTestId('chat-write-request')).not.toBeInTheDocument();
+  });
+
+  it('stops showing a write the backend has already given up on', async () => {
+    // The backend refuses after two minutes. A queue that kept the dead prompt
+    // showed it forever and, because only the first is rendered, hid every live
+    // request behind it — so later writes timed out without ever being seen.
+    mockPickerBackend({ query: '{}' });
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    send('which orders are old');
+    await waitFor(() => expect(lastRequesterId()).toBeTruthy());
+    const mine = lastRequesterId();
+
+    await act(async () => {
+      writeRequestListeners.forEach((fn) =>
+        fn({ id: 'stale', tool: 'delete_many', summary: 'old', requester: mine }),
+      );
+    });
+    // It must be visible first, or the disappearance below proves nothing.
+    expect(await screen.findByTestId('chat-write-request')).toBeInTheDocument();
+
+    // Past the backend's deadline. The store stamps arrival with `Date.now`, so
+    // moving that is what ages the entry; the sweep then drops it.
+    const realNow = Date.now;
+    try {
+      Date.now = () => realNow() + WRITE_REQUEST_TTL_MS + 1_000;
+      await act(async () => {
+        // Something unrelated, only to trigger a re-read. Clicking Refuse would
+        // remove the entry by id and prove nothing about expiry.
+        writeRequestListeners.forEach((fn) =>
+          fn({ id: 'other', tool: 'insert_one', summary: 'x', requester: 'someone-else' }),
+        );
+      });
+      await waitFor(() =>
+        expect(screen.queryByTestId('chat-write-request')).not.toBeInTheDocument(),
+      );
+    } finally {
+      Date.now = realNow;
+    }
   });
 
   it('ignores a write request addressed to another panel', async () => {
