@@ -639,3 +639,30 @@ describe('preserveBigIntegers — literal as a left-hand operand (#318 review)',
     );
   });
 });
+
+// #318 review, round 5. Two findings assumed these were supported shell syntax.
+// They are not — the parser rejects both outright, with or without a big
+// integer — so neither query can run and the rewrite cannot be observed.
+//
+// Pinned rather than guarded, the same way the `d`/`v` regex flags are: adding
+// handling for syntax nothing accepts would be dead code that implies support
+// we do not have. If a parser upgrade ever makes these reachable, these tests
+// fail and the decision gets made deliberately instead of by accident.
+describe('parseShellJson — syntax this parser does not accept (#318 review)', () => {
+  it('rejects template literals, integer or not', () => {
+    expect(() => parseShellJson('{note: `hello`}')).toThrow();
+    expect(() => parseShellJson('{note: `[9007199254740993]`}')).toThrow();
+  });
+
+  it('rejects index expressions, integer or not', () => {
+    expect(() => parseShellJson('{a: [1][0]}')).toThrow();
+    expect(() => parseShellJson('{a: [9007199254740993][0] + 1}')).toThrow();
+  });
+
+  it('but does accept the arithmetic the operand rules are built around', () => {
+    // The contrast that makes the two above worth pinning: arithmetic really is
+    // supported, which is why the left/right operand cases were real bugs.
+    expect(parseShellJson('{a: 1 + 2}')).toEqual({ a: 3 });
+    expect(parseShellJson('{a: [1, 2]}')).toEqual({ a: [1, 2] });
+  });
+});
