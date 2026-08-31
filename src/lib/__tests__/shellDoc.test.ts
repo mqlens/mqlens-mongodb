@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ObjectId, Long, Decimal128, Int32 } from 'bson';
-import { docToShell, shellToEjson, parseShellJson, parseQueryObject, shellDocErrorKey, shellDocErrorParams, type ShellDocNotices } from '../shellDoc';
+import { docToShell, shellToEjson, parseShellJson, parseQueryObject, preserveBigIntegers, shellDocErrorKey, shellDocErrorParams, type ShellDocNotices } from '../shellDoc';
 
 describe('docToShell', () => {
   it('renders EJSON-shaped values as shell constructors', () => {
@@ -476,5 +476,60 @@ describe('parseShellJson — 64-bit integer literals (#317)', () => {
     expect(Object.keys(parseShellJson('{"9007199254740993": 1}'))).toEqual([
       '9007199254740993',
     ]);
+  });
+});
+
+// #318 review: the rewrite originally fired wherever a big integer appeared,
+// but the text around a literal decides what it means. Rewriting outside value
+// position ate operators and wrapped constructor arguments in themselves.
+describe('preserveBigIntegers — only rewrites in value position (#318 review)', () => {
+  it('leaves a spaced binary minus intact', () => {
+    // Was rewritten to `{a: 1 NumberLong("-9007199254740992")}`, which stopped
+    // parsing altogether — a valid query broken by a precision fix.
+    expect(preserveBigIntegers('{a: 1 - 9007199254740992}')).toBe(
+      '{a: 1 - 9007199254740992}'
+    );
+    expect(() => parseShellJson('{a: 1 - 9007199254740992}')).not.toThrow();
+  });
+
+  it('leaves other arithmetic operands alone', () => {
+    // Rewriting these would leave the parser doing arithmetic on a Long.
+    expect(preserveBigIntegers('{a: 1 + 9007199254740992}')).toBe(
+      '{a: 1 + 9007199254740992}'
+    );
+  });
+
+  it('does not wrap a constructor argument in another constructor', () => {
+    // `NumberLong(NumberLong("…"))` is not a thing. The quoted spelling is the
+    // exact one, and it is untouched because it is inside a string.
+    expect(preserveBigIntegers('{a: NumberLong(9007199254740993)}')).toBe(
+      '{a: NumberLong(9007199254740993)}'
+    );
+    expect(parseShellJson('{a: NumberLong("9007199254740993")}').a.$numberLong).toBe(
+      '9007199254740993'
+    );
+  });
+
+  it('leaves a parenthesised expression alone', () => {
+    expect(preserveBigIntegers('{a: (9007199254740993)}')).toBe(
+      '{a: (9007199254740993)}'
+    );
+  });
+
+  it('still treats a genuine leading minus as a sign', () => {
+    // The distinction is whether anything that could end an operand precedes
+    // the minus — here it is the `:`, so the minus belongs to the number.
+    expect(preserveBigIntegers('{a: -9007199254740993}')).toBe(
+      '{a: NumberLong("-9007199254740993")}'
+    );
+  });
+
+  it('rewrites after the punctuation that starts a value', () => {
+    expect(preserveBigIntegers('{a: [1, 9007199254740993]}')).toBe(
+      '{a: [1, NumberLong("9007199254740993")]}'
+    );
+    expect(preserveBigIntegers('counter: 9007199254740993')).toBe(
+      'counter: NumberLong("9007199254740993")'
+    );
   });
 });

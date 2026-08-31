@@ -488,6 +488,46 @@ const I64_MIN = -9223372036854775808n;
  *   there is no lossless form to rewrite them into; they stay as they are
  *   rather than being silently truncated into a different wrong number.
  */
+/**
+ * Characters after which a fresh value may begin: `{a: N}`, `[N]`, `[1, N]`.
+ *
+ * Note what is NOT here. `(` is excluded so `NumberLong(9007199254740993)`
+ * keeps its own argument instead of becoming `NumberLong(NumberLong("…"))`,
+ * and arithmetic operators are excluded so an operand is left alone.
+ */
+const VALUE_STARTS_AFTER = ':,[';
+
+/**
+ * Where does the literal we are about to read sit, and may we rewrite it?
+ *
+ * Rewriting anywhere a big integer appears is wrong, because the text around
+ * it decides what it means. Three ways that bit (#318 review):
+ *
+ * - `{a: 1 - 9007199254740992}` — a spaced binary minus read as a sign, which
+ *   ate the operator and left `{a: 1 NumberLong("-…")}`, so a valid query
+ *   stopped parsing entirely.
+ * - `{a: 1 + 9007199254740992}` — an operand rewritten into a Long, leaving
+ *   the parser to do arithmetic on an object.
+ * - `{a: NumberLong(9007199254740993)}` — an argument rewritten inside the
+ *   very constructor that was already asking for a long.
+ *
+ * So this only says yes in value position, where a literal can stand alone.
+ * Anywhere else the pre-existing behaviour is kept: an arithmetic operand
+ * still rounds, which is worse than exact but far better than not parsing.
+ */
+function classifyNumberPlacement(before: string): 'plain' | 'signed' | 'skip' {
+  const trimmed = before.replace(/\s*$/, '');
+  if (trimmed.endsWith('-')) {
+    const beforeMinus = trimmed.slice(0, -1).replace(/\s*$/, '');
+    const prev = beforeMinus[beforeMinus.length - 1] ?? '';
+    // A minus is a sign only when nothing that could end an operand precedes
+    // it; otherwise this is subtraction and the minus is not ours to take.
+    return prev === '' || VALUE_STARTS_AFTER.includes(prev) ? 'signed' : 'skip';
+  }
+  const prev = trimmed[trimmed.length - 1] ?? '';
+  return prev === '' || VALUE_STARTS_AFTER.includes(prev) ? 'plain' : 'skip';
+}
+
 export function preserveBigIntegers(text: string): string {
   let out = '';
   let i = 0;
@@ -534,16 +574,18 @@ export function preserveBigIntegers(text: string): string {
         // A key, not a value: `{123: 1}`.
         const isKey = /^\s*:/.test(text.slice(j));
         if (isPlainInteger && !isKey && !Number.isSafeInteger(Number(digits))) {
-          // Pull a unary minus in with the digits, so the long carries the
-          // sign rather than the parser negating a Long object.
-          const signed = /(^|[:,[(\s])-\s*$/.test(out);
-          const literal = (signed ? '-' : '') + digits;
-          const value = BigInt(literal);
-          if (value >= I64_MIN && value <= I64_MAX) {
-            if (signed) out = out.replace(/-\s*$/, '');
-            out += `NumberLong("${literal}")`;
-            i = j;
-            continue;
+          const placement = classifyNumberPlacement(out);
+          if (placement !== 'skip') {
+            // A unary minus comes along inside the long, so the parser is
+            // never asked to negate a Long object.
+            const literal = (placement === 'signed' ? '-' : '') + digits;
+            const value = BigInt(literal);
+            if (value >= I64_MIN && value <= I64_MAX) {
+              if (placement === 'signed') out = out.replace(/-\s*$/, '');
+              out += `NumberLong("${literal}")`;
+              i = j;
+              continue;
+            }
           }
         }
       }
