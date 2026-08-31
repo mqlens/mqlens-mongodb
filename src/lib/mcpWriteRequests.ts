@@ -51,11 +51,20 @@ function start() {
   }, 5_000);
 }
 
-/** Live requests addressed to `requester`, oldest first. */
-export function writeRequestsFor(requester: string): McpWriteRequest[] {
+/**
+ * Live requests this caller may answer, oldest first.
+ *
+ * The caller decides: a panel accepts its own runs and unaddressed requests, and
+ * a run it started but whose conversation the user has since left is refused by
+ * showing it to nobody — the answer would be filed under a chat that is no longer
+ * on screen.
+ */
+export function writeRequestsWhere(
+  accepts: (requester: string | null) => boolean
+): McpWriteRequest[] {
   start();
   expire(Date.now());
-  return held.filter((r) => r.requester === requester);
+  return held.filter((r) => accepts(r.requester));
 }
 
 export function subscribeWriteRequests(fn: () => void): () => void {

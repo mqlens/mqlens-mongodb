@@ -1585,6 +1585,12 @@ pub async fn generate_local(
         let mut capped_out = (&mut stdout_pipe).take(MAX_AGENT_STDOUT as u64 + 1);
         let mut capped_err = (&mut stderr_pipe).take(MAX_AGENT_STDERR as u64);
         tokio::try_join!(capped_out.read_to_end(&mut out), capped_err.read_to_end(&mut err))?;
+        // Killed, not waited for, once a cap is hit. Stopping the read leaves the
+        // child blocked writing into a full pipe, and `wait` would then sit there
+        // until the 180s timeout and report the wrong thing — a hang, not a size.
+        if out.len() > MAX_AGENT_STDOUT || err.len() >= MAX_AGENT_STDERR {
+            let _ = child.kill().await;
+        }
         let status = child.wait().await?;
         Ok::<_, std::io::Error>((status, out, err))
     };
@@ -1598,13 +1604,37 @@ pub async fn generate_local(
             .map_err(|e| format!("Failed to read from '{}': {}", program, e))?;
 
     if stdout_bytes.len() > MAX_AGENT_STDOUT {
-        return Err(format!(
-            "Local agent '{}' produced more than {} MB of output, which is past what \
-             this reads. Nothing was applied. If its tools are returning whole \
-             documents, narrow what it is asked to inspect.",
-            program,
-            MAX_AGENT_STDOUT / (1024 * 1024)
-        ));
+        // No claim about side effects. The agent may already have completed a write
+        // the user approved, and the truncated stream is not evidence either way —
+        // saying "nothing was applied" would be an assurance this cannot make. What
+        // it *can* report is whatever activity survives in the part that was read.
+        let ran = parse_agent_events(&String::from_utf8_lossy(&stdout_bytes))
+            .map(|run| {
+                run.tool_calls
+                    .iter()
+                    .map(|c| c.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .filter(|names| !names.is_empty());
+        return Err(match ran {
+            Some(names) => format!(
+                "Local agent '{}' produced more than {} MB of output, past what this \
+                 reads, so its answer was not used. It had already run: {}. Check \
+                 whether anything was changed. If its tools are returning whole \
+                 documents, narrow what it is asked to inspect.",
+                program,
+                MAX_AGENT_STDOUT / (1024 * 1024),
+                names
+            ),
+            None => format!(
+                "Local agent '{}' produced more than {} MB of output, past what this \
+                 reads, so its answer was not used. If its tools are returning whole \
+                 documents, narrow what it is asked to inspect.",
+                program,
+                MAX_AGENT_STDOUT / (1024 * 1024)
+            ),
+        });
     }
     let output = std::process::Output { status, stdout: stdout_bytes, stderr: stderr_bytes };
     let stdout_text = String::from_utf8_lossy(&output.stdout);

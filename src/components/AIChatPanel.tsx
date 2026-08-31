@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils';
 import {
   answerWriteRequest,
   subscribeWriteRequests,
-  writeRequestsFor,
+  writeRequestsWhere,
 } from '../lib/mcpWriteRequests';
 import {
   subscribeAiProvidersChanged,
@@ -508,19 +508,20 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
    * running, and the backend gives up after two minutes — neither of which a
    * queue inside the component can survive or notice. See `mcpWriteRequests`.
    */
-  const panelIdRef = useRef(
-    // Derived from the tab, not minted per mount. App unmounts this panel when the
-    // user switches tabs while `startChatRequest` deliberately keeps the request
-    // alive, and a fresh random id meant the remounted panel could not claim a
-    // request its own run had made — every such write timed out unanswered.
-    sessionKey ? `panel-${sessionKey}` : `panel-${Math.random().toString(36).slice(2)}`
-  );
+  /**
+   * Runs this panel has started, and the conversation each was asked in.
+   *
+   * Keyed by a per-run id rather than by the tab: a rename changes the tab id
+   * mid-run — `App` migrates the pending reply — and a tab-derived address left
+   * the run registered under the old one, so its writes were held for an address
+   * nobody was watching. The chat id travels with it because opening a History
+   * item during a run does not stop the run: the answer is still filed under the
+   * conversation that asked, so a prompt belonging to it must not be answerable
+   * from a different one.
+   */
+  const myRunsRef = useRef(new Map<string, string>());
   const [writeRequests, setWriteRequests] = useState<McpWriteRequest[]>([]);
-  useEffect(() => {
-    const refresh = () => setWriteRequests(writeRequestsFor(panelIdRef.current));
-    refresh();
-    return subscribeWriteRequests(refresh);
-  }, []);
+
 
   const loadCliModels = async () => {
     if (!chatProviderId) return;
@@ -827,6 +828,27 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     onChatIdChange?.(id);
   };
 
+  useEffect(() => {
+    const refresh = () =>
+      setWriteRequests(
+        writeRequestsWhere((requester: string | null) => {
+          // Nobody in particular: an external client, or two runs at once. Any
+          // window may answer — it is the app asking, not a conversation.
+          if (requester === null) return true;
+          const askedIn = myRunsRef.current.get(requester);
+          if (askedIn === undefined) return false; // another panel's run
+          return askedIn === activeChatIdRef.current;
+        })
+      );
+    refresh();
+    return subscribeWriteRequests(refresh);
+    // Re-runs when the conversation changes, not only when the store notifies:
+    // opening a History item does not touch the store, so without this the list
+    // kept whatever it held and a prompt stayed answerable from a conversation it
+    // did not belong to.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChatId]);
+
   // Claimed on mount and NOT released on unmount. An inactive tab is unmounted
   // but still points at its conversation, so releasing here would let another
   // tab take one that is still spoken for. The claim ends when the tab stops
@@ -1101,6 +1123,11 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     // must not land in whichever conversation happens to be open when it
     // arrives — it would be shown there AND persisted under that chat's id.
     const askedIn = activeChatIdRef.current;
+    // Identifies this run for the length of it. Independent of the tab, which can
+    // be renamed mid-run, and paired with the conversation so a write it asks for
+    // cannot be approved from a different one.
+    const runId = `run-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+    myRunsRef.current.set(runId, askedIn);
 
     const run = async (): Promise<PendingChatReply> => {
       const reply = await invoke<AiReply>('generate_mql_query', {
@@ -1112,7 +1139,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
         database: databaseName ?? undefined,
         connectionName: connectionName ?? undefined,
         connectionId: connectionId ?? undefined,
-        requesterId: panelIdRef.current,
+        requesterId: runId,
         history,
         target: variant === 'shell' ? 'shell' : 'editor',
         images: images.map((i) => ({ media_type: i.mediaType, data: i.data })),
@@ -1196,6 +1223,9 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
       }
       appendReply(reply);
     } finally {
+      // The run is over, so nothing more can arrive for it. A write already
+      // waiting is refused by the backend on silence.
+      myRunsRef.current.delete(runId);
       setIsChatLoading(false);
     }
   };

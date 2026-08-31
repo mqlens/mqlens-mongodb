@@ -855,6 +855,22 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
       clipboardData: { items: [{ kind: 'file', type, getAsFile: () => file }] },
     });
   };
+  /**
+   * A backend whose generation is held open, so a write request can arrive while
+   * the run is still going — which is the only time one can.
+   */
+  const heldRun = () => {
+    let release: (v: unknown) => void = () => {};
+    invokeMock.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'ai_provider_options') return Promise.resolve(OPTIONS);
+      if (cmd === 'list_ai_models_for') return Promise.resolve([]);
+      if (cmd.endsWith('_chat') || cmd.endsWith('_chats')) return Promise.resolve(chatBackend(cmd, args));
+      if (cmd === 'generate_mql_query') return new Promise((res) => { release = res; });
+      return Promise.resolve(null);
+    });
+    return () => release({ query: JSON.stringify({ queryType: 'find', filter: {} }) });
+  };
+
   /** The id this panel identifies itself with, taken from its last request. */
   const lastRequesterId = () =>
     (invokeMock.mock.calls.filter((c) => c[0] === 'generate_mql_query').at(-1)?.[1] as any)
@@ -1475,7 +1491,7 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     // The write tools are gated on a flag the agent supplies itself, so for
     // MQLens's own agent the person has to answer. A prompt that quietly approved
     // would look identical on screen — hence asserting the payload, not the click.
-    mockPickerBackend({ query: '{}' });
+    heldRun(); // left open: a write can only arrive while the run is going
     renderPanel('editor');
     await screen.findByTestId('ai-chat-provider-select');
     expect(writeRequestListeners).not.toHaveLength(0);
@@ -1507,7 +1523,7 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     // The backend refuses after two minutes. A queue that kept the dead prompt
     // showed it forever and, because only the first is rendered, hid every live
     // request behind it — so later writes timed out without ever being seen.
-    mockPickerBackend({ query: '{}' });
+    heldRun(); // left open: a write can only arrive while the run is going
     renderPanel('editor');
     await screen.findByTestId('ai-chat-provider-select');
     send('which orders are old');
@@ -1542,6 +1558,38 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     }
   });
 
+  it('will not let a write be approved from a different conversation', async () => {
+    // Opening a History item does not stop the run, and the answer is still filed
+    // under the conversation that asked — so a write belonging to it must not be
+    // answerable from the one now on screen.
+    chatStore = [{
+      id: 'other', title: 'other chat', messages: [{ id: 'm1', role: 'user', text: 'hi' }],
+      connectionName: 'Local', database: 'test-db', collection: 'users', variant: 'editor',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    }];
+    heldRun(); // left open: a write can only arrive while the run is going
+    renderPanel('editor');
+    await screen.findByTestId('ai-chat-provider-select');
+    send('which orders are old');
+    await waitFor(() => expect(lastRequesterId()).toBeTruthy());
+    const run = lastRequesterId();
+
+    await act(async () => {
+      writeRequestListeners.forEach((fn) =>
+        fn({ id: 'w1', tool: 'delete_many', summary: 'shop.orders', requester: run }),
+      );
+    });
+    expect(await screen.findByTestId('chat-write-request')).toBeInTheDocument();
+
+    // The user opens a different conversation while the run continues.
+    fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
+    fireEvent.click(await screen.findByText('other chat'));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('chat-write-request')).not.toBeInTheDocument(),
+    );
+  });
+
   it('ignores a write request addressed to another panel', async () => {
     // Every webview receives the event; only the panel whose agent asked should
     // offer it. Otherwise someone looking at a different connection can approve a
@@ -1562,7 +1610,7 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
   it('queues a second write request rather than losing it', async () => {
     // Two can arrive close together; replacing the first would leave its tool
     // call parked until it timed out with nobody having seen it.
-    mockPickerBackend({ query: '{}' });
+    heldRun(); // left open: a write can only arrive while the run is going
     renderPanel('editor');
     await screen.findByTestId('ai-chat-provider-select');
     send('which orders are old');

@@ -640,9 +640,11 @@ impl McpServer {
         let connection_id = args.connection_id.clone();
         let summary =
             crate::mcp_tools::truncate_summary(&crate::mcp_tools::insert_one_summary(&args.database, &args.collection, &args.document, args._confirm), 200);
-        // MQLens's own agent asks the user; an external client keeps the
-        // `_confirm` contract its operator opted into.
-        if self.helper {
+        // Every route, not only the helper's. `_confirm` is a boolean the caller
+        // supplies, so it was never a gate — and a CLI that found the external
+        // route through its own global config reached these tools with no prompt
+        // at all, which is the hole the helper path alone could not close.
+        {
             match confirm_write(&app_handle, "insert_one", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
@@ -671,9 +673,11 @@ impl McpServer {
             &crate::mcp_tools::update_many_summary(&args.database, &args.collection, &args.filter, &args.update, args._confirm),
             200,
         );
-        // MQLens's own agent asks the user; an external client keeps the
-        // `_confirm` contract its operator opted into.
-        if self.helper {
+        // Every route, not only the helper's. `_confirm` is a boolean the caller
+        // supplies, so it was never a gate — and a CLI that found the external
+        // route through its own global config reached these tools with no prompt
+        // at all, which is the hole the helper path alone could not close.
+        {
             match confirm_write(&app_handle, "update_many", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
@@ -700,9 +704,11 @@ impl McpServer {
         let state = app_handle.state::<AppState>();
         let connection_id = args.connection_id.clone();
         let summary = crate::mcp_tools::truncate_summary(&crate::mcp_tools::delete_many_summary(&args.database, &args.collection, &args.filter, args._confirm), 200);
-        // MQLens's own agent asks the user; an external client keeps the
-        // `_confirm` contract its operator opted into.
-        if self.helper {
+        // Every route, not only the helper's. `_confirm` is a boolean the caller
+        // supplies, so it was never a gate — and a CLI that found the external
+        // route through its own global config reached these tools with no prompt
+        // at all, which is the hole the helper path alone could not close.
+        {
             match confirm_write(&app_handle, "delete_many", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
@@ -739,9 +745,11 @@ impl McpServer {
             ),
             200,
         );
-        // MQLens's own agent asks the user; an external client keeps the
-        // `_confirm` contract its operator opted into.
-        if self.helper {
+        // Every route, not only the helper's. `_confirm` is a boolean the caller
+        // supplies, so it was never a gate — and a CLI that found the external
+        // route through its own global config reached these tools with no prompt
+        // at all, which is the hole the helper path alone could not close.
+        {
             match confirm_write(&app_handle, "create_index", serde_json::json!({
                 "connectionId": args.connection_id,
                 "namespace": format!("{}.{}", args.database, args.collection),
@@ -931,22 +939,15 @@ async fn confirm_write(
     // the request, so with two agents running the write cannot be attributed —
     // and putting one panel's delete in front of whoever else is looking is worse
     // than making the agent ask in its reply.
+    // One live run means the write belongs to it, so the prompt goes to that
+    // panel. With none — an external client — or with several, which `rmcp` gives
+    // no way to tell apart, it is addressed to nobody in particular and any window
+    // may answer: still a person deciding, just not a known conversation.
     let requester = {
         let live = state.mcp_helper_requesters.lock_safe()?;
         match live.as_slice() {
-            [only] => only.clone(),
-            [] => {
-                return Err(format!(
-                    "{tool} was asked for outside a chat request, so there is nobody to ask."
-                ))
-            }
-            _ => {
-                return Err(format!(
-                    "{tool} cannot be confirmed while more than one chat is generating, \
-                     because MQLens cannot tell which of them asked. Describe the change \
-                     in your reply and let the user make it."
-                ))
-            }
+            [only] => Some(only.clone()),
+            _ => None,
         }
     };
     // Registered only once there is somebody to ask and something to ask about.
@@ -1002,14 +1003,23 @@ async fn confirm_write(
         .unwrap_or("an unknown namespace");
     let asked = format!("{tool} on {namespace}");
     let payload = details.to_string();
+    // Split out for the audit's own fields. For a refused or timed-out write this
+    // is the *only* record — the operation never ran — so leaving the scope empty
+    // meant it could not be found by filtering on the connection or namespace it
+    // was aimed at, which is precisely what a refusal trail is for.
+    let scope_connection = details.get("connectionId").and_then(|c| c.as_str());
+    let (scope_db, scope_collection) = match namespace.split_once('.') {
+        Some((db, coll)) if !db.is_empty() && !coll.is_empty() => (Some(db), Some(coll)),
+        _ => (None, None),
+    };
     crate::audit::maybe_record(
         &state,
         crate::audit::RecordInput {
             event_id: None,
             ts: None,
-            connection_id: None,
-            database: None,
-            collection: None,
+            connection_id: scope_connection,
+            database: scope_db,
+            collection: scope_collection,
             op: "agent_write_request",
             class: None,
             source: Some("mcp"),

@@ -136,8 +136,13 @@ export interface McpWriteRequest {
   id: string;
   tool: string;
   summary: string;
-  /** The panel that asked. Others ignore it — see `subscribeMcpWriteRequest`. */
-  requester: string;
+  /**
+   * The run that asked, or `null` when MQLens cannot tell — an external MCP
+   * client with no run of its own, or two runs at once. A named run is shown only
+   * by the panel that started it; an unnamed one may be answered anywhere, since
+   * it is the app asking its user rather than a conversation asking.
+   */
+  requester: string | null;
 }
 
 /**
