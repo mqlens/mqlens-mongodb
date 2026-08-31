@@ -533,3 +533,46 @@ describe('preserveBigIntegers — only rewrites in value position (#318 review)'
     );
   });
 });
+
+// #318 review, round 2: a comment between the delimiter and the value left the
+// literal unrewritten, so a commented query kept rounding silently.
+describe('preserveBigIntegers — comments (#318 review)', () => {
+  const longOf = (text: string, key = 'counter') => parseShellJson(text)[key].$numberLong;
+
+  it('sees past a block comment before the value', () => {
+    expect(longOf('{counter: /* copied from shell */ 9007199254740993}')).toBe(
+      '9007199254740993'
+    );
+  });
+
+  it('sees past a line comment before the value', () => {
+    expect(longOf('{counter: // note\n 9007199254740993}')).toBe('9007199254740993');
+  });
+
+  it('still reads a sign correctly across a comment', () => {
+    expect(parseShellJson('{a: /* c */ -9007199254740993}').a.$numberLong).toBe(
+      '-9007199254740993'
+    );
+  });
+
+  it('does not mistake a comment for an operand when judging a binary minus', () => {
+    expect(preserveBigIntegers('{a: 1 /* c */ - 9007199254740992}')).toBe(
+      '{a: 1 /* c */ - 9007199254740992}'
+    );
+  });
+
+  it('does not mistake // inside a string for a comment', () => {
+    // The reason placement is judged on tracked tokens rather than by scanning
+    // the emitted text backwards: a URL would otherwise look like a comment and
+    // suppress a rewrite that should happen.
+    const parsed = parseShellJson('{url: "http://x.com", counter: 9007199254740993}');
+    expect(parsed.url).toBe('http://x.com');
+    expect(parsed.counter.$numberLong).toBe('9007199254740993');
+  });
+
+  it('still recognises a regex that follows a comment', () => {
+    const parsed = parseShellJson('{a: /* c */ /x/i, b: 9007199254740993}');
+    expect(parsed.a.$regularExpression.pattern).toBe('x');
+    expect(parsed.b.$numberLong).toBe('9007199254740993');
+  });
+});

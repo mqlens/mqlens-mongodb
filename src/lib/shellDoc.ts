@@ -515,22 +515,39 @@ const VALUE_STARTS_AFTER = ':,[';
  * Anywhere else the pre-existing behaviour is kept: an arithmetic operand
  * still rounds, which is worse than exact but far better than not parsing.
  */
-function classifyNumberPlacement(before: string): 'plain' | 'signed' | 'skip' {
-  const trimmed = before.replace(/\s*$/, '');
-  if (trimmed.endsWith('-')) {
-    const beforeMinus = trimmed.slice(0, -1).replace(/\s*$/, '');
-    const prev = beforeMinus[beforeMinus.length - 1] ?? '';
+function classifyNumberPlacement(
+  last: string,
+  prev: string,
+  out: string
+): 'plain' | 'signed' | 'skip' {
+  const startsValue = (ch: string) => ch === '' || VALUE_STARTS_AFTER.includes(ch);
+  if (last === '-') {
     // A minus is a sign only when nothing that could end an operand precedes
     // it; otherwise this is subtraction and the minus is not ours to take.
-    return prev === '' || VALUE_STARTS_AFTER.includes(prev) ? 'signed' : 'skip';
+    //
+    // It also has to still be at the end of the emitted text, since folding it
+    // into the literal means deleting it from there. A comment sitting between
+    // the two (`-/* note */5`) would make that deletion miss, so those are left
+    // alone rather than mangled — an exotic spelling of a rare case.
+    return startsValue(prev) && /-\s*$/.test(out) ? 'signed' : 'skip';
   }
-  const prev = trimmed[trimmed.length - 1] ?? '';
-  return prev === '' || VALUE_STARTS_AFTER.includes(prev) ? 'plain' : 'skip';
+  return startsValue(last) ? 'plain' : 'skip';
 }
 
 export function preserveBigIntegers(text: string): string {
   let out = '';
   let i = 0;
+  // The last two *syntactically meaningful* characters emitted — whitespace and
+  // comments do not count. Placement has to be judged on these rather than on
+  // the tail of `out`, because scanning `out` back would trip over the very
+  // things this pass copies verbatim (a `//` inside a URL string, a comment
+  // between the delimiter and the value).
+  let lastMeaningful = '';
+  let prevMeaningful = '';
+  const remember = (ch: string) => {
+    prevMeaningful = lastMeaningful;
+    lastMeaningful = ch;
+  };
   while (i < text.length) {
     const c = text[i];
     // Verbatim: a string's contents are data, not syntax.
@@ -550,14 +567,30 @@ export function preserveBigIntegers(text: string): string {
         }
         i++;
       }
+      remember('"');
+      continue;
+    }
+    // Comments are copied through but leave no syntactic trace, so they must
+    // be recognised BEFORE the regex branch — `/*` otherwise reads as a regex
+    // opener, and the closing `/` then looks like the token before the value,
+    // which left `{counter: /* note */ 9007199254740993}` unrewritten and
+    // still rounding (#318 review).
+    if (c === '/' && (text[i + 1] === '/' || text[i + 1] === '*')) {
+      const end =
+        text[i + 1] === '/'
+          ? (text.indexOf('\n', i) === -1 ? text.length : text.indexOf('\n', i))
+          : (text.indexOf('*/', i + 2) === -1 ? text.length : text.indexOf('*/', i + 2) + 2);
+      out += text.slice(i, end);
+      i = end;
       continue;
     }
     // Verbatim: digits inside a pattern are part of the pattern.
-    if (c === '/' && startsRegex(out)) {
+    if (c === '/' && startsRegex(lastMeaningful)) {
       const end = endOfRegex(text, i);
       if (end !== -1) {
         out += text.slice(i, end);
         i = end;
+        remember('/');
         continue;
       }
     }
@@ -574,7 +607,7 @@ export function preserveBigIntegers(text: string): string {
         // A key, not a value: `{123: 1}`.
         const isKey = /^\s*:/.test(text.slice(j));
         if (isPlainInteger && !isKey && !Number.isSafeInteger(Number(digits))) {
-          const placement = classifyNumberPlacement(out);
+          const placement = classifyNumberPlacement(lastMeaningful, prevMeaningful, out);
           if (placement !== 'skip') {
             // A unary minus comes along inside the long, so the parser is
             // never asked to negate a Long object.
@@ -584,6 +617,7 @@ export function preserveBigIntegers(text: string): string {
               if (placement === 'signed') out = out.replace(/-\s*$/, '');
               out += `NumberLong("${literal}")`;
               i = j;
+              remember('0');
               continue;
             }
           }
@@ -591,6 +625,7 @@ export function preserveBigIntegers(text: string): string {
       }
     }
     out += c;
+    if (!/\s/.test(c)) remember(c);
     i++;
   }
   return out;
