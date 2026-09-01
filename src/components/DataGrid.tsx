@@ -477,6 +477,9 @@ const JsonRow = ({
         line.isDocRoot && line.docIndex > 0 && 'border-t border-border',
         findHighlightClass(line.num)
       )}
+      // Lets a copy reconstruct the selected range from the line data even
+      // after virtualization has unmounted the rows it started on (#311).
+      data-json-line={index}
       data-doc-even={line.docIndex % 2 === 0}
       onContextMenu={(e) => openCtxMenu(e, documents[line.docIndex], line.kind === 'scalar' ? line.keyName ?? undefined : undefined, line.value)}
     >
@@ -1046,6 +1049,84 @@ export const DataGrid: React.FC<DataGridProps> = ({
       case 'close':
         return `${line.bracket || '}'}${comma}`;
     }
+  };
+
+  // ── Copying a selection that scrolled (#311) ──────────────────────────────
+  //
+  // The JSON view is virtualized, so dragging a selection downwards unmounts
+  // the rows it started on. The browser's selection lives in the DOM, so those
+  // rows are simply gone by the time Cmd+C runs and only the last screenful is
+  // copied — silently, which is the worst part: the paste looks like a
+  // successful copy of the wrong thing.
+  //
+  // The extent is therefore recorded as the drag happens, while both ends are
+  // still mounted, and the copy is rebuilt from the line data rather than from
+  // the DOM.
+  const jsonViewRef = React.useRef<HTMLDivElement | null>(null);
+  const jsonSelectionRef = React.useRef<{ min: number; max: number } | null>(null);
+
+  const jsonLineIndexOf = (node: Node | null): number | null => {
+    const el = node instanceof Element ? node : (node?.parentElement ?? null);
+    const attr = el?.closest('[data-json-line]')?.getAttribute('data-json-line');
+    if (attr == null) return null;
+    const index = Number(attr);
+    return Number.isInteger(index) ? index : null;
+  };
+
+  /** Row indices the live DOM selection still covers, or null if it has none. */
+  const selectedJsonRange = (): { min: number; max: number } | null => {
+    const selection = document.getSelection();
+    const container = jsonViewRef.current;
+    if (!selection || selection.isCollapsed || !container) return null;
+    if (
+      !container.contains(selection.anchorNode) ||
+      !container.contains(selection.focusNode)
+    ) {
+      return null;
+    }
+    const anchor = jsonLineIndexOf(selection.anchorNode);
+    const focus = jsonLineIndexOf(selection.focusNode);
+    if (anchor === null || focus === null) return null;
+    return { min: Math.min(anchor, focus), max: Math.max(anchor, focus) };
+  };
+
+  useEffect(() => {
+    if (viewMode !== 'json') return;
+    // Widen rather than replace: the whole point is to remember rows the
+    // selection used to reach, so each event can only grow the range. A new
+    // drag clears it on mousedown.
+    const onSelectionChange = () => {
+      const range = selectedJsonRange();
+      if (!range) return;
+      const seen = jsonSelectionRef.current;
+      jsonSelectionRef.current = seen
+        ? { min: Math.min(seen.min, range.min), max: Math.max(seen.max, range.max) }
+        : range;
+    };
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => document.removeEventListener('selectionchange', onSelectionChange);
+  }, [viewMode]);
+
+  const handleJsonCopy = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const tracked = jsonSelectionRef.current;
+    if (!tracked) return;
+    const live = selectedJsonRange();
+    // Step in only when rows really were lost. While everything the user
+    // selected is still mounted, the browser's own copy is better than ours:
+    // it honours a partial line at either end, which whole-line rebuilding
+    // cannot.
+    if (live && live.min <= tracked.min && live.max >= tracked.max) return;
+    const text = visibleJsonLines
+      .slice(tracked.min, tracked.max + 1)
+      .map((line) => {
+        const folded = line.foldId !== undefined && collapsedFolds.has(line.foldId);
+        const suffix = folded ? ` … ${line.closeChar ?? ''}${line.hasComma ? ',' : ''}` : '';
+        return '  '.repeat(line.depth) + jsonLineText(line) + suffix;
+      })
+      .join('\n');
+    if (!text) return;
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
   };
 
   const toggleFold = (id: number) => {
@@ -1748,7 +1829,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
             <div>{t('dataGrid.empty.noDocuments')}</div>
           </div>
         ) : viewMode === 'json' ? (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background font-mono text-xs leading-relaxed" data-testid="json-view">
+          <div
+            ref={jsonViewRef}
+            // A fresh drag starts a fresh extent; without this the range would
+            // only ever grow across unrelated selections.
+            onMouseDown={() => { jsonSelectionRef.current = null; }}
+            onCopy={handleJsonCopy}
+            className="flex min-h-0 min-w-0 flex-1 flex-col bg-background font-mono text-xs leading-relaxed"
+            data-testid="json-view"
+          >
             <div className="min-h-0 flex-1 min-w-0 overflow-auto">
               <List<JsonRowExtra>
                 rowCount={visibleJsonLines.length}
