@@ -75,7 +75,11 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
     onJsonChange?.(next);
   };
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  // Which edits have a save in flight, keyed the same way the reset is. Held
+  // per edit so returning to a tab mid-save still shows it as saving, and so a
+  // pending request cannot be forgotten by looking at a different tab.
+  const [savingKeys, setSavingKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const saving = savingKeys.has(editKey ?? '');
   const validationError = useMemo(() => validateDocument(json, t), [json, t]);
   const theme = useMonacoTheme();
   const monacoRef = useRef<Parameters<
@@ -99,7 +103,9 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
     // which is precisely what returning to a tab does.
     if (controlledJson === undefined) setUncontrolledJson(initialJson);
     setError(null);
-    setSaving(false);
+    // Deliberately does NOT touch what is in flight. Clearing it here re-enabled
+    // Save while the original request was still running, so a second click sent
+    // a second insert and could write the document twice (#326 review).
     // `controlledJson` is deliberately not a dependency: this runs when the
     // dialog opens, not on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,18 +117,24 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
       return;
     }
     const ejson = shellToEjson(json);
+    const key = editKey ?? '';
     setError(null);
-    setSaving(true);
+    setSavingKeys(prev => new Set(prev).add(key));
     try {
       await onSave(ejson);
     } catch (err: any) {
       setError(String(err?.message || err));
     } finally {
-      // Cleared on success too. It used to be left set, which was invisible
-      // only because a save closed the dialog and the next one was a fresh
-      // mount — no longer true now that another tab's edit can keep this
-      // component alive (#326 review).
-      setSaving(false);
+      // Retire the key this request claimed, and only that one. A set rather
+      // than a flag because "is a save running" is a fact about an edit, not
+      // about this component: two tabs can each have one in flight, and looking
+      // at one must not report on the other.
+      setSavingKeys(prev => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     }
   };
 

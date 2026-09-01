@@ -204,3 +204,50 @@ describe('DocumentEditModal — transient state does not cross edits (#326 revie
     });
   });
 });
+
+// #326 review (P1): a pending save is a fact about an edit, not about this
+// component. Clearing it when the user looked at another tab re-enabled Save
+// while the original insert was still running, so a second click could write
+// the document twice.
+describe('DocumentEditModal — a pending save survives a look elsewhere (#326 review)', () => {
+  const base = {
+    isOpen: true as const,
+    mode: 'insert' as const,
+    initialJson: '{\n  \n}',
+    onClose: vi.fn(),
+    onJsonChange: vi.fn(),
+  };
+
+  it('keeps Save disabled after switching away and back mid-save', async () => {
+    // Never resolves: the request is still in flight for the whole test.
+    const onSave = vi.fn(() => new Promise<void>(() => {}));
+    const { rerender } = render(
+      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />
+    );
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+    await waitFor(() => expect(screen.getByTestId('document-save-btn')).toBeDisabled());
+
+    // Away to another tab's edit...
+    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"b":2}' editKey="tab-b" />);
+    // ...and back, with tab A's insert still running.
+    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />);
+
+    expect(screen.getByTestId('document-save-btn')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+    // One request, not two — a second would be a duplicate document.
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports saving per edit, not for whichever is on screen', async () => {
+    // Tab A is mid-save; tab B has done nothing and must still be savable.
+    const onSave = vi.fn(() => new Promise<void>(() => {}));
+    const { rerender } = render(
+      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />
+    );
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+    await waitFor(() => expect(screen.getByTestId('document-save-btn')).toBeDisabled());
+
+    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"b":2}' editKey="tab-b" />);
+    expect(screen.getByTestId('document-save-btn')).not.toBeDisabled();
+  });
+});
