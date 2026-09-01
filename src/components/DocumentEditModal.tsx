@@ -47,6 +47,14 @@ interface DocumentEditModalProps {
    *  to the text as it was (#277). Omit both to keep the text locally. */
   json?: string;
   onJsonChange?: (json: string) => void;
+  /** Identifies WHICH edit this is, so transient state does not follow the user
+   *  from one to another.
+   *
+   *  `isOpen` and `initialJson` cannot tell two edits apart: switch between two
+   *  tabs that both have an insert open and both stay the same, so an error or
+   *  an in-flight save from one would still be on screen for the other (#326
+   *  review). Pass the owning tab's id. */
+  editKey?: string;
 }
 
 export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
@@ -57,6 +65,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   onSave,
   json: controlledJson,
   onJsonChange,
+  editKey,
 }) => {
   const { t } = useTranslation('documents');
   const [uncontrolledJson, setUncontrolledJson] = useState(initialJson);
@@ -94,7 +103,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
     // `controlledJson` is deliberately not a dependency: this runs when the
     // dialog opens, not on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initialJson]);
+  }, [isOpen, initialJson, editKey]);
 
   const handleSave = async () => {
     if (validationError) {
@@ -108,6 +117,11 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
       await onSave(ejson);
     } catch (err: any) {
       setError(String(err?.message || err));
+    } finally {
+      // Cleared on success too. It used to be left set, which was invisible
+      // only because a save closed the dialog and the next one was a fresh
+      // mount — no longer true now that another tab's edit can keep this
+      // component alive (#326 review).
       setSaving(false);
     }
   };

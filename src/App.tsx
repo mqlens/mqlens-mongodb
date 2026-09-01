@@ -4693,6 +4693,7 @@ function Workspace() {
             mode={activeTab?.documentEdit?.mode || 'insert'}
             initialJson={activeTab?.documentEdit?.initialJson || '{}'}
             json={activeTab?.documentEdit?.draft ?? ''}
+            editKey={activeTab?.id}
             onJsonChange={(draft) => activeTab && setDocumentDraft(activeTab.id, draft)}
             onClose={() => activeTab && closeDocumentEdit(activeTab.id)}
             onSave={handleSaveDocument}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 // The modal's JSON editor wraps @monaco-editor/react; mock it with a plain
 // <textarea> that exposes the test id via wrapperProps and round-trips value.
@@ -161,5 +161,46 @@ describe('DocumentEditModal — an edit belongs to its tab (#277)', () => {
     // `bg-black/80` element is present and covering the app.
     expect(baseElement.querySelector('.fixed.inset-0')).toBeNull();
     expect(screen.getByTestId('document-edit-modal')).toBeInTheDocument();
+  });
+});
+
+// #326 review: with two tabs each holding an edit, this component stays mounted
+// as the user moves between them. `isOpen` and `initialJson` cannot tell those
+// edits apart — two inserts share the same initial text — so transient state
+// followed the user from one edit to the other.
+describe('DocumentEditModal — transient state does not cross edits (#326 review)', () => {
+  const base = {
+    isOpen: true as const,
+    mode: 'insert' as const,
+    initialJson: '{\n  \n}',
+    onClose: vi.fn(),
+  };
+
+  it('clears the saving flag after a successful save', () => {
+    // It was only ever cleared on failure. Invisible while a save closed the
+    // dialog, and permanent once another tab's edit keeps it mounted: the Save
+    // button stayed disabled with no way back.
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' onJsonChange={vi.fn()} editKey="tab-a" />
+    );
+    const save = screen.getByTestId('document-save-btn');
+    fireEvent.click(save);
+    return waitFor(() => expect(save).not.toBeDisabled());
+  });
+
+  it('drops an error when the user moves to another tab\'s edit', () => {
+    const onSave = vi.fn().mockRejectedValue(new Error('boom'));
+    const { rerender } = render(
+      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' onJsonChange={vi.fn()} editKey="tab-a" />
+    );
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+    return waitFor(() => expect(screen.getByTestId('document-edit-error')).toBeInTheDocument()).then(() => {
+      // Same isOpen, same initialJson — only the owning tab differs.
+      rerender(
+        <DocumentEditModal {...base} onSave={onSave} json='{"b":2}' onJsonChange={vi.fn()} editKey="tab-b" />
+      );
+      expect(screen.queryByTestId('document-edit-error')).not.toBeInTheDocument();
+    });
   });
 });
