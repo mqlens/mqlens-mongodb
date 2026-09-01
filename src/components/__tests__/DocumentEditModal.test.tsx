@@ -251,3 +251,49 @@ describe('DocumentEditModal — a pending save survives a look elsewhere (#326 r
     expect(screen.getByTestId('document-save-btn')).not.toBeDisabled();
   });
 });
+
+// #326 review: a rejection can settle after the user has moved on. Written to a
+// component-wide slot it appeared on whichever edit was showing, and the reset
+// then discarded it — so the failure was reported against the wrong edit and
+// lost by the one it belonged to.
+describe('DocumentEditModal — a failure stays with the edit that caused it (#326 review)', () => {
+  const base = {
+    isOpen: true as const,
+    mode: 'insert' as const,
+    initialJson: '{\n  \n}',
+    onClose: vi.fn(),
+    onJsonChange: vi.fn(),
+  };
+
+  it('does not show one edit\'s failure on another', async () => {
+    let reject!: (e: Error) => void;
+    const onSave = vi.fn(() => new Promise<void>((_, r) => { reject = r; }));
+    const { rerender } = render(
+      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />
+    );
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+
+    // Move to another tab's edit, THEN let tab A's request fail.
+    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"b":2}' editKey="tab-b" />);
+    reject(new Error('tab-a exploded'));
+
+    await waitFor(() => expect(screen.getByTestId('document-save-btn')).not.toBeDisabled());
+    expect(screen.queryByTestId('document-edit-error')).toBeNull();
+  });
+
+  it('shows it again on the edit that owns it', async () => {
+    let reject!: (e: Error) => void;
+    const onSave = vi.fn(() => new Promise<void>((_, r) => { reject = r; }));
+    const { rerender } = render(
+      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />
+    );
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"b":2}' editKey="tab-b" />);
+    reject(new Error('tab-a exploded'));
+    await waitFor(() => expect(screen.getByTestId('document-save-btn')).not.toBeDisabled());
+
+    // Back to A: its own failure is waiting, not discarded.
+    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />);
+    expect(screen.getByTestId('document-edit-error')).toHaveTextContent('tab-a exploded');
+  });
+});

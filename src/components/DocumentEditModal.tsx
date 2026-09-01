@@ -74,12 +74,29 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
     setUncontrolledJson(next);
     onJsonChange?.(next);
   };
-  const [error, setError] = useState<string | null>(null);
-  // Which edits have a save in flight, keyed the same way the reset is. Held
-  // per edit so returning to a tab mid-save still shows it as saving, and so a
-  // pending request cannot be forgotten by looking at a different tab.
+  // Everything transient is keyed by edit, not held for whichever edit happens
+  // to be on screen.
+  //
+  // Scoping these one at a time is what kept going wrong: the component-wide
+  // flag re-enabled Save mid-request, and the component-wide error then showed
+  // one tab's failure on another and lost it on the way back (#326 review). An
+  // edit's error and its in-flight save are facts about that edit, and they
+  // outlive the dialog looking elsewhere, so they are stored the same way the
+  // draft already is.
+  const [errors, setErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [savingKeys, setSavingKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const saving = savingKeys.has(editKey ?? '');
+  const currentKey = editKey ?? '';
+  const error = errors.get(currentKey) ?? null;
+  const saving = savingKeys.has(currentKey);
+  /** Records against the key the request captured, not against whatever is showing now. */
+  const setErrorFor = (key: string, message: string | null) =>
+    setErrors(prev => {
+      if (message === null && !prev.has(key)) return prev;
+      const next = new Map(prev);
+      if (message === null) next.delete(key);
+      else next.set(key, message);
+      return next;
+    });
   const validationError = useMemo(() => validateDocument(json, t), [json, t]);
   const theme = useMonacoTheme();
   const monacoRef = useRef<Parameters<
@@ -102,28 +119,34 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
     // it — resetting here would wipe the edit every time the dialog reappeared,
     // which is precisely what returning to a tab does.
     if (controlledJson === undefined) setUncontrolledJson(initialJson);
-    setError(null);
-    // Deliberately does NOT touch what is in flight. Clearing it here re-enabled
-    // Save while the original request was still running, so a second click sent
-    // a second insert and could write the document twice (#326 review).
-    // `controlledJson` is deliberately not a dependency: this runs when the
-    // dialog opens, not on every keystroke.
+    // Clears only THIS edit's error, and only when this edit is starting: the
+    // dialog opening, or a different document being opened in the same tab.
+    //
+    // `editKey` is deliberately not a dependency any more. Resetting on it was
+    // what cleared a save that was still running, and now that both fields are
+    // per edit there is nothing to reset when the user merely looks elsewhere —
+    // each edit already shows its own state.
+    setErrorFor(currentKey, null);
+    // `controlledJson` is likewise not a dependency: this runs when the dialog
+    // opens, not on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initialJson, editKey]);
+  }, [isOpen, initialJson]);
 
   const handleSave = async () => {
+    // Captured now, so a result arriving after the user has moved on is still
+    // filed against the edit that asked for it.
+    const key = currentKey;
     if (validationError) {
-      setError(validationError);
+      setErrorFor(key, validationError);
       return;
     }
     const ejson = shellToEjson(json);
-    const key = editKey ?? '';
-    setError(null);
+    setErrorFor(key, null);
     setSavingKeys(prev => new Set(prev).add(key));
     try {
       await onSave(ejson);
     } catch (err: any) {
-      setError(String(err?.message || err));
+      setErrorFor(key, String(err?.message || err));
     } finally {
       // Retire the key this request claimed, and only that one. A set rather
       // than a flag because "is a save running" is a fact about an edit, not
