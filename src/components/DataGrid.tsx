@@ -369,6 +369,12 @@ const RenderTreeNode: React.FC<{ node: ExplainNode }> = ({ node }) => {
 
 // Lightweight, data-only descriptor for one rendered JSON line (no React nodes,
 // so building thousands of them stays cheap; content is rendered lazily per row).
+/** One end of a selection: the row it sits on and how far into that row. */
+interface JsonEndpoint {
+  row: number;
+  offset: number;
+}
+
 interface JsonLine {
   num: number;
   depth: number;
@@ -1068,50 +1074,76 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // lets the range CONTRACT: during a drag the anchor is fixed and only the
   // focus moves, so a span that could only grow kept lines the user had dragged
   // back over and deselected, and then copied them (#319 review).
-  const jsonSelectionRef = React.useRef<{ anchor: number | null; focus: number | null }>({
-    anchor: null,
-    focus: null,
-  });
+  const jsonSelectionRef = React.useRef<{
+    anchor: JsonEndpoint | null;
+    focus: JsonEndpoint | null;
+  }>({ anchor: null, focus: null });
 
-  const jsonLineIndexOf = (node: Node | null): number | null => {
+  /**
+   * The row an endpoint sits on, plus how far into that row's text it falls.
+   *
+   * The offset is what lets a partial endpoint be trimmed later. Without it the
+   * rebuild had only row numbers, so a drag starting mid-value and ending
+   * mid-value put the leading key and trailing text of both endpoint lines on
+   * the clipboard as well (#319 review).
+   *
+   * Counting characters across the row's text nodes works because a row's
+   * rendered text is exactly `jsonLineText`: the gutter's line number is a
+   * ::before pseudo-element and the fold control and row actions are icons, so
+   * none of them contribute text.
+   */
+  const jsonEndpointOf = (node: Node | null, offset: number): JsonEndpoint | null => {
     const el = node instanceof Element ? node : (node?.parentElement ?? null);
-    const attr = el?.closest('[data-json-line]')?.getAttribute('data-json-line');
-    if (attr == null) return null;
-    const index = Number(attr);
-    return Number.isInteger(index) ? index : null;
+    const row = el?.closest('[data-json-line]') ?? null;
+    const index = Number(row?.getAttribute('data-json-line'));
+    if (!row || !Number.isInteger(index)) return null;
+    let chars = 0;
+    const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+      if (text === node) return { row: index, offset: chars + offset };
+      chars += text.textContent?.length ?? 0;
+    }
+    // An endpoint on an element rather than a text node: its offset counts
+    // child nodes, not characters, so fall back to the whole line instead of
+    // trimming at a position that does not mean what it appears to.
+    return { row: index, offset: node === row ? 0 : chars };
   };
 
   /**
-   * The row each end of the live selection sits on, or null where it cannot be
-   * resolved.
+   * Both ends of the live selection, each resolved on its own.
    *
-   * Each end is resolved on its own, which is the crux of this mechanism rather
-   * than defensive coding. Once the drag passes the first window, the row
-   * holding the anchor is exactly what react-window unmounts — so requiring
-   * both ends to resolve threw away every update from the moment tracking
-   * started to matter, freezing the range at the first screenful (#319 review).
-   *
-   * An end the browser has relocated to a surviving ancestor resolves to no row
-   * and is reported as null rather than guessed at; the caller keeps the last
-   * row that end was actually seen on.
+   * Resolving them independently is the crux of this mechanism rather than
+   * defensive coding. Once the drag passes the first window, the row holding
+   * the anchor is exactly what react-window unmounts — so requiring both to
+   * resolve threw away every update from the moment tracking started to
+   * matter, freezing the range at the first screenful (#319 review).
    */
-  const selectedJsonEnds = (): { anchor: number | null; focus: number | null } | null => {
+  const selectedJsonEnds = (): {
+    anchor: JsonEndpoint | null;
+    focus: JsonEndpoint | null;
+  } | null => {
     const selection = document.getSelection();
     const container = jsonViewRef.current;
     if (!selection || selection.isCollapsed || !container) return null;
-    const rowOf = (node: Node | null) =>
-      node && container.contains(node) ? jsonLineIndexOf(node) : null;
-    return { anchor: rowOf(selection.anchorNode), focus: rowOf(selection.focusNode) };
+    const endpoint = (node: Node | null, offset: number) =>
+      node && container.contains(node) ? jsonEndpointOf(node, offset) : null;
+    return {
+      anchor: endpoint(selection.anchorNode, selection.anchorOffset),
+      focus: endpoint(selection.focusNode, selection.focusOffset),
+    };
   };
 
-  const jsonRangeOf = (ends: { anchor: number | null; focus: number | null }) => {
-    const rows = [ends.anchor, ends.focus].filter((row): row is number => row !== null);
-    return rows.length ? { min: Math.min(...rows), max: Math.max(...rows) } : null;
+  /** The two endpoints in document order, or null if neither resolved. */
+  const jsonRangeOf = (ends: { anchor: JsonEndpoint | null; focus: JsonEndpoint | null }) => {
+    const ordered = [ends.anchor, ends.focus]
+      .filter((end): end is JsonEndpoint => end !== null)
+      .sort((a, b) => a.row - b.row || a.offset - b.offset);
+    return ordered.length ? { start: ordered[0], end: ordered[ordered.length - 1] } : null;
   };
 
   useEffect(() => {
     if (viewMode !== 'json') return;
-    // Each end keeps the last row it was seen on, so an end that scrolls out of
+    // Each end keeps the last place it was seen, so an end that scrolls out of
     // the DOM is remembered while the other stays free to move in either
     // direction — extending the selection or pulling it back.
     const onSelectionChange = () => {
@@ -1133,23 +1165,31 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const ends = selectedJsonEnds();
     const live = ends && jsonRangeOf(ends);
     // Step in only when rows really were lost. While everything the user
-    // selected is still mounted, the browser's own copy is better than ours:
-    // it honours a partial line at either end, which whole-line rebuilding
-    // cannot.
-    if (live && live.min <= tracked.min && live.max >= tracked.max) return;
+    // selected is still mounted, the browser's own copy is exact and ours can
+    // only approximate it.
+    if (live && live.start.row <= tracked.start.row && live.end.row >= tracked.end.row) return;
     const text = visibleJsonLines
-      .slice(tracked.min, tracked.max + 1)
-      .map((line) => {
+      .slice(tracked.start.row, tracked.end.row + 1)
+      .map((line, i) => {
         const folded = line.foldId !== undefined && collapsedFolds.has(line.foldId);
         const suffix = folded ? ` … ${line.closeChar ?? ''}${line.hasComma ? ',' : ''}` : '';
-        return '  '.repeat(line.depth) + jsonLineText(line) + suffix;
+        const body = jsonLineText(line) + suffix;
+        const first = i === 0;
+        const last = tracked.start.row + i === tracked.end.row;
+        const from = first ? Math.min(tracked.start.offset, body.length) : 0;
+        const to = last ? Math.min(tracked.end.offset, body.length) : body.length;
+        // Indentation is added for readability, not copied — on screen it is
+        // padding, so no row's text contains it. That makes it a reasonable
+        // aid for a line taken whole and an intrusion on a line the selection
+        // only clipped, so a trimmed line goes without.
+        const whole = from === 0 && to === body.length;
+        return (whole ? '  '.repeat(line.depth) : '') + body.slice(from, to);
       })
       .join('\n');
     if (!text) return;
     e.clipboardData.setData('text/plain', text);
     e.preventDefault();
   };
-
   const toggleFold = (id: number) => {
     setCollapsedFolds((prev) => {
       const next = new Set(prev);

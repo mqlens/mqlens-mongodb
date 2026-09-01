@@ -1375,3 +1375,99 @@ describe('DataGrid — copying a JSON selection that scrolled (#311)', () => {
     getSelection.mockRestore();
   });
 });
+
+// #319 review: with only row indices recorded, the rebuild emitted whole
+// endpoint lines — so a drag starting mid-value and ending mid-value put the
+// leading key and trailing text of those lines on the clipboard too.
+describe('DataGrid — trimming partial endpoints of a rebuilt copy (#319 review)', () => {
+  const openJsonView = () => {
+    render(<DataGrid documents={[{ _id: 1, name: 'Alice', city: 'Paris', n: 2 }]} />);
+    fireEvent.click(screen.getByRole('button', { name: /json/i }));
+    return screen.getByTestId('json-view');
+  };
+
+  /** An endpoint at a character offset inside a row's own text. */
+  const endpointIn = (view: HTMLElement, row: number, offset: number) => {
+    const el = view.querySelector(`[data-json-line="${row}"]`)!;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let seen = 0;
+    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+      const len = text.textContent?.length ?? 0;
+      if (seen + len >= offset) return { node: text, offset: offset - seen };
+      seen += len;
+    }
+    return { node: el, offset: 0 };
+  };
+
+  it('trims the first and last lines to what was actually selected', () => {
+    const view = openJsonView();
+    const getSelection = vi.spyOn(document, 'getSelection');
+    const rowText = (i: number) =>
+      view.querySelector(`[data-json-line="${i}"]`)!.textContent ?? '';
+
+    // Start four characters into row 1 and stop four characters into row 3.
+    const from = endpointIn(view, 1, 4);
+    const to = endpointIn(view, 3, 4);
+
+    fireEvent.mouseDown(view);
+    getSelection.mockReturnValue({
+      isCollapsed: false,
+      anchorNode: from.node,
+      anchorOffset: from.offset,
+      focusNode: to.node,
+      focusOffset: to.offset,
+    } as unknown as Selection);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    // Row 1 has since scrolled away, so the rebuild takes over.
+    getSelection.mockReturnValue({
+      isCollapsed: false,
+      anchorNode: view.querySelector('[data-json-line="3"]'),
+      anchorOffset: 0,
+      focusNode: view.querySelector('[data-json-line="3"]'),
+      focusOffset: 0,
+    } as unknown as Selection);
+
+    const setData = vi.fn();
+    fireEvent.copy(view, { clipboardData: { setData, getData: () => '' } });
+    expect(setData).toHaveBeenCalledTimes(1);
+    const lines = setData.mock.calls[0][1].split('\n');
+
+    expect(lines).toHaveLength(3);
+    // The first line starts where the drag did, not at the key.
+    expect(lines[0]).toBe(rowText(1).slice(4));
+    expect(lines[0]).not.toBe(rowText(1));
+    // The last line stops where the drag did, not at the end of the value.
+    expect(lines[2]).toBe(rowText(3).slice(0, 4));
+    getSelection.mockRestore();
+  });
+
+  it('keeps whole lines, indentation included, when the ends are not partial', () => {
+    const view = openJsonView();
+    const getSelection = vi.spyOn(document, 'getSelection');
+
+    fireEvent.mouseDown(view);
+    getSelection.mockReturnValue({
+      isCollapsed: false,
+      anchorNode: view.querySelector('[data-json-line="0"]'),
+      anchorOffset: 0,
+      focusNode: view.querySelector('[data-json-line="3"]'),
+      focusOffset: 0,
+    } as unknown as Selection);
+    document.dispatchEvent(new Event('selectionchange'));
+    getSelection.mockReturnValue({
+      isCollapsed: false,
+      anchorNode: view.querySelector('[data-json-line="3"]'),
+      anchorOffset: 0,
+      focusNode: view.querySelector('[data-json-line="3"]'),
+      focusOffset: 0,
+    } as unknown as Selection);
+
+    const setData = vi.fn();
+    fireEvent.copy(view, { clipboardData: { setData, getData: () => '' } });
+    const lines = setData.mock.calls[0][1].split('\n');
+    // Nested rows keep the indent that a whole-line copy should carry.
+    expect(lines[1].startsWith('  ')).toBe(true);
+    getSelection.mockRestore();
+  });
+});
