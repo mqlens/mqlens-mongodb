@@ -515,8 +515,14 @@ const JsonRow = ({
           </button>
         )}
       </span>
+      {/* `select-text` re-enables selection against the app-wide
+          `body { user-select: none }`, and everything inside inherits it —
+          which is why the blanket `[&_*]:select-text` that used to sit here is
+          gone. It was not adding reach, it was overriding the row actions'
+          `select-none` below and dragging three empty buttons into every copy
+          (#329). */}
       <span
-        className="flex-1 whitespace-pre pr-4 text-foreground select-text [&_*]:select-text"
+        className="flex-1 whitespace-pre pr-4 text-foreground select-text"
         style={{ paddingLeft: line.depth * 18 }}
       >
         {renderContent(line)}
@@ -527,8 +533,13 @@ const JsonRow = ({
             {line.hasComma ? ',' : ''}
           </span>
         )}
+        {/* Controls, not content. They live inside the text span so they sit
+            next to the document they act on, but a selection that runs over
+            them must not pick them up: they carry no text, so the browser
+            serialised each button as its own empty block and a copied document
+            arrived with three blank lines under its opening brace (#329). */}
         {line.isDocRoot && hasRowActions && line.doc && (
-          <span className="ml-2.5 inline-flex align-middle opacity-0 group-hover:opacity-100 [.flex:hover>&]:opacity-100">
+          <span className="ml-2.5 inline-flex select-none align-middle opacity-0 group-hover:opacity-100 [.flex:hover>&]:opacity-100">
             <RowActions doc={line.doc} />
           </span>
         )}

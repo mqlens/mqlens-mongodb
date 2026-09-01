@@ -1607,6 +1607,32 @@ describe('DataGrid — select-all copies every row (#320)', () => {
   });
 });
 
+// #329: the row's copy/edit/delete buttons sit inside its selectable text so
+// they stay next to the document they act on. They hold no text, so a copy that
+// ran over them serialised each one as an empty block and every document
+// arrived with three blank lines under its opening brace. jsdom does not
+// serialise a selection, so what is pinned here is the arrangement that decides
+// it: the controls opt out of selection, and nothing forces them back in.
+describe('DataGrid — row actions stay out of copied text (#329)', () => {
+  it('marks the row actions unselectable and leaves the text selectable', () => {
+    render(<DataGrid documents={mockDocuments} onEditDocument={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /json/i }));
+
+    const actions = screen.getAllByTestId('edit-doc-btn')[0].closest('span');
+    expect(actions).not.toBeNull();
+    expect(actions!.className).toContain('select-none');
+
+    // The text they live in still selects — the fix must not cost the view the
+    // selection it exists to allow, since `body` sets `user-select: none` for
+    // the whole app and this span is what opts back in.
+    const text = actions!.parentElement!;
+    expect(text.className).toContain('select-text');
+    // And it must not re-enable selection for its descendants wholesale: that
+    // blanket rule outranked the controls' `select-none` and was the bug.
+    expect(text.className).not.toContain('[&_*]:select-text');
+  });
+});
+
 // #281: after one visit to Explain, every subsequent run reopened it — the
 // Results tab had to be clicked again each time. The grid remounts on every run
 // (the pane renders `{loading ? <spinner/> : <DataGrid/>}`), a plan is not
