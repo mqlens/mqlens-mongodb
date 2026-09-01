@@ -1439,6 +1439,31 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     }
   };
 
+  // The context value must keep its identity while the user types.
+  //
+  // The results grid consumes this context, and it arrives as `children` — a
+  // subtree React would otherwise skip re-rendering when only this component's
+  // own state changes. Handing over a fresh `{ handleExplain, explainLoading }`
+  // on every render defeated exactly that: each keystroke gave every consumer a
+  // new value, so the whole grid re-rendered per character and typing slowed in
+  // proportion to how much data was loaded (#310).
+  //
+  // A plain useCallback would not help. `handleExplain` reads the query text,
+  // so it genuinely differs on every keystroke and honest dependencies would
+  // change its identity just as often. Keeping the newest implementation in a
+  // ref lets the exposed function stay constant instead, leaving `explainLoading`
+  // — which only flips when an explain actually runs — as the one thing that
+  // can wake a consumer.
+  const handleExplainRef = useRef(handleExplain);
+  useEffect(() => {
+    handleExplainRef.current = handleExplain;
+  });
+  const stableHandleExplain = React.useCallback(() => handleExplainRef.current(), []);
+  const documentViewerContextValue = useMemo(
+    () => ({ handleExplain: stableHandleExplain, explainLoading }),
+    [stableHandleExplain, explainLoading]
+  );
+
   const handleClearField = (field: 'filter' | 'projection' | 'sort') => {
     if (field === 'filter') setFilterQuery('');
     if (field === 'projection') setProjectionQuery('');
@@ -2017,7 +2042,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
             </div>
 
-          <DocumentViewerContext.Provider value={{ handleExplain, explainLoading }}>
+          <DocumentViewerContext.Provider value={documentViewerContextValue}>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {children}
             </div>
