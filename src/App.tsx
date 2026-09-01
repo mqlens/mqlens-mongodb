@@ -79,6 +79,7 @@ import {
   closeWorkspaceWindow,
   moveTabToWindow,
   flushTabState,
+  cancelTabState,
   type WorkspaceChangedPayload,
   type ConnectionsChangedPayload,
   type ConnectionEntry,
@@ -2675,7 +2676,12 @@ function Workspace() {
         workspaceApply(actionToOp(action, undefined, activeConnections));
         return;
       }
+      // A queued patch outlives its tab otherwise. Ids are deterministic, so
+      // closing and reopening the same collection reuses one — and a draft
+      // still inside the debounce would attach to the new model, restoring an
+      // editor the user closed (#326 review).
       case 'close_tab':
+        cancelTabState(toProfileSpaceId(action.tabId, activeConnections));
         if (unmirroredTabIdsRef.current.has(action.tabId)) {
           unmirroredTabIdsRef.current.delete(action.tabId);
           return;
@@ -2683,6 +2689,7 @@ function Workspace() {
         workspaceApply(actionToOp(action, undefined, activeConnections));
         return;
       case 'close_many': {
+        cancelTabState(action.tabIds.map(id => toProfileSpaceId(id, activeConnections)));
         const tabIds = action.tabIds.filter(id => !unmirroredTabIdsRef.current.has(id));
         action.tabIds.forEach(id => unmirroredTabIdsRef.current.delete(id));
         if (tabIds.length === 0) return;
@@ -2739,23 +2746,27 @@ function Workspace() {
    *  debounce behind. Only then: a tab with no edit has nothing at stake here,
    *  and flushing it would put a write in front of every move that never used
    *  to be there. */
-  const readyForWindowChange = (tabId: string): boolean => {
+  const readyForWindowChange = async (tabId: string): Promise<boolean> => {
     const edit = tabs.find(t => t.id === tabId)?.documentEdit;
     if (edit?.saving) {
       toast(t('toast.documentSaveInProgress'), 'error');
       return false;
     }
-    if (edit) flushTabState(toProfileSpaceId(tabId, activeConnections));
+    // Awaited, not merely called first. Both are separate backend commands, so
+    // starting the flush buys no ordering: the move could take the store first
+    // and snapshot the older draft, and the update landing afterwards is not a
+    // cross-window op for the destination to reconcile (#326 review).
+    if (edit) await flushTabState(toProfileSpaceId(tabId, activeConnections));
     return true;
   };
 
-  const handleDetachTab = (tabId: string) => {
-    if (!readyForWindowChange(tabId)) return;
+  const handleDetachTab = async (tabId: string) => {
+    if (!(await readyForWindowChange(tabId))) return;
     detachTabToNewWindow(toProfileSpaceId(tabId, activeConnections));
   };
 
-  const handleMoveTab = (tabId: string, targetWindowId: string) => {
-    if (!readyForWindowChange(tabId)) return;
+  const handleMoveTab = async (tabId: string, targetWindowId: string) => {
+    if (!(await readyForWindowChange(tabId))) return;
     moveTabToWindow(toProfileSpaceId(tabId, activeConnections), targetWindowId);
     // Final whole-branch review, Fix 4(b): the "Move to <window>" list is
     // built from `lastWorkspaceRef` (the last-known cross-window document),

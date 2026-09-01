@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { updateTabState, flushTabState, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
+import { updateTabState, flushTabState, cancelTabState, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
 import { toPersistedTab, toProfileSpaceId, type PersistableConnection } from '../persistence';
 import type { WorkspaceAction } from '../model';
 
@@ -78,6 +78,42 @@ describe('workspaceStore', () => {
     flushTabState('t-nothing');
     expect(invokeMock).not.toHaveBeenCalled();
   });
+
+  it('flushTabState resolves only once the backend write settles', async () => {
+    // #326 review: a move is a separate backend command, so starting the flush
+    // first buys no ordering — the move could take the store first and snapshot
+    // the older draft. Callers await this, so it has to mean something.
+    let settle!: () => void;
+    invokeMock.mockImplementationOnce(() => new Promise<void>((r) => { settle = r; }));
+    updateTabState('t1', { documentEdit: { draft: '{"name":"Ada"}' } });
+
+    let done = false;
+    const flushed = flushTabState('t1').then(() => { done = true; });
+    await Promise.resolve();
+    expect(done).toBe(false);
+
+    settle();
+    await flushed;
+    expect(done).toBe(true);
+  });
+
+  it('cancelTabState drops a pending patch instead of sending it late', () => {
+    // Tab ids are deterministic: close a tab mid-debounce and reopen the same
+    // collection, and the queued draft would land on the new model — an editor
+    // the user closed, attached to a tab that never had one.
+    updateTabState('t1', { documentEdit: { draft: '{"name":"Ada"}' } });
+    cancelTabState('t1');
+    vi.advanceTimersByTime(500);
+    expect(invokeMock).not.toHaveBeenCalled();
+
+    // And the batch form, for close_many.
+    updateTabState('t2', { documentEdit: { draft: 'x' } });
+    updateTabState('t3', { documentEdit: { draft: 'y' } });
+    cancelTabState(['t2', 't3']);
+    vi.advanceTimersByTime(500);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
 
 
   it('omits fields never passed to updateTabState (no key at all, not undefined)', () => {

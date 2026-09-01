@@ -43,10 +43,17 @@ export async function workspaceGet(): Promise<PersistedWorkspace | null> {
  * `workspace-changed` listener recognize and ignore its own echo — see
  * App.tsx's foreign-event reconciliation effect.
  */
-export function workspaceApply(op: Record<string, unknown>): void {
-  invoke('workspace_apply', { op, origin: windowLabel() }).catch((err) => {
-    console.warn('workspace_apply failed', err);
-  });
+export function workspaceApply(op: Record<string, unknown>): Promise<void> {
+  // Returns the promise so a caller that must not race it can wait — a
+  // cross-window move reads the backend store as it stands, so the draft it
+  // carries has to have landed first (#326 review). Callers with no ordering
+  // requirement ignore it exactly as before; the rejection is still handled
+  // here, so an ignored promise never surfaces as an unhandled one.
+  return invoke('workspace_apply', { op, origin: windowLabel() })
+    .then(() => undefined)
+    .catch((err) => {
+      console.warn('workspace_apply failed', err);
+    });
 }
 
 /**
@@ -346,18 +353,18 @@ const DEBOUNCE_MS = 500;
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingPatches = new Map<string, UpdateTabStatePatch>();
 
-function flushUpdateTabState(tabId: string): void {
+function flushUpdateTabState(tabId: string): Promise<void> {
   debounceTimers.delete(tabId);
   const patch = pendingPatches.get(tabId);
   pendingPatches.delete(tabId);
-  if (!patch) return;
+  if (!patch) return Promise.resolve();
 
   const op: Record<string, unknown> = { type: 'update_tab_state', tab_id: tabId };
   if ('lastQuery' in patch) op.last_query = patch.lastQuery;
   if ('lastAggregate' in patch) op.last_aggregate = patch.lastAggregate;
   if ('builderState' in patch) op.builder_state = patch.builderState;
   if ('documentEdit' in patch) op.document_edit = patch.documentEdit;
-  workspaceApply(op);
+  return workspaceApply(op);
 }
 
 /**
@@ -391,10 +398,29 @@ export function updateTabState(tabId: string, patch: UpdateTabStatePatch): void 
  * the destination never reconciles it (#326 review). Callers about to issue a
  * move or a detach flush first, so what travels is what is on screen.
  */
-export function flushTabState(tabId: string): void {
+export function flushTabState(tabId: string): Promise<void> {
   const timer = debounceTimers.get(tabId);
   if (timer !== undefined) clearTimeout(timer);
-  flushUpdateTabState(tabId);
+  return flushUpdateTabState(tabId);
+}
+
+/**
+ * Drop `tabId`'s pending patch without sending it.
+ *
+ * Tab ids are deterministic, so closing a tab and reopening the same
+ * collection produces the same id. A draft still inside the debounce would
+ * then land on the newly created model — an editor the user closed,
+ * reattached to a tab that never had one, waiting for the next restart or
+ * move to bring it back (#326 review). A patch for a tab that is gone
+ * describes nothing, so it goes with it.
+ */
+export function cancelTabState(tabIds: string | string[]): void {
+  for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+    const timer = debounceTimers.get(tabId);
+    if (timer !== undefined) clearTimeout(timer);
+    debounceTimers.delete(tabId);
+    pendingPatches.delete(tabId);
+  }
 }
 
 /** Test-only: flush and clear all pending debounced updateTabState timers. */
