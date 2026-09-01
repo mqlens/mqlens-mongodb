@@ -4347,6 +4347,46 @@ describe('App Component', () => {
       expect(calls.some((c) => c.cmd === 'workspace_apply')).toBe(false);
     });
 
+    it('refuses to detach a tab whose document save is still running (#326 review)', async () => {
+      // The request belongs to this window and settles here, so it cannot
+      // travel — and `carriedDocumentEdit` drops `saving` for exactly that
+      // reason. That would leave the destination's Save enabled over a
+      // document already being written, with the success clear arriving as a
+      // non-cross-window op it never reconciles: one more click, two documents.
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        // Never settles: the insert is in flight for the whole test.
+        if (cmd === 'insert_document') return new Promise<string>(() => {});
+        return Promise.resolve([]);
+      });
+      const { fireEvent, within, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await screen.findByText(/"John Doe"/);
+      fireEvent.click(screen.getByTestId('insert-doc-btn'));
+      fireEvent.change(await screen.findByTestId('document-json-input'), {
+        target: { value: '{"name":"Ada"}' },
+      });
+      fireEvent.click(screen.getByTestId('document-save-btn'));
+      await waitFor(() => expect(screen.getByTestId('document-save-btn')).toBeDisabled());
+
+      const tabStrip = screen.getByTestId('workspace-tab-strip');
+      const customersTab = await within(tabStrip).findByText('customers');
+      calls.length = 0;
+      fireEvent.contextMenu(customersTab.closest('div')!);
+      fireEvent.click(await screen.findByText('Detach to New Window'));
+
+      expect(calls.filter((c) => c.cmd === 'workspace_detach_tab')).toHaveLength(0);
+      expect(await screen.findByText(/Wait for the document save to finish/)).toBeInTheDocument();
+    });
+
+
     it('moving to another window calls workspace_apply with move_tab_to_window and never touches this window\'s local layout', async () => {
       const calls: any[] = [];
       mockInvoke.mockImplementation((cmd: string, args: any) => {

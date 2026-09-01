@@ -380,6 +380,23 @@ export function updateTabState(tabId: string, patch: UpdateTabStatePatch): void 
   );
 }
 
+/**
+ * Send `tabId`'s pending patch now instead of when its timer fires.
+ *
+ * The debounce assumes nothing is racing it. A cross-window move is: it is
+ * backend-authoritative and issued immediately, so the destination reads the
+ * tab as the backend has it at that instant. Detach right after opening an
+ * editor, or move right after typing, and the snapshot the destination sees
+ * predates the draft — and the flush that follows is not a cross-window op, so
+ * the destination never reconciles it (#326 review). Callers about to issue a
+ * move or a detach flush first, so what travels is what is on screen.
+ */
+export function flushTabState(tabId: string): void {
+  const timer = debounceTimers.get(tabId);
+  if (timer !== undefined) clearTimeout(timer);
+  flushUpdateTabState(tabId);
+}
+
 /** Test-only: flush and clear all pending debounced updateTabState timers. */
 export function resetUpdateTabStateDebounce(): void {
   for (const timer of debounceTimers.values()) clearTimeout(timer);

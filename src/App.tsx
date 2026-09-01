@@ -78,6 +78,7 @@ import {
   detachTabToNewWindow,
   closeWorkspaceWindow,
   moveTabToWindow,
+  flushTabState,
   type WorkspaceChangedPayload,
   type ConnectionsChangedPayload,
   type ConnectionEntry,
@@ -2721,11 +2722,40 @@ function Workspace() {
     setTabContextMenu({ tabId, x: e.clientX, y: e.clientY });
   };
 
+  /** Whether this tab can change window right now, and readies it if so.
+   *
+   *  A save in flight blocks the move. The request belongs to this window and
+   *  settles here, so it cannot travel — and `carriedDocumentEdit` drops
+   *  `saving` precisely because an arriving tab must not claim a request the
+   *  destination cannot finish. But that leaves the destination's Save enabled
+   *  over a document that is already being written, and the clear this window
+   *  sends on success is not a cross-window op, so the destination never learns
+   *  the insert happened: one more click and the document is written twice
+   *  (#326 review). Waiting for the save is the honest answer — it is brief,
+   *  and the alternative is a duplicate.
+   *
+   *  Otherwise a tab that holds an edit has its pending mirror flushed, so
+   *  what the destination reads is the draft as it stands rather than one
+   *  debounce behind. Only then: a tab with no edit has nothing at stake here,
+   *  and flushing it would put a write in front of every move that never used
+   *  to be there. */
+  const readyForWindowChange = (tabId: string): boolean => {
+    const edit = tabs.find(t => t.id === tabId)?.documentEdit;
+    if (edit?.saving) {
+      toast(t('toast.documentSaveInProgress'), 'error');
+      return false;
+    }
+    if (edit) flushTabState(toProfileSpaceId(tabId, activeConnections));
+    return true;
+  };
+
   const handleDetachTab = (tabId: string) => {
+    if (!readyForWindowChange(tabId)) return;
     detachTabToNewWindow(toProfileSpaceId(tabId, activeConnections));
   };
 
   const handleMoveTab = (tabId: string, targetWindowId: string) => {
+    if (!readyForWindowChange(tabId)) return;
     moveTabToWindow(toProfileSpaceId(tabId, activeConnections), targetWindowId);
     // Final whole-branch review, Fix 4(b): the "Move to <window>" list is
     // built from `lastWorkspaceRef` (the last-known cross-window document),

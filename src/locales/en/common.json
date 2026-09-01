@@ -58,6 +58,7 @@
     "documentDeletedFrom": "Document deleted from {{collection}}",
     "documentInsertedInto": "Document inserted into {{collection}}",
     "documentSavedIn": "Document saved in {{collection}}",
+    "documentSaveInProgress": "Wait for the document save to finish before moving this tab.",
     "downloadFailed": "Download failed: {{detail}}",
     "dumpFailedToStart": "Dump failed to start: {{detail}}",
     "exportedDocuments_one": "Exported {{count}} document(s) to {{path}}",

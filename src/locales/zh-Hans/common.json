@@ -54,6 +54,7 @@
     "deleteFailed": "删除失败：{{detail}}",
     "documentDeletedFrom": "已从 {{collection}} 中删除文档",
     "documentInsertedInto": "已向 {{collection}} 插入文档",
+    "documentSaveInProgress": "请等待文档保存完成后再移动此标签页。",
     "documentSavedIn": "已在 {{collection}} 中保存文档",
     "downloadFailed": "下载失败：{{detail}}",
     "dumpFailedToStart": "备份导出启动失败：{{detail}}",

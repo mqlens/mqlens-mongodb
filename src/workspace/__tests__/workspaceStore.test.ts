@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { updateTabState, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
+import { updateTabState, flushTabState, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
 import { toPersistedTab, toProfileSpaceId, type PersistableConnection } from '../persistence';
 import type { WorkspaceAction } from '../model';
 
@@ -53,6 +53,32 @@ describe('workspaceStore', () => {
       origin: 'main',
     });
   });
+
+  it('flushTabState sends a pending patch immediately, and only once', () => {
+    // #326 review: a cross-window move is issued immediately and is
+    // backend-authoritative, so the destination reads the tab as the backend
+    // has it right then. A draft still sitting in the debounce would not be
+    // there — and the flush that followed is not a cross-window op, so the
+    // destination would never reconcile it.
+    updateTabState('t1', { documentEdit: { draft: '{"name":"half typed"}' } });
+    expect(invokeMock).not.toHaveBeenCalled();
+
+    flushTabState('t1');
+    expect(invokeMock).toHaveBeenCalledWith('workspace_apply', {
+      op: { type: 'update_tab_state', tab_id: 't1', document_edit: { draft: '{"name":"half typed"}' } },
+      origin: 'main',
+    });
+
+    // The timer it pre-empted must not fire a second write.
+    vi.advanceTimersByTime(500);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('flushTabState is a no-op for a tab with nothing pending', () => {
+    flushTabState('t-nothing');
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
 
   it('omits fields never passed to updateTabState (no key at all, not undefined)', () => {
     updateTabState('t1', { lastQuery: { filter: '{}' } });

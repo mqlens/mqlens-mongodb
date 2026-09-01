@@ -284,6 +284,11 @@ export function toDisconnectedSnapshot(
     explainResult: null,
     lastQuery: t.lastQuery,
     lastAggregate: t.lastAggregate,
+    // The other way a tab reaches a new window. "Detach to New Window" boots
+    // the destination renderer through `workspace_get` and this function, not
+    // through `materializeArrivingTab` — so leaving it out here discarded the
+    // draft on exactly the path the transfer was added for (#326 review).
+    documentEdit: t.documentEdit,
   }));
 
   const builderStates = new Map<string, unknown>();

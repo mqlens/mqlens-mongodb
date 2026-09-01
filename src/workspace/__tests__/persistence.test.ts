@@ -408,6 +408,50 @@ describe('an in-progress document edit travels with its tab (#326 review)', () =
   });
 });
 
+
+// #326 review: three ways the transfer could still lose or duplicate work —
+// the boot path a detached window actually takes, the debounce racing an
+// immediate move, and a request that cannot travel with the tab that made it.
+describe('a document edit survives the whole transfer (#326 review)', () => {
+  const carried = {
+    id: 'edit-1',
+    mode: 'insert',
+    initialJson: '{}',
+    targetDoc: null,
+    draft: '{"name":"half typed"}',
+  };
+
+  it('reaches a window that boots into it, not only one already running', () => {
+    // "Detach to New Window" starts the destination renderer, which reads the
+    // workspace through this function rather than through
+    // `materializeArrivingTab` — so omitting the field here discarded the draft
+    // on exactly the path the transfer exists for.
+    const ws: PersistedWorkspace = {
+      revision: 1,
+      windows: [
+        {
+          id: 'win-2',
+          splitTree: { kind: 'pane', id: 'pane-1', tabIds: ['profile:p1.mydb.mycoll'], activeTabId: 'profile:p1.mydb.mycoll' },
+          focusedPaneId: 'pane-1',
+        },
+      ],
+      tabs: [
+        {
+          id: 'profile:p1.mydb.mycoll',
+          type: 'collection',
+          profileId: 'p1',
+          profileName: 'Profile 1',
+          db: 'mydb',
+          collection: 'mycoll',
+          documentEdit: carried,
+        },
+      ],
+    };
+    const { tabs } = toDisconnectedSnapshot(ws, 'win-2');
+    expect((tabs[0].documentEdit as Record<string, unknown>).draft).toBe('{"name":"half typed"}');
+  });
+});
+
 // CRITICAL regression coverage: before this fix, `dispatchWorkspace`'s
 // mirror sent op ids VERBATIM (live-connection space) while `toPersistedTab`
 // rewrote the nested `open_tab.tab` payload into profile-space — splitting

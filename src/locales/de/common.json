@@ -57,6 +57,7 @@
     "deletedTitle": "Gelöscht",
     "documentDeletedFrom": "Dokument aus {{collection}} gelöscht",
     "documentInsertedInto": "Dokument in {{collection}} eingefügt",
+    "documentSaveInProgress": "Warte, bis das Dokument gespeichert ist, bevor du diesen Tab verschiebst.",
     "documentSavedIn": "Dokument in {{collection}} gespeichert",
     "downloadFailed": "Herunterladen fehlgeschlagen: {{detail}}",
     "dumpFailedToStart": "Dump konnte nicht gestartet werden: {{detail}}",
