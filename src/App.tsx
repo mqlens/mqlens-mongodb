@@ -140,6 +140,14 @@ import { loadTabColors, saveTabColor, TAB_COLORS, tabColorCss, type TabColorId }
  *  makes "starting a new edit" and "clearing the last one's state" a single
  *  act. */
 interface DocumentEdit {
+  /** Identifies THIS edit, so a result can tell whether it is still the one.
+   *
+   *  The tab id is not enough. The dialog is non-modal and draggable, so the
+   *  user can push it aside and start another insert on the same tab while the
+   *  first save is still running — and a completion matched on tab alone would
+   *  then clear the replacement's `saving`, write the old failure onto it, or
+   *  close it and take its draft with it (#326 review). */
+  id: string;
   mode: 'insert' | 'edit';
   initialJson: string;
   targetDoc: Record<string, any> | null;
@@ -150,6 +158,13 @@ interface DocumentEdit {
   /** True while this edit's save is in flight, so Save cannot fire twice. */
   saving: boolean;
 }
+
+/** A fresh identity for each edit, so a completion can name the one it belongs
+ *  to. Same fallback as `queryStore`'s, for environments without `randomUUID`. */
+const newEditId = (): string =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `edit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export interface QueryTab {
   id: string;
@@ -3671,24 +3686,51 @@ function Workspace() {
     mirrorUpdateTabState(tabId, activeConnectionsRef.current, {
       documentEdit: edit ? carriedDocumentEdit(edit) : null,
     });
-  const openDocumentEdit = (tab: QueryTab, edit: Omit<DocumentEdit, 'draft' | 'error' | 'saving'>) => {
-    const opened: DocumentEdit = { ...edit, draft: edit.initialJson, error: null, saving: false };
+  const openDocumentEdit = (
+    tab: QueryTab,
+    edit: Omit<DocumentEdit, 'id' | 'draft' | 'error' | 'saving'>
+  ) => {
+    const opened: DocumentEdit = {
+      ...edit,
+      id: newEditId(),
+      draft: edit.initialJson,
+      error: null,
+      saving: false,
+    };
     setTabs(prev => prev.map(t => (t.id === tab.id ? { ...t, documentEdit: opened } : t)));
     mirrorDocumentEdit(tab.id, opened);
   };
-  const closeDocumentEdit = (tabId: string) => {
-    setTabs(prev => prev.map(t => (t.id === tabId ? { ...t, documentEdit: undefined } : t)));
-    mirrorDocumentEdit(tabId, null);
-  };
-  /** Updates the named tab's edit if it still has one, and no other tab's.
+  /** Ends the tab's edit. With `editId`, only if that is still the edit open.
    *
-   *  The guard is what lets a save report its outcome without checking whether
-   *  the user has since closed the dialog or switched away: a result for an
-   *  edit that is over lands nowhere instead of resurrecting it. */
-  const patchDocumentEdit = (tabId: string, patch: Partial<DocumentEdit>) =>
+   *  A save closes the dialog when it succeeds, and by then the user may have
+   *  started a different one on the same tab — closing that would throw away a
+   *  draft nobody finished with. The user's own Cancel passes no id: whatever
+   *  is on screen is what they meant to close. */
+  const closeDocumentEdit = (tabId: string, editId?: string) => {
+    let closed = false;
+    setTabs(prev =>
+      prev.map(t => {
+        if (t.id !== tabId || !t.documentEdit) return t;
+        if (editId !== undefined && t.documentEdit.id !== editId) return t;
+        closed = true;
+        return { ...t, documentEdit: undefined };
+      })
+    );
+    if (closed) mirrorDocumentEdit(tabId, null);
+  };
+  /** Updates one edit, named by its own id — never merely "this tab's edit".
+   *
+   *  Matching on the tab alone was not enough. The dialog is non-modal, so the
+   *  user can drag it aside and start another edit on the same tab while the
+   *  first save is in flight; the first result would then land on the second
+   *  edit, clearing a `saving` it never set or reporting a failure that was not
+   *  its own (#326 review). A result for an edit that is over lands nowhere. */
+  const patchDocumentEdit = (tabId: string, editId: string, patch: Partial<DocumentEdit>) =>
     setTabs(prev =>
       prev.map(t =>
-        t.id === tabId && t.documentEdit ? { ...t, documentEdit: { ...t.documentEdit, ...patch } } : t
+        t.id === tabId && t.documentEdit?.id === editId
+          ? { ...t, documentEdit: { ...t.documentEdit, ...patch } }
+          : t
       )
     );
   // Only the draft is mirrored as the user types. `error` and `saving` are the
@@ -3699,9 +3741,10 @@ function Workspace() {
   // has to stay pure, and React runs it twice in development, which would make
   // this fire the IPC twice per keystroke.
   const setDocumentDraft = (tabId: string, draft: string) => {
-    patchDocumentEdit(tabId, { draft });
     const edit = tabs.find(t => t.id === tabId)?.documentEdit;
-    if (edit) mirrorDocumentEdit(tabId, { ...edit, draft });
+    if (!edit) return;
+    patchDocumentEdit(tabId, edit.id, { draft });
+    mirrorDocumentEdit(tabId, { ...edit, draft });
   };
 
   const handleInsertDocument = (tab: QueryTab) => {
@@ -4065,22 +4108,23 @@ function Workspace() {
    *  and is waiting there when they come back (#326 review). */
   const handleSaveDocument = async (json: string) => {
     const tab = activeTab;
-    if (!tab?.documentEdit) return;
-    patchDocumentEdit(tab.id, { saving: true, error: null });
+    const edit = tab?.documentEdit;
+    if (!tab || !edit) return;
+    // Captured before the request: every line below names the edit that asked,
+    // so a result arriving after the user has moved on — to another tab, or to
+    // a different edit on this one — reaches that edit or nothing at all.
+    const editId = edit.id;
+    patchDocumentEdit(tab.id, editId, { saving: true, error: null });
     try {
-      await saveDocument(tab, json);
+      await saveDocument(tab, edit, json);
     } catch (err: any) {
-      patchDocumentEdit(tab.id, { error: String(err?.message || err) });
+      patchDocumentEdit(tab.id, editId, { error: String(err?.message || err) });
     } finally {
-      // A no-op when the save closed the edit — `patchDocumentEdit` only
-      // touches a tab that still has one.
-      patchDocumentEdit(tab.id, { saving: false });
+      patchDocumentEdit(tab.id, editId, { saving: false });
     }
   };
 
-  const saveDocument = async (tab: QueryTab, json: string) => {
-    const edit = tab.documentEdit;
-    if (!edit) return;
+  const saveDocument = async (tab: QueryTab, edit: DocumentEdit, json: string) => {
     const collection = tab.collection;
     if (edit.mode === 'insert') {
       await invoke('insert_document', {
@@ -4089,7 +4133,7 @@ function Workspace() {
         collection,
         document: json,
       });
-      closeDocumentEdit(tab.id);
+      closeDocumentEdit(tab.id, edit.id);
       await refreshTabResults(tab);
       toast(t('toast.documentInsertedInto', { collection }), 'success', { title: t('toast.insertedTitle') });
       return;
@@ -4133,7 +4177,7 @@ function Workspace() {
         ? (pipelineYieldsWholeDocuments(tab.lastAggregate) ? '{}' : null)
         : (tab.lastQuery?.projection ?? '{}'),
     });
-    closeDocumentEdit(tab.id);
+    closeDocumentEdit(tab.id, edit.id);
     await refreshTabResults(tab);
     toast(t('toast.documentSavedIn', { collection }), 'success', { title: t('toast.savedTitle') });
   };

@@ -882,6 +882,81 @@ describe('App Component', () => {
       await screen.findByTestId('document-json-input');
       expect(screen.getByTestId('document-save-btn')).toBeDisabled();
     });
+
+    it('leaves a replacement edit alone when the first one it replaced fails', async () => {
+      // The dialog is non-modal, so it can be dragged aside and a second insert
+      // started on the SAME tab while the first save is still running. Matched
+      // on the tab alone, the first result would land on the second edit
+      // (#326 review): clearing a `saving` it never set, or reporting a failure
+      // that was not its own.
+      const explode = pendingInsert();
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await screen.findByText(/"John Doe"/);
+      fireEvent.click(screen.getByTestId('insert-doc-btn'));
+      fireEvent.change(await screen.findByTestId('document-json-input'), {
+        target: { value: '{"name":"first"}' },
+      });
+      fireEvent.click(screen.getByTestId('document-save-btn'));
+      await waitFor(() => expect(screen.getByTestId('document-save-btn')).toBeDisabled());
+
+      // Same tab, a second insert — this replaces the edit that is still saving.
+      fireEvent.click(screen.getByTestId('insert-doc-btn'));
+      const second = await screen.findByTestId('document-json-input');
+      fireEvent.change(second, { target: { value: '{"name":"second"}' } });
+      // A fresh edit, so it is savable even though the first request is live.
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled();
+
+      explode();
+
+      // The failure belonged to an edit that is over. It does not surface on the
+      // one that replaced it, and the draft here is untouched.
+      await waitFor(() =>
+        expect(screen.getByTestId('document-json-input')).toHaveValue('{"name":"second"}')
+      );
+      expect(screen.queryByTestId('document-edit-error')).toBeNull();
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled();
+    });
+
+    it('does not close a replacement edit when the first one it replaced succeeds', async () => {
+      // The mirror image: a success closes the dialog, and closing the wrong
+      // edit would take a draft nobody had finished with.
+      let resolveInsert!: (v: string) => void;
+      mockInvoke.mockImplementation((cmd) => {
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'insert_document') return new Promise<string>((r) => { resolveInsert = r; });
+        return Promise.resolve([]);
+      });
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await screen.findByText(/"John Doe"/);
+      fireEvent.click(screen.getByTestId('insert-doc-btn'));
+      fireEvent.change(await screen.findByTestId('document-json-input'), {
+        target: { value: '{"name":"first"}' },
+      });
+      fireEvent.click(screen.getByTestId('document-save-btn'));
+      await waitFor(() => expect(screen.getByTestId('document-save-btn')).toBeDisabled());
+
+      fireEvent.click(screen.getByTestId('insert-doc-btn'));
+      fireEvent.change(await screen.findByTestId('document-json-input'), {
+        target: { value: '{"name":"second"}' },
+      });
+
+      resolveInsert('"new-id"');
+
+      // The first insert landed — but the dialog still holds the second draft.
+      await screen.findByText(/Document inserted into customers/);
+      expect(screen.getByTestId('document-json-input')).toHaveValue('{"name":"second"}');
+    });
+
   });
 
 

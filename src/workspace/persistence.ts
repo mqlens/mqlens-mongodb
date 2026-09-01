@@ -110,8 +110,10 @@ export interface PersistableTab {
  */
 export function carriedDocumentEdit(edit: unknown): unknown {
   if (!edit || typeof edit !== 'object') return undefined;
-  const { mode, initialJson, targetDoc, draft } = edit as Record<string, unknown>;
-  return { mode, initialJson, targetDoc: targetDoc ?? null, draft };
+  const { id, mode, initialJson, targetDoc, draft } = edit as Record<string, unknown>;
+  // `id` travels so the arriving edit keeps the identity its completions are
+  // matched against; the rest is the text itself.
+  return { id, mode, initialJson, targetDoc: targetDoc ?? null, draft };
 }
 
 export interface PersistableConnection {

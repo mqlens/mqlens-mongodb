@@ -344,6 +344,7 @@ describe('materializeArrivingTab', () => {
 describe('an in-progress document edit travels with its tab (#326 review)', () => {
   const connections: PersistableConnection[] = [{ id: 'live-conn-1', profileId: 'p1', name: 'Profile 1' }];
   const edit = {
+    id: 'edit-1',
     mode: 'edit',
     initialJson: '{"_id":"1"}',
     targetDoc: { _id: '1' },
@@ -355,6 +356,7 @@ describe('an in-progress document edit travels with its tab (#326 review)', () =
   it('carries the text, and leaves the pending save and its failure behind', () => {
     const carried = carriedDocumentEdit(edit) as Record<string, unknown>;
     expect(carried).toEqual({
+      id: 'edit-1',
       mode: 'edit',
       initialJson: '{"_id":"1"}',
       targetDoc: { _id: '1' },
