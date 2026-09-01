@@ -998,6 +998,38 @@ describe('App Component', () => {
       });
     });
 
+    it('still reports a failure after the tab is renamed mid-save', async () => {
+      // #326 review: the dialog is non-modal, so renaming the database stays
+      // reachable while a save runs. The rename preserves the edit but replaces
+      // the tab id, and a completion that named the tab then reached nothing:
+      // the failure never appeared and `saving` was never cleared, leaving the
+      // renamed tab's editor disabled for good.
+      const explode = pendingInsert();
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await screen.findByText(/"John Doe"/);
+      fireEvent.click(screen.getByTestId('insert-doc-btn'));
+      fireEvent.change(await screen.findByTestId('document-json-input'), {
+        target: { value: '{"name":"Ada"}' },
+      });
+      fireEvent.click(screen.getByTestId('document-save-btn'));
+      await waitFor(() => expect(screen.getByTestId('document-save-btn')).toBeDisabled());
+
+      // The tab id changes under the running request; the edit survives it.
+      fireEvent.click(screen.getByTestId('rename-db-btn'));
+      await waitFor(() => expect(screen.getByTestId('document-json-input')).toHaveValue('{"name":"Ada"}'));
+
+      explode();
+
+      expect(await screen.findByTestId('document-edit-error')).toHaveTextContent('insert exploded');
+      // And Save is usable again, rather than stuck on a `saving` nobody cleared.
+      await waitFor(() => expect(screen.getByTestId('document-save-btn')).not.toBeDisabled());
+    });
+
+
 
   });
 

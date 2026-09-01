@@ -3736,39 +3736,39 @@ function Workspace() {
     };
     setTabs(prev => prev.map(t => (t.id === tab.id ? { ...t, documentEdit: opened } : t)));
   };
-  /** Ends the tab's edit. With `editId`, only if that is still the edit open.
+  /** Ends whatever edit this tab has open — the user's own Cancel, where what
+   *  is on screen is exactly what they meant to close. A save that finished
+   *  uses `closeEditById` instead, since by then the edit may have moved on. */
+  const closeDocumentEdit = (tabId: string) =>
+    setTabs(prev => prev.map(t => (t.id === tabId ? { ...t, documentEdit: undefined } : t)));
+  /** Updates one edit, found by its own id — wherever its tab has got to.
    *
-   *  A save closes the dialog when it succeeds, and by then the user may have
-   *  started a different one on the same tab — closing that would throw away a
-   *  draft nobody finished with. The user's own Cancel passes no id: whatever
-   *  is on screen is what they meant to close. */
-  const closeDocumentEdit = (tabId: string, editId?: string) =>
-    setTabs(prev =>
-      prev.map(t => {
-        if (t.id !== tabId || !t.documentEdit) return t;
-        if (editId !== undefined && t.documentEdit.id !== editId) return t;
-        return { ...t, documentEdit: undefined };
-      })
-    );
-  /** Updates one edit, named by its own id — never merely "this tab's edit".
+   *  Matching on the tab was not enough twice over. The dialog is non-modal, so
+   *  the user can drag it aside and start another edit on the same tab while
+   *  the first save is in flight — and those controls include renaming the
+   *  collection, which preserves the edit but replaces the tab id. A completion
+   *  that named a tab therefore either landed on the wrong edit or on nothing
+   *  at all, leaving the renamed tab's dialog disabled for good with its
+   *  failure never shown (#326 review).
    *
-   *  Matching on the tab alone was not enough. The dialog is non-modal, so the
-   *  user can drag it aside and start another edit on the same tab while the
-   *  first save is in flight; the first result would then land on the second
-   *  edit, clearing a `saving` it never set or reporting a failure that was not
-   *  its own (#326 review). A result for an edit that is over lands nowhere. */
-  const patchDocumentEdit = (tabId: string, editId: string, patch: Partial<DocumentEdit>) =>
+   *  The edit's id survives both, so completions use it alone: they find the
+   *  edit that asked, or nothing, and never something else. */
+  const patchDocumentEdit = (editId: string, patch: Partial<DocumentEdit>) =>
     setTabs(prev =>
       prev.map(t =>
-        t.id === tabId && t.documentEdit?.id === editId
-          ? { ...t, documentEdit: { ...t.documentEdit, ...patch } }
-          : t
+        t.documentEdit?.id === editId ? { ...t, documentEdit: { ...t.documentEdit, ...patch } } : t
       )
+    );
+  /** Ends the edit with this id, wherever it is. Used by a save that finished;
+   *  the user's own Cancel closes what is on screen instead. */
+  const closeEditById = (editId: string) =>
+    setTabs(prev =>
+      prev.map(t => (t.documentEdit?.id === editId ? { ...t, documentEdit: undefined } : t))
     );
   const setDocumentDraft = (tabId: string, draft: string) => {
     const edit = tabs.find(t => t.id === tabId)?.documentEdit;
     if (!edit) return;
-    patchDocumentEdit(tabId, edit.id, { draft });
+    patchDocumentEdit(edit.id, { draft });
   };
 
   // The backend's copy of each tab's edit, kept level with state from one place
@@ -3801,6 +3801,13 @@ function Workspace() {
     for (const tabId of [...mirroredEditsRef.current.keys()]) {
       if (open.has(tabId)) continue;
       mirroredEditsRef.current.delete(tabId);
+      // Only a tab still open HERE gets the clear. A tab that has left this
+      // window's `tabs` needs none either way, and sending one is wrong: if it
+      // was closed, the backend dropped the whole model with it, and if it
+      // merely moved, the model is alive in another window and this would race
+      // the destination's own write to erase a draft that is still open
+      // (#326 review). Absence says the tab left, never that the edit ended.
+      if (!tabs.some(t => t.id === tabId)) continue;
       // Explicitly null, not absent: absent means "untouched" and would leave a
       // finished draft on the model for the next move to carry.
       mirrorUpdateTabState(tabId, activeConnectionsRef.current, { documentEdit: null });
@@ -4175,13 +4182,13 @@ function Workspace() {
     // so a result arriving after the user has moved on — to another tab, or to
     // a different edit on this one — reaches that edit or nothing at all.
     const editId = edit.id;
-    patchDocumentEdit(tab.id, editId, { saving: true, error: null });
+    patchDocumentEdit(editId, { saving: true, error: null });
     try {
       await saveDocument(tab, edit, json);
     } catch (err: any) {
-      patchDocumentEdit(tab.id, editId, { error: String(err?.message || err) });
+      patchDocumentEdit(editId, { error: String(err?.message || err) });
     } finally {
-      patchDocumentEdit(tab.id, editId, { saving: false });
+      patchDocumentEdit(editId, { saving: false });
     }
   };
 
@@ -4194,7 +4201,7 @@ function Workspace() {
         collection,
         document: json,
       });
-      closeDocumentEdit(tab.id, edit.id);
+      closeEditById(edit.id);
       await refreshTabResults(tab);
       toast(t('toast.documentInsertedInto', { collection }), 'success', { title: t('toast.insertedTitle') });
       return;
@@ -4238,7 +4245,7 @@ function Workspace() {
         ? (pipelineYieldsWholeDocuments(tab.lastAggregate) ? '{}' : null)
         : (tab.lastQuery?.projection ?? '{}'),
     });
-    closeDocumentEdit(tab.id, edit.id);
+    closeEditById(edit.id);
     await refreshTabResults(tab);
     toast(t('toast.documentSavedIn', { collection }), 'success', { title: t('toast.savedTitle') });
   };
