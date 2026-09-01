@@ -1254,6 +1254,36 @@ describe('DataGrid — copying a JSON selection that scrolled (#311)', () => {
     getSelection.mockRestore();
   });
 
+  it('keeps extending after the anchor row is unmounted (#319 review)', () => {
+    // The sequence that actually happens, which the test below it originally
+    // skipped: the drag records a range, THEN scrolling unmounts the row the
+    // anchor sits on, and the drag continues. Resolving the two endpoints
+    // together discarded every update from that point on, so the range froze
+    // at the first screenful — the exact case this feature exists for.
+    const view = openJsonView();
+    const getSelection = vi.spyOn(document, 'getSelection');
+    // A node the browser is left holding once its row is gone.
+    const detached = document.createElement('span');
+
+    fireEvent.mouseDown(view);
+    getSelection.mockReturnValue(selectionSpanning(view, 0, 1));
+    document.dispatchEvent(new Event('selectionchange'));
+
+    // Row 0 has scrolled away; only the focus end still resolves.
+    getSelection.mockReturnValue({
+      isCollapsed: false,
+      anchorNode: detached,
+      focusNode: view.querySelector('[data-json-line="3"]'),
+    } as unknown as Selection);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const setData = copyFrom(view);
+    expect(setData).toHaveBeenCalledTimes(1);
+    // 0 through 3 — the far end was still picked up with the anchor gone.
+    expect(setData.mock.calls[0][1].split('\n')).toHaveLength(4);
+    getSelection.mockRestore();
+  });
+
   it('leaves the browser alone when the whole selection is still mounted', () => {
     // Whole-line rebuilding cannot honour a partial line at either end, so it
     // must not take over a copy the browser can do exactly.

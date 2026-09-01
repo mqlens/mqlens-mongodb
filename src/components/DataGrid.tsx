@@ -1073,21 +1073,32 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return Number.isInteger(index) ? index : null;
   };
 
-  /** Row indices the live DOM selection still covers, or null if it has none. */
+  /**
+   * Row indices for whichever selection endpoints can still be resolved.
+   *
+   * Each end is resolved on its own, and that is the crux of this whole
+   * mechanism rather than defensive coding. Once the drag passes the first
+   * window, the row holding the anchor is exactly what react-window unmounts —
+   * so requiring both ends to resolve threw away every update from the moment
+   * tracking started to matter, freezing the range at the first screenful
+   * (#319 review).
+   *
+   * An endpoint the browser has relocated to a surviving ancestor resolves to
+   * no row and is skipped rather than guessed at; the other end still extends
+   * the range, and the lost end was already recorded while it was mounted.
+   */
   const selectedJsonRange = (): { min: number; max: number } | null => {
     const selection = document.getSelection();
     const container = jsonViewRef.current;
     if (!selection || selection.isCollapsed || !container) return null;
-    if (
-      !container.contains(selection.anchorNode) ||
-      !container.contains(selection.focusNode)
-    ) {
-      return null;
+    const indices: number[] = [];
+    for (const node of [selection.anchorNode, selection.focusNode]) {
+      if (!node || !container.contains(node)) continue;
+      const index = jsonLineIndexOf(node);
+      if (index !== null) indices.push(index);
     }
-    const anchor = jsonLineIndexOf(selection.anchorNode);
-    const focus = jsonLineIndexOf(selection.focusNode);
-    if (anchor === null || focus === null) return null;
-    return { min: Math.min(anchor, focus), max: Math.max(anchor, focus) };
+    if (indices.length === 0) return null;
+    return { min: Math.min(...indices), max: Math.max(...indices) };
   };
 
   useEffect(() => {
