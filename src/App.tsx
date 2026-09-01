@@ -80,6 +80,7 @@ import {
   moveTabToWindow,
   flushTabState,
   cancelTabState,
+  hasPendingDocumentEdit,
   type WorkspaceChangedPayload,
   type ConnectionsChangedPayload,
   type ConnectionEntry,
@@ -2747,17 +2748,39 @@ function Workspace() {
    *  and flushing it would put a write in front of every move that never used
    *  to be there. */
   const readyForWindowChange = async (tabId: string): Promise<boolean> => {
-    const edit = tabs.find(t => t.id === tabId)?.documentEdit;
-    if (edit?.saving) {
-      toast(t('toast.documentSaveInProgress'), 'error');
-      return false;
+    const profileId = toProfileSpaceId(tabId, activeConnections);
+    // Re-read on every pass, from the ref rather than the render closure: the
+    // await below is a gap the user can type, cancel or start a save in, and a
+    // check made before it describes a state the move no longer happens in
+    // (#326 review). Each pass either finds nothing left to send, or sends it
+    // and looks again.
+    for (let pass = 0; pass < 4; pass++) {
+      const edit = tabsRef.current.find(x => x.id === tabId)?.documentEdit;
+      if (edit?.saving) {
+        toast(t('toast.documentSaveInProgress'), 'error');
+        return false;
+      }
+      // Not `if (edit)`: cancelling one removes it from the tab immediately
+      // while its `document_edit: null` is still queued, so at that moment the
+      // tab has no edit and the backend still holds the draft the move would
+      // carry — an already-inserted document among them, offered to the
+      // destination to submit again.
+      if (!edit && !hasPendingDocumentEdit(profileId)) return true;
+      // Awaited, not merely called first. Both are separate backend commands,
+      // so starting the flush buys no ordering: the move could take the store
+      // first and snapshot the older draft, and the update landing afterwards
+      // is not a cross-window op for the destination to reconcile.
+      await flushTabState(profileId);
+      if (!hasPendingDocumentEdit(profileId)) {
+        // Settled: nothing new arrived while that was in flight.
+        const still = tabsRef.current.find(x => x.id === tabId)?.documentEdit;
+        if (!still?.saving) return true;
+      }
     }
-    // Awaited, not merely called first. Both are separate backend commands, so
-    // starting the flush buys no ordering: the move could take the store first
-    // and snapshot the older draft, and the update landing afterwards is not a
-    // cross-window op for the destination to reconcile (#326 review).
-    if (edit) await flushTabState(toProfileSpaceId(tabId, activeConnections));
-    return true;
+    // Four passes and the edit is still moving. Rather than carry a draft that
+    // may already be stale again, leave the tab where it is and say so.
+    toast(t('toast.documentSaveInProgress'), 'error');
+    return false;
   };
 
   const handleDetachTab = async (tabId: string) => {

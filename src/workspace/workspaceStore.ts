@@ -414,6 +414,22 @@ export function flushTabState(tabId: string): Promise<void> {
  * move to bring it back (#326 review). A patch for a tab that is gone
  * describes nothing, so it goes with it.
  */
+/**
+ * Whether `tabId` has a document-edit change still waiting in the debounce.
+ *
+ * Asked before a cross-window move, which must not overtake it. A cancelled
+ * edit queues `document_edit: null` and is gone from the tab immediately, so
+ * "does this tab have an edit" is the wrong question at that moment — the tab
+ * has none while the backend still holds the draft the move would carry
+ * (#326 review). Only this field is asked about: the others have no ordering
+ * requirement against a move, and flushing them would put a write in front of
+ * every move that never used to be there.
+ */
+export function hasPendingDocumentEdit(tabId: string): boolean {
+  const patch = pendingPatches.get(tabId);
+  return !!patch && 'documentEdit' in patch;
+}
+
 export function cancelTabState(tabIds: string | string[]): void {
   for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
     const timer = debounceTimers.get(tabId);

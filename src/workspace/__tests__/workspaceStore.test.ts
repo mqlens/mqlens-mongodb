@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { updateTabState, flushTabState, cancelTabState, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
+import { updateTabState, flushTabState, cancelTabState, hasPendingDocumentEdit, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
 import { toPersistedTab, toProfileSpaceId, type PersistableConnection } from '../persistence';
 import type { WorkspaceAction } from '../model';
 
@@ -113,6 +113,25 @@ describe('workspaceStore', () => {
     vi.advanceTimersByTime(500);
     expect(invokeMock).not.toHaveBeenCalled();
   });
+
+  it('hasPendingDocumentEdit reports a queued clear, not just a queued draft', () => {
+    // #326 review: cancelling an edit removes it from the tab at once while its
+    // `document_edit: null` is still in the debounce. At that moment the tab has
+    // no edit and the backend still holds the draft — so "does this tab have an
+    // edit" is the wrong question to gate a move on.
+    expect(hasPendingDocumentEdit('t1')).toBe(false);
+
+    updateTabState('t1', { documentEdit: null });
+    expect(hasPendingDocumentEdit('t1')).toBe(true);
+
+    vi.advanceTimersByTime(500);
+    expect(hasPendingDocumentEdit('t1')).toBe(false);
+
+    // A patch about something else is not a reason to hold up a move.
+    updateTabState('t2', { lastQuery: { filter: '{}' } });
+    expect(hasPendingDocumentEdit('t2')).toBe(false);
+  });
+
 
 
 
