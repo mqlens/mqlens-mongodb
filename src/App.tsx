@@ -89,6 +89,7 @@ import {
   toProfileSpaceId,
   toLiveSpaceId,
   materializeArrivingTab,
+  carriedDocumentEdit,
   type PersistedWorkspace,
   type PersistedWindow,
   type PersistedTab,
@@ -3660,16 +3661,25 @@ function Workspace() {
   // another tab's work — each tab keeps its own until it is saved or closed.
   // Replacing the whole object is what starts a new edit, so nothing has to
   // remember to clear the last one's error or pending save.
-  const openDocumentEdit = (tab: QueryTab, edit: Omit<DocumentEdit, 'draft' | 'error' | 'saving'>) =>
-    setTabs(prev =>
-      prev.map(t =>
-        t.id === tab.id
-          ? { ...t, documentEdit: { ...edit, draft: edit.initialJson, error: null, saving: false } }
-          : t
-      )
-    );
-  const closeDocumentEdit = (tabId: string) =>
+  // Mirrored to the backend as it changes, because a tab moved to another
+  // window is rebuilt there from the backend's copy — an edit that never
+  // reached it is an edit the move discards (#326 review). `updateTabState`
+  // debounces, so a keystroke is not a round trip. `carriedDocumentEdit`
+  // decides what travels; `null` on close, since an absent key means
+  // "untouched" and would leave a finished draft on the model.
+  const mirrorDocumentEdit = (tabId: string, edit: DocumentEdit | null) =>
+    mirrorUpdateTabState(tabId, activeConnectionsRef.current, {
+      documentEdit: edit ? carriedDocumentEdit(edit) : null,
+    });
+  const openDocumentEdit = (tab: QueryTab, edit: Omit<DocumentEdit, 'draft' | 'error' | 'saving'>) => {
+    const opened: DocumentEdit = { ...edit, draft: edit.initialJson, error: null, saving: false };
+    setTabs(prev => prev.map(t => (t.id === tab.id ? { ...t, documentEdit: opened } : t)));
+    mirrorDocumentEdit(tab.id, opened);
+  };
+  const closeDocumentEdit = (tabId: string) => {
     setTabs(prev => prev.map(t => (t.id === tabId ? { ...t, documentEdit: undefined } : t)));
+    mirrorDocumentEdit(tabId, null);
+  };
   /** Updates the named tab's edit if it still has one, and no other tab's.
    *
    *  The guard is what lets a save report its outcome without checking whether
@@ -3681,7 +3691,18 @@ function Workspace() {
         t.id === tabId && t.documentEdit ? { ...t, documentEdit: { ...t.documentEdit, ...patch } } : t
       )
     );
-  const setDocumentDraft = (tabId: string, draft: string) => patchDocumentEdit(tabId, { draft });
+  // Only the draft is mirrored as the user types. `error` and `saving` are the
+  // two fields `carriedDocumentEdit` drops anyway, so patching them is not
+  // worth a mirror.
+  //
+  // The mirror is computed here rather than inside the updater: a state updater
+  // has to stay pure, and React runs it twice in development, which would make
+  // this fire the IPC twice per keystroke.
+  const setDocumentDraft = (tabId: string, draft: string) => {
+    patchDocumentEdit(tabId, { draft });
+    const edit = tabs.find(t => t.id === tabId)?.documentEdit;
+    if (edit) mirrorDocumentEdit(tabId, { ...edit, draft });
+  };
 
   const handleInsertDocument = (tab: QueryTab) => {
     openDocumentEdit(tab, { mode: 'insert', initialJson: "{\n  \n}", targetDoc: null });

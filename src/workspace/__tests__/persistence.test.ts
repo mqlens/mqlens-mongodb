@@ -6,6 +6,7 @@ import {
   toProfileSpaceId,
   toLiveSpaceId,
   materializeArrivingTab,
+  carriedDocumentEdit,
   type PersistableTab,
   type PersistableConnection,
   type PersistedTab,
@@ -333,6 +334,75 @@ describe('materializeArrivingTab', () => {
     expect(isLive).toBe(false);
     expect(tab.id).toBe('tasks');
     expect(tab.connectionId).toBe('');
+  });
+});
+
+
+// #326 review: a tab moved or detached to another window is rebuilt there from
+// the persisted model, so anything missing from the model the move discards.
+// Before this, that included the document the user was part-way through typing.
+describe('an in-progress document edit travels with its tab (#326 review)', () => {
+  const connections: PersistableConnection[] = [{ id: 'live-conn-1', profileId: 'p1', name: 'Profile 1' }];
+  const edit = {
+    mode: 'edit',
+    initialJson: '{"_id":"1"}',
+    targetDoc: { _id: '1' },
+    draft: '{"_id":"1","name":"half typed"}',
+    error: 'a failure from the window it left',
+    saving: true,
+  };
+
+  it('carries the text, and leaves the pending save and its failure behind', () => {
+    const carried = carriedDocumentEdit(edit) as Record<string, unknown>;
+    expect(carried).toEqual({
+      mode: 'edit',
+      initialJson: '{"_id":"1"}',
+      targetDoc: { _id: '1' },
+      draft: '{"_id":"1","name":"half typed"}',
+    });
+    // `saving` must not travel: the request belongs to the window that made it
+    // and settles there, so an arriving tab claiming one was in flight would
+    // disable Save with nothing left to finish it.
+    expect(carried.saving).toBeUndefined();
+    expect(carried.error).toBeUndefined();
+  });
+
+  it('has nothing to carry for a tab with no edit open', () => {
+    expect(carriedDocumentEdit(undefined)).toBeUndefined();
+    expect(carriedDocumentEdit(null)).toBeUndefined();
+  });
+
+  it('puts it on the persisted tab', () => {
+    const persisted = toPersistedTab(
+      {
+        id: 'live-conn-1.mydb.mycoll',
+        type: 'collection',
+        connectionId: 'live-conn-1',
+        db: 'mydb',
+        collection: 'mycoll',
+        documentEdit: edit,
+      },
+      { id: 'live-conn-1', profileId: 'p1', name: 'Profile 1' },
+      undefined
+    );
+    expect((persisted?.documentEdit as Record<string, unknown>).draft).toBe('{"_id":"1","name":"half typed"}');
+    expect((persisted?.documentEdit as Record<string, unknown>).saving).toBeUndefined();
+  });
+
+  it('hands it to the tab the destination window builds', () => {
+    const { tab } = materializeArrivingTab(
+      {
+        id: 'profile:p1.mydb.mycoll',
+        type: 'collection',
+        profileId: 'p1',
+        profileName: 'Profile 1',
+        db: 'mydb',
+        collection: 'mycoll',
+        documentEdit: carriedDocumentEdit(edit),
+      },
+      connections
+    );
+    expect((tab.documentEdit as Record<string, unknown>).draft).toBe('{"_id":"1","name":"half typed"}');
   });
 });
 

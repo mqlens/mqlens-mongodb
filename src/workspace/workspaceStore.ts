@@ -333,6 +333,13 @@ export interface UpdateTabStatePatch {
   lastQuery?: unknown;
   lastAggregate?: unknown;
   builderState?: unknown;
+  /** The tab's unsaved document edit, or `null` once it is over.
+   *
+   *  Mirrored because a tab moved to another window is materialized from the
+   *  backend's copy — so an edit that never reached it is an edit the move
+   *  discards (#326 review). `null` rather than omitted on close: absent means
+   *  "untouched", which would leave a finished draft on the model. */
+  documentEdit?: unknown;
 }
 
 const DEBOUNCE_MS = 500;
@@ -349,6 +356,7 @@ function flushUpdateTabState(tabId: string): void {
   if ('lastQuery' in patch) op.last_query = patch.lastQuery;
   if ('lastAggregate' in patch) op.last_aggregate = patch.lastAggregate;
   if ('builderState' in patch) op.builder_state = patch.builderState;
+  if ('documentEdit' in patch) op.document_edit = patch.documentEdit;
   workspaceApply(op);
 }
 

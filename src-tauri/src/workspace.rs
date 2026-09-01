@@ -64,6 +64,14 @@ pub struct TabModel {
     pub last_aggregate: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builder_state: Option<serde_json::Value>,
+    /// An unsaved document edit, so moving this tab to another window carries
+    /// the text instead of discarding it (#326 review). The destination
+    /// materializes the tab from here, which is why the draft has to travel in
+    /// the model rather than in the move op. Opaque to this crate; see
+    /// `carriedDocumentEdit` in persistence.ts for what is deliberately left
+    /// behind — a save in flight belongs to the window that started it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_edit: Option<serde_json::Value>,
 }
 
 /// A node in the split-pane layout tree.
@@ -234,6 +242,8 @@ pub enum WorkspaceOp {
         last_aggregate: Option<Option<serde_json::Value>>,
         #[serde(default, deserialize_with = "deserialize_some")]
         builder_state: Option<Option<serde_json::Value>>,
+        #[serde(default, deserialize_with = "deserialize_some")]
+        document_edit: Option<Option<serde_json::Value>>,
     },
     /// Moves an already-open tab from wherever it currently lives (found by
     /// scanning ALL windows — the op itself doesn't name a source) into
@@ -859,7 +869,7 @@ fn apply_layout_op(ws: &mut Workspace, op: WorkspaceOp) {
                 }
             }
         }
-        WorkspaceOp::UpdateTabState { tab_id, last_query, last_aggregate, builder_state } => {
+        WorkspaceOp::UpdateTabState { tab_id, last_query, last_aggregate, builder_state, document_edit } => {
             if let Some(t) = ws.tabs.iter_mut().find(|t| &t.id == tab_id) {
                 // `patch` is `&Option<Value>` here: present-but-null (`Some(None)`
                 // on the op) clears the field; present-with-value sets it.
@@ -879,6 +889,15 @@ fn apply_layout_op(ws: &mut Workspace, op: WorkspaceOp) {
                 if let Some(patch) = builder_state {
                     if &t.builder_state != patch {
                         t.builder_state = patch.clone();
+                        changed = true;
+                    }
+                }
+                // Present-and-null is how closing an edit clears the draft, so
+                // a tab moved afterwards does not arrive carrying text the user
+                // already finished with.
+                if let Some(patch) = document_edit {
+                    if &t.document_edit != patch {
+                        t.document_edit = patch.clone();
                         changed = true;
                     }
                 }
@@ -1705,6 +1724,7 @@ mod tests {
             last_query: None,
             last_aggregate: None,
             builder_state: None,
+            document_edit: None,
         }
     }
 
@@ -1729,6 +1749,76 @@ mod tests {
         assert_eq!(ws.revision, rev_before + 1);
     }
 
+
+    /// #326 review: a tab moved to another window is rebuilt there from this
+    /// model, so an unsaved document edit has to live on the model or the move
+    /// discards it. Closing the edit sends an explicit null — absent would mean
+    /// "untouched" and leave a finished draft behind for the next move to carry.
+    #[test]
+    fn update_tab_state_carries_and_clears_a_document_edit() {
+        let mut ws = ws_with(&["t1"]);
+        ws.tabs.push(sample_tab("t1"));
+        let draft = serde_json::json!({
+            "mode": "edit",
+            "initialJson": "{\"_id\":\"1\"}",
+            "targetDoc": {"_id": "1"},
+            "draft": "{\"_id\":\"1\",\"name\":\"half typed\"}"
+        });
+
+        apply(
+            &mut ws,
+            WorkspaceOp::UpdateTabState {
+                tab_id: "t1".into(),
+                last_query: None,
+                last_aggregate: None,
+                builder_state: None,
+                document_edit: Some(Some(draft.clone())),
+            },
+        );
+        assert_eq!(ws.tabs[0].document_edit, Some(draft.clone()));
+        assert_eq!(ws.revision, 1);
+
+        // Re-sending the same draft changes nothing — a keystroke that lands on
+        // the same text must not bump the revision and wake every window.
+        apply(
+            &mut ws,
+            WorkspaceOp::UpdateTabState {
+                tab_id: "t1".into(),
+                last_query: None,
+                last_aggregate: None,
+                builder_state: None,
+                document_edit: Some(Some(draft)),
+            },
+        );
+        assert_eq!(ws.revision, 1);
+
+        // A patch that does not mention it leaves the draft alone.
+        apply(
+            &mut ws,
+            WorkspaceOp::UpdateTabState {
+                tab_id: "t1".into(),
+                last_query: Some(Some(serde_json::json!({"filter": "{}"}))),
+                last_aggregate: None,
+                builder_state: None,
+                document_edit: None,
+            },
+        );
+        assert!(ws.tabs[0].document_edit.is_some());
+
+        // Closing the edit clears it.
+        apply(
+            &mut ws,
+            WorkspaceOp::UpdateTabState {
+                tab_id: "t1".into(),
+                last_query: None,
+                last_aggregate: None,
+                builder_state: None,
+                document_edit: Some(None),
+            },
+        );
+        assert_eq!(ws.tabs[0].document_edit, None);
+    }
+
     #[test]
     fn update_tab_state_patches_selected_fields_only() {
         let mut ws = ws_with(&["t1"]);
@@ -1744,6 +1834,7 @@ mod tests {
                 last_query: None, // absent from the patch: untouched
                 last_aggregate: Some(Some(serde_json::json!([{"$match": {}}]))), // present: set
                 builder_state: None,
+                document_edit: None,
             },
         );
         let t = &ws.tabs[0];
@@ -1762,6 +1853,7 @@ mod tests {
                 last_query: None,
                 last_aggregate: Some(Some(serde_json::json!([{"$match": {}}]))),
                 builder_state: None,
+                document_edit: None,
             },
         );
         assert_eq!(ws.revision, rev_before);
@@ -1784,6 +1876,7 @@ mod tests {
                 last_query: None,
                 last_aggregate: Some(None), // explicit null: clear
                 builder_state: None,
+                document_edit: None,
             },
         );
         assert_eq!(ws.tabs[0].last_aggregate, None);
@@ -1804,6 +1897,7 @@ mod tests {
                 last_query: None, // absent: untouched, NOT cleared
                 last_aggregate: None,
                 builder_state: None,
+                document_edit: None,
             },
         );
         assert_eq!(ws.tabs[0].last_query, Some(serde_json::json!({"filter": "{}"})));
@@ -1822,6 +1916,7 @@ mod tests {
                 last_query: None,
                 last_aggregate: Some(None), // explicit null on an already-None field: no-op
                 builder_state: None,
+                document_edit: None,
             },
         );
         assert_eq!(ws.tabs[0].last_aggregate, None);
@@ -2094,6 +2189,7 @@ mod tests {
                 last_query: Some(serde_json::json!({ "filter": {} })),
                 last_aggregate: None,
                 builder_state: None,
+                document_edit: None,
             }
         }
 
@@ -2170,6 +2266,7 @@ mod tests {
                 last_query: Some(Some(patched_query.clone())),
                 last_aggregate: None,
                 builder_state: None,
+                document_edit: None,
             },
         );
 
@@ -3060,6 +3157,7 @@ mod broadcast {
                     last_query: Some(Some(serde_json::json!({"x": 1}))),
                     last_aggregate: None,
                     builder_state: None,
+                    document_edit: None,
                 },
             ),
         ];
@@ -3076,6 +3174,7 @@ mod broadcast {
                 last_query: None,
                 last_aggregate: None,
                 builder_state: None,
+                document_edit: None,
             });
             let payload = apply_and_describe(&mut ws, op, "main".into());
             let payload = payload.unwrap_or_else(|| panic!("`{name}` was expected to change state"));
