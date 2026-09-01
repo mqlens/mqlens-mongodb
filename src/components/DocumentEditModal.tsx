@@ -47,14 +47,17 @@ interface DocumentEditModalProps {
    *  to the text as it was (#277). Omit both to keep the text locally. */
   json?: string;
   onJsonChange?: (json: string) => void;
-  /** Identifies WHICH edit this is, so transient state does not follow the user
-   *  from one to another.
+  /** A save of the current edit that failed, and whether one is in flight.
    *
-   *  `isOpen` and `initialJson` cannot tell two edits apart: switch between two
-   *  tabs that both have an insert open and both stay the same, so an error or
-   *  an in-flight save from one would still be on screen for the other (#326
-   *  review). Pass the owning tab's id. */
-  editKey?: string;
+   *  Owned by the caller for the same reason the draft is: they belong to the
+   *  edit, not to this dialog, and this dialog comes and goes with the active
+   *  tab. Held here they were repeatedly shown against the wrong edit or lost
+   *  on the way back to the right one — a keyed map fixed the first and still
+   *  could not tell "a new edit began" from "the old one is visible again",
+   *  because both look alike from in here (#326 review). The caller knows the
+   *  difference, so the caller keeps them. */
+  error?: string | null;
+  saving?: boolean;
 }
 
 export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
@@ -65,7 +68,8 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   onSave,
   json: controlledJson,
   onJsonChange,
-  editKey,
+  error = null,
+  saving = false,
 }) => {
   const { t } = useTranslation('documents');
   const [uncontrolledJson, setUncontrolledJson] = useState(initialJson);
@@ -74,29 +78,8 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
     setUncontrolledJson(next);
     onJsonChange?.(next);
   };
-  // Everything transient is keyed by edit, not held for whichever edit happens
-  // to be on screen.
-  //
-  // Scoping these one at a time is what kept going wrong: the component-wide
-  // flag re-enabled Save mid-request, and the component-wide error then showed
-  // one tab's failure on another and lost it on the way back (#326 review). An
-  // edit's error and its in-flight save are facts about that edit, and they
-  // outlive the dialog looking elsewhere, so they are stored the same way the
-  // draft already is.
-  const [errors, setErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
-  const [savingKeys, setSavingKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const currentKey = editKey ?? '';
-  const error = errors.get(currentKey) ?? null;
-  const saving = savingKeys.has(currentKey);
-  /** Records against the key the request captured, not against whatever is showing now. */
-  const setErrorFor = (key: string, message: string | null) =>
-    setErrors(prev => {
-      if (message === null && !prev.has(key)) return prev;
-      const next = new Map(prev);
-      if (message === null) next.delete(key);
-      else next.set(key, message);
-      return next;
-    });
+  // Derived from the text on screen, so it needs no owner and no lifetime: it
+  // is recomputed rather than remembered, and cannot outlive what it describes.
   const validationError = useMemo(() => validateDocument(json, t), [json, t]);
   const theme = useMonacoTheme();
   const monacoRef = useRef<Parameters<
@@ -117,48 +100,22 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
     if (!isOpen) return;
     // Only reset the text we own. A controlled draft is reset by whoever holds
     // it — resetting here would wipe the edit every time the dialog reappeared,
-    // which is precisely what returning to a tab does.
+    // which is precisely what returning to a tab does. Nothing else is reset
+    // here: this effect cannot tell a new edit from an old one coming back into
+    // view, and everything that turns on that distinction now lives with the
+    // caller, who can (#326 review).
     if (controlledJson === undefined) setUncontrolledJson(initialJson);
-    // Clears only THIS edit's error, and only when this edit is starting: the
-    // dialog opening, or a different document being opened in the same tab.
-    //
-    // `editKey` is deliberately not a dependency any more. Resetting on it was
-    // what cleared a save that was still running, and now that both fields are
-    // per edit there is nothing to reset when the user merely looks elsewhere —
-    // each edit already shows its own state.
-    setErrorFor(currentKey, null);
-    // `controlledJson` is likewise not a dependency: this runs when the dialog
-    // opens, not on every keystroke.
+    // `controlledJson` is deliberately not a dependency: this runs when the
+    // dialog opens, not on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialJson]);
 
-  const handleSave = async () => {
-    // Captured now, so a result arriving after the user has moved on is still
-    // filed against the edit that asked for it.
-    const key = currentKey;
-    if (validationError) {
-      setErrorFor(key, validationError);
-      return;
-    }
-    const ejson = shellToEjson(json);
-    setErrorFor(key, null);
-    setSavingKeys(prev => new Set(prev).add(key));
-    try {
-      await onSave(ejson);
-    } catch (err: any) {
-      setErrorFor(key, String(err?.message || err));
-    } finally {
-      // Retire the key this request claimed, and only that one. A set rather
-      // than a flag because "is a save running" is a fact about an edit, not
-      // about this component: two tabs can each have one in flight, and looking
-      // at one must not report on the other.
-      setSavingKeys(prev => {
-        if (!prev.has(key)) return prev;
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-    }
+  // Save is disabled while `validationError` is set, so reaching here means the
+  // text parses. The caller runs the request and reports back through `saving`
+  // and `error`.
+  const handleSave = () => {
+    if (validationError) return;
+    onSave(shellToEjson(json));
   };
 
   return (

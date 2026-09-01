@@ -792,6 +792,99 @@ describe('App Component', () => {
     });
   });
 
+  // #326 review: an edit's failure and its pending save belong to the edit, not
+  // to the dialog — the dialog is a view of whichever tab is active, so it
+  // unmounts on the way to another tab and remounts on the way back. Kept in
+  // the dialog, a failure was reported against whichever edit happened to be on
+  // screen, and clearing it on the way back could not be told apart from
+  // clearing it for a genuinely new edit. Both now live on the tab beside the
+  // draft, so these are App's to guarantee.
+  describe('a save failure stays with the edit that caused it (#326 review)', () => {
+    /** An insert whose result this test releases by hand. */
+    const pendingInsert = () => {
+      let reject!: (e: Error) => void;
+      mockInvoke.mockImplementation((cmd) => {
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        if (cmd === 'insert_document') return new Promise<string>((_, r) => { reject = r; });
+        return Promise.resolve([]);
+      });
+      return () => reject(new Error('insert exploded'));
+    };
+
+    it('reports it on its own tab, not on the one in view when it lands', async () => {
+      const explode = pendingInsert();
+      const { fireEvent } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // customers: start an insert and submit it.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await screen.findByText(/"John Doe"/);
+      fireEvent.click(screen.getByTestId('insert-doc-btn'));
+      fireEvent.change(await screen.findByTestId('document-json-input'), {
+        target: { value: '{"name":"Ada"}' },
+      });
+      fireEvent.click(screen.getByTestId('document-save-btn'));
+
+      // orders: an EDIT, so the two dialogs differ in `initialJson` — the case a
+      // keyed error could not tell from a new edit beginning.
+      fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+      await screen.findByText(/"John Doe"/);
+      fireEvent.click(screen.getAllByTestId('edit-doc-btn')[0]);
+      await screen.findByTestId('document-json-input');
+
+      // Only now does the customers insert fail, with its own dialog off screen.
+      explode();
+
+      // Back on customers the failure is waiting — which is also what proves it
+      // has landed, so the next assertion is about a state that exists.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByTestId('document-edit-error')).toHaveTextContent('insert exploded');
+
+      // And it is nowhere near the orders edit, which did not fail.
+      fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+      await screen.findByTestId('document-json-input');
+      expect(screen.queryByTestId('document-edit-error')).toBeNull();
+
+      // Returning to customers a second time still finds it: coming back into
+      // view is not the end of an edit (#326 review).
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      expect(await screen.findByTestId('document-edit-error')).toHaveTextContent('insert exploded');
+    });
+
+    it('disables Save on the edit that is saving, and only that one', async () => {
+      pendingInsert();
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await screen.findByText(/"John Doe"/);
+      fireEvent.click(screen.getByTestId('insert-doc-btn'));
+      fireEvent.change(await screen.findByTestId('document-json-input'), {
+        target: { value: '{"name":"Ada"}' },
+      });
+      fireEvent.click(screen.getByTestId('document-save-btn'));
+      await waitFor(() => expect(screen.getByTestId('document-save-btn')).toBeDisabled());
+
+      // A different tab's edit is savable while this one is still in flight.
+      fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
+      await screen.findByText(/"John Doe"/);
+      fireEvent.click(screen.getAllByTestId('edit-doc-btn')[0]);
+      await screen.findByTestId('document-json-input');
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled();
+
+      // And the one that is saving still is, so a second click cannot write the
+      // document twice.
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await screen.findByTestId('document-json-input');
+      expect(screen.getByTestId('document-save-btn')).toBeDisabled();
+    });
+  });
+
+
   it('opens settings as a workspace tab', async () => {
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === 'load_app_settings') {

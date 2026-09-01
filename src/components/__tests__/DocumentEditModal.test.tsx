@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 // The modal's JSON editor wraps @monaco-editor/react; mock it with a plain
 // <textarea> that exposes the test id via wrapperProps and round-trips value.
@@ -164,52 +164,13 @@ describe('DocumentEditModal — an edit belongs to its tab (#277)', () => {
   });
 });
 
-// #326 review: with two tabs each holding an edit, this component stays mounted
-// as the user moves between them. `isOpen` and `initialJson` cannot tell those
-// edits apart — two inserts share the same initial text — so transient state
-// followed the user from one edit to the other.
-describe('DocumentEditModal — transient state does not cross edits (#326 review)', () => {
-  const base = {
-    isOpen: true as const,
-    mode: 'insert' as const,
-    initialJson: '{\n  \n}',
-    onClose: vi.fn(),
-  };
-
-  it('clears the saving flag after a successful save', () => {
-    // It was only ever cleared on failure. Invisible while a save closed the
-    // dialog, and permanent once another tab's edit keeps it mounted: the Save
-    // button stayed disabled with no way back.
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render(
-      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' onJsonChange={vi.fn()} editKey="tab-a" />
-    );
-    const save = screen.getByTestId('document-save-btn');
-    fireEvent.click(save);
-    return waitFor(() => expect(save).not.toBeDisabled());
-  });
-
-  it('drops an error when the user moves to another tab\'s edit', () => {
-    const onSave = vi.fn().mockRejectedValue(new Error('boom'));
-    const { rerender } = render(
-      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' onJsonChange={vi.fn()} editKey="tab-a" />
-    );
-    fireEvent.click(screen.getByTestId('document-save-btn'));
-    return waitFor(() => expect(screen.getByTestId('document-edit-error')).toBeInTheDocument()).then(() => {
-      // Same isOpen, same initialJson — only the owning tab differs.
-      rerender(
-        <DocumentEditModal {...base} onSave={onSave} json='{"b":2}' onJsonChange={vi.fn()} editKey="tab-b" />
-      );
-      expect(screen.queryByTestId('document-edit-error')).not.toBeInTheDocument();
-    });
-  });
-});
-
-// #326 review (P1): a pending save is a fact about an edit, not about this
-// component. Clearing it when the user looked at another tab re-enabled Save
-// while the original insert was still running, so a second click could write
-// the document twice.
-describe('DocumentEditModal — a pending save survives a look elsewhere (#326 review)', () => {
+// #326 review: the error and the pending save are the caller's now. This
+// dialog is a view of whichever tab is active — it unmounts when the user
+// looks elsewhere and remounts on the way back — so state that has to outlive
+// that cannot live here. Three attempts to keep it here each failed the same
+// way, the last because `isOpen` and `initialJson` cannot tell a new edit from
+// an old one returning to view. What this dialog still owes is showing them.
+describe('DocumentEditModal — reports the save state it is given (#326 review)', () => {
   const base = {
     isOpen: true as const,
     mode: 'insert' as const,
@@ -218,82 +179,31 @@ describe('DocumentEditModal — a pending save survives a look elsewhere (#326 r
     onJsonChange: vi.fn(),
   };
 
-  it('keeps Save disabled after switching away and back mid-save', async () => {
-    // Never resolves: the request is still in flight for the whole test.
-    const onSave = vi.fn(() => new Promise<void>(() => {}));
+  it('shows the failure it is handed, and drops it when the caller does', () => {
     const { rerender } = render(
-      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />
+      <DocumentEditModal {...base} onSave={vi.fn()} json='{"a":1}' error="boom" />
     );
-    fireEvent.click(screen.getByTestId('document-save-btn'));
-    await waitFor(() => expect(screen.getByTestId('document-save-btn')).toBeDisabled());
-
-    // Away to another tab's edit...
-    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"b":2}' editKey="tab-b" />);
-    // ...and back, with tab A's insert still running.
-    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />);
-
-    expect(screen.getByTestId('document-save-btn')).toBeDisabled();
-    fireEvent.click(screen.getByTestId('document-save-btn'));
-    // One request, not two — a second would be a duplicate document.
-    expect(onSave).toHaveBeenCalledTimes(1);
-  });
-
-  it('reports saving per edit, not for whichever is on screen', async () => {
-    // Tab A is mid-save; tab B has done nothing and must still be savable.
-    const onSave = vi.fn(() => new Promise<void>(() => {}));
-    const { rerender } = render(
-      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />
-    );
-    fireEvent.click(screen.getByTestId('document-save-btn'));
-    await waitFor(() => expect(screen.getByTestId('document-save-btn')).toBeDisabled());
-
-    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"b":2}' editKey="tab-b" />);
-    expect(screen.getByTestId('document-save-btn')).not.toBeDisabled();
-  });
-});
-
-// #326 review: a rejection can settle after the user has moved on. Written to a
-// component-wide slot it appeared on whichever edit was showing, and the reset
-// then discarded it — so the failure was reported against the wrong edit and
-// lost by the one it belonged to.
-describe('DocumentEditModal — a failure stays with the edit that caused it (#326 review)', () => {
-  const base = {
-    isOpen: true as const,
-    mode: 'insert' as const,
-    initialJson: '{\n  \n}',
-    onClose: vi.fn(),
-    onJsonChange: vi.fn(),
-  };
-
-  it('does not show one edit\'s failure on another', async () => {
-    let reject!: (e: Error) => void;
-    const onSave = vi.fn(() => new Promise<void>((_, r) => { reject = r; }));
-    const { rerender } = render(
-      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />
-    );
-    fireEvent.click(screen.getByTestId('document-save-btn'));
-
-    // Move to another tab's edit, THEN let tab A's request fail.
-    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"b":2}' editKey="tab-b" />);
-    reject(new Error('tab-a exploded'));
-
-    await waitFor(() => expect(screen.getByTestId('document-save-btn')).not.toBeDisabled());
+    expect(screen.getByTestId('document-edit-error')).toHaveTextContent('boom');
+    rerender(<DocumentEditModal {...base} onSave={vi.fn()} json='{"a":1}' error={null} />);
     expect(screen.queryByTestId('document-edit-error')).toBeNull();
   });
 
-  it('shows it again on the edit that owns it', async () => {
-    let reject!: (e: Error) => void;
-    const onSave = vi.fn(() => new Promise<void>((_, r) => { reject = r; }));
-    const { rerender } = render(
-      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />
-    );
-    fireEvent.click(screen.getByTestId('document-save-btn'));
-    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"b":2}' editKey="tab-b" />);
-    reject(new Error('tab-a exploded'));
-    await waitFor(() => expect(screen.getByTestId('document-save-btn')).not.toBeDisabled());
+  it('refuses a second submit while the caller reports one in flight', () => {
+    // Two inserts would write the document twice, so this is the guard that
+    // matters — and it holds however the user got here, because the answer
+    // comes from the edit rather than from anything this component remembers.
+    const onSave = vi.fn();
+    render(<DocumentEditModal {...base} onSave={onSave} json='{"a":1}' saving />);
+    const save = screen.getByTestId('document-save-btn');
+    expect(save).toBeDisabled();
+    fireEvent.click(save);
+    expect(onSave).not.toHaveBeenCalled();
+  });
 
-    // Back to A: its own failure is waiting, not discarded.
-    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"a":1}' editKey="tab-a" />);
-    expect(screen.getByTestId('document-edit-error')).toHaveTextContent('tab-a exploded');
+  it('stays savable when the caller reports no save of its own', () => {
+    // The sibling case: one tab mid-save must not disable another tab's Save.
+    const onSave = vi.fn();
+    render(<DocumentEditModal {...base} onSave={onSave} json='{"b":2}' saving={false} />);
+    expect(screen.getByTestId('document-save-btn')).not.toBeDisabled();
   });
 });

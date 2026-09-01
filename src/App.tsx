@@ -127,13 +127,27 @@ import { FolderCode, KeyRound, Radio, X, ChevronsRight, XSquare, Play, Settings,
 import logoMark from './assets/logo-mark.svg';
 import { loadTabColors, saveTabColor, TAB_COLORS, tabColorCss, type TabColorId } from './lib/tabColors';
 
-/** An edit or insert in progress, with the text the user has typed so far. */
+/** An edit or insert in progress, with everything true of it while it lasts.
+ *
+ *  All of it lives here rather than in the dialog because the dialog is a view
+ *  of whichever tab is active: it unmounts when the user looks elsewhere and
+ *  remounts on the way back. The draft came here first (#277), and the error
+ *  and the pending save followed once it was clear they have the same lifetime
+ *  — each was patched into the dialog separately and each went wrong in the
+ *  same way, showing one tab's state on another or losing it in between (#326
+ *  review). An edit ends when this object is replaced or removed, which is what
+ *  makes "starting a new edit" and "clearing the last one's state" a single
+ *  act. */
 interface DocumentEdit {
   mode: 'insert' | 'edit';
   initialJson: string;
   targetDoc: Record<string, any> | null;
   /** Live text. Kept here so it outlives the dialog unmounting on a tab switch. */
   draft: string;
+  /** A save of THIS edit that failed, waiting to be seen by the tab that owns it. */
+  error: string | null;
+  /** True while this edit's save is in flight, so Save cannot fire twice. */
+  saving: boolean;
 }
 
 export interface QueryTab {
@@ -3644,14 +3658,30 @@ function Workspace() {
 
   // Only the active tab's edit is rendered, so opening one no longer replaces
   // another tab's work — each tab keeps its own until it is saved or closed.
-  const openDocumentEdit = (tab: QueryTab, edit: Omit<DocumentEdit, 'draft'>) =>
-    setTabs(prev => prev.map(t => (t.id === tab.id ? { ...t, documentEdit: { ...edit, draft: edit.initialJson } } : t)));
+  // Replacing the whole object is what starts a new edit, so nothing has to
+  // remember to clear the last one's error or pending save.
+  const openDocumentEdit = (tab: QueryTab, edit: Omit<DocumentEdit, 'draft' | 'error' | 'saving'>) =>
+    setTabs(prev =>
+      prev.map(t =>
+        t.id === tab.id
+          ? { ...t, documentEdit: { ...edit, draft: edit.initialJson, error: null, saving: false } }
+          : t
+      )
+    );
   const closeDocumentEdit = (tabId: string) =>
     setTabs(prev => prev.map(t => (t.id === tabId ? { ...t, documentEdit: undefined } : t)));
-  const setDocumentDraft = (tabId: string, draft: string) =>
+  /** Updates the named tab's edit if it still has one, and no other tab's.
+   *
+   *  The guard is what lets a save report its outcome without checking whether
+   *  the user has since closed the dialog or switched away: a result for an
+   *  edit that is over lands nowhere instead of resurrecting it. */
+  const patchDocumentEdit = (tabId: string, patch: Partial<DocumentEdit>) =>
     setTabs(prev =>
-      prev.map(t => (t.id === tabId && t.documentEdit ? { ...t, documentEdit: { ...t.documentEdit, draft } } : t))
+      prev.map(t =>
+        t.id === tabId && t.documentEdit ? { ...t, documentEdit: { ...t.documentEdit, ...patch } } : t
+      )
     );
+  const setDocumentDraft = (tabId: string, draft: string) => patchDocumentEdit(tabId, { draft });
 
   const handleInsertDocument = (tab: QueryTab) => {
     openDocumentEdit(tab, { mode: 'insert', initialJson: "{\n  \n}", targetDoc: null });
@@ -4006,10 +4036,30 @@ function Workspace() {
     }
   };
 
+  /** Runs a save and files its outcome against the edit that asked for it.
+   *
+   *  `tab.id` is captured before the request, not read from `activeTab` after
+   *  it, so a rejection that settles once the user has moved on is still
+   *  recorded on its own edit rather than on whichever one is now showing —
+   *  and is waiting there when they come back (#326 review). */
   const handleSaveDocument = async (json: string) => {
     const tab = activeTab;
-    const edit = tab?.documentEdit;
-    if (!tab || !edit) return;
+    if (!tab?.documentEdit) return;
+    patchDocumentEdit(tab.id, { saving: true, error: null });
+    try {
+      await saveDocument(tab, json);
+    } catch (err: any) {
+      patchDocumentEdit(tab.id, { error: String(err?.message || err) });
+    } finally {
+      // A no-op when the save closed the edit — `patchDocumentEdit` only
+      // touches a tab that still has one.
+      patchDocumentEdit(tab.id, { saving: false });
+    }
+  };
+
+  const saveDocument = async (tab: QueryTab, json: string) => {
+    const edit = tab.documentEdit;
+    if (!edit) return;
     const collection = tab.collection;
     if (edit.mode === 'insert') {
       await invoke('insert_document', {
@@ -4026,8 +4076,9 @@ function Workspace() {
 
     const target = edit.targetDoc;
     if (!target || target._id === undefined) {
-      // DocumentEditModal catches this and renders `err.message` straight into
-      // its error banner, so the text is user-facing copy, not a dev invariant.
+      // Caught by handleSaveDocument and filed on the edit, which the dialog
+      // renders straight into its error banner — so the text is user-facing
+      // copy, not a dev invariant.
       throw new Error(t('documents:editModal.errors.noId'));
     }
     // Send the document as loaded *and* as edited so the backend can apply only
@@ -4693,7 +4744,8 @@ function Workspace() {
             mode={activeTab?.documentEdit?.mode || 'insert'}
             initialJson={activeTab?.documentEdit?.initialJson || '{}'}
             json={activeTab?.documentEdit?.draft ?? ''}
-            editKey={activeTab?.id}
+            error={activeTab?.documentEdit?.error ?? null}
+            saving={activeTab?.documentEdit?.saving ?? false}
             onJsonChange={(draft) => activeTab && setDocumentDraft(activeTab.id, draft)}
             onClose={() => activeTab && closeDocumentEdit(activeTab.id)}
             onSave={handleSaveDocument}
