@@ -1564,8 +1564,14 @@ describe('DataGrid — select-all copies every row (#320)', () => {
     getSelection.mockReturnValue(selectAll());
     document.dispatchEvent(new Event('selectionchange'));
 
+    // Dispatched on <body>, because that is where the browser dispatches it.
+    // A copy event targets the element holding the selection's focus, and this
+    // selection's focus is <body> — an ancestor of the React root, so a
+    // handler on the view is never reached and nothing was copied at all
+    // (#328). Aiming this at `view` instead is what let the bug ship: it
+    // proved the rebuild works while stepping over the delivery it depends on.
     const setData = vi.fn();
-    fireEvent.copy(view, { clipboardData: { setData, getData: () => '' } });
+    fireEvent.copy(document.body, { clipboardData: { setData, getData: () => '' } });
 
     expect(setData).toHaveBeenCalledTimes(1);
     const lines = setData.mock.calls[0][1].split('\n');
@@ -1579,7 +1585,12 @@ describe('DataGrid — select-all copies every row (#320)', () => {
   it('ignores a selection that does not enclose the view', () => {
     // The trap in the obvious fix: treating any unresolvable endpoint as the
     // view's bounds would claim rows for selections living elsewhere in the UI.
-    const view = openJsonView();
+    // Listening on the document makes this the load-bearing case rather than a
+    // hypothetical one — every copy in the app now reaches this handler, so a
+    // copy from the query editor has to leave with the text it selected.
+    // Rendered, and deliberately not referenced again: the point is that the
+    // view is listening and still declines this copy.
+    openJsonView();
     const elsewhere = document.createElement('div');
     elsewhere.textContent = 'unrelated';
     document.body.appendChild(elsewhere);
@@ -1599,7 +1610,7 @@ describe('DataGrid — select-all copies every row (#320)', () => {
     document.dispatchEvent(new Event('selectionchange'));
 
     const setData = vi.fn();
-    fireEvent.copy(view, { clipboardData: { setData, getData: () => '' } });
+    fireEvent.copy(elsewhere, { clipboardData: { setData, getData: () => '' } });
     expect(setData).not.toHaveBeenCalled();
 
     elsewhere.remove();

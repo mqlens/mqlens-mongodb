@@ -1255,9 +1255,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
     };
     document.addEventListener('selectionchange', onSelectionChange);
     return () => document.removeEventListener('selectionchange', onSelectionChange);
-  }, [viewMode]);
+    // The lines matter because a select-all is recorded as a row range, and its
+    // far end is the last line there is. The view no longer remounts between
+    // runs, so a listener left holding the previous result set would remember
+    // a select-all that stops short of the rows now on screen.
+  }, [viewMode, visibleJsonLines]);
 
-  const handleJsonCopy = (e: React.ClipboardEvent<HTMLDivElement>) => {
+  const handleJsonCopy = (e: ClipboardEvent) => {
     const tracked = jsonRangeOf(jsonSelectionRef.current);
     if (!tracked) return;
     // Stand aside only when the browser can be trusted to copy this exactly,
@@ -1273,7 +1277,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
     // present too.
     const ends = selectedJsonEnds();
     const live = ends && jsonRangeOf(ends);
-    const spansAll = !!live && live.start.row <= tracked.start.row && live.end.row >= tracked.end.row;
+    // Listening on the document means every copy in the app arrives here, so
+    // this view has to say whether it owns one. A live range is exactly that
+    // claim: `selectedJsonEnds` resolves an endpoint only for a selection that
+    // touches these rows, or encloses the view outright. Without it the
+    // remembered range would answer for a copy from the query editor.
+    if (!live) return;
+    const spansAll = live.start.row <= tracked.start.row && live.end.row >= tracked.end.row;
     const container = jsonViewRef.current;
     const wanted = tracked.end.row - tracked.start.row + 1;
     const allMounted =
@@ -1301,9 +1311,32 @@ export const DataGrid: React.FC<DataGridProps> = ({
       })
       .join('\n');
     if (!text) return;
+    if (!e.clipboardData) return;
     e.clipboardData.setData('text/plain', text);
     e.preventDefault();
   };
+
+  // The browser, not us, decides where a copy event lands: it targets the
+  // element holding the selection's focus, and a select-all leaves that on
+  // <body>. That is an ancestor of the React root, so an `onCopy` on the view
+  // is never reached and the copy fell through to the browser — which holds
+  // only the mounted screenful, or in practice nothing at all (#328).
+  //
+  // Listening on the document puts the handler where every copy passes,
+  // including the ones inside the view, which bubble here just the same. What
+  // it costs is the containment the React tree used to grant for free, so
+  // `handleJsonCopy` establishes that itself before it writes anything.
+  const jsonCopyRef = React.useRef(handleJsonCopy);
+  useEffect(() => {
+    jsonCopyRef.current = handleJsonCopy;
+  });
+  useEffect(() => {
+    if (viewMode !== 'json') return;
+    const onCopy = (e: ClipboardEvent) => jsonCopyRef.current(e);
+    document.addEventListener('copy', onCopy);
+    return () => document.removeEventListener('copy', onCopy);
+  }, [viewMode]);
+
   const toggleFold = (id: number) => {
     setCollapsedFolds((prev) => {
       const next = new Set(prev);
@@ -2013,7 +2046,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
             onMouseDown={(e) => {
               if (e.button === 0) jsonSelectionRef.current = { anchor: null, focus: null };
             }}
-            onCopy={handleJsonCopy}
             className="flex min-h-0 min-w-0 flex-1 flex-col bg-background font-mono text-xs leading-relaxed"
             data-testid="json-view"
           >
