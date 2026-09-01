@@ -957,6 +957,48 @@ describe('App Component', () => {
       expect(screen.getByTestId('document-json-input')).toHaveValue('{"name":"second"}');
     });
 
+    it('mirrors the draft, and clears it on close', async () => {
+      // #326 review: the clear used to be announced by `closeDocumentEdit`,
+      // which decided whether to send it before its own `setTabs` updater had
+      // run — so a close could send nothing, leaving an earlier debounced draft
+      // standing on the backend for the next move to revive.
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'execute_mql_query') {
+          return Promise.resolve([JSON.stringify({ _id: '1', name: 'John Doe' })]);
+        }
+        return Promise.resolve([]);
+      });
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getByTestId('select-collection-btn'));
+      await screen.findByText(/"John Doe"/);
+      fireEvent.click(screen.getByTestId('insert-doc-btn'));
+      fireEvent.change(await screen.findByTestId('document-json-input'), {
+        target: { value: '{"name":"Ada"}' },
+      });
+
+      const edits = () =>
+        calls
+          .filter((c) => c.cmd === 'workspace_apply' && c.args?.op?.type === 'update_tab_state')
+          .filter((c) => 'document_edit' in c.args.op)
+          .map((c) => c.args.op.document_edit);
+
+      await waitFor(() => {
+        expect(edits().some((e) => e && e.draft === '{"name":"Ada"}')).toBe(true);
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+      await waitFor(() => {
+        // Explicitly null, not merely absent — absent means "untouched".
+        expect(edits().at(-1)).toBeNull();
+      });
+    });
+
+
   });
 
 

@@ -3712,10 +3712,6 @@ function Workspace() {
   // debounces, so a keystroke is not a round trip. `carriedDocumentEdit`
   // decides what travels; `null` on close, since an absent key means
   // "untouched" and would leave a finished draft on the model.
-  const mirrorDocumentEdit = (tabId: string, edit: DocumentEdit | null) =>
-    mirrorUpdateTabState(tabId, activeConnectionsRef.current, {
-      documentEdit: edit ? carriedDocumentEdit(edit) : null,
-    });
   const openDocumentEdit = (
     tab: QueryTab,
     edit: Omit<DocumentEdit, 'id' | 'draft' | 'error' | 'saving'>
@@ -3728,7 +3724,6 @@ function Workspace() {
       saving: false,
     };
     setTabs(prev => prev.map(t => (t.id === tab.id ? { ...t, documentEdit: opened } : t)));
-    mirrorDocumentEdit(tab.id, opened);
   };
   /** Ends the tab's edit. With `editId`, only if that is still the edit open.
    *
@@ -3736,18 +3731,14 @@ function Workspace() {
    *  started a different one on the same tab — closing that would throw away a
    *  draft nobody finished with. The user's own Cancel passes no id: whatever
    *  is on screen is what they meant to close. */
-  const closeDocumentEdit = (tabId: string, editId?: string) => {
-    let closed = false;
+  const closeDocumentEdit = (tabId: string, editId?: string) =>
     setTabs(prev =>
       prev.map(t => {
         if (t.id !== tabId || !t.documentEdit) return t;
         if (editId !== undefined && t.documentEdit.id !== editId) return t;
-        closed = true;
         return { ...t, documentEdit: undefined };
       })
     );
-    if (closed) mirrorDocumentEdit(tabId, null);
-  };
   /** Updates one edit, named by its own id — never merely "this tab's edit".
    *
    *  Matching on the tab alone was not enough. The dialog is non-modal, so the
@@ -3763,19 +3754,48 @@ function Workspace() {
           : t
       )
     );
-  // Only the draft is mirrored as the user types. `error` and `saving` are the
-  // two fields `carriedDocumentEdit` drops anyway, so patching them is not
-  // worth a mirror.
-  //
-  // The mirror is computed here rather than inside the updater: a state updater
-  // has to stay pure, and React runs it twice in development, which would make
-  // this fire the IPC twice per keystroke.
   const setDocumentDraft = (tabId: string, draft: string) => {
     const edit = tabs.find(t => t.id === tabId)?.documentEdit;
     if (!edit) return;
     patchDocumentEdit(tabId, edit.id, { draft });
-    mirrorDocumentEdit(tabId, { ...edit, draft });
   };
+
+  // The backend's copy of each tab's edit, kept level with state from one place
+  // rather than announced by whoever changed it.
+  //
+  // Every handler above tried to predict its own mirror, and predicting is what
+  // went wrong: a `setTabs` updater runs when React chooses, so `closeDocumentEdit`
+  // decided whether to send the clear before knowing whether it had closed
+  // anything — and a close that sent nothing left an earlier debounced draft
+  // standing on the backend, ready for the next move to revive an edit the user
+  // had already finished with (#326 review). Reading committed state instead
+  // cannot be wrong about what happened, because it runs after it happened.
+  //
+  // The comparison is against what was last sent, so a re-render that leaves an
+  // edit untouched sends nothing, and a keystroke sends once. `updateTabState`
+  // debounces the rest.
+  const mirroredEditsRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const open = new Set<string>();
+    for (const tab of tabs) {
+      if (!tab.documentEdit) continue;
+      open.add(tab.id);
+      const carried = JSON.stringify(carriedDocumentEdit(tab.documentEdit));
+      if (mirroredEditsRef.current.get(tab.id) === carried) continue;
+      mirroredEditsRef.current.set(tab.id, carried);
+      mirrorUpdateTabState(tab.id, activeConnectionsRef.current, {
+        documentEdit: JSON.parse(carried),
+      });
+    }
+    for (const tabId of [...mirroredEditsRef.current.keys()]) {
+      if (open.has(tabId)) continue;
+      mirroredEditsRef.current.delete(tabId);
+      // Explicitly null, not absent: absent means "untouched" and would leave a
+      // finished draft on the model for the next move to carry.
+      mirrorUpdateTabState(tabId, activeConnectionsRef.current, { documentEdit: null });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs]);
 
   const handleInsertDocument = (tab: QueryTab) => {
     openDocumentEdit(tab, { mode: 'insert', initialJson: "{\n  \n}", targetDoc: null });
