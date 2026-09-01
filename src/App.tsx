@@ -127,6 +127,15 @@ import { FolderCode, KeyRound, Radio, X, ChevronsRight, XSquare, Play, Settings,
 import logoMark from './assets/logo-mark.svg';
 import { loadTabColors, saveTabColor, TAB_COLORS, tabColorCss, type TabColorId } from './lib/tabColors';
 
+/** An edit or insert in progress, with the text the user has typed so far. */
+interface DocumentEdit {
+  mode: 'insert' | 'edit';
+  initialJson: string;
+  targetDoc: Record<string, any> | null;
+  /** Live text. Kept here so it outlives the dialog unmounting on a tab switch. */
+  draft: string;
+}
+
 export interface QueryTab {
   id: string;
   type: 'collection' | 'index' | 'shell' | 'settings' | 'quickstart' | 'export' | 'import' | 'tasks' | 'activity' | 'schema' | 'create-view' | 'gridfs' | 'monitoring' | 'users' | 'dump' | 'restore' | 'validation' | 'generate' | 'watch';
@@ -150,6 +159,9 @@ export interface QueryTab {
   // Which results tab is showing, kept on the tab for the same reason as
   // viewMode: the grid remounts on every run (#281).
   resultsTab?: ResultsTab;
+  // An in-progress document edit belongs to the tab it was opened from, so it
+  // survives a look at another tab and dies with this one (#277).
+  documentEdit?: DocumentEdit;
   // What the results pager last asked for. The values travel with the revision
   // so the builder can never observe a new revision beside a stale page size —
   // see DocumentViewer's pagerRequest prop.
@@ -3630,12 +3642,19 @@ function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportTasks]);
 
-  const [documentModal, setDocumentModal] = useState<
-    { mode: 'insert' | 'edit'; initialJson: string; targetDoc: Record<string, any> | null; tabId: string } | null
-  >(null);
+  // Only the active tab's edit is rendered, so opening one no longer replaces
+  // another tab's work — each tab keeps its own until it is saved or closed.
+  const openDocumentEdit = (tab: QueryTab, edit: Omit<DocumentEdit, 'draft'>) =>
+    setTabs(prev => prev.map(t => (t.id === tab.id ? { ...t, documentEdit: { ...edit, draft: edit.initialJson } } : t)));
+  const closeDocumentEdit = (tabId: string) =>
+    setTabs(prev => prev.map(t => (t.id === tabId ? { ...t, documentEdit: undefined } : t)));
+  const setDocumentDraft = (tabId: string, draft: string) =>
+    setTabs(prev =>
+      prev.map(t => (t.id === tabId && t.documentEdit ? { ...t, documentEdit: { ...t.documentEdit, draft } } : t))
+    );
 
   const handleInsertDocument = (tab: QueryTab) => {
-    setDocumentModal({ mode: 'insert', initialJson: '{\n  \n}', targetDoc: null, tabId: tab.id });
+    openDocumentEdit(tab, { mode: 'insert', initialJson: "{\n  \n}", targetDoc: null });
   };
 
   const handleExportForTab = async (
@@ -3803,13 +3822,13 @@ function Workspace() {
   };
 
   const handleEditDocument = (tab: QueryTab, doc: Record<string, any>) => {
-    setDocumentModal({ mode: 'edit', initialJson: docToShell(doc), targetDoc: doc, tabId: tab.id });
+    openDocumentEdit(tab, { mode: 'edit', initialJson: docToShell(doc), targetDoc: doc });
   };
 
   // Duplicate: open the insert modal pre-filled with the document minus its _id.
   const handleDuplicateDocument = (tab: QueryTab, doc: Record<string, any>) => {
     const { _id, ...rest } = doc;
-    setDocumentModal({ mode: 'insert', initialJson: docToShell(rest), targetDoc: null, tabId: tab.id });
+    openDocumentEdit(tab, { mode: 'insert', initialJson: docToShell(rest), targetDoc: null });
   };
 
   const handleDeleteDocument = async (tab: QueryTab, doc: Record<string, any>) => {
@@ -3988,24 +4007,24 @@ function Workspace() {
   };
 
   const handleSaveDocument = async (json: string) => {
-    if (!documentModal) return;
-    const tab = tabs.find(t => t.id === documentModal.tabId);
-    if (!tab) return;
+    const tab = activeTab;
+    const edit = tab?.documentEdit;
+    if (!tab || !edit) return;
     const collection = tab.collection;
-    if (documentModal.mode === 'insert') {
+    if (edit.mode === 'insert') {
       await invoke('insert_document', {
         id: tab.connectionId,
         database: tab.db,
         collection,
         document: json,
       });
-      setDocumentModal(null);
+      closeDocumentEdit(tab.id);
       await refreshTabResults(tab);
       toast(t('toast.documentInsertedInto', { collection }), 'success', { title: t('toast.insertedTitle') });
       return;
     }
 
-    const target = documentModal.targetDoc;
+    const target = edit.targetDoc;
     if (!target || target._id === undefined) {
       // DocumentEditModal catches this and renders `err.message` straight into
       // its error banner, so the text is user-facing copy, not a dev invariant.
@@ -4042,7 +4061,7 @@ function Workspace() {
         ? (pipelineYieldsWholeDocuments(tab.lastAggregate) ? '{}' : null)
         : (tab.lastQuery?.projection ?? '{}'),
     });
-    setDocumentModal(null);
+    closeDocumentEdit(tab.id);
     await refreshTabResults(tab);
     toast(t('toast.documentSavedIn', { collection }), 'success', { title: t('toast.savedTitle') });
   };
@@ -4666,11 +4685,16 @@ function Workspace() {
             prefill={indexModalTarget?.prefill}
           />
 
+          {/* Driven by the ACTIVE tab: switching away hides the edit and
+              switching back restores it, because the text lives on the tab
+              rather than in the dialog (#277). */}
           <DocumentEditModal
-            isOpen={documentModal !== null}
-            mode={documentModal?.mode || 'insert'}
-            initialJson={documentModal?.initialJson || '{}'}
-            onClose={() => setDocumentModal(null)}
+            isOpen={activeTab?.documentEdit !== undefined}
+            mode={activeTab?.documentEdit?.mode || 'insert'}
+            initialJson={activeTab?.documentEdit?.initialJson || '{}'}
+            json={activeTab?.documentEdit?.draft ?? ''}
+            onJsonChange={(draft) => activeTab && setDocumentDraft(activeTab.id, draft)}
+            onClose={() => activeTab && closeDocumentEdit(activeTab.id)}
             onSave={handleSaveDocument}
           />
 

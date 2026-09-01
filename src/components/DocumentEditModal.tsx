@@ -39,6 +39,14 @@ interface DocumentEditModalProps {
   initialJson: string;
   onClose: () => void;
   onSave: (json: string) => void | Promise<void>;
+  /** The draft text, when the caller wants to own it.
+   *
+   *  Held here, an edit dies whenever this dialog unmounts — which is exactly
+   *  what happens when the user looks at another tab. Lifting it lets the edit
+   *  belong to the tab it was opened from, so switching away and back returns
+   *  to the text as it was (#277). Omit both to keep the text locally. */
+  json?: string;
+  onJsonChange?: (json: string) => void;
 }
 
 export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
@@ -47,9 +55,16 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   initialJson,
   onClose,
   onSave,
+  json: controlledJson,
+  onJsonChange,
 }) => {
   const { t } = useTranslation('documents');
-  const [json, setJson] = useState(initialJson);
+  const [uncontrolledJson, setUncontrolledJson] = useState(initialJson);
+  const json = controlledJson ?? uncontrolledJson;
+  const setJson = (next: string) => {
+    setUncontrolledJson(next);
+    onJsonChange?.(next);
+  };
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const validationError = useMemo(() => validateDocument(json, t), [json, t]);
@@ -69,11 +84,16 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   useEscapeClose(isOpen, onClose);
 
   useEffect(() => {
-    if (isOpen) {
-      setJson(initialJson);
-      setError(null);
-      setSaving(false);
-    }
+    if (!isOpen) return;
+    // Only reset the text we own. A controlled draft is reset by whoever holds
+    // it — resetting here would wipe the edit every time the dialog reappeared,
+    // which is precisely what returning to a tab does.
+    if (controlledJson === undefined) setUncontrolledJson(initialJson);
+    setError(null);
+    setSaving(false);
+    // `controlledJson` is deliberately not a dependency: this runs when the
+    // dialog opens, not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialJson]);
 
   const handleSave = async () => {
@@ -93,7 +113,13 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+    // `modal={false}`: editing a document is exactly when
+    // you want to glance at another tab — to compare a field or copy an id —
+    // and a modal made that cost you the edit (#277). Without the focus trap
+    // and the scrim the rest of the app stays usable while this is open. Radix
+    // omits the overlay altogether outside modal mode, so there is no scrim to
+    // hide — the dialog simply floats above the app.
+    <Dialog modal={false} open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DraggableDialogContent
         defaultWidth={820}
         defaultHeight={560}
