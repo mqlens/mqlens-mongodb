@@ -1284,6 +1284,46 @@ describe('DataGrid — copying a JSON selection that scrolled (#311)', () => {
     getSelection.mockRestore();
   });
 
+  it('lets the range contract when the drag reverses (#319 review)', () => {
+    // Dragging past a line and then back over it deselects it. A range that
+    // could only grow kept those lines and copied them anyway — silently
+    // adding text the user had explicitly removed, with every row mounted.
+    const view = openJsonView();
+    const getSelection = vi.spyOn(document, 'getSelection');
+
+    fireEvent.mouseDown(view);
+    getSelection.mockReturnValue(selectionSpanning(view, 0, 3));
+    document.dispatchEvent(new Event('selectionchange'));
+    // Reversing: the anchor stays on row 0, the focus comes back to row 1.
+    getSelection.mockReturnValue(selectionSpanning(view, 0, 1));
+    document.dispatchEvent(new Event('selectionchange'));
+
+    // Nothing was lost, so the browser's own copy stands — and it is the
+    // contracted one.
+    expect(copyFrom(view)).not.toHaveBeenCalled();
+    getSelection.mockRestore();
+  });
+
+  it('keeps the tracked range through a right-click (#319 review)', () => {
+    // Right-clicking opens a menu over an existing selection rather than
+    // replacing it. Resetting on any button threw the range away immediately
+    // before the copy that needed it, so the fix only worked for Cmd+C.
+    const view = openJsonView();
+    const getSelection = vi.spyOn(document, 'getSelection');
+
+    fireEvent.mouseDown(view, { button: 0 });
+    getSelection.mockReturnValue(selectionSpanning(view, 0, 3));
+    document.dispatchEvent(new Event('selectionchange'));
+    getSelection.mockReturnValue(selectionSpanning(view, 2, 3));
+
+    fireEvent.mouseDown(view, { button: 2 });
+
+    const setData = copyFrom(view);
+    expect(setData).toHaveBeenCalledTimes(1);
+    expect(setData.mock.calls[0][1].split('\n')).toHaveLength(4);
+    getSelection.mockRestore();
+  });
+
   it('leaves the browser alone when the whole selection is still mounted', () => {
     // Whole-line rebuilding cannot honour a partial line at either end, so it
     // must not take over a copy the browser can do exactly.
