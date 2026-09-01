@@ -56,6 +56,7 @@
     "deletedTitle": "Deleted",
     "deleteFailed": "Delete failed: {{detail}}",
     "documentDeletedFrom": "Document deleted from {{collection}}",
+    "documentEditNotSynced": "Could not save this tab’s document draft. The tab was not moved.",
     "documentInsertedInto": "Document inserted into {{collection}}",
     "documentSavedIn": "Document saved in {{collection}}",
     "documentSaveInProgress": "Wait for the document save to finish before moving this tab.",

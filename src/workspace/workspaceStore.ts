@@ -43,16 +43,19 @@ export async function workspaceGet(): Promise<PersistedWorkspace | null> {
  * `workspace-changed` listener recognize and ignore its own echo — see
  * App.tsx's foreign-event reconciliation effect.
  */
-export function workspaceApply(op: Record<string, unknown>): Promise<void> {
-  // Returns the promise so a caller that must not race it can wait — a
-  // cross-window move reads the backend store as it stands, so the draft it
-  // carries has to have landed first (#326 review). Callers with no ordering
-  // requirement ignore it exactly as before; the rejection is still handled
-  // here, so an ignored promise never surfaces as an unhandled one.
+export function workspaceApply(op: Record<string, unknown>): Promise<boolean> {
+  // Resolves to whether the write landed, rather than rejecting. Most callers
+  // are fire-and-forget and ignore the result, so a rejection here would be an
+  // unhandled one — but a caller that must not race the write needs to know it
+  // happened at all: a cross-window move that proceeds on a failed flush reads
+  // a stale model, which either drops the newest draft or brings back an editor
+  // whose insert already succeeded, ready to write the document twice
+  // (#326 review). Reporting it as a value keeps both callers honest.
   return invoke('workspace_apply', { op, origin: windowLabel() })
-    .then(() => undefined)
+    .then(() => true)
     .catch((err) => {
       console.warn('workspace_apply failed', err);
+      return false;
     });
 }
 
@@ -353,11 +356,11 @@ const DEBOUNCE_MS = 500;
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingPatches = new Map<string, UpdateTabStatePatch>();
 
-function flushUpdateTabState(tabId: string): Promise<void> {
+function flushUpdateTabState(tabId: string): Promise<boolean> {
   debounceTimers.delete(tabId);
   const patch = pendingPatches.get(tabId);
   pendingPatches.delete(tabId);
-  if (!patch) return Promise.resolve();
+  if (!patch) return Promise.resolve(true);
 
   const op: Record<string, unknown> = { type: 'update_tab_state', tab_id: tabId };
   if ('lastQuery' in patch) op.last_query = patch.lastQuery;
@@ -398,7 +401,7 @@ export function updateTabState(tabId: string, patch: UpdateTabStatePatch): void 
  * the destination never reconciles it (#326 review). Callers about to issue a
  * move or a detach flush first, so what travels is what is on screen.
  */
-export function flushTabState(tabId: string): Promise<void> {
+export function flushTabState(tabId: string): Promise<boolean> {
   const timer = debounceTimers.get(tabId);
   if (timer !== undefined) clearTimeout(timer);
   return flushUpdateTabState(tabId);

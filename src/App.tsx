@@ -2770,7 +2770,14 @@ function Workspace() {
       // so starting the flush buys no ordering: the move could take the store
       // first and snapshot the older draft, and the update landing afterwards
       // is not a cross-window op for the destination to reconcile.
-      await flushTabState(profileId);
+      if (!(await flushTabState(profileId))) {
+        // The write did not land, so the backend still holds the older model.
+        // Moving now would carry that instead — dropping the newest draft, or
+        // reviving an editor whose insert already succeeded for the destination
+        // to submit a second time (#326 review).
+        toast(t('toast.documentEditNotSynced'), 'error');
+        return false;
+      }
       if (!hasPendingDocumentEdit(profileId)) {
         // Settled: nothing new arrived while that was in flight.
         const still = tabsRef.current.find(x => x.id === tabId)?.documentEdit;
@@ -3782,6 +3789,10 @@ function Workspace() {
         t.documentEdit?.id === editId ? { ...t, documentEdit: { ...t.documentEdit, ...patch } } : t
       )
     );
+  /** The tab currently holding this edit, read live so a rename during a
+   *  request is followed rather than missed. */
+  const tabHoldingEdit = (editId: string): QueryTab | undefined =>
+    tabsRef.current.find(t => t.documentEdit?.id === editId);
   /** Ends the edit with this id, wherever it is. Used by a save that finished;
    *  the user's own Cancel closes what is on screen instead. */
   const closeEditById = (editId: string) =>
@@ -4224,8 +4235,13 @@ function Workspace() {
         collection,
         document: json,
       });
+      // Resolved BEFORE the close, and from the ref: a rename during the
+      // request moved this edit to a tab with a new id and namespace, and the
+      // captured one would refresh the collection this tab no longer is (#326
+      // review).
+      const insertedInto = tabHoldingEdit(edit.id) ?? tab;
       closeEditById(edit.id);
-      await refreshTabResults(tab);
+      await refreshTabResults(insertedInto);
       toast(t('toast.documentInsertedInto', { collection }), 'success', { title: t('toast.insertedTitle') });
       return;
     }
@@ -4268,8 +4284,9 @@ function Workspace() {
         ? (pipelineYieldsWholeDocuments(tab.lastAggregate) ? '{}' : null)
         : (tab.lastQuery?.projection ?? '{}'),
     });
+    const savedIn = tabHoldingEdit(edit.id) ?? tab;
     closeEditById(edit.id);
-    await refreshTabResults(tab);
+    await refreshTabResults(savedIn);
     toast(t('toast.documentSavedIn', { collection }), 'success', { title: t('toast.savedTitle') });
   };
 
