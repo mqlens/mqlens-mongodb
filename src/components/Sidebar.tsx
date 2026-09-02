@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useDialogs } from './dialogs/DialogProvider';
+import { isNamespaceBusy, type SavingTab } from '../lib/namespaceBusy';
 import { confirmByTypedName } from '../lib/typedNameConfirm';
 import { fuzzyMatch } from '../lib/fuzzyMatch';
 import { type CollectionSelection, emptySelection, toggleCollection, selectionScope } from '@/lib/collectionSelection';
@@ -201,6 +202,9 @@ interface SidebarProps {
   onDatabaseDropped?: (connectionId: string, dbName: string) => void;
   onDatabaseRenamed?: (connectionId: string, oldName: string, newName: string) => void;
   onNamespaceMutated?: (connectionId?: string) => void;
+  /** The workspace tabs, so a rename can refuse while one of them is mid-save.
+   *  Only the namespace and the save flag are read — see . */
+  openTabs?: readonly SavingTab[];
   onFilterQueryChange?: (query: string) => void;
   indexMutationTrigger?: number;
   collectionMutationTrigger?: number;
@@ -328,6 +332,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDatabaseDropped,
   onDatabaseRenamed,
   onNamespaceMutated,
+  openTabs,
   onFilterQueryChange,
   indexMutationTrigger,
   collectionMutationTrigger,
@@ -1049,6 +1054,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleRenameCollection = async (connectionId: string, dbName: string, collName: string) => {
+    // A document save already sent names this namespace. Renaming it now is a
+    // race MongoDB settles: if the rename lands first, the insert can recreate
+    // the old name and write into it, while the tab reports success against the
+    // new one (#326 review). The wait is brief; splitting a write across two
+    // collections is not recoverable.
+    if (isNamespaceBusy(openTabs ?? [], connectionId, dbName, collName)) {
+      toast(t('toasts.namespaceBusyWithSave'), 'error');
+      return;
+    }
     const conn = activeConnections.find((c) => c.id === connectionId);
     // #188 Task 3: on a confirm_destructive connection, typing the current
     // collection name (the "already a prompt" precedent kept as-is below for
@@ -1228,6 +1242,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleRenameDatabase = async (connectionId: string, dbName: string) => {
+    // Same race, one level up: every collection under this database moves, so
+    // a save running against any of them is enough to refuse (#326 review).
+    if (isNamespaceBusy(openTabs ?? [], connectionId, dbName)) {
+      toast(t('toasts.namespaceBusyWithSave'), 'error');
+      return;
+    }
     const newName = await prompt({
       title: t('dialogs.renameDatabase.promptTitle'),
       message: t('dialogs.enterNewDatabaseName'),

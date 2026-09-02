@@ -4815,6 +4815,7 @@ function Workspace() {
       sidebar={
         <Sidebar
           onSelectCollection={handleSelectCollection}
+          openTabs={tabs}
           isCollectionOpen={(connectionId, db, collection) =>
             collectionTabsMatching(tabs, { connectionId, db, collection }).length > 0
           }
