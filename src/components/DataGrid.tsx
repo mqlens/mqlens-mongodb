@@ -465,6 +465,21 @@ interface JsonRowExtra {
 // re-render dropped the user's selection mid-copy. A stable identity lets
 // re-renders reconcile in place, so the selection survives. Per-render data is
 // passed through `rowProps` instead of closures.
+/**
+ * The JSON view the user last clicked in, across every grid on screen.
+ *
+ * A split workspace can show two JSON views at once, and each listens for
+ * `copy` on the document because that is where a select-all is dispatched. A
+ * select-all encloses both, so both would answer and the second would overwrite
+ * the first's clipboard — the copy silently coming from whichever grid mounted
+ * last rather than the one the user is working in (#330 review).
+ *
+ * A drag needs none of this: its endpoints resolve inside exactly one view, and
+ * that view owns it. This only decides the enclosing case, where no view owns
+ * the selection by its endpoints and one of them still has to answer.
+ */
+let lastTouchedJsonView: HTMLElement | null = null;
+
 const JsonRow = ({
   index,
   style,
@@ -1262,6 +1277,27 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [viewMode, visibleJsonLines]);
 
   const handleJsonCopy = (e: ClipboardEvent) => {
+    // Another JSON view has already answered this event. Two can be on screen in
+    // a split, both listen on the document, and both would otherwise write to
+    // the clipboard — the second silently replacing the first (#330 review).
+    if (e.defaultPrevented) return;
+    const container = jsonViewRef.current;
+    if (!container) return;
+    // Whose copy is this? A drag settles it by itself: its endpoints are inside
+    // one view, and that view answers. A select-all leaves them on <body>,
+    // enclosing every view equally, so the pane the user last clicked in
+    // answers for it. With no click yet — a select-all into a fresh window —
+    // nobody is preferred, and the guard above makes the first to arrive the
+    // one that answers rather than the last.
+    const selection = document.getSelection();
+    const endpointsHere =
+      !!selection &&
+      ((!!selection.anchorNode && container.contains(selection.anchorNode)) ||
+        (!!selection.focusNode && container.contains(selection.focusNode)));
+    // A view that has left the page owns nothing: it will never answer, and the
+    // one still on screen must not go on deferring to it.
+    const owner = lastTouchedJsonView?.isConnected ? lastTouchedJsonView : null;
+    if (!endpointsHere && owner && owner !== container) return;
     const tracked = jsonRangeOf(jsonSelectionRef.current);
     if (!tracked) return;
     // Stand aside only when the browser can be trusted to copy this exactly,
@@ -1284,10 +1320,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
     // remembered range would answer for a copy from the query editor.
     if (!live) return;
     const spansAll = live.start.row <= tracked.start.row && live.end.row >= tracked.end.row;
-    const container = jsonViewRef.current;
     const wanted = tracked.end.row - tracked.start.row + 1;
     const allMounted =
-      !!container &&
       container.querySelectorAll('[data-json-line]').length >= wanted &&
       !!container.querySelector(`[data-json-line="${tracked.start.row}"]`) &&
       !!container.querySelector(`[data-json-line="${tracked.end.row}"]`);
@@ -1334,7 +1368,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (viewMode !== 'json') return;
     const onCopy = (e: ClipboardEvent) => jsonCopyRef.current(e);
     document.addEventListener('copy', onCopy);
-    return () => document.removeEventListener('copy', onCopy);
+    // Captured here rather than read in the cleanup: React detaches the ref
+    // before passive cleanups run, so by then there is nothing to compare.
+    const view = jsonViewRef.current;
+    return () => {
+      document.removeEventListener('copy', onCopy);
+      // Closing the pane the user last clicked in must not leave it holding
+      // ownership (#330 review). The copy handler double-checks with
+      // `isConnected`, since a view can also go without this ever running.
+      if (lastTouchedJsonView === view) lastTouchedJsonView = null;
+    };
   }, [viewMode]);
 
   const toggleFold = (id: number) => {
@@ -2044,6 +2087,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
             // replacing it, so resetting there threw away the recorded range
             // just before the copy that needed it (#319 review).
             onMouseDown={(e) => {
+              // Which pane the user is working in. A split workspace can show
+              // two JSON views at once, and a select-all encloses both — so
+              // neither owns it by its endpoints and something has to say which
+              // one answers (#330 review).
+              lastTouchedJsonView = jsonViewRef.current;
               if (e.button === 0) jsonSelectionRef.current = { anchor: null, focus: null };
             }}
             className="flex min-h-0 min-w-0 flex-1 flex-col bg-background font-mono text-xs leading-relaxed"

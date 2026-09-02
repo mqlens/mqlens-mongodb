@@ -1582,6 +1582,63 @@ describe('DataGrid — select-all copies every row (#320)', () => {
     getSelection.mockRestore();
   });
 
+  /** Two DataGrids side by side, each in its own container, as a split shows them. */
+  const openTwoJsonPanes = () => {
+    const mount = (docs: unknown[]) => {
+      const container = document.body.appendChild(document.createElement('div'));
+      const result = render(<DataGrid documents={docs as any} />, { container });
+      fireEvent.click(within(container).getByRole('button', { name: /json/i }));
+      return { result, view: within(container).getByTestId('json-view') };
+    };
+    // Both panes hold more than a screenful, so both need the rebuild — with a
+    // pane small enough to be fully mounted, the grid rightly stands aside and
+    // lets the browser copy, which would prove nothing about ownership.
+    const rightDocs = Array.from({ length: 40 }, (_, i) => ({ _id: i, name: `only-in-right-${i}` }));
+    return { left: mount(manyDocs), right: mount(rightDocs) };
+  };
+
+  it('has exactly one of two open JSON panes answer a select-all', () => {
+    // #330 review: a split workspace shows two JSON views, each listening on the
+    // document because that is where a select-all is dispatched. Both saw the
+    // enclosing selection, both wrote to the clipboard, and the second silently
+    // replaced the first — so Cmd+C copied whichever grid mounted last rather
+    // than the pane the user was working in.
+    const { right } = openTwoJsonPanes();
+
+    // The user is working in the right-hand pane.
+    fireEvent.mouseDown(right.view);
+
+    const getSelection = vi.spyOn(document, 'getSelection');
+    getSelection.mockReturnValue(selectAll());
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const setData = vi.fn();
+    fireEvent.copy(document.body, { clipboardData: { setData, getData: () => '' } });
+
+    // One writer, and it is the pane that was clicked — not the last to mount.
+    expect(setData).toHaveBeenCalledTimes(1);
+    expect(setData.mock.calls[0][1]).toContain('only-in-right-0');
+    getSelection.mockRestore();
+  });
+
+  it('lets the surviving pane answer once the other one closes', () => {
+    // The pane holding ownership can be closed. It will never answer again, and
+    // the one still on screen must not go on deferring to it (#330 review).
+    const { right } = openTwoJsonPanes();
+    fireEvent.mouseDown(right.view);
+    right.result.unmount();
+
+    const getSelection = vi.spyOn(document, 'getSelection');
+    getSelection.mockReturnValue(selectAll());
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const setData = vi.fn();
+    fireEvent.copy(document.body, { clipboardData: { setData, getData: () => '' } });
+
+    expect(setData).toHaveBeenCalledTimes(1);
+    expect(setData.mock.calls[0][1]).not.toContain('only-in-right-0');
+    getSelection.mockRestore();
+  });
   it('ignores a selection that does not enclose the view', () => {
     // The trap in the obvious fix: treating any unresolvable endpoint as the
     // view's bounds would claim rows for selections living elsewhere in the UI.
