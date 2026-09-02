@@ -367,7 +367,17 @@ function flushUpdateTabState(tabId: string): Promise<boolean> {
   if ('lastAggregate' in patch) op.last_aggregate = patch.lastAggregate;
   if ('builderState' in patch) op.builder_state = patch.builderState;
   if ('documentEdit' in patch) op.document_edit = patch.documentEdit;
-  return workspaceApply(op);
+  return workspaceApply(op).then((landed) => {
+    // A failed write leaves the patch pending, not spent. Dropping it made the
+    // next attempt look clean: nothing queued, so a flush would report success
+    // without writing, and a move would go ahead on the same stale model the
+    // first attempt refused to move against (#326 review).
+    //
+    // Anything queued while this was in flight is newer and wins; the restored
+    // fields only fill what nobody has spoken for since.
+    if (!landed) pendingPatches.set(tabId, { ...patch, ...(pendingPatches.get(tabId) ?? {}) });
+    return landed;
+  });
 }
 
 /**

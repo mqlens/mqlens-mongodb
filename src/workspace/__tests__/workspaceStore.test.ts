@@ -132,6 +132,41 @@ describe('workspaceStore', () => {
     expect(hasPendingDocumentEdit('t2')).toBe(false);
   });
 
+  it('keeps a patch pending when its write fails, so a retry still has it', async () => {
+    // #326 review: a move aborts on a failed flush — but if the patch were
+    // spent, the next attempt would find nothing queued, report success without
+    // writing, and move against the same stale model the first attempt refused.
+    invokeMock.mockRejectedValueOnce(new Error('backend down'));
+    updateTabState('t1', { documentEdit: { draft: '{"name":"Ada"}' } });
+
+    expect(await flushTabState('t1')).toBe(false);
+    expect(hasPendingDocumentEdit('t1')).toBe(true);
+
+    // The retry writes it, and this time it lands.
+    invokeMock.mockClear();
+    expect(await flushTabState('t1')).toBe(true);
+    expect(invokeMock).toHaveBeenCalledWith('workspace_apply', {
+      op: { type: 'update_tab_state', tab_id: 't1', document_edit: { draft: '{"name":"Ada"}' } },
+      origin: 'main',
+    });
+    expect(hasPendingDocumentEdit('t1')).toBe(false);
+  });
+
+  it('lets a newer value win over one whose write failed', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('backend down'));
+    updateTabState('t1', { documentEdit: { draft: 'first' } });
+    const failing = flushTabState('t1');
+    // Typed while that request was in flight.
+    updateTabState('t1', { documentEdit: { draft: 'second' } });
+    expect(await failing).toBe(false);
+
+    invokeMock.mockClear();
+    await flushTabState('t1');
+    const [, { op }] = invokeMock.mock.calls[0];
+    expect((op as any).document_edit).toEqual({ draft: 'second' });
+  });
+
+
 
 
 
