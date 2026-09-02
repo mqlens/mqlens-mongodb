@@ -452,3 +452,92 @@ async fn delete_index_inner(
         .map(|_| ())
         .map_err(|e| format!("Failed to delete index: {}", e))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reply a server like Azure Cosmos DB gives to `listCollections`: the
+    /// name, and not much else.
+    fn sparse_listing_entry() -> mongodb::bson::Document {
+        mongodb::bson::doc! { "name": "customers" }
+    }
+
+    /// #327: the driver's own type is what fails, before any of our code runs.
+    ///
+    /// `CollectionSpecification` requires `type`, `options` and `info`, and
+    /// `info.readOnly` as a bare bool, with a default on none of them. A server
+    /// that answers with less cannot be deserialized into it at all, so the
+    /// cursor yields an error, the listing returns `Err`, and the sidebar shows
+    /// an empty database — while `dbStats` beside it reports the real count.
+    ///
+    /// A Cosmos instance is the one thing this cannot be run against here: both
+    /// MongoDB-API emulator images are builds whose evaluation period expired,
+    /// and the current Linux emulator serves the NoSQL API only. So this pins
+    /// the mechanism at the point where it actually breaks — the shape the
+    /// driver will not accept — which is checkable without any server at all.
+    #[test]
+    fn the_driver_cannot_read_a_listing_that_omits_type_options_and_info() {
+        let missing_field = |d: mongodb::bson::Document| {
+            mongodb::bson::from_document::<mongodb::results::CollectionSpecification>(d)
+                .err()
+                .expect(
+                    "if the driver ever accepts a partial listing, the fallback is dead code \
+                     and should be deleted along with this test",
+                )
+                .to_string()
+        };
+
+        // One required field at a time, each refused in turn. Naming them keeps
+        // this honest: the listing fails for the reason claimed, not because the
+        // document was malformed in some other way.
+        assert!(missing_field(sparse_listing_entry()).contains("missing field `type`"));
+        assert!(missing_field(mongodb::bson::doc! {
+            "name": "customers", "type": "collection"
+        })
+        .contains("missing field `options`"));
+        assert!(missing_field(mongodb::bson::doc! {
+            "name": "customers", "type": "collection", "options": {}
+        })
+        .contains("missing field `info`"));
+        // And `info.readOnly` is a bare bool with no default of its own, so even
+        // an `info` that is present but empty is not enough.
+        assert!(missing_field(mongodb::bson::doc! {
+            "name": "customers", "type": "collection", "options": {}, "info": {}
+        })
+        .contains("missing field `readOnly`"));
+    }
+
+    /// The counterpart: what a real MongoDB sends does deserialize, so the
+    /// fallback is reached only by servers that answer with less.
+    #[test]
+    fn a_full_mongodb_listing_still_reads_normally() {
+        let spec = mongodb::bson::from_document::<mongodb::results::CollectionSpecification>(
+            mongodb::bson::doc! {
+                "name": "customers",
+                "type": "collection",
+                "options": {},
+                "info": { "readOnly": false },
+            },
+        )
+        .expect("a complete listing entry must still deserialize");
+        assert_eq!(spec.name, "customers");
+    }
+
+    /// The other half: what the server *will* answer is enough for names alone,
+    /// which is what the fallback asks for.
+    #[test]
+    fn a_sparse_entry_still_yields_its_name() {
+        let name = sparse_listing_entry().get_str("name").unwrap().to_string();
+        assert_eq!(name, "customers");
+    }
+
+    /// The fallback's type must stay distinguishable from a confirmed one — a
+    /// database copy refuses on it rather than materializing what may be a view.
+    #[test]
+    fn the_unknown_type_is_not_a_claim_about_the_collection() {
+        assert_ne!(UNKNOWN_COLLECTION_TYPE, "collection");
+        assert_ne!(UNKNOWN_COLLECTION_TYPE, "view");
+        assert_ne!(UNKNOWN_COLLECTION_TYPE, "timeseries");
+    }
+}
