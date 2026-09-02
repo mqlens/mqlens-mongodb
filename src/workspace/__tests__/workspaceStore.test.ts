@@ -114,7 +114,7 @@ describe('workspaceStore', () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it('hasPendingDocumentEdit reports a queued clear, not just a queued draft', () => {
+  it('hasPendingDocumentEdit reports a queued clear, not just a queued draft', async () => {
     // #326 review: cancelling an edit removes it from the tab at once while its
     // `document_edit: null` is still in the debounce. At that moment the tab has
     // no edit and the backend still holds the draft — so "does this tab have an
@@ -124,13 +124,41 @@ describe('workspaceStore', () => {
     updateTabState('t1', { documentEdit: null });
     expect(hasPendingDocumentEdit('t1')).toBe(true);
 
+    // Still pending once the timer fires: it has left the queue but the backend
+    // has not answered yet, and that interval is the one a move must not slip
+    // through. Only settling clears it.
     vi.advanceTimersByTime(500);
-    expect(hasPendingDocumentEdit('t1')).toBe(false);
+    expect(hasPendingDocumentEdit('t1')).toBe(true);
+    await vi.waitFor(() => expect(hasPendingDocumentEdit('t1')).toBe(false));
 
     // A patch about something else is not a reason to hold up a move.
     updateTabState('t2', { lastQuery: { filter: '{}' } });
     expect(hasPendingDocumentEdit('t2')).toBe(false);
   });
+
+  it('counts a write that has left the queue but not landed', async () => {
+    // #326 review: between the debounce firing and the backend answering, the
+    // tab looked synchronized — nothing queued — so a move could start and
+    // overtake the write it was supposed to follow.
+    let settle!: (v: unknown) => void;
+    invokeMock.mockImplementationOnce(() => new Promise((r) => { settle = r; }));
+    updateTabState('t1', { documentEdit: { draft: '{"name":"Ada"}' } });
+    vi.advanceTimersByTime(500);
+
+    // Queue is empty, but the backend does not have it yet.
+    expect(hasPendingDocumentEdit('t1')).toBe(true);
+
+    let moved = false;
+    const ready = flushTabState('t1').then((ok) => { moved = ok; });
+    await Promise.resolve();
+    expect(moved).toBe(false);
+
+    settle(undefined);
+    await ready;
+    expect(moved).toBe(true);
+    expect(hasPendingDocumentEdit('t1')).toBe(false);
+  });
+
 
   it('keeps a patch pending when its write fails, so a retry still has it', async () => {
     // #326 review: a move aborts on a failed flush — but if the patch were

@@ -355,6 +355,14 @@ export interface UpdateTabStatePatch {
 const DEBOUNCE_MS = 500;
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingPatches = new Map<string, UpdateTabStatePatch>();
+/** Writes that have left the queue but not yet landed.
+ *
+ *  A patch is queued, then in flight, then done, and only the first of those
+ *  was visible. Between the debounce firing and the backend answering, a tab
+ *  looked synchronized: a move could start, reach the store first, and carry
+ *  the older draft — or the editor a cancel or a completed insert had just
+ *  cleared, offering it for a second write (#326 review). */
+const inFlightWrites = new Map<string, { done: Promise<boolean>; documentEdit: boolean }>();
 
 function flushUpdateTabState(tabId: string): Promise<boolean> {
   debounceTimers.delete(tabId);
@@ -367,7 +375,7 @@ function flushUpdateTabState(tabId: string): Promise<boolean> {
   if ('lastAggregate' in patch) op.last_aggregate = patch.lastAggregate;
   if ('builderState' in patch) op.builder_state = patch.builderState;
   if ('documentEdit' in patch) op.document_edit = patch.documentEdit;
-  return workspaceApply(op).then((landed) => {
+  const done = workspaceApply(op).then((landed) => {
     // A failed write leaves the patch pending, not spent. Dropping it made the
     // next attempt look clean: nothing queued, so a flush would report success
     // without writing, and a move would go ahead on the same stale model the
@@ -376,8 +384,14 @@ function flushUpdateTabState(tabId: string): Promise<boolean> {
     // Anything queued while this was in flight is newer and wins; the restored
     // fields only fill what nobody has spoken for since.
     if (!landed) pendingPatches.set(tabId, { ...patch, ...(pendingPatches.get(tabId) ?? {}) });
+    // Cleared here rather than in a `finally`, so it is gone before anyone
+    // waiting on `done` observes the result — and only if this is still the
+    // write being tracked, since a later one may have replaced it.
+    if (inFlightWrites.get(tabId)?.done === done) inFlightWrites.delete(tabId);
     return landed;
   });
+  inFlightWrites.set(tabId, { done, documentEdit: 'documentEdit' in patch });
+  return done;
 }
 
 /**
@@ -411,10 +425,14 @@ export function updateTabState(tabId: string, patch: UpdateTabStatePatch): void 
  * the destination never reconciles it (#326 review). Callers about to issue a
  * move or a detach flush first, so what travels is what is on screen.
  */
-export function flushTabState(tabId: string): Promise<boolean> {
+export async function flushTabState(tabId: string): Promise<boolean> {
   const timer = debounceTimers.get(tabId);
   if (timer !== undefined) clearTimeout(timer);
-  return flushUpdateTabState(tabId);
+  // A write already on its way is part of "what is on screen has landed" —
+  // waiting only for the queue would let a move overtake it.
+  const running = inFlightWrites.get(tabId);
+  const ranBefore = running ? await running.done : true;
+  return (await flushUpdateTabState(tabId)) && ranBefore;
 }
 
 /**
@@ -440,7 +458,10 @@ export function flushTabState(tabId: string): Promise<boolean> {
  */
 export function hasPendingDocumentEdit(tabId: string): boolean {
   const patch = pendingPatches.get(tabId);
-  return !!patch && 'documentEdit' in patch;
+  if (patch && 'documentEdit' in patch) return true;
+  // In flight counts as pending: it has left the queue but the backend does not
+  // have it yet, which is exactly the interval a move must not slip through.
+  return inFlightWrites.get(tabId)?.documentEdit ?? false;
 }
 
 export function cancelTabState(tabIds: string | string[]): void {
@@ -457,4 +478,5 @@ export function resetUpdateTabStateDebounce(): void {
   for (const timer of debounceTimers.values()) clearTimeout(timer);
   debounceTimers.clear();
   pendingPatches.clear();
+  inFlightWrites.clear();
 }
