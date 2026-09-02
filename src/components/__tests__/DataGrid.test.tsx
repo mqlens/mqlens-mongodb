@@ -1673,6 +1673,32 @@ describe('DataGrid — select-all copies every row (#320)', () => {
     });
 
 
+    it('lets go of the key once the user clicks away from the pane', () => {
+      // The case the app showed and the test above missed. Most of the app is
+      // not focusable: clicking a sidebar row moves focus nowhere, so the next
+      // keypress targets <body> and reads as "from nothing in particular" —
+      // which the last-pointed fallback then answered with a pane the user had
+      // already left, selecting results they were not looking at (#328 review).
+      //
+      // The earlier test dispatched on a focusable element, so it took the
+      // target-is-in-another-region branch and never reached this one.
+      const container = document.body.appendChild(document.createElement('div'));
+      render(<DataGrid documents={manyDocs} />, { container });
+      fireEvent.click(within(container).getByRole('button', { name: /json/i }));
+      selectPane(container);
+
+      const elsewhere = document.body.appendChild(document.createElement('div'));
+      fireEvent.pointerDown(elsewhere);
+      document.getSelection()?.removeAllRanges();
+
+      // Focus went nowhere, so the key arrives at the body.
+      const event = pressSelectAll(document.body);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(document.getSelection()?.rangeCount ?? 0).toBe(0);
+    });
+
+
     it('leaves the key to whichever pane the user is working in', () => {
       const mount = (docs: unknown[]) => {
         const container = document.body.appendChild(document.createElement('div'));

@@ -126,11 +126,28 @@ function paneForEventTarget(target: EventTarget | null): Pane | undefined {
     const pane = panes.get(lastPointedId);
     if (pane?.element()) return pane;
   }
-  return panes.size === 1 ? [...panes.values()][0] : undefined;
+  return undefined;
 }
 
+/**
+ * Find is more generous than that: with a single pane on screen and nothing
+ * else indicating one, Cmd/Ctrl+F opens it.
+ *
+ * That generosity suits opening a find bar, which is harmless and obviously
+ * what the user meant. It does not suit a key that replaces the selection:
+ * pressing Cmd/Ctrl+A while working in the sidebar would select results the
+ * user was not looking at. So it stays here, with find, rather than in the
+ * shared resolver (#328 review).
+ */
 function targetPane(event: KeyboardEvent): Pane | undefined {
-  return paneForEventTarget(event.target);
+  const pane = paneForEventTarget(event.target);
+  if (pane) return pane;
+  const unfocused =
+    event.target === null ||
+    event.target === document.body ||
+    event.target === document ||
+    event.target === window;
+  return unfocused && panes.size === 1 ? [...panes.values()][0] : undefined;
 }
 
 function onKeyDown(event: KeyboardEvent): void {
@@ -160,6 +177,14 @@ function onPointerDown(event: Event): void {
       return;
     }
   }
+  // Pointing somewhere else means the user has left: a pane the user pointed at
+  // ten minutes ago is not where they are now.
+  //
+  // This matters because most of the app is not focusable. Clicking a sidebar
+  // row moves focus nowhere, so the next keypress targets <body> and reads as
+  // "from nothing in particular" — and a remembered pane would answer for it,
+  // selecting results the user had already navigated away from (#328 review).
+  lastPointedId = null;
 }
 
 /**
