@@ -1673,6 +1673,46 @@ describe('DataGrid — select-all copies every row (#320)', () => {
   });
 
 
+  it('leaves a copy alone when the user is in a pane showing explain', () => {
+    // #330 review: registration used to be scoped to the results tab, so a pane
+    // showing explain vanished from the registry. Clicking it selected no pane,
+    // the fallback handed ownership to the other, still-registered pane, and a
+    // select-all over the explain output came back as that pane's rows instead.
+    const mountJson = () => {
+      const container = document.body.appendChild(document.createElement('div'));
+      render(<DataGrid documents={manyDocs} />, { container });
+      fireEvent.click(within(container).getByRole('button', { name: /json/i }));
+      return container;
+    };
+    const mountExplain = () => {
+      const container = document.body.appendChild(document.createElement('div'));
+      render(
+        <DataGrid documents={[{ _id: 1 }]} explainResult='{"queryPlanner": {}}' />,
+        { container }
+      );
+      fireEvent.click(within(container).getByRole('button', { name: /explain/i }));
+      return container;
+    };
+    mountJson();
+    const explainPane = mountExplain();
+
+    // The user is working in the explain pane.
+    selectPane(explainPane);
+
+    const getSelection = vi.spyOn(document, 'getSelection');
+    getSelection.mockReturnValue(selectAll());
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const setData = vi.fn();
+    fireEvent.copy(document.body, { clipboardData: { setData, getData: () => '' } });
+
+    // Nobody rewrites the clipboard: the browser copies the explain text the
+    // user actually selected.
+    expect(setData).not.toHaveBeenCalled();
+    getSelection.mockRestore();
+  });
+
+
   it('lets the surviving pane answer once the other one closes', () => {
     // The pane holding ownership can be closed. It will never answer again, and
     // the one still on screen must not go on deferring to it (#330 review).

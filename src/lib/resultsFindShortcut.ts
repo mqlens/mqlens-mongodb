@@ -29,6 +29,17 @@ interface Pane {
   element: () => HTMLElement | null;
   /** Called when this pane should open its find bar. */
   open: () => void;
+  /**
+   * Whether the find bar is reachable in this pane right now.
+   *
+   * Separate from being registered, because the two questions are different:
+   * "which pane is the user in" is true of every pane always, while "can this
+   * one open a find bar" is only true while its results tab is showing. A pane
+   * that unregistered itself on the explain tab was invisible here, so the
+   * user's click landed on no pane and the next question — which pane owns a
+   * copy — was answered with somebody else's (#330 review).
+   */
+  canOpenFind?: () => boolean;
 }
 
 const panes = new Map<number, Pane>();
@@ -107,7 +118,9 @@ function onKeyDown(event: KeyboardEvent): void {
   if (eventBelongsToAnEditor(event.target)) return;
 
   const pane = targetPane(event);
-  if (!pane) return;
+  // A pane with no find bar to open leaves the key alone rather than claiming
+  // it and doing nothing — the browser's own find is the better fallback.
+  if (!pane || pane.canOpenFind?.() === false) return;
   // Only now: leaving the key to the browser — and to Sidebar's own Cmd/Ctrl+F,
   // which stands down on defaultPrevented — when no pane claims it.
   event.preventDefault();

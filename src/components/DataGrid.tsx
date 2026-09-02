@@ -801,16 +801,27 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // Registered only while the results are actually showing: the find bar lives
   // in the results tab, so claiming the key from the explain or code tab would
   // swallow it and open a bar the user cannot see.
+  // Registered for the pane's whole life, not only while its results are
+  // showing. Being registered is what makes a click in this pane count as
+  // selecting it, and that is true on every tab: a pane on the explain tab used
+  // to vanish from the registry, so clicking it selected nothing and the copy
+  // it was about went to whichever pane was still registered (#330 review).
+  // Whether the find bar can open is asked separately, at the moment the key
+  // is pressed.
+  const effectiveTabRef = React.useRef(effectiveTab);
+  effectiveTabRef.current = effectiveTab;
   useEffect(() => {
-    if (effectiveTab !== 'results') return;
     return registerResultsFindTarget({
       element: () => paneRootRef.current,
+      canOpenFind: () => effectiveTabRef.current === 'results',
       open: () => {
         setFindOpen(true);
         setFindFocusToken((token) => token + 1);
       },
     });
-  }, [effectiveTab]);
+    // Registered once: re-registering on every tab change would mint a new id
+    // and drop the record of this pane having been pointed at.
+  }, []);
 
   const closeFind = React.useCallback(() => {
     setFindOpen(false);
