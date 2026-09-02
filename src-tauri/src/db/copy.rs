@@ -144,6 +144,19 @@ pub struct PreflightResult {
     pub self_overwrite: bool,
 }
 
+/// The collections whose kind the server would not report.
+///
+/// Separated out so the rule can be tested for what it is: only an unreported
+/// kind counts, and an ordinary collection is never mistaken for one (#327
+/// review).
+fn unidentified_collections(chosen: &[crate::CollectionInfo]) -> Vec<&str> {
+    chosen
+        .iter()
+        .filter(|c| c.collection_type == crate::db::metadata::UNKNOWN_COLLECTION_TYPE)
+        .map(|c| c.name.as_str())
+        .collect()
+}
+
 /// Does `collection` exist in `db` on connection `id`? Works for mock + real.
 async fn collection_exists(state: &AppState, id: &str, db: &str, collection: &str) -> Result<bool, String> {
     let names = crate::list_collections_impl(state, id, db).await?;
@@ -651,6 +664,27 @@ async fn start_database_copy_inner(
         None => all,
     };
 
+    // A copy decides what to do with each collection by its type: views are
+    // skipped unless asked for, time-series are always skipped, and everything
+    // else is read and written document by document. So a type this server
+    // would not tell us is not something to assume our way past — treating an
+    // unidentified view as an ordinary collection would materialize it into the
+    // target, silently turning a view into a table of its own (#327 review).
+    //
+    // Refusing outright rather than skipping them: a copy that quietly leaves
+    // collections out looks like a copy that worked. This is also no loss of
+    // function, since a server that cannot describe its collections could not
+    // be copied from at all before — the listing itself failed.
+    let unidentified = unidentified_collections(&chosen);
+    if !unidentified.is_empty() {
+        return Err(format!(
+            "This server did not report what kind of collection these are, so they cannot be \
+             copied safely: {}. A view copied as a collection would be materialized into the \
+             target, which is not what a copy means.",
+            unidentified.join(", ")
+        ));
+    }
+
     let task_id = Uuid::new_v4().to_string();
     let task = TaskInfo {
         id: task_id.clone(),
@@ -793,6 +827,46 @@ async fn start_database_copy_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    #[test]
+    fn only_an_unreported_kind_counts_as_unidentified() {
+        // #327 review: the fallback listing cannot tell a view from a collection,
+        // and a copy decides what to do from exactly that field. An unidentified
+        // view copied as an ordinary collection would be materialized into the
+        // target — a view silently turned into a table of its own.
+        let of = |name: &str, kind: &str| crate::CollectionInfo {
+            name: name.to_string(),
+            collection_type: kind.to_string(),
+        };
+        let chosen = vec![
+            of("customers", "collection"),
+            of("active_users", "view"),
+            of("readings", "timeseries"),
+            of("mystery", crate::db::metadata::UNKNOWN_COLLECTION_TYPE),
+        ];
+
+        assert_eq!(unidentified_collections(&chosen), vec!["mystery"]);
+    }
+
+    #[test]
+    fn a_fully_described_listing_is_never_refused() {
+        let of = |name: &str, kind: &str| crate::CollectionInfo {
+            name: name.to_string(),
+            collection_type: kind.to_string(),
+        };
+        let chosen = vec![of("customers", "collection"), of("active_users", "view")];
+        assert!(unidentified_collections(&chosen).is_empty());
+    }
+
+    #[test]
+    fn the_unknown_kind_is_not_one_the_copy_acts_on() {
+        // The whole point of a separate value: were it "collection", the copy
+        // would read it as a confirmed ordinary collection and proceed.
+        for known in ["collection", "view", "timeseries"] {
+            assert_ne!(crate::db::metadata::UNKNOWN_COLLECTION_TYPE, known);
+        }
+    }
 
     #[test]
     fn conflict_mode_parses_known_values_and_rejects_others() {

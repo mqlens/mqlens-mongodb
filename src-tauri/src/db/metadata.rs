@@ -80,6 +80,15 @@ pub async fn list_collections_impl(
     result
 }
 
+/// The type of a collection the server would not describe.
+///
+/// Deliberately not "collection". Callers decide things from this field, and
+/// the two are not the same claim: one says "this is an ordinary collection",
+/// the other says "this server did not say". A copy reads it to refuse rather
+/// than materialize what might be a view; the sidebar reads it as nothing in
+/// particular and draws the generic icon, which is exactly right (#327 review).
+pub const UNKNOWN_COLLECTION_TYPE: &str = "unknown";
+
 async fn list_collections_impl_inner(
     state: &AppState,
     id: &str,
@@ -137,7 +146,7 @@ async fn list_collections_impl_inner(
                 .into_iter()
                 .map(|name| CollectionInfo {
                     name,
-                    collection_type: "collection".to_string(),
+                    collection_type: UNKNOWN_COLLECTION_TYPE.to_string(),
                 })
                 .collect())
         }
