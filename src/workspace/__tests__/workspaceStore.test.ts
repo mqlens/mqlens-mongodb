@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { updateTabState, flushTabState, cancelTabState, hasPendingDocumentEdit, applyTabOp, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
+import { updateTabState, flushTabState, cancelTabState, hasPendingDocumentEdit, applyTabOp, renameTabState, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
 import { toPersistedTab, toProfileSpaceId, type PersistableConnection } from '../persistence';
 import type { WorkspaceAction } from '../model';
 
@@ -142,6 +142,54 @@ describe('workspaceStore', () => {
     settleFirst(undefined);
     await closed;
     expect(order).toEqual(['start:update_tab_state', 'start:close_tab']);
+  });
+
+
+  it('renameTabState moves a queued patch onto the tab\'s new id', async () => {
+    // #326 review: a patch restored after a failed write is keyed by the id it
+    // was sent with. Rename the collection and that id is free again — reopen it
+    // later and the deterministic id returns with a renamed tab's draft still
+    // queued against it.
+    invokeMock.mockRejectedValueOnce(new Error('backend down'));
+    updateTabState('old-id', { documentEdit: { draft: 'half typed' } });
+    expect(await flushTabState('old-id')).toBe(false);
+    expect(hasPendingDocumentEdit('old-id')).toBe(true);
+
+    renameTabState('old-id', 'new-id');
+    expect(hasPendingDocumentEdit('old-id')).toBe(false);
+    expect(hasPendingDocumentEdit('new-id')).toBe(true);
+
+    invokeMock.mockClear();
+    vi.advanceTimersByTime(500);
+    expect(invokeMock).toHaveBeenCalledWith('workspace_apply', {
+      op: { type: 'update_tab_state', tab_id: 'new-id', document_edit: { draft: 'half typed' } },
+      origin: 'main',
+    });
+  });
+
+  it('renameTabState lets a value already queued under the new id win', () => {
+    updateTabState('old-id', { documentEdit: { draft: 'older' } });
+    updateTabState('new-id', { documentEdit: { draft: 'newer' } });
+    renameTabState('old-id', 'new-id');
+
+    invokeMock.mockClear();
+    vi.advanceTimersByTime(500);
+    const forNewId = invokeMock.mock.calls.filter(([, a]: any) => (a.op as any).tab_id === 'new-id');
+    expect(forNewId).toHaveLength(1);
+    expect((forNewId[0][1].op as any).document_edit).toEqual({ draft: 'newer' });
+  });
+
+  it('renameTabState disowns a write still out under the old id', async () => {
+    // It cannot be recalled, but its failure must not restore a patch under an
+    // id that is nobody's tab now.
+    let rejectWrite!: (e: Error) => void;
+    invokeMock.mockImplementationOnce(() => new Promise((_, r) => { rejectWrite = r; }));
+    updateTabState('old-id', { documentEdit: { draft: 'half typed' } });
+    vi.advanceTimersByTime(500);
+
+    renameTabState('old-id', 'new-id');
+    rejectWrite(new Error('backend down'));
+    await vi.waitFor(() => expect(hasPendingDocumentEdit('old-id')).toBe(false));
   });
 
 

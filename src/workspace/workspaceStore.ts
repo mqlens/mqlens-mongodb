@@ -553,6 +553,36 @@ export function hasPendingDocumentEdit(tabId: string): boolean {
   return (tabWrites.get(tabId)?.documentEdits ?? 0) > 0;
 }
 
+/**
+ * Move `oldId`'s queued patch onto `newId`, because its tab just became that.
+ *
+ * A patch restored after a failed write is keyed by the id it was sent with.
+ * Rename the collection and that id is free again — recreate the namespace,
+ * reopen the tab, and the deterministic id comes back with a stale draft still
+ * queued against it, waiting for the next flush to put a renamed tab's text on
+ * a model that never had it (#326 review). The patch belongs to the tab, so it
+ * follows the tab.
+ *
+ * The old id's generation is bumped as well: a write still out under it must
+ * not restore itself there on failure, now that nothing is that tab any more.
+ */
+export function renameTabState(oldId: string, newId: string): void {
+  const timer = debounceTimers.get(oldId);
+  if (timer !== undefined) clearTimeout(timer);
+  debounceTimers.delete(oldId);
+
+  const patch = pendingPatches.get(oldId);
+  pendingPatches.delete(oldId);
+  tabGenerations.set(oldId, generationOf(oldId) + 1);
+  if (!patch) return;
+
+  // Anything already queued under the new id is newer and wins.
+  pendingPatches.set(newId, { ...patch, ...(pendingPatches.get(newId) ?? {}) });
+  if (!debounceTimers.has(newId)) {
+    debounceTimers.set(newId, setTimeout(() => flushUpdateTabState(newId), DEBOUNCE_MS));
+  }
+}
+
 export function cancelTabState(tabIds: string | string[]): void {
   for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
     const timer = debounceTimers.get(tabId);

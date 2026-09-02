@@ -81,6 +81,7 @@ import {
   flushTabState,
   cancelTabState,
   applyTabOp,
+  renameTabState,
   hasPendingDocumentEdit,
   type WorkspaceChangedPayload,
   type ConnectionsChangedPayload,
@@ -2745,6 +2746,12 @@ function Workspace() {
       // a no-op, and the rename then carries only the older draft — text lost
       // with nothing left pending to say so (#326 review).
       case 'rename_tab':
+        // The queued patch follows the tab, whether or not the rename itself is
+        // mirrored — an unmirrored tab can still have left one behind.
+        renameTabState(
+          toProfileSpaceId(action.oldId, activeConnections),
+          toProfileSpaceId(action.newId, activeConnections)
+        );
         if (unmirroredTabIdsRef.current.has(action.oldId)) {
           unmirroredTabIdsRef.current.delete(action.oldId);
           unmirroredTabIdsRef.current.add(action.newId);
@@ -3835,6 +3842,11 @@ function Workspace() {
     tab: QueryTab,
     edit: Omit<DocumentEdit, 'id' | 'draft' | 'error' | 'saving'>
   ) => {
+    // Frozen tabs take no new edit either. The dialog being non-modal is what
+    // makes this reachable — drag it aside and Insert again — and a replacement
+    // started now is mirrored after the move may already have taken its
+    // snapshot, so it goes nowhere and dies with the source tab (#326 review).
+    if (movingTabIds.has(tab.id)) return;
     const opened: DocumentEdit = {
       ...edit,
       id: newEditId(),
