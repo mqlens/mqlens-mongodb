@@ -143,7 +143,10 @@ pub async fn drop_collection_impl(
     confirmed: bool,
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
-    crate::namespace_guard::ensure_namespace_idle(state, id, database, Some(collection))?;
+    // Held for the whole call rather than checked before it: a write starting
+    // in the gap between a check and the await would be accepted, and then
+    // recreate the collection this drop had just removed (#326 review).
+    let _claim = crate::namespace_guard::begin_collection_ddl(state, id, database, &[collection])?;
     let result = drop_collection_inner(state, id, database, collection, confirmed).await;
     crate::audit::maybe_record_result(
         state,
@@ -191,7 +194,8 @@ pub async fn rename_collection_impl(
     confirmed: bool,
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
-    crate::namespace_guard::ensure_namespace_idle(state, id, database, Some(from))?;
+    // Both names: a write into the destination mid-rename is the same hazard.
+    let _claim = crate::namespace_guard::begin_collection_ddl(state, id, database, &[from, to])?;
     let result = rename_collection_inner(state, id, database, from, to, confirmed).await;
     crate::audit::maybe_record_result(
         state,
@@ -382,7 +386,7 @@ pub async fn drop_database_impl(
     confirmed: bool,
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
-    crate::namespace_guard::ensure_namespace_idle(state, id, database, None)?;
+    let _claim = crate::namespace_guard::begin_database_ddl(state, id, &[database])?;
     let result = drop_database_inner(state, id, database, confirmed).await;
     crate::audit::maybe_record_result(
         state,
@@ -432,7 +436,8 @@ pub async fn rename_database_impl(
 ) -> Result<DatabaseRenameResult, String> {
     let started = std::time::Instant::now();
     // Every collection under it moves, so any write below the database blocks.
-    crate::namespace_guard::ensure_namespace_idle(state, id, from, None)?;
+    // Every collection under either name moves, so any write below one blocks.
+    let _claim = crate::namespace_guard::begin_database_ddl(state, id, &[from, to])?;
     let result = rename_database_inner(state, id, from, to, drop_source, confirmed).await;
     crate::audit::maybe_record_result(
         state,

@@ -179,7 +179,7 @@ pub struct AppState {
     /// write and undo it — see `namespace_guard`. Shared by every window,
     /// which is the whole point, since a renderer only ever sees its own
     /// (#326 review).
-    pub document_writes: Mutex<HashMap<String, usize>>,
+    pub namespaces: Mutex<crate::namespace_guard::NamespaceLocks>,
     pub connection_meta: Mutex<HashMap<String, ConnectionMeta>>,
     /// Embedded MCP server lifecycle + settings (#98 Task 1): enablement,
     /// bound port, bearer token, rolling call log, and the live server
@@ -238,7 +238,7 @@ impl AppState {
             conn_uris: Mutex::new(HashMap::new()),
             workspace: Mutex::new(None),
             workspace_write_gen: Arc::new(AtomicU64::new(0)),
-            document_writes: Mutex::new(HashMap::new()),
+            namespaces: Mutex::new(Default::default()),
             connection_meta: Mutex::new(HashMap::new()),
             mcp: Arc::new(Mutex::new(mcp::McpControl::new())),
             audit: Arc::new(Mutex::new(None)),
