@@ -1185,8 +1185,28 @@ pub fn load_from_file(path: &Path) -> Option<Workspace> {
 /// mid-`fs::write` left a corrupt file that `load_from_file` would then fail
 /// to parse (or fail `validate`) on every future boot, until the user
 /// deleted it by hand.
+/// The workspace as it goes to disk: every in-progress document edit dropped.
+///
+/// A draft has to be in the store for a tab to change window — the destination
+/// builds the tab from there — but it does not have to outlive the session, and
+/// `workspace.json` is plaintext. Keeping an unsaved document body (its
+/// `targetDoc` is a whole document) in a file that sits on disk indefinitely is
+/// a bigger promise than the feature needs: the draft exists to survive a move,
+/// not a reinstall.
+///
+/// So it lives in memory, where every window reads it, and stops there. A
+/// restart opens with no editors, exactly as before drafts travelled at all
+/// (#326 review).
+fn without_document_edits(ws: &Workspace) -> Workspace {
+    let mut copy = ws.clone();
+    for tab in &mut copy.tabs {
+        tab.document_edit = None;
+    }
+    copy
+}
+
 pub fn save_to_file(path: &Path, ws: &Workspace) -> Result<(), String> {
-    let content = serde_json::to_string_pretty(ws)
+    let content = serde_json::to_string_pretty(&without_document_edits(ws))
         .map_err(|e| format!("Failed to serialize workspace: {}", e))?;
     let mut tmp_os = path.as_os_str().to_os_string();
     tmp_os.push(".tmp");
@@ -2916,6 +2936,50 @@ mod store {
             second, first,
             "second call must return the cached in-memory copy, not re-read the mutated file"
         );
+    }
+
+    /// #326 review: a draft has to reach the store so a tab can carry it to
+    /// another window, but `workspace.json` is plaintext and long-lived. The
+    /// document stays in memory, where every window reads it, and never lands
+    /// in the file.
+    #[test]
+    fn save_to_file_keeps_document_edits_out_of_the_file() {
+        let path = tmp_path("no-drafts-on-disk.json");
+        let mut ws = sample_ws();
+        ws.tabs.push(TabModel {
+            id: "a".into(),
+            tab_type: "collection".into(),
+            profile_id: "p1".into(),
+            profile_name: "Profile 1".into(),
+            db: "mydb".into(),
+            collection: "mycoll".into(),
+            index_name: None,
+            last_query: Some(serde_json::json!({"filter": "{}"})),
+            last_aggregate: None,
+            builder_state: None,
+            document_edit: Some(serde_json::json!({
+                "id": "edit-1",
+                "mode": "edit",
+                "draft": "{\"ssn\":\"not for the disk\"}"
+            })),
+        });
+
+        save_to_file(&path, &ws).unwrap();
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(
+            !raw.contains("not for the disk"),
+            "an unsaved document body must not be written to workspace.json:\n{raw}"
+        );
+        assert!(!raw.contains("documentEdit"), "the key itself should be absent too");
+
+        // Everything else still persists, and the in-memory copy is untouched:
+        // this is a serialization choice, not a mutation of the store.
+        let loaded = load_from_file(&path).unwrap();
+        assert_eq!(loaded.tabs[0].last_query, Some(serde_json::json!({"filter": "{}"})));
+        assert_eq!(loaded.tabs[0].document_edit, None);
+        assert!(ws.tabs[0].document_edit.is_some());
+
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
