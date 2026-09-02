@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { updateTabState, flushTabState, cancelTabState, hasPendingDocumentEdit, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
+import { updateTabState, flushTabState, cancelTabState, hasPendingDocumentEdit, applyTabOp, resetUpdateTabStateDebounce, workspaceApply, workspaceGet, actionToOp } from '../workspaceStore';
 import { toPersistedTab, toProfileSpaceId, type PersistableConnection } from '../persistence';
 import type { WorkspaceAction } from '../model';
 
@@ -96,6 +96,54 @@ describe('workspaceStore', () => {
     await flushed;
     expect(done).toBe(true);
   });
+
+  it('keeps counting a draft when a second write for the tab overlaps it', async () => {
+    // #326 review: tracking one write per tab meant the second erased the
+    // first's record. A query-state update starting while a draft was still in
+    // flight made `hasPendingDocumentEdit` report false, and a move could go.
+    let settleDraft!: (v: unknown) => void;
+    invokeMock.mockImplementationOnce(() => new Promise((r) => { settleDraft = r; }));
+    updateTabState('t1', { documentEdit: { draft: '{"name":"Ada"}' } });
+    vi.advanceTimersByTime(500);
+    expect(hasPendingDocumentEdit('t1')).toBe(true);
+
+    // A second, unrelated write for the same tab while the first is away.
+    updateTabState('t1', { lastQuery: { filter: '{}' } });
+    vi.advanceTimersByTime(500);
+    expect(hasPendingDocumentEdit('t1')).toBe(true);
+
+    settleDraft(undefined);
+    await vi.waitFor(() => expect(hasPendingDocumentEdit('t1')).toBe(false));
+  });
+
+  it('runs a tab\'s writes one at a time, in the order they were issued', async () => {
+    // The close of a tab must not overtake a draft still on its way, and the
+    // reopen that reuses the id must not overtake the close (#326 review).
+    const order: string[] = [];
+    let settleFirst!: (v: unknown) => void;
+    invokeMock.mockImplementationOnce((_cmd: string, args: any) => {
+      order.push(`start:${args.op.type}`);
+      return new Promise((r) => { settleFirst = r; });
+    });
+    invokeMock.mockImplementation((_cmd: string, args: any) => {
+      order.push(`start:${args.op.type}`);
+      return Promise.resolve();
+    });
+
+    updateTabState('t1', { documentEdit: { draft: 'half typed' } });
+    vi.advanceTimersByTime(500);
+    expect(order).toEqual(['start:update_tab_state']);
+
+    // Issued while the draft write is still out; must not start yet.
+    const closed = applyTabOp(['t1'], { type: 'close_tab', tab_id: 't1' });
+    await Promise.resolve();
+    expect(order).toEqual(['start:update_tab_state']);
+
+    settleFirst(undefined);
+    await closed;
+    expect(order).toEqual(['start:update_tab_state', 'start:close_tab']);
+  });
+
 
   it('cancelTabState drops a pending patch instead of sending it late', () => {
     // Tab ids are deterministic: close a tab mid-debounce and reopen the same

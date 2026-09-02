@@ -355,43 +355,120 @@ export interface UpdateTabStatePatch {
 const DEBOUNCE_MS = 500;
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingPatches = new Map<string, UpdateTabStatePatch>();
-/** Writes that have left the queue but not yet landed.
+/**
+ * What is still owed to the backend for one tab.
  *
- *  A patch is queued, then in flight, then done, and only the first of those
- *  was visible. Between the debounce firing and the backend answering, a tab
- *  looked synchronized: a move could start, reach the store first, and carry
- *  the older draft — or the editor a cancel or a completed insert had just
- *  cleared, offering it for a second write (#326 review). */
-const inFlightWrites = new Map<string, { done: Promise<boolean>; documentEdit: boolean }>();
+ * Every write naming a tab goes through here, and they run one at a time in
+ * the order they were issued. That ordering is the point. A tab's writes reach
+ * a store that also serves other windows, and the interesting ops — a move, a
+ * detach, a close — read it as it stands the moment they arrive, so two writes
+ * for the same tab overtaking each other is the difference between carrying a
+ * draft and carrying the one before it.
+ *
+ * Tracking a single outstanding write was not enough twice over: a second one
+ * replaced the first's record, and a close could not see either (#326 review).
+ * A chain has no such gaps — `tail` is everything outstanding, and
+ * `documentEdits` counts how many of those carry a draft, which is what
+ * decides whether a move may go now.
+ */
+interface TabWrites {
+  tail: Promise<boolean>;
+  documentEdits: number;
+}
+const tabWrites = new Map<string, TabWrites>();
+/** Bumped when a tab closes, so a write issued before it cannot re-queue after. */
+const tabGenerations = new Map<string, number>();
+
+const generationOf = (tabId: string) => tabGenerations.get(tabId) ?? 0;
+
+/**
+ * Run `send` once every write already issued for these tabs has settled, and
+ * count it as outstanding until it settles itself.
+ *
+ * `tabIds` is a list because a `close_many` names several at once: it has to
+ * follow each of their queues, and each of them has to follow it.
+ */
+function chainTabWrites(
+  tabIds: string[],
+  send: () => Promise<boolean>,
+  carriesDocumentEdit = false
+): Promise<boolean> {
+  const settle = (landed: boolean) => {
+    for (const id of tabIds) {
+      const entry = tabWrites.get(id);
+      if (!entry) continue;
+      if (carriesDocumentEdit) entry.documentEdits -= 1;
+      // Only the last write out clears the tab: an earlier one settling says
+      // nothing about the ones still behind it.
+      if (entry.tail === done) tabWrites.delete(id);
+    }
+    return landed;
+  };
+  const priors = tabIds
+    .map((id) => tabWrites.get(id)?.tail)
+    .filter((tail): tail is Promise<boolean> => tail !== undefined);
+  // Nothing outstanding means nothing to order behind, so the write goes now.
+  // Waiting on an already-resolved promise would still cost a turn of the
+  // microtask queue, which is a behaviour change for every write in the app to
+  // buy ordering only some of them need.
+  const done: Promise<boolean> =
+    priors.length === 0 ? send().then(settle) : Promise.all(priors).then(send).then(settle);
+  for (const id of tabIds) {
+    const entry = tabWrites.get(id);
+    tabWrites.set(id, {
+      tail: done,
+      documentEdits: (entry?.documentEdits ?? 0) + (carriesDocumentEdit ? 1 : 0),
+    });
+  }
+  return done;
+}
+
+/**
+ * Mirror one op that names tabs, ordered against everything else for them.
+ *
+ * Used for the ops that create and destroy tab models — a close must not
+ * overtake a draft still on its way, and the reopen that follows must not
+ * overtake the close (#326 review). Ordering only within a tab; ops for
+ * different tabs still run concurrently.
+ */
+export function applyTabOp(tabIds: string[], op: Record<string, unknown>): Promise<boolean> {
+  return chainTabWrites(tabIds, () => workspaceApply(op));
+}
 
 function flushUpdateTabState(tabId: string): Promise<boolean> {
   debounceTimers.delete(tabId);
   const patch = pendingPatches.get(tabId);
   pendingPatches.delete(tabId);
-  if (!patch) return Promise.resolve(true);
+  if (!patch) return tabWrites.get(tabId)?.tail ?? Promise.resolve(true);
 
   const op: Record<string, unknown> = { type: 'update_tab_state', tab_id: tabId };
   if ('lastQuery' in patch) op.last_query = patch.lastQuery;
   if ('lastAggregate' in patch) op.last_aggregate = patch.lastAggregate;
   if ('builderState' in patch) op.builder_state = patch.builderState;
   if ('documentEdit' in patch) op.document_edit = patch.documentEdit;
-  const done = workspaceApply(op).then((landed) => {
-    // A failed write leaves the patch pending, not spent. Dropping it made the
-    // next attempt look clean: nothing queued, so a flush would report success
-    // without writing, and a move would go ahead on the same stale model the
-    // first attempt refused to move against (#326 review).
-    //
-    // Anything queued while this was in flight is newer and wins; the restored
-    // fields only fill what nobody has spoken for since.
-    if (!landed) pendingPatches.set(tabId, { ...patch, ...(pendingPatches.get(tabId) ?? {}) });
-    // Cleared here rather than in a `finally`, so it is gone before anyone
-    // waiting on `done` observes the result — and only if this is still the
-    // write being tracked, since a later one may have replaced it.
-    if (inFlightWrites.get(tabId)?.done === done) inFlightWrites.delete(tabId);
-    return landed;
-  });
-  inFlightWrites.set(tabId, { done, documentEdit: 'documentEdit' in patch });
-  return done;
+  const issuedAt = generationOf(tabId);
+  return chainTabWrites(
+    [tabId],
+    () =>
+      workspaceApply(op).then((landed) => {
+        // A failed write leaves the patch pending, not spent. Dropping it made
+        // the next attempt look clean: nothing queued, so a flush would report
+        // success without writing, and a move would go ahead on the same stale
+        // model the first attempt refused to move against (#326 review).
+        //
+        // Unless the tab closed while this was away — then the patch describes
+        // a model that no longer exists, and re-queueing it would leave a draft
+        // waiting to attach itself to the next tab given the same id.
+        //
+        // Anything queued since is newer and wins; the restored fields fill
+        // only what nobody has spoken for.
+        if (!landed && generationOf(tabId) === issuedAt) {
+          pendingPatches.set(tabId, { ...patch, ...(pendingPatches.get(tabId) ?? {}) });
+        }
+        return landed;
+      }),
+    'documentEdit' in patch
+  );
 }
 
 /**
@@ -426,13 +503,23 @@ export function updateTabState(tabId: string, patch: UpdateTabStatePatch): void 
  * move or a detach flush first, so what travels is what is on screen.
  */
 export async function flushTabState(tabId: string): Promise<boolean> {
-  const timer = debounceTimers.get(tabId);
-  if (timer !== undefined) clearTimeout(timer);
-  // A write already on its way is part of "what is on screen has landed" —
-  // waiting only for the queue would let a move overtake it.
-  const running = inFlightWrites.get(tabId);
-  const ranBefore = running ? await running.done : true;
-  return (await flushUpdateTabState(tabId)) && ranBefore;
+  // Repeats because the wait is a gap: a keystroke during it queues a patch
+  // behind the one being sent. Each pass sends what is queued and waits for
+  // everything outstanding; it returns when a pass finds neither.
+  for (let pass = 0; pass < 8; pass++) {
+    const timer = debounceTimers.get(tabId);
+    if (timer !== undefined) clearTimeout(timer);
+    // A write that did not land ends this: the patch stays pending, and
+    // whether to try again is the caller's call, not a loop's.
+    if (!(await flushUpdateTabState(tabId))) return false;
+    const outstanding = tabWrites.get(tabId);
+    if (outstanding && !(await outstanding.tail)) return false;
+    if (!pendingPatches.has(tabId) && !tabWrites.has(tabId)) return true;
+  }
+  // Still not settled after eight rounds. Reporting failure is the honest
+  // answer: the caller's whole reason for asking is that it must not act on a
+  // model it cannot vouch for.
+  return false;
 }
 
 /**
@@ -459,9 +546,11 @@ export async function flushTabState(tabId: string): Promise<boolean> {
 export function hasPendingDocumentEdit(tabId: string): boolean {
   const patch = pendingPatches.get(tabId);
   if (patch && 'documentEdit' in patch) return true;
-  // In flight counts as pending: it has left the queue but the backend does not
-  // have it yet, which is exactly the interval a move must not slip through.
-  return inFlightWrites.get(tabId)?.documentEdit ?? false;
+  // Outstanding counts as pending: a write has left the queue but the backend
+  // does not have it yet, which is exactly the interval a move must not slip
+  // through. Counted rather than flagged, because several can overlap and the
+  // last to settle is not necessarily the one carrying a draft (#326 review).
+  return (tabWrites.get(tabId)?.documentEdits ?? 0) > 0;
 }
 
 export function cancelTabState(tabIds: string | string[]): void {
@@ -470,6 +559,12 @@ export function cancelTabState(tabIds: string | string[]): void {
     if (timer !== undefined) clearTimeout(timer);
     debounceTimers.delete(tabId);
     pendingPatches.delete(tabId);
+    // A write already on its way cannot be recalled, but it can be disowned:
+    // past this generation its failure does not re-queue it, so it cannot come
+    // back to attach a dead tab's draft to the next tab given the same id. The
+    // close op itself is chained behind it, so the model it may land on is
+    // removed immediately afterwards (#326 review).
+    tabGenerations.set(tabId, generationOf(tabId) + 1);
   }
 }
 
@@ -478,5 +573,6 @@ export function resetUpdateTabStateDebounce(): void {
   for (const timer of debounceTimers.values()) clearTimeout(timer);
   debounceTimers.clear();
   pendingPatches.clear();
-  inFlightWrites.clear();
+  tabWrites.clear();
+  tabGenerations.clear();
 }

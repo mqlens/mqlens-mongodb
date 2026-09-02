@@ -80,6 +80,7 @@ import {
   moveTabToWindow,
   flushTabState,
   cancelTabState,
+  applyTabOp,
   hasPendingDocumentEdit,
   type WorkspaceChangedPayload,
   type ConnectionsChangedPayload,
@@ -2670,31 +2671,46 @@ function Workspace() {
             return;
           }
           unmirroredTabIdsRef.current.delete(action.tabId);
-          workspaceApply(actionToOp(action, persisted, activeConnections));
+          // Ordered on the tab, like the close below: reopening a collection
+          // reuses its id, and this must not overtake the close of the tab that
+          // had it (#326 review).
+          applyTabOp(
+            [toProfileSpaceId(action.tabId, activeConnections)],
+            actionToOp(action, persisted, activeConnections)
+          );
           return;
         }
         if (unmirroredTabIdsRef.current.has(action.tabId)) return;
-        workspaceApply(actionToOp(action, undefined, activeConnections));
+        applyTabOp(
+          [toProfileSpaceId(action.tabId, activeConnections)],
+          actionToOp(action, undefined, activeConnections)
+        );
         return;
       }
-      // A queued patch outlives its tab otherwise. Ids are deterministic, so
-      // closing and reopening the same collection reuses one — and a draft
-      // still inside the debounce would attach to the new model, restoring an
-      // editor the user closed (#326 review).
+      // Two things a close has to get right, both because tab ids are
+      // deterministic: close and reopen the same collection and the id comes
+      // back. A queued patch would attach to the new model, restoring an editor
+      // the user closed — so it is dropped. And a write already on its way
+      // would do the same, so the close is ordered behind it rather than racing
+      // it, and the reopen behind the close (#326 review).
       case 'close_tab':
         cancelTabState(toProfileSpaceId(action.tabId, activeConnections));
         if (unmirroredTabIdsRef.current.has(action.tabId)) {
           unmirroredTabIdsRef.current.delete(action.tabId);
           return;
         }
-        workspaceApply(actionToOp(action, undefined, activeConnections));
+        applyTabOp(
+          [toProfileSpaceId(action.tabId, activeConnections)],
+          actionToOp(action, undefined, activeConnections)
+        );
         return;
       case 'close_many': {
-        cancelTabState(action.tabIds.map(id => toProfileSpaceId(id, activeConnections)));
+        const closing = action.tabIds.map(id => toProfileSpaceId(id, activeConnections));
+        cancelTabState(closing);
         const tabIds = action.tabIds.filter(id => !unmirroredTabIdsRef.current.has(id));
         action.tabIds.forEach(id => unmirroredTabIdsRef.current.delete(id));
         if (tabIds.length === 0) return;
-        workspaceApply(actionToOp({ ...action, tabIds }, undefined, activeConnections));
+        applyTabOp(closing, actionToOp({ ...action, tabIds }, undefined, activeConnections));
         return;
       }
       case 'move_tab':
