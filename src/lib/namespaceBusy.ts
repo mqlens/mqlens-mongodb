@@ -12,31 +12,42 @@
  * the same collection, and it is the collection being renamed.
  */
 
-/** The parts of a tab this needs — a structural subset of App's `QueryTab`. */
-export interface SavingTab {
+/**
+ * One document write that has been sent and not yet answered.
+ *
+ * Recorded per request rather than read off the edit that started it. An edit
+ * can be replaced while its save is still running — the non-modal dialog
+ * exists so a second one can be started on the same tab — and asking the
+ * current edit whether it is saving then answers about the wrong request, or
+ * about none at all (#326 review). A request outlives the edit; this is the
+ * record that outlives it too.
+ */
+export interface PendingSave {
   connectionId: string;
   db: string;
   collection: string;
-  documentEdit?: { saving: boolean } | undefined;
 }
 
 /**
- * True when any tab has a document save running against this namespace.
+ * True when a document write is outstanding against this namespace.
  *
  * Omit `collection` to ask about a whole database, which is what a database
- * rename needs: every collection under it moves.
+ * rename or drop needs: every collection under it moves or goes.
+ *
+ * This is the fast answer, for a control that can refuse before it starts. It
+ * only knows about this window; the authoritative check is the backend's, which
+ * sees every window's requests — see `namespace_guard.rs`.
  */
 export function isNamespaceBusy(
-  tabs: readonly SavingTab[],
+  saves: readonly PendingSave[],
   connectionId: string,
   db: string,
   collection?: string
 ): boolean {
-  return tabs.some(
-    (tab) =>
-      tab.documentEdit?.saving === true &&
-      tab.connectionId === connectionId &&
-      tab.db === db &&
-      (collection === undefined || tab.collection === collection)
+  return saves.some(
+    (save) =>
+      save.connectionId === connectionId &&
+      save.db === db &&
+      (collection === undefined || save.collection === collection)
   );
 }

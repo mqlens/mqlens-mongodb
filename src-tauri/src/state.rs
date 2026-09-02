@@ -172,6 +172,14 @@ pub struct AppState {
     /// changes (`set_connection_meta` on connect, removed on
     /// `disconnect_db`). See `ConnectionMeta`'s doc comment for why this
     /// deliberately never holds a URI.
+    /// Document writes in flight, counted per `connection/database/collection`.
+    ///
+    /// A rename or a drop of a namespace with an outstanding write is refused:
+    /// if it landed first, the server would recreate the namespace for the
+    /// write and undo it — see `namespace_guard`. Shared by every window,
+    /// which is the whole point, since a renderer only ever sees its own
+    /// (#326 review).
+    pub document_writes: Mutex<HashMap<String, usize>>,
     pub connection_meta: Mutex<HashMap<String, ConnectionMeta>>,
     /// Embedded MCP server lifecycle + settings (#98 Task 1): enablement,
     /// bound port, bearer token, rolling call log, and the live server
@@ -230,6 +238,7 @@ impl AppState {
             conn_uris: Mutex::new(HashMap::new()),
             workspace: Mutex::new(None),
             workspace_write_gen: Arc::new(AtomicU64::new(0)),
+            document_writes: Mutex::new(HashMap::new()),
             connection_meta: Mutex::new(HashMap::new()),
             mcp: Arc::new(Mutex::new(mcp::McpControl::new())),
             audit: Arc::new(Mutex::new(None)),

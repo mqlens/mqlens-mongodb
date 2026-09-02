@@ -343,6 +343,9 @@ pub async fn insert_document_impl(
     collection: &str,
     document: &str,
 ) -> Result<String, String> {
+    // Counted for the life of this call, so a rename or a drop of this
+    // namespace is refused while the insert is on its way (#326 review).
+    let _write = crate::namespace_guard::begin_document_write(state, id, database, collection)?;
     let started = std::time::Instant::now();
     let result = insert_document_inner(state, id, database, collection, document).await;
     crate::audit::maybe_record_result(
@@ -1070,6 +1073,7 @@ pub async fn update_document_impl(
     edited: &str,
     projection: Option<&str>,
 ) -> Result<u64, String> {
+    let _write = crate::namespace_guard::begin_document_write(state, id, database, collection)?;
     let started = std::time::Instant::now();
     let outcome = update_document_inner(
         state, id, database, collection, filter, original, edited, projection,

@@ -143,6 +143,7 @@ pub async fn drop_collection_impl(
     confirmed: bool,
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
+    crate::namespace_guard::ensure_namespace_idle(state, id, database, Some(collection))?;
     let result = drop_collection_inner(state, id, database, collection, confirmed).await;
     crate::audit::maybe_record_result(
         state,
@@ -190,6 +191,7 @@ pub async fn rename_collection_impl(
     confirmed: bool,
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
+    crate::namespace_guard::ensure_namespace_idle(state, id, database, Some(from))?;
     let result = rename_collection_inner(state, id, database, from, to, confirmed).await;
     crate::audit::maybe_record_result(
         state,
@@ -380,6 +382,7 @@ pub async fn drop_database_impl(
     confirmed: bool,
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
+    crate::namespace_guard::ensure_namespace_idle(state, id, database, None)?;
     let result = drop_database_inner(state, id, database, confirmed).await;
     crate::audit::maybe_record_result(
         state,
@@ -428,8 +431,9 @@ pub async fn rename_database_impl(
     confirmed: bool,
 ) -> Result<DatabaseRenameResult, String> {
     let started = std::time::Instant::now();
-    let result =
-        rename_database_inner(state, id, from, to, drop_source, confirmed).await;
+    // Every collection under it moves, so any write below the database blocks.
+    crate::namespace_guard::ensure_namespace_idle(state, id, from, None)?;
+    let result = rename_database_inner(state, id, from, to, drop_source, confirmed).await;
     crate::audit::maybe_record_result(
         state,
         Some(id),

@@ -1149,6 +1149,18 @@ function Workspace() {
       keys: Record<string, number>;
     } | null;
   } | null>(null);
+  // Document writes sent and not yet answered, one entry per request.
+  //
+  // Kept beside the tabs rather than on them because a request outlives the
+  // edit that started it: replace the edit, close the dialog, switch tabs, and
+  // the write is still out. Whatever wants to know whether a namespace is busy
+  // has to ask about requests (#326 review).
+  const [pendingSaves, setPendingSaves] = useState<
+    Array<{ editId: string; tabId: string; connectionId: string; db: string; collection: string }>
+  >([]);
+  // Read after an await, where the render closure is already stale.
+  const pendingSavesRef = useRef(pendingSaves);
+  pendingSavesRef.current = pendingSaves;
   const [indexMutationTrigger, setIndexMutationTrigger] = useState(0);
   const [collectionMutationTrigger, setCollectionMutationTrigger] = useState(0);
   const [sidebarFilterQuery, setSidebarFilterQuery] = useState('');
@@ -2717,13 +2729,24 @@ function Workspace() {
         if (unmirroredTabIdsRef.current.has(action.tabId)) return;
         workspaceApply(actionToOp(action, undefined, activeConnections));
         return;
+      // Ordered against both ids. A rename gives the tab a new id at once, so
+      // its draft is mirrored under the new one while `rename_tab` is still on
+      // its way: arriving first, that update finds no such tab and succeeds as
+      // a no-op, and the rename then carries only the older draft — text lost
+      // with nothing left pending to say so (#326 review).
       case 'rename_tab':
         if (unmirroredTabIdsRef.current.has(action.oldId)) {
           unmirroredTabIdsRef.current.delete(action.oldId);
           unmirroredTabIdsRef.current.add(action.newId);
           return;
         }
-        workspaceApply(actionToOp(action, undefined, activeConnections));
+        applyTabOp(
+          [
+            toProfileSpaceId(action.oldId, activeConnections),
+            toProfileSpaceId(action.newId, activeConnections),
+          ],
+          actionToOp(action, undefined, activeConnections)
+        );
         return;
       default:
         workspaceApply(actionToOp(action, undefined, activeConnections));
@@ -2772,7 +2795,10 @@ function Workspace() {
     // and looks again.
     for (let pass = 0; pass < 4; pass++) {
       const edit = tabsRef.current.find(x => x.id === tabId)?.documentEdit;
-      if (edit?.saving) {
+      // Asked of the requests, not of the edit on screen. A save whose edit has
+      // since been replaced is still a save this window cannot hand to another
+      // one, and the edit that replaced it says nothing about it (#326 review).
+      if (pendingSavesRef.current.some(s => s.tabId === tabId)) {
         toast(t('toast.documentSaveInProgress'), 'error');
         return false;
       }
@@ -4233,12 +4259,21 @@ function Workspace() {
     // a different edit on this one — reaches that edit or nothing at all.
     const editId = edit.id;
     patchDocumentEdit(editId, { saving: true, error: null });
+    // Recorded against the request, not the edit. The edit can be replaced
+    // while this runs — starting another one on the same tab is what the
+    // non-modal dialog is for — and everything that asks "is a save running
+    // here" would then be told no while the write was still out (#326 review).
+    setPendingSaves(prev => [
+      ...prev,
+      { editId, tabId: tab.id, connectionId: tab.connectionId, db: tab.db, collection: tab.collection },
+    ]);
     try {
       await saveDocument(tab, edit, json);
     } catch (err: any) {
       patchDocumentEdit(editId, { error: String(err?.message || err) });
     } finally {
       patchDocumentEdit(editId, { saving: false });
+      setPendingSaves(prev => prev.filter(s => s.editId !== editId));
     }
   };
 
@@ -4815,7 +4850,7 @@ function Workspace() {
       sidebar={
         <Sidebar
           onSelectCollection={handleSelectCollection}
-          openTabs={tabs}
+          pendingSaves={pendingSaves}
           isCollectionOpen={(connectionId, db, collection) =>
             collectionTabsMatching(tabs, { connectionId, db, collection }).length > 0
           }

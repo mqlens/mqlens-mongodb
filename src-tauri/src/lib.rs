@@ -27,6 +27,7 @@ pub mod monitoring;
 pub mod path_env;
 pub mod queries;
 pub mod ssh_tunnel;
+mod namespace_guard;
 mod state;
 pub mod toolsetup;
 pub mod updater;
