@@ -14,9 +14,9 @@ import { EJSON } from 'bson';
 import { copyValueToText } from '../lib/copyValue';
 import { ResultsFindBar } from './ResultsFindBar';
 import {
-  activeResultsPaneElement,
-  eventBelongsToAnEditor,
+  isTextEntryContext,
   registerResultsFindTarget,
+  resultsPaneElementForEvent,
 } from '../lib/resultsFindShortcut';
 import { findMatches, isMatchAt, stepMatch, type FindCell } from '../lib/resultsFind';
 import {
@@ -1301,7 +1301,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     // one place: the pane holding focus, else the one last pointed at, else the
     // only one. With several panes and no signal it returns null, and the
     // `defaultPrevented` guard above makes the first view to arrive answer.
-    const activePane = activeResultsPaneElement();
+    const activePane = resultsPaneElementForEvent(e.target);
     const paneRoot = paneRootRef.current;
     if (!endpointsHere && activePane && paneRoot && activePane !== paneRoot) return;
     const tracked = jsonRangeOf(jsonSelectionRef.current);
@@ -1392,13 +1392,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
       if (e.key !== 'a' && e.key !== 'A') return;
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
       // A query editor or a text field owns this key for its own content.
-      if (eventBelongsToAnEditor(e.target)) return;
+      if (isTextEntryContext(e.target)) return;
       const container = jsonViewRef.current;
       if (!container) return;
       // Same ownership question the copy asks, and the same answer: in a split,
       // the pane the user is working in is the one that responds.
-      const active = activeResultsPaneElement();
-      if (active && paneRootRef.current && active !== paneRootRef.current) return;
+      // Target-aware: an event from another region belongs to that region, and
+      // only one from nothing in particular falls back to the pane last pointed
+      // at. Reading focus alone let this pane answer for the whole app.
+      const active = resultsPaneElementForEvent(e.target);
+      if (active !== paneRootRef.current) return;
       const selection = document.getSelection();
       if (!selection) return;
       const range = document.createRange();

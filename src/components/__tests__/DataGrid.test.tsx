@@ -1636,6 +1636,43 @@ describe('DataGrid — select-all copies every row (#320)', () => {
       expect(pressSelectAll(inner).defaultPrevented).toBe(false);
     });
 
+    it('leaves the key to the results find bar, which is a text field like any other', () => {
+      // The find shortcut deliberately treats its own input as NOT an editor, so
+      // Ctrl+F with the caret already in it means 'search here again'. That
+      // exception is find's alone: select-all in that input means select the
+      // search text, and taking it would leave the user unable to (#328 review).
+      //
+      // The bar is mounted INSIDE the pane, where it really lives. Outside it the
+      // pane declines on ownership instead, and the test would pass without ever
+      // reaching the predicate it is about.
+      const container = document.body.appendChild(document.createElement('div'));
+      render(<DataGrid documents={manyDocs} />, { container });
+      fireEvent.click(within(container).getByRole('button', { name: /json/i }));
+      const bar = container.firstElementChild!.appendChild(document.createElement('div'));
+      bar.setAttribute('data-results-find-input', '');
+      const input = bar.appendChild(document.createElement('input'));
+
+      expect(pressSelectAll(input).defaultPrevented).toBe(false);
+    });
+
+    it('leaves the key to a non-editor element in another part of the app', () => {
+      // A focused control elsewhere — a sidebar row, a button — is not nothing in
+      // particular, so the pane must not answer for it just because it was the
+      // last one pointed at. Reading focus alone let a single pane claim
+      // Ctrl/Cmd+A for the whole window (#328 review).
+      const view = openJsonView();
+      selectPane(view.closest('div')!.parentElement ?? view);
+      const elsewhere = document.body.appendChild(document.createElement('div'));
+      elsewhere.tabIndex = 0;
+      document.getSelection()?.removeAllRanges();
+
+      const event = pressSelectAll(elsewhere);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(document.getSelection()?.rangeCount ?? 0).toBe(0);
+    });
+
+
     it('leaves the key to whichever pane the user is working in', () => {
       const mount = (docs: unknown[]) => {
         const container = document.body.appendChild(document.createElement('div'));
