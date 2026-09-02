@@ -1621,6 +1621,43 @@ describe('DataGrid — select-all copies every row (#320)', () => {
     getSelection.mockRestore();
   });
 
+  it('rebuilds for the owning pane even when every row is mounted', () => {
+    // #330 review: with both panes small enough to be fully mounted, the owner
+    // took the "let the browser do it" path — and the browser serializes the
+    // whole enclosing selection, so the copy came back with both panes' text.
+    // Standing aside only makes sense when the selection lives inside the view;
+    // an enclosing one covers the page.
+    //
+    // The earlier split tests used 40 documents each, which forced the rebuild
+    // and stepped straight over this path.
+    const mount = (docs: unknown[]) => {
+      const container = document.body.appendChild(document.createElement('div'));
+      const result = render(<DataGrid documents={docs as any} />, { container });
+      fireEvent.click(within(container).getByRole('button', { name: /json/i }));
+      return { result, view: within(container).getByTestId('json-view') };
+    };
+    const left = mount([{ _id: 'left-doc' }]);
+    const right = mount([{ _id: 'right-doc' }]);
+    // Precondition: both panes really are fully mounted, or this proves nothing.
+    expect(left.view.querySelectorAll('[data-json-line]').length).toBeGreaterThan(0);
+    expect(right.view.querySelectorAll('[data-json-line]').length).toBeGreaterThan(0);
+
+    fireEvent.mouseDown(right.view);
+    const getSelection = vi.spyOn(document, 'getSelection');
+    getSelection.mockReturnValue(selectAll());
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const setData = vi.fn();
+    fireEvent.copy(document.body, { clipboardData: { setData, getData: () => '' } });
+
+    expect(setData).toHaveBeenCalledTimes(1);
+    const copied = setData.mock.calls[0][1];
+    expect(copied).toContain('right-doc');
+    expect(copied).not.toContain('left-doc');
+    getSelection.mockRestore();
+  });
+
+
   it('lets the surviving pane answer once the other one closes', () => {
     // The pane holding ownership can be closed. It will never answer again, and
     // the one still on screen must not go on deferring to it (#330 review).

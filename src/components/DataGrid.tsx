@@ -1325,7 +1325,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
       container.querySelectorAll('[data-json-line]').length >= wanted &&
       !!container.querySelector(`[data-json-line="${tracked.start.row}"]`) &&
       !!container.querySelector(`[data-json-line="${tracked.end.row}"]`);
-    if (spansAll && allMounted) return;
+    // Standing aside says "the browser will copy exactly what this view holds",
+    // and that is only knowable when the selection lives inside this view. An
+    // enclosing selection covers the whole page, so leaving it to the browser
+    // yields every other selectable thing on it — in a split with two small
+    // panes, both panes' text, when the user asked for the one they clicked
+    // (#330 review). Those are rebuilt however many rows are mounted.
+    if (endpointsHere && spansAll && allMounted) return;
     const text = visibleJsonLines
       .slice(tracked.start.row, tracked.end.row + 1)
       .map((line, i) => {
