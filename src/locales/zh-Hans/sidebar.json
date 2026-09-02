@@ -162,6 +162,7 @@
     "readOnlyBlocked": "此连接为只读（生产保护）。如需修改数据，请在连接设置中更改连接模式。",
     "removedFromFavorites": "已从收藏中移除",
     "namespaceBusyWithSave": "此处正在保存文档，请等待完成后再重命名。",
+    "loadCollectionsFailed": "无法列出 {{db}} 中的集合：{{error}}",
     "renameCollectionFailed": "重命名 Collection 失败：{{error}}",
     "renameDatabaseFailed": "重命名数据库失败：{{error}}",
     "savedQueryGone": "该已保存的查询已不存在",

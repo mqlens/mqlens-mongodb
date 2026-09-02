@@ -1576,6 +1576,40 @@ describe('Sidebar Component', () => {
     expect(await screen.findByText('orders')).toBeInTheDocument();
   });
 
+  it('says so when a database cannot list its collections (#327)', async () => {
+    // The silence was half the bug. A server whose `listCollections` reply the
+    // driver cannot read left the tree empty with only a console line — which
+    // reads as "this database has no collections", and is flatly contradicted
+    // by the database's own popover reporting the real count from `dbStats`.
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'list_collections') {
+        return Promise.reject(new Error('Failed to list collections: missing field `readOnly`'));
+      }
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[{ id: 'conn-1', name: 'Local', uri: 'mongodb://localhost' }]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText('sales_db'));
+
+    // The database is named, so the user knows which one, and the server's own
+    // words are kept — they are what makes this diagnosable at all.
+    const toast = await screen.findByText(/Could not list collections in sales_db/);
+    expect(toast).toHaveTextContent('missing field `readOnly`');
+  });
+
+
   it('pins a connection from the context menu and shows a toast', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_databases') return Promise.resolve(['sales_db']);

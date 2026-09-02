@@ -645,17 +645,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setExpandedConnections((prev) => ({ ...prev, [connId]: true }));
   };
 
+  /**
+   * Load a database's collections into the tree, and say so when it cannot.
+   *
+   * The silence was half of #327. A server whose `listCollections` reply the
+   * driver could not read left the tree empty with nothing but a console line —
+   * indistinguishable from a database that genuinely has no collections, and
+   * flatly contradicted by the database's own popover, which asks `dbStats` and
+   * reported the real count. An empty tree should never be how the app says
+   * something failed.
+   */
+  const loadCollectionsInto = async (connectionId: string, dbName: string) => {
+    const key = `${connectionId}/${dbName}`;
+    try {
+      const colls = await invoke<CollectionInfo[]>('list_collections', { id: connectionId, db: dbName });
+      setCollections((prev) => ({ ...prev, [key]: colls }));
+    } catch (err) {
+      console.error(`Failed to load collections for database ${dbName}`, err);
+      toast(t('toasts.loadCollectionsFailed', { db: dbName, error: `${err}` }), 'error');
+    }
+  };
+
   const ensureDbExpanded = async (connId: string, dbName: string) => {
     const key = `${connId}/${dbName}`;
     setExpandedDbs((prev) => ({ ...prev, [key]: true }));
-    if (!collections[key]) {
-      try {
-        const colls = await invoke<CollectionInfo[]>('list_collections', { id: connId, db: dbName });
-        setCollections((prev) => ({ ...prev, [key]: colls }));
-      } catch (err) {
-        console.error(`Failed to load collections for database ${dbName}`, err);
-      }
-    }
+    if (!collections[key]) await loadCollectionsInto(connId, dbName);
   };
 
   const navigateToPinned = async (item: PinnedItem) => {
@@ -844,14 +858,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const isExpanding = !expandedDbs[key];
     setExpandedDbs((prev) => ({ ...prev, [key]: !prev[key] }));
 
-    if (isExpanding && !collections[key]) {
-      try {
-        const colls = await invoke<CollectionInfo[]>('list_collections', { id: connectionId, db: dbName });
-        setCollections((prev) => ({ ...prev, [key]: colls }));
-      } catch (err) {
-        console.error(`Failed to load collections for database ${dbName}`, err);
-      }
-    }
+    if (isExpanding && !collections[key]) await loadCollectionsInto(connectionId, dbName);
   };
 
   const toggleCollectionsFolder = async (connectionId: string, dbName: string) => {
@@ -861,12 +868,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     const collsKey = `${connectionId}/${dbName}`;
     if (!isCurrentlyExpanded && !collections[collsKey]) {
-      try {
-        const colls = await invoke<CollectionInfo[]>('list_collections', { id: connectionId, db: dbName });
-        setCollections((prev) => ({ ...prev, [collsKey]: colls }));
-      } catch (err) {
-        console.error(`Failed to load collections for database ${dbName}`, err);
-      }
+      await loadCollectionsInto(connectionId, dbName);
     }
   };
 
@@ -894,13 +896,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleRefreshDb = async (connectionId: string, dbName: string) => {
-    const key = `${connectionId}/${dbName}`;
-    try {
-      const colls = await invoke<CollectionInfo[]>('list_collections', { id: connectionId, db: dbName });
-      setCollections((prev) => ({ ...prev, [key]: colls }));
-    } catch (err) {
-      console.error(err);
-    }
+    // Refresh especially: the user asked for this one, so a failure they cannot
+    // see is a refresh that looks like it emptied the database.
+    await loadCollectionsInto(connectionId, dbName);
   };
 
   const handleAddDatabase = async (connectionId: string) => {

@@ -157,6 +157,7 @@
     "createDatabaseFailed": "Failed to create database: {{error}}",
     "dropCollectionFailed": "Failed to drop collection: {{error}}",
     "dropDatabaseFailed": "Failed to drop database: {{error}}",
+    "loadCollectionsFailed": "Could not list collections in {{db}}: {{error}}",
     "namespaceBusyWithSave": "A document is being saved here. Wait for it to finish before renaming.",
     "noSavedConnection": "No saved connection \"{{name}}\". Add it in Connection Manager, then try again.",
     "pinned": "Pinned to sidebar",

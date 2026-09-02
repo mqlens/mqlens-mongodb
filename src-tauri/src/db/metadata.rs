@@ -111,8 +111,47 @@ async fn list_collections_impl_inner(
     };
 
     let database = client.database(db);
-    // Use list_collections (not list_collection_names) so we can read each
-    // collection's type and let the UI separate Collections / Views / etc.
+    match full_collection_specs(&database).await {
+        Ok(collections) => Ok(collections),
+        // Not every MongoDB-compatible service answers `listCollections` with
+        // everything the driver's `CollectionSpecification` insists on. It
+        // requires `type`, `options` and `info` — and `info.readOnly` as a bare
+        // `bool`, with no default anywhere — while Azure Cosmos DB replies with
+        // little more than the name. One missing field fails the whole listing,
+        // so the tree came up empty while the database's own popover, which
+        // asks `dbStats` instead, cheerfully reported the right count (#327).
+        //
+        // Names alone go out as `nameOnly: true`, which such a service can
+        // satisfy, and the driver then reads back only the name. Collections
+        // without their type are worth far more than no collections: everything
+        // shows as a plain collection, so a view is mislabelled rather than
+        // missing.
+        Err(spec_error) => {
+            let names = database.list_collection_names().await.map_err(|names_error| {
+                // Both failures, because the first one is the interesting one:
+                // it says what the server would not give, and the second only
+                // confirms the fallback did not help either.
+                format!("Failed to list collections: {spec_error}; names only: {names_error}")
+            })?;
+            Ok(names
+                .into_iter()
+                .map(|name| CollectionInfo {
+                    name,
+                    collection_type: "collection".to_string(),
+                })
+                .collect())
+        }
+    }
+}
+
+/// Every collection with its type, as `listCollections` reports it.
+///
+/// Preferred because the type is what lets the UI separate Collections from
+/// Views and time-series; see the fallback above for when a server cannot
+/// answer in that much detail.
+async fn full_collection_specs(
+    database: &mongodb::Database,
+) -> Result<Vec<CollectionInfo>, String> {
     let mut cursor = database
         .list_collections()
         .await

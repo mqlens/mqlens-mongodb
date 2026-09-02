@@ -162,6 +162,7 @@
     "readOnlyBlocked": "Diese Verbindung ist schreibgeschützt (Produktionsschutz). Ändere den Verbindungsmodus im Verbindungsmanager, um Daten zu bearbeiten.",
     "removedFromFavorites": "Aus Favoriten entfernt",
     "namespaceBusyWithSave": "Hier wird gerade ein Dokument gespeichert. Warte, bis das fertig ist, bevor du umbenennst.",
+    "loadCollectionsFailed": "Sammlungen in {{db}} konnten nicht aufgelistet werden: {{error}}",
     "renameCollectionFailed": "Collection konnte nicht umbenannt werden: {{error}}",
     "renameDatabaseFailed": "Datenbank konnte nicht umbenannt werden: {{error}}",
     "savedQueryGone": "Gespeicherte Abfrage existiert nicht mehr",
