@@ -47,8 +47,14 @@ let nextId = 1;
 let lastPointedId: number | null = null;
 let listening = false;
 
-/** Editors and text fields keep their own find/typing behaviour. */
-function eventBelongsToAnEditor(target: EventTarget | null): boolean {
+/**
+ * Editors and text fields keep their own find/typing behaviour.
+ *
+ * Exported because every results-pane shortcut owes them the same deference,
+ * not just find: Cmd/Ctrl+A inside a query editor means "select this query",
+ * and a pane that took it would be answering for something it does not own.
+ */
+export function eventBelongsToAnEditor(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   // The find bar's own input is a text field but is not somebody else's: the
   // shortcut pressed inside it means "search here again", not "leave me alone".

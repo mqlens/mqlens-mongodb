@@ -1571,6 +1571,95 @@ describe('DataGrid — select-all copies every row (#320)', () => {
     } as unknown as Selection;
   };
 
+  // #328 root cause: the app sets `user-select: none` on `body`, and under that
+  // Chromium paints a select-all across the rows while reporting the selection
+  // to script as collapsed and empty. The browser had nothing to copy and
+  // neither did the rebuild, so the clipboard was left untouched.
+  //
+  // These use the real Selection API rather than a mocked one. That is the
+  // point: every earlier test mocked `getSelection()` to return a non-collapsed
+  // range over `document.body` — precisely the state the browser does not
+  // produce — so they passed while the app did nothing at all.
+  describe('the select-all shortcut makes a selection the page can see (#328)', () => {
+    const pressSelectAll = (target: EventTarget) => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'a',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      target.dispatchEvent(event);
+      return event;
+    };
+
+    it('claims the key and selects the view, leaving a real range behind', () => {
+      const view = openJsonView();
+      document.getSelection()?.removeAllRanges();
+
+      const event = pressSelectAll(view);
+
+      expect(event.defaultPrevented).toBe(true);
+      const selection = document.getSelection()!;
+      expect(selection.rangeCount).toBe(1);
+      expect(selection.isCollapsed).toBe(false);
+      expect(view.contains(selection.anchorNode)).toBe(true);
+      expect(view.contains(selection.focusNode)).toBe(true);
+    });
+
+    it('rebuilds every row from that selection, including unmounted ones', () => {
+      const view = openJsonView();
+      const mounted = view.querySelectorAll('[data-json-line]').length;
+      document.getSelection()?.removeAllRanges();
+
+      pressSelectAll(view);
+      document.dispatchEvent(new Event('selectionchange'));
+
+      const setData = vi.fn();
+      fireEvent.copy(document.body, { clipboardData: { setData, getData: () => '' } });
+
+      expect(setData).toHaveBeenCalledTimes(1);
+      const lines = setData.mock.calls[0][1].split('\n');
+      expect(lines.length).toBeGreaterThan(mounted);
+      expect(lines[0]).toBe('{');
+    });
+
+    it('leaves the key to a text field or an editor', () => {
+      // Cmd/Ctrl+A in a query editor means "select this query". A pane that
+      // took it would be answering for something it does not own.
+      openJsonView();
+      const input = document.body.appendChild(document.createElement('input'));
+      expect(pressSelectAll(input).defaultPrevented).toBe(false);
+
+      const editor = document.body.appendChild(document.createElement('div'));
+      editor.className = 'monaco-editor';
+      const inner = editor.appendChild(document.createElement('span'));
+      expect(pressSelectAll(inner).defaultPrevented).toBe(false);
+    });
+
+    it('leaves the key to whichever pane the user is working in', () => {
+      const mount = (docs: unknown[]) => {
+        const container = document.body.appendChild(document.createElement('div'));
+        render(<DataGrid documents={docs as any} />, { container });
+        fireEvent.click(within(container).getByRole('button', { name: /json/i }));
+        return { container, view: within(container).getByTestId('json-view') };
+      };
+      const left = mount(manyDocs);
+      const right = mount(manyDocs);
+      // The user selects the right-hand pane.
+      selectPane(right.container);
+      document.getSelection()?.removeAllRanges();
+
+      // The key arrives at the document, not at either view.
+      pressSelectAll(document.body);
+
+      const selection = document.getSelection()!;
+      expect(selection.rangeCount).toBe(1);
+      expect(right.view.contains(selection.anchorNode)).toBe(true);
+      expect(left.view.contains(selection.anchorNode)).toBe(false);
+    });
+  });
+
+
   it('rebuilds every line, not just the mounted ones', () => {
     const view = openJsonView();
     const mounted = view.querySelectorAll('[data-json-line]').length;

@@ -13,7 +13,11 @@ import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { EJSON } from 'bson';
 import { copyValueToText } from '../lib/copyValue';
 import { ResultsFindBar } from './ResultsFindBar';
-import { activeResultsPaneElement, registerResultsFindTarget } from '../lib/resultsFindShortcut';
+import {
+  activeResultsPaneElement,
+  eventBelongsToAnEditor,
+  registerResultsFindTarget,
+} from '../lib/resultsFindShortcut';
 import { findMatches, isMatchAt, stepMatch, type FindCell } from '../lib/resultsFind';
 import {
   bsonCallOf,
@@ -1368,6 +1372,47 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // including the ones inside the view, which bubble here just the same. What
   // it costs is the containment the React tree used to grant for free, so
   // `handleJsonCopy` establishes that itself before it writes anything.
+  // Make the select-all a selection the page can actually see (#328).
+  //
+  // The app sets `user-select: none` on `body` so its chrome does not select
+  // like a web page. Under that, Chromium *paints* a select-all across the
+  // rows — every one of them highlights — while reporting the selection to
+  // script as collapsed and empty: `isCollapsed` true, `toString()` ''. So the
+  // browser had nothing to copy and neither did we, and the clipboard was left
+  // untouched. Not truncated: untouched, because there was nothing to truncate.
+  //
+  // Claiming the key and setting the range explicitly gives a real selection
+  // that both the native copy and the rebuild below can read. It is the better
+  // meaning of the shortcut too: in a results pane, select-all is about the
+  // results, not about the whole application around them.
+  useEffect(() => {
+    if (viewMode !== 'json') return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (e.key !== 'a' && e.key !== 'A') return;
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      // A query editor or a text field owns this key for its own content.
+      if (eventBelongsToAnEditor(e.target)) return;
+      const container = jsonViewRef.current;
+      if (!container) return;
+      // Same ownership question the copy asks, and the same answer: in a split,
+      // the pane the user is working in is the one that responds.
+      const active = activeResultsPaneElement();
+      if (active && paneRootRef.current && active !== paneRootRef.current) return;
+      const selection = document.getSelection();
+      if (!selection) return;
+      const range = document.createRange();
+      range.selectNodeContents(container);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      e.preventDefault();
+    };
+    // Capture, for the same reason the find shortcut uses it: to be ahead of
+    // any window-level handler that would otherwise claim the key first.
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [viewMode]);
+
   const jsonCopyRef = React.useRef(handleJsonCopy);
   useEffect(() => {
     jsonCopyRef.current = handleJsonCopy;
