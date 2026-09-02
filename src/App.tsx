@@ -213,6 +213,13 @@ export interface QueryTab {
 /// `$addFields` — reshapes the row or replaces its identity, so its `_id` may be
 /// a group key rather than a document id and saving could hit an unrelated
 /// document.
+/** How long an edit stays frozen waiting for its tab's move to be reconciled.
+ *
+ *  A backstop, not a schedule: the freeze normally ends when the tab leaves
+ *  this window, which is immediate. This is only so a move that never lands
+ *  cannot leave an editor unusable for the rest of the session. */
+const WINDOW_CHANGE_LOCK_MS = 10_000;
+
 const DOCUMENT_PRESERVING_STAGES = new Set(['$match', '$sort', '$limit', '$skip']);
 
 /** True when every stage of `pipeline` leaves documents intact. */
@@ -1158,6 +1165,9 @@ function Workspace() {
   const [pendingSaves, setPendingSaves] = useState<
     Array<{ editId: string; tabId: string; connectionId: string; db: string; collection: string }>
   >([]);
+  // Tabs whose move has been dispatched and not yet reconciled away. Their
+  // edits are frozen for that window — see lockTabForWindowChange.
+  const [movingTabIds, setMovingTabIds] = useState<ReadonlySet<string>>(() => new Set());
   // Read after an await, where the render closure is already stale.
   const pendingSavesRef = useRef(pendingSaves);
   pendingSavesRef.current = pendingSaves;
@@ -2832,13 +2842,39 @@ function Workspace() {
     return false;
   };
 
+  /** Freezes a tab's edit from the moment its move is dispatched.
+   *
+   *  The move is fire-and-forget: the backend may already have taken the tab's
+   *  snapshot while this window still shows it, and it stays interactive until
+   *  the reconciliation broadcast removes it. Anything typed in that window is
+   *  mirrored under an id the destination no longer reconciles — text lost in
+   *  front of the user — and a save started there does not travel, since
+   *  `carriedDocumentEdit` drops `saving`, leaving the destination free to
+   *  submit the same insert again (#326 review).
+   *
+   *  Released when the tab leaves, and on a timer besides: a move that never
+   *  happens must not stand the editor down for the rest of the session. */
+  const lockTabForWindowChange = (tabId: string) => {
+    setMovingTabIds(prev => new Set(prev).add(tabId));
+    window.setTimeout(() => {
+      setMovingTabIds(prev => {
+        if (!prev.has(tabId)) return prev;
+        const next = new Set(prev);
+        next.delete(tabId);
+        return next;
+      });
+    }, WINDOW_CHANGE_LOCK_MS);
+  };
+
   const handleDetachTab = async (tabId: string) => {
     if (!(await readyForWindowChange(tabId))) return;
+    lockTabForWindowChange(tabId);
     detachTabToNewWindow(toProfileSpaceId(tabId, activeConnections));
   };
 
   const handleMoveTab = async (tabId: string, targetWindowId: string) => {
     if (!(await readyForWindowChange(tabId))) return;
+    lockTabForWindowChange(tabId);
     moveTabToWindow(toProfileSpaceId(tabId, activeConnections), targetWindowId);
     // Final whole-branch review, Fix 4(b): the "Move to <window>" list is
     // built from `lastWorkspaceRef` (the last-known cross-window document),
@@ -3842,10 +3878,26 @@ function Workspace() {
       prev.map(t => (t.documentEdit?.id === editId ? { ...t, documentEdit: undefined } : t))
     );
   const setDocumentDraft = (tabId: string, draft: string) => {
+    // Frozen: this tab is on its way to another window, and anything accepted
+    // here would be mirrored under an id the destination no longer reconciles.
+    // The dialog is read-only meanwhile; this is the same answer for anything
+    // that reaches the handler another way.
+    if (movingTabIds.has(tabId)) return;
     const edit = tabs.find(t => t.id === tabId)?.documentEdit;
     if (!edit) return;
     patchDocumentEdit(edit.id, { draft });
   };
+
+  // The freeze ends when reconciliation takes the tab, which is the event it
+  // was waiting for. The timer in  only matters if that
+  // never comes.
+  useEffect(() => {
+    setMovingTabIds(prev => {
+      if (prev.size === 0) return prev;
+      const stillHere = [...prev].filter(id => tabs.some(t => t.id === id));
+      return stillHere.length === prev.size ? prev : new Set(stillHere);
+    });
+  }, [tabs]);
 
   // The backend's copy of each tab's edit, kept level with state from one place
   // rather than announced by whoever changed it.
@@ -4254,6 +4306,10 @@ function Workspace() {
     const tab = activeTab;
     const edit = tab?.documentEdit;
     if (!tab || !edit) return;
+    // A save started after the move was dispatched does not travel — the
+    // destination is handed an edit with no save on it and would let the same
+    // insert be submitted again (#326 review).
+    if (movingTabIds.has(tab.id)) return;
     // Captured before the request: every line below names the edit that asked,
     // so a result arriving after the user has moved on — to another tab, or to
     // a different edit on this one — reaches that edit or nothing at all.
@@ -4971,6 +5027,7 @@ function Workspace() {
             json={activeTab?.documentEdit?.draft ?? ''}
             error={activeTab?.documentEdit?.error ?? null}
             saving={activeTab?.documentEdit?.saving ?? false}
+            frozen={activeTab ? movingTabIds.has(activeTab.id) : false}
             onJsonChange={(draft) => activeTab && setDocumentDraft(activeTab.id, draft)}
             onClose={() => activeTab && closeDocumentEdit(activeTab.id)}
             onSave={handleSaveDocument}

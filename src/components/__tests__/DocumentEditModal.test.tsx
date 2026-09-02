@@ -206,4 +206,35 @@ describe('DocumentEditModal — reports the save state it is given (#326 review)
     render(<DocumentEditModal {...base} onSave={onSave} json='{"b":2}' saving={false} />);
     expect(screen.getByTestId('document-save-btn')).not.toBeDisabled();
   });
+
+  it('freezes the edit once its tab is on the way to another window', () => {
+    // #326 review: the move is fire-and-forget, so the backend can have taken
+    // the tab's snapshot while this window still shows the editor. A keystroke
+    // here goes to an id the destination no longer reconciles, and a save
+    // started here does not travel with the edit.
+    const onSave = vi.fn();
+    const onJsonChange = vi.fn();
+    render(
+      <DocumentEditModal
+        {...base}
+        onSave={onSave}
+        onJsonChange={onJsonChange}
+        json='{"a":1}'
+        frozen
+      />
+    );
+    expect(screen.getByTestId('document-save-btn')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('document-save-btn'));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('is editable again when the freeze lifts', () => {
+    const onSave = vi.fn();
+    const { rerender } = render(
+      <DocumentEditModal {...base} onSave={onSave} json='{"a":1}' frozen />
+    );
+    rerender(<DocumentEditModal {...base} onSave={onSave} json='{"a":1}' frozen={false} />);
+    expect(screen.getByTestId('document-save-btn')).not.toBeDisabled();
+  });
+
 });

@@ -58,6 +58,15 @@ interface DocumentEditModalProps {
    *  difference, so the caller keeps them. */
   error?: string | null;
   saving?: boolean;
+  /** The edit is on its way to another window: show it, change nothing.
+   *
+   *  Between dispatching a move and the reconciliation that takes the tab away,
+   *  this window still shows the editor while the backend may already have
+   *  handed the tab over. Anything typed here would be mirrored under an id the
+   *  destination no longer reconciles, and a save started here would not travel
+   *  with it (#326 review). Read-only says so, rather than quietly dropping the
+   *  keystrokes. */
+  frozen?: boolean;
 }
 
 export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
@@ -70,6 +79,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
   onJsonChange,
   error = null,
   saving = false,
+  frozen = false,
 }) => {
   const { t } = useTranslation('documents');
   const [uncontrolledJson, setUncontrolledJson] = useState(initialJson);
@@ -192,6 +202,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
                 wordBasedSuggestions: 'off',
                 parameterHints: { enabled: false },
                 hover: { enabled: false },
+                readOnly: frozen,
               }}
             />
           </div>
@@ -218,7 +229,7 @@ export const DocumentEditModal: React.FC<DocumentEditModalProps> = ({
           <Button
             type="button"
             onClick={handleSave}
-            disabled={saving || !!validationError}
+            disabled={saving || frozen || !!validationError}
             data-testid="document-save-btn"
           >
             {mode === 'insert' ? t('editModal.actions.insert') : t('editModal.actions.saveChanges')}
