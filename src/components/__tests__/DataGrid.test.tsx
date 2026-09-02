@@ -1533,6 +1533,21 @@ describe('DataGrid — element selection boundaries (#322 review)', () => {
 // which holds only the mounted rows. Same silent truncation as #311, on the
 // more natural way to copy a whole result set.
 describe('DataGrid — select-all copies every row (#320)', () => {
+  beforeEach(() => resetResultsFindShortcutForTests());
+
+  /**
+   * Select a pane the way a user does: a pointer press inside it.
+   *
+   * Deliberately on a toolbar control rather than on the rows, because that is
+   * the case the old code got wrong. Ownership was recorded from a `mousedown`
+   * on the JSON body alone, so clicking a pane's toolbar — switching it to JSON
+   * is itself such a click — selected that pane for every other purpose while a
+   * copy still went to the pane before it (#330 review).
+   */
+  const selectPane = (container: HTMLElement) => {
+    fireEvent.pointerDown(within(container).getAllByRole('button')[0]);
+  };
+
   const manyDocs = Array.from({ length: 40 }, (_, i) => ({ _id: i, name: `n${i}` }));
 
   const openJsonView = () => {
@@ -1588,7 +1603,7 @@ describe('DataGrid — select-all copies every row (#320)', () => {
       const container = document.body.appendChild(document.createElement('div'));
       const result = render(<DataGrid documents={docs as any} />, { container });
       fireEvent.click(within(container).getByRole('button', { name: /json/i }));
-      return { result, view: within(container).getByTestId('json-view') };
+      return { result, container, view: within(container).getByTestId('json-view') };
     };
     // Both panes hold more than a screenful, so both need the rebuild — with a
     // pane small enough to be fully mounted, the grid rightly stands aside and
@@ -1606,7 +1621,7 @@ describe('DataGrid — select-all copies every row (#320)', () => {
     const { right } = openTwoJsonPanes();
 
     // The user is working in the right-hand pane.
-    fireEvent.mouseDown(right.view);
+    selectPane(right.container);
 
     const getSelection = vi.spyOn(document, 'getSelection');
     getSelection.mockReturnValue(selectAll());
@@ -1634,7 +1649,7 @@ describe('DataGrid — select-all copies every row (#320)', () => {
       const container = document.body.appendChild(document.createElement('div'));
       const result = render(<DataGrid documents={docs as any} />, { container });
       fireEvent.click(within(container).getByRole('button', { name: /json/i }));
-      return { result, view: within(container).getByTestId('json-view') };
+      return { result, container, view: within(container).getByTestId('json-view') };
     };
     const left = mount([{ _id: 'left-doc' }]);
     const right = mount([{ _id: 'right-doc' }]);
@@ -1642,7 +1657,7 @@ describe('DataGrid — select-all copies every row (#320)', () => {
     expect(left.view.querySelectorAll('[data-json-line]').length).toBeGreaterThan(0);
     expect(right.view.querySelectorAll('[data-json-line]').length).toBeGreaterThan(0);
 
-    fireEvent.mouseDown(right.view);
+    selectPane(right.container);
     const getSelection = vi.spyOn(document, 'getSelection');
     getSelection.mockReturnValue(selectAll());
     document.dispatchEvent(new Event('selectionchange'));
@@ -1662,7 +1677,7 @@ describe('DataGrid — select-all copies every row (#320)', () => {
     // The pane holding ownership can be closed. It will never answer again, and
     // the one still on screen must not go on deferring to it (#330 review).
     const { right } = openTwoJsonPanes();
-    fireEvent.mouseDown(right.view);
+    selectPane(right.container);
     right.result.unmount();
 
     const getSelection = vi.spyOn(document, 'getSelection');

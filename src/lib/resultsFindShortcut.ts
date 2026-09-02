@@ -155,6 +155,30 @@ export function registerResultsFindTarget(pane: Pane): () => void {
   };
 }
 
+/**
+ * The results pane the user is working in, by the same reckoning the shortcut
+ * uses: the pane holding focus, else the one last pointed at, else the only one.
+ *
+ * Exposed because "which pane is this for" is not a question about find. A copy
+ * has to answer it too — several JSON views listen for the same select-all, and
+ * one of them has to be the one that responds (#330 review). Keeping a second
+ * notion of the active pane in the grid meant the two could disagree, and they
+ * did: this one counts a click anywhere in the pane, its toolbar included, while
+ * the grid's counted only clicks in the results body.
+ *
+ * `null` when nothing indicates a pane and there is more than one, which is the
+ * honest answer — the caller decides what to do without a preference.
+ */
+export function activeResultsPaneElement(): HTMLElement | null {
+  const fromFocus = paneContaining(document.activeElement);
+  if (fromFocus) return fromFocus.element();
+  if (lastPointedId !== null) {
+    const el = panes.get(lastPointedId)?.element();
+    if (el) return el;
+  }
+  return panes.size === 1 ? [...panes.values()][0].element() : null;
+}
+
 /** Reset module state between tests. */
 export function resetResultsFindShortcutForTests(): void {
   if (listening && typeof window !== "undefined") {
