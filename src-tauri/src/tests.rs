@@ -3023,89 +3023,69 @@ mod tests {
     // REPL waiting for input, which is what a stalled script looks like — was
     // never delivered at all.
     //
-    // A prompt is recognised by that framing, not by its shape: it arrives as a
-    // tail with no newline. Once seen, its exact text is known, and only that
-    // exact text is ever treated as a prompt again — so output that merely
-    // resembles one is left alone.
+    // A prompt is recognised by that framing alone: it is a chunk's newline-less
+    // tail. Complete lines are never judged by shape and never rewritten, so
+    // output that resembles a prompt is output. Completion does not depend on
+    // prompt recognition at all — markers are matched by suffix.
 
     #[test]
-    fn a_prompt_arriving_without_a_newline_is_learned_and_dropped() {
-        use crate::{take_mongosh_lines, MongoshPrompts};
-        let mut prompts = MongoshPrompts::default();
+    fn a_prompt_arriving_without_a_newline_is_dropped() {
+        use crate::take_mongosh_lines;
         let mut buf = b"hello\nrs0 [direct: primary] test> ".to_vec();
-        assert_eq!(take_mongosh_lines(&mut buf, &mut prompts), vec!["hello".to_string()]);
+        assert_eq!(take_mongosh_lines(&mut buf), vec!["hello".to_string()]);
         assert!(buf.is_empty(), "the prompt is consumed, not left to glue onto later output");
+
+        // The continuation prompt is the same string in every session.
+        let mut buf = b"| ".to_vec();
+        assert!(take_mongosh_lines(&mut buf).is_empty());
+        assert!(buf.is_empty());
     }
 
     #[test]
-    fn a_prompt_glued_to_output_in_one_read_is_split_off() {
-        use crate::{take_mongosh_lines, MongoshPrompts};
-        // The OS can hand the reader a prompt and the next line together. The
-        // recovery marker is compared exactly, so `test> __MQLENS_DONE_x__`
-        // delivered as one line would never match — and with no ceiling on a
-        // command any more, that is a wait with no end.
-        let mut prompts = MongoshPrompts::default();
-        prompts.learn("test> ");
-        let mut buf = b"test> __MQLENS_DONE_x__\n".to_vec();
-        assert_eq!(take_mongosh_lines(&mut buf, &mut prompts), vec!["__MQLENS_DONE_x__".to_string()]);
-
-        // Two prompts can precede it: `.break` on an idle REPL prints one more.
-        let mut buf = b"test> test> __MQLENS_DONE_x__\n".to_vec();
-        assert_eq!(take_mongosh_lines(&mut buf, &mut prompts), vec!["__MQLENS_DONE_x__".to_string()]);
-    }
-
-    #[test]
-    fn output_that_merely_resembles_a_prompt_is_kept() {
-        use crate::{take_mongosh_lines, MongoshPrompts};
-        // A script may print anything. Only the exact prompt this session has
-        // been seen to write is a prompt; a line ending in `> ` is not.
-        let mut prompts = MongoshPrompts::default();
-        prompts.learn("test> ");
-        let mut buf = b"ready> \nstatus> ok\n".to_vec();
+    fn complete_lines_are_never_rewritten() {
+        use crate::take_mongosh_lines;
+        // A script may print anything, including things shaped like a prompt,
+        // and a prompt the OS delivered in the same read as the output after it
+        // is left glued on rather than guessed at. Both are delivered verbatim.
+        let mut buf = b"ready> \ntest> hello\nstatus> ok\n".to_vec();
         assert_eq!(
-            take_mongosh_lines(&mut buf, &mut prompts),
-            vec!["ready> ".to_string(), "status> ok".to_string()]
+            take_mongosh_lines(&mut buf),
+            vec!["ready> ".to_string(), "test> hello".to_string(), "status> ok".to_string()]
         );
     }
 
     #[test]
     fn a_partial_output_line_waits_for_its_newline() {
-        use crate::{take_mongosh_lines, MongoshPrompts};
-        let mut prompts = MongoshPrompts::default();
+        use crate::take_mongosh_lines;
         let mut buf = b"{ _id: 1, name: 'half".to_vec();
-        assert!(take_mongosh_lines(&mut buf, &mut prompts).is_empty());
+        assert!(take_mongosh_lines(&mut buf).is_empty());
         assert_eq!(buf, b"{ _id: 1, name: 'half".to_vec(), "not a prompt, so it stays buffered");
 
         buf.extend_from_slice(b" typed' }\r\n");
-        assert_eq!(
-            take_mongosh_lines(&mut buf, &mut prompts),
-            vec!["{ _id: 1, name: 'half typed' }".to_string()]
-        );
+        assert_eq!(take_mongosh_lines(&mut buf), vec!["{ _id: 1, name: 'half typed' }".to_string()]);
     }
 
     #[test]
-    fn the_continuation_prompt_needs_no_learning() {
-        use crate::{take_mongosh_lines, MongoshPrompts};
-        // `| ` is what the REPL prints each time it reads a line while a
-        // statement is still open. It is the same string in every session.
-        let mut prompts = MongoshPrompts::default();
-        let mut buf = b"| \n| item 1\n".to_vec();
-        assert_eq!(take_mongosh_lines(&mut buf, &mut prompts), vec!["item 1".to_string()]);
-    }
-
-    #[test]
-    fn the_marker_is_told_apart_from_a_code_frame_quoting_it() {
+    fn the_marker_is_matched_by_suffix_so_a_glued_prompt_cannot_hide_it() {
         use crate::{marker_line_kind, MongoshCommandEnd};
         let marker = "__MQLENS_DONE_abc__";
-        // Printed by our own `print(...)`: the command completed.
+        // The REPL's echo of the marker expression: the command completed.
         assert_eq!(marker_line_kind(marker, marker), Some(MongoshCommandEnd::Completed));
-        assert_eq!(marker_line_kind("  __MQLENS_DONE_abc__  ", marker), Some(MongoshCommandEnd::Completed));
-        // Quoted back by the REPL's SyntaxError: our line was swallowed into
-        // an unclosed statement that then failed to parse.
+        // With the previous prompt delivered in the same read — the case that
+        // would otherwise wait forever, now that a command has no ceiling. It
+        // needs no prompt to have been seen first: the first prompt of a session
+        // can arrive coalesced with the marker of the `use` that starts it.
         assert_eq!(
-            marker_line_kind("> 2 | print('__MQLENS_DONE_abc__')", marker),
-            Some(MongoshCommandEnd::SyntaxError)
+            marker_line_kind("rs0 [direct: primary] test> __MQLENS_DONE_abc__", marker),
+            Some(MongoshCommandEnd::Completed)
         );
+        assert_eq!(
+            marker_line_kind("test> test> __MQLENS_DONE_abc__", marker),
+            Some(MongoshCommandEnd::Completed)
+        );
+        // Quoted back inside a SyntaxError code frame: our line was swallowed
+        // into an unclosed statement that then failed to parse.
+        assert_eq!(marker_line_kind("> 2 | '__MQLENS_DONE_abc__'", marker), Some(MongoshCommandEnd::SyntaxError));
         // Anything else is ordinary output.
         assert_eq!(marker_line_kind("hello", marker), None);
         assert_eq!(marker_line_kind("__MQLENS_DONE_other__", marker), None);

@@ -332,71 +332,27 @@ pub struct MongoshSessionInfo {
 /// left behind by an earlier command and must not be shown as output.
 const MONGOSH_MARKER_PREFIX: &str = "__MQLENS_DONE_";
 
-/// The prompt strings this session has been seen to print.
+/// Is this newline-less tail mongosh's prompt?
 ///
-/// A prompt is not recognised by how it looks — a script can print anything,
-/// `print("ready> ")` included — but by how it arrives: it is the one thing
-/// mongosh writes with no newline after it, because it is waiting for input on
-/// the same line. Everything a script prints is newline-terminated. So a chunk
-/// that ends without a newline and looks like a prompt is a prompt, and once
-/// seen its exact text is known. From then on a line equal to it is dropped,
-/// and a line beginning with it is a prompt glued onto whatever the REPL wrote
-/// next — which the OS may well deliver in the same read — and is split.
+/// Asked only of a chunk's tail — bytes with no newline after them. That is
+/// the framing that identifies a prompt: mongosh writes it and then waits for
+/// input on the same line, so it is the one thing the process writes without
+/// a newline. A script's output is newline-terminated, so it never ends a
+/// chunk this way except mid-line, and the shape check below is only there to
+/// keep a half-received output line from being taken for a prompt.
 ///
-/// The set grows on `use <db>` and topology changes, when the prompt changes.
-#[derive(Default)]
-pub(crate) struct MongoshPrompts {
-    known: Vec<String>,
+/// Nothing else is ever judged by shape. A complete line is output, whatever
+/// it looks like: `print("ready> ")` and `print("test> hello")` both come
+/// through untouched. And a prompt the OS delivered in the same read as the
+/// output before it is left glued on — rare, cosmetic, and the only safe
+/// choice, since prompt bytes and identical script bytes cannot be told apart
+/// once they share a line. The completion protocol does not need them told
+/// apart: it matches its markers by suffix (see `marker_line_kind`).
+pub(crate) fn tail_is_mongosh_prompt(tail: &str) -> bool {
+    tail == "| " || (tail.len() <= 200 && tail.ends_with("> ") && tail.trim_end() != ">")
 }
 
-impl MongoshPrompts {
-    /// The continuation prompt is fixed and needs no learning: the REPL prints
-    /// exactly this each time it reads a line while a statement is still open.
-    const CONTINUATION: &'static str = "| ";
-
-    /// Could this newline-less tail be a prompt? Only asked of tails, where the
-    /// framing has already done most of the work; the shape check just keeps a
-    /// half-received output line from being mistaken for one.
-    fn looks_like_prompt(tail: &str) -> bool {
-        tail == Self::CONTINUATION
-            || (tail.len() <= 200 && tail.ends_with("> ") && tail.trim_end() != ">")
-    }
-
-    pub(crate) fn learn(&mut self, prompt: &str) {
-        if prompt != Self::CONTINUATION && !self.known.iter().any(|k| k == prompt) {
-            self.known.push(prompt.to_string());
-        }
-    }
-
-    /// A complete line that is nothing but a prompt.
-    fn is_prompt(&self, line: &str) -> bool {
-        line == Self::CONTINUATION || self.known.iter().any(|k| k == line)
-    }
-
-    /// Strip known prompts glued onto the front of `line`.
-    ///
-    /// Plural: `.break` on an idle REPL prints a prompt with nothing after it,
-    /// so the next output can sit behind two of them.
-    fn strip_leading<'a>(&self, line: &'a str) -> &'a str {
-        let mut rest = line;
-        loop {
-            let before = rest;
-            for k in &self.known {
-                if let Some(r) = rest.strip_prefix(k.as_str()) {
-                    rest = r;
-                }
-            }
-            if let Some(r) = rest.strip_prefix(Self::CONTINUATION) {
-                rest = r;
-            }
-            if rest.len() == before.len() {
-                return rest;
-            }
-        }
-    }
-}
-
-/// Take every complete output line out of `buf`, learning prompts on the way.
+/// Take every complete output line out of `buf`, and drop a trailing prompt.
 ///
 /// A line reader on mongosh's stdout was subtly wrong: the REPL writes its
 /// prompt with no newline after it, so a `lines()` reader never saw the prompt
@@ -405,10 +361,9 @@ impl MongoshPrompts {
 /// nothing after it, which is exactly what a REPL waiting for input produces,
 /// was never delivered at all.
 ///
-/// Prompts are consumed here and never delivered: nothing downstream needs
-/// them. Output glued behind one is delivered without it. `\r\n` is folded to
-/// `\n`; partial UTF-8 at the end of a chunk stays until the rest arrives.
-pub(crate) fn take_mongosh_lines(buf: &mut Vec<u8>, prompts: &mut MongoshPrompts) -> Vec<String> {
+/// `\r\n` is folded to `\n`; partial UTF-8 at the end of a chunk stays until
+/// the rest of it arrives.
+pub(crate) fn take_mongosh_lines(buf: &mut Vec<u8>) -> Vec<String> {
     let mut lines = Vec::new();
     while let Some(end) = buf.iter().position(|&b| b == b'\n') {
         let raw: Vec<u8> = buf.drain(..=end).collect();
@@ -416,14 +371,10 @@ pub(crate) fn take_mongosh_lines(buf: &mut Vec<u8>, prompts: &mut MongoshPrompts
         if text.ends_with('\r') {
             text.pop();
         }
-        if prompts.is_prompt(&text) {
-            continue;
-        }
-        lines.push(prompts.strip_leading(&text).to_string());
+        lines.push(text);
     }
     if let Ok(tail) = std::str::from_utf8(buf) {
-        if MongoshPrompts::looks_like_prompt(tail) {
-            prompts.learn(tail);
+        if tail_is_mongosh_prompt(tail) {
             buf.clear();
         }
     }
@@ -440,7 +391,6 @@ fn spawn_mongosh_reader<R>(
     tokio::spawn(async move {
         let mut reader = reader;
         let mut pending = Vec::new();
-        let mut prompts = MongoshPrompts::default();
         let mut chunk = [0u8; 4096];
         loop {
             let read = match reader.read(&mut chunk).await {
@@ -448,7 +398,7 @@ fn spawn_mongosh_reader<R>(
                 Ok(n) => n,
             };
             pending.extend_from_slice(&chunk[..read]);
-            for text in take_mongosh_lines(&mut pending, &mut prompts) {
+            for text in take_mongosh_lines(&mut pending) {
                 let _ = sender.send(MongoshLine {
                     stream: stream.clone(),
                     text,
@@ -513,19 +463,30 @@ pub(crate) enum MongoshCommandEnd {
     SyntaxError,
 }
 
-/// Where a line that carries the marker came from: the `print` we asked for,
-/// or a SyntaxError code frame quoting our own line back at us.
+/// Where a line that carries the marker came from: the REPL echoing the marker
+/// expression we sent, or a SyntaxError code frame quoting our line back.
 ///
-///     > 2 | print('__MQLENS_DONE_…__')
+/// Matched by suffix, not equality. The marker is unique and nothing but the
+/// REPL's echo of it ever ends a line with it, so whatever precedes it on the
+/// line is a prompt the OS delivered in the same read — `test> __MQLENS_DONE_…__`
+/// — and is irrelevant. This is what keeps completion detection from ever
+/// depending on prompt recognition, which is heuristic and can lag: the very
+/// first prompt of a session can arrive coalesced with the marker of the `use`
+/// that starts it, before anything has been seen at all.
 ///
-/// is what the REPL prints when an open `(` on line 1 made line 2 part of the
-/// same statement. The marker is unique per command, so the frame can only be
-/// quoting this command.
+/// A code frame quoting our line ends with `'`, not the marker:
+///
+///     > 2 | '__MQLENS_DONE_…__'
+///
+/// so it is a different kind. With the marker sent as a bare expression that
+/// is rare — a string is valid inside most open constructs, so the REPL keeps
+/// reading rather than failing — but the REPL can still produce it, and it
+/// means the same thing: our line was swallowed into an unclosed statement.
 pub(crate) fn marker_line_kind(line: &str, marker: &str) -> Option<MongoshCommandEnd> {
     if !line.contains(marker) {
         return None;
     }
-    Some(if line.trim() == marker {
+    Some(if line.trim_end().ends_with(marker) {
         MongoshCommandEnd::Completed
     } else {
         MongoshCommandEnd::SyntaxError
@@ -558,11 +519,17 @@ async fn run_mongosh_command_on_session(
     // is merely slow, which is still evaluating and has not read it yet. And
     // when nothing is open it does nothing at all. The second marker prints
     // either way; it is the point at which we can say what happened.
+    //
+    // The markers are bare string expressions, not `print(...)` calls. The REPL
+    // echoes the value of every expression statement itself, and that is not
+    // something a script can reach: `print = () => {}` silences `print`, and
+    // would have silenced both markers with it, leaving a command that could
+    // only end by being stopped. The echo of a string is the bare text.
     let mut script = command.replace("\r\n", "\n");
     if !script.ends_with('\n') {
         script.push('\n');
     }
-    script.push_str(&format!("print('{marker}')\n.break\nprint('{recovered}')\n"));
+    script.push_str(&format!("'{marker}'\n.break\n'{recovered}'\n"));
     {
         let mut stdin = session.stdin.lock().await;
         stdin
@@ -590,7 +557,9 @@ async fn run_mongosh_command_on_session(
             Some(line) => line,
             None => return Err("mongosh session closed".to_string()),
         };
-        if line.text.trim() == recovered {
+        // Suffix, for the same reason `marker_line_kind` uses one: a prompt
+        // delivered in the same read sits in front of it.
+        if line.text.trim_end().ends_with(&recovered) {
             break;
         }
         match marker_line_kind(&line.text, &marker) {
