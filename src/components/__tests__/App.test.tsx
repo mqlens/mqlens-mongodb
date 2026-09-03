@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import { renderWithProviders } from '../../test/render-with-providers';
 import { resetUpdateTabStateDebounce } from '../../workspace/workspaceStore';
 import App, { tabLabelFor, tabTooltipFor, type QueryTab } from '../../App';
@@ -2616,22 +2616,27 @@ describe('App Component', () => {
     });
 
     const { fireEvent } = await import('@testing-library/react');
+    // Inactive tabs stay mounted now (#240), so a global query matches every
+    // mounted tab's editor. Scope to the one actually on screen — which is
+    // also what the user sees, and so what this test is really about.
+    const visibleTab = () =>
+      within(document.querySelector('[data-testid^="tab-content-"]:not([hidden])') as HTMLElement);
     renderWithProviders(<App />);
     await screen.findByTestId('mock-sidebar');
 
     // Open customers, type a custom filter.
     fireEvent.click(screen.getByTestId('select-collection-btn'));
-    await screen.findByText(/"Sample"/);
-    fireEvent.click(screen.getByTestId('toggle-query-builder'));
-    const filterInput = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    await screen.findAllByText(/"Sample"/);
+    fireEvent.click(visibleTab().getByTestId('toggle-query-builder'));
+    const filterInput = visibleTab().getByTestId('query-filter-input') as HTMLTextAreaElement;
     fireEvent.change(filterInput, { target: { value: '{"status":"active"}' } });
     expect(filterInput.value).toContain('"status"');
 
     // Switch to orders — editor must reset to the default empty filter, not carry over.
     fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
-    await screen.findByText(/"Sample"/);
-    fireEvent.click(screen.getByTestId('toggle-query-builder'));
-    const ordersFilter = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    await screen.findAllByText(/"Sample"/);
+    fireEvent.click(visibleTab().getByTestId('toggle-query-builder'));
+    const ordersFilter = visibleTab().getByTestId('query-filter-input') as HTMLTextAreaElement;
     expect(ordersFilter.value).toBe('');
 
     // Type a different filter on orders.
@@ -2640,16 +2645,16 @@ describe('App Component', () => {
 
     // Switch back to customers — customers filter must be restored.
     fireEvent.click(screen.getByTestId('select-collection-btn'));
-    await screen.findByText(/"Sample"/);
-    fireEvent.click(screen.getByTestId('toggle-query-builder'));
-    const customersFilterAgain = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    await screen.findAllByText(/"Sample"/);
+    fireEvent.click(visibleTab().getByTestId('toggle-query-builder'));
+    const customersFilterAgain = visibleTab().getByTestId('query-filter-input') as HTMLTextAreaElement;
     expect(customersFilterAgain.value).toContain('"status"');
 
     // Switch back to orders — orders filter must be restored.
     fireEvent.click(screen.getByTestId('select-orders-collection-btn'));
-    await screen.findByText(/"Sample"/);
-    fireEvent.click(screen.getByTestId('toggle-query-builder'));
-    const ordersFilterAgain = screen.getByTestId('query-filter-input') as HTMLTextAreaElement;
+    await screen.findAllByText(/"Sample"/);
+    fireEvent.click(visibleTab().getByTestId('toggle-query-builder'));
+    const ordersFilterAgain = visibleTab().getByTestId('query-filter-input') as HTMLTextAreaElement;
     expect(ordersFilterAgain.value).toContain('"shipped"');
   });
 

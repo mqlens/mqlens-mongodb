@@ -20,6 +20,10 @@ export interface WorkspaceTab {
   accentColor?: string;
   icon: React.ReactNode;
   pinned?: boolean;
+  /** The tab's kind, as `QueryTab['type']`. Not used for rendering: the pane
+   *  reads it to budget how many of each kind stay mounted, since a mongosh tab
+   *  costs two orders of magnitude more than a collection tab (#240). */
+  kind?: string;
 }
 
 interface WorkspaceTabBarProps {

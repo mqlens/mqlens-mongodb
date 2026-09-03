@@ -5148,6 +5148,7 @@ function Workspace() {
                 return color ? tabColorCss(color) : undefined;
               })(),
               icon: tabIconFor(tab, tab.id === pane.activeTabId),
+              kind: tab.type,
             }))
         }
         renderTabContent={renderTabContent}

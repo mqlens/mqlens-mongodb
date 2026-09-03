@@ -14,10 +14,12 @@ export interface WorkspaceRootProps {
   /** Right-click on a tab (Phase 3 Task 5) — forwarded straight to
    *  PaneView/WorkspaceTabBar. Additive/optional, same as there. */
   onTabContextMenu?: (tabId: string, e: React.MouseEvent) => void;
+  /** Per-kind mounted-tab budgets, forwarded to every pane (#240). */
+  keepAliveLimits?: React.ComponentProps<typeof PaneView>['keepAliveLimits'];
 }
 
 function NodeView({ node, props }: { node: LayoutNode; props: WorkspaceRootProps }) {
-  const { layout, dispatch, tabsFor, renderTabContent, renderEmptyPane, onTabContextMenu } = props;
+  const { layout, dispatch, tabsFor, renderTabContent, renderEmptyPane, onTabContextMenu, keepAliveLimits } = props;
   if (node.kind === 'pane') {
     return (
       <PaneView
@@ -29,6 +31,7 @@ function NodeView({ node, props }: { node: LayoutNode; props: WorkspaceRootProps
         renderTabContent={renderTabContent}
         renderEmptyPane={renderEmptyPane}
         onTabContextMenu={onTabContextMenu}
+        keepAliveLimits={keepAliveLimits}
       />
     );
   }

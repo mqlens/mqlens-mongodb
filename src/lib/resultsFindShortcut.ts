@@ -79,9 +79,35 @@ function eventBelongsToAnEditor(target: EventTarget | null): boolean {
 }
 
 /** The registered pane containing `node`, if any. */
+/**
+ * A pane that is registered but not on screen.
+ *
+ * Inactive tabs stay mounted now, hidden with `hidden`/`display: none` (#240),
+ * so several panes can be registered while only one is visible. A hidden one
+ * must not answer for a shortcut: it cannot be pointed at or focused, and
+ * opening its find bar would do nothing the user could see.
+ *
+ * Tested by walking to a `[hidden]` ancestor rather than by measuring, because
+ * measuring is exactly what a hidden element cannot do — and because jsdom has
+ * no layout, so `offsetParent` would call every pane hidden and route nothing.
+ */
+function isHidden(el: HTMLElement): boolean {
+  return el.closest('[hidden]') !== null;
+}
+
+/** Registered panes that are actually on screen, in registration order. */
+function visiblePanes(): Map<number, Pane> {
+  const shown = new Map<number, Pane>();
+  for (const [id, pane] of panes) {
+    const el = pane.element();
+    if (el && !isHidden(el)) shown.set(id, pane);
+  }
+  return shown;
+}
+
 function paneContaining(node: EventTarget | null): Pane | undefined {
   if (!(node instanceof Node)) return undefined;
-  for (const pane of panes.values()) {
+  for (const pane of visiblePanes().values()) {
     const el = pane.element();
     if (el && el.contains(node)) return pane;
   }
@@ -123,7 +149,9 @@ function paneForEventTarget(target: EventTarget | null): Pane | undefined {
   if (!unfocused) return undefined;
 
   if (lastPointedId !== null) {
-    const pane = panes.get(lastPointedId);
+    // Visible only: the tab last pointed at may since have been switched away
+    // from and is now mounted but hidden.
+    const pane = visiblePanes().get(lastPointedId);
     if (pane?.element()) return pane;
   }
   return undefined;
@@ -147,7 +175,11 @@ function targetPane(event: KeyboardEvent): Pane | undefined {
     event.target === document.body ||
     event.target === document ||
     event.target === window;
-  return unfocused && panes.size === 1 ? [...panes.values()][0] : undefined;
+  // Counted over visible panes: with inactive tabs kept mounted there is
+  // almost always more than one registered, and the single-pane generosity
+  // this serves is about what the user can actually see (#240).
+  const shown = visiblePanes();
+  return unfocused && shown.size === 1 ? [...shown.values()][0] : undefined;
 }
 
 function onKeyDown(event: KeyboardEvent): void {
