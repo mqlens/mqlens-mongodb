@@ -41,7 +41,7 @@ sysinfo = "0.38.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 argon2 = "0.6"
 aes-gcm = "0.11"
-rand = "0.8"
+rand = "0.10"
 # Pinned to the last release on the rand-0.8 line (fake 3.2.0+ moved to rand 0.9,
 # fake 5.x to rand 0.10) — our StdRng is rand 0.8 (see `rand = "0.8"` above) and
 # determinism requires driving fake's generators with OUR seeded rng via
