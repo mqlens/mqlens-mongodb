@@ -4,7 +4,7 @@ import Editor from '@monaco-editor/react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, RotateCcw, Sparkles, Terminal } from 'lucide-react';
+import { AlertCircle, Braces, CornerDownLeft, Eraser, Play, RotateCcw, Sparkles, Square, Terminal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -299,6 +299,28 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   const [viewer, setViewer] = useState<{ docs: Record<string, any>[]; label: string; ms: number } | null>(null);
   const [tab, setTab] = useState<ShellTab>('console');
   const [running, setRunning] = useState(false);
+  // Set by the Stop button just before it restarts the session. The pending
+  // `run_mongosh_command` then fails with "session closed", and this is how the
+  // catch below tells a stop the user asked for from a session that died on its
+  // own — the same rejection, two very different messages.
+  const cancelRequestedRef = useRef(false);
+  // Seconds the current command has been running, so a long script reads as
+  // "still going" rather than "hung". A script takes as long as it takes now:
+  // the backend no longer cuts it off, and the only thing that ends it early is
+  // the user pressing Stop.
+  const [runningFor, setRunningFor] = useState(0);
+  useEffect(() => {
+    if (!running) {
+      setRunningFor(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const tick = window.setInterval(
+      () => setRunningFor(Math.floor((Date.now() - startedAt) / 1000)),
+      1000
+    );
+    return () => window.clearInterval(tick);
+  }, [running]);
   const [topHeight, setTopHeight] = useState<number | null>(null);
   const [mongoshPath, setMongoshPath] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(storedSession?.sessionId ?? null);
@@ -956,11 +978,29 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       if (ranExternally) return;
       throw new Error(t('mongoShell.errors.sessionRequiredForScripts'));
     } catch (err: any) {
-      appendEntries([{ kind: 'error', message: err.message || String(err) }]);
+      if (cancelRequestedRef.current) {
+        // The rejection is the session being killed, and the user is the one
+        // who killed it. That is not an error; it is what Stop does.
+        cancelRequestedRef.current = false;
+        appendEntries([{ kind: 'note', text: t('mongoShell.notes.commandStopped') }]);
+      } else {
+        appendEntries([{ kind: 'error', message: err.message || String(err) }]);
+      }
       setTab('console');
     } finally {
       setRunning(false);
     }
+  };
+
+  // Stop the running command. mongosh has no way to interrupt a statement over
+  // a pipe — Ctrl+C is a terminal affordance, and the process is not on one —
+  // so the only reliable stop is ending the session and starting a fresh one.
+  // The transcript survives that; `restartSession` keeps it. What the user
+  // loses is the session's variables and `use` state, which is the honest
+  // price of stopping a script that will not stop on its own.
+  const stopCommand = () => {
+    cancelRequestedRef.current = true;
+    void restartSession();
   };
 
   runRef.current = () => runCommand();
@@ -1089,13 +1129,36 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           <span className="text-xs font-semibold text-foreground">mongosh</span>
           <span className="font-mono text-[11px] text-muted-foreground">{connectionName} · {currentDb}</span>
           <span className="flex-1" />
-          <span className="font-mono text-[10px] text-muted-foreground">
-            {formatShortcut(shortcutById('run-query')!)}
-          </span>
-          <Button size="sm" onClick={() => runRef.current()} disabled={running}>
-            <Play size={11} />
-            {t('mongoShell.toolbar.run')}
-          </Button>
+          {running ? (
+            <span
+              className="font-mono text-[10px] text-muted-foreground"
+              data-testid="shell-running-for"
+            >
+              {t('mongoShell.notes.runningFor', { seconds: runningFor })}
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] text-muted-foreground">
+              {formatShortcut(shortcutById('run-query')!)}
+            </span>
+          )}
+          {running ? (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={stopCommand}
+              disabled={restarting}
+              data-testid="shell-stop-command"
+              title={t('mongoShell.toolbar.stopTitle')}
+            >
+              <Square size={11} />
+              {t('mongoShell.toolbar.stop')}
+            </Button>
+          ) : (
+            <Button size="sm" onClick={() => runRef.current()}>
+              <Play size={11} />
+              {t('mongoShell.toolbar.run')}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"

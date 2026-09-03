@@ -925,4 +925,41 @@ describe('MongoShell Component', () => {
       await waitFor(() => expect(stopCalls()).toBe(1));
     });
   });
+  it('Stop ends the running command by restarting the session, and says so', async () => {
+    // A script takes as long as it takes now — the backend no longer cuts it
+    // off — so the user needs a way out. mongosh cannot be interrupted over a
+    // pipe, so Stop restarts the session, and the pending call fails with
+    // "session closed". That is the user's doing, not an error, and it must
+    // read that way.
+    let rejectRun!: (e: Error) => void;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'start_mongosh_session') return Promise.resolve({ session_id: 'shell-session-1', stdout: [], stderr: [] });
+      if (cmd === 'run_mongosh_command') return new Promise((_, reject) => { rejectRun = reject; });
+      if (cmd === 'stop_mongosh_session') { rejectRun(new Error('mongosh session closed')); return Promise.resolve(); }
+      if (cmd === 'get_shell_tab_state') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+
+    render(<MongoShell connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" />);
+    await screen.findByTestId('shell-restart-session');
+
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'sleep(60000)' } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+
+    // While it runs: an elapsed indicator and a Stop button in place of Run.
+    const stop = await screen.findByTestId('shell-stop-command');
+    expect(screen.getByTestId('shell-running-for')).toBeInTheDocument();
+
+    fireEvent.click(stop);
+
+    await waitFor(() => expect(screen.getByText('Command stopped.')).toBeInTheDocument());
+    // Reported as stopped, never as a session error.
+    expect(screen.queryByText(/mongosh session closed/)).toBeNull();
+    // And ready to run again.
+    expect(await screen.findByRole('button', { name: /^run$/i })).toBeInTheDocument();
+  });
+
 });
