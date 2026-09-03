@@ -3022,50 +3022,75 @@ mod tests {
     // was glued to the front of it, and a prompt with nothing after it — the
     // REPL waiting for input, which is what a stalled script looks like — was
     // never delivered at all.
+    //
+    // A prompt is recognised by that framing, not by its shape: it arrives as a
+    // tail with no newline. Once seen, its exact text is known, and only that
+    // exact text is ever treated as a prompt again — so output that merely
+    // resembles one is left alone.
 
     #[test]
-    fn a_prompt_with_no_newline_is_delivered_as_its_own_line() {
-        use crate::take_mongosh_lines;
+    fn a_prompt_arriving_without_a_newline_is_learned_and_dropped() {
+        use crate::{take_mongosh_lines, MongoshPrompts};
+        let mut prompts = MongoshPrompts::default();
         let mut buf = b"hello\nrs0 [direct: primary] test> ".to_vec();
-        assert_eq!(
-            take_mongosh_lines(&mut buf),
-            vec!["hello".to_string(), "rs0 [direct: primary] test> ".to_string()]
-        );
-        assert!(buf.is_empty(), "a recognised prompt is consumed, not left to glue onto later output");
+        assert_eq!(take_mongosh_lines(&mut buf, &mut prompts), vec!["hello".to_string()]);
+        assert!(buf.is_empty(), "the prompt is consumed, not left to glue onto later output");
     }
 
     #[test]
-    fn a_continuation_prompt_is_delivered_too() {
-        use crate::take_mongosh_lines;
-        // `| ` is what the REPL prints each time it reads a line while a
-        // statement is still open — the signal that a script is incomplete.
-        let mut buf = b"| ".to_vec();
-        assert_eq!(take_mongosh_lines(&mut buf), vec!["| ".to_string()]);
-        assert!(buf.is_empty());
+    fn a_prompt_glued_to_output_in_one_read_is_split_off() {
+        use crate::{take_mongosh_lines, MongoshPrompts};
+        // The OS can hand the reader a prompt and the next line together. The
+        // recovery marker is compared exactly, so `test> __MQLENS_DONE_x__`
+        // delivered as one line would never match — and with no ceiling on a
+        // command any more, that is a wait with no end.
+        let mut prompts = MongoshPrompts::default();
+        prompts.learn("test> ");
+        let mut buf = b"test> __MQLENS_DONE_x__\n".to_vec();
+        assert_eq!(take_mongosh_lines(&mut buf, &mut prompts), vec!["__MQLENS_DONE_x__".to_string()]);
+
+        // Two prompts can precede it: `.break` on an idle REPL prints one more.
+        let mut buf = b"test> test> __MQLENS_DONE_x__\n".to_vec();
+        assert_eq!(take_mongosh_lines(&mut buf, &mut prompts), vec!["__MQLENS_DONE_x__".to_string()]);
+    }
+
+    #[test]
+    fn output_that_merely_resembles_a_prompt_is_kept() {
+        use crate::{take_mongosh_lines, MongoshPrompts};
+        // A script may print anything. Only the exact prompt this session has
+        // been seen to write is a prompt; a line ending in `> ` is not.
+        let mut prompts = MongoshPrompts::default();
+        prompts.learn("test> ");
+        let mut buf = b"ready> \nstatus> ok\n".to_vec();
+        assert_eq!(
+            take_mongosh_lines(&mut buf, &mut prompts),
+            vec!["ready> ".to_string(), "status> ok".to_string()]
+        );
     }
 
     #[test]
     fn a_partial_output_line_waits_for_its_newline() {
-        use crate::take_mongosh_lines;
+        use crate::{take_mongosh_lines, MongoshPrompts};
+        let mut prompts = MongoshPrompts::default();
         let mut buf = b"{ _id: 1, name: 'half".to_vec();
-        assert!(take_mongosh_lines(&mut buf).is_empty());
+        assert!(take_mongosh_lines(&mut buf, &mut prompts).is_empty());
         assert_eq!(buf, b"{ _id: 1, name: 'half".to_vec(), "not a prompt, so it stays buffered");
 
         buf.extend_from_slice(b" typed' }\r\n");
-        assert_eq!(take_mongosh_lines(&mut buf), vec!["{ _id: 1, name: 'half typed' }".to_string()]);
+        assert_eq!(
+            take_mongosh_lines(&mut buf, &mut prompts),
+            vec!["{ _id: 1, name: 'half typed' }".to_string()]
+        );
     }
 
     #[test]
-    fn prompt_detection_is_narrow() {
-        use crate::is_mongosh_prompt;
-        assert!(is_mongosh_prompt("rs0 [direct: primary] test> "));
-        assert!(is_mongosh_prompt("hello> "));
-        assert!(is_mongosh_prompt("| "));
-        // Output that merely ends in the same characters is not a prompt.
-        assert!(!is_mongosh_prompt("{ a: 1 }"));
-        assert!(!is_mongosh_prompt("> 2 | print('x')")); // a SyntaxError code frame
-        assert!(!is_mongosh_prompt("> "));
-        assert!(!is_mongosh_prompt(&format!("{}> ", "x".repeat(300))));
+    fn the_continuation_prompt_needs_no_learning() {
+        use crate::{take_mongosh_lines, MongoshPrompts};
+        // `| ` is what the REPL prints each time it reads a line while a
+        // statement is still open. It is the same string in every session.
+        let mut prompts = MongoshPrompts::default();
+        let mut buf = b"| \n| item 1\n".to_vec();
+        assert_eq!(take_mongosh_lines(&mut buf, &mut prompts), vec!["item 1".to_string()]);
     }
 
     #[test]
@@ -3085,7 +3110,6 @@ mod tests {
         assert_eq!(marker_line_kind("hello", marker), None);
         assert_eq!(marker_line_kind("__MQLENS_DONE_other__", marker), None);
     }
-
 
     #[tokio::test]
     async fn test_mongosh_session_not_found() {

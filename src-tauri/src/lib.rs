@@ -332,36 +332,83 @@ pub struct MongoshSessionInfo {
 /// left behind by an earlier command and must not be shown as output.
 const MONGOSH_MARKER_PREFIX: &str = "__MQLENS_DONE_";
 
-/// Is this line mongosh's prompt, rather than something the script printed?
+/// The prompt strings this session has been seen to print.
 ///
-/// Two shapes. `| ` is the continuation prompt the REPL emits each time it
-/// reads a line while a statement is still open. Everything else ends in `> `
-/// — `rs0 [direct: primary] test> ` — and is emitted after each statement
-/// evaluates, `--quiet` or not. Neither is output, and the continuation one is
-/// a signal in its own right (see `run_mongosh_command_on_session`).
+/// A prompt is not recognised by how it looks — a script can print anything,
+/// `print("ready> ")` included — but by how it arrives: it is the one thing
+/// mongosh writes with no newline after it, because it is waiting for input on
+/// the same line. Everything a script prints is newline-terminated. So a chunk
+/// that ends without a newline and looks like a prompt is a prompt, and once
+/// seen its exact text is known. From then on a line equal to it is dropped,
+/// and a line beginning with it is a prompt glued onto whatever the REPL wrote
+/// next — which the OS may well deliver in the same read — and is split.
 ///
-/// Bounded in length so a long document line that happens to end in `> `
-/// cannot be mistaken for one; a prompt is a short line.
-pub(crate) fn is_mongosh_prompt(line: &str) -> bool {
-    if line == "| " {
-        return true;
-    }
-    line.len() <= 200 && line.ends_with("> ") && line.trim_end() != ">"
+/// The set grows on `use <db>` and topology changes, when the prompt changes.
+#[derive(Default)]
+pub(crate) struct MongoshPrompts {
+    known: Vec<String>,
 }
 
-/// Take every complete line out of `buf`, and a trailing prompt as well.
+impl MongoshPrompts {
+    /// The continuation prompt is fixed and needs no learning: the REPL prints
+    /// exactly this each time it reads a line while a statement is still open.
+    const CONTINUATION: &'static str = "| ";
+
+    /// Could this newline-less tail be a prompt? Only asked of tails, where the
+    /// framing has already done most of the work; the shape check just keeps a
+    /// half-received output line from being mistaken for one.
+    fn looks_like_prompt(tail: &str) -> bool {
+        tail == Self::CONTINUATION
+            || (tail.len() <= 200 && tail.ends_with("> ") && tail.trim_end() != ">")
+    }
+
+    pub(crate) fn learn(&mut self, prompt: &str) {
+        if prompt != Self::CONTINUATION && !self.known.iter().any(|k| k == prompt) {
+            self.known.push(prompt.to_string());
+        }
+    }
+
+    /// A complete line that is nothing but a prompt.
+    fn is_prompt(&self, line: &str) -> bool {
+        line == Self::CONTINUATION || self.known.iter().any(|k| k == line)
+    }
+
+    /// Strip known prompts glued onto the front of `line`.
+    ///
+    /// Plural: `.break` on an idle REPL prints a prompt with nothing after it,
+    /// so the next output can sit behind two of them.
+    fn strip_leading<'a>(&self, line: &'a str) -> &'a str {
+        let mut rest = line;
+        loop {
+            let before = rest;
+            for k in &self.known {
+                if let Some(r) = rest.strip_prefix(k.as_str()) {
+                    rest = r;
+                }
+            }
+            if let Some(r) = rest.strip_prefix(Self::CONTINUATION) {
+                rest = r;
+            }
+            if rest.len() == before.len() {
+                return rest;
+            }
+        }
+    }
+}
+
+/// Take every complete output line out of `buf`, learning prompts on the way.
 ///
 /// A line reader on mongosh's stdout was subtly wrong: the REPL writes its
 /// prompt with no newline after it, so a `lines()` reader never saw the prompt
 /// as a line. It sat in the buffer until the NEXT output arrived and was glued
 /// to the front of it — the console showed `test> hello` — and a prompt with
 /// nothing after it, which is exactly what a REPL waiting for input produces,
-/// was never delivered at all. That prompt is the one piece of evidence that a
-/// script has stalled, so it is flushed the moment it is recognisable.
+/// was never delivered at all.
 ///
-/// `\r\n` is folded to `\n`; partial UTF-8 at the end of a chunk stays in the
-/// buffer until the rest of it arrives.
-pub(crate) fn take_mongosh_lines(buf: &mut Vec<u8>) -> Vec<String> {
+/// Prompts are consumed here and never delivered: nothing downstream needs
+/// them. Output glued behind one is delivered without it. `\r\n` is folded to
+/// `\n`; partial UTF-8 at the end of a chunk stays until the rest arrives.
+pub(crate) fn take_mongosh_lines(buf: &mut Vec<u8>, prompts: &mut MongoshPrompts) -> Vec<String> {
     let mut lines = Vec::new();
     while let Some(end) = buf.iter().position(|&b| b == b'\n') {
         let raw: Vec<u8> = buf.drain(..=end).collect();
@@ -369,11 +416,14 @@ pub(crate) fn take_mongosh_lines(buf: &mut Vec<u8>) -> Vec<String> {
         if text.ends_with('\r') {
             text.pop();
         }
-        lines.push(text);
+        if prompts.is_prompt(&text) {
+            continue;
+        }
+        lines.push(prompts.strip_leading(&text).to_string());
     }
     if let Ok(tail) = std::str::from_utf8(buf) {
-        if is_mongosh_prompt(tail) {
-            lines.push(tail.to_string());
+        if MongoshPrompts::looks_like_prompt(tail) {
+            prompts.learn(tail);
             buf.clear();
         }
     }
@@ -390,6 +440,7 @@ fn spawn_mongosh_reader<R>(
     tokio::spawn(async move {
         let mut reader = reader;
         let mut pending = Vec::new();
+        let mut prompts = MongoshPrompts::default();
         let mut chunk = [0u8; 4096];
         loop {
             let read = match reader.read(&mut chunk).await {
@@ -397,7 +448,7 @@ fn spawn_mongosh_reader<R>(
                 Ok(n) => n,
             };
             pending.extend_from_slice(&chunk[..read]);
-            for text in take_mongosh_lines(&mut pending) {
+            for text in take_mongosh_lines(&mut pending, &mut prompts) {
                 let _ = sender.send(MongoshLine {
                     stream: stream.clone(),
                     text,
@@ -424,9 +475,9 @@ async fn drain_mongosh_output(session: &MongoshSession) -> MongoshCommandOutput 
     loop {
         match tokio::time::timeout(Duration::from_millis(25), output.recv()).await {
             Ok(Some(line)) => {
-                // Prompts and leftover markers are not output, here any more
-                // than during a command.
-                if is_mongosh_prompt(&line.text) || line.text.contains(MONGOSH_MARKER_PREFIX) {
+                // Leftover markers are not output, here any more than during a
+                // command. Prompts never reach this channel: the reader eats them.
+                if line.text.contains(MONGOSH_MARKER_PREFIX) {
                     continue;
                 }
                 match line.stream {
@@ -539,9 +590,6 @@ async fn run_mongosh_command_on_session(
             Some(line) => line,
             None => return Err("mongosh session closed".to_string()),
         };
-        if is_mongosh_prompt(&line.text) {
-            continue;
-        }
         if line.text.trim() == recovered {
             break;
         }
@@ -582,11 +630,21 @@ async fn run_mongosh_command_on_session(
             stderr.extend(error.into_iter().filter(|l| !l.contains(&marker)));
             Ok(MongoshCommandOutput { stdout, stderr })
         }
-        MongoshCommandEnd::Incomplete => Err(
-            "Script is incomplete: an unclosed {, [ or ( left mongosh waiting for more input, \
-             so nothing was run. Close it and try again."
-                .to_string(),
-        ),
+        MongoshCommandEnd::Incomplete => {
+            // Only the trailing open statement was discarded. The REPL evaluates
+            // each statement as soon as it is complete, so anything before it
+            // has already run — a script ending in a stray `{` after an insert
+            // has done the insert. Saying "nothing ran" would invite the user to
+            // run it again. The output that was produced is kept for the same
+            // reason: it is the record of what did happen.
+            stderr.push(
+                "The last statement is incomplete: an unclosed {, [ or ( left mongosh waiting \
+                 for more input, so that statement was discarded. Any complete statements \
+                 before it have already run."
+                    .to_string(),
+            );
+            Ok(MongoshCommandOutput { stdout, stderr })
+        }
     }
 }
 
