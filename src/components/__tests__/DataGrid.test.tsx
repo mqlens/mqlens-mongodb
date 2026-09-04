@@ -2186,3 +2186,42 @@ describe('DataGrid — tab guards survive StrictMode replay (#325 review)', () =
     expect(onActiveTabChange).toHaveBeenCalledWith('explain');
   });
 });
+
+describe('DataGrid — stays mounted across a run (#344)', () => {
+  const docs = () => [{ _id: '1', name: 'Alice Smith', address: { city: 'Oslo' } }];
+  const firstFold = () => screen.getAllByTestId('json-fold-btn')[0];
+
+  it('keeps a fold collapsed across a run that returns the same documents', () => {
+    // Re-running a query gives a fresh array of the same result. The fold ids
+    // are positional, and the positions have not moved.
+    const { rerender } = render(<DataGrid documents={docs()} />);
+    fireEvent.click(firstFold());
+    expect(firstFold()).toHaveAttribute('aria-label', expect.stringMatching(/expand/i));
+
+    rerender(<DataGrid documents={docs()} loading />);
+    rerender(<DataGrid documents={docs()} />);
+
+    expect(firstFold()).toHaveAttribute('aria-label', expect.stringMatching(/expand/i));
+  });
+
+  it('resets folds when a different result set arrives', () => {
+    const { rerender } = render(<DataGrid documents={docs()} />);
+    fireEvent.click(firstFold());
+
+    rerender(<DataGrid documents={[{ _id: '2', name: 'Bob', address: { city: 'Rome' } }]} />);
+
+    expect(firstFold()).toHaveAttribute('aria-label', expect.stringMatching(/collapse/i));
+  });
+
+  it('shows a run in flight over the previous results, not in their place', () => {
+    const { rerender } = render(<DataGrid documents={docs()} />);
+    expect(screen.queryByTestId('results-loading')).toBeNull();
+
+    rerender(<DataGrid documents={docs()} loading />);
+    expect(screen.getByTestId('results-loading')).toBeInTheDocument();
+    expect(screen.getByText(/"Alice Smith"/)).toBeInTheDocument();
+
+    rerender(<DataGrid documents={docs()} />);
+    expect(screen.queryByTestId('results-loading')).toBeNull();
+  });
+});

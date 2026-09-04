@@ -36,8 +36,22 @@ import { getScaledRowHeight } from '@/lib/themes/ui-scale';
 import { cn } from '@/lib/utils';
 import type { SpacingDensity } from '@/lib/themes/schema';
 
+/** A document's identity for comparing result sets, tolerant of any `_id` shape. */
+function stableDocId(doc: Record<string, any>): string {
+  try {
+    return JSON.stringify(doc?._id ?? null);
+  } catch {
+    return '';
+  }
+}
+
 interface DataGridProps {
   documents: Array<Record<string, any>>;
+  /** A run is in flight. The grid stays mounted and keeps showing the previous
+   *  results under a loading overlay, rather than being replaced by a spinner
+   *  — which unmounted it on every run and threw away its folds, its find bar,
+   *  its scroll position and everything else it holds (#344). */
+  loading?: boolean;
   density?: 'roomy' | 'cozy' | 'compact';
   explainResult?: string | null;
   // The query that produced these results, rendered as runnable driver code
@@ -58,10 +72,11 @@ interface DataGridProps {
   onPageChange?: (newSkip: number) => void;
   onPageSizeChange?: (newLimit: number) => void;
   /** Results view mode, owned by the caller so it survives this grid being
-   *  unmounted. The results pane renders `{loading ? <spinner/> : <DataGrid/>}`,
-   *  so the grid remounts on EVERY run, and switching tabs unmounts the whole
-   *  DocumentViewer subtree — local state reset to 'json' both times. Omit both
-   *  props to keep the old self-managed behaviour (MongoShell does). */
+   *  unmounted. The results pane used to render
+   *  `{loading ? <spinner/> : <DataGrid/>}`, remounting the grid on every run;
+   *  that is gone (#344), but switching tabs can still unmount the whole
+   *  DocumentViewer subtree, so the mode stays lifted. Omit both props to keep
+   *  the self-managed behaviour (MongoShell does). */
   viewMode?: ViewMode;
   onViewModeChange?: (mode: ViewMode) => void;
   /** Which results tab is showing. Owned by the caller for the same reason as
@@ -560,6 +575,7 @@ const JsonRow = ({
 
 export const DataGrid: React.FC<DataGridProps> = ({
   documents,
+  loading = false,
   density: densityProp,
   explainResult = null,
   querySpec = null,
@@ -859,10 +875,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // Collapsed rows in the tree-table view (separate id space from JSON folds).
   const [treeCollapsed, setTreeCollapsed] = useState<Set<number>>(new Set());
 
-  // Reset JSON fold state whenever the result set changes (fold ids are positional).
-  useEffect(() => {
-    setCollapsedFolds(new Set());
-  }, [documents]);
+  // JSON folds are reset further down, once the lines they index are known.
 
   // Switch to the explain tab when a NEW plan arrives — not merely because one
   // exists.
@@ -1084,6 +1097,20 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return { jsonLines: lines, jsonMaxWidthPx: maxWidthPx };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsedDocs, documents]);
+
+  // Fold ids are positional, so folds only stay meaningful over a result with
+  // the same documents in the same order and the same number of foldable
+  // blocks. That is exactly what a re-run of the same query returns — the case
+  // where losing every fold on every run was the complaint (#344) — so folds
+  // survive it. Any other change to the result set resets them.
+  const foldShape = useMemo(() => {
+    let blocks = 0;
+    for (const line of jsonLines) if (line.kind === 'open') blocks++;
+    return `${blocks}\u0000${documents.map(stableDocId).join('\u0000')}`;
+  }, [jsonLines, documents]);
+  useEffect(() => {
+    setCollapsedFolds(new Set());
+  }, [foldShape]);
 
   // Only the lines not hidden inside a collapsed fold are rendered/virtualized.
   const visibleJsonLines = useMemo(
@@ -1920,8 +1947,24 @@ export const DataGrid: React.FC<DataGridProps> = ({
   return (
     <div
       ref={paneRootRef}
-      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      aria-busy={loading || undefined}
     >
+      {/* A run in flight. Over the previous results, not in their place: the
+          grid stays mounted, so nothing it holds is lost, and the last result
+          stays readable until the next one lands (#344). */}
+      {loading && (
+        <div
+          role="status"
+          data-testid="results-loading"
+          className="absolute inset-0 z-40 flex items-center justify-center bg-background/60 text-muted-foreground"
+        >
+          <div className="flex select-none flex-col items-center gap-2">
+            <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary" />
+            <span className="text-xs">{t('documents:dataGrid.labels.streamingDocuments')}</span>
+          </div>
+        </div>
+      )}
       {/* Control Bar — omitted for a chromeless render, where none of these
           controls have anything to act on. */}
       {!chromeless && (

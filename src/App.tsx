@@ -4561,15 +4561,11 @@ function Workspace() {
                     </Button>
                   </div>
                 )}
-                {tab.loading ? (
-                  <div className="flex-grow flex items-center justify-center text-muted-foreground bg-background">
-                    <div className="flex flex-col items-center gap-2 select-none">
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
-                      <span className="text-xs">{t('documents:dataGrid.labels.streamingDocuments')}</span>
-                    </div>
-                  </div>
-                ) : (
-                  <DataGrid
+                {/* Always mounted: a run shows as an overlay inside the grid,
+                    so re-running a query no longer throws away the folds, the
+                    find bar, the scroll position and the rest (#344). */}
+                <DataGrid
+                    loading={tab.loading}
                     documents={tab.results}
                     density={density}
                     explainResult={tab.explainResult}
@@ -4599,7 +4595,6 @@ function Workspace() {
                       onPageSizeChange: (newLimit: number) => handlePageSizeChange(tab, newLimit),
                     } : {})}
                   />
-                )}
               </div>
             </DocumentViewer>
           );
