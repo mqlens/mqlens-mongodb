@@ -23,6 +23,7 @@ import { useMonacoTheme, useMonacoFontSize } from '../lib/useMonacoTheme';
 import { attachMonaco } from '../lib/monacoAppTheme';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import { windowLabel } from '../workspace/workspaceStore';
+import { useTabVisible } from '../workspace/tabVisibility';
 
 type ShellTab = 'console' | 'viewer';
 
@@ -688,10 +689,17 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionId, connectionUri, mongoshPath, retryNonce, sessionKey, hydrated]);
 
+  // Pinned to the newest output. Not while the tab is hidden: a kept-alive
+  // tab (#240) is `display: none`, where scrollHeight is 0 and the assignment
+  // would reset the position — and nothing would scroll again on reveal. So
+  // the scroll waits for the tab to be shown, which is what brings a command
+  // that finished while the user was elsewhere into view.
+  const tabVisible = useTabVisible();
   useEffect(() => {
+    if (!tabVisible) return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [entries, tab]);
+  }, [entries, tab, tabVisible]);
 
   // When the session failed to attach, probe for a usable mongosh (managed
   // install, PATH, well-known locations) so the gate can offer a one-click
@@ -1245,7 +1253,11 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         </div>
 
         {tab === 'console' ? (
-          <div className="min-h-0 flex-1 overflow-y-auto p-2 font-mono text-xs" ref={scrollRef}>
+          <div
+            className="min-h-0 flex-1 overflow-y-auto p-2 font-mono text-xs"
+            ref={scrollRef}
+            data-testid="shell-transcript"
+          >
             {entries.length === 0 && (
               <div className="py-4 text-center text-muted-foreground">{t('mongoShell.console.cleared')}</div>
             )}
