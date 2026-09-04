@@ -41,6 +41,7 @@ describe('mongosh session registry (#240)', () => {
       autoRanCommand: false,
       aiOpen: false,
       aiMessages: [],
+      activeCommand: null,
     });
     // Writes now mirror to the backend; what must NOT happen is the child being
     // killed just because the component went away.
@@ -58,6 +59,7 @@ describe('mongosh session registry (#240)', () => {
       autoRanCommand: false,
       aiOpen: false,
       aiMessages: [],
+      activeCommand: null,
     });
   });
 
@@ -508,4 +510,27 @@ describe('mongosh session registry (#240)', () => {
     expect(await loadShellSession('tab-1')).toBeUndefined();
     expect(readShellSession('tab-1')).toBeUndefined();
   });
+  it('keeps the running command with the session, and clears it on an explicit null', () => {
+    // A tab can unmount mid-command. The record of the command belongs to the
+    // session, like the transcript, so a remounted shell knows it is busy.
+    writeShellSession('tab-1', { sessionId: 'sess-1', activeCommand: { since: 1000, phase: 'mongosh', stopRequested: false } });
+    // A patch that does not mention it leaves it alone.
+    writeShellSession('tab-1', { currentDb: 'sales' });
+    expect(readShellSession('tab-1')?.activeCommand).toEqual({ since: 1000, phase: 'mongosh', stopRequested: false });
+    // `null` is a deliberate write: the command is over.
+    writeShellSession('tab-1', { activeCommand: null });
+    expect(readShellSession('tab-1')?.activeCommand).toBeNull();
+  });
+
+  it('treats a malformed running-command record as nothing running', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'claim_shell_tab_state') {
+        return Promise.resolve({ sessionId: 's', entries: [], currentDb: 'x', activeCommand: { since: 'yesterday' } });
+      }
+      return Promise.resolve();
+    });
+    const loaded = await loadShellSession('tab-9');
+    expect(loaded?.activeCommand).toBeNull();
+  });
+
 });

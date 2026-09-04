@@ -47,6 +47,25 @@ export interface ShellSession {
   /** Which conversation in the backend chat store this tab has open. The
    *  transcript is not stored here — only the choice of which one. */
   aiChatId?: string;
+  /** The command running in this tab's session right now, if any.
+   *
+   *  Held here for the same reason the transcript is: the tab can unmount while
+   *  a command is still running, and a remounted shell that believed itself
+   *  idle would enable Run — and a second command then queues behind the first
+   *  on the backend's command lock, with no Stop on screen to end either. The
+   *  backend session is doing the work; this is the record that it is.
+   *
+   *  `phase` is where execution is: only `mongosh` can be stopped by restarting
+   *  the session. `stopRequested` lets the instance that started the command,
+   *  which may no longer be the one on screen, report a stop as a stop. */
+  activeCommand?: ActiveShellCommand | null;
+}
+
+export interface ActiveShellCommand {
+  /** When it started, so an elapsed counter survives a remount. */
+  since: number;
+  phase: 'mongosh' | 'driver';
+  stopRequested: boolean;
 }
 
 /**
@@ -204,7 +223,16 @@ function normalizeStoredSession(stored: unknown): ShellSession | undefined {
     aiOpen: candidate.aiOpen ?? false,
     aiMessages: Array.isArray(candidate.aiMessages) ? candidate.aiMessages : [],
     aiChatId: typeof candidate.aiChatId === 'string' ? candidate.aiChatId : undefined,
+    activeCommand: normaliseActiveCommand(candidate.activeCommand),
   };
+}
+
+/** Only a well-formed record counts; anything else means "nothing running". */
+function normaliseActiveCommand(value: unknown): ActiveShellCommand | null {
+  if (!value || typeof value !== 'object') return null;
+  const c = value as Partial<ActiveShellCommand>;
+  if (typeof c.since !== 'number' || (c.phase !== 'mongosh' && c.phase !== 'driver')) return null;
+  return { since: c.since, phase: c.phase, stopRequested: c.stopRequested === true };
 }
 
 /** Write-through to the backend. Fire-and-forget: the cache is already updated,
@@ -291,6 +319,10 @@ export function writeShellSession(
     aiOpen: patch.aiOpen ?? prev?.aiOpen ?? false,
     aiMessages: patch.aiMessages ?? prev?.aiMessages ?? [],
     aiChatId: patch.aiChatId ?? prev?.aiChatId,
+    // `null` is a deliberate write ("nothing running now"); only an absent key
+    // keeps the previous value, like `sessionId`.
+    activeCommand:
+      patch.activeCommand !== undefined ? patch.activeCommand : (prev?.activeCommand ?? null),
   };
   sessions.set(key, next);
   persist(key, next);
