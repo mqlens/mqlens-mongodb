@@ -1098,19 +1098,34 @@ export const DataGrid: React.FC<DataGridProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsedDocs, documents]);
 
-  // Fold ids are positional, so folds only stay meaningful over a result with
-  // the same documents in the same order and the same number of foldable
-  // blocks. That is exactly what a re-run of the same query returns — the case
-  // where losing every fold on every run was the complaint (#344) — so folds
-  // survive it. Any other change to the result set resets them.
-  const foldShape = useMemo(() => {
-    let blocks = 0;
-    for (const line of jsonLines) if (line.kind === 'open') blocks++;
-    return `${blocks}\u0000${documents.map(stableDocId).join('\u0000')}`;
+  // The result's shape: its documents in order, then every foldable block in
+  // order with where it sits (document, depth, key). Fold ids are positional,
+  // and this is the identity that makes them meaningful again on a new array:
+  // a re-run of the same query returns the same shape — the case where losing
+  // every fold on every run was the complaint (#344) — while another page,
+  // another query, or the same documents with their fields rearranged do not.
+  // Ids alone would not do: an aggregation's documents may all lack one.
+  //
+  // Two things hang off it. Folds are kept across the same shape and reset
+  // otherwise. The scroll position likewise: a refresh keeps the user's place,
+  // a new page starts at its first row — now that the grid stays mounted,
+  // nothing else would move it there.
+  const resultShape = useMemo(() => {
+    const parts: string[] = [documents.map(stableDocId).join('\u0000')];
+    for (const line of jsonLines) {
+      if (line.kind === 'open') parts.push(`${line.docIndex}/${line.depth}/${line.keyName ?? ''}`);
+    }
+    return parts.join('\u0001');
   }, [jsonLines, documents]);
   useEffect(() => {
     setCollapsedFolds(new Set());
-  }, [foldShape]);
+    // `scrollToRow` throws on an out-of-range index, and an empty result has
+    // no row 0. Only the mounted view has a list; the others are null.
+    if (documents.length === 0) return;
+    for (const list of [jsonListRef, treeListRef, tableListRef]) {
+      list.current?.scrollToRow({ index: 0, align: 'start' });
+    }
+  }, [resultShape]);
 
   // Only the lines not hidden inside a collapsed fold are rendered/virtualized.
   const visibleJsonLines = useMemo(

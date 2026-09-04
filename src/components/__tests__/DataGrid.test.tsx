@@ -2213,6 +2213,41 @@ describe('DataGrid — stays mounted across a run (#344)', () => {
     expect(firstFold()).toHaveAttribute('aria-label', expect.stringMatching(/collapse/i));
   });
 
+  it('resets folds for a result with the same ids and block count but a different structure', () => {
+    // Aggregation output may carry no _id at all; the structure of the folds
+    // is what tells one such result from another.
+    const { rerender } = render(<DataGrid documents={[{ _id: null, a: { x: 1 } }]} />);
+    fireEvent.click(firstFold());
+    expect(firstFold()).toHaveAttribute('aria-label', expect.stringMatching(/expand/i));
+
+    rerender(<DataGrid documents={[{ _id: null, b: { y: 1 } }]} />);
+
+    expect(firstFold()).toHaveAttribute('aria-label', expect.stringMatching(/collapse/i));
+  });
+
+  it('keeps the scroll position across a refresh, and starts a new page at its first row', () => {
+    const page = (from: number) =>
+      Array.from({ length: 40 }, (_, i) => ({ _id: String(from + i), name: `doc ${from + i}` }));
+    const { rerender } = render(<DataGrid documents={page(0)} />);
+    const list = within(screen.getByTestId('json-view')).getByRole('list');
+    // jsdom lays nothing out and scrolls nothing; record what the list is told.
+    Object.defineProperty(list, 'scrollTo', {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        list.scrollTop = top;
+      },
+    });
+    list.scrollTop = 300;
+
+    // The same result again: the user's place is kept.
+    rerender(<DataGrid documents={page(0)} />);
+    expect(list.scrollTop).toBe(300);
+
+    // The next page: it starts at its first row.
+    rerender(<DataGrid documents={page(40)} />);
+    expect(list.scrollTop).toBe(0);
+  });
+
   it('shows a run in flight over the previous results, not in their place', () => {
     const { rerender } = render(<DataGrid documents={docs()} />);
     expect(screen.queryByTestId('results-loading')).toBeNull();
