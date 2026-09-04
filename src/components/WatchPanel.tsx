@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { List, type RowComponentProps } from 'react-window';
 import { useTranslation } from 'react-i18next';
+import { useTabVisible } from '../workspace/tabVisibility';
 import { Database, Layers, Pause, Play, Radio, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -237,6 +238,16 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
   // tearing the cursor down here would drop its resume token and silently miss
   // every change until the user came back. The tab's close path stops it, the
   // same way a shell session is ended.
+  // Kept-alive tabs stay mounted while hidden (#240). A hidden Watch tab polls
+  // nothing: the backend keeps buffering for it — evicting the oldest past its
+  // cap and reporting how many it dropped, exactly as for any slow consumer —
+  // and the first tick after the tab is shown again drains what accumulated.
+  const tabVisible = useTabVisible();
+  const tabVisibleRef = useRef(tabVisible);
+  useEffect(() => {
+    tabVisibleRef.current = tabVisible;
+  }, [tabVisible]);
+
   useEffect(() => {
     // Nothing may start before the filter has been reconciled above, or the
     // first start would be the unfiltered one this is here to avoid.
@@ -327,8 +338,11 @@ export const WatchPanel: React.FC<WatchPanelProps> = ({
         polling = false;
       }
     };
-    const timer = setInterval(() => void tick(), POLL_MS);
-    void tick();
+    const run = () => {
+      if (tabVisibleRef.current) void tick();
+    };
+    const timer = setInterval(run, POLL_MS);
+    run();
 
     return () => {
       alive = false;

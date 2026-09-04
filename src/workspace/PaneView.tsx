@@ -7,6 +7,7 @@ import {
  DEFAULT_KEEP_ALIVE_LIMITS,
  type KeepAliveLimits,
 } from './keepAlive';
+import { TabVisibleContext } from './tabVisibility';
 
 // Re-exported so existing `import { TAB_DRAG_MIME } from '../PaneView'` call sites
 // (e.g. tests) keep working. Owned by WorkspaceTabBar.tsx — see that file.
@@ -141,7 +142,11 @@ export function PaneView({
             the visible one still fills the pane. Monaco cannot measure inside a
             box with no layout, but every editor here runs with
             `automaticLayout`, whose ResizeObserver fires when the element gets
-            a box back — so revealing a tab re-lays it out without help. */}
+            a box back — so revealing a tab re-lays it out without help.
+
+            A hidden tab is told so through `TabVisibleContext`. Views that poll
+            on an interval — Monitoring, Watch — pause while hidden; otherwise
+            every kept tab would keep its backend traffic going unseen. */}
         {mounted.map((tabId) => (
           <div
             key={tabId}
@@ -149,7 +154,9 @@ export function PaneView({
             data-testid={`tab-content-${tabId}`}
             className="h-full min-h-0"
           >
-            {renderTabContent(tabId)}
+            <TabVisibleContext.Provider value={tabId === pane.activeTabId}>
+              {renderTabContent(tabId)}
+            </TabVisibleContext.Provider>
           </div>
         ))}
         {!pane.activeTabId && renderEmptyPane()}

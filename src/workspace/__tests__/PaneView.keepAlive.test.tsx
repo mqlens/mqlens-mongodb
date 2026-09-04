@@ -3,6 +3,7 @@ import { useReducer, useState } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { WorkspaceRoot } from '../WorkspaceRoot';
 import { createInitialLayout, workspaceReducer, type PaneNode } from '../model';
+import { useTabVisible } from '../tabVisibility';
 
 /**
  * #240: a pane used to render only its active tab, so switching tabs unmounted
@@ -20,8 +21,9 @@ const mounts = new Map<string, number>();
 function Content({ tabId }: { tabId: string }) {
   const [typed, setTyped] = useState('');
   useState(() => mounts.set(tabId, (mounts.get(tabId) ?? 0) + 1));
+  const tabVisible = useTabVisible();
   return (
-    <div data-testid={`content-${tabId}`}>
+    <div data-testid={`content-${tabId}`} data-tab-visible={String(tabVisible)}>
       <input
         data-testid={`input-${tabId}`}
         value={typed}
@@ -89,6 +91,20 @@ describe('PaneView — inactive tabs stay mounted (#240)', () => {
     expect(screen.getByTestId('content-a')).toBeInTheDocument();
     expect(visible('a')).toBe(false);
     expect(visible('b')).toBe(true);
+  });
+
+  it('tells a kept tab whether it is on screen, so a polling view can pause', () => {
+    // A hidden Monitoring or Watch tab would otherwise keep fetching for a
+    // view nobody is looking at; `document.hidden` cannot tell it apart.
+    render(<Harness tabIds={['a', 'b']} />);
+    expect(screen.getByTestId('content-a').dataset.tabVisible).toBe('true');
+
+    switchTo('b');
+    expect(screen.getByTestId('content-a').dataset.tabVisible).toBe('false');
+    expect(screen.getByTestId('content-b').dataset.tabVisible).toBe('true');
+
+    switchTo('a');
+    expect(screen.getByTestId('content-a').dataset.tabVisible).toBe('true');
   });
 
   it('does not mount a tab until it has been visited', () => {
