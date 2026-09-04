@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MongoShell } from '../MongoShell';
-import { readShellSession, resetShellSessions, writeShellSession } from '../../lib/mongoshSession';
+import {
+  readShellSession,
+  renameShellSession,
+  resetShellSessions,
+  writeShellSession,
+} from '../../lib/mongoshSession';
 
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -1050,6 +1055,96 @@ describe('MongoShell Component', () => {
     fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
     expect(await screen.findByText(/genuine failure/)).toBeInTheDocument();
     expect(screen.queryAllByText('Command stopped.').length).toBeLessThanOrEqual(1);
+  });
+
+  it('reattaches to a command still running on the backend after a reload, and frees the shell when it ends', async () => {
+    // The renderer was reloaded mid-script: the registry is empty, the backend
+    // still records the command, and whoever awaited it is gone.
+    let idle!: () => void;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'claim_shell_tab_state') {
+        return Promise.resolve({
+          sessionId: 'shell-session-9',
+          entries: [],
+          currentDb: 'sales_db',
+          activeCommand: { since: Date.now() - 5_000, phase: 'mongosh', stopRequested: false },
+        });
+      }
+      if (cmd === 'await_mongosh_idle') return new Promise<void>((resolve) => { idle = resolve; });
+      return Promise.resolve();
+    });
+
+    render(<MongoShell connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" sessionKey="shell-tab" />);
+
+    expect(await screen.findByTestId('shell-stop-command')).toBeInTheDocument();
+    expect(screen.getByText(/still running when this shell reopened/)).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith('await_mongosh_idle', { sessionId: 'shell-session-9' });
+
+    idle();
+    expect(await screen.findByRole('button', { name: /^run$/i })).not.toBeDisabled();
+    expect(readShellSession('shell-tab')?.activeCommand).toBeNull();
+  });
+
+  it('drops a reloaded command that was already past mongosh, since nothing holds the session', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'claim_shell_tab_state') {
+        return Promise.resolve({
+          sessionId: 'shell-session-9',
+          entries: [],
+          currentDb: 'sales_db',
+          activeCommand: { since: Date.now() - 5_000, phase: 'driver', stopRequested: false },
+        });
+      }
+      return Promise.resolve();
+    });
+
+    render(<MongoShell connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" sessionKey="shell-tab" />);
+
+    // Hydration has landed once the backend's session id is in the registry;
+    // until then the registry holds only this mount's own first write.
+    await waitFor(() => expect(readShellSession('shell-tab')?.sessionId).toBe('shell-session-9'));
+    expect(readShellSession('shell-tab')?.activeCommand).toBeNull();
+    expect(mockInvoke).not.toHaveBeenCalledWith('await_mongosh_idle', expect.anything());
+    expect(screen.queryByTestId('shell-stop-command')).toBeNull();
+  });
+
+  it('frees a renamed tab when the command its old shell started finishes', async () => {
+    // The collection is renamed while a script runs: the registry re-keys the
+    // session and React remounts the shell under the new key. The completion
+    // arrives from the old instance, under the old key, with an ended epoch.
+    let finish!: (v: unknown) => void;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'start_mongosh_session') return Promise.resolve({ session_id: 'shell-session-1', stdout: [], stderr: [] });
+      if (cmd === 'run_mongosh_command') return new Promise((resolve) => { finish = resolve; });
+      if (cmd === 'claim_shell_tab_state') return Promise.resolve(null);
+      return Promise.resolve();
+    });
+    const shell = (key: string, sessionKey: string) => (
+      <MongoShell key={key} connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" sessionKey={sessionKey} />
+    );
+    const { rerender } = render(shell('old', 'coll-old'));
+    await screen.findByTestId('shell-restart-session');
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'sleep(1)' } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+    await screen.findByTestId('shell-stop-command');
+
+    void renameShellSession('coll-old', 'coll-new');
+    rerender(shell('new', 'coll-new'));
+    // Still running, as far as the renamed shell is concerned.
+    expect(await screen.findByTestId('shell-stop-command')).toBeInTheDocument();
+
+    finish({ stdout: ['done'], stderr: [] });
+    expect(await screen.findByRole('button', { name: /^run$/i })).not.toBeDisabled();
+    expect(readShellSession('coll-new')?.activeCommand).toBeNull();
   });
 
 });

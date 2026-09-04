@@ -188,6 +188,50 @@ export function dropPendingShellStart(key: string): void {
  */
 const watchers: Map<string, Set<(session: ShellSession) => void>> = new Map();
 
+/**
+ * Where a renamed key's session went. A command's completion is written under
+ * the key its shell mounted with; if the tab was renamed meanwhile — its
+ * collection or database renamed while a script ran — that key is closed, and
+ * the write must follow the session to its new key or the renamed shell stays
+ * "running" for good, with nothing on screen able to end it (#346 review).
+ */
+const forwards: Map<string, string> = new Map();
+function followForwards(key: string): string {
+  const seen = new Set<string>();
+  let current = key;
+  while (forwards.has(current) && !seen.has(current)) {
+    seen.add(current);
+    current = forwards.get(current)!;
+  }
+  return current;
+}
+
+/** The running-command record for the command that started at `since`, wherever its session lives now. */
+export function readShellCommand(key: string, since: number): ActiveShellCommand | null {
+  const command = sessions.get(followForwards(key))?.activeCommand ?? null;
+  return command && command.since === since ? command : null;
+}
+
+/**
+ * Update the running-command record for the command that started at `since`,
+ * wherever its session lives now, and only while that command is the one
+ * recorded. `null` ends it; a partial patch merges into it.
+ *
+ * Deliberately not epoch-checked. The epoch says which mount may write a key;
+ * but a command's own progress is true whoever owns the tab now, and dropping
+ * its completion would leave that owner busy forever.
+ */
+export function writeShellCommand(
+  key: string,
+  since: number,
+  patch: Partial<ActiveShellCommand> | null
+): void {
+  const target = followForwards(key);
+  const current = sessions.get(target)?.activeCommand;
+  if (!current || current.since !== since) return;
+  writeShellSession(target, { activeCommand: patch === null ? null : { ...current, ...patch } });
+}
+
 /** Subscribe to changes for `key`; returns an unsubscribe. */
 export function watchShellSession(key: string, fn: (session: ShellSession) => void): () => void {
   const forKey = watchers.get(key) ?? new Set();
@@ -399,6 +443,9 @@ export function renameShellSession(oldKey: string, newKey: string): Promise<void
   // a session mapping that the renamed tab's close will never clear — and the
   // output would land there instead of in the tab the user is looking at.
   endEpoch(oldKey);
+  // Renaming back (new → old) removes the forward that would otherwise loop.
+  forwards.delete(newKey);
+  forwards.set(oldKey, newKey);
   const session = sessions.get(oldKey);
   if (session) {
     sessions.delete(oldKey);
@@ -478,6 +525,7 @@ export function forgetShellSession(key: string): void {
 /** Test seam: forget everything without touching the backend. */
 export function resetShellSessions(): void {
   sessions.clear();
+  forwards.clear();
   epochs.clear();
   pendingStarts.clear();
   watchers.clear();

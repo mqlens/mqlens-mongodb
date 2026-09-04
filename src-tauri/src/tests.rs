@@ -3052,6 +3052,21 @@ mod tests {
     }
 
     #[test]
+    fn output_split_before_its_crlf_is_kept_whole() {
+        use crate::absorb_mongosh_chunk;
+        // The same split, but the line ends in `\r\n` (mongosh on Windows) and
+        // the read boundary falls before the `\r`. A leading carriage return is
+        // a line ending arriving, not new output after a prompt.
+        let mut pending = Vec::new();
+        assert!(absorb_mongosh_chunk(&mut pending, b"ready> ").is_empty());
+        assert_eq!(absorb_mongosh_chunk(&mut pending, b"\r\n"), vec!["ready> ".to_string()]);
+        // And split again, between the `\r` and the `\n`.
+        assert!(absorb_mongosh_chunk(&mut pending, b"status> ").is_empty());
+        assert!(absorb_mongosh_chunk(&mut pending, b"\r").is_empty());
+        assert_eq!(absorb_mongosh_chunk(&mut pending, b"\n"), vec!["status> ".to_string()]);
+    }
+
+    #[test]
     fn complete_lines_are_never_rewritten() {
         use crate::absorb_mongosh_chunk;
         // A script may print anything, including things shaped like a prompt,

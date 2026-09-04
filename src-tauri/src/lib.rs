@@ -403,7 +403,11 @@ pub(crate) fn take_mongosh_lines(buf: &mut Vec<u8>) -> Vec<String> {
 /// reading — markers are matched by suffix — so it costs a line of output in
 /// a rare case, never a hang.
 pub(crate) fn absorb_mongosh_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
-    if chunk.first() != Some(&b'\n') {
+    // A chunk that opens with a line ending — `\n`, or the `\r` of a `\r\n` —
+    // is finishing the pending line, so what is pending was output, however
+    // prompt-shaped. Only output that starts something new proves the pending
+    // text was a prompt.
+    if !matches!(chunk.first(), Some(b'\n') | Some(b'\r')) {
         if let Ok(tail) = std::str::from_utf8(pending) {
             if tail_is_mongosh_prompt(tail) {
                 pending.clear();
@@ -1827,6 +1831,24 @@ async fn run_mongosh_command(
     command: String,
 ) -> Result<MongoshCommandOutput, String> {
     run_mongosh_command_impl(&state, &session_id, &command).await
+}
+
+/// Resolves once `session_id` is not running a command.
+///
+/// A shell that reopens — a window refresh, a tab moved to another window —
+/// can find a command recorded as running whose caller is gone, and nothing
+/// else would ever tell it when that command ends. The command holds
+/// `command_lock` for as long as it runs, so waiting on that lock is the
+/// honest signal. Stopping the session ends the command and releases the lock,
+/// so this resolves then too.
+#[tauri::command]
+async fn await_mongosh_idle(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let session = get_mongosh_session(&state, &session_id)?;
+    let _idle = session.command_lock.lock().await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -3351,6 +3373,7 @@ pub fn run() {
             get_mongodb_version,
             start_mongosh_session,
             run_mongosh_command,
+            await_mongosh_idle,
             stop_mongosh_session,
             get_shell_tab_state,
             set_shell_tab_state,

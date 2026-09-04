@@ -364,6 +364,7 @@
       "useDb": "  use <db>                 switch current database"
     },
     "notes": {
+      "commandReattached": "A command was still running when this shell reopened here. Its output stayed with the view it started in; waiting for it to finish — Stop ends it.",
       "commandStopped": "Command stopped.",
       "destructiveCancelled": "Destructive command cancelled.",
       "resultToDataViewer_one": "{{count}} document -> Data Viewer",

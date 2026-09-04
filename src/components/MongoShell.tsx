@@ -29,11 +29,13 @@ type ShellTab = 'console' | 'viewer';
 import {
   dropPendingShellStart,
   loadShellSession,
+  readShellCommand,
   readShellSession,
   shareShellStart,
   shellSessionEpoch,
   watchShellSession,
   stopShellSessionProcess,
+  writeShellCommand,
   writeShellSession,
   type ActiveShellCommand,
   type ShellEntry,
@@ -319,6 +321,18 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     setActiveCommand(next);
     persistSession({ activeCommand: next });
   };
+  // Progress of the command that started at `since`: its move into the driver
+  // phase, a Stop, its end. Written by command identity rather than by this
+  // mount's epoch, because the tab may have been renamed underneath a running
+  // command — that remounts the shell under a new key and closes this one's
+  // epoch, and an epoch-checked completion would be dropped, leaving the
+  // renamed shell busy for good.
+  const updateCommand = (since: number, patch: Partial<ActiveShellCommand> | null) => {
+    setActiveCommand((prev) =>
+      prev && prev.since === since ? (patch === null ? null : { ...prev, ...patch }) : prev
+    );
+    if (sessionKey) writeShellCommand(sessionKey, since, patch);
+  };
   // Set by the Stop button just before it restarts the session. The pending
   // `run_mongosh_command` then fails with "session closed", and this is how the
   // catch below tells a stop the user asked for from a session that died on its
@@ -369,6 +383,25 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         setIsAIOpenState(restored.aiOpen);
         setAiChatId(restored.aiChatId);
         autoRunRef.current = restored.autoRanCommand;
+        // A command recorded as running whose caller is not in this renderer:
+        // the window was reloaded, or the tab arrived from another window,
+        // while a script ran. Its result went to the view it started in. What
+        // still matters is that the backend is busy with it — a shell that
+        // believed itself idle would queue the next command behind it with no
+        // Stop on screen — so show it running, keep Stop available, and wait
+        // on the backend to learn when it ends. Nothing else here ever would.
+        const orphan = restored.activeCommand;
+        if (orphan && orphan.phase === 'mongosh' && restored.sessionId) {
+          setActiveCommand(orphan);
+          appendEntries([{ kind: 'note', text: t('mongoShell.notes.commandReattached') }]);
+          void invoke('await_mongosh_idle', { sessionId: restored.sessionId })
+            .catch(() => undefined)
+            .then(() => writeShellCommand(sessionKey, orphan.since, null));
+        } else if (orphan) {
+          // Past mongosh already: the lock is free and there is nothing left to
+          // stop or wait for.
+          writeShellCommand(sessionKey, orphan.since, null);
+        }
         if (restored.sessionId) {
           setSessionId(restored.sessionId);
           setSessionAttempted(true);
@@ -901,7 +934,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     const raw = (commandOverride ?? command).trim().replace(/;$/, '');
     if (!raw || running) return;
     appendEntries([{ kind: 'input', db: currentDb, text: raw }]);
-    setActive({ since: Date.now(), phase: 'mongosh', stopRequested: false });
+    const started: ActiveShellCommand = { since: Date.now(), phase: 'mongosh', stopRequested: false };
+    setActive(started);
     try {
       if (/^(cls|clear)$/i.test(raw)) {
         setEntries([]);
@@ -918,8 +952,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       // Whatever follows — a driver call for a recognised command, or nothing —
       // is not something Stop can end. Read live: Stop may have been pressed,
       // and `stopRequested` must not be lost by overwriting the record.
-      const live = sessionKey ? readShellSession(sessionKey)?.activeCommand : activeCommand;
-      setActive({ since: live?.since ?? Date.now(), phase: 'driver', stopRequested: live?.stopRequested ?? false });
+      updateCommand(started.since, { phase: 'driver' });
 
       if (raw === 'db') {
         if (ranExternally) return;
@@ -1010,7 +1043,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       // now if this tab was switched away and back; the session knows either way.
       const stopped =
         cancelRequestedRef.current ||
-        (sessionKey ? readShellSession(sessionKey)?.activeCommand?.stopRequested === true : false);
+        (sessionKey ? readShellCommand(sessionKey, started.since)?.stopRequested === true : false);
       if (stopped) {
         // The rejection is the session being killed, and the user is the one
         // who killed it. That is not an error; it is what Stop does.
@@ -1024,7 +1057,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       // command that completes first, the catch never runs and a flag left set
       // would report the NEXT command's genuine failure as a stop.
       cancelRequestedRef.current = false;
-      setActive(null);
+      updateCommand(started.since, null);
     }
   };
 
@@ -1036,7 +1069,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // price of stopping a script that will not stop on its own.
   const stopCommand = () => {
     cancelRequestedRef.current = true;
-    if (activeCommand) setActive({ ...activeCommand, stopRequested: true });
+    if (activeCommand) updateCommand(activeCommand.since, { stopRequested: true });
     void restartSession();
   };
 

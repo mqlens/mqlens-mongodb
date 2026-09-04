@@ -4,7 +4,9 @@ import {
   dropPendingShellStart,
   shareShellStart,
   watchShellSession,
+  writeShellCommand,
   loadShellSession,
+  type ActiveShellCommand,
   renameShellSession,
   shellSessionEpoch,
   retargetShellSessionDatabase,
@@ -531,6 +533,34 @@ describe('mongosh session registry (#240)', () => {
     });
     const loaded = await loadShellSession('tab-9');
     expect(loaded?.activeCommand).toBeNull();
+  });
+
+  it('follows a rename, so a command finishing under the old key frees the renamed tab', () => {
+    writeShellSession('coll-old', {
+      sessionId: 'sess-1',
+      activeCommand: { since: 5, phase: 'mongosh', stopRequested: false },
+    });
+    void renameShellSession('coll-old', 'coll-new');
+    const seen: Array<ActiveShellCommand | null> = [];
+    watchShellSession('coll-new', (s) => seen.push(s.activeCommand ?? null));
+
+    // The old shell's completion arrives under the key it mounted with, whose
+    // epoch the rename has since ended. It must still land.
+    writeShellCommand('coll-old', 5, null);
+
+    expect(readShellSession('coll-new')?.activeCommand).toBeNull();
+    expect(seen).toEqual([null]);
+  });
+
+  it('only touches the command it was told about', () => {
+    writeShellSession('tab-1', {
+      sessionId: 'sess-1',
+      activeCommand: { since: 7, phase: 'mongosh', stopRequested: false },
+    });
+    // An older command's late completion is not this command's.
+    writeShellCommand('tab-1', 6, null);
+    writeShellCommand('tab-1', 7, { phase: 'driver' });
+    expect(readShellSession('tab-1')?.activeCommand).toEqual({ since: 7, phase: 'driver', stopRequested: false });
   });
 
 });
