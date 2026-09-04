@@ -1098,25 +1098,31 @@ export const DataGrid: React.FC<DataGridProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsedDocs, documents]);
 
-  // The result's shape: its documents in order, then every foldable block in
-  // order with where it sits (document, depth, key). Fold ids are positional,
-  // and this is the identity that makes them meaningful again on a new array:
-  // a re-run of the same query returns the same shape — the case where losing
-  // every fold on every run was the complaint (#344) — while another page,
-  // another query, or the same documents with their fields rearranged do not.
-  // Ids alone would not do: an aggregation's documents may all lack one.
+  // The result's identity: what was asked for — the query, the page — and the
+  // shape of what came back: its documents in order, then every foldable
+  // block in order with where it sits (document, depth, key). Fold ids are
+  // positional, and this is what makes them meaningful again on a new array:
+  // a re-run of the same query returns the same identity — the case where
+  // losing every fold on every run was the complaint (#344) — while another
+  // page, another query, or the same documents with their fields rearranged
+  // do not. Neither half would do alone: an aggregation's documents may all
+  // lack an _id, and a projection may drop it, so two pages can have the same
+  // shape; and the same query may return new documents.
   //
-  // Two things hang off it. Folds are kept across the same shape and reset
-  // otherwise. The scroll position likewise: a refresh keeps the user's place,
-  // a new page starts at its first row — now that the grid stays mounted,
-  // nothing else would move it there.
+  // Two things hang off it. Folds — JSON and tree — are kept across the same
+  // identity and reset otherwise. The scroll position likewise: a refresh
+  // keeps the user's place, a new page starts at its first row — now that the
+  // grid stays mounted, nothing else would move it there.
   const resultShape = useMemo(() => {
-    const parts: string[] = [documents.map(stableDocId).join('\u0000')];
+    const parts: string[] = [
+      JSON.stringify([querySpec, skip ?? null, limit ?? null]),
+      documents.map(stableDocId).join('\u0000'),
+    ];
     for (const line of jsonLines) {
       if (line.kind === 'open') parts.push(`${line.docIndex}/${line.depth}/${line.keyName ?? ''}`);
     }
     return parts.join('\u0001');
-  }, [jsonLines, documents]);
+  }, [querySpec, skip, limit, jsonLines, documents]);
   useEffect(() => {
     setCollapsedFolds(new Set());
     // `scrollToRow` throws on an out-of-range index, and an empty result has
@@ -1579,10 +1585,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsedDocs, documents]);
 
-  // Apply the default collapse set whenever the result set (and thus rows) changes.
+  // Apply the default collapse set when the result changes — by identity, not
+  // by array: a re-run of the same query rebuilds the rows and the defaults,
+  // but the tree the user has opened up is the same tree, so it stays (#344).
+  const treeShapeRef = React.useRef<string | null>(null);
   useEffect(() => {
+    if (treeShapeRef.current === resultShape) return;
+    treeShapeRef.current = resultShape;
     setTreeCollapsed(new Set(treeDefaultCollapsed));
-  }, [treeDefaultCollapsed]);
+  }, [resultShape, treeDefaultCollapsed]);
 
   // The text of one tree row: all three columns, since all three are on screen.
   // Container rows show their child count, so that label is searchable too.

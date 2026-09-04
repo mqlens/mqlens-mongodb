@@ -2248,6 +2248,53 @@ describe('DataGrid — stays mounted across a run (#344)', () => {
     expect(list.scrollTop).toBe(0);
   });
 
+  it('starts the next page at its first row even when a projection hides every _id', () => {
+    // Projected out, the ids say nothing; the page asked for does.
+    const page = (skip: number) =>
+      Array.from({ length: 40 }, (_, i) => ({ name: `doc ${skip + i}` }));
+    const { rerender } = render(<DataGrid documents={page(0)} skip={0} limit={40} />);
+    const list = within(screen.getByTestId('json-view')).getByRole('list');
+    Object.defineProperty(list, 'scrollTo', {
+      configurable: true,
+      value: ({ top }: { top: number }) => {
+        list.scrollTop = top;
+      },
+    });
+    list.scrollTop = 300;
+
+    rerender(<DataGrid documents={page(0)} skip={0} limit={40} />);
+    expect(list.scrollTop).toBe(300);
+
+    rerender(<DataGrid documents={page(40)} skip={40} limit={40} />);
+    expect(list.scrollTop).toBe(0);
+  });
+
+  it('keeps tree folds across a run that returns the same documents', () => {
+    const nested = () => [{ _id: '1', g: { a: { akey: 'one' } } }];
+    const foldState = (keyName: string): 'open' | 'closed' => {
+      const row = screen.getByTitle(keyName).closest('[data-doc-even]');
+      const button = row?.querySelector('[data-testid="tree-fold-btn"]');
+      const label = button?.getAttribute('aria-label') ?? '';
+      if (/expand/i.test(label)) return 'closed';
+      if (/collapse/i.test(label)) return 'open';
+      throw new Error(`no fold for ${keyName}: ${label}`);
+    };
+    const { rerender } = render(<DataGrid documents={nested()} />);
+    fireEvent.click(screen.getByRole('button', { name: /tree/i }));
+    // Depth >= 2 starts collapsed; the user opens it.
+    expect(foldState('a')).toBe('closed');
+    fireEvent.click(screen.getByTitle('a').closest('[data-doc-even]')!.querySelector('[data-testid="tree-fold-btn"]')!);
+    expect(foldState('a')).toBe('open');
+
+    rerender(<DataGrid documents={nested()} loading />);
+    rerender(<DataGrid documents={nested()} />);
+    expect(foldState('a')).toBe('open');
+
+    // A different result: back to the defaults.
+    rerender(<DataGrid documents={[{ _id: '2', g: { a: { akey: 'two' } } }]} />);
+    expect(foldState('a')).toBe('closed');
+  });
+
   it('shows a run in flight over the previous results, not in their place', () => {
     const { rerender } = render(<DataGrid documents={docs()} />);
     expect(screen.queryByTestId('results-loading')).toBeNull();
