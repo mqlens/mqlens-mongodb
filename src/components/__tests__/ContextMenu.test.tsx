@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ContextMenu } from '../ContextMenu';
+import { TabVisibleContext } from '../../workspace/tabVisibility';
 
 describe('ContextMenu', () => {
   it('renders items and fires onClick then onClose', () => {
@@ -17,6 +18,24 @@ describe('ContextMenu', () => {
     expect(screen.getByTestId('context-menu')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Edit'));
     expect(edit).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('closes when the tab it belongs to is hidden', () => {
+    // It renders through a portal, outside the wrapper that hides a kept-alive
+    // tab (#240); left up, its actions would still act for the hidden tab.
+    const onClose = vi.fn();
+    const menu = (visible: boolean) => (
+      <TabVisibleContext.Provider value={visible}>
+        <ContextMenu x={0} y={0} items={[{ label: 'Delete', onClick: () => {}, danger: true }]} onClose={onClose} />
+      </TabVisibleContext.Provider>
+    );
+    const { rerender } = render(menu(true));
+    expect(screen.getByTestId('context-menu')).toBeInTheDocument();
+
+    rerender(menu(false));
+
+    expect(screen.queryByTestId('context-menu')).toBeNull();
     expect(onClose).toHaveBeenCalled();
   });
 

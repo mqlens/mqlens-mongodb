@@ -73,15 +73,16 @@ export function PaneView({
   const mounted = useMemo(
     () =>
       keepAliveTabs(
-        // The active tab is mounted even on the first render, before the effect
-        // above has had a chance to record it.
-        pane.activeTabId && !recency.includes(pane.activeTabId)
-          ? [pane.activeTabId, ...recency]
-          : recency,
+        // The active tab goes first on THIS render, not after the effect above
+        // has recorded it. A tab that was visited and has since fallen out of
+        // its budget is still in `recency`, further down; taken as is, the
+        // budget would exclude the very tab being shown, and the pane would
+        // paint empty once before the effect caught up.
+        withActiveFirst(recency, pane.activeTabId, liveIds),
         tabs.map((t) => ({ id: t.id, kind: t.kind ?? '' })),
         keepAliveLimits
       ),
-    [recency, pane.activeTabId, tabs, keepAliveLimits]
+    [recency, pane.activeTabId, liveIds, tabs, keepAliveLimits]
   );
 
   const onDragOver = useCallback((e: React.DragEvent) => {

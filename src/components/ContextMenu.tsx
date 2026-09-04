@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
+import { useTabVisible } from '@/workspace/tabVisibility';
 
 export interface ContextMenuItem {
   label: string;
@@ -27,6 +28,15 @@ interface ContextMenuProps {
 export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
+
+  // Rendered through a portal, so the wrapper that hides a kept-alive tab
+  // (#240) cannot hide this. Switching tabs by keyboard with a menu open
+  // would leave it over the new tab, its actions — deletes included — still
+  // wired to the hidden one. It closes instead.
+  const tabVisible = useTabVisible();
+  useEffect(() => {
+    if (!tabVisible) onClose();
+  }, [tabVisible, onClose]);
 
   // Keep the menu fully on screen.
   useLayoutEffect(() => {
@@ -60,6 +70,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
     };
   }, [onClose]);
 
+  if (!tabVisible) return null;
   return createPortal(
     <div
       ref={ref}

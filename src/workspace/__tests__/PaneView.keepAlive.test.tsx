@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useReducer, useState } from 'react';
+import { useLayoutEffect, useReducer, useState } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { WorkspaceRoot } from '../WorkspaceRoot';
 import { createInitialLayout, workspaceReducer, type PaneNode } from '../model';
@@ -25,12 +25,18 @@ import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/pop
 
 /** Counts how many times each tab's content has been mounted. */
 const mounts = new Map<string, number>();
+/** Whether tab a's content was in the document at each commit, as seen by tab c — the one
+ *  tab that stays mounted through the switch back to a under a budget of two. */
+const aPresentAtCommit: boolean[] = [];
 
 function Content({ tabId }: { tabId: string }) {
   const [typed, setTyped] = useState('');
   useState(() => mounts.set(tabId, (mounts.get(tabId) ?? 0) + 1));
   const tabVisible = useTabVisible();
   const [dialogOpen, setDialogOpen] = useState(false);
+  useLayoutEffect(() => {
+    if (tabId === 'c') aPresentAtCommit.push(document.querySelector('[data-testid="content-a"]') !== null);
+  });
   return (
     <div data-testid={`content-${tabId}`} data-tab-visible={String(tabVisible)}>
       <input
@@ -166,6 +172,24 @@ describe('PaneView — inactive tabs stay mounted (#240)', () => {
     expect(screen.getByText('popover of a')).toBeInTheDocument();
     switchTo('b');
     expect(screen.queryByText('popover of a')).toBeNull();
+  });
+
+  it('shows a tab that had fallen out of its budget on the very first paint', () => {
+    // a was visited, then evicted by c under a budget of two. Selecting a again
+    // finds it still listed in the pane's recency, further down; budgeting
+    // that list as it stands leaves a out, and the pane paints empty once
+    // before the effect that reorders recency catches up.
+    render(<Harness tabIds={['a', 'b', 'c']} limits={{ shell: 2, other: 2 }} />);
+    switchTo('b');
+    switchTo('c');
+    expect(screen.queryByTestId('content-a')).toBeNull();
+
+    aPresentAtCommit.length = 0;
+    switchTo('a');
+
+    expect(screen.getByTestId('content-a')).toBeInTheDocument();
+    expect(aPresentAtCommit.length).toBeGreaterThan(0);
+    expect(aPresentAtCommit.every(Boolean)).toBe(true);
   });
 
   it('does not mount a tab until it has been visited', () => {
