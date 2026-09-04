@@ -85,6 +85,9 @@ describe('MongoShell Component', () => {
       if (cmd === 'run_mongosh_command') {
         return Promise.resolve({ stdout: ['mongosh result'], stderr: [] });
       }
+      if (cmd === 'run_mongosh_script') {
+        return Promise.resolve({ stdout: ['script result'], stderr: [] });
+      }
       if (cmd === 'stop_mongosh_session') {
         return Promise.resolve();
       }
@@ -141,6 +144,67 @@ describe('MongoShell Component', () => {
       limit: 50,
       skip: 0,
     }));
+  });
+
+  it('runs a multi-line script one-shot in JavaScript mode, not down the warm session', async () => {
+    // A pasted script is a program, not a typed command. Feeding it to the REPL
+    // a line at a time is what made big scripts — especially ones that call
+    // quit() — unpredictable, so a multi-line run goes to `run_mongosh_script`,
+    // which executes it as one `mongosh --file` program.
+    render(
+      <MongoShell
+        connectionId="conn-1"
+        connectionName="mock"
+        connectionUri="mongodb://prod-replica-set"
+        databaseName="sales_db"
+      />
+    );
+    await screen.findByText(/mongosh session attached/);
+
+    const script = 'print("one")\nprint("two")\nquit(0)';
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: script } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+
+    await waitFor(() => {
+      expect(mockInvoke.mock.calls.some((c) => c[0] === 'run_mongosh_script')).toBe(true);
+    });
+    const call = mockInvoke.mock.calls.find((c) => c[0] === 'run_mongosh_script');
+    expect(call?.[1]).toMatchObject({
+      connectionId: 'conn-1',
+      uri: 'mongodb://prod-replica-set',
+      database: 'sales_db',
+      mongoshPath: '/usr/local/bin/mongosh',
+      script,
+    });
+    // The warm session never saw the script.
+    expect(
+      mockInvoke.mock.calls.some(
+        (c) => c[0] === 'run_mongosh_command' && String(c[1]?.command ?? '').includes('print')
+      )
+    ).toBe(false);
+    expect(await screen.findByText('script result')).toBeInTheDocument();
+  });
+
+  it('keeps a single typed command on the warm session', async () => {
+    render(
+      <MongoShell
+        connectionId="conn-1"
+        connectionName="mock"
+        connectionUri="mongodb://prod-replica-set"
+        databaseName="sales_db"
+      />
+    );
+    await screen.findByText(/mongosh session attached/);
+
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'db.stats()' } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+
+    await waitFor(() => {
+      expect(
+        mockInvoke.mock.calls.some((c) => c[0] === 'run_mongosh_command' && c[1]?.command === 'db.stats()')
+      ).toBe(true);
+    });
+    expect(mockInvoke.mock.calls.some((c) => c[0] === 'run_mongosh_script')).toBe(false);
   });
 
   it('runs edited shell command and renders returned documents', async () => {
@@ -239,7 +303,7 @@ describe('MongoShell Component', () => {
     expect(toggle).not.toHaveTextContent('KI');
   });
 
-  it('runs a multi-statement JS script through the mongosh session', async () => {
+  it('runs a multi-statement JS script one-shot, not down the warm session', async () => {
     render(
       <MongoShell
         connectionId="conn-1"
@@ -260,12 +324,14 @@ describe('MongoShell Component', () => {
 
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith(
-        'run_mongosh_command',
+        'run_mongosh_script',
         // runCommand strips a single trailing semicolon.
-        expect.objectContaining({ command: 'const n = 2;\nprintjson(n)' })
+        expect.objectContaining({ script: 'const n = 2;\nprintjson(n)' })
       );
     });
-    // A script does NOT go through the typed find path.
+    // A multi-line script never touches the warm REPL session...
+    expect(mockInvoke.mock.calls.some((c) => c[0] === 'run_mongosh_command')).toBe(false);
+    // ...nor the typed find path.
     const findCalls = mockInvoke.mock.calls.filter((c) => c[0] === 'execute_mql_query');
     expect(findCalls.length).toBe(0);
   });
