@@ -199,7 +199,11 @@ const forwards: Map<string, string> = new Map();
 function followForwards(key: string): string {
   const seen = new Set<string>();
   let current = key;
-  while (forwards.has(current) && !seen.has(current)) {
+  // A key with a live session is where writes for that key go, forward or no
+  // forward: a collection renamed away and then recreated under its old name
+  // gets a new shell under the old key, and that shell's own command must not
+  // be redirected to the renamed one's session (#346 review).
+  while (forwards.has(current) && !sessions.has(current) && !seen.has(current)) {
     seen.add(current);
     current = forwards.get(current)!;
   }
@@ -330,6 +334,7 @@ export async function loadShellSession(key: string): Promise<ShellSession | unde
   }
   const session = normalizeStoredSession(stored);
   if (!session) return undefined;
+  forwards.delete(key);
   sessions.set(key, session);
   return session;
 }
@@ -355,6 +360,8 @@ export function writeShellSession(
 ): void {
   if (epoch !== undefined && epoch !== shellSessionEpoch(key)) return;
   const prev = sessions.get(key);
+  // The key is live again; a forward left by an earlier rename is obsolete.
+  if (!prev) forwards.delete(key);
   const next: ShellSession = {
     sessionId: patch.sessionId !== undefined ? patch.sessionId : (prev?.sessionId ?? null),
     entries: patch.entries ?? prev?.entries ?? [],

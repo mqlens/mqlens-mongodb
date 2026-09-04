@@ -552,6 +552,18 @@ describe('mongosh session registry (#240)', () => {
     expect(seen).toEqual([null]);
   });
 
+  it('stops forwarding once the old key has a shell of its own again', () => {
+    // Renamed a → b, then a collection named a is created and its shell opened.
+    writeShellSession('coll-a', { sessionId: 'sess-1', activeCommand: { since: 5, phase: 'mongosh', stopRequested: false } });
+    void renameShellSession('coll-a', 'coll-b');
+    writeShellSession('coll-a', { sessionId: 'sess-2', activeCommand: { since: 9, phase: 'mongosh', stopRequested: false } });
+
+    writeShellCommand('coll-a', 9, null);
+
+    expect(readShellSession('coll-a')?.activeCommand).toBeNull();
+    expect(readShellSession('coll-b')?.activeCommand).toEqual({ since: 5, phase: 'mongosh', stopRequested: false });
+  });
+
   it('only touches the command it was told about', () => {
     writeShellSession('tab-1', {
       sessionId: 'sess-1',
