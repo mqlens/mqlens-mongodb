@@ -4,6 +4,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { WorkspaceRoot } from '../WorkspaceRoot';
 import { createInitialLayout, workspaceReducer, type PaneNode } from '../model';
 import { useTabVisible } from '../tabVisibility';
+import { Dialog, DialogContent, DialogTitle } from '../../components/ui/dialog';
 
 /**
  * #240: a pane used to render only its active tab, so switching tabs unmounted
@@ -22,6 +23,7 @@ function Content({ tabId }: { tabId: string }) {
   const [typed, setTyped] = useState('');
   useState(() => mounts.set(tabId, (mounts.get(tabId) ?? 0) + 1));
   const tabVisible = useTabVisible();
+  const [dialogOpen, setDialogOpen] = useState(false);
   return (
     <div data-testid={`content-${tabId}`} data-tab-visible={String(tabVisible)}>
       <input
@@ -29,6 +31,14 @@ function Content({ tabId }: { tabId: string }) {
         value={typed}
         onChange={(e) => setTyped(e.target.value)}
       />
+      <button data-testid={`open-dialog-${tabId}`} onClick={() => setDialogOpen(true)}>
+        open
+      </button>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogTitle>dialog of {tabId}</DialogTitle>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -105,6 +115,22 @@ describe('PaneView — inactive tabs stay mounted (#240)', () => {
 
     switchTo('a');
     expect(screen.getByTestId('content-a').dataset.tabVisible).toBe('true');
+  });
+
+  it('closes a hidden tab’s dialog, and reopens it when the tab comes back', () => {
+    // A dialog renders through a portal under document.body, outside the
+    // hidden wrapper. Left open it would cover the tab the user switched to —
+    // overlay, focus trap, and a confirmation acting for a tab nobody can see.
+    render(<Harness tabIds={['a', 'b']} />);
+    fireEvent.click(screen.getByTestId('open-dialog-a'));
+    expect(screen.getByText('dialog of a')).toBeInTheDocument();
+
+    switchTo('b');
+    expect(screen.queryByText('dialog of a')).toBeNull();
+
+    // The owner still has it open; showing the tab shows the dialog.
+    switchTo('a');
+    expect(screen.getByText('dialog of a')).toBeInTheDocument();
   });
 
   it('does not mount a tab until it has been visited', () => {
