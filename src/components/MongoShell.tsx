@@ -304,6 +304,12 @@ export const MongoShell: React.FC<MongoShellProps> = ({
   // catch below tells a stop the user asked for from a session that died on its
   // own — the same rejection, two very different messages.
   const cancelRequestedRef = useRef(false);
+  // Whether the running command is inside mongosh right now. A recognised
+  // `find`/`aggregate`/`count` runs through mongosh and then makes a driver
+  // call to fill the viewer; Stop only restarts mongosh, so during that second
+  // phase it would stop nothing and the result would still land. Stop is
+  // offered only while this is true.
+  const [inMongosh, setInMongosh] = useState(false);
   // Seconds the current command has been running, so a long script reads as
   // "still going" rather than "hung". A script takes as long as it takes now:
   // the backend no longer cuts it off, and the only thing that ends it early is
@@ -891,7 +897,15 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         setTab('console');
         return;
       }
-      const ranExternally = await runExternalMongoshCommand(raw);
+      setInMongosh(true);
+      let ranExternally: boolean;
+      try {
+        ranExternally = await runExternalMongoshCommand(raw);
+      } finally {
+        // Whatever follows — a driver call for a recognised command, or
+        // nothing — is not something Stop can end.
+        setInMongosh(false);
+      }
 
       if (raw === 'db') {
         if (ranExternally) return;
@@ -1141,7 +1155,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               {formatShortcut(shortcutById('run-query')!)}
             </span>
           )}
-          {running ? (
+          {running && inMongosh ? (
             <Button
               size="sm"
               variant="destructive"
@@ -1154,7 +1168,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
               {t('mongoShell.toolbar.stop')}
             </Button>
           ) : (
-            <Button size="sm" onClick={() => runRef.current()}>
+            // Disabled rather than replaced while a recognised command is in
+            // its driver phase: Stop could not end that, so it is not offered.
+            <Button size="sm" onClick={() => runRef.current()} disabled={running}>
               <Play size={11} />
               {t('mongoShell.toolbar.run')}
             </Button>

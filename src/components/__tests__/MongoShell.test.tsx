@@ -962,4 +962,35 @@ describe('MongoShell Component', () => {
     expect(await screen.findByRole('button', { name: /^run$/i })).toBeInTheDocument();
   });
 
+  it('does not offer Stop while a recognised command is in its driver phase', async () => {
+    // `find` runs through mongosh and then makes a driver call to fill the
+    // viewer. Stop only restarts mongosh, so during that second phase it would
+    // stop nothing and the result would still land — better not to offer it.
+    let resolveDriver!: (v: unknown) => void;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'start_mongosh_session') return Promise.resolve({ session_id: 'shell-session-1', stdout: [], stderr: [] });
+      if (cmd === 'run_mongosh_command') return Promise.resolve({ stdout: ['{ _id: 1 }'], stderr: [] });
+      if (cmd === 'execute_mql_query') return new Promise((resolve) => { resolveDriver = resolve; });
+      if (cmd === 'get_shell_tab_state') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+
+    render(<MongoShell connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" />);
+    await screen.findByTestId('shell-restart-session');
+
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'db.customers.find({})' } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+
+    // mongosh has answered; the driver call is what is pending now.
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('execute_mql_query', expect.anything()));
+    expect(screen.queryByTestId('shell-stop-command')).toBeNull();
+    expect(screen.getByRole('button', { name: /^run$/i })).toBeDisabled();
+
+    resolveDriver([JSON.stringify({ _id: 1 })]);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^run$/i })).not.toBeDisabled());
+  });
+
 });

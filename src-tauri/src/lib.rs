@@ -193,6 +193,11 @@ pub struct MongoshSession {
     output: AsyncMutex<mpsc::UnboundedReceiver<MongoshLine>>,
     child: AsyncMutex<Child>,
     command_lock: AsyncMutex<()>,
+    /// The markers of the command before this one. A line ending in one of
+    /// them is that command's echo arriving late — after its caller gave up
+    /// on it — and not this command's output. Matched exactly: a script that
+    /// prints something merely resembling a marker is printing output.
+    stale_markers: AsyncMutex<Vec<String>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -352,7 +357,7 @@ pub(crate) fn tail_is_mongosh_prompt(tail: &str) -> bool {
     tail == "| " || (tail.len() <= 200 && tail.ends_with("> ") && tail.trim_end() != ">")
 }
 
-/// Take every complete output line out of `buf`, and drop a trailing prompt.
+/// Take every complete output line out of `buf`.
 ///
 /// A line reader on mongosh's stdout was subtly wrong: the REPL writes its
 /// prompt with no newline after it, so a `lines()` reader never saw the prompt
@@ -361,8 +366,10 @@ pub(crate) fn tail_is_mongosh_prompt(tail: &str) -> bool {
 /// nothing after it, which is exactly what a REPL waiting for input produces,
 /// was never delivered at all.
 ///
-/// `\r\n` is folded to `\n`; partial UTF-8 at the end of a chunk stays until
-/// the rest of it arrives.
+/// Whatever is left in `buf` afterwards has no newline yet. It may be a prompt
+/// or the front of an output line the pipe split; `absorb_mongosh_chunk` is
+/// where that is decided, and only once the next bytes say which. `\r\n` is
+/// folded to `\n`; partial UTF-8 stays until the rest of it arrives.
 pub(crate) fn take_mongosh_lines(buf: &mut Vec<u8>) -> Vec<String> {
     let mut lines = Vec::new();
     while let Some(end) = buf.iter().position(|&b| b == b'\n') {
@@ -373,12 +380,38 @@ pub(crate) fn take_mongosh_lines(buf: &mut Vec<u8>) -> Vec<String> {
         }
         lines.push(text);
     }
-    if let Ok(tail) = std::str::from_utf8(buf) {
-        if tail_is_mongosh_prompt(tail) {
-            buf.clear();
+    lines
+}
+
+/// Add a chunk from the pipe to `pending` and return the complete lines.
+///
+/// The decision about a prompt-shaped tail is made HERE, on the next chunk,
+/// and not when the tail arrives. `AsyncRead::read` returns whatever the pipe
+/// has, at any boundary; `print("ready> ")` can be delivered as `ready> ` and
+/// then `\n`, and judged on its own the first part is indistinguishable from a
+/// prompt. The next bytes settle it: if they begin with the newline, the tail
+/// was the front of an output line and is kept; if they begin with anything
+/// else, nothing continues a line that way except the REPL writing what comes
+/// after a prompt, so the tail was a prompt and is dropped.
+///
+/// What this cannot tell apart, stated plainly: an output line the pipe split
+/// immediately after a `> ` in the middle of it — `foo> ` then `bar\n`. That
+/// needs a boundary at exactly that point and text following it that is not a
+/// newline; it is strictly narrower than the case above, and there is no
+/// framing that resolves it, because the bytes are identical to a prompt
+/// followed by output. The completion protocol does not depend on either
+/// reading — markers are matched by suffix — so it costs a line of output in
+/// a rare case, never a hang.
+pub(crate) fn absorb_mongosh_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
+    if chunk.first() != Some(&b'\n') {
+        if let Ok(tail) = std::str::from_utf8(pending) {
+            if tail_is_mongosh_prompt(tail) {
+                pending.clear();
+            }
         }
     }
-    lines
+    pending.extend_from_slice(chunk);
+    take_mongosh_lines(pending)
 }
 
 fn spawn_mongosh_reader<R>(
@@ -397,8 +430,7 @@ fn spawn_mongosh_reader<R>(
                 Ok(0) | Err(_) => break,
                 Ok(n) => n,
             };
-            pending.extend_from_slice(&chunk[..read]);
-            for text in take_mongosh_lines(&mut pending) {
+            for text in absorb_mongosh_chunk(&mut pending, &chunk[..read]) {
                 let _ = sender.send(MongoshLine {
                     stream: stream.clone(),
                     text,
@@ -406,28 +438,40 @@ fn spawn_mongosh_reader<R>(
             }
         }
         // Whatever the process wrote last without a newline still belongs to
-        // someone; the channel closing right after is what tells the reader
-        // the session ended.
-        if !pending.is_empty() {
-            let _ = sender.send(MongoshLine {
-                stream,
-                text: String::from_utf8_lossy(&pending).into_owned(),
-            });
+        // someone — unless it is the prompt the REPL was showing when it died,
+        // which is nobody's output. The channel closing right after is what
+        // tells the reader the session ended.
+        let leftover = String::from_utf8_lossy(&pending).into_owned();
+        if !leftover.is_empty() && !tail_is_mongosh_prompt(&leftover) {
+            let _ = sender.send(MongoshLine { stream, text: leftover });
         }
     });
+}
+
+/// Does this line end in one of the previous command's markers?
+///
+/// Exact markers, matched by suffix — the same rule as for the live ones. A
+/// prefix match would have swallowed any output that happened to contain the
+/// reserved-looking text, `printjson({ status: "__MQLENS_DONE_pending" })`
+/// included; only the two UUID markers an earlier command actually sent can
+/// be its echo arriving late.
+pub(crate) fn is_stale_marker_line(line: &str, stale: &[String]) -> bool {
+    let text = line.trim_end();
+    stale.iter().any(|m| text.ends_with(m.as_str()))
 }
 
 async fn drain_mongosh_output(session: &MongoshSession) -> MongoshCommandOutput {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
+    let stale = session.stale_markers.lock().await.clone();
     let mut output = session.output.lock().await;
 
     loop {
         match tokio::time::timeout(Duration::from_millis(25), output.recv()).await {
             Ok(Some(line)) => {
-                // Leftover markers are not output, here any more than during a
-                // command. Prompts never reach this channel: the reader eats them.
-                if line.text.contains(MONGOSH_MARKER_PREFIX) {
+                // The previous command's markers are not output, here any more
+                // than during a command.
+                if is_stale_marker_line(&line.text, &stale) {
                     continue;
                 }
                 match line.stream {
@@ -501,7 +545,14 @@ async fn run_mongosh_command_on_session(
     let marker = format!("{MONGOSH_MARKER_PREFIX}{}__", Uuid::new_v4().simple());
     let recovered = format!("{MONGOSH_MARKER_PREFIX}{}__", Uuid::new_v4().simple());
 
+    // Whatever the previous command left behind is drained before this one
+    // starts; its markers stay known for the rest of this command, in case
+    // its echo arrives later still. Then this command's markers take over.
     let _ = drain_mongosh_output(session).await;
+    let stale = std::mem::replace(
+        &mut *session.stale_markers.lock().await,
+        vec![marker.clone(), recovered.clone()],
+    );
 
     // Sent as one write, in this order, and the order is the whole mechanism.
     //
@@ -574,9 +625,9 @@ async fn run_mongosh_command_on_session(
             }
             _ => {}
         }
-        if line.text.contains(MONGOSH_MARKER_PREFIX) {
-            // A marker from a command that ended before this one started —
-            // typically one the user stopped. Not this command's output.
+        if is_stale_marker_line(&line.text, &stale) {
+            // The previous command's echo arriving late — its caller gave up on
+            // it before the REPL finished. Not this command's output.
             continue;
         }
         match line.stream {
@@ -871,6 +922,7 @@ pub async fn start_mongosh_session_impl(
         output: AsyncMutex::new(receiver),
         child: AsyncMutex::new(child),
         command_lock: AsyncMutex::new(()),
+        stale_markers: AsyncMutex::new(Vec::new()),
     });
 
     {
