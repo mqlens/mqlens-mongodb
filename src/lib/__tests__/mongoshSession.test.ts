@@ -564,6 +564,26 @@ describe('mongosh session registry (#240)', () => {
     expect(readShellSession('coll-b')?.activeCommand).toEqual({ since: 5, phase: 'mongosh', stopRequested: false });
   });
 
+  it('still finds a moved command after its old key is reused', () => {
+    // Renamed a → b while a's command runs; a new collection a, with its own
+    // shell and command, opens before the moved command finishes.
+    writeShellSession('coll-a', {
+      sessionId: 'sess-1',
+      activeCommand: { since: 5, phase: 'mongosh', stopRequested: false },
+    });
+    void renameShellSession('coll-a', 'coll-b');
+    writeShellSession('coll-a', {
+      sessionId: 'sess-2',
+      activeCommand: { since: 9, phase: 'mongosh', stopRequested: false },
+    });
+
+    // The moved command completes, under the key it started with.
+    writeShellCommand('coll-a', 5, null);
+
+    expect(readShellSession('coll-b')?.activeCommand).toBeNull();
+    expect(readShellSession('coll-a')?.activeCommand).toEqual({ since: 9, phase: 'mongosh', stopRequested: false });
+  });
+
   it('only touches the command it was told about', () => {
     writeShellSession('tab-1', {
       sessionId: 'sess-1',

@@ -196,29 +196,50 @@ const watchers: Map<string, Set<(session: ShellSession) => void>> = new Map();
  * "running" for good, with nothing on screen able to end it (#346 review).
  */
 const forwards: Map<string, string> = new Map();
-function followForwards(key: string): string {
-  const seen = new Set<string>();
+
+/**
+ * Every key the session mounted under `key` may live under now: the key
+ * itself, then wherever renames have moved it since. Oldest first.
+ */
+function keysReachableFrom(key: string): string[] {
+  const keys = [key];
+  const seen = new Set(keys);
   let current = key;
-  // A key with a live session is where writes for that key go, forward or no
-  // forward: a collection renamed away and then recreated under its old name
-  // gets a new shell under the old key, and that shell's own command must not
-  // be redirected to the renamed one's session (#346 review).
-  while (forwards.has(current) && !sessions.has(current) && !seen.has(current)) {
-    seen.add(current);
+  while (forwards.has(current)) {
     current = forwards.get(current)!;
+    if (seen.has(current)) break;
+    seen.add(current);
+    keys.push(current);
   }
-  return current;
+  return keys;
+}
+
+/**
+ * Find the command that started at `since` under `key`, wherever it is now.
+ * Matched by the command's identity, not by the key alone: a collection renamed
+ * away and recreated under its old name has a NEW shell — with its own command
+ * — under the old key while the moved command is still running under the new
+ * one, and each completion must find its own record (#346 review).
+ */
+function locateShellCommand(
+  key: string,
+  since: number
+): { key: string; command: ActiveShellCommand } | null {
+  for (const candidate of keysReachableFrom(key)) {
+    const command = sessions.get(candidate)?.activeCommand;
+    if (command && command.since === since) return { key: candidate, command };
+  }
+  return null;
 }
 
 /** The running-command record for the command that started at `since`, wherever its session lives now. */
 export function readShellCommand(key: string, since: number): ActiveShellCommand | null {
-  const command = sessions.get(followForwards(key))?.activeCommand ?? null;
-  return command && command.since === since ? command : null;
+  return locateShellCommand(key, since)?.command ?? null;
 }
 
 /**
  * Update the running-command record for the command that started at `since`,
- * wherever its session lives now, and only while that command is the one
+ * wherever its session lives now, and only while that command is still
  * recorded. `null` ends it; a partial patch merges into it.
  *
  * Deliberately not epoch-checked. The epoch says which mount may write a key;
@@ -230,13 +251,13 @@ export function writeShellCommand(
   since: number,
   patch: Partial<ActiveShellCommand> | null
 ): void {
-  const target = followForwards(key);
-  const current = sessions.get(target)?.activeCommand;
-  if (!current || current.since !== since) return;
-  writeShellSession(target, { activeCommand: patch === null ? null : { ...current, ...patch } });
+  const found = locateShellCommand(key, since);
+  if (!found) return;
+  writeShellSession(found.key, {
+    activeCommand: patch === null ? null : { ...found.command, ...patch },
+  });
 }
 
-/** Subscribe to changes for `key`; returns an unsubscribe. */
 export function watchShellSession(key: string, fn: (session: ShellSession) => void): () => void {
   const forKey = watchers.get(key) ?? new Set();
   forKey.add(fn);
@@ -334,7 +355,6 @@ export async function loadShellSession(key: string): Promise<ShellSession | unde
   }
   const session = normalizeStoredSession(stored);
   if (!session) return undefined;
-  forwards.delete(key);
   sessions.set(key, session);
   return session;
 }
@@ -360,8 +380,6 @@ export function writeShellSession(
 ): void {
   if (epoch !== undefined && epoch !== shellSessionEpoch(key)) return;
   const prev = sessions.get(key);
-  // The key is live again; a forward left by an earlier rename is obsolete.
-  if (!prev) forwards.delete(key);
   const next: ShellSession = {
     sessionId: patch.sessionId !== undefined ? patch.sessionId : (prev?.sessionId ?? null),
     entries: patch.entries ?? prev?.entries ?? [],
