@@ -195,21 +195,25 @@ const watchers: Map<string, Set<(session: ShellSession) => void>> = new Map();
  * the write must follow the session to its new key or the renamed shell stays
  * "running" for good, with nothing on screen able to end it (#346 review).
  */
-const forwards: Map<string, string> = new Map();
+const forwards: Map<string, string[]> = new Map();
 
 /**
- * Every key the session mounted under `key` may live under now: the key
- * itself, then wherever renames have moved it since. Oldest first.
+ * Every key a session mounted under `key` may live under now: the key itself,
+ * then wherever renames have moved anything that was ever under it. Every
+ * rename edge is kept, because a key can be reused and renamed again while a
+ * command moved off it earlier is still running — `a → b`, a new `a`, then
+ * `a → x` — and that command's completion must still reach `b`. Matching by
+ * the command's identity is what keeps the extra reach harmless.
  */
 function keysReachableFrom(key: string): string[] {
   const keys = [key];
   const seen = new Set(keys);
-  let current = key;
-  while (forwards.has(current)) {
-    current = forwards.get(current)!;
-    if (seen.has(current)) break;
-    seen.add(current);
-    keys.push(current);
+  for (let i = 0; i < keys.length; i++) {
+    for (const next of forwards.get(keys[i]) ?? []) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      keys.push(next);
+    }
   }
   return keys;
 }
@@ -468,9 +472,7 @@ export function renameShellSession(oldKey: string, newKey: string): Promise<void
   // a session mapping that the renamed tab's close will never clear — and the
   // output would land there instead of in the tab the user is looking at.
   endEpoch(oldKey);
-  // Renaming back (new → old) removes the forward that would otherwise loop.
-  forwards.delete(newKey);
-  forwards.set(oldKey, newKey);
+  forwards.set(oldKey, [...(forwards.get(oldKey) ?? []), newKey]);
   const session = sessions.get(oldKey);
   if (session) {
     sessions.delete(oldKey);
