@@ -619,6 +619,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
   );
 
   // Right-click context menu shared by all result views (Table / Tree / JSON).
+  // A run in flight takes the grid out of reach: the overlay covers it, and
+  // `inert` takes the controls under it out of the tab order too, so a stale
+  // row cannot be acted on by keyboard either. An open context menu is
+  // portaled outside that subtree, so it is closed rather than covered.
+  useEffect(() => {
+    if (loading) setCtxMenu(null);
+  }, [loading]);
+
   const [ctxMenu, setCtxMenu] = useState<
     { x: number; y: number; doc: Record<string, any>; field?: string; value?: any } | null
   >(null);
@@ -1119,7 +1127,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
       documents.map(stableDocId).join('\u0000'),
     ];
     for (const line of jsonLines) {
-      if (line.kind === 'open') parts.push(`${line.docIndex}/${line.depth}/${line.keyName ?? ''}`);
+      // `empty` as well as `open`: an empty object or array is not foldable in
+      // the JSON view, but the tree walker still gives it a fold id, so one
+      // appearing or vanishing shifts every id after it. Left out of the
+      // identity, an otherwise identical result would keep tree folds that now
+      // point at different nodes.
+      if (line.kind === 'open' || line.kind === 'empty') {
+        parts.push(`${line.kind}/${line.docIndex}/${line.depth}/${line.keyName ?? ''}`);
+      }
     }
     return parts.join('\u0001');
   }, [querySpec, skip, limit, jsonLines, documents]);
@@ -1975,6 +1990,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
       ref={paneRootRef}
       className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
       aria-busy={loading || undefined}
+      // Everything under the overlay — row actions, paging, the write buttons —
+      // is unreachable while a run is in flight, by pointer and by keyboard
+      // alike. The overlay is a child, but `inert` on an ancestor does not
+      // disable a `role="status"` announcement, and the overlay has nothing to
+      // interact with.
+      inert={loading || undefined}
     >
       {/* A run in flight. Over the previous results, not in their place: the
           grid stays mounted, so nothing it holds is lost, and the last result
@@ -1983,7 +2004,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         <div
           role="status"
           data-testid="results-loading"
-          className="absolute inset-0 z-40 flex items-center justify-center bg-background/60 text-muted-foreground"
+          className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 text-muted-foreground"
         >
           <div className="flex select-none flex-col items-center gap-2">
             <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary" />

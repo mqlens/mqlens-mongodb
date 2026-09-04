@@ -2295,6 +2295,48 @@ describe('DataGrid — stays mounted across a run (#344)', () => {
     expect(foldState('a')).toBe('closed');
   });
 
+  it('resets folds when an empty container shifts every fold id', () => {
+    // An empty object is not foldable in the JSON view, so it was left out of
+    // the identity — but the tree walker still gives it a fold id, and every
+    // id after it moves. Folds kept over that shift would point at other nodes.
+    const before = [{ _id: '1', g: { a: { akey: 'one' } } }];
+    const after = [{ _id: '1', g: { empty: {}, a: { akey: 'one' } } }];
+    const { rerender } = render(<DataGrid documents={before} />);
+    fireEvent.click(firstFold());
+    expect(firstFold()).toHaveAttribute('aria-label', expect.stringMatching(/expand/i));
+
+    rerender(<DataGrid documents={after} />);
+
+    expect(firstFold()).toHaveAttribute('aria-label', expect.stringMatching(/collapse/i));
+  });
+
+  it('puts the grid out of reach while a run is in flight', () => {
+    // The overlay stops the pointer; the inert attribute stops the keyboard, so a stale
+    // row cannot be acted on by tabbing to its buttons.
+    const { container, rerender } = render(<DataGrid documents={docs()} />);
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.hasAttribute('inert')).toBe(false);
+
+    rerender(<DataGrid documents={docs()} loading />);
+    expect(root.hasAttribute('inert')).toBe(true);
+
+    rerender(<DataGrid documents={docs()} />);
+    expect(root.hasAttribute('inert')).toBe(false);
+  });
+
+  it('closes an open context menu when a run starts', () => {
+    // It is portaled out of the grid, above the overlay, so covering it is
+    // not enough — its actions would still run against the stale result.
+    const { rerender } = render(<DataGrid documents={docs()} onDeleteDocument={() => {}} />);
+    const line = screen.getByTestId('json-view').querySelector('[data-json-line]') as HTMLElement;
+    fireEvent.contextMenu(line, { clientX: 10, clientY: 10 });
+    expect(screen.getByTestId('context-menu')).toBeInTheDocument();
+
+    rerender(<DataGrid documents={docs()} onDeleteDocument={() => {}} loading />);
+
+    expect(screen.queryByTestId('context-menu')).toBeNull();
+  });
+
   it('shows a run in flight over the previous results, not in their place', () => {
     const { rerender } = render(<DataGrid documents={docs()} />);
     expect(screen.queryByTestId('results-loading')).toBeNull();
