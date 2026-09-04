@@ -1,8 +1,15 @@
 import * as React from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { cn } from '@/lib/utils';
+import { useTabScopedOpen } from '@/workspace/tabVisibility';
 
-const Popover = PopoverPrimitive.Root;
+/** Radix's root; the popover closes when the tab it belongs to is hidden (#240). */
+const Popover: React.FC<React.ComponentProps<typeof PopoverPrimitive.Root>> = ({
+  open,
+  defaultOpen,
+  onOpenChange,
+  ...props
+}) => <PopoverPrimitive.Root {...props} {...useTabScopedOpen({ open, defaultOpen, onOpenChange })} />;
 const PopoverTrigger = PopoverPrimitive.Trigger;
 const PopoverAnchor = PopoverPrimitive.Anchor;
 

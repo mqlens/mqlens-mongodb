@@ -5,6 +5,13 @@ import { WorkspaceRoot } from '../WorkspaceRoot';
 import { createInitialLayout, workspaceReducer, type PaneNode } from '../model';
 import { useTabVisible } from '../tabVisibility';
 import { Dialog, DialogContent, DialogTitle } from '../../components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../components/ui/dropdown-menu';
+import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover';
 
 /**
  * #240: a pane used to render only its active tab, so switching tabs unmounted
@@ -39,6 +46,16 @@ function Content({ tabId }: { tabId: string }) {
           <DialogTitle>dialog of {tabId}</DialogTitle>
         </DialogContent>
       </Dialog>
+      <DropdownMenu>
+        <DropdownMenuTrigger data-testid={`open-menu-${tabId}`}>menu</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem>menu item of {tabId}</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Popover>
+        <PopoverTrigger data-testid={`open-popover-${tabId}`}>popover</PopoverTrigger>
+        <PopoverContent>popover of {tabId}</PopoverContent>
+      </Popover>
     </div>
   );
 }
@@ -131,6 +148,24 @@ describe('PaneView — inactive tabs stay mounted (#240)', () => {
     // The owner still has it open; showing the tab shows the dialog.
     switchTo('a');
     expect(screen.getByText('dialog of a')).toBeInTheDocument();
+  });
+
+  it('closes a hidden tab’s menu and popover, which portal out of the hidden wrapper too', () => {
+    // Unlike a dialog these are closed for good: a menu that is gone from
+    // under the pointer has no state worth bringing back.
+    render(<Harness tabIds={['a', 'b']} />);
+
+    fireEvent.pointerDown(screen.getByTestId('open-menu-a'), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+    expect(screen.getByText('menu item of a')).toBeInTheDocument();
+    switchTo('b');
+    expect(screen.queryByText('menu item of a')).toBeNull();
+    switchTo('a');
+    expect(screen.queryByText('menu item of a')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('open-popover-a'));
+    expect(screen.getByText('popover of a')).toBeInTheDocument();
+    switchTo('b');
+    expect(screen.queryByText('popover of a')).toBeNull();
   });
 
   it('does not mount a tab until it has been visited', () => {

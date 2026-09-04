@@ -2,8 +2,15 @@ import * as React from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTabScopedOpen } from "@/workspace/tabVisibility";
 
-const Select = SelectPrimitive.Root;
+/** Radix's root; its list closes when the tab it belongs to is hidden (#240). */
+const Select: React.FC<React.ComponentProps<typeof SelectPrimitive.Root>> = ({
+  open,
+  defaultOpen,
+  onOpenChange,
+  ...props
+}) => <SelectPrimitive.Root {...props} {...useTabScopedOpen({ open, defaultOpen, onOpenChange })} />;
 const SelectGroup = SelectPrimitive.Group;
 const SelectValue = SelectPrimitive.Value;
 
