@@ -36,6 +36,7 @@ vi.mock('@/hooks/use-theme', () => ({
 }));
 
 import { DataGrid, getExplainTree } from '../DataGrid';
+import { TabVisibleContext } from '../../workspace/tabVisibility';
 import { resetResultsFindShortcutForTests } from '@/lib/resultsFindShortcut';
 
 // Collect every node name in the tree (depth-first) for assertions.
@@ -2184,5 +2185,48 @@ describe('DataGrid — tab guards survive StrictMode replay (#325 review)', () =
       </React.StrictMode>
     );
     expect(onActiveTabChange).toHaveBeenCalledWith('explain');
+  });
+});
+
+describe('DataGrid — a hidden tab does not answer the clipboard (#240)', () => {
+  const view = (visible: boolean) => (
+    <TabVisibleContext.Provider value={visible}>
+      <DataGrid documents={mockDocuments} />
+    </TabVisibleContext.Provider>
+  );
+
+  const pressSelectAll = (target: EventTarget) => {
+    const event = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event;
+  };
+
+  it('leaves select-all alone once its tab is hidden', () => {
+    // The grid stays mounted (#240), so without this it would still claim the
+    // key pressed in the tab the user switched to.
+    const { rerender } = render(view(true));
+    const json = screen.getByTestId('json-view');
+    document.getSelection()?.removeAllRanges();
+    expect(pressSelectAll(json).defaultPrevented).toBe(true);
+
+    rerender(view(false));
+    expect(pressSelectAll(json).defaultPrevented).toBe(false);
+  });
+
+  it('leaves a copy alone once its tab is hidden', () => {
+    const { rerender } = render(view(true));
+    const json = screen.getByTestId('json-view');
+    document.getSelection()?.removeAllRanges();
+    pressSelectAll(json);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const shown = vi.fn();
+    fireEvent.copy(json, { clipboardData: { setData: shown, getData: () => '' } });
+    expect(shown).toHaveBeenCalled();
+
+    rerender(view(false));
+    const hidden = vi.fn();
+    fireEvent.copy(json, { clipboardData: { setData: hidden, getData: () => '' } });
+    expect(hidden).not.toHaveBeenCalled();
   });
 });

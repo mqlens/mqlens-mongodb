@@ -34,6 +34,7 @@ import { Badge } from '@/components/ui/badge';
 import { useThemeOptional } from '@/hooks/use-theme';
 import { getScaledRowHeight } from '@/lib/themes/ui-scale';
 import { cn } from '@/lib/utils';
+import { useTabVisible } from '@/workspace/tabVisibility';
 import type { SpacingDensity } from '@/lib/themes/schema';
 
 interface DataGridProps {
@@ -1160,6 +1161,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // still mounted, and the copy is rebuilt from the line data rather than from
   // the DOM.
   const jsonViewRef = React.useRef<HTMLDivElement | null>(null);
+  // These grids listen on `document` for copy and select-all, and answer for a
+  // selection whose endpoints are inside their own container — which bypasses
+  // the active-pane check on purpose (#330). A kept-alive tab (#240) stays
+  // mounted with its selection intact, so a hidden grid would go on answering
+  // Ctrl+C in the tab the user switched to, copying data they cannot see. Only
+  // the grid on screen listens.
+  const tabVisible = useTabVisible();
   // The two ends of the selection, each remembered independently at the last
   // row it was seen on. Modelling the ends rather than a min/max span is what
   // lets the range CONTRACT: during a drag the anchor is fixed and only the
@@ -1404,7 +1412,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // meaning of the shortcut too: in a results pane, select-all is about the
   // results, not about the whole application around them.
   useEffect(() => {
-    if (viewMode !== 'json') return;
+    if (viewMode !== 'json' || !tabVisible) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
       if (e.key !== 'a' && e.key !== 'A') return;
@@ -1432,20 +1440,20 @@ export const DataGrid: React.FC<DataGridProps> = ({
     // any window-level handler that would otherwise claim the key first.
     document.addEventListener('keydown', onKeyDown, true);
     return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [viewMode]);
+  }, [viewMode, tabVisible]);
 
   const jsonCopyRef = React.useRef(handleJsonCopy);
   useEffect(() => {
     jsonCopyRef.current = handleJsonCopy;
   });
   useEffect(() => {
-    if (viewMode !== 'json') return;
+    if (viewMode !== 'json' || !tabVisible) return;
     const onCopy = (e: ClipboardEvent) => jsonCopyRef.current(e);
     document.addEventListener('copy', onCopy);
     // Nothing to unwind: ownership is the pane registry's, and a pane
     // unregisters itself there when it goes.
     return () => document.removeEventListener('copy', onCopy);
-  }, [viewMode]);
+  }, [viewMode, tabVisible]);
 
   const toggleFold = (id: number) => {
     setCollapsedFolds((prev) => {
