@@ -308,6 +308,9 @@
       "destructiveCancelled": "已取消该破坏性命令。",
       "resultToDataViewer_other": "{{count}} 个文档 -> 数据视图",
       "sessionAttached": "已接入 mongosh 会话",
+      "commandReattached": "重新打开此 Shell 时仍有命令在运行。其输出留在启动它的视图中；正在等待其完成，按“停止”可将其结束。",
+      "commandStopped": "命令已停止。",
+      "runningFor": "运行中… {{seconds}}秒",
       "sessionRestarting": "正在重启 mongosh 会话…",
       "sessionUnavailable": "mongosh 会话不可用：{{detail}}",
       "switchedToDb": "已切换到数据库 {{db}}"
@@ -315,6 +318,8 @@
     "toolbar": {
       "aiToggleLabel": "AI",
       "aiToggleTitle": "AI 助手",
+      "stop": "停止",
+      "stopTitle": "通过重启 mongosh 会话来停止正在运行的命令",
       "restartSession": "重启",
       "restartSessionTitle": "停止当前 mongosh 会话并启动新会话",
       "run": "运行"

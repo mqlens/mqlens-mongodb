@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MongoShell } from '../MongoShell';
-import { readShellSession, resetShellSessions, writeShellSession } from '../../lib/mongoshSession';
+import {
+  readShellSession,
+  renameShellSession,
+  resetShellSessions,
+  writeShellSession,
+} from '../../lib/mongoshSession';
 import { TabVisibleContext } from '../../workspace/tabVisibility';
 
 const mockInvoke = vi.fn();
@@ -955,4 +960,221 @@ describe('MongoShell Component', () => {
       await waitFor(() => expect(stopCalls()).toBe(1));
     });
   });
+  it('Stop ends the running command by restarting the session, and says so', async () => {
+    // A script takes as long as it takes now — the backend no longer cuts it
+    // off — so the user needs a way out. mongosh cannot be interrupted over a
+    // pipe, so Stop restarts the session, and the pending call fails with
+    // "session closed". That is the user's doing, not an error, and it must
+    // read that way.
+    let rejectRun!: (e: Error) => void;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'start_mongosh_session') return Promise.resolve({ session_id: 'shell-session-1', stdout: [], stderr: [] });
+      if (cmd === 'run_mongosh_command') return new Promise((_, reject) => { rejectRun = reject; });
+      if (cmd === 'stop_mongosh_session') { rejectRun(new Error('mongosh session closed')); return Promise.resolve(); }
+      if (cmd === 'get_shell_tab_state') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+
+    render(<MongoShell connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" />);
+    await screen.findByTestId('shell-restart-session');
+
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'sleep(60000)' } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+
+    // While it runs: an elapsed indicator and a Stop button in place of Run.
+    const stop = await screen.findByTestId('shell-stop-command');
+    expect(screen.getByTestId('shell-running-for')).toBeInTheDocument();
+
+    fireEvent.click(stop);
+
+    await waitFor(() => expect(screen.getByText('Command stopped.')).toBeInTheDocument());
+    // Reported as stopped, never as a session error.
+    expect(screen.queryByText(/mongosh session closed/)).toBeNull();
+    // And ready to run again.
+    expect(await screen.findByRole('button', { name: /^run$/i })).toBeInTheDocument();
+  });
+
+  it('does not offer Stop while a recognised command is in its driver phase', async () => {
+    // `find` runs through mongosh and then makes a driver call to fill the
+    // viewer. Stop only restarts mongosh, so during that second phase it would
+    // stop nothing and the result would still land — better not to offer it.
+    let resolveDriver!: (v: unknown) => void;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'start_mongosh_session') return Promise.resolve({ session_id: 'shell-session-1', stdout: [], stderr: [] });
+      if (cmd === 'run_mongosh_command') return Promise.resolve({ stdout: ['{ _id: 1 }'], stderr: [] });
+      if (cmd === 'execute_mql_query') return new Promise((resolve) => { resolveDriver = resolve; });
+      if (cmd === 'get_shell_tab_state') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+
+    render(<MongoShell connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" />);
+    await screen.findByTestId('shell-restart-session');
+
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'db.customers.find({})' } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+
+    // mongosh has answered; the driver call is what is pending now.
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('execute_mql_query', expect.anything()));
+    expect(screen.queryByTestId('shell-stop-command')).toBeNull();
+    expect(screen.getByRole('button', { name: /^run$/i })).toBeDisabled();
+
+    resolveDriver([JSON.stringify({ _id: 1 })]);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^run$/i })).not.toBeDisabled());
+  });
+
+  it('still shows a command as running after a remount, with Stop and Run disabled', async () => {
+    // The tab was switched away and back while a script was running. The
+    // backend is still running it; a shell that believed itself idle would
+    // enable Run, and the next command would queue behind the first on the
+    // backend lock with no Stop on screen to end either.
+    writeShellSession('shell-tab', {
+      sessionId: 'shell-session-1',
+      entries: [],
+      currentDb: 'sales_db',
+      activeCommand: { since: Date.now() - 12_000, phase: 'mongosh', stopRequested: false },
+    });
+    render(<MongoShell connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" sessionKey="shell-tab" />);
+
+    expect(await screen.findByTestId('shell-stop-command')).toBeInTheDocument();
+    expect(screen.getByTestId('shell-running-for')).toHaveTextContent(/1[0-9]s/);
+    expect(screen.queryByRole('button', { name: /^run$/i })).toBeNull();
+
+    // When the instance that started it finishes, this one sees it.
+    writeShellSession('shell-tab', { activeCommand: null });
+    expect(await screen.findByRole('button', { name: /^run$/i })).not.toBeDisabled();
+  });
+
+  it('does not report a later failure as a stop after Stop raced a completing command', async () => {
+    // Stop pressed, but the command resolved before the process died: the catch
+    // never ran. The flag must not survive into the next command.
+    let resolveRun!: (v: unknown) => void;
+    let calls = 0;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'start_mongosh_session') return Promise.resolve({ session_id: 'shell-session-' + (++calls), stdout: [], stderr: [] });
+      if (cmd === 'run_mongosh_command') {
+        if (calls === 1) return new Promise((resolve) => { resolveRun = resolve; });
+        return Promise.reject(new Error('genuine failure'));
+      }
+      if (cmd === 'stop_mongosh_session') { resolveRun({ stdout: ['done'], stderr: [] }); return Promise.resolve(); }
+      if (cmd === 'get_shell_tab_state') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+
+    render(<MongoShell connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" />);
+    await screen.findByTestId('shell-restart-session');
+
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'sleep(1)' } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+    fireEvent.click(await screen.findByTestId('shell-stop-command'));
+    // The command completed — the stop lost the race.
+    expect(await screen.findByText('done')).toBeInTheDocument();
+    await screen.findByTestId('shell-restart-session');
+    await waitFor(() => expect(screen.getByRole('button', { name: /^run$/i })).not.toBeDisabled());
+
+    // A later, unrelated failure must read as a failure.
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'boom()' } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+    expect(await screen.findByText(/genuine failure/)).toBeInTheDocument();
+    expect(screen.queryAllByText('Command stopped.').length).toBeLessThanOrEqual(1);
+  });
+
+  it('reattaches to a command still running on the backend after a reload, and frees the shell when it ends', async () => {
+    // The renderer was reloaded mid-script: the registry is empty, the backend
+    // still records the command, and whoever awaited it is gone.
+    let idle!: () => void;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'claim_shell_tab_state') {
+        return Promise.resolve({
+          sessionId: 'shell-session-9',
+          entries: [],
+          currentDb: 'sales_db',
+          activeCommand: { since: Date.now() - 5_000, phase: 'mongosh', stopRequested: false },
+        });
+      }
+      if (cmd === 'await_mongosh_idle') return new Promise<void>((resolve) => { idle = resolve; });
+      return Promise.resolve();
+    });
+
+    render(<MongoShell connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" sessionKey="shell-tab" />);
+
+    expect(await screen.findByTestId('shell-stop-command')).toBeInTheDocument();
+    expect(screen.getByText(/still running when this shell reopened/)).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith('await_mongosh_idle', { sessionId: 'shell-session-9' });
+
+    idle();
+    expect(await screen.findByRole('button', { name: /^run$/i })).not.toBeDisabled();
+    expect(readShellSession('shell-tab')?.activeCommand).toBeNull();
+  });
+
+  it('drops a reloaded command that was already past mongosh, since nothing holds the session', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'claim_shell_tab_state') {
+        return Promise.resolve({
+          sessionId: 'shell-session-9',
+          entries: [],
+          currentDb: 'sales_db',
+          activeCommand: { since: Date.now() - 5_000, phase: 'driver', stopRequested: false },
+        });
+      }
+      return Promise.resolve();
+    });
+
+    render(<MongoShell connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" sessionKey="shell-tab" />);
+
+    // Hydration has landed once the backend's session id is in the registry;
+    // until then the registry holds only this mount's own first write.
+    await waitFor(() => expect(readShellSession('shell-tab')?.sessionId).toBe('shell-session-9'));
+    expect(readShellSession('shell-tab')?.activeCommand).toBeNull();
+    expect(mockInvoke).not.toHaveBeenCalledWith('await_mongosh_idle', expect.anything());
+    expect(screen.queryByTestId('shell-stop-command')).toBeNull();
+  });
+
+  it('frees a renamed tab when the command its old shell started finishes', async () => {
+    // The collection is renamed while a script runs: the registry re-keys the
+    // session and React remounts the shell under the new key. The completion
+    // arrives from the old instance, under the old key, with an ended epoch.
+    let finish!: (v: unknown) => void;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_app_settings') return Promise.resolve({ mongosh_path: '/usr/local/bin/mongosh' });
+      if (cmd === 'test_mongosh_path') return Promise.resolve('2.1.1');
+      if (cmd === 'get_mongodb_version') return Promise.resolve('7.0.5');
+      if (cmd === 'start_mongosh_session') return Promise.resolve({ session_id: 'shell-session-1', stdout: [], stderr: [] });
+      if (cmd === 'run_mongosh_command') return new Promise((resolve) => { finish = resolve; });
+      if (cmd === 'claim_shell_tab_state') return Promise.resolve(null);
+      return Promise.resolve();
+    });
+    const shell = (key: string, sessionKey: string) => (
+      <MongoShell key={key} connectionId="conn-1" connectionName="Local" connectionUri="mongodb://localhost:27017" databaseName="sales_db" sessionKey={sessionKey} />
+    );
+    const { rerender } = render(shell('old', 'coll-old'));
+    await screen.findByTestId('shell-restart-session');
+    fireEvent.change(screen.getByLabelText('mongosh editor'), { target: { value: 'sleep(1)' } });
+    fireEvent.click(screen.getByRole('button', { name: /^run$/i }));
+    await screen.findByTestId('shell-stop-command');
+
+    void renameShellSession('coll-old', 'coll-new');
+    rerender(shell('new', 'coll-new'));
+    // Still running, as far as the renamed shell is concerned.
+    expect(await screen.findByTestId('shell-stop-command')).toBeInTheDocument();
+
+    finish({ stdout: ['done'], stderr: [] });
+    expect(await screen.findByRole('button', { name: /^run$/i })).not.toBeDisabled();
+    expect(readShellSession('coll-new')?.activeCommand).toBeNull();
+  });
+
 });

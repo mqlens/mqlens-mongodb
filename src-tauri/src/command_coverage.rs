@@ -90,6 +90,7 @@ const LOCAL_COMMANDS: &[&str] = &[
     "ai_provider_options",
     "list_ai_models_for",
     "stop_mongosh_session", // kills the local child process, no DB write
+    "await_mongosh_idle",   // waits on the local session lock, touches nothing
     // Per-tab shell state (session id, scrollback). In-process only — no DB
     // access, and clearing a tab's entry deliberately does not stop its child.
     "get_shell_tab_state",

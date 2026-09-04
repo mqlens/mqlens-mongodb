@@ -47,6 +47,25 @@ export interface ShellSession {
   /** Which conversation in the backend chat store this tab has open. The
    *  transcript is not stored here — only the choice of which one. */
   aiChatId?: string;
+  /** The command running in this tab's session right now, if any.
+   *
+   *  Held here for the same reason the transcript is: the tab can unmount while
+   *  a command is still running, and a remounted shell that believed itself
+   *  idle would enable Run — and a second command then queues behind the first
+   *  on the backend's command lock, with no Stop on screen to end either. The
+   *  backend session is doing the work; this is the record that it is.
+   *
+   *  `phase` is where execution is: only `mongosh` can be stopped by restarting
+   *  the session. `stopRequested` lets the instance that started the command,
+   *  which may no longer be the one on screen, report a stop as a stop. */
+  activeCommand?: ActiveShellCommand | null;
+}
+
+export interface ActiveShellCommand {
+  /** When it started, so an elapsed counter survives a remount. */
+  since: number;
+  phase: 'mongosh' | 'driver';
+  stopRequested: boolean;
 }
 
 /**
@@ -169,7 +188,80 @@ export function dropPendingShellStart(key: string): void {
  */
 const watchers: Map<string, Set<(session: ShellSession) => void>> = new Map();
 
-/** Subscribe to changes for `key`; returns an unsubscribe. */
+/**
+ * Where a renamed key's session went. A command's completion is written under
+ * the key its shell mounted with; if the tab was renamed meanwhile — its
+ * collection or database renamed while a script ran — that key is closed, and
+ * the write must follow the session to its new key or the renamed shell stays
+ * "running" for good, with nothing on screen able to end it (#346 review).
+ */
+const forwards: Map<string, string[]> = new Map();
+
+/**
+ * Every key a session mounted under `key` may live under now: the key itself,
+ * then wherever renames have moved anything that was ever under it. Every
+ * rename edge is kept, because a key can be reused and renamed again while a
+ * command moved off it earlier is still running — `a → b`, a new `a`, then
+ * `a → x` — and that command's completion must still reach `b`. Matching by
+ * the command's identity is what keeps the extra reach harmless.
+ */
+function keysReachableFrom(key: string): string[] {
+  const keys = [key];
+  const seen = new Set(keys);
+  for (let i = 0; i < keys.length; i++) {
+    for (const next of forwards.get(keys[i]) ?? []) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      keys.push(next);
+    }
+  }
+  return keys;
+}
+
+/**
+ * Find the command that started at `since` under `key`, wherever it is now.
+ * Matched by the command's identity, not by the key alone: a collection renamed
+ * away and recreated under its old name has a NEW shell — with its own command
+ * — under the old key while the moved command is still running under the new
+ * one, and each completion must find its own record (#346 review).
+ */
+function locateShellCommand(
+  key: string,
+  since: number
+): { key: string; command: ActiveShellCommand } | null {
+  for (const candidate of keysReachableFrom(key)) {
+    const command = sessions.get(candidate)?.activeCommand;
+    if (command && command.since === since) return { key: candidate, command };
+  }
+  return null;
+}
+
+/** The running-command record for the command that started at `since`, wherever its session lives now. */
+export function readShellCommand(key: string, since: number): ActiveShellCommand | null {
+  return locateShellCommand(key, since)?.command ?? null;
+}
+
+/**
+ * Update the running-command record for the command that started at `since`,
+ * wherever its session lives now, and only while that command is still
+ * recorded. `null` ends it; a partial patch merges into it.
+ *
+ * Deliberately not epoch-checked. The epoch says which mount may write a key;
+ * but a command's own progress is true whoever owns the tab now, and dropping
+ * its completion would leave that owner busy forever.
+ */
+export function writeShellCommand(
+  key: string,
+  since: number,
+  patch: Partial<ActiveShellCommand> | null
+): void {
+  const found = locateShellCommand(key, since);
+  if (!found) return;
+  writeShellSession(found.key, {
+    activeCommand: patch === null ? null : { ...found.command, ...patch },
+  });
+}
+
 export function watchShellSession(key: string, fn: (session: ShellSession) => void): () => void {
   const forKey = watchers.get(key) ?? new Set();
   forKey.add(fn);
@@ -204,7 +296,16 @@ function normalizeStoredSession(stored: unknown): ShellSession | undefined {
     aiOpen: candidate.aiOpen ?? false,
     aiMessages: Array.isArray(candidate.aiMessages) ? candidate.aiMessages : [],
     aiChatId: typeof candidate.aiChatId === 'string' ? candidate.aiChatId : undefined,
+    activeCommand: normaliseActiveCommand(candidate.activeCommand),
   };
+}
+
+/** Only a well-formed record counts; anything else means "nothing running". */
+function normaliseActiveCommand(value: unknown): ActiveShellCommand | null {
+  if (!value || typeof value !== 'object') return null;
+  const c = value as Partial<ActiveShellCommand>;
+  if (typeof c.since !== 'number' || (c.phase !== 'mongosh' && c.phase !== 'driver')) return null;
+  return { since: c.since, phase: c.phase, stopRequested: c.stopRequested === true };
 }
 
 /** Write-through to the backend. Fire-and-forget: the cache is already updated,
@@ -291,6 +392,10 @@ export function writeShellSession(
     aiOpen: patch.aiOpen ?? prev?.aiOpen ?? false,
     aiMessages: patch.aiMessages ?? prev?.aiMessages ?? [],
     aiChatId: patch.aiChatId ?? prev?.aiChatId,
+    // `null` is a deliberate write ("nothing running now"); only an absent key
+    // keeps the previous value, like `sessionId`.
+    activeCommand:
+      patch.activeCommand !== undefined ? patch.activeCommand : (prev?.activeCommand ?? null),
   };
   sessions.set(key, next);
   persist(key, next);
@@ -367,6 +472,7 @@ export function renameShellSession(oldKey: string, newKey: string): Promise<void
   // a session mapping that the renamed tab's close will never clear — and the
   // output would land there instead of in the tab the user is looking at.
   endEpoch(oldKey);
+  forwards.set(oldKey, [...(forwards.get(oldKey) ?? []), newKey]);
   const session = sessions.get(oldKey);
   if (session) {
     sessions.delete(oldKey);
@@ -446,6 +552,7 @@ export function forgetShellSession(key: string): void {
 /** Test seam: forget everything without touching the backend. */
 export function resetShellSessions(): void {
   sessions.clear();
+  forwards.clear();
   epochs.clear();
   pendingStarts.clear();
   watchers.clear();

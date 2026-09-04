@@ -4,7 +4,7 @@ use serde_json;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command as TokioCommand};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use uuid::Uuid;
@@ -193,6 +193,11 @@ pub struct MongoshSession {
     output: AsyncMutex<mpsc::UnboundedReceiver<MongoshLine>>,
     child: AsyncMutex<Child>,
     command_lock: AsyncMutex<()>,
+    /// The markers of the command before this one. A line ending in one of
+    /// them is that command's echo arriving late — after its caller gave up
+    /// on it — and not this command's output. Matched exactly: a script that
+    /// prints something merely resembling a marker is printing output.
+    stale_markers: AsyncMutex<Vec<String>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -327,6 +332,92 @@ pub struct MongoshSessionInfo {
     pub stderr: Vec<String>,
 }
 
+/// Prefix of every completion marker this process has ever printed into a
+/// session. Any line carrying it that is not the marker being waited for was
+/// left behind by an earlier command and must not be shown as output.
+const MONGOSH_MARKER_PREFIX: &str = "__MQLENS_DONE_";
+
+/// Is this newline-less tail mongosh's prompt?
+///
+/// Asked only of a chunk's tail — bytes with no newline after them. That is
+/// the framing that identifies a prompt: mongosh writes it and then waits for
+/// input on the same line, so it is the one thing the process writes without
+/// a newline. A script's output is newline-terminated, so it never ends a
+/// chunk this way except mid-line, and the shape check below is only there to
+/// keep a half-received output line from being taken for a prompt.
+///
+/// Nothing else is ever judged by shape. A complete line is output, whatever
+/// it looks like: `print("ready> ")` and `print("test> hello")` both come
+/// through untouched. And a prompt the OS delivered in the same read as the
+/// output before it is left glued on — rare, cosmetic, and the only safe
+/// choice, since prompt bytes and identical script bytes cannot be told apart
+/// once they share a line. The completion protocol does not need them told
+/// apart: it matches its markers by suffix (see `marker_line_kind`).
+pub(crate) fn tail_is_mongosh_prompt(tail: &str) -> bool {
+    tail == "| " || (tail.len() <= 200 && tail.ends_with("> ") && tail.trim_end() != ">")
+}
+
+/// Take every complete output line out of `buf`.
+///
+/// A line reader on mongosh's stdout was subtly wrong: the REPL writes its
+/// prompt with no newline after it, so a `lines()` reader never saw the prompt
+/// as a line. It sat in the buffer until the NEXT output arrived and was glued
+/// to the front of it — the console showed `test> hello` — and a prompt with
+/// nothing after it, which is exactly what a REPL waiting for input produces,
+/// was never delivered at all.
+///
+/// Whatever is left in `buf` afterwards has no newline yet. It may be a prompt
+/// or the front of an output line the pipe split; `absorb_mongosh_chunk` is
+/// where that is decided, and only once the next bytes say which. `\r\n` is
+/// folded to `\n`; partial UTF-8 stays until the rest of it arrives.
+pub(crate) fn take_mongosh_lines(buf: &mut Vec<u8>) -> Vec<String> {
+    let mut lines = Vec::new();
+    while let Some(end) = buf.iter().position(|&b| b == b'\n') {
+        let raw: Vec<u8> = buf.drain(..=end).collect();
+        let mut text = String::from_utf8_lossy(&raw[..raw.len() - 1]).into_owned();
+        if text.ends_with('\r') {
+            text.pop();
+        }
+        lines.push(text);
+    }
+    lines
+}
+
+/// Add a chunk from the pipe to `pending` and return the complete lines.
+///
+/// The decision about a prompt-shaped tail is made HERE, on the next chunk,
+/// and not when the tail arrives. `AsyncRead::read` returns whatever the pipe
+/// has, at any boundary; `print("ready> ")` can be delivered as `ready> ` and
+/// then `\n`, and judged on its own the first part is indistinguishable from a
+/// prompt. The next bytes settle it: if they begin with the newline, the tail
+/// was the front of an output line and is kept; if they begin with anything
+/// else, nothing continues a line that way except the REPL writing what comes
+/// after a prompt, so the tail was a prompt and is dropped.
+///
+/// What this cannot tell apart, stated plainly: an output line the pipe split
+/// immediately after a `> ` in the middle of it — `foo> ` then `bar\n`. That
+/// needs a boundary at exactly that point and text following it that is not a
+/// newline; it is strictly narrower than the case above, and there is no
+/// framing that resolves it, because the bytes are identical to a prompt
+/// followed by output. The completion protocol does not depend on either
+/// reading — markers are matched by suffix — so it costs a line of output in
+/// a rare case, never a hang.
+pub(crate) fn absorb_mongosh_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
+    // A chunk that opens with a line ending — `\n`, or the `\r` of a `\r\n` —
+    // is finishing the pending line, so what is pending was output, however
+    // prompt-shaped. Only output that starts something new proves the pending
+    // text was a prompt.
+    if !matches!(chunk.first(), Some(b'\n') | Some(b'\r')) {
+        if let Ok(tail) = std::str::from_utf8(pending) {
+            if tail_is_mongosh_prompt(tail) {
+                pending.clear();
+            }
+        }
+    }
+    pending.extend_from_slice(chunk);
+    take_mongosh_lines(pending)
+}
+
 fn spawn_mongosh_reader<R>(
     reader: R,
     stream: MongoshStream,
@@ -335,27 +426,63 @@ fn spawn_mongosh_reader<R>(
     R: AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
-        let mut lines = BufReader::new(reader).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let _ = sender.send(MongoshLine {
-                stream: stream.clone(),
-                text: line,
-            });
+        let mut reader = reader;
+        let mut pending = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let read = match reader.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            for text in absorb_mongosh_chunk(&mut pending, &chunk[..read]) {
+                let _ = sender.send(MongoshLine {
+                    stream: stream.clone(),
+                    text,
+                });
+            }
+        }
+        // Whatever the process wrote last without a newline still belongs to
+        // someone — unless it is the prompt the REPL was showing when it died,
+        // which is nobody's output. The channel closing right after is what
+        // tells the reader the session ended.
+        let leftover = String::from_utf8_lossy(&pending).into_owned();
+        if !leftover.is_empty() && !tail_is_mongosh_prompt(&leftover) {
+            let _ = sender.send(MongoshLine { stream, text: leftover });
         }
     });
+}
+
+/// Does this line end in one of the previous command's markers?
+///
+/// Exact markers, matched by suffix — the same rule as for the live ones. A
+/// prefix match would have swallowed any output that happened to contain the
+/// reserved-looking text, `printjson({ status: "__MQLENS_DONE_pending" })`
+/// included; only the two UUID markers an earlier command actually sent can
+/// be its echo arriving late.
+pub(crate) fn is_stale_marker_line(line: &str, stale: &[String]) -> bool {
+    let text = line.trim_end();
+    stale.iter().any(|m| text.ends_with(m.as_str()))
 }
 
 async fn drain_mongosh_output(session: &MongoshSession) -> MongoshCommandOutput {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
+    let stale = session.stale_markers.lock().await.clone();
     let mut output = session.output.lock().await;
 
     loop {
         match tokio::time::timeout(Duration::from_millis(25), output.recv()).await {
-            Ok(Some(line)) => match line.stream {
-                MongoshStream::Stdout => push_mongosh_line(&mut stdout, line.text),
-                MongoshStream::Stderr => push_mongosh_line(&mut stderr, line.text),
-            },
+            Ok(Some(line)) => {
+                // The previous command's markers are not output, here any more
+                // than during a command.
+                if is_stale_marker_line(&line.text, &stale) {
+                    continue;
+                }
+                match line.stream {
+                    MongoshStream::Stdout => push_mongosh_line(&mut stdout, line.text),
+                    MongoshStream::Stderr => push_mongosh_line(&mut stderr, line.text),
+                }
+            }
             _ => break,
         }
     }
@@ -363,64 +490,186 @@ async fn drain_mongosh_output(session: &MongoshSession) -> MongoshCommandOutput 
     MongoshCommandOutput { stdout, stderr }
 }
 
+/// How a command's turn at the REPL ended, read off the marker lines.
+///
+/// The three outcomes are distinguishable only because of what follows the
+/// command on stdin: its own marker, then `.break`, then a second marker.
+/// `.break` is the REPL's own command to abandon a half-typed statement — a
+/// no-op when nothing is open, so it costs nothing on the happy path — and the
+/// second marker prints in every case, which is what makes the first marker's
+/// absence meaningful rather than merely silence.
+#[derive(Debug, PartialEq)]
+pub(crate) enum MongoshCommandEnd {
+    /// The marker printed: the script ran to the end, whatever it printed.
+    Completed,
+    /// The marker never printed and no error mentioned it: an unclosed brace or
+    /// bracket left the REPL reading our marker as more of the script, and
+    /// `.break` threw the whole thing away. Nothing ran.
+    Incomplete,
+    /// The marker was swallowed into a statement that then failed to parse. The
+    /// REPL reported the SyntaxError itself — it just never got to print.
+    SyntaxError,
+}
+
+/// Where a line that carries the marker came from: the REPL echoing the marker
+/// expression we sent, or a SyntaxError code frame quoting our line back.
+///
+/// Matched by suffix, not equality. The marker is unique and nothing but the
+/// REPL's echo of it ever ends a line with it, so whatever precedes it on the
+/// line is a prompt the OS delivered in the same read — `test> __MQLENS_DONE_…__`
+/// — and is irrelevant. This is what keeps completion detection from ever
+/// depending on prompt recognition, which is heuristic and can lag: the very
+/// first prompt of a session can arrive coalesced with the marker of the `use`
+/// that starts it, before anything has been seen at all.
+///
+/// A code frame quoting our line ends with `'`, not the marker:
+///
+///     > 2 | '__MQLENS_DONE_…__'
+///
+/// so it is a different kind. With the marker sent as a bare expression that
+/// is rare — a string is valid inside most open constructs, so the REPL keeps
+/// reading rather than failing — but the REPL can still produce it, and it
+/// means the same thing: our line was swallowed into an unclosed statement.
+pub(crate) fn marker_line_kind(line: &str, marker: &str) -> Option<MongoshCommandEnd> {
+    if !line.contains(marker) {
+        return None;
+    }
+    Some(if line.trim_end().ends_with(marker) {
+        MongoshCommandEnd::Completed
+    } else {
+        MongoshCommandEnd::SyntaxError
+    })
+}
+
 async fn run_mongosh_command_on_session(
     session: &MongoshSession,
     command: &str,
 ) -> Result<MongoshCommandOutput, String> {
     let _command_guard = session.command_lock.lock().await;
-    let marker = format!("__MQLENS_DONE_{}__", Uuid::new_v4().simple());
+    let marker = format!("{MONGOSH_MARKER_PREFIX}{}__", Uuid::new_v4().simple());
+    let recovered = format!("{MONGOSH_MARKER_PREFIX}{}__", Uuid::new_v4().simple());
 
+    // Whatever the previous command left behind is drained before this one
+    // starts; its markers stay known for the rest of this command, in case
+    // its echo arrives later still. Then this command's markers take over.
     let _ = drain_mongosh_output(session).await;
+    let stale = std::mem::replace(
+        &mut *session.stale_markers.lock().await,
+        vec![marker.clone(), recovered.clone()],
+    );
 
+    // Sent as one write, in this order, and the order is the whole mechanism.
+    //
+    // The REPL reads a line at a time and only evaluates once a statement is
+    // complete. Left open — an unclosed `{`, a `find(` with no `)` — it does not
+    // report anything; it reads the next line as more of the same statement,
+    // and the next, our marker included, and waits. Every later command the
+    // user sends lands in that same buffer. That is what a "timeout" looked
+    // like from the outside: twenty seconds of nothing, then an error, then a
+    // shell that no longer answers anything.
+    //
+    // `.break` after the marker is the REPL's own escape from that state. It
+    // sits in the pipe behind every line of the script and the marker, so it
+    // can only ever discard a statement those lines left open — never one that
+    // is merely slow, which is still evaluating and has not read it yet. And
+    // when nothing is open it does nothing at all. The second marker prints
+    // either way; it is the point at which we can say what happened.
+    //
+    // The markers are bare string expressions, not `print(...)` calls. The REPL
+    // echoes the value of every expression statement itself, and that is not
+    // something a script can reach: `print = () => {}` silences `print`, and
+    // would have silenced both markers with it, leaving a command that could
+    // only end by being stopped. The echo of a string is the bare text.
+    let mut script = command.replace("\r\n", "\n");
+    if !script.ends_with('\n') {
+        script.push('\n');
+    }
+    script.push_str(&format!("'{marker}'\n.break\n'{recovered}'\n"));
     {
         let mut stdin = session.stdin.lock().await;
         stdin
-            .write_all(command.as_bytes())
+            .write_all(script.as_bytes())
             .await
             .map_err(|e| format!("Failed to write to mongosh: {}", e))?;
-        if !command.ends_with('\n') {
-            stdin
-                .write_all(b"\n")
-                .await
-                .map_err(|e| format!("Failed to write to mongosh: {}", e))?;
-        }
-        stdin
-            .write_all(format!("print('{}')\n", marker).as_bytes())
-            .await
-            .map_err(|e| format!("Failed to write command marker to mongosh: {}", e))?;
         stdin
             .flush()
             .await
             .map_err(|e| format!("Failed to flush mongosh stdin: {}", e))?;
     }
 
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // No deadline. A script takes as long as it takes — an index build, an
+    // aggregation over a large collection, a `sleep` — and cutting it off after
+    // a fixed twenty seconds did not stop it: mongosh kept running, and its
+    // output, marker included, arrived during whatever the user ran next. The
+    // wait ends when the REPL says the turn is over, or when the session is
+    // gone, which is how the user stops a command they no longer want.
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
+    let mut end = MongoshCommandEnd::Incomplete;
     let mut output = session.output.lock().await;
-
     loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err("mongosh command timed out".to_string());
+        let line = match output.recv().await {
+            Some(line) => line,
+            None => return Err("mongosh session closed".to_string()),
+        };
+        // Suffix, for the same reason `marker_line_kind` uses one: a prompt
+        // delivered in the same read sits in front of it.
+        if line.text.trim_end().ends_with(&recovered) {
+            break;
         }
-
-        match tokio::time::timeout(remaining, output.recv()).await {
-            Ok(Some(line)) => {
-                if line.text.contains(&marker) {
-                    break;
-                }
-                match line.stream {
-                    MongoshStream::Stdout => push_mongosh_line(&mut stdout, line.text),
-                    MongoshStream::Stderr => push_mongosh_line(&mut stderr, line.text),
-                }
+        match marker_line_kind(&line.text, &marker) {
+            Some(MongoshCommandEnd::Completed) => {
+                end = MongoshCommandEnd::Completed;
+                continue;
             }
-            Ok(None) => return Err("mongosh session closed".to_string()),
-            Err(_) => return Err("mongosh command timed out".to_string()),
+            Some(MongoshCommandEnd::SyntaxError) => {
+                // Keep reading: the rest of the error is still coming.
+                end = MongoshCommandEnd::SyntaxError;
+                continue;
+            }
+            _ => {}
+        }
+        if is_stale_marker_line(&line.text, &stale) {
+            // The previous command's echo arriving late — its caller gave up on
+            // it before the REPL finished. Not this command's output.
+            continue;
+        }
+        match line.stream {
+            MongoshStream::Stdout => push_mongosh_line(&mut stdout, line.text),
+            MongoshStream::Stderr => push_mongosh_line(&mut stderr, line.text),
         }
     }
 
-    Ok(MongoshCommandOutput { stdout, stderr })
+    match end {
+        MongoshCommandEnd::Completed => Ok(MongoshCommandOutput { stdout, stderr }),
+        MongoshCommandEnd::SyntaxError => {
+            // The REPL's own report, moved to stderr so it reads as the error it
+            // is. The code frame quoted our marker as if it were the script's
+            // last line; that line is ours, not the user's, and goes.
+            let at = stdout
+                .iter()
+                .position(|l| l.starts_with("Uncaught"))
+                .unwrap_or(stdout.len());
+            let error: Vec<String> = stdout.split_off(at);
+            stderr.extend(error.into_iter().filter(|l| !l.contains(&marker)));
+            Ok(MongoshCommandOutput { stdout, stderr })
+        }
+        MongoshCommandEnd::Incomplete => {
+            // Only the trailing open statement was discarded. The REPL evaluates
+            // each statement as soon as it is complete, so anything before it
+            // has already run — a script ending in a stray `{` after an insert
+            // has done the insert. Saying "nothing ran" would invite the user to
+            // run it again. The output that was produced is kept for the same
+            // reason: it is the record of what did happen.
+            stderr.push(
+                "The last statement is incomplete: an unclosed {, [ or ( left mongosh waiting \
+                 for more input, so that statement was discarded. Any complete statements \
+                 before it have already run."
+                    .to_string(),
+            );
+            Ok(MongoshCommandOutput { stdout, stderr })
+        }
+    }
 }
 
 fn push_mongosh_line(lines: &mut Vec<String>, text: String) {
@@ -677,6 +926,7 @@ pub async fn start_mongosh_session_impl(
         output: AsyncMutex::new(receiver),
         child: AsyncMutex::new(child),
         command_lock: AsyncMutex::new(()),
+        stale_markers: AsyncMutex::new(Vec::new()),
     });
 
     {
@@ -1581,6 +1831,24 @@ async fn run_mongosh_command(
     command: String,
 ) -> Result<MongoshCommandOutput, String> {
     run_mongosh_command_impl(&state, &session_id, &command).await
+}
+
+/// Resolves once `session_id` is not running a command.
+///
+/// A shell that reopens — a window refresh, a tab moved to another window —
+/// can find a command recorded as running whose caller is gone, and nothing
+/// else would ever tell it when that command ends. The command holds
+/// `command_lock` for as long as it runs, so waiting on that lock is the
+/// honest signal. Stopping the session ends the command and releases the lock,
+/// so this resolves then too.
+#[tauri::command]
+async fn await_mongosh_idle(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let session = get_mongosh_session(&state, &session_id)?;
+    let _idle = session.command_lock.lock().await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -3105,6 +3373,7 @@ pub fn run() {
             get_mongodb_version,
             start_mongosh_session,
             run_mongosh_command,
+            await_mongosh_idle,
             stop_mongosh_session,
             get_shell_tab_state,
             set_shell_tab_state,

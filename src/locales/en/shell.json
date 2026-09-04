@@ -364,9 +364,12 @@
       "useDb": "  use <db>                 switch current database"
     },
     "notes": {
+      "commandReattached": "A command was still running when this shell reopened here. Its output stayed with the view it started in; waiting for it to finish — Stop ends it.",
+      "commandStopped": "Command stopped.",
       "destructiveCancelled": "Destructive command cancelled.",
       "resultToDataViewer_one": "{{count}} document -> Data Viewer",
       "resultToDataViewer_other": "{{count}} documents -> Data Viewer",
+      "runningFor": "running… {{seconds}}s",
       "sessionAttached": "mongosh session attached",
       "sessionRestarting": "restarting mongosh session…",
       "sessionUnavailable": "mongosh session unavailable: {{detail}}",
@@ -377,7 +380,9 @@
       "aiToggleTitle": "AI assistant",
       "restartSession": "Restart",
       "restartSessionTitle": "Stop this mongosh session and start a new one",
-      "run": "Run"
+      "run": "Run",
+      "stop": "Stop",
+      "stopTitle": "Stop the running command by restarting the mongosh session"
     }
   },
   "quickStart": {
