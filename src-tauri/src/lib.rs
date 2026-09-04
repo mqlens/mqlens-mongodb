@@ -989,6 +989,126 @@ pub async fn run_mongosh_command_impl(
     result
 }
 
+/// Split mongosh's captured output into lines, folding CRLF and dropping the
+/// single empty element a trailing newline leaves behind, so a clean run does
+/// not end in a blank line.
+pub(crate) fn split_mongosh_output_lines(bytes: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut lines: Vec<String> = text
+        .split('\n')
+        .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
+        .collect();
+    if lines.last().map(|l| l.is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    lines
+}
+
+/// Run a whole script as a one-shot `mongosh --file` program, the way a script
+/// is meant to run: parsed and executed as one unit, then the process exits.
+///
+/// This is the counterpart to the persistent REPL session. Feeding a script to
+/// the REPL a line at a time is what made big pastes unpredictable — an
+/// unclosed brace left the REPL waiting, and a script that called `quit()` (as
+/// diagnostic scripts routinely do) tore the session down before its completion
+/// marker could return, which surfaced as "session closed". None of that
+/// applies here: `--file` handles `quit()`, `use`/`show`, unclosed braces and
+/// syntax errors on its own, reporting an error once and exiting non-zero.
+///
+/// The cost is that nothing carries over between runs. The one piece of state
+/// that matters in practice, the current database, is passed in and applied
+/// with a leading `use`, exactly as the REPL session does on startup, so `db`
+/// still points where the tab expects. A script may `use` elsewhere itself.
+pub async fn run_mongosh_script_impl(
+    state: &AppState,
+    connection_id: &str,
+    uri: &str,
+    database: &str,
+    mongosh_path: &str,
+    script: &str,
+) -> Result<MongoshCommandOutput, String> {
+    if write_guard::connection_mode(state, connection_id)? == connections::ConnectionMode::ReadOnly
+    {
+        return Err(write_guard::READ_ONLY_MSG.to_string());
+    }
+    let is_mock = {
+        let mocks = state.mocks.lock_safe()?;
+        *mocks
+            .get(connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+    };
+    if is_mock || uri.starts_with("mongodb://mock") {
+        return Err("External mongosh sessions require a real MongoDB URI".to_string());
+    }
+
+    let executable = if mongosh_path.trim().is_empty() {
+        "mongosh".to_string()
+    } else {
+        mongosh_path.trim().to_string()
+    };
+
+    // The script goes in a temp file, not an `--eval` argument: it can be large,
+    // and a file sidesteps every argument-length and shell-quoting limit.
+    let path =
+        std::env::temp_dir().join(format!("mqlens-shell-{}.js", Uuid::new_v4().simple()));
+    tokio::fs::write(&path, script.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to stage the script: {}", e))?;
+
+    let started = std::time::Instant::now();
+    let mut command = TokioCommand::new(&executable);
+    command
+        .arg("--quiet")
+        .arg(connections::normalize_mongodb_uri_options(uri));
+    // `use <db>` only when the name is a plain one — a control character could
+    // not appear in a real database name and must never reach the argument.
+    let db = database.trim();
+    if !db.is_empty() && !db.chars().any(|c| c.is_control()) {
+        command.arg("--eval").arg(format!("use {}", db));
+    }
+    command.arg("--file").arg(&path);
+
+    let spawned = command.output().await;
+    // Best effort: a leaked temp file must never fail an otherwise good run.
+    let _ = tokio::fs::remove_file(&path).await;
+
+    let result: Result<MongoshCommandOutput, String> = match spawned {
+        Ok(output) => {
+            let stdout = split_mongosh_output_lines(&output.stdout);
+            let mut stderr = split_mongosh_output_lines(&output.stderr);
+            // A non-zero exit with nothing on stderr still has to read as a
+            // failure rather than a silent, empty success.
+            if !output.status.success() && stderr.is_empty() {
+                stderr.push(format!(
+                    "mongosh exited with status {}",
+                    output
+                        .status
+                        .code()
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "unknown".to_string())
+                ));
+            }
+            Ok(MongoshCommandOutput { stdout, stderr })
+        }
+        Err(e) => Err(format!("Failed to run mongosh: {}", e)),
+    };
+
+    crate::audit::maybe_record_result(
+        state,
+        Some(connection_id),
+        None,
+        None,
+        "run_mongosh_script",
+        crate::audit::OpClass::Shell,
+        Some("shell"),
+        started,
+        "mongosh",
+        Some(script),
+        &result,
+    );
+    result
+}
+
 /// Per-tab shell state, held backend-side so a frontend hot reload or window
 /// refresh cannot lose the mapping from a tab to its running mongosh process.
 ///
@@ -1849,6 +1969,18 @@ async fn await_mongosh_idle(
     let session = get_mongosh_session(&state, &session_id)?;
     let _idle = session.command_lock.lock().await;
     Ok(())
+}
+
+#[tauri::command]
+async fn run_mongosh_script(
+    state: tauri::State<'_, AppState>,
+    connection_id: String,
+    uri: String,
+    database: String,
+    mongosh_path: String,
+    script: String,
+) -> Result<MongoshCommandOutput, String> {
+    run_mongosh_script_impl(&state, &connection_id, &uri, &database, &mongosh_path, &script).await
 }
 
 #[tauri::command]
@@ -3373,6 +3505,7 @@ pub fn run() {
             get_mongodb_version,
             start_mongosh_session,
             run_mongosh_command,
+            run_mongosh_script,
             await_mongosh_idle,
             stop_mongosh_session,
             get_shell_tab_state,

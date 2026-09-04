@@ -905,6 +905,27 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     return true;
   };
 
+  // A multi-line script runs as one non-interactive `mongosh --file` program
+  // rather than being fed to the REPL a line at a time. That is what makes a
+  // pasted diagnostic script reliable: it is parsed and run as a unit, so an
+  // unclosed brace is a single reported error rather than a hang, and a
+  // `quit()` inside it just ends the run instead of tearing down the session
+  // (#344 shell reliability). It is one-shot, so it does not need the warm
+  // session; the current database is passed so `db` still points at the tab's.
+  const runMongoshScriptOnce = async (script: string) => {
+    if (mongoshPath === null || !connectionUri) return false;
+    const output = await invoke<MongoshCommandOutput>('run_mongosh_script', {
+      connectionId,
+      uri: connectionUri,
+      database: currentDb,
+      mongoshPath,
+      script,
+    });
+    appendCommandOutput(output);
+    setTab('console');
+    return true;
+  };
+
   // The shell's current collection context for AI-generated commands.
   const aiCollection = collectionName ?? 'collection';
 
@@ -956,7 +977,9 @@ export const MongoShell: React.FC<MongoShellProps> = ({
         setTab('console');
         return;
       }
-      const ranExternally = await runExternalMongoshCommand(raw);
+      const ranExternally = raw.includes('\n')
+        ? await runMongoshScriptOnce(raw)
+        : await runExternalMongoshCommand(raw);
       // Whatever follows — a driver call for a recognised command, or nothing —
       // is not something Stop can end. Read live: Stop may have been pressed,
       // and `stopRequested` must not be lost by overwriting the record.

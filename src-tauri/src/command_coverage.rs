@@ -200,6 +200,7 @@ const GUARDED_WRITE_COMMANDS: &[&str] = &[
     "start_restore_task",
     "start_mongosh_session",
     "run_mongosh_command",
+    "run_mongosh_script",
     "create_index",
     "delete_index",
     "delete_document",
