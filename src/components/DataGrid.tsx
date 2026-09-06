@@ -1141,12 +1141,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [querySpec, skip, limit, jsonLines, documents]);
   useEffect(() => {
     setCollapsedFolds(new Set());
-    // `scrollToRow` throws on an out-of-range index, and an empty result has
-    // no row 0. Only the mounted view has a list; the others are null.
-    if (documents.length === 0) return;
+    // A different result opens at the top-left, not wherever the last one was
+    // left scrolled. `scrollToRow` resets only the vertical offset and throws
+    // on an out-of-range index, so it is guarded; the horizontal offset of each
+    // scroller — and the table header that mirrors it — is reset directly,
+    // which an empty result can do safely too.
     for (const list of [jsonListRef, treeListRef, tableListRef]) {
-      list.current?.scrollToRow({ index: 0, align: 'start' });
+      const el = list.current?.element;
+      if (el) el.scrollLeft = 0;
+      if (documents.length > 0) list.current?.scrollToRow({ index: 0, align: 'start' });
     }
+    if (tableHeaderRef.current) tableHeaderRef.current.scrollLeft = 0;
   }, [resultShape]);
 
   // Only the lines not hidden inside a collapsed fold are rendered/virtualized.
@@ -1994,15 +1999,24 @@ export const DataGrid: React.FC<DataGridProps> = ({
     );
   };
   return (
+    <>
+      {/* The accessible announcement of a run in flight, kept OUTSIDE the inert
+          root below. `inert` removes its whole subtree from the accessibility
+          tree, so a live region rendered inside it would be silent to a screen
+          reader (#344 review). */}
+      {loading && (
+        <div role="status" className="sr-only">
+          {t('documents:dataGrid.labels.streamingDocuments')}
+        </div>
+      )}
     <div
       ref={paneRootRef}
       className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
       aria-busy={loading || undefined}
-      // Everything under the overlay — row actions, paging, the write buttons —
-      // is unreachable while a run is in flight, by pointer and by keyboard
-      // alike. The overlay is a child, but `inert` on an ancestor does not
-      // disable a `role="status"` announcement, and the overlay has nothing to
-      // interact with.
+      // Everything under it — row actions, paging, the write buttons — is
+      // unreachable while a run is in flight, by pointer and by keyboard alike.
+      // The overlay below is decorative (aria-hidden); its accessible
+      // counterpart is the live region above, outside this inert subtree.
       inert={loading || undefined}
     >
       {/* A run in flight. Over the previous results, not in their place: the
@@ -2010,7 +2024,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           stays readable until the next one lands (#344). */}
       {loading && (
         <div
-          role="status"
+          aria-hidden
           data-testid="results-loading"
           className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 text-muted-foreground"
         >
@@ -2570,5 +2584,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
         />
       )}
     </div>
+    </>
   );
 };

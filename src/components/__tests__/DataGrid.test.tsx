@@ -2338,6 +2338,38 @@ describe('DataGrid — stays mounted across a run (#344)', () => {
     expect(screen.queryByTestId('context-menu')).toBeNull();
   });
 
+  it('opens a different result at the left edge, but keeps the scroll on a refresh', () => {
+    // scrollToRow only resets the vertical axis; a wide result left scrolled
+    // right would otherwise open with its first fields off-screen.
+    const page = (from: number) =>
+      Array.from({ length: 40 }, (_, i) => ({ _id: String(from + i), name: `doc ${from + i}` }));
+    const { rerender } = render(<DataGrid documents={page(0)} skip={0} limit={40} />);
+    const list = within(screen.getByTestId('json-view')).getByRole('list');
+    list.scrollLeft = 120;
+
+    // Same result: the user's place is kept.
+    rerender(<DataGrid documents={page(0)} skip={0} limit={40} />);
+    expect(list.scrollLeft).toBe(120);
+
+    // A different page: back to the left edge.
+    rerender(<DataGrid documents={page(40)} skip={40} limit={40} />);
+    expect(list.scrollLeft).toBe(0);
+  });
+
+  it('announces a run in flight outside the inert subtree, so a screen reader hears it', () => {
+    // inert removes its whole subtree from the accessibility tree, so a status
+    // inside the inert root would be silent. It has to sit outside.
+    const { container, rerender } = render(<DataGrid documents={docs()} />);
+    expect(screen.queryByRole('status')).toBeNull();
+
+    rerender(<DataGrid documents={docs()} loading />);
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(/\S/);
+    const paneRoot = container.querySelector('[aria-busy]') as HTMLElement;
+    expect(paneRoot.hasAttribute('inert')).toBe(true);
+    expect(paneRoot.contains(status)).toBe(false);
+  });
+
   it('shows a run in flight over the previous results, not in their place', () => {
     const { rerender } = render(<DataGrid documents={docs()} />);
     expect(screen.queryByTestId('results-loading')).toBeNull();
