@@ -29,6 +29,7 @@ import { SUPPORTED_LOCALES, SYSTEM_LOCALE, type LocaleSetting } from '@/lib/i18n
 import { getMcpStatus, mcpSetEnabled, mcpRegenerateToken, type McpStatusUi } from '@/lib/mcpApi';
 import type { ConnectionProfile } from '@/lib/connection';
 import { CHECK_UPDATE_EVENT } from './UpdatePrompt';
+import { useTabVisible } from '../workspace/tabVisibility';
 import {
   formatLastChecked,
   readUpdateCheckSnapshot,
@@ -277,10 +278,12 @@ const McpSettingsPanel: React.FC = () => {
 
   // Poll precedent: App.tsx's resource-usage/export-task polls (App.tsx
   // ~424-436) — `active` flag + `clearInterval` on cleanup, StrictMode-safe.
-  // Only runs while this tab is mounted AND the server is enabled, since
-  // there is nothing new to poll for while disabled.
+  // Only runs while this tab is on screen AND the server is enabled, since
+  // there is nothing new to poll for while disabled — and nobody to show it
+  // to while the Settings tab is kept mounted but hidden (#240).
+  const tabVisible = useTabVisible();
   useEffect(() => {
-    if (!status?.enabled) return;
+    if (!status?.enabled || !tabVisible) return;
     let active = true;
     const id = setInterval(() => {
       getMcpStatus()
@@ -291,7 +294,7 @@ const McpSettingsPanel: React.FC = () => {
       active = false;
       clearInterval(id);
     };
-  }, [status?.enabled]);
+  }, [status?.enabled, tabVisible]);
 
   const copy = (key: string, text: string) => {
     navigator.clipboard?.writeText(text);

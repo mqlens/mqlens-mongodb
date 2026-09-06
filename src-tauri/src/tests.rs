@@ -3015,6 +3015,115 @@ mod tests {
         );
     }
 
+    // ── mongosh output framing (shell reliability) ──────────────────────────
+    //
+    // mongosh writes its prompt with no newline after it. A line reader never
+    // saw the prompt as a line: it sat in the buffer until the next output and
+    // was glued to the front of it, and a prompt with nothing after it — the
+    // REPL waiting for input, which is what a stalled script looks like — was
+    // never delivered at all.
+    //
+    // A prompt-shaped tail is judged only by what comes next: a newline means
+    // it was output the pipe split, anything else means it was a prompt. Complete
+    // lines are never rewritten. Completion does not depend on prompt handling
+    // at all — markers are matched by suffix.
+
+    #[test]
+    fn a_prompt_is_dropped_once_the_next_output_shows_it_was_one() {
+        use crate::absorb_mongosh_chunk;
+        let mut pending = Vec::new();
+        assert_eq!(absorb_mongosh_chunk(&mut pending, b"hello\nrs0 [direct: primary] test> "), vec!["hello".to_string()]);
+        // Held, not decided: it could still be the front of an output line.
+        assert_eq!(pending, b"rs0 [direct: primary] test> ".to_vec());
+        // The next chunk starts with output, so the tail was a prompt.
+        assert_eq!(absorb_mongosh_chunk(&mut pending, b"world\n"), vec!["world".to_string()]);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn output_split_right_before_its_newline_is_kept_whole() {
+        use crate::absorb_mongosh_chunk;
+        // `print("ready> ")` delivered as `ready> ` and then `\n`. Judged on its
+        // own the first part looks exactly like a prompt; the newline that
+        // follows is what says it was not.
+        let mut pending = Vec::new();
+        assert!(absorb_mongosh_chunk(&mut pending, b"ready> ").is_empty());
+        assert_eq!(absorb_mongosh_chunk(&mut pending, b"\n"), vec!["ready> ".to_string()]);
+    }
+
+    #[test]
+    fn output_split_before_its_crlf_is_kept_whole() {
+        use crate::absorb_mongosh_chunk;
+        // The same split, but the line ends in `\r\n` (mongosh on Windows) and
+        // the read boundary falls before the `\r`. A leading carriage return is
+        // a line ending arriving, not new output after a prompt.
+        let mut pending = Vec::new();
+        assert!(absorb_mongosh_chunk(&mut pending, b"ready> ").is_empty());
+        assert_eq!(absorb_mongosh_chunk(&mut pending, b"\r\n"), vec!["ready> ".to_string()]);
+        // And split again, between the `\r` and the `\n`.
+        assert!(absorb_mongosh_chunk(&mut pending, b"status> ").is_empty());
+        assert!(absorb_mongosh_chunk(&mut pending, b"\r").is_empty());
+        assert_eq!(absorb_mongosh_chunk(&mut pending, b"\n"), vec!["status> ".to_string()]);
+    }
+
+    #[test]
+    fn complete_lines_are_never_rewritten() {
+        use crate::absorb_mongosh_chunk;
+        // A script may print anything, including things shaped like a prompt,
+        // and a prompt the OS delivered in the same read as the output after it
+        // is left glued on rather than guessed at. Both are delivered verbatim.
+        let mut pending = Vec::new();
+        assert_eq!(
+            absorb_mongosh_chunk(&mut pending, b"ready> \ntest> hello\nstatus> ok\n"),
+            vec!["ready> ".to_string(), "test> hello".to_string(), "status> ok".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_partial_output_line_waits_for_its_newline() {
+        use crate::absorb_mongosh_chunk;
+        let mut pending = Vec::new();
+        assert!(absorb_mongosh_chunk(&mut pending, b"{ _id: 1, name: 'half").is_empty());
+        assert_eq!(pending, b"{ _id: 1, name: 'half".to_vec(), "not prompt-shaped, so it stays buffered");
+        assert_eq!(absorb_mongosh_chunk(&mut pending, b" typed' }\r\n"), vec!["{ _id: 1, name: 'half typed' }".to_string()]);
+    }
+
+    #[test]
+    fn the_marker_is_matched_by_suffix_so_a_glued_prompt_cannot_hide_it() {
+        use crate::{marker_line_kind, MongoshCommandEnd};
+        let marker = "__MQLENS_DONE_abc__";
+        // The REPL's echo of the marker expression: the command completed.
+        assert_eq!(marker_line_kind(marker, marker), Some(MongoshCommandEnd::Completed));
+        // With the previous prompt delivered in the same read — the case that
+        // would otherwise wait forever, now that a command has no ceiling. It
+        // needs no prompt to have been seen first: the first prompt of a session
+        // can arrive coalesced with the marker of the `use` that starts it.
+        assert_eq!(
+            marker_line_kind("rs0 [direct: primary] test> __MQLENS_DONE_abc__", marker),
+            Some(MongoshCommandEnd::Completed)
+        );
+        assert_eq!(marker_line_kind("test> test> __MQLENS_DONE_abc__", marker), Some(MongoshCommandEnd::Completed));
+        // Quoted back inside a SyntaxError code frame: our line was swallowed
+        // into an unclosed statement that then failed to parse.
+        assert_eq!(marker_line_kind("> 2 | '__MQLENS_DONE_abc__'", marker), Some(MongoshCommandEnd::SyntaxError));
+        // Anything else is ordinary output.
+        assert_eq!(marker_line_kind("hello", marker), None);
+        assert_eq!(marker_line_kind("__MQLENS_DONE_other__", marker), None);
+    }
+
+    #[test]
+    fn only_the_previous_commands_own_markers_are_stale() {
+        use crate::is_stale_marker_line;
+        let stale = vec!["__MQLENS_DONE_old1__".to_string(), "__MQLENS_DONE_old2__".to_string()];
+        // Its echo arriving late, glued prompt or not.
+        assert!(is_stale_marker_line("__MQLENS_DONE_old1__", &stale));
+        assert!(is_stale_marker_line("test> __MQLENS_DONE_old2__", &stale));
+        // Output that merely contains the reserved-looking text is output.
+        assert!(!is_stale_marker_line("{ status: \"__MQLENS_DONE_pending\" }", &stale));
+        assert!(!is_stale_marker_line("__MQLENS_DONE_old1__ was printed", &stale));
+        assert!(!is_stale_marker_line("hello", &stale));
+    }
+
     #[tokio::test]
     async fn test_mongosh_session_not_found() {
         use crate::{run_mongosh_command_impl, stop_mongosh_session_impl};

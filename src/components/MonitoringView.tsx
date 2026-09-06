@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
+import { useTabVisible } from '../workspace/tabVisibility';
 import {
   Activity,
   RefreshCw,
@@ -590,7 +591,17 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
     sectionRef.current = section;
   }, [section]);
 
+  // Kept-alive tabs stay mounted while hidden (#240), and `document.hidden`
+  // says nothing about that. While this tab is not on screen a poll fetches
+  // nothing and sets nothing; the interval keeps its rhythm but does no work,
+  // so pausing does not reset the sample history the way re-running the
+  // interval effect would. Coming back fetches at once rather than waiting
+  // out the rest of the interval.
+  const tabVisible = useTabVisible();
+  const tabVisibleRef = useRef(tabVisible);
+
   const pollOnce = useCallback(async () => {
+    if (!tabVisibleRef.current) return;
     if (typeof document !== 'undefined' && document.hidden) return;
     const [sRes, oRes, cRes] = await Promise.allSettled([
       serverStatus(connectionId),
@@ -621,6 +632,14 @@ export const MonitoringView: React.FC<MonitoringViewProps> = ({ connectionId }) 
       setClusterErr(String((cRes.reason as Error)?.message || cRes.reason));
     }
   }, [connectionId]);
+
+  // Declared before the interval effect so the ref is right before its first
+  // poll; on mount nothing has changed, so this adds no poll of its own.
+  useEffect(() => {
+    const wasVisible = tabVisibleRef.current;
+    tabVisibleRef.current = tabVisible;
+    if (tabVisible && !wasVisible) void pollOnce();
+  }, [tabVisible, pollOnce]);
 
   useEffect(() => {
     aliveRef.current = true;

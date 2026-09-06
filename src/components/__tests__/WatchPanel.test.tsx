@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { WatchPanel } from '../WatchPanel';
+import { TabVisibleContext } from '../../workspace/tabVisibility';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
@@ -75,6 +76,25 @@ describe('WatchPanel', () => {
     render(panel());
     await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(1));
     expect(callsTo('start_change_stream')[0][1]).toMatchObject({ operationTypes: [] });
+  });
+
+  it('does not poll while its tab is hidden, and resumes when it is shown', async () => {
+    // A kept-alive Watch tab stays mounted while another tab is on screen
+    // (#240). The stream keeps running and buffering on the backend; this
+    // panel just stops asking for it until someone can see it.
+    const view = (visible: boolean) => (
+      <TabVisibleContext.Provider value={visible}>{panel()}</TabVisibleContext.Provider>
+    );
+    const { rerender } = render(view(false));
+
+    await waitFor(() => expect(callsTo('start_change_stream')).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 900));
+    expect(callsTo('poll_change_stream')).toHaveLength(0);
+
+    rerender(view(true));
+    await waitFor(() => expect(callsTo('poll_change_stream').length).toBeGreaterThan(0), {
+      timeout: 2000,
+    });
   });
 
   it('does not poll until the stream it is polling exists', async () => {

@@ -3,8 +3,30 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
+import { useTabVisible } from "@/workspace/tabVisibility";
 
-const Dialog = DialogPrimitive.Root;
+/**
+ * Radix's root, with one addition: a dialog belonging to a tab that is not on
+ * screen is closed.
+ *
+ * Kept-alive tabs (#240) stay mounted while hidden, but a dialog renders
+ * through a portal under `document.body`, outside the hidden wrapper. Left
+ * open, its overlay and focus trap would sit over the tab the user switched
+ * to, and a confirmation could act on the hidden tab's behalf. Closing — not
+ * merely hiding — is the only safe option: a modal dialog that stays mounted
+ * keeps its focus trap and `pointer-events: none` on the body.
+ *
+ * The owner's `open` state is untouched, so the dialog reopens when its tab
+ * is shown again; whatever `DialogContent` held is rebuilt then. Every
+ * dialog in the app is controlled through `open`.
+ */
+const Dialog: React.FC<React.ComponentProps<typeof DialogPrimitive.Root>> = ({
+  open,
+  ...props
+}) => {
+  const tabVisible = useTabVisible();
+  return <DialogPrimitive.Root {...props} open={tabVisible ? open : false} />;
+};
 const DialogTrigger = DialogPrimitive.Trigger;
 const DialogPortal = DialogPrimitive.Portal;
 const DialogClose = DialogPrimitive.Close;

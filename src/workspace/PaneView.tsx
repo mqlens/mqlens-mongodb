@@ -1,6 +1,13 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { WorkspaceTabBar, TAB_DRAG_MIME, type WorkspaceTab } from '../components/layout/WorkspaceTabBar';
 import type { PaneNode, WorkspaceAction, SplitDir, SplitSide } from './model';
+import {
+ keepAliveTabs,
+ withActiveFirst,
+ DEFAULT_KEEP_ALIVE_LIMITS,
+ type KeepAliveLimits,
+} from './keepAlive';
+import { TabVisibleContext } from './tabVisibility';
 
 // Re-exported so existing `import { TAB_DRAG_MIME } from '../PaneView'` call sites
 // (e.g. tests) keep working. Owned by WorkspaceTabBar.tsx — see that file.
@@ -39,12 +46,44 @@ export interface PaneViewProps {
   /** Right-click on a tab (Phase 3 Task 5) — forwarded straight to
    *  WorkspaceTabBar. Additive/optional, same as there. */
   onTabContextMenu?: (tabId: string, e: React.MouseEvent) => void;
+  /** Per-kind mounted-tab budgets. Injectable so tests can pin small numbers
+   *  rather than depending on the shipped defaults. */
+  keepAliveLimits?: KeepAliveLimits;
 }
 
 export function PaneView({
   pane, focused, multiPane, tabs, dispatch, renderTabContent, renderEmptyPane, onTabContextMenu,
+  keepAliveLimits = DEFAULT_KEEP_ALIVE_LIMITS,
 }: PaneViewProps) {
   const [zone, setZone] = useState<DropZone | null>(null);
+
+  // Which tabs this pane has shown, most recent first. The keep-alive set is
+  // taken from it, so the tabs that survive a switch are the ones the user has
+  // actually been moving between.
+  const [recency, setRecency] = useState<string[]>(() =>
+    pane.activeTabId ? [pane.activeTabId] : []
+  );
+  const liveIds = useMemo(() => new Set(tabs.map((t) => t.id)), [tabs]);
+  useEffect(() => {
+    // `withActiveFirst` returns the same array when nothing moved, so this
+    // settles immediately rather than re-rendering on every pass.
+    setRecency((prev) => withActiveFirst(prev, pane.activeTabId, liveIds));
+  }, [pane.activeTabId, liveIds]);
+
+  const mounted = useMemo(
+    () =>
+      keepAliveTabs(
+        // The active tab goes first on THIS render, not after the effect above
+        // has recorded it. A tab that was visited and has since fallen out of
+        // its budget is still in `recency`, further down; taken as is, the
+        // budget would exclude the very tab being shown, and the pane would
+        // paint empty once before the effect caught up.
+        withActiveFirst(recency, pane.activeTabId, liveIds),
+        tabs.map((t) => ({ id: t.id, kind: t.kind ?? '' })),
+        keepAliveLimits
+      ),
+    [recency, pane.activeTabId, liveIds, tabs, keepAliveLimits]
+  );
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes(TAB_DRAG_MIME)) return;
@@ -95,7 +134,33 @@ export function PaneView({
         />
       )}
       <div className="relative min-h-0 flex-1">
-        {pane.activeTabId ? renderTabContent(pane.activeTabId) : renderEmptyPane()}
+        {/* Every kept tab stays mounted; the inactive ones are hidden rather
+            than removed. Rendering only the active tab is what unmounted the
+            whole subtree on every switch, taking the shell's session, the
+            builder state, the chat and the results view with it (#240).
+
+            `hidden` gives `display: none`, so a hidden tab occupies no space and
+            the visible one still fills the pane. Monaco cannot measure inside a
+            box with no layout, but every editor here runs with
+            `automaticLayout`, whose ResizeObserver fires when the element gets
+            a box back — so revealing a tab re-lays it out without help.
+
+            A hidden tab is told so through `TabVisibleContext`. Views that poll
+            on an interval — Monitoring, Watch — pause while hidden; otherwise
+            every kept tab would keep its backend traffic going unseen. */}
+        {mounted.map((tabId) => (
+          <div
+            key={tabId}
+            hidden={tabId !== pane.activeTabId}
+            data-testid={`tab-content-${tabId}`}
+            className="h-full min-h-0"
+          >
+            <TabVisibleContext.Provider value={tabId === pane.activeTabId}>
+              {renderTabContent(tabId)}
+            </TabVisibleContext.Provider>
+          </div>
+        ))}
+        {!pane.activeTabId && renderEmptyPane()}
         {zone && (
           <div
             data-testid={`drop-indicator-${zone}`}

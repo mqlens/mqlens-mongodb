@@ -4,7 +4,9 @@ import {
   dropPendingShellStart,
   shareShellStart,
   watchShellSession,
+  writeShellCommand,
   loadShellSession,
+  type ActiveShellCommand,
   renameShellSession,
   shellSessionEpoch,
   retargetShellSessionDatabase,
@@ -41,6 +43,7 @@ describe('mongosh session registry (#240)', () => {
       autoRanCommand: false,
       aiOpen: false,
       aiMessages: [],
+      activeCommand: null,
     });
     // Writes now mirror to the backend; what must NOT happen is the child being
     // killed just because the component went away.
@@ -58,6 +61,7 @@ describe('mongosh session registry (#240)', () => {
       autoRanCommand: false,
       aiOpen: false,
       aiMessages: [],
+      activeCommand: null,
     });
   });
 
@@ -508,4 +512,108 @@ describe('mongosh session registry (#240)', () => {
     expect(await loadShellSession('tab-1')).toBeUndefined();
     expect(readShellSession('tab-1')).toBeUndefined();
   });
+  it('keeps the running command with the session, and clears it on an explicit null', () => {
+    // A tab can unmount mid-command. The record of the command belongs to the
+    // session, like the transcript, so a remounted shell knows it is busy.
+    writeShellSession('tab-1', { sessionId: 'sess-1', activeCommand: { since: 1000, phase: 'mongosh', stopRequested: false } });
+    // A patch that does not mention it leaves it alone.
+    writeShellSession('tab-1', { currentDb: 'sales' });
+    expect(readShellSession('tab-1')?.activeCommand).toEqual({ since: 1000, phase: 'mongosh', stopRequested: false });
+    // `null` is a deliberate write: the command is over.
+    writeShellSession('tab-1', { activeCommand: null });
+    expect(readShellSession('tab-1')?.activeCommand).toBeNull();
+  });
+
+  it('treats a malformed running-command record as nothing running', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'claim_shell_tab_state') {
+        return Promise.resolve({ sessionId: 's', entries: [], currentDb: 'x', activeCommand: { since: 'yesterday' } });
+      }
+      return Promise.resolve();
+    });
+    const loaded = await loadShellSession('tab-9');
+    expect(loaded?.activeCommand).toBeNull();
+  });
+
+  it('follows a rename, so a command finishing under the old key frees the renamed tab', () => {
+    writeShellSession('coll-old', {
+      sessionId: 'sess-1',
+      activeCommand: { since: 5, phase: 'mongosh', stopRequested: false },
+    });
+    void renameShellSession('coll-old', 'coll-new');
+    const seen: Array<ActiveShellCommand | null> = [];
+    watchShellSession('coll-new', (s) => seen.push(s.activeCommand ?? null));
+
+    // The old shell's completion arrives under the key it mounted with, whose
+    // epoch the rename has since ended. It must still land.
+    writeShellCommand('coll-old', 5, null);
+
+    expect(readShellSession('coll-new')?.activeCommand).toBeNull();
+    expect(seen).toEqual([null]);
+  });
+
+  it('stops forwarding once the old key has a shell of its own again', () => {
+    // Renamed a → b, then a collection named a is created and its shell opened.
+    writeShellSession('coll-a', { sessionId: 'sess-1', activeCommand: { since: 5, phase: 'mongosh', stopRequested: false } });
+    void renameShellSession('coll-a', 'coll-b');
+    writeShellSession('coll-a', { sessionId: 'sess-2', activeCommand: { since: 9, phase: 'mongosh', stopRequested: false } });
+
+    writeShellCommand('coll-a', 9, null);
+
+    expect(readShellSession('coll-a')?.activeCommand).toBeNull();
+    expect(readShellSession('coll-b')?.activeCommand).toEqual({ since: 5, phase: 'mongosh', stopRequested: false });
+  });
+
+  it('still finds a moved command after its old key is reused', () => {
+    // Renamed a → b while a's command runs; a new collection a, with its own
+    // shell and command, opens before the moved command finishes.
+    writeShellSession('coll-a', {
+      sessionId: 'sess-1',
+      activeCommand: { since: 5, phase: 'mongosh', stopRequested: false },
+    });
+    void renameShellSession('coll-a', 'coll-b');
+    writeShellSession('coll-a', {
+      sessionId: 'sess-2',
+      activeCommand: { since: 9, phase: 'mongosh', stopRequested: false },
+    });
+
+    // The moved command completes, under the key it started with.
+    writeShellCommand('coll-a', 5, null);
+
+    expect(readShellSession('coll-b')?.activeCommand).toBeNull();
+    expect(readShellSession('coll-a')?.activeCommand).toEqual({ since: 9, phase: 'mongosh', stopRequested: false });
+  });
+
+  it('keeps reaching a moved command after its old key is reused and renamed again', () => {
+    // a's command moves to b; a new a opens and is itself renamed to x, all
+    // before the first command finishes.
+    writeShellSession('coll-a', {
+      sessionId: 'sess-1',
+      activeCommand: { since: 5, phase: 'mongosh', stopRequested: false },
+    });
+    void renameShellSession('coll-a', 'coll-b');
+    writeShellSession('coll-a', {
+      sessionId: 'sess-2',
+      activeCommand: { since: 9, phase: 'mongosh', stopRequested: false },
+    });
+    void renameShellSession('coll-a', 'coll-x');
+
+    writeShellCommand('coll-a', 5, null);
+    writeShellCommand('coll-a', 9, { phase: 'driver' });
+
+    expect(readShellSession('coll-b')?.activeCommand).toBeNull();
+    expect(readShellSession('coll-x')?.activeCommand).toEqual({ since: 9, phase: 'driver', stopRequested: false });
+  });
+
+  it('only touches the command it was told about', () => {
+    writeShellSession('tab-1', {
+      sessionId: 'sess-1',
+      activeCommand: { since: 7, phase: 'mongosh', stopRequested: false },
+    });
+    // An older command's late completion is not this command's.
+    writeShellCommand('tab-1', 6, null);
+    writeShellCommand('tab-1', 7, { phase: 'driver' });
+    expect(readShellSession('tab-1')?.activeCommand).toEqual({ since: 7, phase: 'driver', stopRequested: false });
+  });
+
 });

@@ -2,8 +2,15 @@ import * as React from "react";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronRight, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTabScopedOpen } from "@/workspace/tabVisibility";
 
-const DropdownMenu = DropdownMenuPrimitive.Root;
+/** Radix's root; the menu closes when the tab it belongs to is hidden (#240). */
+const DropdownMenu: React.FC<React.ComponentProps<typeof DropdownMenuPrimitive.Root>> = ({
+  open,
+  defaultOpen,
+  onOpenChange,
+  ...props
+}) => <DropdownMenuPrimitive.Root {...props} {...useTabScopedOpen({ open, defaultOpen, onOpenChange })} />;
 const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 const DropdownMenuGroup = DropdownMenuPrimitive.Group;
 const DropdownMenuPortal = DropdownMenuPrimitive.Portal;

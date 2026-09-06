@@ -312,6 +312,9 @@
       "resultToDataViewer_one": "{{count}} Dokument -> Datenansicht",
       "resultToDataViewer_other": "{{count}} Dokumente -> Datenansicht",
       "sessionAttached": "mongosh-Sitzung verbunden",
+      "commandReattached": "Beim erneuten Öffnen dieser Shell lief noch ein Befehl. Seine Ausgabe blieb in der Ansicht, in der er gestartet wurde; es wird auf sein Ende gewartet – Stopp beendet ihn.",
+      "commandStopped": "Befehl gestoppt.",
+      "runningFor": "läuft… {{seconds}}s",
       "sessionRestarting": "mongosh-Sitzung wird neu gestartet…",
       "sessionUnavailable": "mongosh-Sitzung nicht verfügbar: {{detail}}",
       "switchedToDb": "zur Datenbank {{db}} gewechselt"
@@ -319,6 +322,8 @@
     "toolbar": {
       "aiToggleLabel": "KI",
       "aiToggleTitle": "KI-Assistent",
+      "stop": "Stopp",
+      "stopTitle": "Laufenden Befehl stoppen, indem die mongosh-Sitzung neu gestartet wird",
       "restartSession": "Neu starten",
       "restartSessionTitle": "Diese mongosh-Sitzung beenden und eine neue starten",
       "run": "Ausführen"

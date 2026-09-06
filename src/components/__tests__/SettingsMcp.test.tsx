@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SettingsView } from '../SettingsModal';
+import { TabVisibleContext } from '../../workspace/tabVisibility';
 import type { McpStatusUi } from '../../lib/mcpApi';
 import type { ConnectionProfile } from '../../lib/connection';
 
@@ -82,6 +83,27 @@ describe('SettingsView MCP panel', () => {
       configurable: true,
     });
   });
+
+  it('pauses the status poll while the Settings tab is hidden, and resumes when it is shown', async () => {
+    // A kept-alive Settings tab (#240) stays mounted while another tab is on
+    // screen; the two-second status poll has nobody to show its result to.
+    setupInvoke({ status: enabledStatus() });
+    const statusCalls = () => mockInvoke.mock.calls.filter((c) => c[0] === 'mcp_get_status').length;
+    const view = (visible: boolean) => (
+      <TabVisibleContext.Provider value={visible}>
+        <SettingsView />
+      </TabVisibleContext.Provider>
+    );
+    const { rerender } = render(view(false));
+    await openMcpTab();
+    const afterOpen = statusCalls();
+
+    await new Promise((r) => setTimeout(r, 2300));
+    expect(statusCalls()).toBe(afterOpen);
+
+    rerender(view(true));
+    await waitFor(() => expect(statusCalls()).toBeGreaterThan(afterOpen), { timeout: 3000 });
+  }, 10000);
 
   it('toggling on invokes mcp_set_enabled with the configured port', async () => {
     setupInvoke({ status: disabledStatus() });

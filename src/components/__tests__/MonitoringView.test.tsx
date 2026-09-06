@@ -5,6 +5,7 @@ const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: any[]) => mockInvoke(...a) }));
 
 import { MonitoringView } from '../MonitoringView';
+import { TabVisibleContext } from '../../workspace/tabVisibility';
 
 const STATUS = {
   host: 'h:27017', version: '7.0.0', uptimeSeconds: 3600,
@@ -48,6 +49,27 @@ beforeEach(() => {
 });
 
 describe('MonitoringView', () => {
+  it('does not poll while its tab is hidden, and fetches at once when it is shown again', async () => {
+    // A kept-alive tab stays mounted while another tab is on screen (#240).
+    const statusCalls = () => mockInvoke.mock.calls.filter((c) => c[0] === 'server_status').length;
+    const view = (visible: boolean) => (
+      <TabVisibleContext.Provider value={visible}>
+        <MonitoringView connectionId="c1" />
+      </TabVisibleContext.Provider>
+    );
+    const { rerender } = render(view(false));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(statusCalls()).toBe(0);
+
+    rerender(view(true));
+    await waitFor(() => expect(statusCalls()).toBe(1));
+
+    // Hidden again: the interval may fire, but it fetches nothing.
+    rerender(view(false));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(statusCalls()).toBe(1);
+  });
+
   it('renders server metrics and current operations', async () => {
     render(<MonitoringView connectionId="conn-1" />);
     expect(await screen.findByTestId('monitoring-view')).toBeInTheDocument();
