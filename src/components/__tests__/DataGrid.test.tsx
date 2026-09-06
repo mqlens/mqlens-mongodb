@@ -2344,16 +2344,17 @@ describe('DataGrid — stays mounted across a run (#344)', () => {
     const page = (from: number) =>
       Array.from({ length: 40 }, (_, i) => ({ _id: String(from + i), name: `doc ${from + i}` }));
     const { rerender } = render(<DataGrid documents={page(0)} skip={0} limit={40} />);
-    const list = within(screen.getByTestId('json-view')).getByRole('list');
-    list.scrollLeft = 120;
+    // The real horizontal scroller is the overflow-auto wrapper, not the list.
+    const scroller = screen.getByTestId('json-scroll');
+    scroller.scrollLeft = 120;
 
     // Same result: the user's place is kept.
     rerender(<DataGrid documents={page(0)} skip={0} limit={40} />);
-    expect(list.scrollLeft).toBe(120);
+    expect(scroller.scrollLeft).toBe(120);
 
     // A different page: back to the left edge.
     rerender(<DataGrid documents={page(40)} skip={40} limit={40} />);
-    expect(list.scrollLeft).toBe(0);
+    expect(scroller.scrollLeft).toBe(0);
   });
 
   it('announces a run in flight outside the inert subtree, so a screen reader hears it', () => {

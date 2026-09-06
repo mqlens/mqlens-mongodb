@@ -745,6 +745,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // the body's horizontal scroll onto the header.
   const tableHeaderRef = React.useRef<HTMLDivElement>(null);
   const tableBodyRef = React.useRef<HTMLDivElement>(null);
+  // The JSON view's horizontal scroller is the overflow-auto wrapper around its
+  // list, not the list element: the list is widened to `jsonMaxWidthPx`, so the
+  // wrapper is what carries scrollLeft.
+  const jsonScrollRef = React.useRef<HTMLDivElement>(null);
   useEffect(() => {
     const body = tableBodyRef.current;
     if (!body) return;
@@ -1143,15 +1147,18 @@ export const DataGrid: React.FC<DataGridProps> = ({
     setCollapsedFolds(new Set());
     // A different result opens at the top-left, not wherever the last one was
     // left scrolled. `scrollToRow` resets only the vertical offset and throws
-    // on an out-of-range index, so it is guarded; the horizontal offset of each
-    // scroller — and the table header that mirrors it — is reset directly,
-    // which an empty result can do safely too.
+    // on an out-of-range index, so it is guarded.
     for (const list of [jsonListRef, treeListRef, tableListRef]) {
-      const el = list.current?.element;
-      if (el) el.scrollLeft = 0;
       if (documents.length > 0) list.current?.scrollToRow({ index: 0, align: 'start' });
     }
-    if (tableHeaderRef.current) tableHeaderRef.current.scrollLeft = 0;
+    // The horizontal offset lives on the overflow-auto wrappers, not the List
+    // elements: the JSON list is widened to `jsonMaxWidthPx` and the table body
+    // to its total column width, so those wrappers carry scrollLeft. The table
+    // header mirrors the body and is reset with it. (The tree view is
+    // full-width with no horizontal scroll.)
+    for (const scroller of [jsonScrollRef.current, tableBodyRef.current, tableHeaderRef.current]) {
+      if (scroller) scroller.scrollLeft = 0;
+    }
   }, [resultShape]);
 
   // Only the lines not hidden inside a collapsed fold are rendered/virtualized.
@@ -2271,7 +2278,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
             className="flex min-h-0 min-w-0 flex-1 flex-col bg-background font-mono text-xs leading-relaxed"
             data-testid="json-view"
           >
-            <div className="min-h-0 flex-1 min-w-0 overflow-auto">
+            <div
+              ref={jsonScrollRef}
+              data-testid="json-scroll"
+              className="min-h-0 flex-1 min-w-0 overflow-auto"
+            >
               <List<JsonRowExtra>
                 rowCount={visibleJsonLines.length}
                 listRef={jsonListRef}
