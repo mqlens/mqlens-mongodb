@@ -2338,6 +2338,22 @@ describe('DataGrid — stays mounted across a run (#344)', () => {
     expect(screen.queryByTestId('context-menu')).toBeNull();
   });
 
+  it('does not let a field name impersonate the result-identity delimiters', () => {
+    // Under an unescaped `/`-joined-then-`\u0001`-joined key, a single fold
+    // path could look like two, colliding two different structures. The key
+    // `x\u0001open/0/2/y` is exactly such a forgery of two nested paths.
+    const nested = [{ _id: '1', x: { y: { n: 1 } } }];
+    const crafted = [{ _id: '1', ['x\u0001open/0/2/y']: { n: 1 } }];
+    const { rerender } = render(<DataGrid documents={nested} />);
+    fireEvent.click(firstFold());
+    expect(firstFold()).toHaveAttribute('aria-label', expect.stringMatching(/expand/i));
+
+    rerender(<DataGrid documents={crafted} />);
+
+    // Different structure, so the identity changed and folds reset to default.
+    expect(firstFold()).toHaveAttribute('aria-label', expect.stringMatching(/collapse/i));
+  });
+
   it('opens a different result at the left edge, but keeps the scroll on a refresh', () => {
     // scrollToRow only resets the vertical axis; a wide result left scrolled
     // right would otherwise open with its first fields off-screen.

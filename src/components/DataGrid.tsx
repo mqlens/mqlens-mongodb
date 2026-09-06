@@ -1127,21 +1127,25 @@ export const DataGrid: React.FC<DataGridProps> = ({
   // keeps the user's place, a new page starts at its first row — now that the
   // grid stays mounted, nothing else would move it there.
   const resultShape = useMemo(() => {
-    const parts: string[] = [
-      JSON.stringify([querySpec, skip ?? null, limit ?? null]),
-      documents.map(stableDocId).join('\u0000'),
-    ];
+    // One JSON serialization of everything that identifies the result, so no
+    // field name can impersonate a delimiter: an unescaped separator let a key
+    // like `x\u0001open/0/2/y` reproduce two fold-path parts and collide two
+    // structurally different results (#344 review). `empty` lines count
+    // alongside `open`: an empty container is not foldable in the JSON view but
+    // still takes a fold id in the tree, so one shifts every id after it.
+    const folds: Array<[string, number, number, string]> = [];
     for (const line of jsonLines) {
-      // `empty` as well as `open`: an empty object or array is not foldable in
-      // the JSON view, but the tree walker still gives it a fold id, so one
-      // appearing or vanishing shifts every id after it. Left out of the
-      // identity, an otherwise identical result would keep tree folds that now
-      // point at different nodes.
       if (line.kind === 'open' || line.kind === 'empty') {
-        parts.push(`${line.kind}/${line.docIndex}/${line.depth}/${line.keyName ?? ''}`);
+        folds.push([line.kind, line.docIndex, line.depth, line.keyName ?? '']);
       }
     }
-    return parts.join('\u0001');
+    return JSON.stringify([
+      querySpec ?? null,
+      skip ?? null,
+      limit ?? null,
+      documents.map(stableDocId),
+      folds,
+    ]);
   }, [querySpec, skip, limit, jsonLines, documents]);
   useEffect(() => {
     setCollapsedFolds(new Set());
