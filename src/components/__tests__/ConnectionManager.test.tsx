@@ -140,9 +140,27 @@ describe('parseUriIntoFields (import → form)', () => {
     expect(f.authMethod).toBe('scram-256');
   });
 
-  it('falls back to admin only when the URI carries no authSource', () => {
+  it('reads the auth database from the path when no authSource is given', () => {
+    // MongoDB authenticates against the path database when authSource is
+    // absent, so reporting `admin` would name a database this connection
+    // does not use. The backend applies the same rule in strip_path_database.
     const f = parseUriIntoFields('mongodb://alice:pw@h:27017/shop');
-    expect(f.authDb).toBe('admin');
+    expect(f.authDb).toBe('shop');
+  });
+
+  it('prefers an explicit authSource over the path database', () => {
+    const f = parseUriIntoFields('mongodb://alice:pw@h:27017/shop?authSource=reporting');
+    expect(f.authDb).toBe('reporting');
+  });
+
+  it('falls back to admin when there is no authSource and no path database', () => {
+    expect(parseUriIntoFields('mongodb://alice:pw@h:27017').authDb).toBe('admin');
+    expect(parseUriIntoFields('mongodb://alice:pw@h:27017/').authDb).toBe('admin');
+  });
+
+  it('decodes a percent-encoded path database before using it as the auth source', () => {
+    const f = parseUriIntoFields('mongodb://alice:pw@h:27017/my%20db');
+    expect(f.authDb).toBe('my db');
   });
 
   it('does not put $external in the auth database field', () => {

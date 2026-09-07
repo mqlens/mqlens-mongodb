@@ -286,12 +286,6 @@ export const parseUriIntoFields = (uri: string) => {
     const insecure = /(?:^|&)tlsInsecure=true/i.test(query);
     tlsAllowInvalidCerts = insecure || /(?:^|&)tlsAllowInvalidCertificates=true/i.test(query);
     tlsAllowInvalidHosts = insecure || /(?:^|&)tlsAllowInvalidHostnames=true/i.test(query);
-    // `$external` is not a database the user picks; it is what the external
-    // mechanisms authenticate against, and buildUri writes it from the
-    // mechanism rather than from this field. An absent authSource means the
-    // default, which is what buildUri omits it for.
-    const authSource = param('authSource');
-    if (authSource && authSource !== '$external') authDb = authSource;
     // The inverse of the mechanism buildUri writes. Without this a saved
     // SCRAM-SHA-1 or X.509 connection reopened as SCRAM-SHA-256.
     const mechanisms: Record<string, string> = {
@@ -307,6 +301,26 @@ export const parseUriIntoFields = (uri: string) => {
     // X.509 carries no username, so the mechanism alone decides there.
     if (mechanism) authMethod = mechanism;
     else if (authUser) authMethod = 'scram-256';
+    // `$external` is not a database the user picks; it is what the external
+    // mechanisms authenticate against, and buildUri writes it from the
+    // mechanism rather than from this field.
+    const authSource = param('authSource');
+    if (authSource && authSource !== '$external') {
+      authDb = authSource;
+    } else if (!authSource && (authMethod === 'scram-1' || authMethod === 'scram-256')) {
+      // With no authSource, MongoDB authenticates against the path database
+      // and only falls back to admin when the path is empty — the same rule
+      // the backend applies in `strip_path_database`. Reporting admin here
+      // named a database the connection was not using, and left editing the
+      // default database silently moving where authentication happens.
+      let pathDb = defaultDb;
+      try {
+        pathDb = decodeURIComponent(defaultDb);
+      } catch {
+        // A malformed escape is left as written rather than failing the parse.
+      }
+      if (pathDb) authDb = pathDb;
+    }
     // Split on the first colon only: the key never contains one, the value may.
     for (const entry of (param('authMechanismProperties') || '').split(',')) {
       const at = entry.indexOf(':');
