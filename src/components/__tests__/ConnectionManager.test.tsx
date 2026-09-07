@@ -189,6 +189,22 @@ describe('parseUriIntoFields (import → form)', () => {
     expect(krb.kerberosServiceName).toBe('mongodb');
   });
 
+  it('reads username-only credentials for a passwordless mechanism', () => {
+    // buildUri emits `user@host` for X.509 and Kerberos; a credentials group
+    // requiring a colon swallowed the principal into the hostname instead.
+    const f = parseUriIntoFields('mongodb://user%40REALM@kdc.example.com:27017/?authMechanism=GSSAPI');
+    expect(f.authUser).toBe('user@REALM');
+    expect(f.authPass).toBe('');
+    expect(f.authMethod).toBe('kerberos');
+    expect(f.hosts).toEqual([{ host: 'kdc.example.com', port: '27017' }]);
+  });
+
+  it('does not mistake an @ in the query string for credentials', () => {
+    const f = parseUriIntoFields('mongodb://h:27017/db?appName=a@b');
+    expect(f.authUser).toBe('');
+    expect(f.hosts).toEqual([{ host: 'h', port: '27017' }]);
+  });
+
   it('splits multiple hosts and detects a replica set (with its name)', () => {
     const f = parseUriIntoFields('mongodb://h1:27017,h2:27017,h3:27017/?replicaSet=rs0');
     expect(f.hosts).toEqual([
@@ -283,6 +299,47 @@ describe('saving a connection and reopening it keeps its auth settings (#349)', 
     });
     expect(reopened.authMethod).toBe('scram-1');
     expect(reopened.authDb).toBe('reporting');
+  });
+
+  it('keeps an explicit admin auth source when the default database differs', () => {
+    // Omitting it here would hand authentication to the path database on the
+    // next save, while the form still showed admin.
+    const uri = buildUri({
+      ...baseConn,
+      authMethod: 'scram-256',
+      authUser: 'alice',
+      authPass: 'pw',
+      authDb: 'admin',
+      defaultDb: 'shop',
+    });
+    expect(uri).toContain('authSource=admin');
+    expect(parseUriIntoFields(uri).authDb).toBe('admin');
+  });
+
+  it('omits authSource when it would only repeat the path database', () => {
+    const uri = buildUri({
+      ...baseConn,
+      authMethod: 'scram-256',
+      authUser: 'alice',
+      authPass: 'pw',
+      authDb: 'shop',
+      defaultDb: 'shop',
+    });
+    expect(uri).not.toContain('authSource');
+    expect(parseUriIntoFields(uri).authDb).toBe('shop');
+  });
+
+  it('keeps a Kerberos principal and its service name', () => {
+    const uri = buildUri({
+      ...baseConn,
+      authMethod: 'kerberos',
+      authUser: 'user@REALM',
+      kerberosServiceName: 'mongodb',
+    });
+    const reopened = parseUriIntoFields(uri);
+    expect(reopened.authUser).toBe('user@REALM');
+    expect(reopened.authMethod).toBe('kerberos');
+    expect(reopened.kerberosServiceName).toBe('mongodb');
   });
 
   it('leaves an admin auth database as admin', () => {

@@ -244,7 +244,12 @@ export const summarizeConnectionError = (raw: string): ConnectionErrorSummary =>
 // Used both when editing a saved profile and when importing a pasted URI.
 export const parseUriIntoFields = (uri: string) => {
   const isSrv = /^mongodb\+srv:\/\//i.test(uri);
-  const m = uri.match(/mongodb(?:\+srv)?:\/\/(?:([^:@]+):([^@]*)@)?([^/?]+)(?:\/([^?]*))?(?:\?(.*))?/i);
+  // The password is optional: X.509 and Kerberos authenticate without one and
+  // buildUri emits username-only userinfo for them, which a credentials group
+  // requiring a colon read as part of the hostname. Excluding `/` and `?` from
+  // the username keeps a query string containing `@` from being mistaken for
+  // credentials now that the colon is no longer required (#349 review).
+  const m = uri.match(/mongodb(?:\+srv)?:\/\/(?:([^:@/?]+)(?::([^@/?]*))?@)?([^/?]+)(?:\/([^?]*))?(?:\?(.*))?/i);
   let authUser = '';
   let authPass = '';
   let hostStr = isSrv ? 'localhost' : 'localhost:27017';
@@ -418,8 +423,14 @@ export const buildUri = (s: typeof BLANK_CONN) => {
   const isExternalAuth = ['x509', 'aws', 'kerberos', 'ldap'].includes(s.authMethod);
   if (isExternalAuth) {
     params.push('authSource=$external');
-  } else if (s.authMethod !== 'none' && s.authDb && s.authDb !== 'admin') {
-    params.push(`authSource=${s.authDb}`);
+  } else if (s.authMethod !== 'none' && s.authDb) {
+    // With authSource omitted MongoDB authenticates against the path database,
+    // or admin when there is no path. So the parameter is redundant only when
+    // it already matches that: dropping an explicit `admin` beside a path
+    // database moved authentication onto that database on the next save
+    // (#349 review).
+    const implied = s.defaultDb || 'admin';
+    if (s.authDb !== implied) params.push(`authSource=${s.authDb}`);
   }
   // Mechanism-specific properties (M5).
   if (s.authMethod === 'aws' && s.awsSessionToken) {
