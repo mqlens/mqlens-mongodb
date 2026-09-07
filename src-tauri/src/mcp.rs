@@ -325,7 +325,14 @@ pub async fn set_enabled_impl(
             // "Regenerate" replaces it.
             let mut persisted = load_persisted(state, app);
             persisted.enabled = false;
-            let _ = save_persisted(state, app, &persisted);
+            // Propagated, unlike the enable path below. The two failures are not
+            // symmetric: an enable that cannot be written down leaves the server
+            // running now and not restored later, which errs towards off. A
+            // disable that cannot be written down stops the listener but leaves
+            // `mcp_enabled = true` on disk, so the next unlock starts the server
+            // again — silently undoing an explicit disable. The user has to be
+            // told that one did not stick (#350 review).
+            save_persisted(state, app, &persisted)?;
         }
         return get_status_impl(state);
     }
@@ -1387,6 +1394,30 @@ mod tests {
             format!("Bearer {token}").parse().unwrap(),
         );
         h
+    }
+
+    #[test]
+    fn a_disable_that_cannot_be_persisted_is_not_reported_as_success() {
+        // Discarding the write here stops the listener but leaves
+        // `mcp_enabled = true` in the settings, so the next unlock starts the
+        // server back up and the user's explicit disable is undone. Checked
+        // against the source, the way `the_audit_summary_carries_no_write_payload`
+        // below does, because the write itself needs a real `AppHandle`.
+        let src = include_str!("mcp.rs");
+        let body = &src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())];
+        let disable = body
+            .split("if !enabled {")
+            .nth(1)
+            .and_then(|s| s.split("return get_status_impl(state);").next())
+            .expect("the disable branch of set_enabled_impl");
+        assert!(
+            disable.contains("save_persisted(state, app, &persisted)?"),
+            "the disable branch must propagate a failed persist"
+        );
+        assert!(
+            !disable.contains("let _ = save_persisted"),
+            "the disable branch discards a failed persist"
+        );
     }
 
     #[test]
