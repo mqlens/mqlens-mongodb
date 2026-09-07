@@ -3039,6 +3039,9 @@ async fn vault_unlock(
     let key = connections::unlock_key(&meta, &password)?;
     *state.vault_key.lock_safe()? = Some(key);
     let _ = audit::open_on_unlock(&app_handle, &state, key);
+    // The MCP server needs the key, so this is the first moment it can come
+    // back up. Best-effort by design — see `restore_on_unlock` (#350).
+    mcp::restore_on_unlock(&state, app_handle).await;
     Ok(connections::VaultStatus::Unlocked)
 }
 
@@ -3300,8 +3303,11 @@ async fn mcp_resolve_write(
 }
 
 #[tauri::command]
-async fn mcp_regenerate_token(state: tauri::State<'_, AppState>) -> Result<mcp::McpStatusUi, String> {
-    mcp::regenerate_token_impl(&state)
+async fn mcp_regenerate_token(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<mcp::McpStatusUi, String> {
+    mcp::regenerate_token_impl(&state, Some(&app_handle))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

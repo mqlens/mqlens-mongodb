@@ -4060,6 +4060,24 @@ mod tests {
         assert_eq!(legacy.audit_level, "A");
         assert_eq!(legacy.audit_retention_days, 30);
         assert!(!legacy.audit_include_payloads);
+        // A settings file written before #350 has no MCP fields at all; it has
+        // to read as "server off, default port, nothing to restore" rather than
+        // failing to parse.
+        assert!(!legacy.mcp_enabled);
+        assert_eq!(legacy.mcp_port, crate::mcp::DEFAULT_PORT);
+        assert!(legacy.mcp_token.is_empty());
+
+        // And what the MCP panel stores survives a write/read cycle — the whole
+        // point of #350 is that the token outlives the process.
+        let mut with_mcp = AppSettings::default();
+        with_mcp.mcp_enabled = true;
+        with_mcp.mcp_port = 9123;
+        with_mcp.mcp_token = "token-clients-are-configured-with".to_string();
+        let reloaded: AppSettings =
+            serde_json::from_str(&serde_json::to_string(&with_mcp).unwrap()).unwrap();
+        assert!(reloaded.mcp_enabled);
+        assert_eq!(reloaded.mcp_port, 9123);
+        assert_eq!(reloaded.mcp_token, "token-clients-are-configured-with");
 
         // resolve_local_command falls back to built-in defaults when unset.
         assert_eq!(

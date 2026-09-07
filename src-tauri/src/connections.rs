@@ -197,11 +197,36 @@ pub struct AppSettings {
     // UI appearance: theme preset, fonts, font size, spacing density.
     #[serde(default)]
     pub appearance: AppearanceSettings,
+    /// Whether the embedded MCP server should be running (#350).
+    ///
+    /// The server itself needs the vault key, so it cannot come up before the
+    /// vault is unlocked; this records the user's intent and the unlock path
+    /// acts on it. Without it the server came back disabled on every launch.
+    #[serde(default)]
+    pub mcp_enabled: bool,
+    /// The port the MCP server was last enabled on.
+    #[serde(default = "default_mcp_port")]
+    pub mcp_port: u16,
+    /// The bearer token external MCP clients authenticate with.
+    ///
+    /// Kept across restarts so a configured client keeps working: minting a
+    /// fresh one on every enable meant every client had to be reconfigured
+    /// after each launch (#350). Only "Regenerate" replaces it. Encrypted at
+    /// rest with the rest of this file, like the AI provider keys above.
+    #[serde(default)]
+    pub mcp_token: String,
+}
+
+fn default_mcp_port() -> u16 {
+    crate::mcp::DEFAULT_PORT
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            mcp_enabled: false,
+            mcp_port: default_mcp_port(),
+            mcp_token: String::new(),
             mongosh_path: String::new(),
             locale: default_locale(),
             ai_provider: default_ai_provider(),
