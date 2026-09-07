@@ -129,6 +129,48 @@ describe('parseUriIntoFields (import → form)', () => {
     expect(f.topology).toBe('standalone');
   });
 
+  it('keeps a non-admin auth database instead of resetting it to admin (#349)', () => {
+    // Reported bug: a SCRAM connection saved with its own authSource came back
+    // showing `admin`, silently changing the authSource the connection used.
+    const f = parseUriIntoFields(
+      'mongodb://appuser:pw@db.example.com:27017/?authSource=reporting&authMechanism=SCRAM-SHA-256'
+    );
+    expect(f.authDb).toBe('reporting');
+    expect(f.authUser).toBe('appuser');
+    expect(f.authMethod).toBe('scram-256');
+  });
+
+  it('falls back to admin only when the URI carries no authSource', () => {
+    const f = parseUriIntoFields('mongodb://alice:pw@h:27017/shop');
+    expect(f.authDb).toBe('admin');
+  });
+
+  it('does not put $external in the auth database field', () => {
+    // buildUri writes $external from the mechanism, not from this field, so
+    // showing it as the auth database would be wrong on the way back.
+    const f = parseUriIntoFields('mongodb://h:27017/?authMechanism=MONGODB-X509&authSource=$external');
+    expect(f.authDb).toBe('admin');
+    expect(f.authMethod).toBe('x509');
+  });
+
+  it('restores the saved auth mechanism rather than assuming SCRAM-SHA-256', () => {
+    expect(parseUriIntoFields('mongodb://u:p@h/?authMechanism=SCRAM-SHA-1').authMethod).toBe('scram-1');
+    expect(parseUriIntoFields('mongodb://u:p@h/?authMechanism=PLAIN').authMethod).toBe('ldap');
+    expect(parseUriIntoFields('mongodb://u:p@h/?authMechanism=GSSAPI').authMethod).toBe('kerberos');
+    expect(parseUriIntoFields('mongodb://u:p@h/?authMechanism=MONGODB-AWS').authMethod).toBe('aws');
+  });
+
+  it('restores the mechanism properties that go with AWS and Kerberos', () => {
+    const aws = parseUriIntoFields(
+      'mongodb://k:s@h/?authMechanism=MONGODB-AWS&authMechanismProperties=AWS_SESSION_TOKEN%3Atok%3An'
+    );
+    expect(aws.awsSessionToken).toBe('tok:n');
+    const krb = parseUriIntoFields(
+      'mongodb://u@h/?authMechanism=GSSAPI&authMechanismProperties=SERVICE_NAME%3Amongodb'
+    );
+    expect(krb.kerberosServiceName).toBe('mongodb');
+  });
+
   it('splits multiple hosts and detects a replica set (with its name)', () => {
     const f = parseUriIntoFields('mongodb://h1:27017,h2:27017,h3:27017/?replicaSet=rs0');
     expect(f.hosts).toEqual([
@@ -193,6 +235,46 @@ describe('parseUriIntoFields (import → form)', () => {
     const uri = buildUri({ ...baseConn, ...f, authPass: f.authPass });
     expect(uri).toContain('db.example.com:27018');
     expect(uri).toContain('alice');
+  });
+});
+
+describe('saving a connection and reopening it keeps its auth settings (#349)', () => {
+  // The editor rebuilds its fields from the saved URI, so the round trip is
+  // the behaviour that matters: what the user typed has to survive save →
+  // reopen. It did not — a non-admin auth database came back as `admin`.
+  const roundTrip = (state: Record<string, unknown>) =>
+    parseUriIntoFields(buildUri({ ...baseConn, ...state }));
+
+  it('keeps the auth database the user typed', () => {
+    const reopened = roundTrip({
+      authMethod: 'scram-256',
+      authUser: 'adtimabox_cshub_ab_internal_stg',
+      authPass: 'pw',
+      authDb: 'adtimabox_cshub_ab_internal_stg',
+    });
+    expect(reopened.authDb).toBe('adtimabox_cshub_ab_internal_stg');
+    expect(reopened.authUser).toBe('adtimabox_cshub_ab_internal_stg');
+  });
+
+  it('keeps a non-default auth mechanism', () => {
+    const reopened = roundTrip({
+      authMethod: 'scram-1',
+      authUser: 'alice',
+      authPass: 'pw',
+      authDb: 'reporting',
+    });
+    expect(reopened.authMethod).toBe('scram-1');
+    expect(reopened.authDb).toBe('reporting');
+  });
+
+  it('leaves an admin auth database as admin', () => {
+    const reopened = roundTrip({
+      authMethod: 'scram-256',
+      authUser: 'alice',
+      authPass: 'pw',
+      authDb: 'admin',
+    });
+    expect(reopened.authDb).toBe('admin');
   });
 });
 

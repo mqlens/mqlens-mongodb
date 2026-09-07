@@ -255,6 +255,14 @@ export const parseUriIntoFields = (uri: string) => {
   let tlsAllowInvalidCerts = false;
   let tlsAllowInvalidHosts = false;
   let authMethod = 'none';
+  // Auth settings default to what a blank form would hold. Everything the
+  // editor rebuilds from a saved URI has to be read back here: a field left
+  // unparsed silently reverts to the blank default when a saved connection is
+  // reopened, which is how a non-admin auth database came back as `admin` and
+  // quietly changed the authSource the connection used (#349).
+  let authDb = 'admin';
+  let awsSessionToken = '';
+  let kerberosServiceName = '';
   let query = '';
   if (m) {
     authUser = m[1] ? decodeURIComponent(m[1]) : '';
@@ -278,7 +286,36 @@ export const parseUriIntoFields = (uri: string) => {
     const insecure = /(?:^|&)tlsInsecure=true/i.test(query);
     tlsAllowInvalidCerts = insecure || /(?:^|&)tlsAllowInvalidCertificates=true/i.test(query);
     tlsAllowInvalidHosts = insecure || /(?:^|&)tlsAllowInvalidHostnames=true/i.test(query);
-    if (authUser) authMethod = 'scram-256';
+    // `$external` is not a database the user picks; it is what the external
+    // mechanisms authenticate against, and buildUri writes it from the
+    // mechanism rather than from this field. An absent authSource means the
+    // default, which is what buildUri omits it for.
+    const authSource = param('authSource');
+    if (authSource && authSource !== '$external') authDb = authSource;
+    // The inverse of the mechanism buildUri writes. Without this a saved
+    // SCRAM-SHA-1 or X.509 connection reopened as SCRAM-SHA-256.
+    const mechanisms: Record<string, string> = {
+      'SCRAM-SHA-1': 'scram-1',
+      'SCRAM-SHA-256': 'scram-256',
+      'MONGODB-X509': 'x509',
+      'MONGODB-AWS': 'aws',
+      GSSAPI: 'kerberos',
+      PLAIN: 'ldap',
+    };
+    const mechanism = mechanisms[(param('authMechanism') || '').toUpperCase()];
+    // A URI with credentials and no mechanism is SCRAM, the server default.
+    // X.509 carries no username, so the mechanism alone decides there.
+    if (mechanism) authMethod = mechanism;
+    else if (authUser) authMethod = 'scram-256';
+    // Split on the first colon only: the key never contains one, the value may.
+    for (const entry of (param('authMechanismProperties') || '').split(',')) {
+      const at = entry.indexOf(':');
+      if (at < 0) continue;
+      const key = entry.slice(0, at).trim().toUpperCase();
+      const value = entry.slice(at + 1);
+      if (key === 'AWS_SESSION_TOKEN') awsSessionToken = value;
+      else if (key === 'SERVICE_NAME') kerberosServiceName = value;
+    }
   }
   const hosts = hostStr.split(',').map((h) => {
     const [host, port] = h.split(':');
@@ -299,6 +336,9 @@ export const parseUriIntoFields = (uri: string) => {
     authUser,
     authPass,
     authMethod,
+    authDb,
+    awsSessionToken,
+    kerberosServiceName,
     tlsMode,
     tlsCa,
     tlsClientCert,
