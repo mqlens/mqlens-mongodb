@@ -4,7 +4,7 @@ use serde_json;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command as TokioCommand};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use uuid::Uuid;
@@ -677,15 +677,52 @@ async fn run_mongosh_command_on_session(
 /// Reading continues to EOF even once the caps are full: the surplus is
 /// discarded rather than kept, but the pipe still has to be drained or the
 /// child blocks writing into it and never exits (#359 review).
+///
+/// Read in fixed chunks rather than with `lines()`, and the line being built is
+/// bounded as it grows. `lines()` materialises a whole newline-delimited run
+/// before anything can cap it, so a script writing one enormous string with no
+/// newline in it — `print` of a huge document, a stack trace on one line — grew
+/// memory without limit before `push_mongosh_line` ever saw it (#360 review).
+///
+/// The bound is in bytes, at four per permitted character, which is the widest
+/// UTF-8 encoding: enough that the whole allowed prefix always survives, while
+/// the buffer itself can never exceed a fixed size. Bytes past it are dropped
+/// until the next newline, and `push_mongosh_line` applies the character cap to
+/// what is kept.
 async fn read_capped_mongosh_output<R>(reader: Option<R>) -> Vec<String>
 where
     R: AsyncRead + Unpin,
 {
     let mut lines: Vec<String> = Vec::new();
-    let Some(reader) = reader else { return lines };
-    let mut stream = tokio::io::BufReader::new(reader).lines();
-    while let Ok(Some(line)) = stream.next_line().await {
-        push_mongosh_line(&mut lines, line);
+    let Some(mut reader) = reader else { return lines };
+    let max_line_bytes = crate::limits::MAX_MONGOSH_LINE_CHARS * 4;
+    let mut chunk = [0u8; 8192];
+    let mut pending: Vec<u8> = Vec::new();
+    // True once this line has given us everything we are going to keep; the
+    // rest of it is read and thrown away so the pipe keeps draining.
+    let mut past_the_cap = false;
+    loop {
+        let read = match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        for &byte in &chunk[..read] {
+            if byte == b'\n' {
+                let mut line = std::mem::take(&mut pending);
+                if line.last() == Some(&b'\r') {
+                    line.pop();
+                }
+                push_mongosh_line(&mut lines, String::from_utf8_lossy(&line).into_owned());
+                past_the_cap = false;
+            } else if !past_the_cap {
+                pending.push(byte);
+                past_the_cap = pending.len() >= max_line_bytes;
+            }
+        }
+    }
+    // Whatever the script wrote without a trailing newline is still output.
+    if !pending.is_empty() {
+        push_mongosh_line(&mut lines, String::from_utf8_lossy(&pending).into_owned());
     }
     lines
 }

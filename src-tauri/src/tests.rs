@@ -3144,6 +3144,23 @@ mod tests {
         let kept = crate::read_capped_mongosh_output(Some(huge.as_bytes())).await;
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].chars().count(), MAX_MONGOSH_LINE_CHARS);
+
+        // And with no newline at all — the case a line-oriented reader cannot
+        // bound, because it has nothing to split on (#360 review).
+        let unterminated = "y".repeat(MAX_MONGOSH_LINE_CHARS * 8);
+        let kept = crate::read_capped_mongosh_output(Some(unterminated.as_bytes())).await;
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].chars().count(), MAX_MONGOSH_LINE_CHARS);
+    }
+
+    #[tokio::test]
+    async fn a_one_shot_script_keeps_output_that_never_ends_in_a_newline() {
+        // Trailing output without a newline is still output.
+        let kept = crate::read_capped_mongosh_output(Some(&b"done"[..])).await;
+        assert_eq!(kept, vec!["done".to_string()]);
+        // CRLF is folded, like the session reader does.
+        let kept = crate::read_capped_mongosh_output(Some(&b"a\r\nb\r\n"[..])).await;
+        assert_eq!(kept, vec!["a".to_string(), "b".to_string()]);
     }
 
     #[tokio::test]
