@@ -429,8 +429,18 @@ export const buildUri = (s: typeof BLANK_CONN) => {
     // it already matches that: dropping an explicit `admin` beside a path
     // database moved authentication onto that database on the next save
     // (#349 review).
-    const implied = s.defaultDb || 'admin';
-    if (s.authDb !== implied) params.push(`authSource=${s.authDb}`);
+    // The path is compared decoded, because that is the form the auth database
+    // is held in, and the value is written back encoded: an unescaped `&` in a
+    // database name would start another query option and change what the URI
+    // means (#349 review).
+    let pathDb = s.defaultDb;
+    try {
+      pathDb = decodeURIComponent(s.defaultDb);
+    } catch {
+      // A malformed escape compares as written.
+    }
+    const implied = pathDb || 'admin';
+    if (s.authDb !== implied) params.push(`authSource=${encodeURIComponent(s.authDb)}`);
   }
   // Mechanism-specific properties (M5).
   if (s.authMethod === 'aws' && s.awsSessionToken) {

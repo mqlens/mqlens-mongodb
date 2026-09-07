@@ -342,6 +342,31 @@ describe('saving a connection and reopening it keeps its auth settings (#349)', 
     expect(reopened.kerberosServiceName).toBe('mongodb');
   });
 
+  it('treats an encoded path database and its decoded auth source as one database', () => {
+    // The path keeps its escapes while the auth database is held decoded, so
+    // comparing them raw called the same database different and emitted a raw
+    // `&` that started another query option.
+    const parsed = parseUriIntoFields('mongodb://u:p@h:27017/sales%26ops');
+    expect(parsed.authDb).toBe('sales&ops');
+    const uri = buildUri({ ...baseConn, ...parsed });
+    expect(uri).not.toContain('authSource');
+    expect(uri).toContain('/sales%26ops');
+    expect(parseUriIntoFields(uri).authDb).toBe('sales&ops');
+  });
+
+  it('percent-encodes an auth source that needs it', () => {
+    const uri = buildUri({
+      ...baseConn,
+      authMethod: 'scram-256',
+      authUser: 'alice',
+      authPass: 'pw',
+      authDb: 'sales&ops',
+      defaultDb: 'shop',
+    });
+    expect(uri).toContain('authSource=sales%26ops');
+    expect(parseUriIntoFields(uri).authDb).toBe('sales&ops');
+  });
+
   it('leaves an admin auth database as admin', () => {
     const reopened = roundTrip({
       authMethod: 'scram-256',
