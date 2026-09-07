@@ -821,12 +821,16 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
     const refresh = () =>
       setWriteRequests(
         writeRequestsWhere((requester: string | null) => {
-          // Nobody in particular: an external client, or two runs at once. Any
-          // window may answer — it is the app asking, not a conversation.
-          if (requester === null) return true;
           // Addressed by conversation, so this holds in whichever window is
           // showing that chat — including one the tab was moved to mid-run.
-          return requester === activeChatIdRef.current;
+          //
+          // Unaddressed requests — an external client, or two runs at once —
+          // are deliberately NOT claimed here. This panel renders nothing while
+          // closed and is unmounted on a tab switch, so a write with no
+          // conversation to belong to had no visible prompt whenever the user
+          // was anywhere else, and could only time out. `McpWriteConfirm`
+          // shows those at the app level instead (#352 review).
+          return requester !== null && requester === activeChatIdRef.current;
         })
       );
     refresh();

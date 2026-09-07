@@ -68,6 +68,12 @@
     "writeRequestRefuse": "拒绝",
     "writeRequestTitle": "助手想要修改数据"
   },
+  "mcpWriteConfirm": {
+    "allow": "允许",
+    "description": "已连接到 MQLens 的 MCP 客户端请求修改数据。仅在这是您发起的操作时才允许。",
+    "refuse": "拒绝",
+    "title": "MCP 客户端请求修改数据"
+  },
   "commandPalette": {
     "buckets": {
       "collections": {

@@ -1700,28 +1700,27 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     expect(await screen.findByTestId('chat-write-request')).toHaveTextContent('shop.orders');
   });
 
-  it('recovers a write that arrived before any panel was mounted', async () => {
-    // An external MCP client's write is confirmed too, and it does not come from
-    // a panel. With the listener started lazily by the panel, such a request was
-    // broadcast to nobody and could only fail when the backend gave up two
-    // minutes later. `App` starts it instead, so opening the chat still finds it.
+  it('leaves a write no conversation asked for to the app-level prompt', async () => {
+    // An external MCP client's write is confirmed too, but it belongs to no
+    // conversation — and this panel renders nothing while closed and is
+    // unmounted on a tab switch, so claiming it here meant no prompt at all
+    // whenever the user was anywhere else. `McpWriteConfirm` shows those, and
+    // has its own suite; the panel must not also offer them (#352 review).
     startWriteRequests();
     await act(async () => {});
     expect(writeRequestListeners).not.toHaveLength(0);
 
-    // Unaddressed, as an external client's write always is.
     await act(async () => {
       writeRequestListeners.forEach((fn) =>
         fn({ id: 'ext1', tool: 'delete_many', summary: 'from an external client', requester: null }),
       );
     });
 
-    // Only now does any UI exist. The prompt does not depend on a provider
-    // being configured — the write is already parked in the backend.
     renderPanel('editor');
-    expect(await screen.findByTestId('chat-write-request')).toHaveTextContent(
-      'from an external client',
-    );
+    // The panel is up (its New chat control renders unconditionally); the
+    // unaddressed request is simply not offered here.
+    await screen.findByTestId('ai-chat-new-btn');
+    expect(screen.queryByTestId('chat-write-request')).toBeNull();
   });
 
   it('re-reads its provider list when settings change elsewhere', async () => {

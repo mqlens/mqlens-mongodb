@@ -69,6 +69,12 @@
     "writeRequestRefuse": "Ablehnen",
     "writeRequestTitle": "Der Assistent möchte Daten ändern"
   },
+  "mcpWriteConfirm": {
+    "allow": "Zulassen",
+    "description": "Ein mit MQLens verbundener MCP-Client möchte Daten ändern. Erlaube es nur, wenn du das angefordert hast.",
+    "refuse": "Ablehnen",
+    "title": "Ein MCP-Client möchte Daten ändern"
+  },
   "commandPalette": {
     "buckets": {
       "collections": {

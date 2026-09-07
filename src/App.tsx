@@ -18,6 +18,7 @@ import {
 } from './lib/aiChatRequest';
 import { stopChangeStream } from './lib/changeStream';
 import { startWriteRequests } from './lib/mcpWriteRequests';
+import { McpWriteConfirm } from './components/McpWriteConfirm';
 import {
   appendReplyToChat,
   releaseChatsForTab,
@@ -5057,6 +5058,11 @@ function Workspace() {
           />
 
           <UpdatePrompt />
+
+          {/* A write no conversation asked for — an external MCP client's —
+              is confirmed here rather than in a chat panel, which is not on
+              screen when the user is anywhere but a chat (#352 review). */}
+          <McpWriteConfirm />
 
           <ToolSetupDialog
             open={toolSetupOpen}

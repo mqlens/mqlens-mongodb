@@ -125,6 +125,12 @@
     "writeRequestRefuse": "Refuse",
     "writeRequestTitle": "The assistant wants to change data"
   },
+  "mcpWriteConfirm": {
+    "allow": "Allow",
+    "description": "An MCP client connected to MQLens is asking to change data. Approve it only if you asked for this.",
+    "refuse": "Refuse",
+    "title": "An MCP client wants to change data"
+  },
   "commandPalette": {
     "buckets": {
       "collections": {
