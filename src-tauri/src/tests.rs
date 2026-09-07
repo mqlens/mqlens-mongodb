@@ -3125,6 +3125,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_one_shot_script_cannot_flood_memory_with_output() {
+        // `Command::output()` held every byte until the process exited, so one
+        // verbose script could exhaust the backend. The session path never had
+        // that exposure because every line goes through `push_mongosh_line`;
+        // the one-shot path now reads under the same caps (#359 review).
+        use crate::limits::{MAX_MONGOSH_LINES, MAX_MONGOSH_LINE_CHARS};
+
+        let mut flood = String::new();
+        for i in 0..(MAX_MONGOSH_LINES + 500) {
+            flood.push_str(&format!("line {i}\n"));
+        }
+        let kept = crate::read_capped_mongosh_output(Some(flood.as_bytes())).await;
+        assert_eq!(kept.len(), MAX_MONGOSH_LINES, "more lines than the cap were kept");
+
+        // A single enormous line is truncated rather than kept whole.
+        let huge = format!("{}\n", "x".repeat(MAX_MONGOSH_LINE_CHARS * 2));
+        let kept = crate::read_capped_mongosh_output(Some(huge.as_bytes())).await;
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].chars().count(), MAX_MONGOSH_LINE_CHARS);
+    }
+
+    #[tokio::test]
+    async fn a_one_shot_script_with_no_output_reads_as_empty() {
+        let kept = crate::read_capped_mongosh_output(Some(&b""[..])).await;
+        assert!(kept.is_empty());
+        let none: Option<&[u8]> = None;
+        assert!(crate::read_capped_mongosh_output(none).await.is_empty());
+    }
+
+    #[test]
+    fn a_one_shot_script_resolves_a_managed_mongosh_like_the_session_does() {
+        // An app-managed mongosh is not necessarily on PATH. Falling back to
+        // the bare name meant a warm session started from the managed binary
+        // while every multi-line script failed to launch (#359 review).
+        let src = include_str!("lib.rs");
+        let wrapper = src
+            .split("async fn run_mongosh_script(")
+            .nth(1)
+            .and_then(|s| s.split("run_mongosh_script_impl").next())
+            .expect("the run_mongosh_script wrapper");
+        assert!(
+            wrapper.contains("toolsetup::resolve_mongosh_executable"),
+            "the one-shot wrapper must resolve the executable like start_mongosh_session"
+        );
+    }
+
+    #[tokio::test]
     async fn test_mongosh_session_not_found() {
         use crate::{run_mongosh_command_impl, stop_mongosh_session_impl};
         let state = AppState::new();

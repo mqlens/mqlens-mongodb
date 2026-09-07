@@ -4,7 +4,7 @@ use serde_json;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command as TokioCommand};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use uuid::Uuid;
@@ -672,6 +672,24 @@ async fn run_mongosh_command_on_session(
     }
 }
 
+/// Every line a one-shot script wrote, under the same caps as a session's.
+///
+/// Reading continues to EOF even once the caps are full: the surplus is
+/// discarded rather than kept, but the pipe still has to be drained or the
+/// child blocks writing into it and never exits (#359 review).
+async fn read_capped_mongosh_output<R>(reader: Option<R>) -> Vec<String>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut lines: Vec<String> = Vec::new();
+    let Some(reader) = reader else { return lines };
+    let mut stream = tokio::io::BufReader::new(reader).lines();
+    while let Ok(Some(line)) = stream.next_line().await {
+        push_mongosh_line(&mut lines, line);
+    }
+    lines
+}
+
 fn push_mongosh_line(lines: &mut Vec<String>, text: String) {
     use crate::limits::{MAX_MONGOSH_LINE_CHARS, MAX_MONGOSH_LINES, MAX_MONGOSH_TOTAL_CHARS};
     if lines.len() >= MAX_MONGOSH_LINES {
@@ -989,20 +1007,6 @@ pub async fn run_mongosh_command_impl(
     result
 }
 
-/// Split mongosh's captured output into lines, folding CRLF and dropping the
-/// single empty element a trailing newline leaves behind, so a clean run does
-/// not end in a blank line.
-pub(crate) fn split_mongosh_output_lines(bytes: &[u8]) -> Vec<String> {
-    let text = String::from_utf8_lossy(bytes);
-    let mut lines: Vec<String> = text
-        .split('\n')
-        .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
-        .collect();
-    if lines.last().map(|l| l.is_empty()).unwrap_or(false) {
-        lines.pop();
-    }
-    lines
-}
 
 /// Run a whole script as a one-shot `mongosh --file` program, the way a script
 /// is meant to run: parsed and executed as one unit, then the process exits.
@@ -1068,30 +1072,48 @@ pub async fn run_mongosh_script_impl(
     }
     command.arg("--file").arg(&path);
 
-    let spawned = command.output().await;
-    // Best effort: a leaked temp file must never fail an otherwise good run.
-    let _ = tokio::fs::remove_file(&path).await;
+    // Streamed and capped rather than buffered whole. `Command::output()` holds
+    // every byte of stdout and stderr in memory until the process exits and then
+    // sends the lot over IPC, so one verbose script could exhaust the backend —
+    // the persistent-session path has never had that exposure, because it puts
+    // every line through `push_mongosh_line` (#359 review). The pipes are still
+    // drained to EOF after the caps are reached, so the child is never blocked
+    // writing into a full pipe; the surplus is simply not kept.
+    let spawned = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
 
     let result: Result<MongoshCommandOutput, String> = match spawned {
-        Ok(output) => {
-            let stdout = split_mongosh_output_lines(&output.stdout);
-            let mut stderr = split_mongosh_output_lines(&output.stderr);
+        Ok(mut child) => {
+            let out = child.stdout.take();
+            let err = child.stderr.take();
+            let (stdout, stderr, status) = tokio::join!(
+                read_capped_mongosh_output(out),
+                read_capped_mongosh_output(err),
+                child.wait(),
+            );
+            let mut stderr = stderr;
             // A non-zero exit with nothing on stderr still has to read as a
             // failure rather than a silent, empty success.
-            if !output.status.success() && stderr.is_empty() {
-                stderr.push(format!(
-                    "mongosh exited with status {}",
-                    output
-                        .status
-                        .code()
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| "unknown".to_string())
-                ));
+            let failed = status.as_ref().map(|s| !s.success()).unwrap_or(true);
+            if failed && stderr.is_empty() {
+                let code = status
+                    .as_ref()
+                    .ok()
+                    .and_then(|s| s.code())
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                push_mongosh_line(&mut stderr, format!("mongosh exited with status {}", code));
             }
             Ok(MongoshCommandOutput { stdout, stderr })
         }
         Err(e) => Err(format!("Failed to run mongosh: {}", e)),
     };
+
+    // Best effort: a leaked temp file must never fail an otherwise good run.
+    let _ = tokio::fs::remove_file(&path).await;
 
     crate::audit::maybe_record_result(
         state,
@@ -1973,6 +1995,7 @@ async fn await_mongosh_idle(
 
 #[tauri::command]
 async fn run_mongosh_script(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     connection_id: String,
     uri: String,
@@ -1980,7 +2003,14 @@ async fn run_mongosh_script(
     mongosh_path: String,
     script: String,
 ) -> Result<MongoshCommandOutput, String> {
-    run_mongosh_script_impl(&state, &connection_id, &uri, &database, &mongosh_path, &script).await
+    use tauri::Manager;
+    // Exactly as `start_mongosh_session` does. An app-managed mongosh is not
+    // necessarily on PATH, so falling back to the bare name meant a warm
+    // session started from the managed binary while every multi-line script
+    // failed with "Failed to run mongosh" (#359 review).
+    let app_data_dir = app_handle.path().app_data_dir().ok();
+    let resolved_path = toolsetup::resolve_mongosh_executable(&mongosh_path, app_data_dir.as_deref());
+    run_mongosh_script_impl(&state, &connection_id, &uri, &database, &resolved_path, &script).await
 }
 
 #[tauri::command]
