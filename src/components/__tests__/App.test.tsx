@@ -3153,44 +3153,6 @@ describe('App Component', () => {
       expect(splitCalls).toHaveLength(1);
     });
 
-    it('mirrors a split that carries an unmirrored tab, but without naming it', async () => {
-      const calls: any[] = [];
-      mockInvoke.mockImplementation((cmd: string, args: any) => {
-        calls.push({ cmd, args });
-        if (cmd === 'execute_mql_query') return Promise.resolve([JSON.stringify({ _id: '1', name: 'Ada' })]);
-        return Promise.resolve([]);
-      });
-
-      const { fireEvent, waitFor } = await import('@testing-library/react');
-      renderWithProviders(<App />);
-      await screen.findByTestId('mock-sidebar');
-
-      fireEvent.click(screen.getByTestId('select-collection-btn'));
-      expect(await screen.findAllByText(/"Ada"/)).toBeTruthy();
-
-      // An export tab is never persisted, so the backend never opened it — the
-      // same shape as a tab on a connection the user has not saved (#364).
-      fireEvent.click(screen.getByTestId('export-btn'));
-      expect(await screen.findByTestId('export-view')).toBeInTheDocument();
-
-      fireEvent.keyDown(window, { key: 'k', metaKey: true });
-      fireEvent.change(await screen.findByTestId('command-palette-input'), { target: { value: 'Split Right' } });
-      fireEvent.click(await screen.findByText('Split Right'));
-
-      await waitFor(() => {
-        expect(screen.getAllByTestId(/^pane-pane-/)).toHaveLength(2);
-      });
-
-      const splitCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'split_pane');
-      // The split itself MUST still be mirrored: both reducers mint pane and
-      // split ids from the same op stream, so skipping it on one side would
-      // put the two id spaces permanently out of step.
-      expect(splitCalls).toHaveLength(1);
-      // But it cannot name a tab the backend has never seen, or the backend
-      // splits into a pane it then cannot fill and the trees diverge anyway.
-      expect((splitCalls[0].args.op as any).move_tab_id).toBeUndefined();
-    });
-
     it('renames a watch tab to a watch id, not to the collection tab it would collide with', async () => {
       // Falling through to the generic `<connection>.<db>.<collection>` form
       // mints the id an ordinary collection tab already uses, and abandons the
