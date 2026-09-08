@@ -1454,6 +1454,18 @@ function Workspace() {
    * Its entries are orphaned when the session ends, which is the right outcome
    * for a connection the user declined to keep.
    */
+  /**
+   * Whether this connection is one the user never saved.
+   *
+   * Read from the profile id, which is the only thing that actually knows.
+   * Callers must not infer it from the query store key: that key is the display
+   * NAME for an ordinary connection, and display names are unrestricted — one
+   * that happens to start with "ephemeral:" would otherwise make a perfectly
+   * saved connection look like a trial (#369 review).
+   */
+  const isEphemeralConnection = (connectionId: string): boolean =>
+    isEphemeralProfileId(activeConnections.find((c) => c.id === connectionId)?.profileId);
+
   const connectionQueryKeyFor = (connectionId: string): string => {
     const conn = activeConnections.find((c) => c.id === connectionId);
     if (!conn) return connectionId;
@@ -4555,6 +4567,7 @@ function Workspace() {
               connectionId={tab.connectionId}
               connectionName={connectionName}
               queryStoreKey={connectionQueryKeyFor(tab.connectionId)}
+              ephemeral={isEphemeralConnection(tab.connectionId)}
               connectionUser={connectionUser}
               databaseName={tab.db}
               collectionName={tab.collection}

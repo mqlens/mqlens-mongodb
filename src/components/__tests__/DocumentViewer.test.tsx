@@ -1689,7 +1689,7 @@ describe('query storage namespace (#369 review)', () => {
 });
 
 describe('query favorites on a connection that was never saved (#369 review)', () => {
-  const withSavedQuery = (storeKey?: string) => {
+  const withSavedQuery = (storeKey?: string, ephemeral = false) => {
     mockInvoke.mockClear();
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'load_collection_queries') {
@@ -1706,6 +1706,7 @@ describe('query favorites on a connection that was never saved (#369 review)', (
       <DocumentViewer
         connectionName="Prod"
         queryStoreKey={storeKey}
+        ephemeral={ephemeral}
         databaseName="sales_db"
         collectionName="orders"
         onExecute={vi.fn()}
@@ -1717,7 +1718,7 @@ describe('query favorites on a connection that was never saved (#369 review)', (
 
   it('refuses the favorite instead of writing one that points at nothing', async () => {
     localStorage.clear();
-    withSavedQuery('ephemeral:1111-2222');
+    withSavedQuery('ephemeral:1111-2222', true);
 
     // The query lives under the ephemeral key while a favorite is keyed on the
     // display name, so Sidebar.navigateToFavorite could never match the two —
@@ -1731,6 +1732,17 @@ describe('query favorites on a connection that was never saved (#369 review)', (
     expect(localStorage.getItem('mqlens_favorites')).toBeNull();
   });
 
+  it('does not mistake a saved connection named like a sentinel for a trial one', async () => {
+    localStorage.clear();
+    // Display names are unrestricted. Sniffing the store key for the sentinel
+    // would lock this perfectly saved connection out of its own favorites.
+    withSavedQuery('ephemeral:not-really-a-trial', false);
+
+    fireEvent.click(await screen.findByRole('button', { name: /load query/i }));
+    fireEvent.click(await screen.findByTestId('favorite-saved-q1'));
+
+    await waitFor(() => expect(localStorage.getItem('mqlens_favorites')).not.toBeNull());
+  });
   it('still favorites a query on an ordinary saved connection', async () => {
     localStorage.clear();
     withSavedQuery('Prod');

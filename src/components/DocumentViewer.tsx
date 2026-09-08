@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { isEphemeralProfileId } from '../workspace/persistence';
 import { AIChatPanel, type ChatMessage } from './AIChatPanel';
 import { QueryEditor } from './QueryEditor';
 import { FindQueryBar } from './FindQueryBar';
@@ -203,6 +202,16 @@ interface DocumentViewerProps {
    * trial session cannot read or write a saved profile's queries (#369 review).
    */
   queryStoreKey?: string;
+  /**
+   * True when this connection was never saved, so nothing keyed on it can
+   * outlive the session.
+   *
+   * Passed rather than derived from `queryStoreKey`: that key is the display
+   * name for an ordinary connection, and a display name beginning "ephemeral:"
+   * would otherwise lock a perfectly saved connection out of its own favourites
+   * (#369 review).
+   */
+  ephemeral?: boolean;
   /** Auth username parsed from the connection URI; empty when the connection has no credentials. */
   connectionUser?: string;
   databaseName: string;
@@ -561,6 +570,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // before this prop existed — so a caller that has no opinion gets exactly the
   // old behaviour rather than a silently different one.
   queryStoreKey,
+  ephemeral = false,
   connectionUser,
   databaseName,
   collectionName,
@@ -637,7 +647,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // `storeKey`, so on a trial session the two never meet: the favourite is born
   // pointing at nothing, reports the query as gone the moment it is followed,
   // and could not survive a restart anyway (#369 review).
-  const canFavoriteQueries = !isEphemeralProfileId(storeKey);
+  const canFavoriteQueries = !ephemeral;
 
   const refreshStoredQueries = React.useCallback(async () => {
     try {

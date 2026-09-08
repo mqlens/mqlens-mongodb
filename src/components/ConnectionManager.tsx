@@ -1122,6 +1122,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       state: pendingSave.state,
     });
     if (!profile) return;
+
+    // Checked once more, because the write above is asynchronous and another
+    // window can take the profile during it. This does NOT close the race — the
+    // profile has already been overwritten by the time we get here, and only
+    // the backend could hold it for the whole operation. What it prevents is
+    // the worse half: handing over a connection that `addActiveConnection`
+    // drops as a duplicate, which would leave this session live, unreachable
+    // and invisible. Releasing it instead keeps the backend honest (#369
+    // review; the reservation itself is filed separately).
+    if (activeConnections.some((c) => c.profileId === profile.id)) {
+      void invoke('disconnect_db', { id: pendingSave.connId }).catch(() => {});
+      setPendingSave(null);
+      setShowEditDialog(false);
+      setError(t('errors.alreadyActive'));
+      return;
+    }
+
     const pending = pendingSave;
     setPendingSave(null);
     setShowEditDialog(false);
