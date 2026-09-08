@@ -2755,6 +2755,31 @@ function Workspace() {
         if (unmirroredTabIdsRef.current.has(action.tabId)) return;
         workspaceApply(actionToOp(action, undefined, activeConnections));
         return;
+      // A split can carry a tab into the new pane, and that `moveTabId` obeys
+      // the same rule as `move_tab`'s id: a tab the backend never opened must
+      // not be named in a mirrored op, or it splits into a pane it then cannot
+      // fill.
+      //
+      // Dropping the whole op is NOT the answer, though — `split_pane` mints
+      // pane and split ids, and both reducers mint them from the same op
+      // stream, so skipping it on one side alone would put the two id spaces
+      // permanently out of step (see persistence.ts's header note). The split
+      // is mirrored without the move instead: the backend builds the same pane,
+      // empty, which is all it could ever hold for a tab it does not have.
+      //
+      // A split the local reducer declines as pointless never reaches here —
+      // the `isNoOp` gate above has already returned (#369 review).
+      case 'split_pane':
+        workspaceApply(
+          actionToOp(
+            action.moveTabId && unmirroredTabIdsRef.current.has(action.moveTabId)
+              ? { ...action, moveTabId: undefined }
+              : action,
+            undefined,
+            activeConnections
+          )
+        );
+        return;
       // Ordered against both ids. A rename gives the tab a new id at once, so
       // its draft is mirrored under the new one while `rename_tab` is still on
       // its way: arriving first, that update finds no such tab and succeeds as

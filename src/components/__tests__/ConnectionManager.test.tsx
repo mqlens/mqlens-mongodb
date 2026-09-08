@@ -1783,17 +1783,28 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     });
 
     render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
-    await openEditorWith('mongodb://named-host:27017');
+    await openEditorWith('mongodb://someone:hunter2@named-host:27017/app');
     fireEvent.click(screen.getByTestId('editor-connect-btn'));
     await screen.findByTestId('connect-save-offer');
 
     // Declining to save is not declining to be identifiable: an empty name
-    // reaches the sidebar as a blank row.
+    // reaches the sidebar as a blank row. Clearing it here rather than before
+    // Connect is what actually reaches the fallback — before Connect, the
+    // offer's own prefill would fill it in and the fallback would never run.
     fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: '   ' } });
     fireEvent.click(screen.getByTestId('connect-skip-save-btn'));
 
     await waitFor(() => expect(handleConnect).toHaveBeenCalled());
-    expect(handleConnect.mock.calls[0][1]).toBe('named-host');
+    const name = handleConnect.mock.calls[0][1];
+    expect(name).toBe('named-host');
+    // And never the connection string. The name reaches pinned and favourite
+    // state, which writes it to localStorage in clear text — CodeQL flagged
+    // js/clear-text-storage-of-sensitive-data when this fell back to the URI.
+    // Masking the password is not enough: `user@host` is still a credential
+    // and an infrastructure detail. Only the host may be borrowed.
+    expect(name).not.toContain('@');
+    expect(name).not.toContain('someone');
+    expect(name).not.toContain('hunter2');
   });
 
   it('does not let the editor be dismissed out from under a save', async () => {

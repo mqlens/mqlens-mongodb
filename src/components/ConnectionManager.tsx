@@ -984,7 +984,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       // Never nameless: the display name is still editable while the offer is
       // up, and an empty one reaches the sidebar as a blank row that pinned and
       // favourite lookups cannot resolve by name (#369 review).
-      editorState.name.trim() || suggestConnectionName(editorState).trim() || maskUriPassword(pending.uri),
+      //
+      // The last resort is a literal, deliberately. Falling back to the URI —
+      // even with the password masked — puts `user@host` into a name that
+      // pinned and favourite state writes to localStorage in clear text, which
+      // is what CodeQL flagged js/clear-text-storage-of-sensitive-data on. It
+      // would also be a poor label: this branch is only reached when the URI
+      // has no host to take a name from, so there is nothing recognisable in
+      // it to show anyway.
+      // Stored profile data, not UI copy — intentionally English in every locale (i18n out of scope).
+      editorState.name.trim() || suggestConnectionName(editorState).trim() || 'Untitled Connection',
       pending.uri,
       pending.profileId,
       editorState.colorTag
