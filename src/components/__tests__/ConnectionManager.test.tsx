@@ -1989,6 +1989,37 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     expect(screen.getByTestId('connect-save-offer')).toBeInTheDocument();
   });
 
+  it('gives every trial connection an identity of its own', async () => {
+    const handleConnect = vi.fn();
+    let n = 0;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') {
+        n += 1;
+        return Promise.resolve(`conn-${n}`);
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+
+    for (const host of ['first-host', 'second-host']) {
+      await openEditorWith(`mongodb://${host}:27017`);
+      fireEvent.click(screen.getByTestId('editor-connect-btn'));
+      await screen.findByTestId('connect-save-offer');
+      fireEvent.click(screen.getByTestId('connect-skip-save-btn'));
+      await waitFor(() => expect(handleConnect).toHaveBeenCalledTimes(host === 'first-host' ? 1 : 2));
+    }
+
+    // The app dedupes active connections on profileId, so two trial sessions
+    // sharing one would mean the second silently never arrives. Uniqueness is
+    // the whole job of this id — it is a namespace, not a secret.
+    const [firstId, secondId] = handleConnect.mock.calls.map((c) => c[3]);
+    expect(firstId).toMatch(/^ephemeral:/);
+    expect(secondId).toMatch(/^ephemeral:/);
+    expect(firstId).not.toBe(secondId);
+  });
+
   it('releases a connection that arrives after the editor was dismissed', async () => {
     const handleConnect = vi.fn();
     const disconnected: string[] = [];

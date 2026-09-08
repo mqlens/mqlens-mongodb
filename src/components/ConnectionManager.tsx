@@ -97,11 +97,35 @@ interface TestStep {
   status: 'pending' | 'running' | 'success' | 'failed';
 }
 
+/** Last resort only: enough to stay unique within a session, see below. */
+let idSequence = 0;
+
+/**
+ * An id for a saved profile, and for the identity an unsaved connection
+ * travels under.
+ *
+ * What these need is uniqueness, not unpredictability — nothing authorises on
+ * them. But an ephemeral id is now also the namespace a trial session's saved
+ * queries and history live under, and CodeQL objects to `Math.random()`
+ * reaching a storage key (js/insecure-randomness). It is right to: weak
+ * randomness given a new job is worth two lines to fix rather than to argue
+ * about, so the randomness comes from `crypto` wherever there is any.
+ *
+ * The counter tail covers an environment with no `crypto` at all. It is still
+ * unique within a session, and unlike the old fallback it does not pretend to
+ * be random.
+ */
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+      b.toString(16).padStart(2, '0'),
+    ).join('');
+  }
+  idSequence += 1;
+  return `${Date.now().toString(36)}-${idSequence.toString(36)}`;
 };
 
 const BLANK_CONN = {
