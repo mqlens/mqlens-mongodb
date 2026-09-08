@@ -226,6 +226,16 @@ interface AIChatPanelProps {
   connectionId?: string;
   /** Connection display name — scopes History + session with db/collection. */
   connectionName?: string;
+  /**
+   * Identity for chat history, when it differs from the display name.
+   *
+   * A connection the user never saved can carry a saved profile's name (#364),
+   * and `connectionName` alone would then list, write into and treat as local
+   * that profile's conversations — including running their generated queries
+   * against the trial server. Defaults to `connectionName`, which is what this
+   * was scoped on before the distinction existed.
+   */
+  scopeKey?: string;
   databaseName?: string;
   collectionName: string;
   fields?: string[];
@@ -278,6 +288,7 @@ const composerClassName = cn(
 export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   connectionId,
   connectionName,
+  scopeKey,
   databaseName,
   collectionName,
   fields = [],
@@ -755,14 +766,19 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
   }, []);
   const nextChatId = () => `m${chatIdRef.current++}`;
 
+  // The namespace conversations belong to. Deliberately NOT what is sent to the
+  // agent as context further down — that stays the real connection name, since
+  // it is prose for a model rather than a key.
+  const chatScopeName = scopeKey ?? connectionName ?? '';
+
   const scope: ChatScope = useMemo(
     () => ({
-      connectionName: connectionName ?? '',
+      connectionName: chatScopeName,
       database: databaseName ?? '',
       collection: collectionName,
       variant,
     }),
-    [connectionName, databaseName, collectionName, variant]
+    [chatScopeName, databaseName, collectionName, variant]
   );
 
   // The chat this panel is writing to. A tab that has never had one gets an id
@@ -783,7 +799,7 @@ export const AIChatPanel: React.FC<AIChatPanelProps> = ({
    *  would target this collection with someone else's query. */
   const foreignChat =
     openScope !== null &&
-    (openScope.connectionName !== (connectionName ?? '') ||
+    (openScope.connectionName !== chatScopeName ||
       openScope.database !== (databaseName ?? '') ||
       openScope.collection !== collectionName ||
       openScope.variant !== variant);

@@ -3157,7 +3157,15 @@ function Workspace() {
           if (!matchesNamespaceScope(paletteNamespaceScope, { connectionName, db: t.db, collection: t.collection })) {
             return;
           }
-          const cq = await loadCollectionQueries(connectionName, t.db, t.collection);
+          // Keyed like every other reader of this store. The scope match above
+          // stays on the display name — that is what the user typed — but the
+          // load must not, or the palette lists a saved profile's queries as
+          // actions bound to a trial tab and runs them there (#369 review).
+          const cq = await loadCollectionQueries(
+            connectionQueryKeyFor(t.connectionId),
+            t.db,
+            t.collection,
+          );
           for (const s of cq.saved) {
             items.push({
               id: `saved:${t.id}:${s.id}`,

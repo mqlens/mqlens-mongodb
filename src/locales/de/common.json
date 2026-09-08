@@ -12,6 +12,7 @@
   },
   "save": "Speichern",
   "tabs": {
+    "activity": "Aktivität",
     "createView": "Neue View: {{db}}",
     "dump": "Dump: {{name}}",
     "export": "Export: {{collection}}",
@@ -26,8 +27,7 @@
     "tasks": "Aufgaben",
     "users": "Benutzer: {{name}}",
     "validation": "Validierung: {{collection}}",
-    "watch": "Beobachten: {{target}}",
-    "activity": "Aktivität"
+    "watch": "Beobachten: {{target}}"
   },
   "toast": {
     "aggregationPipelineApplied": "Aggregationspipeline angewendet",
@@ -56,8 +56,8 @@
     "deletedDocuments_other": "{{count}} Dokumente gelöscht",
     "deletedTitle": "Gelöscht",
     "documentDeletedFrom": "Dokument aus {{collection}} gelöscht",
-    "documentInsertedInto": "Dokument in {{collection}} eingefügt",
     "documentEditNotSynced": "Der Dokumententwurf dieses Tabs konnte nicht gespeichert werden. Der Tab wurde nicht verschoben.",
+    "documentInsertedInto": "Dokument in {{collection}} eingefügt",
     "documentSaveInProgress": "Warte, bis das Dokument gespeichert ist, bevor du diesen Tab verschiebst.",
     "documentSavedIn": "Dokument in {{collection}} gespeichert",
     "downloadFailed": "Herunterladen fehlgeschlagen: {{detail}}",
@@ -69,6 +69,7 @@
     "failedToDeleteIndex": "Index konnte nicht gelöscht werden: {{detail}}",
     "failedToDropUser": "Benutzer konnte nicht gelöscht werden: {{detail}}",
     "failedToSaveIndex": "Index konnte nicht gespeichert werden: {{detail}}",
+    "favoriteNeedsSavedConnection": "Speichere diese Verbindung, bevor du eine Abfrage favorisierst — Favoriten werden aus gespeicherten Verbindungen wiederhergestellt.",
     "fileDeleteFailed": "Löschen fehlgeschlagen: {{detail}}",
     "fileDeleted": "{{filename}} gelöscht",
     "fileDownloaded": "{{filename}} heruntergeladen",

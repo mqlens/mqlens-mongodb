@@ -2117,3 +2117,66 @@ JSON.stringify({ explanation: 'Here are the results.', queryType: 'find', filter
     expect(screen.getByTestId('chat-image-note')).toHaveTextContent(/under 5 MB/);
   });
 });
+
+describe('chat history scope (#369 review)', () => {
+  const scopesUsed = () =>
+    invokeMock.mock.calls
+      .filter((c: unknown[]) => c[0] === 'list_chats')
+      .map((c: unknown[]) => (c[1] as { scope?: { connectionName?: string } })?.scope?.connectionName);
+
+  it('scopes on the store key when one is given, not on the display name', async () => {
+    invokeMock.mockClear();
+    invokeMock.mockResolvedValue([]);
+
+    // A connection the user never saved can carry a saved profile's name. Left
+    // on the display name, this panel would list and write that profile's
+    // conversations — and treat them as local, so their generated queries could
+    // be run against the trial server.
+    render(
+      <AIChatPanel
+        variant="editor"
+        connectionId="conn-trial"
+        connectionName="Prod"
+        scopeKey="ephemeral:1111-2222"
+        databaseName="sales_db"
+        collectionName="orders"
+        isOpen
+        onClose={() => {}}
+        onInsertQuery={vi.fn()}
+        onInsertAndRunQuery={vi.fn()}
+      />,
+    );
+
+    // History is fetched when the dropdown opens, not on mount.
+    fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
+    await waitFor(() => expect(scopesUsed().length).toBeGreaterThan(0));
+    expect(scopesUsed()).toContain('ephemeral:1111-2222');
+    expect(scopesUsed()).not.toContain('Prod');
+  });
+
+  it('falls back to the display name when no store key is given', async () => {
+    invokeMock.mockClear();
+    invokeMock.mockResolvedValue([]);
+
+    // This is what the scope was before the distinction existed; a caller with
+    // no opinion has to keep getting exactly it.
+    render(
+      <AIChatPanel
+        variant="editor"
+        connectionId="conn-1"
+        connectionName="Prod"
+        databaseName="sales_db"
+        collectionName="orders"
+        isOpen
+        onClose={() => {}}
+        onInsertQuery={vi.fn()}
+        onInsertAndRunQuery={vi.fn()}
+      />,
+    );
+
+    // History is fetched when the dropdown opens, not on mount.
+    fireEvent.click(screen.getByTestId('ai-chat-history-btn'));
+    await waitFor(() => expect(scopesUsed().length).toBeGreaterThan(0));
+    expect(scopesUsed()).toContain('Prod');
+  });
+});

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { isEphemeralProfileId } from '../workspace/persistence';
 import { AIChatPanel, type ChatMessage } from './AIChatPanel';
 import { QueryEditor } from './QueryEditor';
 import { FindQueryBar } from './FindQueryBar';
@@ -632,6 +633,11 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // The stores were keyed on the display name before this prop existed, so a
   // caller with no opinion keeps exactly the old behaviour.
   const storeKey = queryStoreKey ?? connectionName;
+  // Favourites are keyed on the display name while the query itself lives under
+  // `storeKey`, so on a trial session the two never meet: the favourite is born
+  // pointing at nothing, reports the query as gone the moment it is followed,
+  // and could not survive a restart anyway (#369 review).
+  const canFavoriteQueries = !isEphemeralProfileId(storeKey);
 
   const refreshStoredQueries = React.useCallback(async () => {
     try {
@@ -1251,7 +1257,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     try {
       await saveQuery(storeKey, databaseName, collectionName, name.trim(), currentBuilderQuery());
       await refreshStoredQueries();
-      if (alsoFavorite) {
+      if (alsoFavorite && !canFavoriteQueries) {
+        notify('toast.favoriteNeedsSavedConnection', 'error');
+      } else if (alsoFavorite) {
         const cq = await loadCollectionQueries(storeKey, databaseName, collectionName);
         const saved = (cq.saved ?? []).find((s) => s.name === name.trim());
         if (saved) {
@@ -1259,13 +1267,21 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
           setFavoriteItems(loadFavoriteItems());
         }
       }
-      notify(alsoFavorite ? 'toast.querySavedAndFavorited' : 'toast.querySaved', 'success', { name: name.trim() });
+      notify(
+        alsoFavorite && canFavoriteQueries ? 'toast.querySavedAndFavorited' : 'toast.querySaved',
+        'success',
+        { name: name.trim() },
+      );
     } catch (e: any) {
       notify('toast.couldNotSaveQuery', 'error', { detail: e?.message || e });
     }
   };
 
   const handleToggleQueryFavorite = (sq: SavedQuery) => {
+    if (!canFavoriteQueries) {
+      notify('toast.favoriteNeedsSavedConnection', 'error');
+      return;
+    }
     setFavoriteItems((prev) => toggleFavoriteItem(prev, queryFavoriteEntry(sq)));
   };
 
@@ -2454,6 +2470,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 embedded
                 connectionId={connectionId}
                 connectionName={connectionName}
+                scopeKey={storeKey}
                 databaseName={databaseName}
                 collectionName={collectionName}
                 fields={availableFields}

@@ -69,6 +69,7 @@
     "failedToDeleteIndex": "Failed to delete index: {{detail}}",
     "failedToDropUser": "Failed to drop user: {{detail}}",
     "failedToSaveIndex": "Failed to save index: {{detail}}",
+    "favoriteNeedsSavedConnection": "Save this connection before favoriting a query — favorites are restored from saved connections.",
     "fileDeleted": "Deleted {{filename}}",
     "fileDeleteFailed": "Delete failed: {{detail}}",
     "fileDownloaded": "Downloaded {{filename}}",

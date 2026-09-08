@@ -1687,3 +1687,61 @@ describe('query storage namespace (#369 review)', () => {
     expect(keysUsedFor('load_collection_queries')).toContain('Prod');
   });
 });
+
+describe('query favorites on a connection that was never saved (#369 review)', () => {
+  const withSavedQuery = (storeKey?: string) => {
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({
+          saved: [{ id: 'q1', name: 'Recent orders', query: { filter: '{}' } }],
+          history: [],
+          default: null,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    return render(
+      <DocumentViewer
+        connectionName="Prod"
+        queryStoreKey={storeKey}
+        databaseName="sales_db"
+        collectionName="orders"
+        onExecute={vi.fn()}
+        onExplain={vi.fn()}
+        loading={false}
+      />,
+    );
+  };
+
+  it('refuses the favorite instead of writing one that points at nothing', async () => {
+    localStorage.clear();
+    withSavedQuery('ephemeral:1111-2222');
+
+    // The query lives under the ephemeral key while a favorite is keyed on the
+    // display name, so Sidebar.navigateToFavorite could never match the two —
+    // the favorite would report the query missing the moment it was followed.
+    // The saved-query list lives behind the Load Query dropdown.
+    fireEvent.click(await screen.findByRole('button', { name: /load query/i }));
+    const heart = await screen.findByTestId('favorite-saved-q1');
+    fireEvent.click(heart);
+
+    expect(await screen.findByText(/before favoriting a query/i)).toBeInTheDocument();
+    expect(localStorage.getItem('mqlens_favorites')).toBeNull();
+  });
+
+  it('still favorites a query on an ordinary saved connection', async () => {
+    localStorage.clear();
+    withSavedQuery('Prod');
+
+    // The saved-query list lives behind the Load Query dropdown.
+    fireEvent.click(await screen.findByRole('button', { name: /load query/i }));
+    const heart = await screen.findByTestId('favorite-saved-q1');
+    fireEvent.click(heart);
+
+    await waitFor(() =>
+      expect(localStorage.getItem('mqlens_favorites')).not.toBeNull(),
+    );
+  });
+});

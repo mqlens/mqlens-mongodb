@@ -145,6 +145,12 @@ vi.mock('../Sidebar', () => ({
       >
         Quick Connect Prod
       </button>
+      <button
+        data-testid="select-trial-collection-btn"
+        onClick={() => onSelectCollection('conn-trial', 'sales_db', 'customers')}
+      >
+        Select Collection On Trial
+      </button>
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
       </button>
@@ -3206,6 +3212,53 @@ describe('App Component', () => {
       await waitFor(() => {
         expect(calls.some((c) => c.cmd === 'connect_db' && c.args?.uri === 'mongodb://saved')).toBe(true);
       });
+    });
+
+    it('lists palette queries from the tab\'s own namespace, not a saved profile of the same name', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // Adopt a connection the user declined to save, carrying a name a saved
+      // profile could equally have.
+      fireEvent.click(screen.getAllByText('New connection')[0]);
+      fireEvent.click(await screen.findByTestId('mock-cm-adopt-trial-btn'));
+      await screen.findByTestId('sidebar-conn-conn-trial');
+
+      fireEvent.click(screen.getByTestId('select-trial-collection-btn'));
+      // Opening the tab loads its default query through the OTHER call site,
+      // which is already keyed correctly — leaving those calls in the list made
+      // this test pass with the palette still broken.
+      await waitFor(() => expect(calls.some((c) => c.cmd === 'load_collection_queries')).toBe(true));
+      calls.length = 0;
+
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      // The dynamic loader only runs once there is something to search for.
+      fireEvent.change(await screen.findByTestId('command-palette-input'), {
+        target: { value: 'orders' },
+      });
+
+      // The palette offers saved queries as actions bound to a tab. Loaded by
+      // display name, it would list the saved profile's queries and run them
+      // against the trial server.
+      await waitFor(() => {
+        expect(calls.some((c) => c.cmd === 'load_collection_queries')).toBe(true);
+      });
+      const keys = calls
+        .filter((c) => c.cmd === 'load_collection_queries')
+        .map((c) => c.args?.connectionName);
+      expect(keys.some((k: string) => k?.startsWith('ephemeral:'))).toBe(true);
+      expect(keys).not.toContain('Prod');
     });
 
     it('renames a watch tab to a watch id, not to the collection tab it would collide with', async () => {
