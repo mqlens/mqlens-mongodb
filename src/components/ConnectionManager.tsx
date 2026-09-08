@@ -606,6 +606,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   // back as `mongodb://mock:27017/?directConnection=true` — so every profile
   // would look modified the instant it was opened.
   const pristineEditorRef = useRef<string | null>(null);
+  // Bumped every time the editor closes. A `connect_db` still in flight
+  // compares against it to find out whether anyone is still waiting for the
+  // answer, since a server-selection timeout can leave the user looking at a
+  // dialog for half a minute and they are entitled to walk away from it.
+  const connectAttemptRef = useRef(0);
 
   // Initialize folders and load connection profiles
   useEffect(() => {
@@ -618,6 +623,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   // Escape closes the topmost layer: the nested editor dialog when it is
   // open, otherwise the manager itself.
   useEscapeClose(isOpen && showEditDialog, () => closeEditor());
+
+  useEffect(() => {
+    if (!showEditDialog) connectAttemptRef.current += 1;
+  }, [showEditDialog]);
   useEscapeClose(isOpen && !showEditDialog, onClose);
 
   const loadFoldersFromStorage = () => {
@@ -889,6 +898,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       return;
     }
 
+    const attempt = connectAttemptRef.current;
     setConnecting(true);
     setConnectError(null);
     setShowConnectErrDetail(false);
@@ -896,6 +906,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     try {
       const connId = await invoke<string>('connect_db', { uri, ssh });
+      // The editor was dismissed while this was in flight. There is no longer a
+      // surface to offer the connection on, and `pendingSave` set now would be
+      // an invisible handle that the next editor silently discards — so release
+      // it instead. Walking away from an attempt is a way of cancelling it.
+      if (attempt !== connectAttemptRef.current) {
+        try {
+          await invoke('disconnect_db', { id: connId });
+        } catch {
+          /* best effort: the session is already unreachable either way */
+        }
+        return;
+      }
       if (existing) {
         setShowEditDialog(false);
         onConnect(
@@ -919,7 +941,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           : { ...prev, name: suggestConnectionName(prev) },
       );
     } catch (err: any) {
-      setConnectError(String(err));
+      if (attempt === connectAttemptRef.current) setConnectError(String(err));
     } finally {
       setConnecting(false);
     }

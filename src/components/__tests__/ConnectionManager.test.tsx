@@ -1747,6 +1747,64 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     expect(handleConnect).not.toHaveBeenCalled();
   });
 
+  it('releases a connection that arrives after the editor was dismissed', async () => {
+    const handleConnect = vi.fn();
+    const disconnected: string[] = [];
+    let settle: ((id: string) => void) | null = null;
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return new Promise<string>((resolve) => { settle = resolve; });
+      if (cmd === 'disconnect_db') {
+        disconnected.push(args.id);
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://slow-host:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+
+    // Server selection can take half a minute, and the user is entitled to
+    // walk away from it. Nothing is pending yet, so the editor just closes.
+    await waitFor(() => expect(settle).not.toBeNull());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByTestId('connect-save-offer')).toBeNull();
+
+    // The answer arrives with nobody waiting for it. Held as `pendingSave` it
+    // would be an invisible handle the next editor silently discards, leaving
+    // the session open and unreachable — so it has to be given back.
+    settle!('conn-abandoned');
+    await waitFor(() => expect(disconnected).toEqual(['conn-abandoned']));
+    expect(handleConnect).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('connect-save-offer')).toBeNull();
+  });
+
+  it('still offers a connection that arrives while the editor is open', async () => {
+    const handleConnect = vi.fn();
+    const disconnected: string[] = [];
+    let settle: ((id: string) => void) | null = null;
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return new Promise<string>((resolve) => { settle = resolve; });
+      if (cmd === 'disconnect_db') {
+        disconnected.push(args.id);
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://slow-host:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+
+    // The generation guard must not fire for the ordinary slow connection.
+    await waitFor(() => expect(settle).not.toBeNull());
+    settle!('conn-patient');
+    await screen.findByTestId('connect-save-offer');
+    expect(disconnected).toEqual([]);
+  });
+
   it('says why Save did nothing when the name has been cleared', async () => {
     mockInvoke.mockImplementation((cmd) => {
       if (cmd === 'load_connection_profiles') return Promise.resolve([]);
