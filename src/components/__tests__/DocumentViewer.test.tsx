@@ -1638,3 +1638,52 @@ describe('DocumentViewer — typing does not re-render the results (#310)', () =
     expect(mockOnExplain).toHaveBeenCalledWith(JSON.stringify({ tier: 'gold' }));
   });
 });
+
+describe('query storage namespace (#369 review)', () => {
+  const keysUsedFor = (cmd: string) =>
+    mockInvoke.mock.calls.filter((c) => c[0] === cmd).map((c) => c[1]?.connectionName);
+
+  it('keys the stores on the store key, never on the display name', async () => {
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValue({ saved: [], history: [], default: null });
+
+    // A trial connection can be given a saved profile's display name, so the
+    // name cannot be what decides whose saved queries and history these are.
+    render(
+      <DocumentViewer
+        connectionName="Prod"
+        queryStoreKey="ephemeral:1111-2222"
+        databaseName="sales_db"
+        collectionName="orders"
+        onExecute={vi.fn()}
+        onExplain={vi.fn()}
+        loading={false}
+      />,
+    );
+
+    await waitFor(() => expect(keysUsedFor('load_collection_queries').length).toBeGreaterThan(0));
+    expect(keysUsedFor('load_collection_queries')).toContain('ephemeral:1111-2222');
+    expect(keysUsedFor('load_collection_queries')).not.toContain('Prod');
+  });
+
+  it('falls back to the display name when no store key is given', async () => {
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValue({ saved: [], history: [], default: null });
+
+    // These stores were keyed on the display name before the prop existed, so a
+    // caller with no opinion has to keep getting exactly that.
+    render(
+      <DocumentViewer
+        connectionName="Prod"
+        databaseName="sales_db"
+        collectionName="orders"
+        onExecute={vi.fn()}
+        onExplain={vi.fn()}
+        loading={false}
+      />,
+    );
+
+    await waitFor(() => expect(keysUsedFor('load_collection_queries').length).toBeGreaterThan(0));
+    expect(keysUsedFor('load_collection_queries')).toContain('Prod');
+  });
+});

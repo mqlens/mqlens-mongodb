@@ -1788,6 +1788,49 @@ describe('Sidebar Component', () => {
     expect(onConnectProfile.mock.calls[0][0]).toMatchObject({ id: 'profile-1', uri: 'mongodb://saved' });
   });
 
+  it('cannot unpin a saved shortcut from a trial row that shares its name', async () => {
+    localStorage.setItem(
+      'mqlens_pinned_collections',
+      JSON.stringify([{ kind: 'connection', connectionName: 'Prod' }]),
+    );
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          {
+            id: 'conn-trial',
+            name: 'Prod',
+            uri: 'mongodb://trial',
+            profileId: 'ephemeral:11111111-2222-3333-4444-555555555555',
+          },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    // Shortcut keys carry only a name, so the saved pin already looks "pinned"
+    // from this trial row and the menu offers Unpin. An addition-only guard
+    // would have let that delete the saved profile's shortcut. Nothing is
+    // trapped by refusing both directions: a shortcut can never have been made
+    // from a trial row in the first place.
+    const rows = await screen.findAllByText('Prod');
+    fireEvent.contextMenu(rows[rows.length - 1].closest('div')!);
+    fireEvent.click(screen.getByText(/unpin|pin to sidebar/i));
+
+    expect(JSON.parse(localStorage.getItem('mqlens_pinned_collections')!)).toEqual([
+      { kind: 'connection', connectionName: 'Prod' },
+    ]);
+  });
+
   it('shows empty-state hint when pinned section has no items', async () => {
     render(
       <Sidebar

@@ -763,9 +763,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleTogglePin = (entry: PinnedItem, connId: string) => {
     try {
       const wasPinned = isItemPinned(pinnedItems, entry);
-      // Only adding is refused. Removing has to keep working whatever the
-      // entry points at, or a shortcut could become impossible to clear.
-      if (!wasPinned && !canOutliveTheSession(connId)) {
+      // Refused in BOTH directions, not just for adding. Shortcut keys carry
+      // only a name, so a trial connection sharing one with a saved shortcut
+      // makes `isItemPinned` true — and an addition-only guard would then let
+      // the trial row delete the saved profile's shortcut, under a menu
+      // helpfully labelled "Unpin" (#369 review).
+      //
+      // Nothing is trapped by this: a shortcut can never have been created
+      // from a trial row in the first place, so there is none here to clear.
+      if (!canOutliveTheSession(connId)) {
         toast(t('toasts.shortcutNeedsSavedConnection', { name: entry.connectionName }), 'error');
         return;
       }
@@ -783,7 +789,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleToggleFavorite = (entry: FavoriteItem, connId: string) => {
     try {
       const wasFav = isItemFavorited(favoriteItems, entry);
-      if (!wasFav && !canOutliveTheSession(connId)) {
+      if (!canOutliveTheSession(connId)) {
         toast(t('toasts.shortcutNeedsSavedConnection', { name: entry.connectionName }), 'error');
         return;
       }

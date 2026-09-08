@@ -1441,6 +1441,25 @@ function Workspace() {
   const connectionNameFor = (connectionId: string): string =>
     activeConnections.find((c) => c.id === connectionId)?.name || connectionId;
 
+  /**
+   * The key a connection's saved queries, default query and history live under.
+   *
+   * Normally the display name, which is what these stores have always been
+   * keyed on. An unsaved connection gets its own ephemeral id instead: its name
+   * is editable and can be a saved profile's, and sharing a namespace would
+   * mean opening a collection ran the saved profile's default query against the
+   * trial server, while the trial's own history wrote back into the saved
+   * profile's (#369 review).
+   *
+   * Its entries are orphaned when the session ends, which is the right outcome
+   * for a connection the user declined to keep.
+   */
+  const connectionQueryKeyFor = (connectionId: string): string => {
+    const conn = activeConnections.find((c) => c.id === connectionId);
+    if (!conn) return connectionId;
+    return isEphemeralProfileId(conn.profileId) ? conn.profileId! : conn.name;
+  };
+
   // Never sit on a blank canvas — if every tab is closed, bring back Quick
   // Start. Main-window-only (Phase 3 Task 4): a secondary window has no
   // quickstart concept — the spec says an emptied secondary window closes
@@ -1583,7 +1602,7 @@ function Workspace() {
       let def: QueryDef | null = (savedQuery as QueryDef | undefined) ?? null;
       if (!def) {
         try {
-          const cq = await loadCollectionQueries(connectionNameFor(connectionId), dbName, collName);
+          const cq = await loadCollectionQueries(connectionQueryKeyFor(connectionId), dbName, collName);
           def = (cq.default as QueryDef | null) ?? null;
         } catch {
           def = null;
@@ -4527,6 +4546,7 @@ function Workspace() {
               key={tab.id}
               connectionId={tab.connectionId}
               connectionName={connectionName}
+              queryStoreKey={connectionQueryKeyFor(tab.connectionId)}
               connectionUser={connectionUser}
               databaseName={tab.db}
               collectionName={tab.collection}
