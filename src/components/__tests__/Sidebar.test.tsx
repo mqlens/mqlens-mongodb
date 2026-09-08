@@ -1706,6 +1706,44 @@ describe('Sidebar Component', () => {
     expect(await screen.findByTestId('pinned-item-conn::Local')).toBeInTheDocument();
   });
 
+  it('decides by connection, not by a display name a saved profile also uses', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-saved', name: 'Prod', uri: 'mongodb://saved', profileId: 'profile-1' },
+          {
+            id: 'conn-trial',
+            name: 'Prod',
+            uri: 'mongodb://trial',
+            profileId: 'ephemeral:11111111-2222-3333-4444-555555555555',
+          },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    // Duplicate profile names are supported and a trial connection's name is
+    // editable, so the two rows can collide. Looking the name up would find the
+    // saved connection first and wave this through — and the shortcut, which
+    // stores only the name, would then resolve to the wrong server.
+    const rows = await screen.findAllByText('Prod');
+    fireEvent.contextMenu(rows[1].closest('div')!);
+    fireEvent.click(screen.getByText('Pin to sidebar'));
+
+    expect(await screen.findByText(/before pinning it/i)).toBeInTheDocument();
+    expect(localStorage.getItem('mqlens_pinned_collections')).toBeNull();
+  });
+
   it('shows empty-state hint when pinned section has no items', async () => {
     render(
       <Sidebar

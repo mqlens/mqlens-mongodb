@@ -738,19 +738,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
    * one choke point cannot be half-applied, and connection, database and
    * collection shortcuts all fail for the same reason.
    */
-  const canOutliveTheSession = (connectionName: string): boolean => {
-    const conn = activeConnections.find((c) => c.name === connectionName);
+  // Takes the id of the connection the shortcut is being made FROM, never its
+  // name. Duplicate profile names are supported and a trial connection's name
+  // is editable, so a name can match a different, saved connection — and a
+  // name-based check would then clear the shortcut for the wrong server
+  // (#369 review).
+  const canOutliveTheSession = (connId: string): boolean => {
+    const conn = activeConnections.find((c) => c.id === connId);
     // Unknown means gone, not ephemeral — never block removing an existing
     // shortcut for a connection that is no longer open.
     return !conn || !isEphemeralProfileId(conn.profileId);
   };
 
-  const handleTogglePin = (entry: PinnedItem) => {
+  const handleTogglePin = (entry: PinnedItem, connId: string) => {
     try {
       const wasPinned = isItemPinned(pinnedItems, entry);
       // Only adding is refused. Removing has to keep working whatever the
       // entry points at, or a shortcut could become impossible to clear.
-      if (!wasPinned && !canOutliveTheSession(entry.connectionName)) {
+      if (!wasPinned && !canOutliveTheSession(connId)) {
         toast(t('toasts.shortcutNeedsSavedConnection', { name: entry.connectionName }), 'error');
         return;
       }
@@ -765,10 +770,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleToggleFavorite = (entry: FavoriteItem) => {
+  const handleToggleFavorite = (entry: FavoriteItem, connId: string) => {
     try {
       const wasFav = isItemFavorited(favoriteItems, entry);
-      if (!wasFav && !canOutliveTheSession(entry.connectionName)) {
+      if (!wasFav && !canOutliveTheSession(connId)) {
         toast(t('toasts.shortcutNeedsSavedConnection', { name: entry.connectionName }), 'error');
         return;
       }
@@ -1510,7 +1515,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     connectionName: conn.name,
                     db: dbName,
                     collection: collName,
-                  });
+                  }, connId);
                 }
               }}
             >
@@ -1539,7 +1544,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     connectionName: conn.name,
                     db: dbName,
                     collection: collName,
-                  });
+                  }, connId);
                 }
               }}
             >
@@ -1879,7 +1884,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     data-testid={`ctx-pin-conn-${conn.id}`}
                     onSelect={() => {
                       const entry = pinEntryForConnection(conn.id);
-                      if (entry) handleTogglePin(entry);
+                      if (entry) handleTogglePin(entry, conn.id);
                     }}
                   >
                     <Pin />
@@ -1894,7 +1899,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     className={ctxItemClass}
                     onSelect={() => {
                       const entry = favoriteEntryForConnection(conn.id);
-                      if (entry) handleToggleFavorite(entry);
+                      if (entry) handleToggleFavorite(entry, conn.id);
                     }}
                   >
                     <Heart />
@@ -2036,7 +2041,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   kind: 'database',
                                   connectionName: conn.name,
                                   db: dbName,
-                                })
+                                }, conn.id)
                               }
                             >
                               <Pin />
@@ -2055,7 +2060,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   kind: 'database',
                                   connectionName: conn.name,
                                   db: dbName,
-                                })
+                                }, conn.id)
                               }
                             >
                               <Heart />

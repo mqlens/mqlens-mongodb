@@ -965,14 +965,25 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         profileId: `${EPHEMERAL_PROFILE_PREFIX}${generateUUID()}`,
         state: tested,
       });
-      // Suggested from what was connected to, not from what the form happens to
-      // say now — a host typed while the connection was still opening belongs
-      // to a connection that was never made.
-      setEditorState((prev) =>
-        prev.name.trim() && prev.name !== BLANK_CONN.name
-          ? prev
-          : { ...prev, name: suggestConnectionName(tested) },
-      );
+      // The editor goes back to describing what was actually connected to. Its
+      // connection fields are off screen from here on, but the URI preview and
+      // the Export URI button beside the name are NOT — left on the live form
+      // they would show, and export, a URI nobody connected to, directly under a
+      // banner saying "Connected" (#369 review).
+      //
+      // Name, folder and colour are kept from the live form instead: those are
+      // the three things still on screen, and the only ones the offer is asking
+      // about. A name typed while the connection was opening is still a name the
+      // user chose for it, so it stands.
+      setEditorState((prev) => ({
+        ...tested,
+        name:
+          prev.name.trim() && prev.name !== BLANK_CONN.name
+            ? prev.name
+            : suggestConnectionName(tested),
+        folder: prev.folder,
+        colorTag: prev.colorTag,
+      }));
     } catch (err: any) {
       if (attempt === connectAttemptRef.current) setConnectError(String(err));
     } finally {

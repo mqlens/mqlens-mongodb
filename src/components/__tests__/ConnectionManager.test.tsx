@@ -1936,6 +1936,33 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     await waitFor(() => expect(handleConnect).toHaveBeenCalled());
     expect(handleConnect.mock.calls[0][5]).toBe('normal');
   });
+  it('shows the URI it connected to, not the one left in the form', async () => {
+    let settle: ((id: string) => void) | null = null;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return new Promise<string>((resolve) => { settle = resolve; });
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb://tested-host:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await waitFor(() => expect(settle).not.toBeNull());
+    fireEvent.change(screen.getByLabelText(/connection uri/i), {
+      target: { value: 'mongodb://typed-later:27017' },
+    });
+    settle!('conn-preview');
+    await screen.findByTestId('connect-save-offer');
+
+    // The URI preview and its Export button sit beside the name, above the
+    // fields the offer hides — so they stay on screen under a banner that says
+    // "Connected". Showing a host nobody connected to there, or exporting it as
+    // the working configuration, is the visible half of saving the wrong one.
+    const shown = screen.getByText(/^mongodb:\/\//);
+    expect(shown).toHaveTextContent('tested-host');
+    expect(shown).not.toHaveTextContent('typed-later');
+  });
+
   it('releases a connection that arrives after the editor was dismissed', async () => {
     const handleConnect = vi.fn();
     const disconnected: string[] = [];
