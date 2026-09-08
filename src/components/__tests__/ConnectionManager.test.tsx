@@ -1963,6 +1963,32 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     expect(shown).not.toHaveTextContent('typed-later');
   });
 
+  it('does not answer the save offer when Escape was meant for the export dialog', async () => {
+    const handleConnect = vi.fn();
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-export-escape');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+
+    fireEvent.click(screen.getByTestId('editor-export-uri-btn'));
+    await screen.findByTestId('export-uri-dialog');
+
+    // The export dialog is its own Radix layer and dismisses itself. This
+    // listener is on window, so the same keypress reached it too — and now that
+    // the editor's Escape answers the save offer, it would have silently
+    // chosen "Don't save" and closed the manager underneath.
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(handleConnect).not.toHaveBeenCalled();
+    expect(screen.getByTestId('connect-save-offer')).toBeInTheDocument();
+  });
+
   it('releases a connection that arrives after the editor was dismissed', async () => {
     const handleConnect = vi.fn();
     const disconnected: string[] = [];

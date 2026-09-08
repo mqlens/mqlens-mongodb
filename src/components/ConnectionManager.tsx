@@ -642,12 +642,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   // Escape closes the topmost layer: the nested editor dialog when it is
   // open, otherwise the manager itself.
-  useEscapeClose(isOpen && showEditDialog, () => closeEditor());
+  //
+  // Both stand down while the export or new-folder dialog is up. Those are
+  // Radix layers of their own and dismiss themselves on Escape; this listener
+  // sits on window, so the same keypress reached it too and closed what was
+  // underneath. Harmless when that only dropped a dialog — but the editor's
+  // Escape now answers the save offer, so dismissing an export preview would
+  // have silently chosen 'Don't save' and taken the manager with it
+  // (#369 review).
+  const nestedLayerOpen = !!exportDialog || showFolderDialog;
+  useEscapeClose(isOpen && showEditDialog && !nestedLayerOpen, () => closeEditor());
 
   useEffect(() => {
     if (!showEditDialog) connectAttemptRef.current += 1;
   }, [showEditDialog]);
-  useEscapeClose(isOpen && !showEditDialog, onClose);
+  useEscapeClose(isOpen && !showEditDialog && !nestedLayerOpen, onClose);
 
   const loadFoldersFromStorage = () => {
     const { folders: currentFolders, profileFolderMap: map } = loadConnectionFolders();

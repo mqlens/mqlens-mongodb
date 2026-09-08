@@ -507,8 +507,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     'local-resources': true,
   });
 
+  /**
+   * The open connection a saved shortcut's name refers to, if any.
+   *
+   * Unsaved connections are skipped. Their names are editable and can be set
+   * to anything, including a saved profile's — and every stored pin, favourite
+   * and query target is only a name. Answering with a trial session would run
+   * a shortcut the user made for their saved server against a different one
+   * they were only trying out (#369 review).
+   */
   const connectionIdForName = (name: string): string | null =>
-    activeConnections.find((c) => c.name === name)?.id ?? null;
+    activeConnections.find((c) => c.name === name && !isEphemeralProfileId(c.profileId))?.id ??
+    null;
 
   const ensureConnection = async (connectionName: string): Promise<string | null> => {
     const existing = connectionIdForName(connectionName);

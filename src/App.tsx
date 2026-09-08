@@ -90,6 +90,7 @@ import {
 } from './workspace/workspaceStore';
 import {
   toPersistedTab,
+  isEphemeralProfileId,
   toDisconnectedSnapshot,
   rebindConnection,
   toProfileSpaceId,
@@ -1127,7 +1128,13 @@ function Workspace() {
 
   const handleQuickConnect = async (profile: ConnectionProfile): Promise<string | null> => {
     const existing = activeConnections.find(
-      (c) => c.profileId === profile.id || c.name === profile.name,
+      (c) =>
+        c.profileId === profile.id ||
+        // Matching on name is a convenience for a profile reconnecting under a
+        // new session id. An unsaved connection must not answer to it: its name
+        // is editable and can be set to this profile's, and quick-connect would
+        // then hand back a session pointing at a different server (#369 review).
+        (c.name === profile.name && !isEphemeralProfileId(c.profileId)),
     );
     if (existing) return existing.id;
     try {

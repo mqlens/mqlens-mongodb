@@ -1744,6 +1744,50 @@ describe('Sidebar Component', () => {
     expect(localStorage.getItem('mqlens_pinned_collections')).toBeNull();
   });
 
+  it('opens a saved shortcut against the saved server, not a trial one sharing its name', async () => {
+    localStorage.setItem(
+      'mqlens_pinned_collections',
+      JSON.stringify([{ kind: 'connection', connectionName: 'Prod' }]),
+    );
+    const onConnectProfile = vi.fn().mockResolvedValue('conn-saved');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'load_connection_profiles') {
+        return Promise.resolve([{ id: 'profile-1', name: 'Prod', uri: 'mongodb://saved' }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          {
+            id: 'conn-trial',
+            name: 'Prod',
+            uri: 'mongodb://trial',
+            profileId: 'ephemeral:11111111-2222-3333-4444-555555555555',
+          },
+        ]}
+        onConnectProfile={onConnectProfile}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    // The shortcut stores only a name, and the trial connection has been given
+    // that same name. Answering with the open trial session would run a
+    // shortcut made for the saved server against a different one.
+    fireEvent.click(screen.getByRole('button', { name: /pinned/i }));
+    fireEvent.click(await screen.findByTestId('pinned-item-conn::Prod'));
+
+    await waitFor(() => expect(onConnectProfile).toHaveBeenCalled());
+    expect(onConnectProfile.mock.calls[0][0]).toMatchObject({ id: 'profile-1', uri: 'mongodb://saved' });
+  });
+
   it('shows empty-state hint when pinned section has no items', async () => {
     render(
       <Sidebar

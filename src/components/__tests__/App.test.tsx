@@ -124,7 +124,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile }: any) => (
     <div data-testid="mock-sidebar">
       {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
           `activeConnections` prop for its "Connections" tree — lets tests
@@ -135,6 +135,16 @@ vi.mock('../Sidebar', () => ({
           <li key={c.id} data-testid={`sidebar-conn-${c.id}`}>{c.name}</li>
         ))}
       </ul>
+      {/* Quick-connect seam: the real Sidebar reaches this from a pinned or
+          favourite shortcut, which stores only a connection NAME. */}
+      <button
+        data-testid="quick-connect-prod-btn"
+        onClick={() =>
+          onConnectProfile?.({ id: 'profile-1', name: 'Prod', uri: 'mongodb://saved', ssh: null })
+        }
+      >
+        Quick Connect Prod
+      </button>
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
       </button>
@@ -213,6 +223,21 @@ vi.mock('../ConnectionManager', () => ({
           onClick={() => onConnect('cm-live-1', 'Staging Cluster', 'mongodb://staging', 'p-cm', '#fff')}
         >
           Connect
+        </button>
+        {/* Adopting a connection the user chose not to save (#364): it carries an
+            ephemeral profile id, and a display name they were free to type. */}
+        <button
+          data-testid="mock-cm-adopt-trial-btn"
+          onClick={() =>
+            onConnect(
+              'conn-trial',
+              'Prod',
+              'mongodb://trial',
+              'ephemeral:11111111-2222-3333-4444-555555555555',
+            )
+          }
+        >
+          Adopt Trial
         </button>
       </div>
     ) : null,
@@ -3151,6 +3176,36 @@ describe('App Component', () => {
       });
       const splitCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'split_pane');
       expect(splitCalls).toHaveLength(1);
+    });
+
+    it('quick-connects a profile rather than reusing a trial session with its name', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'connect_db') return Promise.resolve('conn-from-profile');
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // An unsaved connection is adopted, then carries the same display name
+      // as a saved profile — its name is editable right up to adoption, so
+      // this is an ordinary thing to end up with by accident.
+      fireEvent.click(screen.getAllByText('New connection')[0]);
+      fireEvent.click(await screen.findByTestId('mock-cm-adopt-trial-btn'));
+      await screen.findByTestId('sidebar-conn-conn-trial');
+
+      fireEvent.click(screen.getByTestId('quick-connect-prod-btn'));
+
+      // Matching on name is a convenience for a profile reconnecting under a
+      // new session id. Handing back the trial session instead would run the
+      // shortcut against a server the user was only trying out.
+      await waitFor(() => {
+        expect(calls.some((c) => c.cmd === 'connect_db' && c.args?.uri === 'mongodb://saved')).toBe(true);
+      });
     });
 
     it('renames a watch tab to a watch id, not to the collection tab it would collide with', async () => {
