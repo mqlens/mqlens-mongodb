@@ -590,7 +590,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   // to outlive that. Every path out of the editor adopts it (see
   // `closeEditor`), so a trial connection can never be orphaned in the backend.
   const [pendingSave, setPendingSave] = useState<
-    { connId: string; uri: string; ssh: SshConfig | null; profileId: string } | null
+    {
+      connId: string;
+      uri: string;
+      ssh: SshConfig | null;
+      profileId: string;
+      // The editor exactly as it stood when Connect was pressed. The fields go
+      // off screen once the offer is up, but they are live for as long as
+      // `connect_db` takes — which can be a server-selection timeout's worth of
+      // seconds — so anything the offer says about the connection has to come
+      // from here rather than from the form (#369 review). Only the name,
+      // folder and colour still on screen are read live.
+      state: typeof BLANK_CONN;
+    } | null
   >(null);
   const [connecting, setConnecting] = useState(false);
   // Raw driver text from a failed editor Connect, kept apart from `testResult`
@@ -824,7 +836,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
    * leave the editor open.
    */
   const persistEditorProfile = async (
-    tested?: { uri: string; ssh: SshConfig | null },
+    tested?: { uri: string; ssh: SshConfig | null; state: typeof BLANK_CONN },
   ): Promise<ConnectionProfile | null> => {
     if (!editorState.name.trim()) {
       setError(t('errors.displayNameRequired'));
@@ -845,8 +857,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       color_tag: editorState.colorTag
         ? normalizeHexColor(editorState.colorTag) ?? editorState.colorTag
         : null,
-      mcp_enabled: editorState.mcpEnabled,
-      connection_mode: editorState.connectionMode,
+      mcp_enabled: tested ? tested.state.mcpEnabled : editorState.mcpEnabled,
+      connection_mode: tested ? tested.state.connectionMode : editorState.connectionMode,
     };
 
     setLoading(true);
@@ -906,6 +918,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       return;
     }
 
+    // Held by reference, which is a true snapshot: editorState is only ever
+    // replaced with a fresh object, never mutated in place.
+    const tested = editorState;
     const attempt = connectAttemptRef.current;
     setConnecting(true);
     setConnectError(null);
@@ -948,11 +963,15 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         uri,
         ssh,
         profileId: `${EPHEMERAL_PROFILE_PREFIX}${generateUUID()}`,
+        state: tested,
       });
+      // Suggested from what was connected to, not from what the form happens to
+      // say now — a host typed while the connection was still opening belongs
+      // to a connection that was never made.
       setEditorState((prev) =>
         prev.name.trim() && prev.name !== BLANK_CONN.name
           ? prev
-          : { ...prev, name: suggestConnectionName(prev) },
+          : { ...prev, name: suggestConnectionName(tested) },
       );
     } catch (err: any) {
       if (attempt === connectAttemptRef.current) setConnectError(String(err));
@@ -993,13 +1012,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       // has no host to take a name from, so there is nothing recognisable in
       // it to show anyway.
       // Stored profile data, not UI copy — intentionally English in every locale (i18n out of scope).
-      editorState.name.trim() || suggestConnectionName(editorState).trim() || 'Untitled Connection',
+      editorState.name.trim() || suggestConnectionName(pending.state).trim() || 'Untitled Connection',
       pending.uri,
       pending.profileId,
       editorState.colorTag
         ? normalizeHexColor(editorState.colorTag) ?? editorState.colorTag
         : undefined,
-      editorState.connectionMode,
+      pending.state.connectionMode,
     );
   };
 
@@ -1025,7 +1044,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   /** Keep the connection that just worked, then open it under its new profile. */
   const handleSaveAndOpen = async () => {
     if (!pendingSave) return;
-    const profile = await persistEditorProfile({ uri: pendingSave.uri, ssh: pendingSave.ssh });
+    const profile = await persistEditorProfile({
+      uri: pendingSave.uri,
+      ssh: pendingSave.ssh,
+      state: pendingSave.state,
+    });
     if (!profile) return;
     const pending = pendingSave;
     setPendingSave(null);

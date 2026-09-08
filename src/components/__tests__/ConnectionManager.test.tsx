@@ -1838,6 +1838,104 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     expect(handleConnect.mock.calls[0][3]).not.toMatch(/^ephemeral:/);
   });
 
+  it('ignores edits made while the connection was still opening', async () => {
+    const handleConnect = vi.fn();
+    let saved: any = null;
+    let settle: ((id: string) => void) | null = null;
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(saved ? [saved] : []);
+      if (cmd === 'connect_db') {
+        expect(args.uri).toBe('mongodb://tested-host:27017');
+        return new Promise<string>((resolve) => { settle = resolve; });
+      }
+      if (cmd === 'save_connection_profile') {
+        saved = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://tested-host:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await waitFor(() => expect(settle).not.toBeNull());
+
+    // The fields only go off screen once the offer is up. Until then they are
+    // live, and server selection can take half a minute.
+    fireEvent.change(screen.getByLabelText(/connection uri/i), {
+      target: { value: 'mongodb://typed-later:27017' },
+    });
+    settle!('conn-tested');
+    await screen.findByTestId('connect-save-offer');
+
+    // Everything the offer says has to describe what was connected to. A name
+    // suggested from a host nobody connected to is the visible half of the
+    // same mistake as saving one.
+    expect(screen.getByLabelText(/display name/i)).toHaveValue('tested-host');
+
+    fireEvent.click(screen.getByTestId('connect-save-btn'));
+    await waitFor(() => expect(saved).not.toBeNull());
+    expect(saved.uri).toBe('mongodb://tested-host:27017');
+    await waitFor(() => expect(handleConnect).toHaveBeenCalled());
+    expect(handleConnect.mock.calls[0][2]).toBe('mongodb://tested-host:27017');
+  });
+
+  it('adopts an unsaved connection under the host it actually reached', async () => {
+    const handleConnect = vi.fn();
+    let settle: ((id: string) => void) | null = null;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return new Promise<string>((resolve) => { settle = resolve; });
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://tested-host:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await waitFor(() => expect(settle).not.toBeNull());
+    fireEvent.change(screen.getByLabelText(/connection uri/i), {
+      target: { value: 'mongodb://typed-later:27017' },
+    });
+    settle!('conn-adopted');
+    await screen.findByTestId('connect-save-offer');
+
+    // Clearing the name sends adoption to its fallback, which must derive from
+    // the snapshot too — not from a form that has moved on.
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: '  ' } });
+    fireEvent.click(screen.getByTestId('connect-skip-save-btn'));
+
+    await waitFor(() => expect(handleConnect).toHaveBeenCalled());
+    expect(handleConnect.mock.calls[0][1]).toBe('tested-host');
+    expect(handleConnect.mock.calls[0][2]).toBe('mongodb://tested-host:27017');
+  });
+
+  it('carries the safeguard the connection was opened under, not a later one', async () => {
+    const handleConnect = vi.fn();
+    let settle: ((id: string) => void) | null = null;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return new Promise<string>((resolve) => { settle = resolve; });
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://tested-host:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await waitFor(() => expect(settle).not.toBeNull());
+
+    // The mode control is still reachable while the connection is opening.
+    // Everything the offer hands over describes the attempt that was made, so
+    // a mode chosen after it was dispatched belongs to a connection that was
+    // never opened. (If read-only should instead win here on safety grounds,
+    // that is a deliberate exception to the rule, not an accident of it.)
+    fireEvent.click(screen.getByTestId('connection-mode-read_only'));
+    settle!('conn-mode');
+    await screen.findByTestId('connect-save-offer');
+    fireEvent.click(screen.getByTestId('connect-skip-save-btn'));
+
+    await waitFor(() => expect(handleConnect).toHaveBeenCalled());
+    expect(handleConnect.mock.calls[0][5]).toBe('normal');
+  });
   it('releases a connection that arrives after the editor was dismissed', async () => {
     const handleConnect = vi.fn();
     const disconnected: string[] = [];
