@@ -1103,6 +1103,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   /** Keep the connection that just worked, then open it under its new profile. */
   const handleSaveAndOpen = async () => {
     if (!pendingSave) return;
+    // Checked again here, not only before connecting. The offer can sit on
+    // screen for as long as the user likes, and another window can connect this
+    // same profile in the meantime — this connection has not been announced
+    // yet, so nothing stops it. Saving then would overwrite the profile and
+    // hand over a second live id, which App drops as a duplicate by profileId
+    // while still publishing its metadata: the visible session would point at
+    // the old server under a profile now describing the new one, and this
+    // connection would be unreachable (#369 review).
+    const target = editMode === 'edit' && selectedId ? selectedId : null;
+    if (target && activeConnections.some((c) => c.profileId === target)) {
+      setError(t('errors.alreadyActive'));
+      return;
+    }
     const profile = await persistEditorProfile({
       uri: pendingSave.uri,
       ssh: pendingSave.ssh,

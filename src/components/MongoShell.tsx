@@ -69,6 +69,14 @@ interface MongoshCommandOutput {
 interface MongoShellProps {
   connectionId: string;
   connectionName: string;
+  /**
+   * Identity for this connection's AI chat history, when it differs from the
+   * display name — see AIChatPanel's own `scopeKey`. Without it a shell on an
+   * unsaved connection lists and writes a saved profile's shell conversations
+   * and treats them as local, so a command generated for that server can be run
+   * here (#369 review).
+   */
+  scopeKey?: string;
   connectionUri: string;
   databaseName: string;
   collectionName?: string;
@@ -331,6 +339,7 @@ const buildStartupLines = (
 export const MongoShell: React.FC<MongoShellProps> = ({
   connectionId,
   connectionName,
+  scopeKey,
   connectionUri,
   databaseName,
   collectionName,
@@ -1762,6 +1771,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       variant="shell"
       connectionId={connectionId}
       connectionName={connectionName}
+      scopeKey={scopeKey}
       databaseName={currentDb}
       collectionName={aiCollection}
       isOpen={isAIOpen}

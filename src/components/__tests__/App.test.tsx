@@ -3261,6 +3261,40 @@ describe('App Component', () => {
       expect(keys).not.toContain('Prod');
     });
 
+    it('keys history writes to the tab\'s own namespace, not a saved profile of the same name', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getAllByText('New connection')[0]);
+      fireEvent.click(await screen.findByTestId('mock-cm-adopt-trial-btn'));
+      await screen.findByTestId('sidebar-conn-conn-trial');
+
+      // Merely opening a collection records history. Keyed by display name it
+      // would append the trial server's query to the saved profile's history,
+      // even though reads and saved queries are already isolated.
+      fireEvent.click(screen.getByTestId('select-trial-collection-btn'));
+
+      await waitFor(() => {
+        expect(calls.some((c) => c.cmd === 'record_history')).toBe(true);
+      });
+      const keys = calls
+        .filter((c) => c.cmd === 'record_history')
+        .map((c) => c.args?.connectionName);
+      expect(keys.some((k: string) => k?.startsWith('ephemeral:'))).toBe(true);
+      expect(keys).not.toContain('Prod');
+    });
+
     it('renames a watch tab to a watch id, not to the collection tab it would collide with', async () => {
       // Falling through to the generic `<connection>.<db>.<collection>` form
       // mints the id an ordinary collection tab already uses, and abandons the

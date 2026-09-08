@@ -2064,6 +2064,66 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     await screen.findByTestId('connect-save-offer');
   });
 
+  it('will not save onto a profile another window connected while the offer waited', async () => {
+    const handleConnect = vi.fn();
+    const calls: string[] = [];
+    const profile = {
+      id: 'profile-1',
+      name: 'Mock DB 1',
+      uri: 'mongodb://mock',
+      ssh: null,
+      color_tag: null,
+      connection_mode: 'normal',
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      calls.push(cmd);
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-ours');
+      if (cmd === 'save_connection_profile') return Promise.resolve();
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    const { rerender } = render(
+      <ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} activeConnections={[]} />,
+    );
+    fireEvent.click((await screen.findAllByText('Mock DB 1'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // Edited, so this is an offer rather than a plain reconnect.
+    fireEvent.change(await screen.findByLabelText(/display name/i), {
+      target: { value: 'Mock DB 1 (edited)' },
+    });
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+
+    // Another window connects the same profile while the offer sits there.
+    // Nothing stopped it: this connection has not been announced yet.
+    // Wrapped again: rerender replaces the whole tree, and this suite's render
+    // helper is what supplies the DialogProvider.
+    rerender(
+      <DialogProvider>
+        <ConnectionManager
+          isOpen
+          onClose={() => {}}
+          onConnect={handleConnect}
+          activeConnections={[
+            { id: 'live-elsewhere', profileId: 'profile-1', name: 'Mock DB 1', uri: 'mongodb://mock' },
+          ]}
+        />
+      </DialogProvider>,
+    );
+
+    calls.length = 0;
+    fireEvent.click(screen.getByTestId('connect-save-btn'));
+
+    // Saving would overwrite the profile and hand over a second live id that
+    // App drops as a duplicate, leaving this session unreachable under a
+    // profile that now describes a different server.
+    expect(await screen.findByTestId('editor-error')).toHaveTextContent(/already active/i);
+    expect(calls).not.toContain('save_connection_profile');
+    expect(handleConnect).not.toHaveBeenCalled();
+  });
+
   it('releases a connection that arrives after the editor was dismissed', async () => {
     const handleConnect = vi.fn();
     const disconnected: string[] = [];

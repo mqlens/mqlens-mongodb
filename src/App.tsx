@@ -1510,7 +1510,7 @@ function Workspace() {
         const parsedResults = resultStrs.map(s => JSON.parse(s));
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
         // History is best-effort: never surface an error after a successful run.
-        recordHistory(connectionNameFor(connectionId), dbName, collName, {
+        recordHistory(connectionQueryKeyFor(connectionId), dbName, collName, {
           queryType: 'aggregate',
           pipeline,
         }).catch(() => {});
@@ -1533,7 +1533,7 @@ function Workspace() {
         const parsedResults = resultStrs.map(s => JSON.parse(s));
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastQuery: q } : t));
         // History is best-effort: never surface an error after a successful run.
-        recordHistory(connectionNameFor(connectionId), dbName, collName, {
+        recordHistory(connectionQueryKeyFor(connectionId), dbName, collName, {
           queryType: 'find',
           filter: JSON.parse(q.filter || '{}'),
           sort: JSON.parse(q.sort || '{}'),
@@ -3257,7 +3257,7 @@ function Workspace() {
       // local `lastAggregate: undefined` above.
       mirrorUpdateTabState(tab.id, activeConnections, { lastQuery: query, lastAggregate: null });
       // History is best-effort: never surface an error after a successful run.
-      recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
+      recordHistory(connectionQueryKeyFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'find',
         filter: JSON.parse(query.filter || '{}'),
         sort: JSON.parse(query.sort || '{}'),
@@ -3362,7 +3362,7 @@ function Workspace() {
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
       mirrorUpdateTabState(tab.id, activeConnections, { lastAggregate: pipeline });
-      recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
+      recordHistory(connectionQueryKeyFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'aggregate',
         pipeline,
       }).catch(() => {});
@@ -4880,6 +4880,7 @@ function Workspace() {
               key={`${tab.id}:${tab.initialShellCommand || ''}`}
               connectionId={tab.connectionId}
               connectionName={connectionName}
+              scopeKey={connectionQueryKeyFor(tab.connectionId)}
               connectionUri={activeConnection?.uri || ''}
               databaseName={tab.db}
               collectionName={tab.collection || undefined}
