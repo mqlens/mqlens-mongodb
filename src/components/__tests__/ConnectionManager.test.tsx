@@ -1747,6 +1747,86 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     expect(handleConnect).not.toHaveBeenCalled();
   });
 
+  it('hands the connection over once when Escape reaches both listeners', async () => {
+    const handleConnect = vi.fn();
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-once');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+
+    // One Escape, from inside the dialog where a real one comes from. It
+    // bubbles to document, where Radix dismisses the layer, and on to window,
+    // where useEscapeClose is listening — two handlers for one event, both
+    // reading the same pendingSave because neither has re-rendered yet.
+    fireEvent.keyDown(screen.getByTestId('connect-save-offer'), {
+      key: 'Escape',
+      bubbles: true,
+    });
+
+    await waitFor(() => expect(handleConnect).toHaveBeenCalled());
+    // Twice would re-broadcast metadata, rebind tabs and refresh, all again.
+    expect(handleConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('never hands over a nameless connection', async () => {
+    const handleConnect = vi.fn();
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-nameless');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://named-host:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+
+    // Declining to save is not declining to be identifiable: an empty name
+    // reaches the sidebar as a blank row.
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: '   ' } });
+    fireEvent.click(screen.getByTestId('connect-skip-save-btn'));
+
+    await waitFor(() => expect(handleConnect).toHaveBeenCalled());
+    expect(handleConnect.mock.calls[0][1]).toBe('named-host');
+  });
+
+  it('does not let the editor be dismissed out from under a save', async () => {
+    const handleConnect = vi.fn();
+    let finishSave: (() => void) | null = null;
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-slow-save');
+      if (cmd === 'save_connection_profile') {
+        return new Promise<void>((resolve) => { finishSave = () => resolve(); });
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+    fireEvent.click(screen.getByTestId('connect-save-btn'));
+    await waitFor(() => expect(finishSave).not.toBeNull());
+
+    // Escaping here would adopt under the throwaway id while the write is still
+    // going, and the write would then hand the same session over again under
+    // the saved profile's id — two identities for one connection.
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(handleConnect).not.toHaveBeenCalled();
+    expect(screen.getByTestId('connect-save-offer')).toBeInTheDocument();
+
+    finishSave!();
+    await waitFor(() => expect(handleConnect).toHaveBeenCalledTimes(1));
+    expect(handleConnect.mock.calls[0][3]).not.toMatch(/^ephemeral:/);
+  });
+
   it('releases a connection that arrives after the editor was dismissed', async () => {
     const handleConnect = vi.fn();
     const disconnected: string[] = [];

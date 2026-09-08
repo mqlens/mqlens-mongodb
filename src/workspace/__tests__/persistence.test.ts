@@ -4,6 +4,7 @@ import {
   toDisconnectedSnapshot,
   rebindConnection,
   toProfileSpaceId,
+  isEphemeralProfileId,
   toLiveSpaceId,
   materializeArrivingTab,
   carriedDocumentEdit,
@@ -666,5 +667,44 @@ describe('actionToOp', () => {
     const expected = opsByType.get('rename_tab'); // { type, old_id, new_id }
     const action: WorkspaceAction = { type: 'rename_tab', oldId: expected!.old_id as string, newId: expected!.new_id as string };
     expect(actionToOp(action)).toEqual({ ...expected, window_id: 'main' });
+  });
+});
+
+describe('tabs on a connection that was never saved (#369 review)', () => {
+  const tab: PersistableTab = {
+    id: 'live-conn-1:users',
+    connectionId: 'live-conn-1',
+    type: 'collection',
+    db: 'app',
+    collection: 'users',
+  };
+
+  it('are not persisted, because there is no profile to reconnect them to', () => {
+    // Persisted, the id becomes `profile:ephemeral:...`, and on restart
+    // handleReconnectProfile resolves that against load_connection_profiles —
+    // which can never list it. The tab would be stuck on "profile missing".
+    const ephemeral = {
+      id: 'live-conn-1',
+      profileId: 'ephemeral:11111111-2222-3333-4444-555555555555',
+      name: 'trial',
+    };
+    expect(toPersistedTab(tab, ephemeral, undefined)).toBeNull();
+  });
+
+  it('are persisted as normal once the connection has been saved', () => {
+    const saved = { id: 'live-conn-1', profileId: 'profile-1', name: 'Prod' };
+    const persisted = toPersistedTab(tab, saved, undefined);
+    expect(persisted).not.toBeNull();
+    expect(persisted!.profileId).toBe('profile-1');
+    expect(persisted!.id).toBe('profile:profile-1:users');
+  });
+
+  it('recognises an ephemeral id only by its own prefix', () => {
+    expect(isEphemeralProfileId('ephemeral:abc')).toBe(true);
+    expect(isEphemeralProfileId('profile-1')).toBe(false);
+    expect(isEphemeralProfileId('')).toBe(false);
+    expect(isEphemeralProfileId(undefined)).toBe(false);
+    // Not a prefix match anywhere else in the string.
+    expect(isEphemeralProfileId('not-ephemeral:abc')).toBe(false);
   });
 });

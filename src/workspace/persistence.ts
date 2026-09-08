@@ -148,6 +148,15 @@ export interface RestoredTab {
 // `toPersistedTab` returning null for it is what App.tsx's `dispatchWorkspace`
 // reads to populate `unmirroredTabIdsRef`, so no separate change is needed.
 const NON_PERSISTED_TYPES = new Set<QueryTabType>(['export', 'import', 'generate']);
+/**
+ * Marks a connection the user opened but never saved (#364). Connection ids
+ * from `connect_db` are session-scoped, so an unsaved connection still needs
+ * *some* stable identity while it is open — the app dedupes on it — but that
+ * identity is not a profile and will never be one.
+ */
+export const EPHEMERAL_PROFILE_PREFIX = 'ephemeral:';
+export const isEphemeralProfileId = (profileId: string | undefined | null): boolean =>
+  !!profileId && profileId.startsWith(EPHEMERAL_PROFILE_PREFIX);
 // These tab kinds carry no connection at all; pass their id through as-is.
 const CONNECTIONLESS_TYPES = new Set<QueryTabType>(['settings', 'quickstart', 'tasks', 'activity']);
 
@@ -200,6 +209,13 @@ export function toPersistedTab(
   builderState: unknown
 ): PersistedTab | null {
   if (NON_PERSISTED_TYPES.has(tab.type)) return null;
+
+  // A connection that was never saved has no profile to come back to. Its tabs
+  // would persist as `profile:ephemeral:<uuid>`, and on restart
+  // `handleReconnectProfile` resolves that against `load_connection_profiles`,
+  // which can never list it — so the tab would sit on "profile missing"
+  // forever. Dropped at save time instead, like an export tab (#369 review).
+  if (conn && isEphemeralProfileId(conn.profileId)) return null;
 
   if (CONNECTIONLESS_TYPES.has(tab.type)) {
     return {

@@ -14,6 +14,7 @@ import {
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
 import { useEscapeClose } from '../lib/useEscapeClose';
+import { EPHEMERAL_PROFILE_PREFIX } from '../workspace/persistence';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
@@ -611,6 +612,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   // answer, since a server-selection timeout can leave the user looking at a
   // dialog for half a minute and they are entitled to walk away from it.
   const connectAttemptRef = useRef(0);
+  // A single Escape reaches us twice: Radix dismisses the dialog through
+  // `onOpenChange` and the window-level listener fires for the same event, and
+  // both read the same `pendingSave` from this render. Handing a connection to
+  // the app is not idempotent over there — it broadcasts metadata, rebinds
+  // tabs and refreshes the profile list — so the guard has to be a ref, which
+  // settles synchronously, rather than state, which would not (#369 review).
+  const handedOverRef = useRef<string | null>(null);
 
   // Initialize folders and load connection profiles
   useEffect(() => {
@@ -906,6 +914,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setError(null);
     try {
       const connId = await invoke<string>('connect_db', { uri, ssh });
+      handedOverRef.current = null;
       // The editor was dismissed while this was in flight. There is no longer a
       // surface to offer the connection on, and `pendingSave` set now would be
       // an invisible handle that the next editor silently discards — so release
@@ -920,7 +929,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       }
       if (existing) {
         setShowEditDialog(false);
-        onConnect(
+        handOverConnection(
           connId,
           existing.name,
           uri,
@@ -934,7 +943,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       // dedupes on it, so it has to be unique per connection rather than one
       // shared sentinel — otherwise a second trial connection would be dropped
       // on the floor as a duplicate of the first.
-      setPendingSave({ connId, uri, ssh, profileId: `ephemeral:${generateUUID()}` });
+      setPendingSave({
+        connId,
+        uri,
+        ssh,
+        profileId: `${EPHEMERAL_PROFILE_PREFIX}${generateUUID()}`,
+      });
       setEditorState((prev) =>
         prev.name.trim() && prev.name !== BLANK_CONN.name
           ? prev
@@ -947,13 +961,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     }
   };
 
+  /** Give the app a connection, once, however many callers ask. */
+  const handOverConnection = (
+    connId: string,
+    name: string,
+    uri: string,
+    profileId: string,
+    colorTag: string | undefined,
+    mode: ConnectionMode,
+  ) => {
+    if (handedOverRef.current === connId) return;
+    handedOverRef.current = connId;
+    onConnect(connId, name, uri, profileId, colorTag, mode);
+  };
+
   /** Hand a connection the user chose not to save to the app as it stands. */
   const adoptPendingConnection = (pending: NonNullable<typeof pendingSave>) => {
     setPendingSave(null);
     setShowEditDialog(false);
-    onConnect(
+    handOverConnection(
       pending.connId,
-      editorState.name,
+      // Never nameless: the display name is still editable while the offer is
+      // up, and an empty one reaches the sidebar as a blank row that pinned and
+      // favourite lookups cannot resolve by name (#369 review).
+      editorState.name.trim() || suggestConnectionName(editorState).trim() || maskUriPassword(pending.uri),
       pending.uri,
       pending.profileId,
       editorState.colorTag
@@ -969,6 +1000,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
    * declining the save offer is a decision about the profile, not the session.
    */
   const closeEditor = () => {
+    // A save is a local encrypted write and takes milliseconds, but leaving
+    // during one would adopt the connection under its throwaway id while the
+    // write finishes and hands the same connection over under the saved
+    // profile's id — two identities for one session, with the backend's
+    // metadata left describing whichever landed last (#369 review).
+    if (loading) return;
     if (pendingSave) {
       adoptPendingConnection(pendingSave);
       return;
@@ -984,7 +1021,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     const pending = pendingSave;
     setPendingSave(null);
     setShowEditDialog(false);
-    onConnect(
+    handOverConnection(
       pending.connId,
       profile.name,
       pending.uri,
