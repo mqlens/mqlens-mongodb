@@ -170,6 +170,12 @@ vi.mock('../Sidebar', () => ({
         Rename sales_db
       </button>
       <button
+        data-testid="rename-trial-db-btn"
+        onClick={() => onDatabaseRenamed && onDatabaseRenamed('conn-trial', 'sales_db', 'sales_db2')}
+      >
+        Rename DB On Trial
+      </button>
+      <button
         data-testid="drop-db-btn"
         onClick={() => onDatabaseDropped && onDatabaseDropped('conn-1', 'sales_db')}
       >
@@ -3290,6 +3296,39 @@ describe('App Component', () => {
       });
       const keys = calls
         .filter((c) => c.cmd === 'record_history')
+        .map((c) => c.args?.connectionName);
+      expect(keys.some((k: string) => k?.startsWith('ephemeral:'))).toBe(true);
+      expect(keys).not.toContain('Prod');
+    });
+
+    it('retargets a trial connection\'s chats under its own identity, not its display name', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getAllByText('New connection')[0]);
+      fireEvent.click(await screen.findByTestId('mock-cm-adopt-trial-btn'));
+      await screen.findByTestId('sidebar-conn-conn-trial');
+
+      fireEvent.click(screen.getByTestId('rename-trial-db-btn'));
+
+      // The chats were written under the ephemeral key, so retargeting by
+      // display name would strand them on the old namespace — and if that name
+      // matches a saved profile, would move THAT profile's chats instead.
+      await waitFor(() => {
+        expect(calls.some((c) => c.cmd === 'retarget_chat_scope')).toBe(true);
+      });
+      const keys = calls
+        .filter((c) => c.cmd === 'retarget_chat_scope')
         .map((c) => c.args?.connectionName);
       expect(keys.some((k: string) => k?.startsWith('ephemeral:'))).toBe(true);
       expect(keys).not.toContain('Prod');

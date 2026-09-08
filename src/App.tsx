@@ -2352,7 +2352,17 @@ function Workspace() {
     if (renamedConnection) {
       for (const variant of ['editor', 'shell'] as const) {
         void retargetChatScope(
-          { connectionName: renamedConnection.name, database: dbName, collection: oldName, variant },
+          // Keyed like the panel that wrote these chats. Since an unsaved
+          // connection stores under its ephemeral id, retargeting by display
+          // name would leave its own conversations behind on the old namespace
+          // — and, if that name matches a saved profile, would move THAT
+          // profile's chats instead (#369 review).
+          {
+            connectionName: connectionQueryKeyFor(connectionId),
+            database: dbName,
+            collection: oldName,
+            variant,
+          },
           { database: dbName, collection: newName }
         );
       }
@@ -2446,7 +2456,7 @@ function Workspace() {
     const renamedConnection = activeConnections.find((c) => c.id === connectionId);
     if (renamedConnection) {
       void retargetChatScope(
-        { connectionName: renamedConnection.name, database: oldName },
+        { connectionName: connectionQueryKeyFor(connectionId), database: oldName },
         { database: newName }
       );
     }
