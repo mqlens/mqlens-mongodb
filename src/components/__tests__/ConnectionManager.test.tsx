@@ -1621,6 +1621,154 @@ describe('connecting before saving (#364)', () => {
   });
 });
 
+describe('the save offer cannot strand or misdescribe a connection (#369 review)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const openEditorWith = async (uri: string) => {
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    await pickSelectOption('topology-select', /full uri string only/i);
+    fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: uri } });
+  };
+
+  it('adopts the connection when the editor is closed from its header button', async () => {
+    const handleConnect = vi.fn();
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-header-close');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+
+    // The header's X is a plain button, not a Radix close primitive, so it
+    // never reaches the dialog's onOpenChange. Left to itself it would drop
+    // the reference to a session still open in the backend.
+    const closeButtons = screen.getAllByRole('button', { name: /^close$/i });
+    fireEvent.click(closeButtons[closeButtons.length - 1]);
+
+    await waitFor(() => expect(handleConnect).toHaveBeenCalled());
+    expect(handleConnect.mock.calls[0][0]).toBe('conn-header-close');
+  });
+
+  it('takes the connection fields off screen once the offer is up', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-frozen');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb://trial:27017');
+    expect(screen.getByLabelText(/connection uri/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+
+    // Answering the offer closes the dialog, so a field edited here could only
+    // ever describe something other than the connection already open. The name
+    // stays, because naming the thing is the question being asked.
+    expect(screen.queryByLabelText(/connection uri/i)).toBeNull();
+    expect(screen.queryByTestId('topology-select')).toBeNull();
+    expect(screen.queryByRole('button', { name: /test connection/i })).toBeNull();
+    expect(screen.getByLabelText(/display name/i)).toBeInTheDocument();
+  });
+
+  it('saves the configuration the connection was opened on', async () => {
+    let saved: any = null;
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(saved ? [saved] : []);
+      if (cmd === 'connect_db') return Promise.resolve('conn-tested');
+      if (cmd === 'save_connection_profile') {
+        saved = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb://tested-host:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+    fireEvent.click(screen.getByTestId('connect-save-btn'));
+
+    // The profile and the live connection handed over beside it have to
+    // describe the same server, or every later reconnect targets the wrong one.
+    await waitFor(() => expect(saved).not.toBeNull());
+    expect(saved.uri).toBe('mongodb://tested-host:27017');
+  });
+
+  it('refuses to connect a profile that is already active, edited or not', async () => {
+    const handleConnect = vi.fn();
+    const calls: string[] = [];
+    const profile = {
+      id: 'profile-1',
+      name: 'Mock DB 1',
+      uri: 'mongodb://mock',
+      ssh: null,
+      color_tag: null,
+      connection_mode: 'normal',
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      calls.push(cmd);
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-duplicate');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(
+      <ConnectionManager
+        isOpen
+        onClose={() => {}}
+        onConnect={handleConnect}
+        activeConnections={[
+          { id: 'live-1', profileId: 'profile-1', name: 'Mock DB 1', uri: 'mongodb://mock' },
+        ]}
+      />,
+    );
+    fireEvent.click((await screen.findAllByText('Mock DB 1'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // Edited, so it is no longer "unchanged" — but saving still writes back
+    // onto this same profile id, which the app already has a session for.
+    fireEvent.change(await screen.findByLabelText(/display name/i), {
+      target: { value: 'Mock DB 1 (tweaked)' },
+    });
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+
+    await screen.findByTestId('editor-error');
+    expect(screen.getByTestId('editor-error')).toHaveTextContent(/already active/i);
+    expect(calls).not.toContain('connect_db');
+    expect(handleConnect).not.toHaveBeenCalled();
+  });
+
+  it('says why Save did nothing when the name has been cleared', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-unnamed');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: '  ' } });
+    fireEvent.click(screen.getByTestId('connect-save-btn'));
+
+    // Without an outlet inside the dialog this reason rendered behind the
+    // modal, and Save just appeared to do nothing.
+    expect(await screen.findByTestId('editor-error')).toHaveTextContent(/display name/i);
+    expect(screen.getByTestId('connect-save-offer')).toBeInTheDocument();
+  });
+});
+
 describe('suggestConnectionName', () => {
   const withHost = (host: string, port = '27017') =>
     ({ ...baseConn, topology: 'standalone', hosts: [{ host, port }], name: 'New Connection' }) as any;

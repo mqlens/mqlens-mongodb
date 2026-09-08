@@ -589,7 +589,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   // to outlive that. Every path out of the editor adopts it (see
   // `closeEditor`), so a trial connection can never be orphaned in the backend.
   const [pendingSave, setPendingSave] = useState<
-    { connId: string; uri: string; profileId: string } | null
+    { connId: string; uri: string; ssh: SshConfig | null; profileId: string } | null
   >(null);
   const [connecting, setConnecting] = useState(false);
   // Raw driver text from a failed editor Connect, kept apart from `testResult`
@@ -806,19 +806,25 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
    * write failed, with the reason already on screen, so the caller knows to
    * leave the editor open.
    */
-  const persistEditorProfile = async (): Promise<ConnectionProfile | null> => {
+  const persistEditorProfile = async (
+    tested?: { uri: string; ssh: SshConfig | null },
+  ): Promise<ConnectionProfile | null> => {
     if (!editorState.name.trim()) {
       setError(t('errors.displayNameRequired'));
       return null;
     }
 
-    const uriToSave = buildUri(editorState);
+    // `tested` is the configuration a connection was actually opened on. Saving
+    // a rebuilt one instead would let the profile and the live connection it is
+    // about to be handed describe different servers, so every later reconnect
+    // and every restored tab would target the wrong one.
+    const uriToSave = tested ? tested.uri : buildUri(editorState);
     const id = editMode === 'edit' && selectedId ? selectedId : generateUUID();
     const profile: ConnectionProfile = {
       id,
       name: editorState.name,
       uri: uriToSave,
-      ssh: buildSshConfig(editorState),
+      ssh: tested ? tested.ssh : buildSshConfig(editorState),
       color_tag: editorState.colorTag
         ? normalizeHexColor(editorState.colorTag) ?? editorState.colorTag
         : null,
@@ -874,7 +880,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     // `mongodb://mock:27017` — and connect to something the user never wrote.
     const uri = existing ? existing.uri : buildUri(editorState);
     const ssh = existing ? existing.ssh ?? null : buildSshConfig(editorState);
-    if (existing && activeConnections.some((c) => c.profileId === existing.id)) {
+    // Keyed on the saved profile, not on `existing`: an edited profile still
+    // saves back onto its own id, and `addActiveConnection` dedupes by
+    // profileId — so connecting a second time would leave the user on the old
+    // session while the new one leaked, with the profile overwritten under it.
+    if (saved && activeConnections.some((c) => c.profileId === saved.id)) {
       setError(t('errors.alreadyActive'));
       return;
     }
@@ -902,7 +912,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       // dedupes on it, so it has to be unique per connection rather than one
       // shared sentinel — otherwise a second trial connection would be dropped
       // on the floor as a duplicate of the first.
-      setPendingSave({ connId, uri, profileId: `ephemeral:${generateUUID()}` });
+      setPendingSave({ connId, uri, ssh, profileId: `ephemeral:${generateUUID()}` });
       setEditorState((prev) =>
         prev.name.trim() && prev.name !== BLANK_CONN.name
           ? prev
@@ -947,7 +957,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   /** Keep the connection that just worked, then open it under its new profile. */
   const handleSaveAndOpen = async () => {
     if (!pendingSave) return;
-    const profile = await persistEditorProfile();
+    const profile = await persistEditorProfile({ uri: pendingSave.uri, ssh: pendingSave.ssh });
     if (!profile) return;
     const pending = pendingSave;
     setPendingSave(null);
@@ -1749,7 +1759,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   <p className="truncate text-ui-xs text-muted-foreground">{t('editor.subtitle')}</p>
                 </div>
               </div>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setShowEditDialog(false)} aria-label={t('common:close')}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={closeEditor} aria-label={t('common:close')}>
                 <X size={14} />
               </Button>
             </header>
@@ -1854,6 +1864,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </section>
 
             <div className="flex min-h-0 flex-1">
+            {!pendingSave && (
             <aside className={cn(sidebarPanelClass, 'w-48 xl:w-52')}>
               <nav className="flex flex-col gap-0.5 p-2" aria-label={t('editor.tabsAria')}>
                 {TABS.map(tab => {
@@ -1872,9 +1883,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 })}
               </nav>
             </aside>
+            )}
 
             {/* Editor dialog body views */}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+            {!pendingSave && (
             <ScrollArea className="min-h-0 flex-1">
             <div className="p-6">
               {activeEditorTab === 'server' && (
@@ -2434,6 +2447,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
             </div>
             </ScrollArea>
+            )}
 
             {(testing || testResult) && (
               <div className="mx-4 mb-2 flex max-h-[200px] shrink-0 flex-col gap-2 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3">
@@ -2523,6 +2537,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                     </div>
                   );
                 })()}
+              </div>
+            )}
+
+            {/* The only other `error` outlet sits in the manager pane behind this
+                modal, so anything reported while the editor is open — a missing
+                display name, a profile that is already connected — had no way of
+                reaching the person it was written for. */}
+            {error && (
+              <div
+                className="mx-4 mb-2 flex shrink-0 items-center gap-1.5 rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive"
+                data-testid="editor-error"
+              >
+                <AlertCircle size={12} className="shrink-0" />
+                <span>{error}</span>
               </div>
             )}
 
