@@ -59,6 +59,11 @@
     "slate": "Schiefer",
     "violet": "Violett"
   },
+  "connectNow": {
+    "connected": "Verbunden",
+    "saveOffer": "Speichere diese Verbindung, damit du sie später wieder öffnen kannst.",
+    "dontSave": "Nicht speichern"
+  },
   "connectionMode": {
     "confirmDestructive": {
       "description": "Destruktive Vorgänge müssen durch Eintippen bestätigt werden",

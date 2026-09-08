@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
@@ -242,6 +242,27 @@ export const summarizeConnectionError = (raw: string): ConnectionErrorSummary =>
 // Parse a mongodb URI into structured editor fields so the form (protocol / hosts
 // / auth / TLS) can be edited interactively, auto-detecting the deployment type.
 // Used both when editing a saved profile and when importing a pasted URI.
+/**
+ * The user-facing summary and hint for a raw driver error.
+ *
+ * Both the connection test and a failed Connect show the same diagnosis, so the
+ * classification lives in one place; only the surrounding banner differs.
+ */
+export const describeConnectionError = (
+  raw: string,
+  t: (key: string) => string,
+): { summary: string; hint?: string } => {
+  const info = summarizeConnectionError(raw);
+  // Pulled out rather than inlined below: the i18n coverage scanner reads a
+  // string literal sitting directly after `hint:` as untranslated UI copy,
+  // which the key name in the `in` check would otherwise look exactly like.
+  const hintKey = 'hintKey' in info ? info.hintKey : undefined;
+  return {
+    summary: 'summaryKey' in info ? t(info.summaryKey) : info.summaryText,
+    hint: hintKey ? t(hintKey) : undefined,
+  };
+};
+
 export const parseUriIntoFields = (uri: string) => {
   const isSrv = /^mongodb\+srv:\/\//i.test(uri);
   // The password is optional: X.509 and Kerberos authenticate without one and
@@ -468,6 +489,23 @@ export const buildUri = (s: typeof BLANK_CONN) => {
 };
 
 // Build the structured SSH tunnel config the backend expects, or null when disabled.
+/**
+ * A name worth offering for a connection the user has just proved works (#364).
+ *
+ * The host carries the identity people recognise: an Atlas cluster reached at
+ * `cluster0.ab12c.mongodb.net` is "cluster0" to whoever provisioned it, and a
+ * local server is just "localhost". Anything else keeps its full hostname,
+ * which still beats offering to save something called "New Connection".
+ */
+export const suggestConnectionName = (s: typeof BLANK_CONN): string => {
+  const host =
+    s.topology === 'uri'
+      ? (parseUriIntoFields(s.uri).hosts ?? [])[0]?.host
+      : s.hosts.find((h: { host: string }) => h.host)?.host;
+  if (!host) return s.name;
+  return (host.endsWith('.mongodb.net') ? host.split('.')[0] : host) || host;
+};
+
 export const buildSshConfig = (s: typeof BLANK_CONN): SshConfig | null => {
   if (!s.sshEnabled || !s.sshHost) return null;
   const auth =
@@ -545,6 +583,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [testResult, setTestResult] = useState<{ success: boolean; message?: string } | null>(null);
   const [showErrDetail, setShowErrDetail] = useState(false);
 
+  // A connection opened straight from the editor, before it has been saved
+  // (#364). Held here rather than handed straight to the app, because the app
+  // closes this manager the moment it accepts one — and the offer to save has
+  // to outlive that. Every path out of the editor adopts it (see
+  // `closeEditor`), so a trial connection can never be orphaned in the backend.
+  const [pendingSave, setPendingSave] = useState<
+    { connId: string; uri: string; profileId: string } | null
+  >(null);
+  const [connecting, setConnecting] = useState(false);
+  // Raw driver text from a failed editor Connect, kept apart from `testResult`
+  // so the failure reads as what it was — the connection itself refusing —
+  // rather than borrowing the four-stage checklist of a test that never ran.
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [showConnectErrDetail, setShowConnectErrDetail] = useState(false);
+  // The editor's own rendering of the profile it opened, serialized, or null
+  // when the editor is not sitting on a saved profile. Connect compares against
+  // this to tell a saved connection from a new one.
+  //
+  // It cannot compare rebuilt URIs instead: the structured form does not
+  // round-trip one byte for byte — a profile stored as `mongodb://mock` comes
+  // back as `mongodb://mock:27017/?directConnection=true` — so every profile
+  // would look modified the instant it was opened.
+  const pristineEditorRef = useRef<string | null>(null);
+
   // Initialize folders and load connection profiles
   useEffect(() => {
     if (isOpen) {
@@ -555,7 +617,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   // Escape closes the topmost layer: the nested editor dialog when it is
   // open, otherwise the manager itself.
-  useEscapeClose(isOpen && showEditDialog, () => setShowEditDialog(false));
+  useEscapeClose(isOpen && showEditDialog, () => closeEditor());
   useEscapeClose(isOpen && !showEditDialog, onClose);
 
   const loadFoldersFromStorage = () => {
@@ -601,6 +663,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     });
     setError(null);
     setTestResult(null);
+    setPendingSave(null);
+    setConnectError(null);
+    pristineEditorRef.current = null;
     setTesting(false);
     setActiveEditorTab('server');
     setShowEditDialog(true);
@@ -634,7 +699,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         }
       : {};
 
-    setEditorState({
+    const opened = {
       ...BLANK_CONN,
       name: profile.name,
       uri: profile.uri,
@@ -644,12 +709,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       mcpEnabled: profile.mcp_enabled ?? false,
       connectionMode: profile.connection_mode ?? 'normal',
       ...sshFields,
-    });
+    };
+    setEditorState(opened);
 
     setError(null);
     setTestResult(null);
+    setPendingSave(null);
+    setConnectError(null);
+    pristineEditorRef.current = null;
     setTesting(false);
     setActiveEditorTab('server');
+    pristineEditorRef.current = JSON.stringify(opened);
     setShowEditDialog(true);
   };
 
@@ -685,6 +755,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     });
     setError(null);
     setTestResult(null);
+    setPendingSave(null);
+    setConnectError(null);
+    pristineEditorRef.current = null;
     setTesting(false);
     setActiveEditorTab('server');
     setShowEditDialog(true);
@@ -724,10 +797,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setFolderError(null);
   };
 
-  const handleSave = async () => {
+  /**
+   * Write the editor's current fields out as a profile.
+   *
+   * Returns the saved profile so a caller can go on to use it — the
+   * connect-then-save path needs its id to hand the live connection over under
+   * the identity it has just acquired. Returns null when validation or the
+   * write failed, with the reason already on screen, so the caller knows to
+   * leave the editor open.
+   */
+  const persistEditorProfile = async (): Promise<ConnectionProfile | null> => {
     if (!editorState.name.trim()) {
       setError(t('errors.displayNameRequired'));
-      return;
+      return null;
     }
 
     const uriToSave = buildUri(editorState);
@@ -747,19 +829,137 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setLoading(true);
     try {
       await invoke('save_connection_profile', { profile });
-      
+
       // Update profile folder mapping
       const updatedMap = { ...profileFolderMap, [id]: editorState.folder };
       saveFoldersToStorage(folders, updatedMap);
 
-      setShowEditDialog(false);
       await loadProfiles();
       setSelectedId(id);
+      return profile;
     } catch (err: any) {
       setError(String(err));
+      return null;
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSave = async () => {
+    if (await persistEditorProfile()) setShowEditDialog(false);
+  };
+
+  /**
+   * Connect with the fields as they stand, saving nothing (#364).
+   *
+   * Saving is what engages the vault, so requiring it first meant the very
+   * first thing a trial user did was write an encrypted credential to disk for
+   * a connection nobody had shown to work yet. This asks the server instead,
+   * and only then asks the user whether it is worth keeping.
+   */
+  const handleEditorConnect = async () => {
+    // An untouched existing profile is not an anonymous connection: connect it
+    // as itself so the duplicate guard and tab rebinding still recognise it,
+    // and so nobody is offered a chance to save what is already saved. Edited
+    // fields do get the offer, since Save in edit mode updates that same
+    // profile rather than filing a second copy of it.
+    const saved =
+      editMode === 'edit' && selectedId ? profiles.find((p) => p.id === selectedId) : undefined;
+    const existing =
+      saved && pristineEditorRef.current === JSON.stringify(editorState) ? saved : undefined;
+
+    // Untouched means untouched: connect on the exact string that was saved,
+    // the way the profile list's own Connect does. Rebuilding it from the form
+    // would quietly normalise it — `mongodb://mock` becomes
+    // `mongodb://mock:27017` — and connect to something the user never wrote.
+    const uri = existing ? existing.uri : buildUri(editorState);
+    const ssh = existing ? existing.ssh ?? null : buildSshConfig(editorState);
+    if (existing && activeConnections.some((c) => c.profileId === existing.id)) {
+      setError(t('errors.alreadyActive'));
+      return;
+    }
+
+    setConnecting(true);
+    setConnectError(null);
+    setShowConnectErrDetail(false);
+    setTestResult(null);
+    setError(null);
+    try {
+      const connId = await invoke<string>('connect_db', { uri, ssh });
+      if (existing) {
+        setShowEditDialog(false);
+        onConnect(
+          connId,
+          existing.name,
+          uri,
+          existing.id,
+          existing.color_tag ?? undefined,
+          existing.connection_mode ?? 'normal',
+        );
+        return;
+      }
+      // The identity an unsaved connection travels under. `addActiveConnection`
+      // dedupes on it, so it has to be unique per connection rather than one
+      // shared sentinel — otherwise a second trial connection would be dropped
+      // on the floor as a duplicate of the first.
+      setPendingSave({ connId, uri, profileId: `ephemeral:${generateUUID()}` });
+      setEditorState((prev) =>
+        prev.name.trim() && prev.name !== BLANK_CONN.name
+          ? prev
+          : { ...prev, name: suggestConnectionName(prev) },
+      );
+    } catch (err: any) {
+      setConnectError(String(err));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  /** Hand a connection the user chose not to save to the app as it stands. */
+  const adoptPendingConnection = (pending: NonNullable<typeof pendingSave>) => {
+    setPendingSave(null);
+    setShowEditDialog(false);
+    onConnect(
+      pending.connId,
+      editorState.name,
+      pending.uri,
+      pending.profileId,
+      editorState.colorTag
+        ? normalizeHexColor(editorState.colorTag) ?? editorState.colorTag
+        : undefined,
+      editorState.connectionMode,
+    );
+  };
+
+  /**
+   * Leave the editor. A connection opened but not yet saved goes to the app
+   * rather than being abandoned: it is already live in the backend, and
+   * declining the save offer is a decision about the profile, not the session.
+   */
+  const closeEditor = () => {
+    if (pendingSave) {
+      adoptPendingConnection(pendingSave);
+      return;
+    }
+    setShowEditDialog(false);
+  };
+
+  /** Keep the connection that just worked, then open it under its new profile. */
+  const handleSaveAndOpen = async () => {
+    if (!pendingSave) return;
+    const profile = await persistEditorProfile();
+    if (!profile) return;
+    const pending = pendingSave;
+    setPendingSave(null);
+    setShowEditDialog(false);
+    onConnect(
+      pending.connId,
+      profile.name,
+      pending.uri,
+      profile.id,
+      profile.color_tag ?? undefined,
+      profile.connection_mode ?? 'normal',
+    );
   };
 
   const handleDelete = async (profileId: string) => {
@@ -842,6 +1042,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     });
     setError(null);
     setTestResult(null);
+    setPendingSave(null);
+    setConnectError(null);
+    pristineEditorRef.current = null;
     setImportError(null);
     setTesting(false);
     setActiveEditorTab('server');
@@ -1104,6 +1307,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const runTestStepSequence = async () => {
     setTesting(true);
     setTestResult(null);
+    setConnectError(null);
     setShowErrDetail(false);
     setTestProgress(0);
 
@@ -1515,7 +1719,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       </Dialog>
 
       {/* Editor Dialog nested modal */}
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+      <Dialog open={showEditDialog} onOpenChange={(open) => { if (!open) closeEditor(); }}>
         <DraggableDialogContent
           resetKey={showEditDialog}
           defaultWidth={780}
@@ -2282,9 +2486,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   if (testResult.success) {
                     summary = t('test.successMessage');
                   } else {
-                    const info = summarizeConnectionError(testResult.message ?? '');
-                    summary = 'summaryKey' in info ? t(info.summaryKey) : info.summaryText;
-                    hint = 'hintKey' in info && info.hintKey ? t(info.hintKey) : undefined;
+                    ({ summary, hint } = describeConnectionError(testResult.message ?? '', t));
                   }
                   return (
                     <div className={cn(
@@ -2324,25 +2526,108 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               </div>
             )}
 
+            {connectError && (() => {
+              const { summary, hint } = describeConnectionError(connectError, t);
+              return (
+                <div
+                  className="mx-4 mb-2 shrink-0 rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive"
+                  data-testid="connect-error"
+                >
+                  <div className="flex items-start gap-1.5">
+                    <AlertCircle size={12} className="mt-px shrink-0" />
+                    <span className="font-semibold" data-testid="connect-error-summary">{summary}</span>
+                  </div>
+                  {hint && (
+                    <div className="ml-[18px] mt-1 font-normal text-muted-foreground">{hint}</div>
+                  )}
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="ml-[18px] mt-1.5 h-auto p-0 text-[10px] text-muted-foreground"
+                    data-testid="connect-error-details-toggle"
+                    onClick={() => setShowConnectErrDetail(v => !v)}
+                  >
+                    {showConnectErrDetail ? t('test.hideDetails') : t('test.showDetails')}
+                  </Button>
+                  {showConnectErrDetail && (
+                    <pre
+                      data-testid="connect-error-detail"
+                      className="mb-0 mt-1.5 whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-muted-foreground"
+                    >
+                      {connectError}
+                    </pre>
+                  )}
+                </div>
+              );
+            })()}
+
+            {pendingSave && (
+              <div
+                className="mx-4 mb-2 shrink-0 rounded border border-success/30 bg-success/10 p-2 text-[11px] text-success"
+                data-testid="connect-save-offer"
+              >
+                <div className="flex items-start gap-1.5">
+                  <Check size={12} className="mt-px shrink-0" />
+                  <span className="font-semibold">{t('connectNow.connected')}</span>
+                </div>
+                <div className="ml-[18px] mt-1 font-normal text-muted-foreground">
+                  {t('connectNow.saveOffer')}
+                </div>
+              </div>
+            )}
+
             <footer className="flex shrink-0 items-center justify-between border-t border-border bg-muted/20 px-4 py-3">
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={runTestStepSequence} disabled={testing}>
-                  <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
-                  <span>{t('actions.testConnection')}</span>
-                </Button>
-                {importUriMenu()}
-                {importError && (
-                  <span className="self-center text-ui-2xs text-destructive" data-testid="import-uri-error">
-                    {importError}
-                  </span>
+                {!pendingSave && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={runTestStepSequence} disabled={testing || connecting}>
+                      <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
+                      <span>{t('actions.testConnection')}</span>
+                    </Button>
+                    {importUriMenu()}
+                    {importError && (
+                      <span className="self-center text-ui-2xs text-destructive" data-testid="import-uri-error">
+                        {importError}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setShowEditDialog(false)}>{t('common:cancel')}</Button>
-                <Button size="sm" onClick={handleSave} disabled={loading || testing}>
-                  <Check size={11} />
-                  <span>{t('common:save')}</span>
-                </Button>
+                {pendingSave ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="connect-skip-save-btn"
+                      onClick={() => adoptPendingConnection(pendingSave)}
+                      disabled={loading}
+                    >
+                      {t('connectNow.dontSave')}
+                    </Button>
+                    <Button size="sm" data-testid="connect-save-btn" onClick={handleSaveAndOpen} disabled={loading}>
+                      <Check size={11} />
+                      <span>{t('common:save')}</span>
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="outline" size="sm" onClick={closeEditor}>{t('common:cancel')}</Button>
+                    <Button variant="outline" size="sm" onClick={handleSave} disabled={loading || testing || connecting}>
+                      <Check size={11} />
+                      <span>{t('common:save')}</span>
+                    </Button>
+                    <Button
+                      size="sm"
+                      data-testid="editor-connect-btn"
+                      onClick={handleEditorConnect}
+                      disabled={loading || testing || connecting}
+                    >
+                      <Play size={11} fill="currentColor" />
+                      <span>{connecting ? t('actions.connecting') : t('actions.connect')}</span>
+                    </Button>
+                  </>
+                )}
               </div>
             </footer>
             </div>

@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactElement } from 'react';
 import { render as rtlRender, screen, fireEvent, waitFor } from '@testing-library/react';
-import { ConnectionManager, buildUri, buildSshConfig, parseUriIntoFields, summarizeConnectionError } from '../ConnectionManager';
+import {
+  ConnectionManager,
+  buildUri,
+  buildSshConfig,
+  parseUriIntoFields,
+  summarizeConnectionError,
+  suggestConnectionName,
+} from '../ConnectionManager';
 import { DialogProvider } from '../dialogs/DialogProvider';
 import enErrors from '../../locales/en/errors.json';
 
@@ -1397,6 +1404,250 @@ describe('Connection mode segmented control (#188 Task 1)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^duplicate$/i }));
 
     expect(screen.getByTestId('connection-mode-read_only')).toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
+describe('connecting before saving (#364)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  /** Open the editor on a blank connection and point it at `uri`. */
+  const openEditorWith = async (uri: string) => {
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    await pickSelectOption('topology-select', /full uri string only/i);
+    fireEvent.change(screen.getByLabelText(/connection uri/i), { target: { value: uri } });
+  };
+
+  it('opens the connection from the editor without writing a profile', async () => {
+    const handleConnect = vi.fn();
+    const calls: string[] = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      calls.push(cmd);
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') {
+        expect(args.uri).toBe('mongodb://trial:27017');
+        return Promise.resolve('conn-trial-1');
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+
+    // The connection is live and the user is asked — not told — about saving.
+    await screen.findByTestId('connect-save-offer');
+    expect(calls).toContain('connect_db');
+    expect(calls).not.toContain('save_connection_profile');
+    // Nothing reaches the app until that question is answered, because
+    // accepting a connection closes this manager.
+    expect(handleConnect).not.toHaveBeenCalled();
+  });
+
+  it('declining the offer still opens the connection, under no profile', async () => {
+    const handleConnect = vi.fn();
+    const calls: string[] = [];
+    mockInvoke.mockImplementation((cmd) => {
+      calls.push(cmd);
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-trial-2');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    fireEvent.click(await screen.findByTestId('connect-skip-save-btn'));
+
+    await waitFor(() => expect(handleConnect).toHaveBeenCalled());
+    const [connId, , uri, profileId] = handleConnect.mock.calls[0];
+    expect(connId).toBe('conn-trial-2');
+    expect(uri).toBe('mongodb://trial:27017');
+    // An id of its own, so a second trial connection is not mistaken for this
+    // one by the app's dedupe-on-profileId.
+    expect(profileId).toMatch(/^ephemeral:/);
+    expect(calls).not.toContain('save_connection_profile');
+  });
+
+  it('accepting the offer saves it and opens it under the new profile', async () => {
+    const handleConnect = vi.fn();
+    let saved: any = null;
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve(saved ? [saved] : []);
+      if (cmd === 'connect_db') return Promise.resolve('conn-trial-3');
+      if (cmd === 'save_connection_profile') {
+        saved = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    fireEvent.click(await screen.findByTestId('connect-save-btn'));
+
+    await waitFor(() => expect(handleConnect).toHaveBeenCalled());
+    expect(saved).toMatchObject({ uri: 'mongodb://trial:27017' });
+    // The live connection carries the identity it just acquired, not the
+    // throwaway one — otherwise its tabs could never be reconnected to it.
+    const [connId, , , profileId] = handleConnect.mock.calls[0];
+    expect(connId).toBe('conn-trial-3');
+    expect(profileId).toBe(saved.id);
+    expect(profileId).not.toMatch(/^ephemeral:/);
+  });
+
+  it('keeps the editor open on failure, with the cause and the raw text', async () => {
+    const handleConnect = vi.fn();
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.reject('Authentication failed.');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+
+    // The diagnosis, not the driver's dump — and the editor is still there to
+    // act on it, which is the whole point of not having saved first.
+    await waitFor(() => {
+      expect(screen.getByTestId('connect-error-summary')).toHaveTextContent(/authentication/i);
+    });
+    expect(screen.getByLabelText(/connection uri/i)).toBeInTheDocument();
+    expect(handleConnect).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('connect-save-offer')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('connect-error-details-toggle'));
+    expect(screen.getByTestId('connect-error-detail')).toHaveTextContent('Authentication failed.');
+  });
+
+  it('does not strand a live connection when the editor is dismissed', async () => {
+    const handleConnect = vi.fn();
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-trial-4');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+
+    // The offer replaces Cancel with an explicit choice, so Escape is the
+    // way out that could actually strand the connection. It answers 'no
+    // profile', not 'no connection': the connection is already open in the
+    // backend, and abandoning it here would leak it.
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(handleConnect).toHaveBeenCalledWith(
+      'conn-trial-4',
+      expect.any(String),
+      'mongodb://trial:27017',
+      expect.stringMatching(/^ephemeral:/),
+      undefined,
+      'normal',
+    ));
+  });
+
+  it('offers a name taken from the host rather than "New Connection"', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-trial-5');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb+srv://cluster0.ab12c.mongodb.net');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+
+    await screen.findByTestId('connect-save-offer');
+    expect(screen.getByLabelText(/display name/i)).toHaveValue('cluster0');
+  });
+
+  it('leaves a name the user typed alone', async () => {
+    mockInvoke.mockImplementation((cmd) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-trial-6');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openEditorWith('mongodb://trial:27017');
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Payments prod' } });
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+
+    await screen.findByTestId('connect-save-offer');
+    expect(screen.getByLabelText(/display name/i)).toHaveValue('Payments prod');
+  });
+
+  it('connects an unchanged saved profile as itself, with nothing to save', async () => {
+    const handleConnect = vi.fn();
+    const calls: string[] = [];
+    const profile = {
+      id: 'profile-1',
+      name: 'Mock DB 1',
+      uri: 'mongodb://mock',
+      ssh: null,
+      color_tag: null,
+      connection_mode: 'normal',
+    };
+    mockInvoke.mockImplementation((cmd) => {
+      calls.push(cmd);
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-existing');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    fireEvent.click((await screen.findAllByText('Mock DB 1'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByTestId('editor-connect-btn'));
+
+    // Already saved, so it keeps its own identity and is not offered back to
+    // the user as something new to file.
+    await waitFor(() => expect(handleConnect).toHaveBeenCalledWith(
+      'conn-existing',
+      'Mock DB 1',
+      'mongodb://mock',
+      'profile-1',
+      undefined,
+      'normal',
+    ));
+    expect(screen.queryByTestId('connect-save-offer')).toBeNull();
+    expect(calls).not.toContain('save_connection_profile');
+  });
+});
+
+describe('suggestConnectionName', () => {
+  const withHost = (host: string, port = '27017') =>
+    ({ ...baseConn, topology: 'standalone', hosts: [{ host, port }], name: 'New Connection' }) as any;
+
+  it('names an Atlas cluster after the cluster, not the whole SRV record', () => {
+    expect(suggestConnectionName(withHost('cluster0.ab12c.mongodb.net'))).toBe('cluster0');
+  });
+
+  it('keeps an ordinary hostname whole', () => {
+    expect(suggestConnectionName(withHost('db.internal.example.com'))).toBe('db.internal.example.com');
+  });
+
+  it('reads the host out of a URI-only connection', () => {
+    expect(
+      suggestConnectionName({
+        ...baseConn,
+        topology: 'uri',
+        uri: 'mongodb://user:pw@shard.example.com:27017/app',
+        name: 'New Connection',
+      } as any),
+    ).toBe('shard.example.com');
+  });
+
+  it('falls back to the existing name when there is no host to go on', () => {
+    expect(suggestConnectionName({ ...baseConn, topology: 'standalone', hosts: [], name: 'Untitled' } as any)).toBe(
+      'Untitled',
+    );
   });
 });
 
