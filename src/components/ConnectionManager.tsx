@@ -727,6 +727,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setTestResult(null);
     setPendingSave(null);
     setConnectError(null);
+    // A previous attempt may still be in flight and will no longer clear this,
+    // by design — so the fresh editor starts its own.
+    setConnecting(false);
     pristineEditorRef.current = null;
     setTesting(false);
     setActiveEditorTab('server');
@@ -778,6 +781,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setTestResult(null);
     setPendingSave(null);
     setConnectError(null);
+    // A previous attempt may still be in flight and will no longer clear this,
+    // by design — so the fresh editor starts its own.
+    setConnecting(false);
     pristineEditorRef.current = null;
     setTesting(false);
     setActiveEditorTab('server');
@@ -819,6 +825,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setTestResult(null);
     setPendingSave(null);
     setConnectError(null);
+    // A previous attempt may still be in flight and will no longer clear this,
+    // by design — so the fresh editor starts its own.
+    setConnecting(false);
     pristineEditorRef.current = null;
     setTesting(false);
     setActiveEditorTab('server');
@@ -1020,7 +1029,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     } catch (err: any) {
       if (attempt === connectAttemptRef.current) setConnectError(String(err));
     } finally {
-      setConnecting(false);
+      // Only the attempt that is still current may release the button. An
+      // abandoned one clearing it would re-enable Connect while the NEW attempt
+      // is still in flight, and a further click would then run two requests
+      // under one generation — both would pass the guard above, and the second
+      // to land would overwrite the first pendingSave and strand its connection
+      // (#369 review).
+      if (attempt === connectAttemptRef.current) setConnecting(false);
     }
   };
 
@@ -1189,6 +1204,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setTestResult(null);
     setPendingSave(null);
     setConnectError(null);
+    // A previous attempt may still be in flight and will no longer clear this,
+    // by design — so the fresh editor starts its own.
+    setConnecting(false);
     pristineEditorRef.current = null;
     setImportError(null);
     setTesting(false);

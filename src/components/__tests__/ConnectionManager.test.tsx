@@ -2020,6 +2020,50 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     expect(firstId).not.toBe(secondId);
   });
 
+  it('does not let an abandoned attempt re-enable Connect for a live one', async () => {
+    const handleConnect = vi.fn();
+    const disconnected: string[] = [];
+    const settlers: Array<(id: string) => void> = [];
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') {
+        return new Promise<string>((resolve) => { settlers.push(resolve); });
+      }
+      if (cmd === 'disconnect_db') {
+        disconnected.push(args.id);
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+
+    // First attempt, then walk away from it while it is still going.
+    await openEditorWith('mongodb://slow-one:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await waitFor(() => expect(settlers).toHaveLength(1));
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    // Second attempt, in a fresh editor, also still going.
+    await openEditorWith('mongodb://slow-two:27017');
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await waitFor(() => expect(settlers).toHaveLength(2));
+    expect(screen.getByTestId('editor-connect-btn')).toBeDisabled();
+
+    // The abandoned one lands. It must release its own connection and nothing
+    // else: clearing the button here would let a third click run two requests
+    // under one generation, and the later to land would overwrite the earlier
+    // pendingSave and strand its connection.
+    settlers[0]('conn-abandoned');
+    await waitFor(() => expect(disconnected).toEqual(['conn-abandoned']));
+    expect(screen.getByTestId('editor-connect-btn')).toBeDisabled();
+    expect(screen.queryByTestId('connect-save-offer')).toBeNull();
+
+    // The live one still finishes normally.
+    settlers[1]('conn-live');
+    await screen.findByTestId('connect-save-offer');
+  });
+
   it('releases a connection that arrives after the editor was dismissed', async () => {
     const handleConnect = vi.fn();
     const disconnected: string[] = [];
