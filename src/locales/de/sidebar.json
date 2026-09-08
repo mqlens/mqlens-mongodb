@@ -157,15 +157,16 @@
     "createDatabaseFailed": "Datenbank konnte nicht erstellt werden: {{error}}",
     "dropCollectionFailed": "Collection konnte nicht gelöscht werden: {{error}}",
     "dropDatabaseFailed": "Datenbank konnte nicht gelöscht werden: {{error}}",
+    "loadCollectionsFailed": "Sammlungen in {{db}} konnten nicht aufgelistet werden: {{error}}",
+    "namespaceBusyWithSave": "Hier wird gerade ein Dokument gespeichert. Warte, bis das fertig ist, bevor du umbenennst.",
     "noSavedConnection": "Keine gespeicherte Verbindung \"{{name}}\". Füge sie im Verbindungsmanager hinzu und versuche es erneut.",
     "pinned": "An Seitenleiste angeheftet",
     "readOnlyBlocked": "Diese Verbindung ist schreibgeschützt (Produktionsschutz). Ändere den Verbindungsmodus im Verbindungsmanager, um Daten zu bearbeiten.",
     "removedFromFavorites": "Aus Favoriten entfernt",
-    "namespaceBusyWithSave": "Hier wird gerade ein Dokument gespeichert. Warte, bis das fertig ist, bevor du umbenennst.",
-    "loadCollectionsFailed": "Sammlungen in {{db}} konnten nicht aufgelistet werden: {{error}}",
     "renameCollectionFailed": "Collection konnte nicht umbenannt werden: {{error}}",
     "renameDatabaseFailed": "Datenbank konnte nicht umbenannt werden: {{error}}",
     "savedQueryGone": "Gespeicherte Abfrage existiert nicht mehr",
+    "shortcutNeedsSavedConnection": "Speichere die Verbindung \"{{name}}\", bevor du sie anheftest — Verknüpfungen werden aus gespeicherten Verbindungen wiederhergestellt.",
     "unpinned": "Anheftung an Seitenleiste aufgehoben"
   },
   "tree": {

@@ -38,6 +38,7 @@ import {
   favoriteItemSubtitle,
   favoriteItemKey,
 } from '../lib/favoriteItems';
+import { isEphemeralProfileId } from '../workspace/persistence';
 import {
   listAllSavedQueries,
   QUERIES_CHANGED_EVENT,
@@ -724,9 +725,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return { kind: 'connection', connectionName: conn.name };
   };
 
+  /**
+   * Whether a shortcut to this connection could survive a restart.
+   *
+   * Pins and favourites are stored by connection NAME and resolved on the way
+   * back by `ensureConnection`, which looks that name up among *saved
+   * profiles*. A connection the user chose not to save has no profile to
+   * resolve to, so a shortcut to it — or to any database or collection inside
+   * it — could only ever come back as "no saved connection" (#369 review).
+   *
+   * Guarded here rather than at the six menu items that build these entries:
+   * one choke point cannot be half-applied, and connection, database and
+   * collection shortcuts all fail for the same reason.
+   */
+  const canOutliveTheSession = (connectionName: string): boolean => {
+    const conn = activeConnections.find((c) => c.name === connectionName);
+    // Unknown means gone, not ephemeral — never block removing an existing
+    // shortcut for a connection that is no longer open.
+    return !conn || !isEphemeralProfileId(conn.profileId);
+  };
+
   const handleTogglePin = (entry: PinnedItem) => {
     try {
       const wasPinned = isItemPinned(pinnedItems, entry);
+      // Only adding is refused. Removing has to keep working whatever the
+      // entry points at, or a shortcut could become impossible to clear.
+      if (!wasPinned && !canOutliveTheSession(entry.connectionName)) {
+        toast(t('toasts.shortcutNeedsSavedConnection', { name: entry.connectionName }), 'error');
+        return;
+      }
       const next = togglePinItem(pinnedItems, entry);
       setPinnedItems(next);
       if (!wasPinned) {
@@ -741,6 +768,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleToggleFavorite = (entry: FavoriteItem) => {
     try {
       const wasFav = isItemFavorited(favoriteItems, entry);
+      if (!wasFav && !canOutliveTheSession(entry.connectionName)) {
+        toast(t('toasts.shortcutNeedsSavedConnection', { name: entry.connectionName }), 'error');
+        return;
+      }
       const next = toggleFavoriteItem(favoriteItems, entry);
       setFavoriteItems(next);
       if (!wasFav) {

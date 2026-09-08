@@ -1639,6 +1639,73 @@ describe('Sidebar Component', () => {
     ]);
   });
 
+  it('refuses to pin a connection the user never saved (#369 review)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          {
+            id: 'conn-1',
+            name: 'Trial',
+            uri: 'mongodb://localhost',
+            profileId: 'ephemeral:11111111-2222-3333-4444-555555555555',
+          },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    const serverNode = await screen.findByText('Trial');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    fireEvent.click(screen.getByText('Pin to sidebar'));
+
+    // Pins are stored by name and resolved after a restart against SAVED
+    // profiles, so a shortcut to a connection that was never saved could only
+    // ever come back as "no saved connection". Refused, with the reason said
+    // out loud rather than a click that appears to do nothing.
+    expect(await screen.findByText(/before pinning it/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('pinned-item-conn::Trial')).toBeNull();
+    expect(localStorage.getItem('mqlens_pinned_collections')).toBeNull();
+  });
+
+  it('still pins a connection that has a saved profile', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-1', name: 'Local', uri: 'mongodb://localhost', profileId: 'profile-1' },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    const serverNode = await screen.findByText('Local');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    fireEvent.click(screen.getByText('Pin to sidebar'));
+
+    // The guard must read the ephemeral marker, not merely the presence of a
+    // profile id — every saved connection carries one too.
+    expect(await screen.findByTestId('pinned-item-conn::Local')).toBeInTheDocument();
+  });
+
   it('shows empty-state hint when pinned section has no items', async () => {
     render(
       <Sidebar
