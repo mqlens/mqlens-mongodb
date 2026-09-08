@@ -648,6 +648,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   // answer, since a server-selection timeout can leave the user looking at a
   // dialog for half a minute and they are entitled to walk away from it.
   const connectAttemptRef = useRef(0);
+  // Every check that runs AFTER an await must read this, not the prop.
+  //
+  // A handler suspended on `connect_db` or `save_connection_profile` resumes
+  // inside the render that started it, so `activeConnections` there is the array
+  // as it was when the click happened — even though React has since re-rendered
+  // this component with another window's connection in it. A post-await check
+  // against the prop therefore cannot see the very thing it exists to catch
+  // (#369 review).
+  const activeConnectionsRef = useRef(activeConnections);
+  activeConnectionsRef.current = activeConnections;
   // A single Escape reaches us twice: Radix dismisses the dialog through
   // `onOpenChange` and the window-level listener fires for the same event, and
   // both read the same `pendingSave` from this render. Handing a connection to
@@ -985,6 +995,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         return;
       }
       if (existing) {
+        // Rechecked, because `connect_db` is an await and another window can
+        // claim this profile during it. Handing the id over anyway would give
+        // App a row it drops as a duplicate while `set_connection_meta` still
+        // publishes it — a live backend session with nothing local pointing at
+        // it (#369 review).
+        if (activeConnectionsRef.current.some((c) => c.profileId === existing.id)) {
+          try {
+            await invoke('disconnect_db', { id: connId });
+          } catch {
+            /* best effort: the session is unreachable either way */
+          }
+          setError(t('errors.alreadyActive'));
+          return;
+        }
         setShowEditDialog(false);
         handOverConnection(
           connId,
@@ -1131,7 +1155,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     // drops as a duplicate, which would leave this session live, unreachable
     // and invisible. Releasing it instead keeps the backend honest (#369
     // review; the reservation itself is filed separately).
-    if (activeConnections.some((c) => c.profileId === profile.id)) {
+    if (activeConnectionsRef.current.some((c) => c.profileId === profile.id)) {
       void invoke('disconnect_db', { id: pendingSave.connId }).catch(() => {});
       setPendingSave(null);
       setShowEditDialog(false);

@@ -2124,6 +2124,125 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     expect(handleConnect).not.toHaveBeenCalled();
   });
 
+  it('sees a profile claimed while the save was in flight, not just before it', async () => {
+    const handleConnect = vi.fn();
+    const disconnected: string[] = [];
+    let finishSave: (() => void) | null = null;
+    const profile = {
+      id: 'profile-1',
+      name: 'Mock DB 1',
+      uri: 'mongodb://mock',
+      ssh: null,
+      color_tag: null,
+      connection_mode: 'normal',
+    };
+    const taken = [
+      { id: 'live-elsewhere', profileId: 'profile-1', name: 'Mock DB 1', uri: 'mongodb://mock' },
+    ];
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-ours');
+      if (cmd === 'save_connection_profile') {
+        return new Promise<void>((resolve) => { finishSave = () => resolve(); });
+      }
+      if (cmd === 'disconnect_db') {
+        disconnected.push(args.id);
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    const { rerender } = render(
+      <ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} activeConnections={[]} />,
+    );
+    fireEvent.click((await screen.findAllByText('Mock DB 1'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(await screen.findByLabelText(/display name/i), {
+      target: { value: 'Mock DB 1 (edited)' },
+    });
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+
+    // Save starts while the profile is free.
+    fireEvent.click(screen.getByTestId('connect-save-btn'));
+    await waitFor(() => expect(finishSave).not.toBeNull());
+
+    // The other window claims it DURING the write. React re-renders with the
+    // new prop, but the suspended handler still closes over the old array — so
+    // a post-await check against the prop cannot see this at all.
+    rerender(
+      <DialogProvider>
+        <ConnectionManager
+          isOpen
+          onClose={() => {}}
+          onConnect={handleConnect}
+          activeConnections={taken}
+        />
+      </DialogProvider>,
+    );
+
+    finishSave!();
+
+    await waitFor(() => expect(disconnected).toEqual(['conn-ours']));
+    expect(handleConnect).not.toHaveBeenCalled();
+  });
+
+  it('sees a profile claimed while an untouched reconnect was in flight', async () => {
+    const handleConnect = vi.fn();
+    const disconnected: string[] = [];
+    let settle: ((id: string) => void) | null = null;
+    const profile = {
+      id: 'profile-1',
+      name: 'Mock DB 1',
+      uri: 'mongodb://mock',
+      ssh: null,
+      color_tag: null,
+      connection_mode: 'normal',
+    };
+    const taken = [
+      { id: 'live-elsewhere', profileId: 'profile-1', name: 'Mock DB 1', uri: 'mongodb://mock' },
+    ];
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'connect_db') return new Promise<string>((resolve) => { settle = resolve; });
+      if (cmd === 'disconnect_db') {
+        disconnected.push(args.id);
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    const { rerender } = render(
+      <ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} activeConnections={[]} />,
+    );
+    fireEvent.click((await screen.findAllByText('Mock DB 1'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // Untouched, so this is a plain reconnect rather than an offer — the branch
+    // that hands the connection straight over.
+    fireEvent.click(await screen.findByTestId('editor-connect-btn'));
+    await waitFor(() => expect(settle).not.toBeNull());
+
+    rerender(
+      <DialogProvider>
+        <ConnectionManager
+          isOpen
+          onClose={() => {}}
+          onConnect={handleConnect}
+          activeConnections={taken}
+        />
+      </DialogProvider>,
+    );
+
+    settle!('conn-ours');
+
+    // Handing it over would give App a row it drops as a duplicate while the
+    // backend session stays open with nothing pointing at it.
+    await waitFor(() => expect(disconnected).toEqual(['conn-ours']));
+    expect(handleConnect).not.toHaveBeenCalled();
+    expect(await screen.findByTestId('editor-error')).toHaveTextContent(/already active/i);
+  });
+
   it('releases a connection that arrives after the editor was dismissed', async () => {
     const handleConnect = vi.fn();
     const disconnected: string[] = [];
