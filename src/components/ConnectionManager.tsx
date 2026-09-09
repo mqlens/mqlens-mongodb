@@ -1041,15 +1041,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       // the three things still on screen, and the only ones the offer is asking
       // about. A name typed while the connection was opening is still a name the
       // user chose for it, so it stands.
-      setEditorState((prev) => ({
-        ...tested,
-        name:
-          prev.name.trim() && prev.name !== BLANK_CONN.name
-            ? prev.name
-            : suggestConnectionName(tested),
-        folder: prev.folder,
-        colorTag: prev.colorTag,
-      }));
+      setEditorState((prev) => {
+        // "New Connection" is only a placeholder where WE put it — opening a
+        // blank editor. On a saved profile it is a name somebody chose, and
+        // matching it by string alone silently renamed their profile on save
+        // (#369 review). An empty name still takes the suggestion whatever the
+        // mode, since the alternative is handing the app a nameless connection.
+        const ourPlaceholder = editMode === 'new' && prev.name === BLANK_CONN.name;
+        return {
+          ...tested,
+          name: !prev.name.trim() || ourPlaceholder ? suggestConnectionName(tested) : prev.name,
+          folder: prev.folder,
+          colorTag: prev.colorTag,
+        };
+      });
     } catch (err: any) {
       if (attempt === connectAttemptRef.current) setConnectError(String(err));
     } finally {

@@ -2243,6 +2243,47 @@ describe('the save offer cannot strand or misdescribe a connection (#369 review)
     expect(await screen.findByTestId('editor-error')).toHaveTextContent(/already active/i);
   });
 
+  it('does not rename a saved profile that happens to be called New Connection', async () => {
+    const handleConnect = vi.fn();
+    let saved: any = null;
+    const profile = {
+      id: 'profile-1',
+      name: 'New Connection',
+      uri: 'mongodb://mock',
+      ssh: null,
+      color_tag: null,
+      connection_mode: 'normal',
+    };
+    mockInvoke.mockImplementation((cmd, args) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-named');
+      if (cmd === 'save_connection_profile') {
+        saved = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={handleConnect} />);
+    fireEvent.click((await screen.findAllByText('New Connection'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // Touch a connection setting, never the name — that is what routes this
+    // through the offer rather than a plain reconnect.
+    fireEvent.click(await screen.findByTestId('connection-mode-read_only'));
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+    await screen.findByTestId('connect-save-offer');
+
+    // "New Connection" is a placeholder only where the app puts it. Here it is
+    // a name somebody chose, and matching it by string alone renamed their
+    // profile on save without them touching the field.
+    expect(screen.getByLabelText(/display name/i)).toHaveValue('New Connection');
+
+    fireEvent.click(screen.getByTestId('connect-save-btn'));
+    await waitFor(() => expect(saved).not.toBeNull());
+    expect(saved.name).toBe('New Connection');
+  });
+
   it('releases a connection that arrives after the editor was dismissed', async () => {
     const handleConnect = vi.fn();
     const disconnected: string[] = [];
