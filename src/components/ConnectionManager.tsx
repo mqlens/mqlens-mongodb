@@ -1122,6 +1122,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     // profile's id — two identities for one session, with the backend's
     // metadata left describing whichever landed last (#369 review).
     if (loading) return;
+
+    // Advanced here, synchronously, and not left to the effect that watches
+    // `showEditDialog`. That effect is passive: it runs after the commit, while
+    // a `connect_db` promise resolves on a microtask — so a connection landing
+    // in between would still read the old generation, pass the abandonment
+    // check, and be stored in `pendingSave` on an editor that no longer exists.
+    // The next editor would then clear that handle without disconnecting it
+    // (#369 review). The effect stays for the close paths that do not come
+    // through here; advancing twice is harmless, since only equality matters.
+    connectAttemptRef.current += 1;
+
     if (pendingSave) {
       adoptPendingConnection(pendingSave);
       return;
