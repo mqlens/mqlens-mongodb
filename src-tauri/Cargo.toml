@@ -67,7 +67,7 @@ axum = { version = "=0.8.9", default-features = false, features = ["http1", "tok
 rusqlite = { version = "0.40", features = ["bundled"] }
 # Cross-process advisory lock on the audit log so two MQLens instances cannot
 # interleave appends and break its hash chain.
-fs4 = "0.13"
+fs4 = "1.1"
 
 [dev-dependencies]
 tiny_http = "0.12.0"
