@@ -3554,9 +3554,17 @@ fn log_frontend_error(app_handle: tauri::AppHandle, message: String) {
     let ts = mongodb::bson::DateTime::now()
         .try_to_rfc3339_string()
         .unwrap_or_default();
+    // Bound the record itself, not just the file. The file-size check above
+    // only looks at the pre-existing length, so a single oversized message
+    // would sail past the cap in one write (#381 review). One crash record is
+    // a message plus a stack — a few KB at most — so 64 KiB is generous.
+    const MAX_RECORD_CHARS: usize = 64 * 1024;
     // One record per line; a multi-line stack is indented so it stays part of
     // its own record rather than looking like separate entries.
-    let body = message.replace('\n', "\n    ");
+    let mut body = message.replace('\n', "\n    ");
+    if body.chars().count() > MAX_RECORD_CHARS {
+        body = body.chars().take(MAX_RECORD_CHARS).collect::<String>() + "…(truncated)";
+    }
     let _ = writeln!(file, "[{ts}] {body}");
 }
 
