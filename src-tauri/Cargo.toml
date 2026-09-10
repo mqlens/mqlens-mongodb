@@ -46,7 +46,7 @@ rand = "0.8"
 # fake 5.x to rand 0.10) — our StdRng is rand 0.8 (see `rand = "0.8"` above) and
 # determinism requires driving fake's generators with OUR seeded rng via
 # `Fake::fake_with_rng`, which only type-checks against a matching rand major.
-fake = "=3.1.0"
+fake = "=5.1.0"
 base64 = "0.23"
 rust_xlsxwriter = "0.99.0"
 tempfile = "3.27.0"
