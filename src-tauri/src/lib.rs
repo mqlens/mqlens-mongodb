@@ -3027,18 +3027,44 @@ async fn load_connection_profiles(
 /// different database than the profile now names. Only a server change matters;
 /// renaming, recolouring or changing the connection mode of a live profile is
 /// harmless and stays allowed.
+/// A mongodb URI reduced to a form two equivalent URIs share, for deciding
+/// whether a save actually moves the server.
+///
+/// `normalize_mongodb_uri_options` folds equivalent option spellings
+/// (`ssl`→`tls`, …) but keeps option ORDER, so a profile imported or saved with
+/// its query options in a different order than the editor's `buildUri` emits
+/// would otherwise read as a server change on a rename-only edit (#384 review).
+/// Sorting the query options removes that false difference. Host order and
+/// other deeper equivalences are deliberately not canonicalized here — this
+/// stays a conservative comparison whose worst case is asking the user to
+/// disconnect before a metadata edit, never missing a real server change.
+fn canonical_connection_uri(uri: &str) -> String {
+    let normalized = connections::normalize_mongodb_uri_options(uri);
+    let (base, rest) = match normalized.split_once('?') {
+        None => return normalized,
+        Some(parts) => parts,
+    };
+    let (query, fragment) = match rest.split_once('#') {
+        Some((q, f)) => (q, Some(f)),
+        None => (rest, None),
+    };
+    let mut params: Vec<&str> = query.split('&').filter(|p| !p.is_empty()).collect();
+    params.sort_unstable();
+    let mut out = format!("{base}?{}", params.join("&"));
+    if let Some(f) = fragment {
+        out.push('#');
+        out.push_str(f);
+    }
+    out
+}
+
 fn would_retarget_live_profile(
     existing: &connections::ConnectionProfile,
     incoming: &connections::ConnectionProfile,
     meta: &std::collections::HashMap<String, ConnectionMeta>,
 ) -> bool {
-    // Compare normalized forms on both sides. The incoming uri is normalized
-    // before it reaches here, but the stored one may use an older-but-equivalent
-    // spelling (e.g. `?ssl=true` vs `?tls=true`); a raw comparison would read
-    // that as a server change and wrongly refuse a metadata-only edit (#384
-    // review).
-    let server_changed = connections::normalize_mongodb_uri_options(&existing.uri)
-        != connections::normalize_mongodb_uri_options(&incoming.uri)
+    let server_changed = canonical_connection_uri(&existing.uri)
+        != canonical_connection_uri(&incoming.uri)
         || existing.ssh != incoming.ssh;
     server_changed && meta.values().any(|m| m.profile_id == incoming.id)
 }

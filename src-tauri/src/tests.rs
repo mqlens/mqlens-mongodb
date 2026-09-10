@@ -7288,6 +7288,18 @@ mod change_stream_tests {
         }
 
         #[test]
+        fn allows_a_rename_when_stored_options_are_in_a_different_order() {
+            // Same options, different order (an imported profile vs the editor's
+            // fixed buildUri order). Normalization keeps order, so a plain
+            // compare would call this a server change; canonicalization sorts
+            // the options so a rename-only edit is allowed (#384 review).
+            let existing = profile("p1", "mongodb://h:27017/?tls=true&directConnection=true");
+            let mut incoming = profile("p1", "mongodb://h:27017/?directConnection=true&tls=true");
+            incoming.name = "Prod (renamed)".to_string();
+            assert!(!would_retarget_live_profile(&existing, &incoming, &live("p1")));
+        }
+
+        #[test]
         fn refuses_when_only_the_ssh_tunnel_changes_while_live() {
             let existing = profile("p1", "mongodb://server:27017");
             let mut incoming = profile("p1", "mongodb://server:27017");
