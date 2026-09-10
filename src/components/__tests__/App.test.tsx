@@ -124,7 +124,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 
 // Mock Sidebar component
 vi.mock('../Sidebar', () => ({
-  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections }: any) => (
+  Sidebar: ({ onSelectCollection, onSelectIndex, onCreateIndex, onDeleteIndex, onOpenSettings, onOpenDump, onOpenRestore, onEditValidation, onOpenGenerate, onDatabaseRenamed, onDatabaseDropped, onWatchCollection, activeConnections, onConnectProfile }: any) => (
     <div data-testid="mock-sidebar">
       {/* Phase 3 Task 6 (b): mirrors the real Sidebar's dependence on the
           `activeConnections` prop for its "Connections" tree — lets tests
@@ -135,6 +135,22 @@ vi.mock('../Sidebar', () => ({
           <li key={c.id} data-testid={`sidebar-conn-${c.id}`}>{c.name}</li>
         ))}
       </ul>
+      {/* Quick-connect seam: the real Sidebar reaches this from a pinned or
+          favourite shortcut, which stores only a connection NAME. */}
+      <button
+        data-testid="quick-connect-prod-btn"
+        onClick={() =>
+          onConnectProfile?.({ id: 'profile-1', name: 'Prod', uri: 'mongodb://saved', ssh: null })
+        }
+      >
+        Quick Connect Prod
+      </button>
+      <button
+        data-testid="select-trial-collection-btn"
+        onClick={() => onSelectCollection('conn-trial', 'sales_db', 'customers')}
+      >
+        Select Collection On Trial
+      </button>
       <button data-testid="select-collection-btn" onClick={() => onSelectCollection('conn-1', 'sales_db', 'customers')}>
         Select Collection
       </button>
@@ -152,6 +168,12 @@ vi.mock('../Sidebar', () => ({
         onClick={() => onDatabaseRenamed && onDatabaseRenamed('conn-1', 'sales_db', 'sales_db2')}
       >
         Rename sales_db
+      </button>
+      <button
+        data-testid="rename-trial-db-btn"
+        onClick={() => onDatabaseRenamed && onDatabaseRenamed('conn-trial', 'sales_db', 'sales_db2')}
+      >
+        Rename DB On Trial
       </button>
       <button
         data-testid="drop-db-btn"
@@ -213,6 +235,21 @@ vi.mock('../ConnectionManager', () => ({
           onClick={() => onConnect('cm-live-1', 'Staging Cluster', 'mongodb://staging', 'p-cm', '#fff')}
         >
           Connect
+        </button>
+        {/* Adopting a connection the user chose not to save (#364): it carries an
+            ephemeral profile id, and a display name they were free to type. */}
+        <button
+          data-testid="mock-cm-adopt-trial-btn"
+          onClick={() =>
+            onConnect(
+              'conn-trial',
+              'Prod',
+              'mongodb://trial',
+              'ephemeral:11111111-2222-3333-4444-555555555555',
+            )
+          }
+        >
+          Adopt Trial
         </button>
       </div>
     ) : null,
@@ -3151,6 +3188,150 @@ describe('App Component', () => {
       });
       const splitCalls = calls.filter((c) => c.cmd === 'workspace_apply' && (c.args?.op as any)?.type === 'split_pane');
       expect(splitCalls).toHaveLength(1);
+    });
+
+    it('quick-connects a profile rather than reusing a trial session with its name', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'connect_db') return Promise.resolve('conn-from-profile');
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // An unsaved connection is adopted, then carries the same display name
+      // as a saved profile — its name is editable right up to adoption, so
+      // this is an ordinary thing to end up with by accident.
+      fireEvent.click(screen.getAllByText('New connection')[0]);
+      fireEvent.click(await screen.findByTestId('mock-cm-adopt-trial-btn'));
+      await screen.findByTestId('sidebar-conn-conn-trial');
+
+      fireEvent.click(screen.getByTestId('quick-connect-prod-btn'));
+
+      // Matching on name is a convenience for a profile reconnecting under a
+      // new session id. Handing back the trial session instead would run the
+      // shortcut against a server the user was only trying out.
+      await waitFor(() => {
+        expect(calls.some((c) => c.cmd === 'connect_db' && c.args?.uri === 'mongodb://saved')).toBe(true);
+      });
+    });
+
+    it('lists palette queries from the tab\'s own namespace, not a saved profile of the same name', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      // Adopt a connection the user declined to save, carrying a name a saved
+      // profile could equally have.
+      fireEvent.click(screen.getAllByText('New connection')[0]);
+      fireEvent.click(await screen.findByTestId('mock-cm-adopt-trial-btn'));
+      await screen.findByTestId('sidebar-conn-conn-trial');
+
+      fireEvent.click(screen.getByTestId('select-trial-collection-btn'));
+      // Opening the tab loads its default query through the OTHER call site,
+      // which is already keyed correctly — leaving those calls in the list made
+      // this test pass with the palette still broken.
+      await waitFor(() => expect(calls.some((c) => c.cmd === 'load_collection_queries')).toBe(true));
+      calls.length = 0;
+
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      // The dynamic loader only runs once there is something to search for.
+      fireEvent.change(await screen.findByTestId('command-palette-input'), {
+        target: { value: 'orders' },
+      });
+
+      // The palette offers saved queries as actions bound to a tab. Loaded by
+      // display name, it would list the saved profile's queries and run them
+      // against the trial server.
+      await waitFor(() => {
+        expect(calls.some((c) => c.cmd === 'load_collection_queries')).toBe(true);
+      });
+      const keys = calls
+        .filter((c) => c.cmd === 'load_collection_queries')
+        .map((c) => c.args?.connectionName);
+      expect(keys.some((k: string) => k?.startsWith('ephemeral:'))).toBe(true);
+      expect(keys).not.toContain('Prod');
+    });
+
+    it('keys history writes to the tab\'s own namespace, not a saved profile of the same name', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        if (cmd === 'execute_mql_query') return Promise.resolve([]);
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getAllByText('New connection')[0]);
+      fireEvent.click(await screen.findByTestId('mock-cm-adopt-trial-btn'));
+      await screen.findByTestId('sidebar-conn-conn-trial');
+
+      // Merely opening a collection records history. Keyed by display name it
+      // would append the trial server's query to the saved profile's history,
+      // even though reads and saved queries are already isolated.
+      fireEvent.click(screen.getByTestId('select-trial-collection-btn'));
+
+      await waitFor(() => {
+        expect(calls.some((c) => c.cmd === 'record_history')).toBe(true);
+      });
+      const keys = calls
+        .filter((c) => c.cmd === 'record_history')
+        .map((c) => c.args?.connectionName);
+      expect(keys.some((k: string) => k?.startsWith('ephemeral:'))).toBe(true);
+      expect(keys).not.toContain('Prod');
+    });
+
+    it('retargets a trial connection\'s chats under its own identity, not its display name', async () => {
+      const calls: any[] = [];
+      mockInvoke.mockImplementation((cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'load_collection_queries') {
+          return Promise.resolve({ saved: [], history: [], default: null });
+        }
+        return Promise.resolve([]);
+      });
+
+      const { fireEvent, waitFor } = await import('@testing-library/react');
+      renderWithProviders(<App />);
+      await screen.findByTestId('mock-sidebar');
+
+      fireEvent.click(screen.getAllByText('New connection')[0]);
+      fireEvent.click(await screen.findByTestId('mock-cm-adopt-trial-btn'));
+      await screen.findByTestId('sidebar-conn-conn-trial');
+
+      fireEvent.click(screen.getByTestId('rename-trial-db-btn'));
+
+      // The chats were written under the ephemeral key, so retargeting by
+      // display name would strand them on the old namespace — and if that name
+      // matches a saved profile, would move THAT profile's chats instead.
+      await waitFor(() => {
+        expect(calls.some((c) => c.cmd === 'retarget_chat_scope')).toBe(true);
+      });
+      const keys = calls
+        .filter((c) => c.cmd === 'retarget_chat_scope')
+        .map((c) => c.args?.connectionName);
+      expect(keys.some((k: string) => k?.startsWith('ephemeral:'))).toBe(true);
+      expect(keys).not.toContain('Prod');
     });
 
     it('renames a watch tab to a watch id, not to the collection tab it would collide with', async () => {

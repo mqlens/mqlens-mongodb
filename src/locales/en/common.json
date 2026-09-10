@@ -3,6 +3,11 @@
   "cancel": "Cancel",
   "close": "Close",
   "confirm": "Confirm",
+  "errorBoundary": {
+    "description": "The rest of the app is still working. Retry, or switch to another tab.",
+    "retry": "Retry",
+    "title": "This tab ran into a problem"
+  },
   "ok": "OK",
   "passwordInput": {
     "hide": "Hide",
@@ -69,6 +74,7 @@
     "failedToDeleteIndex": "Failed to delete index: {{detail}}",
     "failedToDropUser": "Failed to drop user: {{detail}}",
     "failedToSaveIndex": "Failed to save index: {{detail}}",
+    "favoriteNeedsSavedConnection": "Save this connection before favoriting a query — favorites are restored from saved connections.",
     "fileDeleted": "Deleted {{filename}}",
     "fileDeleteFailed": "Delete failed: {{detail}}",
     "fileDownloaded": "Downloaded {{filename}}",

@@ -3509,6 +3509,65 @@ async fn mcp_regenerate_token(
     mcp::regenerate_token_impl(&state, Some(&app_handle))
 }
 
+/// Append a frontend crash report to a log file the user can find and attach.
+///
+/// The app has no other logging. An uncaught render error (see
+/// `TabErrorBoundary`) or a `window.onerror` / `unhandledrejection` on a
+/// release build — where the webview console is disabled — otherwise leaves no
+/// trace at all, which is why #379 was only ever a blank screen. This gives
+/// those a durable home under the OS log dir (macOS `~/Library/Logs/<id>/`,
+/// Windows `%LOCALAPPDATA%\<id>\logs\`).
+///
+/// Best-effort by contract: logging a crash must never raise one, so every
+/// fallible step is swallowed rather than returned. The file is capped so a
+/// render loop cannot fill the disk.
+#[tauri::command]
+fn log_frontend_error(app_handle: tauri::AppHandle, message: String) {
+    use std::io::Write;
+    use tauri::Manager;
+
+    let Ok(dir) = app_handle.path().app_log_dir() else {
+        return;
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("frontend-errors.log");
+
+    // Start fresh once the log grows past this, so an error that fires on every
+    // render can never grow the file without bound.
+    const MAX_LOG_BYTES: u64 = 512 * 1024;
+    let truncate = std::fs::metadata(&path)
+        .map(|m| m.len() > MAX_LOG_BYTES)
+        .unwrap_or(false);
+
+    let opened = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(!truncate)
+        .truncate(truncate)
+        .open(&path);
+    let Ok(mut file) = opened else {
+        return;
+    };
+
+    let ts = mongodb::bson::DateTime::now()
+        .try_to_rfc3339_string()
+        .unwrap_or_default();
+    // Bound the record itself, not just the file. The file-size check above
+    // only looks at the pre-existing length, so a single oversized message
+    // would sail past the cap in one write (#381 review). One crash record is
+    // a message plus a stack — a few KB at most — so 64 KiB is generous.
+    const MAX_RECORD_CHARS: usize = 64 * 1024;
+    // One record per line; a multi-line stack is indented so it stays part of
+    // its own record rather than looking like separate entries.
+    let mut body = message.replace('\n', "\n    ");
+    if body.chars().count() > MAX_RECORD_CHARS {
+        body = body.chars().take(MAX_RECORD_CHARS).collect::<String>() + "…(truncated)";
+    }
+    let _ = writeln!(file, "[{ts}] {body}");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Resolve the user's real shell PATH before anything spawns child processes,
@@ -3556,6 +3615,7 @@ pub fn run() {
         })
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
+            log_frontend_error,
             connect_db,
             detect_mongo_tools,
             detect_mongosh_binary,

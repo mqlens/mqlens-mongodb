@@ -73,6 +73,11 @@
       "label": "Read-only"
     }
   },
+  "connectNow": {
+    "connected": "Connected",
+    "dontSave": "Don't save",
+    "saveOffer": "Save this connection so you can open it again later."
+  },
   "dialogs": {
     "deleteProfile": {
       "message": "Are you sure you want to delete this connection profile?",

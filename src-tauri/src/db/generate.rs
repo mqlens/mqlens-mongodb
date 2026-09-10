@@ -35,7 +35,7 @@ use crate::write_guard::{guard_writable, WriteOp};
 use crate::{AppState, LockExt, TaskInfo};
 use mongodb::bson::{self, Bson, Document};
 use rand::rngs::StdRng;
-use rand::{Rng, RngCore, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng};
 use serde_json::{Map, Value};
 use std::sync::atomic::Ordering;
 use uuid::Uuid;
@@ -337,9 +337,9 @@ pub fn generate_doc(t: &Template, rng: &mut StdRng, now: bson::DateTime) -> Docu
 
 fn random_bytes<const N: usize>(rng: &mut StdRng) -> [u8; N] {
     let mut bytes = [0u8; N];
-    // `fill_bytes` (from `RngCore`, which `Rng: RngCore`) takes a plain
-    // `&mut [u8]` slice — unlike `Rng::fill`, it has no `Fill` trait bound,
-    // so it works for a const-generic `N` without a per-size impl.
+    // `fill_bytes` (from `Rng`) takes a plain `&mut [u8]` slice — unlike
+    // `RngExt::fill`, it has no `Fill` trait bound, so it works for a
+    // const-generic `N` without a per-size impl.
     rng.fill_bytes(&mut bytes);
     bytes
 }
@@ -369,14 +369,14 @@ fn generate_value(spec: &Spec, rng: &mut StdRng, now: bson::DateTime) -> Bson {
             bytes[8] = (bytes[8] & 0x3f) | 0x80;
             Bson::String(bson::Uuid::from_bytes(bytes).to_string())
         }
-        Spec::Bool => Bson::Boolean(rng.gen()),
-        Spec::Int { min, max } => Bson::Int64(rng.gen_range(*min..=*max)),
+        Spec::Bool => Bson::Boolean(rng.random()),
+        Spec::Int { min, max } => Bson::Int64(rng.random_range(*min..=*max)),
         Spec::Float {
             min,
             max,
             decimals,
         } => {
-            let raw: f64 = rng.gen_range(*min..=*max);
+            let raw: f64 = rng.random_range(*min..=*max);
             let factor = 10f64.powi(*decimals as i32);
             Bson::Double((raw * factor).round() / factor)
         }
@@ -387,12 +387,12 @@ fn generate_value(spec: &Spec, rng: &mut StdRng, now: bson::DateTime) -> Bson {
                     let offset_ms = if span_ms == 0 {
                         0
                     } else {
-                        rng.gen_range(0..=span_ms)
+                        rng.random_range(0..=span_ms)
                     };
                     now.timestamp_millis() - offset_ms
                 }
                 DateSpec::Range { from, to } => {
-                    rng.gen_range(from.timestamp_millis()..=to.timestamp_millis())
+                    rng.random_range(from.timestamp_millis()..=to.timestamp_millis())
                 }
             };
             Bson::DateTime(bson::DateTime::from_millis(millis))
@@ -404,7 +404,7 @@ fn generate_value(spec: &Spec, rng: &mut StdRng, now: bson::DateTime) -> Bson {
             Bson::String(words.join(" "))
         }
         Spec::Pick(values) => {
-            let idx = rng.gen_range(0..values.len());
+            let idx = rng.random_range(0..values.len());
             // Validated convertible in `parse_pick`; a fresh `try_from` here
             // (rather than caching pre-converted Bson) keeps `Spec` cheap to
             // clone/compare and the DSL's "literal" surface (serde_json
@@ -412,7 +412,7 @@ fn generate_value(spec: &Spec, rng: &mut StdRng, now: bson::DateTime) -> Bson {
             Bson::try_from(values[idx].clone()).unwrap_or(Bson::Null)
         }
         Spec::Array { of, min, max } => {
-            let len = rng.gen_range(*min..=*max) as usize;
+            let len = rng.random_range(*min..=*max) as usize;
             let items = (0..len).map(|_| generate_value(of, rng, now)).collect();
             Bson::Array(items)
         }

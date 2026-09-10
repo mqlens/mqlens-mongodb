@@ -8,6 +8,7 @@ import {
  type KeepAliveLimits,
 } from './keepAlive';
 import { TabVisibleContext } from './tabVisibility';
+import { TabErrorBoundary, BoundaryContent } from '@/components/TabErrorBoundary';
 
 // Re-exported so existing `import { TAB_DRAG_MIME } from '../PaneView'` call sites
 // (e.g. tests) keep working. Owned by WorkspaceTabBar.tsx — see that file.
@@ -156,7 +157,9 @@ export function PaneView({
             className="h-full min-h-0"
           >
             <TabVisibleContext.Provider value={tabId === pane.activeTabId}>
-              {renderTabContent(tabId)}
+              <TabErrorBoundary resetKey={tabId}>
+                <BoundaryContent render={() => renderTabContent(tabId)} />
+              </TabErrorBoundary>
             </TabVisibleContext.Provider>
           </div>
         ))}

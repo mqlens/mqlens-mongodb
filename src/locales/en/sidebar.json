@@ -166,6 +166,7 @@
     "renameCollectionFailed": "Failed to rename collection: {{error}}",
     "renameDatabaseFailed": "Failed to rename database: {{error}}",
     "savedQueryGone": "Saved query no longer exists",
+    "shortcutNeedsSavedConnection": "Save the connection \"{{name}}\" before pinning it — shortcuts are restored from saved connections.",
     "unpinned": "Unpinned from sidebar"
   },
   "tree": {

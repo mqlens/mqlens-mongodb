@@ -223,9 +223,17 @@ describe('IndexModal Component', () => {
       }));
     });
 
-    const fieldSelect = screen.getByTestId('index-key-field-0') as HTMLSelectElement;
-    const optionValues = Array.from(fieldSelect.options).map((o) => o.value);
-    expect(optionValues).toContain('email');
+    // Waited on the options themselves, not just on the call being made. The
+    // call having been issued says nothing about its promise having resolved
+    // and the state having been committed, so reading the list straight after
+    // was a race the test lost whenever CI was loaded enough.
+    const optionsNow = () => {
+      const select = screen.getByTestId('index-key-field-0') as HTMLSelectElement;
+      return Array.from(select.options).map((o) => o.value);
+    };
+    await waitFor(() => expect(optionsNow()).toContain('email'));
+
+    const optionValues = optionsNow();
     expect(optionValues).toContain('profile.city');
     expect(optionValues[0]).toBe('_id');
   });

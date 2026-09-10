@@ -59,6 +59,11 @@
     "slate": "石板灰",
     "violet": "紫罗兰色"
   },
+  "connectNow": {
+    "connected": "已连接",
+    "saveOffer": "保存此连接，以便以后再次打开。",
+    "dontSave": "不保存"
+  },
   "connectionMode": {
     "confirmDestructive": {
       "description": "破坏性操作需要输入名称确认",

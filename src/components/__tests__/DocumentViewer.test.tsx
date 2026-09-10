@@ -1638,3 +1638,122 @@ describe('DocumentViewer — typing does not re-render the results (#310)', () =
     expect(mockOnExplain).toHaveBeenCalledWith(JSON.stringify({ tier: 'gold' }));
   });
 });
+
+describe('query storage namespace (#369 review)', () => {
+  const keysUsedFor = (cmd: string) =>
+    mockInvoke.mock.calls.filter((c) => c[0] === cmd).map((c) => c[1]?.connectionName);
+
+  it('keys the stores on the store key, never on the display name', async () => {
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValue({ saved: [], history: [], default: null });
+
+    // A trial connection can be given a saved profile's display name, so the
+    // name cannot be what decides whose saved queries and history these are.
+    render(
+      <DocumentViewer
+        connectionName="Prod"
+        queryStoreKey="ephemeral:1111-2222"
+        databaseName="sales_db"
+        collectionName="orders"
+        onExecute={vi.fn()}
+        onExplain={vi.fn()}
+        loading={false}
+      />,
+    );
+
+    await waitFor(() => expect(keysUsedFor('load_collection_queries').length).toBeGreaterThan(0));
+    expect(keysUsedFor('load_collection_queries')).toContain('ephemeral:1111-2222');
+    expect(keysUsedFor('load_collection_queries')).not.toContain('Prod');
+  });
+
+  it('falls back to the display name when no store key is given', async () => {
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValue({ saved: [], history: [], default: null });
+
+    // These stores were keyed on the display name before the prop existed, so a
+    // caller with no opinion has to keep getting exactly that.
+    render(
+      <DocumentViewer
+        connectionName="Prod"
+        databaseName="sales_db"
+        collectionName="orders"
+        onExecute={vi.fn()}
+        onExplain={vi.fn()}
+        loading={false}
+      />,
+    );
+
+    await waitFor(() => expect(keysUsedFor('load_collection_queries').length).toBeGreaterThan(0));
+    expect(keysUsedFor('load_collection_queries')).toContain('Prod');
+  });
+});
+
+describe('query favorites on a connection that was never saved (#369 review)', () => {
+  const withSavedQuery = (storeKey?: string, ephemeral = false) => {
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_collection_queries') {
+        return Promise.resolve({
+          saved: [{ id: 'q1', name: 'Recent orders', query: { filter: '{}' } }],
+          history: [],
+          default: null,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    return render(
+      <DocumentViewer
+        connectionName="Prod"
+        queryStoreKey={storeKey}
+        ephemeral={ephemeral}
+        databaseName="sales_db"
+        collectionName="orders"
+        onExecute={vi.fn()}
+        onExplain={vi.fn()}
+        loading={false}
+      />,
+    );
+  };
+
+  it('refuses the favorite instead of writing one that points at nothing', async () => {
+    localStorage.clear();
+    withSavedQuery('ephemeral:1111-2222', true);
+
+    // The query lives under the ephemeral key while a favorite is keyed on the
+    // display name, so Sidebar.navigateToFavorite could never match the two —
+    // the favorite would report the query missing the moment it was followed.
+    // The saved-query list lives behind the Load Query dropdown.
+    fireEvent.click(await screen.findByRole('button', { name: /load query/i }));
+    const heart = await screen.findByTestId('favorite-saved-q1');
+    fireEvent.click(heart);
+
+    expect(await screen.findByText(/before favoriting a query/i)).toBeInTheDocument();
+    expect(localStorage.getItem('mqlens_favorites')).toBeNull();
+  });
+
+  it('does not mistake a saved connection named like a sentinel for a trial one', async () => {
+    localStorage.clear();
+    // Display names are unrestricted. Sniffing the store key for the sentinel
+    // would lock this perfectly saved connection out of its own favorites.
+    withSavedQuery('ephemeral:not-really-a-trial', false);
+
+    fireEvent.click(await screen.findByRole('button', { name: /load query/i }));
+    fireEvent.click(await screen.findByTestId('favorite-saved-q1'));
+
+    await waitFor(() => expect(localStorage.getItem('mqlens_favorites')).not.toBeNull());
+  });
+  it('still favorites a query on an ordinary saved connection', async () => {
+    localStorage.clear();
+    withSavedQuery('Prod');
+
+    // The saved-query list lives behind the Load Query dropdown.
+    fireEvent.click(await screen.findByRole('button', { name: /load query/i }));
+    const heart = await screen.findByTestId('favorite-saved-q1');
+    fireEvent.click(heart);
+
+    await waitFor(() =>
+      expect(localStorage.getItem('mqlens_favorites')).not.toBeNull(),
+    );
+  });
+});

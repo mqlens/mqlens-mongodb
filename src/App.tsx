@@ -90,6 +90,7 @@ import {
 } from './workspace/workspaceStore';
 import {
   toPersistedTab,
+  isEphemeralProfileId,
   toDisconnectedSnapshot,
   rebindConnection,
   toProfileSpaceId,
@@ -1127,7 +1128,13 @@ function Workspace() {
 
   const handleQuickConnect = async (profile: ConnectionProfile): Promise<string | null> => {
     const existing = activeConnections.find(
-      (c) => c.profileId === profile.id || c.name === profile.name,
+      (c) =>
+        c.profileId === profile.id ||
+        // Matching on name is a convenience for a profile reconnecting under a
+        // new session id. An unsaved connection must not answer to it: its name
+        // is editable and can be set to this profile's, and quick-connect would
+        // then hand back a session pointing at a different server (#369 review).
+        (c.name === profile.name && !isEphemeralProfileId(c.profileId)),
     );
     if (existing) return existing.id;
     try {
@@ -1434,6 +1441,37 @@ function Workspace() {
   const connectionNameFor = (connectionId: string): string =>
     activeConnections.find((c) => c.id === connectionId)?.name || connectionId;
 
+  /**
+   * The key a connection's saved queries, default query and history live under.
+   *
+   * Normally the display name, which is what these stores have always been
+   * keyed on. An unsaved connection gets its own ephemeral id instead: its name
+   * is editable and can be a saved profile's, and sharing a namespace would
+   * mean opening a collection ran the saved profile's default query against the
+   * trial server, while the trial's own history wrote back into the saved
+   * profile's (#369 review).
+   *
+   * Its entries are orphaned when the session ends, which is the right outcome
+   * for a connection the user declined to keep.
+   */
+  /**
+   * Whether this connection is one the user never saved.
+   *
+   * Read from the profile id, which is the only thing that actually knows.
+   * Callers must not infer it from the query store key: that key is the display
+   * NAME for an ordinary connection, and display names are unrestricted — one
+   * that happens to start with "ephemeral:" would otherwise make a perfectly
+   * saved connection look like a trial (#369 review).
+   */
+  const isEphemeralConnection = (connectionId: string): boolean =>
+    isEphemeralProfileId(activeConnections.find((c) => c.id === connectionId)?.profileId);
+
+  const connectionQueryKeyFor = (connectionId: string): string => {
+    const conn = activeConnections.find((c) => c.id === connectionId);
+    if (!conn) return connectionId;
+    return isEphemeralProfileId(conn.profileId) ? conn.profileId! : conn.name;
+  };
+
   // Never sit on a blank canvas — if every tab is closed, bring back Quick
   // Start. Main-window-only (Phase 3 Task 4): a secondary window has no
   // quickstart concept — the spec says an emptied secondary window closes
@@ -1484,7 +1522,7 @@ function Workspace() {
         const parsedResults = resultStrs.map(s => JSON.parse(s));
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
         // History is best-effort: never surface an error after a successful run.
-        recordHistory(connectionNameFor(connectionId), dbName, collName, {
+        recordHistory(connectionQueryKeyFor(connectionId), dbName, collName, {
           queryType: 'aggregate',
           pipeline,
         }).catch(() => {});
@@ -1507,7 +1545,7 @@ function Workspace() {
         const parsedResults = resultStrs.map(s => JSON.parse(s));
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, results: parsedResults, loading: false, lastQuery: q } : t));
         // History is best-effort: never surface an error after a successful run.
-        recordHistory(connectionNameFor(connectionId), dbName, collName, {
+        recordHistory(connectionQueryKeyFor(connectionId), dbName, collName, {
           queryType: 'find',
           filter: JSON.parse(q.filter || '{}'),
           sort: JSON.parse(q.sort || '{}'),
@@ -1576,7 +1614,7 @@ function Workspace() {
       let def: QueryDef | null = (savedQuery as QueryDef | undefined) ?? null;
       if (!def) {
         try {
-          const cq = await loadCollectionQueries(connectionNameFor(connectionId), dbName, collName);
+          const cq = await loadCollectionQueries(connectionQueryKeyFor(connectionId), dbName, collName);
           def = (cq.default as QueryDef | null) ?? null;
         } catch {
           def = null;
@@ -2314,7 +2352,17 @@ function Workspace() {
     if (renamedConnection) {
       for (const variant of ['editor', 'shell'] as const) {
         void retargetChatScope(
-          { connectionName: renamedConnection.name, database: dbName, collection: oldName, variant },
+          // Keyed like the panel that wrote these chats. Since an unsaved
+          // connection stores under its ephemeral id, retargeting by display
+          // name would leave its own conversations behind on the old namespace
+          // — and, if that name matches a saved profile, would move THAT
+          // profile's chats instead (#369 review).
+          {
+            connectionName: connectionQueryKeyFor(connectionId),
+            database: dbName,
+            collection: oldName,
+            variant,
+          },
           { database: dbName, collection: newName }
         );
       }
@@ -2408,7 +2456,7 @@ function Workspace() {
     const renamedConnection = activeConnections.find((c) => c.id === connectionId);
     if (renamedConnection) {
       void retargetChatScope(
-        { connectionName: renamedConnection.name, database: oldName },
+        { connectionName: connectionQueryKeyFor(connectionId), database: oldName },
         { database: newName }
       );
     }
@@ -3131,7 +3179,15 @@ function Workspace() {
           if (!matchesNamespaceScope(paletteNamespaceScope, { connectionName, db: t.db, collection: t.collection })) {
             return;
           }
-          const cq = await loadCollectionQueries(connectionName, t.db, t.collection);
+          // Keyed like every other reader of this store. The scope match above
+          // stays on the display name — that is what the user typed — but the
+          // load must not, or the palette lists a saved profile's queries as
+          // actions bound to a trial tab and runs them there (#369 review).
+          const cq = await loadCollectionQueries(
+            connectionQueryKeyFor(t.connectionId),
+            t.db,
+            t.collection,
+          );
           for (const s of cq.saved) {
             items.push({
               id: `saved:${t.id}:${s.id}`,
@@ -3223,7 +3279,7 @@ function Workspace() {
       // local `lastAggregate: undefined` above.
       mirrorUpdateTabState(tab.id, activeConnections, { lastQuery: query, lastAggregate: null });
       // History is best-effort: never surface an error after a successful run.
-      recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
+      recordHistory(connectionQueryKeyFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'find',
         filter: JSON.parse(query.filter || '{}'),
         sort: JSON.parse(query.sort || '{}'),
@@ -3328,7 +3384,7 @@ function Workspace() {
       const parsedResults = resultStrs.map(s => JSON.parse(s));
       setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, results: parsedResults, loading: false, lastAggregate: pipeline } : t));
       mirrorUpdateTabState(tab.id, activeConnections, { lastAggregate: pipeline });
-      recordHistory(connectionNameFor(tab.connectionId), tab.db, tab.collection, {
+      recordHistory(connectionQueryKeyFor(tab.connectionId), tab.db, tab.collection, {
         queryType: 'aggregate',
         pipeline,
       }).catch(() => {});
@@ -4520,6 +4576,8 @@ function Workspace() {
               key={tab.id}
               connectionId={tab.connectionId}
               connectionName={connectionName}
+              queryStoreKey={connectionQueryKeyFor(tab.connectionId)}
+              ephemeral={isEphemeralConnection(tab.connectionId)}
               connectionUser={connectionUser}
               databaseName={tab.db}
               collectionName={tab.collection}
@@ -4845,6 +4903,7 @@ function Workspace() {
               key={`${tab.id}:${tab.initialShellCommand || ''}`}
               connectionId={tab.connectionId}
               connectionName={connectionName}
+              scopeKey={connectionQueryKeyFor(tab.connectionId)}
               connectionUri={activeConnection?.uri || ''}
               databaseName={tab.db}
               collectionName={tab.collection || undefined}

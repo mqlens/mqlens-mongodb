@@ -38,6 +38,7 @@ import {
   favoriteItemSubtitle,
   favoriteItemKey,
 } from '../lib/favoriteItems';
+import { isEphemeralProfileId } from '../workspace/persistence';
 import {
   listAllSavedQueries,
   QUERIES_CHANGED_EVENT,
@@ -506,8 +507,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     'local-resources': true,
   });
 
+  /**
+   * The open connection a saved shortcut's name refers to, if any.
+   *
+   * Unsaved connections are skipped. Their names are editable and can be set
+   * to anything, including a saved profile's — and every stored pin, favourite
+   * and query target is only a name. Answering with a trial session would run
+   * a shortcut the user made for their saved server against a different one
+   * they were only trying out (#369 review).
+   */
   const connectionIdForName = (name: string): string | null =>
-    activeConnections.find((c) => c.name === name)?.id ?? null;
+    activeConnections.find((c) => c.name === name && !isEphemeralProfileId(c.profileId))?.id ??
+    null;
 
   const ensureConnection = async (connectionName: string): Promise<string | null> => {
     const existing = connectionIdForName(connectionName);
@@ -724,9 +735,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return { kind: 'connection', connectionName: conn.name };
   };
 
-  const handleTogglePin = (entry: PinnedItem) => {
+  /**
+   * Whether a shortcut to this connection could survive a restart.
+   *
+   * Pins and favourites are stored by connection NAME and resolved on the way
+   * back by `ensureConnection`, which looks that name up among *saved
+   * profiles*. A connection the user chose not to save has no profile to
+   * resolve to, so a shortcut to it — or to any database or collection inside
+   * it — could only ever come back as "no saved connection" (#369 review).
+   *
+   * Guarded here rather than at the six menu items that build these entries:
+   * one choke point cannot be half-applied, and connection, database and
+   * collection shortcuts all fail for the same reason.
+   */
+  // Takes the id of the connection the shortcut is being made FROM, never its
+  // name. Duplicate profile names are supported and a trial connection's name
+  // is editable, so a name can match a different, saved connection — and a
+  // name-based check would then clear the shortcut for the wrong server
+  // (#369 review).
+  const canOutliveTheSession = (connId: string): boolean => {
+    const conn = activeConnections.find((c) => c.id === connId);
+    // Unknown means gone, not ephemeral — never block removing an existing
+    // shortcut for a connection that is no longer open.
+    return !conn || !isEphemeralProfileId(conn.profileId);
+  };
+
+  const handleTogglePin = (entry: PinnedItem, connId: string) => {
     try {
       const wasPinned = isItemPinned(pinnedItems, entry);
+      // Refused in BOTH directions, not just for adding. Shortcut keys carry
+      // only a name, so a trial connection sharing one with a saved shortcut
+      // makes `isItemPinned` true — and an addition-only guard would then let
+      // the trial row delete the saved profile's shortcut, under a menu
+      // helpfully labelled "Unpin" (#369 review).
+      //
+      // Nothing is trapped by this: a shortcut can never have been created
+      // from a trial row in the first place, so there is none here to clear.
+      if (!canOutliveTheSession(connId)) {
+        toast(t('toasts.shortcutNeedsSavedConnection', { name: entry.connectionName }), 'error');
+        return;
+      }
       const next = togglePinItem(pinnedItems, entry);
       setPinnedItems(next);
       if (!wasPinned) {
@@ -738,9 +786,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleToggleFavorite = (entry: FavoriteItem) => {
+  const handleToggleFavorite = (entry: FavoriteItem, connId: string) => {
     try {
       const wasFav = isItemFavorited(favoriteItems, entry);
+      if (!canOutliveTheSession(connId)) {
+        toast(t('toasts.shortcutNeedsSavedConnection', { name: entry.connectionName }), 'error');
+        return;
+      }
       const next = toggleFavoriteItem(favoriteItems, entry);
       setFavoriteItems(next);
       if (!wasFav) {
@@ -1479,7 +1531,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     connectionName: conn.name,
                     db: dbName,
                     collection: collName,
-                  });
+                  }, connId);
                 }
               }}
             >
@@ -1508,7 +1560,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     connectionName: conn.name,
                     db: dbName,
                     collection: collName,
-                  });
+                  }, connId);
                 }
               }}
             >
@@ -1848,7 +1900,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     data-testid={`ctx-pin-conn-${conn.id}`}
                     onSelect={() => {
                       const entry = pinEntryForConnection(conn.id);
-                      if (entry) handleTogglePin(entry);
+                      if (entry) handleTogglePin(entry, conn.id);
                     }}
                   >
                     <Pin />
@@ -1863,7 +1915,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     className={ctxItemClass}
                     onSelect={() => {
                       const entry = favoriteEntryForConnection(conn.id);
-                      if (entry) handleToggleFavorite(entry);
+                      if (entry) handleToggleFavorite(entry, conn.id);
                     }}
                   >
                     <Heart />
@@ -2005,7 +2057,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   kind: 'database',
                                   connectionName: conn.name,
                                   db: dbName,
-                                })
+                                }, conn.id)
                               }
                             >
                               <Pin />
@@ -2024,7 +2076,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   kind: 'database',
                                   connectionName: conn.name,
                                   db: dbName,
-                                })
+                                }, conn.id)
                               }
                             >
                               <Heart />

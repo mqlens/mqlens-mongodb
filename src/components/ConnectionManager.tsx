@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
@@ -14,6 +14,7 @@ import {
 import { useDialogs } from './dialogs/DialogProvider';
 import { PasswordInput } from './PasswordInput';
 import { useEscapeClose } from '../lib/useEscapeClose';
+import { EPHEMERAL_PROFILE_PREFIX } from '../workspace/persistence';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
   Plus, X, Server, Play, Edit3, Trash2, Check, AlertCircle, RefreshCw,
@@ -96,11 +97,35 @@ interface TestStep {
   status: 'pending' | 'running' | 'success' | 'failed';
 }
 
+/** Last resort only: enough to stay unique within a session, see below. */
+let idSequence = 0;
+
+/**
+ * An id for a saved profile, and for the identity an unsaved connection
+ * travels under.
+ *
+ * What these need is uniqueness, not unpredictability — nothing authorises on
+ * them. But an ephemeral id is now also the namespace a trial session's saved
+ * queries and history live under, and CodeQL objects to `Math.random()`
+ * reaching a storage key (js/insecure-randomness). It is right to: weak
+ * randomness given a new job is worth two lines to fix rather than to argue
+ * about, so the randomness comes from `crypto` wherever there is any.
+ *
+ * The counter tail covers an environment with no `crypto` at all. It is still
+ * unique within a session, and unlike the old fallback it does not pretend to
+ * be random.
+ */
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+      b.toString(16).padStart(2, '0'),
+    ).join('');
+  }
+  idSequence += 1;
+  return `${Date.now().toString(36)}-${idSequence.toString(36)}`;
 };
 
 const BLANK_CONN = {
@@ -242,6 +267,27 @@ export const summarizeConnectionError = (raw: string): ConnectionErrorSummary =>
 // Parse a mongodb URI into structured editor fields so the form (protocol / hosts
 // / auth / TLS) can be edited interactively, auto-detecting the deployment type.
 // Used both when editing a saved profile and when importing a pasted URI.
+/**
+ * The user-facing summary and hint for a raw driver error.
+ *
+ * Both the connection test and a failed Connect show the same diagnosis, so the
+ * classification lives in one place; only the surrounding banner differs.
+ */
+export const describeConnectionError = (
+  raw: string,
+  t: (key: string) => string,
+): { summary: string; hint?: string } => {
+  const info = summarizeConnectionError(raw);
+  // Pulled out rather than inlined below: the i18n coverage scanner reads a
+  // string literal sitting directly after `hint:` as untranslated UI copy,
+  // which the key name in the `in` check would otherwise look exactly like.
+  const hintKey = 'hintKey' in info ? info.hintKey : undefined;
+  return {
+    summary: 'summaryKey' in info ? t(info.summaryKey) : info.summaryText,
+    hint: hintKey ? t(hintKey) : undefined,
+  };
+};
+
 export const parseUriIntoFields = (uri: string) => {
   const isSrv = /^mongodb\+srv:\/\//i.test(uri);
   // The password is optional: X.509 and Kerberos authenticate without one and
@@ -468,6 +514,23 @@ export const buildUri = (s: typeof BLANK_CONN) => {
 };
 
 // Build the structured SSH tunnel config the backend expects, or null when disabled.
+/**
+ * A name worth offering for a connection the user has just proved works (#364).
+ *
+ * The host carries the identity people recognise: an Atlas cluster reached at
+ * `cluster0.ab12c.mongodb.net` is "cluster0" to whoever provisioned it, and a
+ * local server is just "localhost". Anything else keeps its full hostname,
+ * which still beats offering to save something called "New Connection".
+ */
+export const suggestConnectionName = (s: typeof BLANK_CONN): string => {
+  const host =
+    s.topology === 'uri'
+      ? (parseUriIntoFields(s.uri).hosts ?? [])[0]?.host
+      : s.hosts.find((h: { host: string }) => h.host)?.host;
+  if (!host) return s.name;
+  return (host.endsWith('.mongodb.net') ? host.split('.')[0] : host) || host;
+};
+
 export const buildSshConfig = (s: typeof BLANK_CONN): SshConfig | null => {
   if (!s.sshEnabled || !s.sshHost) return null;
   const auth =
@@ -545,6 +608,64 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [testResult, setTestResult] = useState<{ success: boolean; message?: string } | null>(null);
   const [showErrDetail, setShowErrDetail] = useState(false);
 
+  // A connection opened straight from the editor, before it has been saved
+  // (#364). Held here rather than handed straight to the app, because the app
+  // closes this manager the moment it accepts one — and the offer to save has
+  // to outlive that. Every path out of the editor adopts it (see
+  // `closeEditor`), so a trial connection can never be orphaned in the backend.
+  const [pendingSave, setPendingSave] = useState<
+    {
+      connId: string;
+      uri: string;
+      ssh: SshConfig | null;
+      profileId: string;
+      // The editor exactly as it stood when Connect was pressed. The fields go
+      // off screen once the offer is up, but they are live for as long as
+      // `connect_db` takes — which can be a server-selection timeout's worth of
+      // seconds — so anything the offer says about the connection has to come
+      // from here rather than from the form (#369 review). Only the name,
+      // folder and colour still on screen are read live.
+      state: typeof BLANK_CONN;
+    } | null
+  >(null);
+  const [connecting, setConnecting] = useState(false);
+  // Raw driver text from a failed editor Connect, kept apart from `testResult`
+  // so the failure reads as what it was — the connection itself refusing —
+  // rather than borrowing the four-stage checklist of a test that never ran.
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [showConnectErrDetail, setShowConnectErrDetail] = useState(false);
+  // The editor's own rendering of the profile it opened, serialized, or null
+  // when the editor is not sitting on a saved profile. Connect compares against
+  // this to tell a saved connection from a new one.
+  //
+  // It cannot compare rebuilt URIs instead: the structured form does not
+  // round-trip one byte for byte — a profile stored as `mongodb://mock` comes
+  // back as `mongodb://mock:27017/?directConnection=true` — so every profile
+  // would look modified the instant it was opened.
+  const pristineEditorRef = useRef<string | null>(null);
+  // Bumped every time the editor closes. A `connect_db` still in flight
+  // compares against it to find out whether anyone is still waiting for the
+  // answer, since a server-selection timeout can leave the user looking at a
+  // dialog for half a minute and they are entitled to walk away from it.
+  const connectAttemptRef = useRef(0);
+  // Every check that runs AFTER an await must read this, not the prop.
+  //
+  // A handler suspended on `connect_db` or `save_connection_profile` resumes
+  // inside the render that started it, so `activeConnections` there is the array
+  // as it was when the click happened — even though React has since re-rendered
+  // this component with another window's connection in it. A post-await check
+  // against the prop therefore cannot see the very thing it exists to catch
+  // (#369 review).
+  const activeConnectionsRef = useRef(activeConnections);
+  activeConnectionsRef.current = activeConnections;
+  // A single Escape reaches us twice: Radix dismisses the dialog through
+  // `onOpenChange` and the window-level listener fires for the same event, and
+  // both read the same `pendingSave` from this render. Handing a connection to
+  // the app is not idempotent over there — it broadcasts metadata, rebinds
+  // tabs and refreshes the profile list — so the guard has to be a ref, which
+  // settles synchronously, rather than state, which would not (#369 review).
+  const handedOverRef = useRef<string | null>(null);
+
   // Initialize folders and load connection profiles
   useEffect(() => {
     if (isOpen) {
@@ -555,8 +676,21 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   // Escape closes the topmost layer: the nested editor dialog when it is
   // open, otherwise the manager itself.
-  useEscapeClose(isOpen && showEditDialog, () => setShowEditDialog(false));
-  useEscapeClose(isOpen && !showEditDialog, onClose);
+  //
+  // Both stand down while the export or new-folder dialog is up. Those are
+  // Radix layers of their own and dismiss themselves on Escape; this listener
+  // sits on window, so the same keypress reached it too and closed what was
+  // underneath. Harmless when that only dropped a dialog — but the editor's
+  // Escape now answers the save offer, so dismissing an export preview would
+  // have silently chosen 'Don't save' and taken the manager with it
+  // (#369 review).
+  const nestedLayerOpen = !!exportDialog || showFolderDialog;
+  useEscapeClose(isOpen && showEditDialog && !nestedLayerOpen, () => closeEditor());
+
+  useEffect(() => {
+    if (!showEditDialog) connectAttemptRef.current += 1;
+  }, [showEditDialog]);
+  useEscapeClose(isOpen && !showEditDialog && !nestedLayerOpen, onClose);
 
   const loadFoldersFromStorage = () => {
     const { folders: currentFolders, profileFolderMap: map } = loadConnectionFolders();
@@ -601,6 +735,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     });
     setError(null);
     setTestResult(null);
+    setPendingSave(null);
+    setConnectError(null);
+    // A previous attempt may still be in flight and will no longer clear this,
+    // by design — so the fresh editor starts its own.
+    setConnecting(false);
+    pristineEditorRef.current = null;
     setTesting(false);
     setActiveEditorTab('server');
     setShowEditDialog(true);
@@ -634,7 +774,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         }
       : {};
 
-    setEditorState({
+    const opened = {
       ...BLANK_CONN,
       name: profile.name,
       uri: profile.uri,
@@ -644,12 +784,20 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       mcpEnabled: profile.mcp_enabled ?? false,
       connectionMode: profile.connection_mode ?? 'normal',
       ...sshFields,
-    });
+    };
+    setEditorState(opened);
 
     setError(null);
     setTestResult(null);
+    setPendingSave(null);
+    setConnectError(null);
+    // A previous attempt may still be in flight and will no longer clear this,
+    // by design — so the fresh editor starts its own.
+    setConnecting(false);
+    pristineEditorRef.current = null;
     setTesting(false);
     setActiveEditorTab('server');
+    pristineEditorRef.current = JSON.stringify(opened);
     setShowEditDialog(true);
   };
 
@@ -685,6 +833,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     });
     setError(null);
     setTestResult(null);
+    setPendingSave(null);
+    setConnectError(null);
+    // A previous attempt may still be in flight and will no longer clear this,
+    // by design — so the fresh editor starts its own.
+    setConnecting(false);
+    pristineEditorRef.current = null;
     setTesting(false);
     setActiveEditorTab('server');
     setShowEditDialog(true);
@@ -724,42 +878,318 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setFolderError(null);
   };
 
-  const handleSave = async () => {
+  /**
+   * Write the editor's current fields out as a profile.
+   *
+   * Returns the saved profile so a caller can go on to use it — the
+   * connect-then-save path needs its id to hand the live connection over under
+   * the identity it has just acquired. Returns null when validation or the
+   * write failed, with the reason already on screen, so the caller knows to
+   * leave the editor open.
+   */
+  const persistEditorProfile = async (
+    tested?: { uri: string; ssh: SshConfig | null; state: typeof BLANK_CONN },
+  ): Promise<ConnectionProfile | null> => {
     if (!editorState.name.trim()) {
       setError(t('errors.displayNameRequired'));
-      return;
+      return null;
     }
 
-    const uriToSave = buildUri(editorState);
+    // `tested` is the configuration a connection was actually opened on. Saving
+    // a rebuilt one instead would let the profile and the live connection it is
+    // about to be handed describe different servers, so every later reconnect
+    // and every restored tab would target the wrong one.
+    const uriToSave = tested ? tested.uri : buildUri(editorState);
     const id = editMode === 'edit' && selectedId ? selectedId : generateUUID();
     const profile: ConnectionProfile = {
       id,
       name: editorState.name,
       uri: uriToSave,
-      ssh: buildSshConfig(editorState),
+      ssh: tested ? tested.ssh : buildSshConfig(editorState),
       color_tag: editorState.colorTag
         ? normalizeHexColor(editorState.colorTag) ?? editorState.colorTag
         : null,
-      mcp_enabled: editorState.mcpEnabled,
-      connection_mode: editorState.connectionMode,
+      mcp_enabled: tested ? tested.state.mcpEnabled : editorState.mcpEnabled,
+      connection_mode: tested ? tested.state.connectionMode : editorState.connectionMode,
     };
 
     setLoading(true);
     try {
       await invoke('save_connection_profile', { profile });
-      
+
       // Update profile folder mapping
       const updatedMap = { ...profileFolderMap, [id]: editorState.folder };
       saveFoldersToStorage(folders, updatedMap);
 
-      setShowEditDialog(false);
       await loadProfiles();
       setSelectedId(id);
+      return profile;
     } catch (err: any) {
       setError(String(err));
+      return null;
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSave = async () => {
+    if (await persistEditorProfile()) setShowEditDialog(false);
+  };
+
+  /**
+   * Connect with the fields as they stand, saving nothing (#364).
+   *
+   * Saving is what engages the vault, so requiring it first meant the very
+   * first thing a trial user did was write an encrypted credential to disk for
+   * a connection nobody had shown to work yet. This asks the server instead,
+   * and only then asks the user whether it is worth keeping.
+   */
+  const handleEditorConnect = async () => {
+    // An untouched existing profile is not an anonymous connection: connect it
+    // as itself so the duplicate guard and tab rebinding still recognise it,
+    // and so nobody is offered a chance to save what is already saved. Edited
+    // fields do get the offer, since Save in edit mode updates that same
+    // profile rather than filing a second copy of it.
+    const saved =
+      editMode === 'edit' && selectedId ? profiles.find((p) => p.id === selectedId) : undefined;
+    const existing =
+      saved && pristineEditorRef.current === JSON.stringify(editorState) ? saved : undefined;
+
+    // Untouched means untouched: connect on the exact string that was saved,
+    // the way the profile list's own Connect does. Rebuilding it from the form
+    // would quietly normalise it — `mongodb://mock` becomes
+    // `mongodb://mock:27017` — and connect to something the user never wrote.
+    const uri = existing ? existing.uri : buildUri(editorState);
+    const ssh = existing ? existing.ssh ?? null : buildSshConfig(editorState);
+    // Keyed on the saved profile, not on `existing`: an edited profile still
+    // saves back onto its own id, and `addActiveConnection` dedupes by
+    // profileId — so connecting a second time would leave the user on the old
+    // session while the new one leaked, with the profile overwritten under it.
+    if (saved && activeConnections.some((c) => c.profileId === saved.id)) {
+      setError(t('errors.alreadyActive'));
+      return;
+    }
+
+    // Held by reference, which is a true snapshot: editorState is only ever
+    // replaced with a fresh object, never mutated in place.
+    const tested = editorState;
+    const attempt = connectAttemptRef.current;
+    setConnecting(true);
+    setConnectError(null);
+    setShowConnectErrDetail(false);
+    setTestResult(null);
+    setError(null);
+    try {
+      const connId = await invoke<string>('connect_db', { uri, ssh });
+      handedOverRef.current = null;
+      // The editor was dismissed while this was in flight. There is no longer a
+      // surface to offer the connection on, and `pendingSave` set now would be
+      // an invisible handle that the next editor silently discards — so release
+      // it instead. Walking away from an attempt is a way of cancelling it.
+      if (attempt !== connectAttemptRef.current) {
+        try {
+          await invoke('disconnect_db', { id: connId });
+        } catch {
+          /* best effort: the session is already unreachable either way */
+        }
+        return;
+      }
+      if (existing) {
+        // Rechecked, because `connect_db` is an await and another window can
+        // claim this profile during it. Handing the id over anyway would give
+        // App a row it drops as a duplicate while `set_connection_meta` still
+        // publishes it — a live backend session with nothing local pointing at
+        // it (#369 review).
+        if (activeConnectionsRef.current.some((c) => c.profileId === existing.id)) {
+          try {
+            await invoke('disconnect_db', { id: connId });
+          } catch {
+            /* best effort: the session is unreachable either way */
+          }
+          setError(t('errors.alreadyActive'));
+          return;
+        }
+        setShowEditDialog(false);
+        handOverConnection(
+          connId,
+          existing.name,
+          uri,
+          existing.id,
+          existing.color_tag ?? undefined,
+          existing.connection_mode ?? 'normal',
+        );
+        return;
+      }
+      // The identity an unsaved connection travels under. `addActiveConnection`
+      // dedupes on it, so it has to be unique per connection rather than one
+      // shared sentinel — otherwise a second trial connection would be dropped
+      // on the floor as a duplicate of the first.
+      setPendingSave({
+        connId,
+        uri,
+        ssh,
+        profileId: `${EPHEMERAL_PROFILE_PREFIX}${generateUUID()}`,
+        state: tested,
+      });
+      // The editor goes back to describing what was actually connected to. Its
+      // connection fields are off screen from here on, but the URI preview and
+      // the Export URI button beside the name are NOT — left on the live form
+      // they would show, and export, a URI nobody connected to, directly under a
+      // banner saying "Connected" (#369 review).
+      //
+      // Name, folder and colour are kept from the live form instead: those are
+      // the three things still on screen, and the only ones the offer is asking
+      // about. A name typed while the connection was opening is still a name the
+      // user chose for it, so it stands.
+      setEditorState((prev) => {
+        // "New Connection" is only a placeholder where WE put it — opening a
+        // blank editor. On a saved profile it is a name somebody chose, and
+        // matching it by string alone silently renamed their profile on save
+        // (#369 review). An empty name still takes the suggestion whatever the
+        // mode, since the alternative is handing the app a nameless connection.
+        const ourPlaceholder = editMode === 'new' && prev.name === BLANK_CONN.name;
+        return {
+          ...tested,
+          name: !prev.name.trim() || ourPlaceholder ? suggestConnectionName(tested) : prev.name,
+          folder: prev.folder,
+          colorTag: prev.colorTag,
+        };
+      });
+    } catch (err: any) {
+      if (attempt === connectAttemptRef.current) setConnectError(String(err));
+    } finally {
+      // Only the attempt that is still current may release the button. An
+      // abandoned one clearing it would re-enable Connect while the NEW attempt
+      // is still in flight, and a further click would then run two requests
+      // under one generation — both would pass the guard above, and the second
+      // to land would overwrite the first pendingSave and strand its connection
+      // (#369 review).
+      if (attempt === connectAttemptRef.current) setConnecting(false);
+    }
+  };
+
+  /** Give the app a connection, once, however many callers ask. */
+  const handOverConnection = (
+    connId: string,
+    name: string,
+    uri: string,
+    profileId: string,
+    colorTag: string | undefined,
+    mode: ConnectionMode,
+  ) => {
+    if (handedOverRef.current === connId) return;
+    handedOverRef.current = connId;
+    onConnect(connId, name, uri, profileId, colorTag, mode);
+  };
+
+  /** Hand a connection the user chose not to save to the app as it stands. */
+  const adoptPendingConnection = (pending: NonNullable<typeof pendingSave>) => {
+    setPendingSave(null);
+    setShowEditDialog(false);
+    handOverConnection(
+      pending.connId,
+      // Never nameless: the display name is still editable while the offer is
+      // up, and an empty one reaches the sidebar as a blank row that pinned and
+      // favourite lookups cannot resolve by name (#369 review).
+      //
+      // The last resort is a literal, deliberately. Falling back to the URI —
+      // even with the password masked — puts `user@host` into a name that
+      // pinned and favourite state writes to localStorage in clear text, which
+      // is what CodeQL flagged js/clear-text-storage-of-sensitive-data on. It
+      // would also be a poor label: this branch is only reached when the URI
+      // has no host to take a name from, so there is nothing recognisable in
+      // it to show anyway.
+      // Stored profile data, not UI copy — intentionally English in every locale (i18n out of scope).
+      editorState.name.trim() || suggestConnectionName(pending.state).trim() || 'Untitled Connection',
+      pending.uri,
+      pending.profileId,
+      editorState.colorTag
+        ? normalizeHexColor(editorState.colorTag) ?? editorState.colorTag
+        : undefined,
+      pending.state.connectionMode,
+    );
+  };
+
+  /**
+   * Leave the editor. A connection opened but not yet saved goes to the app
+   * rather than being abandoned: it is already live in the backend, and
+   * declining the save offer is a decision about the profile, not the session.
+   */
+  const closeEditor = () => {
+    // A save is a local encrypted write and takes milliseconds, but leaving
+    // during one would adopt the connection under its throwaway id while the
+    // write finishes and hands the same connection over under the saved
+    // profile's id — two identities for one session, with the backend's
+    // metadata left describing whichever landed last (#369 review).
+    if (loading) return;
+
+    // Advanced here, synchronously, and not left to the effect that watches
+    // `showEditDialog`. That effect is passive: it runs after the commit, while
+    // a `connect_db` promise resolves on a microtask — so a connection landing
+    // in between would still read the old generation, pass the abandonment
+    // check, and be stored in `pendingSave` on an editor that no longer exists.
+    // The next editor would then clear that handle without disconnecting it
+    // (#369 review). The effect stays for the close paths that do not come
+    // through here; advancing twice is harmless, since only equality matters.
+    connectAttemptRef.current += 1;
+
+    if (pendingSave) {
+      adoptPendingConnection(pendingSave);
+      return;
+    }
+    setShowEditDialog(false);
+  };
+
+  /** Keep the connection that just worked, then open it under its new profile. */
+  const handleSaveAndOpen = async () => {
+    if (!pendingSave) return;
+    // Checked again here, not only before connecting. The offer can sit on
+    // screen for as long as the user likes, and another window can connect this
+    // same profile in the meantime — this connection has not been announced
+    // yet, so nothing stops it. Saving then would overwrite the profile and
+    // hand over a second live id, which App drops as a duplicate by profileId
+    // while still publishing its metadata: the visible session would point at
+    // the old server under a profile now describing the new one, and this
+    // connection would be unreachable (#369 review).
+    const target = editMode === 'edit' && selectedId ? selectedId : null;
+    if (target && activeConnections.some((c) => c.profileId === target)) {
+      setError(t('errors.alreadyActive'));
+      return;
+    }
+    const profile = await persistEditorProfile({
+      uri: pendingSave.uri,
+      ssh: pendingSave.ssh,
+      state: pendingSave.state,
+    });
+    if (!profile) return;
+
+    // Checked once more, because the write above is asynchronous and another
+    // window can take the profile during it. This does NOT close the race — the
+    // profile has already been overwritten by the time we get here, and only
+    // the backend could hold it for the whole operation. What it prevents is
+    // the worse half: handing over a connection that `addActiveConnection`
+    // drops as a duplicate, which would leave this session live, unreachable
+    // and invisible. Releasing it instead keeps the backend honest (#369
+    // review; the reservation itself is filed separately).
+    if (activeConnectionsRef.current.some((c) => c.profileId === profile.id)) {
+      void invoke('disconnect_db', { id: pendingSave.connId }).catch(() => {});
+      setPendingSave(null);
+      setShowEditDialog(false);
+      setError(t('errors.alreadyActive'));
+      return;
+    }
+
+    const pending = pendingSave;
+    setPendingSave(null);
+    setShowEditDialog(false);
+    handOverConnection(
+      pending.connId,
+      profile.name,
+      pending.uri,
+      profile.id,
+      profile.color_tag ?? undefined,
+      profile.connection_mode ?? 'normal',
+    );
   };
 
   const handleDelete = async (profileId: string) => {
@@ -842,6 +1272,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     });
     setError(null);
     setTestResult(null);
+    setPendingSave(null);
+    setConnectError(null);
+    // A previous attempt may still be in flight and will no longer clear this,
+    // by design — so the fresh editor starts its own.
+    setConnecting(false);
+    pristineEditorRef.current = null;
     setImportError(null);
     setTesting(false);
     setActiveEditorTab('server');
@@ -1104,6 +1540,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const runTestStepSequence = async () => {
     setTesting(true);
     setTestResult(null);
+    setConnectError(null);
     setShowErrDetail(false);
     setTestProgress(0);
 
@@ -1515,7 +1952,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       </Dialog>
 
       {/* Editor Dialog nested modal */}
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+      <Dialog open={showEditDialog} onOpenChange={(open) => { if (!open) closeEditor(); }}>
         <DraggableDialogContent
           resetKey={showEditDialog}
           defaultWidth={780}
@@ -1545,7 +1982,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   <p className="truncate text-ui-xs text-muted-foreground">{t('editor.subtitle')}</p>
                 </div>
               </div>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setShowEditDialog(false)} aria-label={t('common:close')}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={closeEditor} aria-label={t('common:close')}>
                 <X size={14} />
               </Button>
             </header>
@@ -1650,6 +2087,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </section>
 
             <div className="flex min-h-0 flex-1">
+            {!pendingSave && (
             <aside className={cn(sidebarPanelClass, 'w-48 xl:w-52')}>
               <nav className="flex flex-col gap-0.5 p-2" aria-label={t('editor.tabsAria')}>
                 {TABS.map(tab => {
@@ -1668,9 +2106,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 })}
               </nav>
             </aside>
+            )}
 
             {/* Editor dialog body views */}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+            {!pendingSave && (
             <ScrollArea className="min-h-0 flex-1">
             <div className="p-6">
               {activeEditorTab === 'server' && (
@@ -2230,6 +2670,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
             </div>
             </ScrollArea>
+            )}
 
             {(testing || testResult) && (
               <div className="mx-4 mb-2 flex max-h-[200px] shrink-0 flex-col gap-2 overflow-y-auto rounded-lg border border-border bg-muted/30 p-3">
@@ -2282,9 +2723,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   if (testResult.success) {
                     summary = t('test.successMessage');
                   } else {
-                    const info = summarizeConnectionError(testResult.message ?? '');
-                    summary = 'summaryKey' in info ? t(info.summaryKey) : info.summaryText;
-                    hint = 'hintKey' in info && info.hintKey ? t(info.hintKey) : undefined;
+                    ({ summary, hint } = describeConnectionError(testResult.message ?? '', t));
                   }
                   return (
                     <div className={cn(
@@ -2324,25 +2763,122 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               </div>
             )}
 
+            {/* The only other `error` outlet sits in the manager pane behind this
+                modal, so anything reported while the editor is open — a missing
+                display name, a profile that is already connected — had no way of
+                reaching the person it was written for. */}
+            {error && (
+              <div
+                className="mx-4 mb-2 flex shrink-0 items-center gap-1.5 rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive"
+                data-testid="editor-error"
+              >
+                <AlertCircle size={12} className="shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {connectError && (() => {
+              const { summary, hint } = describeConnectionError(connectError, t);
+              return (
+                <div
+                  className="mx-4 mb-2 shrink-0 rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive"
+                  data-testid="connect-error"
+                >
+                  <div className="flex items-start gap-1.5">
+                    <AlertCircle size={12} className="mt-px shrink-0" />
+                    <span className="font-semibold" data-testid="connect-error-summary">{summary}</span>
+                  </div>
+                  {hint && (
+                    <div className="ml-[18px] mt-1 font-normal text-muted-foreground">{hint}</div>
+                  )}
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="ml-[18px] mt-1.5 h-auto p-0 text-[10px] text-muted-foreground"
+                    data-testid="connect-error-details-toggle"
+                    onClick={() => setShowConnectErrDetail(v => !v)}
+                  >
+                    {showConnectErrDetail ? t('test.hideDetails') : t('test.showDetails')}
+                  </Button>
+                  {showConnectErrDetail && (
+                    <pre
+                      data-testid="connect-error-detail"
+                      className="mb-0 mt-1.5 whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-muted-foreground"
+                    >
+                      {connectError}
+                    </pre>
+                  )}
+                </div>
+              );
+            })()}
+
+            {pendingSave && (
+              <div
+                className="mx-4 mb-2 shrink-0 rounded border border-success/30 bg-success/10 p-2 text-[11px] text-success"
+                data-testid="connect-save-offer"
+              >
+                <div className="flex items-start gap-1.5">
+                  <Check size={12} className="mt-px shrink-0" />
+                  <span className="font-semibold">{t('connectNow.connected')}</span>
+                </div>
+                <div className="ml-[18px] mt-1 font-normal text-muted-foreground">
+                  {t('connectNow.saveOffer')}
+                </div>
+              </div>
+            )}
+
             <footer className="flex shrink-0 items-center justify-between border-t border-border bg-muted/20 px-4 py-3">
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={runTestStepSequence} disabled={testing}>
-                  <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
-                  <span>{t('actions.testConnection')}</span>
-                </Button>
-                {importUriMenu()}
-                {importError && (
-                  <span className="self-center text-ui-2xs text-destructive" data-testid="import-uri-error">
-                    {importError}
-                  </span>
+                {!pendingSave && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={runTestStepSequence} disabled={testing || connecting}>
+                      <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
+                      <span>{t('actions.testConnection')}</span>
+                    </Button>
+                    {importUriMenu()}
+                    {importError && (
+                      <span className="self-center text-ui-2xs text-destructive" data-testid="import-uri-error">
+                        {importError}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setShowEditDialog(false)}>{t('common:cancel')}</Button>
-                <Button size="sm" onClick={handleSave} disabled={loading || testing}>
-                  <Check size={11} />
-                  <span>{t('common:save')}</span>
-                </Button>
+                {pendingSave ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="connect-skip-save-btn"
+                      onClick={() => adoptPendingConnection(pendingSave)}
+                      disabled={loading}
+                    >
+                      {t('connectNow.dontSave')}
+                    </Button>
+                    <Button size="sm" data-testid="connect-save-btn" onClick={handleSaveAndOpen} disabled={loading}>
+                      <Check size={11} />
+                      <span>{t('common:save')}</span>
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="outline" size="sm" onClick={closeEditor}>{t('common:cancel')}</Button>
+                    <Button variant="outline" size="sm" onClick={handleSave} disabled={loading || testing || connecting}>
+                      <Check size={11} />
+                      <span>{t('common:save')}</span>
+                    </Button>
+                    <Button
+                      size="sm"
+                      data-testid="editor-connect-btn"
+                      onClick={handleEditorConnect}
+                      disabled={loading || testing || connecting}
+                    >
+                      <Play size={11} fill="currentColor" />
+                      <span>{connecting ? t('actions.connecting') : t('actions.connect')}</span>
+                    </Button>
+                  </>
+                )}
               </div>
             </footer>
             </div>

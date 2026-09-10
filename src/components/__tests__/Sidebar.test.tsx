@@ -1639,6 +1639,198 @@ describe('Sidebar Component', () => {
     ]);
   });
 
+  it('refuses to pin a connection the user never saved (#369 review)', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          {
+            id: 'conn-1',
+            name: 'Trial',
+            uri: 'mongodb://localhost',
+            profileId: 'ephemeral:11111111-2222-3333-4444-555555555555',
+          },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    const serverNode = await screen.findByText('Trial');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    fireEvent.click(screen.getByText('Pin to sidebar'));
+
+    // Pins are stored by name and resolved after a restart against SAVED
+    // profiles, so a shortcut to a connection that was never saved could only
+    // ever come back as "no saved connection". Refused, with the reason said
+    // out loud rather than a click that appears to do nothing.
+    expect(await screen.findByText(/before pinning it/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('pinned-item-conn::Trial')).toBeNull();
+    expect(localStorage.getItem('mqlens_pinned_collections')).toBeNull();
+  });
+
+  it('still pins a connection that has a saved profile', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-1', name: 'Local', uri: 'mongodb://localhost', profileId: 'profile-1' },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    const serverNode = await screen.findByText('Local');
+    fireEvent.contextMenu(serverNode.closest('div')!);
+    fireEvent.click(screen.getByText('Pin to sidebar'));
+
+    // The guard must read the ephemeral marker, not merely the presence of a
+    // profile id — every saved connection carries one too.
+    expect(await screen.findByTestId('pinned-item-conn::Local')).toBeInTheDocument();
+  });
+
+  it('decides by connection, not by a display name a saved profile also uses', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          { id: 'conn-saved', name: 'Prod', uri: 'mongodb://saved', profileId: 'profile-1' },
+          {
+            id: 'conn-trial',
+            name: 'Prod',
+            uri: 'mongodb://trial',
+            profileId: 'ephemeral:11111111-2222-3333-4444-555555555555',
+          },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    // Duplicate profile names are supported and a trial connection's name is
+    // editable, so the two rows can collide. Looking the name up would find the
+    // saved connection first and wave this through — and the shortcut, which
+    // stores only the name, would then resolve to the wrong server.
+    const rows = await screen.findAllByText('Prod');
+    fireEvent.contextMenu(rows[1].closest('div')!);
+    fireEvent.click(screen.getByText('Pin to sidebar'));
+
+    expect(await screen.findByText(/before pinning it/i)).toBeInTheDocument();
+    expect(localStorage.getItem('mqlens_pinned_collections')).toBeNull();
+  });
+
+  it('opens a saved shortcut against the saved server, not a trial one sharing its name', async () => {
+    localStorage.setItem(
+      'mqlens_pinned_collections',
+      JSON.stringify([{ kind: 'connection', connectionName: 'Prod' }]),
+    );
+    const onConnectProfile = vi.fn().mockResolvedValue('conn-saved');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      if (cmd === 'load_connection_profiles') {
+        return Promise.resolve([{ id: 'profile-1', name: 'Prod', uri: 'mongodb://saved' }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          {
+            id: 'conn-trial',
+            name: 'Prod',
+            uri: 'mongodb://trial',
+            profileId: 'ephemeral:11111111-2222-3333-4444-555555555555',
+          },
+        ]}
+        onConnectProfile={onConnectProfile}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    // The shortcut stores only a name, and the trial connection has been given
+    // that same name. Answering with the open trial session would run a
+    // shortcut made for the saved server against a different one.
+    fireEvent.click(screen.getByRole('button', { name: /pinned/i }));
+    fireEvent.click(await screen.findByTestId('pinned-item-conn::Prod'));
+
+    await waitFor(() => expect(onConnectProfile).toHaveBeenCalled());
+    expect(onConnectProfile.mock.calls[0][0]).toMatchObject({ id: 'profile-1', uri: 'mongodb://saved' });
+  });
+
+  it('cannot unpin a saved shortcut from a trial row that shares its name', async () => {
+    localStorage.setItem(
+      'mqlens_pinned_collections',
+      JSON.stringify([{ kind: 'connection', connectionName: 'Prod' }]),
+    );
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_databases') return Promise.resolve(['sales_db']);
+      return Promise.resolve([]);
+    });
+
+    render(
+      <Sidebar
+        onSelectCollection={() => {}}
+        onSelectIndex={() => {}}
+        activeCollection={null}
+        activeConnections={[
+          {
+            id: 'conn-trial',
+            name: 'Prod',
+            uri: 'mongodb://trial',
+            profileId: 'ephemeral:11111111-2222-3333-4444-555555555555',
+          },
+        ]}
+        onOpenConnectionManager={() => {}}
+        onDisconnect={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    // Shortcut keys carry only a name, so the saved pin already looks "pinned"
+    // from this trial row and the menu offers Unpin. An addition-only guard
+    // would have let that delete the saved profile's shortcut. Nothing is
+    // trapped by refusing both directions: a shortcut can never have been made
+    // from a trial row in the first place.
+    const rows = await screen.findAllByText('Prod');
+    fireEvent.contextMenu(rows[rows.length - 1].closest('div')!);
+    fireEvent.click(screen.getByText(/unpin|pin to sidebar/i));
+
+    expect(JSON.parse(localStorage.getItem('mqlens_pinned_collections')!)).toEqual([
+      { kind: 'connection', connectionName: 'Prod' },
+    ]);
+  });
+
   it('shows empty-state hint when pinned section has no items', async () => {
     render(
       <Sidebar
