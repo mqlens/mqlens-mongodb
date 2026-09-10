@@ -3048,8 +3048,15 @@ fn canonical_connection_uri(uri: &str) -> String {
         Some((q, f)) => (q, Some(f)),
         None => (rest, None),
     };
+    // Sort by option KEY only, and stably. Sorting the whole `key=value` string
+    // would reorder repeated `readPreferenceTags`, whose URI order MongoDB
+    // honors as ordered read-routing fallbacks — so a change to that order on a
+    // live profile would wrongly canonicalize as unchanged and slip past the
+    // guard (#384 review). A stable sort by key canonicalizes the order of
+    // distinct options while preserving the relative order of any repeated one.
+    let key_of = |p: &str| p.split_once('=').map(|(k, _)| k).unwrap_or(p).to_string();
     let mut params: Vec<&str> = query.split('&').filter(|p| !p.is_empty()).collect();
-    params.sort_unstable();
+    params.sort_by(|a, b| key_of(a).cmp(&key_of(b)));
     let mut out = format!("{base}?{}", params.join("&"));
     if let Some(f) = fragment {
         out.push('#');

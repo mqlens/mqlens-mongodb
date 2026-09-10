@@ -7300,6 +7300,23 @@ mod change_stream_tests {
         }
 
         #[test]
+        fn refuses_when_repeated_read_preference_tag_order_changes_while_live() {
+            // readPreferenceTags is order-sensitive: MongoDB tries the tag sets
+            // in URI order. Reordering them changes which members serve reads,
+            // so it IS a server change and must be caught — the canonical form
+            // must not sort repeated keys against each other (#384 review).
+            let existing = profile(
+                "p1",
+                "mongodb://h:27017/?readPreferenceTags=dc:ny&readPreferenceTags=dc:sf",
+            );
+            let incoming = profile(
+                "p1",
+                "mongodb://h:27017/?readPreferenceTags=dc:sf&readPreferenceTags=dc:ny",
+            );
+            assert!(would_retarget_live_profile(&existing, &incoming, &live("p1")));
+        }
+
+        #[test]
         fn refuses_when_only_the_ssh_tunnel_changes_while_live() {
             let existing = profile("p1", "mongodb://server:27017");
             let mut incoming = profile("p1", "mongodb://server:27017");
