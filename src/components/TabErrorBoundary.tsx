@@ -2,6 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { logFrontendError } from '@/lib/crashLog';
 
 /**
  * Isolates a render crash to the tab it happened in.
@@ -108,6 +109,14 @@ export class TabErrorBoundary extends React.Component<Props, State> {
     // Keep the crash visible in the console for diagnosis — the fallback shows
     // the message but not the component stack.
     console.error('Tab content crashed:', error, info.componentStack);
+    // React caught this, so it never reached window.onerror — forward it to the
+    // crash log ourselves, or a release build keeps no record of it (#379).
+    // `error` is `unknown` (anything can be thrown), so read a stack only when
+    // it really is an Error and fall back to the normalized message otherwise.
+    const detail = error instanceof Error ? (error.stack ?? `${error.name}: ${error.message}`) : toDisplayMessage(error);
+    logFrontendError(
+      `TabErrorBoundary: ${detail}${info.componentStack ? `\nComponent stack:${info.componentStack}` : ''}`,
+    );
     this.props.onError?.(error, info);
   }
 

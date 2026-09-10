@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { useState } from 'react';
 import { TabErrorBoundary, BoundaryContent } from '../TabErrorBoundary';
+import { logFrontendError } from '@/lib/crashLog';
+
+vi.mock('@/lib/crashLog', () => ({ logFrontendError: vi.fn() }));
 
 // The boundary logs the caught error; silence it so the suite output stays
 // readable, and assert it still fires.
@@ -42,6 +45,12 @@ describe('TabErrorBoundary (#379)', () => {
     expect(screen.getByTestId('tab-error-message')).toHaveTextContent('provider blew up');
     // The crash was surfaced for diagnosis rather than swallowed.
     expect(errSpy).toHaveBeenCalled();
+    // React caught it, so it never reached window.onerror — the boundary must
+    // forward it to the crash log itself, or a release build keeps no record.
+    expect(logFrontendError).toHaveBeenCalled();
+    expect((logFrontendError as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain(
+      'provider blew up',
+    );
   });
 
   it('does not tear down siblings when one child throws', () => {

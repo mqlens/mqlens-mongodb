@@ -64,6 +64,8 @@ const READ_COMMANDS: &[&str] = &[
 /// and pure local computation (formatting already-fetched docs, generating
 /// documents from a template with no DB round-trip).
 const LOCAL_COMMANDS: &[&str] = &[
+    // Appends an uncaught-frontend-error report to a local log file; no DB.
+    "log_frontend_error",
     "connect_db",
     "detect_mongo_tools",
     "detect_mongosh_binary",
