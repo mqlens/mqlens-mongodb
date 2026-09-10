@@ -3017,6 +3017,77 @@ async fn load_connection_profiles(
     connections::load_profiles_encrypted(&connections::get_profiles_enc_path(&app_handle), &key)
 }
 
+/// Whether saving `incoming` over an existing profile would move its server
+/// (uri or ssh) while a live connection still depends on the old one.
+///
+/// The connection editor cannot make connect-and-save atomic across windows
+/// (#371): another window can hold a live connection to this profile while the
+/// save is in flight, and overwriting the server out from under it would leave
+/// that session — and its restored tabs on the next launch — pointing at a
+/// different database than the profile now names. Only a server change matters;
+/// renaming, recolouring or changing the connection mode of a live profile is
+/// harmless and stays allowed.
+/// A mongodb URI reduced to a form two equivalent URIs share, for deciding
+/// whether a save actually moves the server.
+///
+/// `normalize_mongodb_uri_options` folds equivalent option spellings
+/// (`ssl`→`tls`, …) but keeps option ORDER, so a profile imported or saved with
+/// its query options in a different order than the editor's `buildUri` emits
+/// would otherwise read as a server change on a rename-only edit (#384 review).
+/// Sorting the query options removes that false difference. Host order and
+/// other deeper equivalences are deliberately not canonicalized here — this
+/// stays a conservative comparison whose worst case is asking the user to
+/// disconnect before a metadata edit, never missing a real server change.
+fn canonical_connection_uri(uri: &str) -> String {
+    let normalized = connections::normalize_mongodb_uri_options(uri);
+    let (base, rest) = match normalized.split_once('?') {
+        None => return normalized,
+        Some(parts) => parts,
+    };
+    let (query, fragment) = match rest.split_once('#') {
+        Some((q, f)) => (q, Some(f)),
+        None => (rest, None),
+    };
+    // Lower-case the option KEY (MongoDB option names are case-insensitive, and
+    // the normalizer only lower-cases the ones it rewrites, so `TLS` vs `tls`
+    // would otherwise read as different — #384 review). Values are left as-is,
+    // since option values (tag sets, file paths) are case-sensitive.
+    let canonical_param = |p: &str| match p.split_once('=') {
+        Some((k, v)) => format!("{}={}", k.to_ascii_lowercase(), v),
+        None => p.to_ascii_lowercase(),
+    };
+    let key_of = |p: &str| p.split_once('=').map(|(k, _)| k).unwrap_or(p).to_string();
+    // Sort by key only, and stably. Sorting the whole `key=value` string would
+    // reorder repeated `readPreferenceTags`, whose URI order MongoDB honors as
+    // ordered read-routing fallbacks — so a change to that order on a live
+    // profile would wrongly canonicalize as unchanged and slip past the guard
+    // (#384 review). A stable sort by key canonicalizes the order of distinct
+    // options while preserving the relative order of any repeated one.
+    let mut params: Vec<String> = query
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .map(canonical_param)
+        .collect();
+    params.sort_by(|a, b| key_of(a).cmp(&key_of(b)));
+    let mut out = format!("{base}?{}", params.join("&"));
+    if let Some(f) = fragment {
+        out.push('#');
+        out.push_str(f);
+    }
+    out
+}
+
+fn would_retarget_live_profile(
+    existing: &connections::ConnectionProfile,
+    incoming: &connections::ConnectionProfile,
+    meta: &std::collections::HashMap<String, ConnectionMeta>,
+) -> bool {
+    let server_changed = canonical_connection_uri(&existing.uri)
+        != canonical_connection_uri(&incoming.uri)
+        || existing.ssh != incoming.ssh;
+    server_changed && meta.values().any(|m| m.profile_id == incoming.id)
+}
+
 #[tauri::command]
 async fn save_connection_profile(
     app_handle: tauri::AppHandle,
@@ -3053,6 +3124,15 @@ async fn save_connection_profile_inner(
     let mut profiles = connections::load_profiles_encrypted(&path, &key)?;
     profile.uri = connections::normalize_mongodb_uri_options(&profile.uri);
     if let Some(pos) = profiles.iter().position(|p| p.id == profile.id) {
+        // Refuse to move a live profile's server (#371 / #383 review). See
+        // `would_retarget_live_profile`.
+        let meta = state.connection_meta.lock_safe()?;
+        if would_retarget_live_profile(&profiles[pos], profile, &meta) {
+            return Err(
+                "This connection is open in another window. Close it there before changing its server, so that session isn't left pointing at the old one."
+                    .to_string(),
+            );
+        }
         profiles[pos] = profile.clone();
     } else {
         profiles.push(profile.clone());
