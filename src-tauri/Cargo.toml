@@ -54,7 +54,7 @@ sha2 = "0.11.0"
 zip = "8.6.0"
 tar = "0.4.46"
 flate2 = "1.1.9"
-rmcp = { version = "=2.2.0", features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "=3.2.0", features = ["server", "transport-streamable-http-server"] }
 # Serves rmcp's `StreamableHttpService` (a plain `tower_service::Service`) on our
 # already-bound `TcpListener`. Minimal, no-default-features build: "http1" (we only
 # need HTTP/1.1 for a loopback MCP endpoint, no h2) + "tokio" (required to enable
