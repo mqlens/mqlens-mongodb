@@ -7212,5 +7212,83 @@ mod change_stream_tests {
         );
         retiring.join().expect("retiring thread");
     }
+
+    // ---- save_connection_profile: don't retarget a live profile (#371) -----
+
+    mod retarget_live_profile {
+        use crate::connections::{ConnectionProfile, ConnectionMode};
+        use crate::state::ConnectionMeta;
+        use crate::would_retarget_live_profile;
+        use std::collections::HashMap;
+
+        fn profile(id: &str, uri: &str) -> ConnectionProfile {
+            ConnectionProfile {
+                id: id.to_string(),
+                name: "Prod".to_string(),
+                uri: uri.to_string(),
+                color_tag: None,
+                ssh: None,
+                mcp_enabled: false,
+                connection_mode: ConnectionMode::default(),
+            }
+        }
+
+        /// `profile_id` has a live connection registered.
+        fn live(profile_id: &str) -> HashMap<String, ConnectionMeta> {
+            let mut m = HashMap::new();
+            m.insert(
+                "live-conn-1".to_string(),
+                ConnectionMeta {
+                    profile_id: profile_id.to_string(),
+                    name: "Prod".to_string(),
+                    via_mcp: false,
+                    mode: ConnectionMode::default(),
+                },
+            );
+            m
+        }
+
+        #[test]
+        fn refuses_when_the_server_changes_and_the_profile_is_live() {
+            let existing = profile("p1", "mongodb://old-server:27017");
+            let incoming = profile("p1", "mongodb://new-server:27017");
+            assert!(would_retarget_live_profile(&existing, &incoming, &live("p1")));
+        }
+
+        #[test]
+        fn allows_a_name_only_change_while_live() {
+            let existing = profile("p1", "mongodb://server:27017");
+            let mut incoming = profile("p1", "mongodb://server:27017");
+            incoming.name = "Prod (renamed)".to_string();
+            incoming.color_tag = Some("#fff".to_string());
+            incoming.connection_mode = ConnectionMode::ReadOnly;
+            // Same server — only the label/mode changed — so it must not be blocked.
+            assert!(!would_retarget_live_profile(&existing, &incoming, &live("p1")));
+        }
+
+        #[test]
+        fn allows_a_server_change_when_the_profile_is_not_live() {
+            let existing = profile("p1", "mongodb://old:27017");
+            let incoming = profile("p1", "mongodb://new:27017");
+            // A different profile is live, not this one.
+            assert!(!would_retarget_live_profile(&existing, &incoming, &live("p2")));
+            // And with nothing live at all.
+            assert!(!would_retarget_live_profile(&existing, &incoming, &HashMap::new()));
+        }
+
+        #[test]
+        fn refuses_when_only_the_ssh_tunnel_changes_while_live() {
+            let existing = profile("p1", "mongodb://server:27017");
+            let mut incoming = profile("p1", "mongodb://server:27017");
+            incoming.ssh = Some(crate::ssh_tunnel::SshConfig {
+                enabled: true,
+                host: "bastion.example.com".to_string(),
+                port: 22,
+                user: "deploy".to_string(),
+                auth: crate::ssh_tunnel::SshAuth::Agent,
+            });
+            assert!(would_retarget_live_profile(&existing, &incoming, &live("p1")));
+        }
+    }
 }
 

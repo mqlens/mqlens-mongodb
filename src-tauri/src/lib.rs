@@ -3017,6 +3017,25 @@ async fn load_connection_profiles(
     connections::load_profiles_encrypted(&connections::get_profiles_enc_path(&app_handle), &key)
 }
 
+/// Whether saving `incoming` over an existing profile would move its server
+/// (uri or ssh) while a live connection still depends on the old one.
+///
+/// The connection editor cannot make connect-and-save atomic across windows
+/// (#371): another window can hold a live connection to this profile while the
+/// save is in flight, and overwriting the server out from under it would leave
+/// that session — and its restored tabs on the next launch — pointing at a
+/// different database than the profile now names. Only a server change matters;
+/// renaming, recolouring or changing the connection mode of a live profile is
+/// harmless and stays allowed.
+fn would_retarget_live_profile(
+    existing: &connections::ConnectionProfile,
+    incoming: &connections::ConnectionProfile,
+    meta: &std::collections::HashMap<String, ConnectionMeta>,
+) -> bool {
+    let server_changed = existing.uri != incoming.uri || existing.ssh != incoming.ssh;
+    server_changed && meta.values().any(|m| m.profile_id == incoming.id)
+}
+
 #[tauri::command]
 async fn save_connection_profile(
     app_handle: tauri::AppHandle,
@@ -3053,6 +3072,15 @@ async fn save_connection_profile_inner(
     let mut profiles = connections::load_profiles_encrypted(&path, &key)?;
     profile.uri = connections::normalize_mongodb_uri_options(&profile.uri);
     if let Some(pos) = profiles.iter().position(|p| p.id == profile.id) {
+        // Refuse to move a live profile's server (#371 / #383 review). See
+        // `would_retarget_live_profile`.
+        let meta = state.connection_meta.lock_safe()?;
+        if would_retarget_live_profile(&profiles[pos], profile, &meta) {
+            return Err(
+                "This connection is open in another window. Close it there before changing its server, so that session isn't left pointing at the old one."
+                    .to_string(),
+            );
+        }
         profiles[pos] = profile.clone();
     } else {
         profiles.push(profile.clone());
