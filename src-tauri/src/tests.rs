@@ -7300,6 +7300,17 @@ mod change_stream_tests {
         }
 
         #[test]
+        fn allows_a_rename_when_only_option_key_case_differs() {
+            // Option names are case-insensitive; only the ones the normalizer
+            // rewrites get lower-cased, so `TLS` vs `tls` would otherwise read as
+            // a change and refuse a rename-only edit (#384 review).
+            let existing = profile("p1", "mongodb://h:27017/?TLS=true&directConnection=true");
+            let mut incoming = profile("p1", "mongodb://h:27017/?tls=true&directConnection=true");
+            incoming.name = "Prod (renamed)".to_string();
+            assert!(!would_retarget_live_profile(&existing, &incoming, &live("p1")));
+        }
+
+        #[test]
         fn refuses_when_repeated_read_preference_tag_order_changes_while_live() {
             // readPreferenceTags is order-sensitive: MongoDB tries the tag sets
             // in URI order. Reordering them changes which members serve reads,

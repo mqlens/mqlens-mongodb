@@ -3048,14 +3048,26 @@ fn canonical_connection_uri(uri: &str) -> String {
         Some((q, f)) => (q, Some(f)),
         None => (rest, None),
     };
-    // Sort by option KEY only, and stably. Sorting the whole `key=value` string
-    // would reorder repeated `readPreferenceTags`, whose URI order MongoDB
-    // honors as ordered read-routing fallbacks — so a change to that order on a
-    // live profile would wrongly canonicalize as unchanged and slip past the
-    // guard (#384 review). A stable sort by key canonicalizes the order of
-    // distinct options while preserving the relative order of any repeated one.
+    // Lower-case the option KEY (MongoDB option names are case-insensitive, and
+    // the normalizer only lower-cases the ones it rewrites, so `TLS` vs `tls`
+    // would otherwise read as different — #384 review). Values are left as-is,
+    // since option values (tag sets, file paths) are case-sensitive.
+    let canonical_param = |p: &str| match p.split_once('=') {
+        Some((k, v)) => format!("{}={}", k.to_ascii_lowercase(), v),
+        None => p.to_ascii_lowercase(),
+    };
     let key_of = |p: &str| p.split_once('=').map(|(k, _)| k).unwrap_or(p).to_string();
-    let mut params: Vec<&str> = query.split('&').filter(|p| !p.is_empty()).collect();
+    // Sort by key only, and stably. Sorting the whole `key=value` string would
+    // reorder repeated `readPreferenceTags`, whose URI order MongoDB honors as
+    // ordered read-routing fallbacks — so a change to that order on a live
+    // profile would wrongly canonicalize as unchanged and slip past the guard
+    // (#384 review). A stable sort by key canonicalizes the order of distinct
+    // options while preserving the relative order of any repeated one.
+    let mut params: Vec<String> = query
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .map(canonical_param)
+        .collect();
     params.sort_by(|a, b| key_of(a).cmp(&key_of(b)));
     let mut out = format!("{base}?{}", params.join("&"));
     if let Some(f) = fragment {
