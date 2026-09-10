@@ -3,6 +3,11 @@
   "cancel": "Abbrechen",
   "close": "Schließen",
   "confirm": "Bestätigen",
+  "errorBoundary": {
+    "description": "Der Rest der App funktioniert weiter. Versuche es erneut oder wechsle zu einem anderen Tab.",
+    "retry": "Erneut versuchen",
+    "title": "Bei diesem Tab ist ein Problem aufgetreten"
+  },
   "ok": "OK",
   "passwordInput": {
     "hide": "Ausblenden",

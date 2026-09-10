@@ -3,6 +3,11 @@
   "cancel": "取消",
   "close": "关闭",
   "confirm": "确认",
+  "errorBoundary": {
+    "description": "应用的其余部分仍可正常使用。请重试，或切换到其他标签页。",
+    "retry": "重试",
+    "title": "此标签页遇到问题"
+  },
   "ok": "确定",
   "passwordInput": {
     "hide": "隐藏",

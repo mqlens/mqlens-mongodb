@@ -38,6 +38,7 @@ import {
   ResizableHandle,
 } from '@/components/ui/resizable';
 import { useDefaultLayout, type Layout } from 'react-resizable-panels';
+import { restorableLayout } from '@/lib/restorableLayout';
 import { cn } from '@/lib/utils';
 import { formatShortcut, shortcutById } from '@/lib/shortcuts';
 import {
@@ -1506,6 +1507,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       storage: typeof localStorage === 'undefined' ? undefined : localStorage,
     });
 
+  // Only restore a persisted layout when it is safe for the current panel set
+  // (see restorableLayout — a mismatched or sliver layout would crash the group
+  // or render an invisible strip, #379).
+  const safeSavedLayout = useMemo(
+    () => restorableLayout(savedWorkspaceLayout, workspacePanelIds),
+    [savedWorkspaceLayout, workspacePanelIds],
+  );
+
   return (
     <div className="relative flex h-full min-h-0 flex-col min-w-0">
       
@@ -1834,7 +1843,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       <ResizablePanelGroup
         id="document-viewer-workspace"
         orientation="horizontal"
-        defaultLayout={savedWorkspaceLayout ?? workspaceDefaultLayout}
+        defaultLayout={safeSavedLayout ?? workspaceDefaultLayout}
         onLayoutChanged={saveWorkspaceLayout}
         className="min-h-0 min-w-0 flex-1"
       >

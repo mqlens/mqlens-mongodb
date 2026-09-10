@@ -3,6 +3,11 @@
   "cancel": "Cancel",
   "close": "Close",
   "confirm": "Confirm",
+  "errorBoundary": {
+    "description": "The rest of the app is still working. Retry, or switch to another tab.",
+    "retry": "Retry",
+    "title": "This tab ran into a problem"
+  },
   "ok": "OK",
   "passwordInput": {
     "hide": "Hide",
