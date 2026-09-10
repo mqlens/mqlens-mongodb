@@ -3032,7 +3032,14 @@ fn would_retarget_live_profile(
     incoming: &connections::ConnectionProfile,
     meta: &std::collections::HashMap<String, ConnectionMeta>,
 ) -> bool {
-    let server_changed = existing.uri != incoming.uri || existing.ssh != incoming.ssh;
+    // Compare normalized forms on both sides. The incoming uri is normalized
+    // before it reaches here, but the stored one may use an older-but-equivalent
+    // spelling (e.g. `?ssl=true` vs `?tls=true`); a raw comparison would read
+    // that as a server change and wrongly refuse a metadata-only edit (#384
+    // review).
+    let server_changed = connections::normalize_mongodb_uri_options(&existing.uri)
+        != connections::normalize_mongodb_uri_options(&incoming.uri)
+        || existing.ssh != incoming.ssh;
     server_changed && meta.values().any(|m| m.profile_id == incoming.id)
 }
 

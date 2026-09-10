@@ -7277,6 +7277,17 @@ mod change_stream_tests {
         }
 
         #[test]
+        fn allows_a_rename_when_the_stored_uri_is_an_equivalent_older_spelling() {
+            // Stored with the older `ssl` spelling; the incoming save is already
+            // normalized to `tls`. Same server — a raw string compare would call
+            // it a change and refuse this rename-only edit (#384 review).
+            let existing = profile("p1", "mongodb://server:27017/?ssl=true");
+            let mut incoming = profile("p1", "mongodb://server:27017/?tls=true");
+            incoming.name = "Prod (renamed)".to_string();
+            assert!(!would_retarget_live_profile(&existing, &incoming, &live("p1")));
+        }
+
+        #[test]
         fn refuses_when_only_the_ssh_tunnel_changes_while_live() {
             let existing = profile("p1", "mongodb://server:27017");
             let mut incoming = profile("p1", "mongodb://server:27017");
