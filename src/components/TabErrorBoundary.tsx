@@ -58,6 +58,21 @@ function TabErrorFallback({ error, onRetry }: { error: Error; onRetry: () => voi
   );
 }
 
+/**
+ * Runs a render callback *inside* the boundary's subtree.
+ *
+ * A boundary only catches throws from its descendants' render — not throws in
+ * the parent scope that computes its children. `renderTabContent(tabId)` is
+ * called while PaneView renders, before the boundary mounts, so a synchronous
+ * failure there (the tab renderer does lookups, IIFEs and serialization before
+ * returning) would still escape to the app root. Deferring the call into this
+ * child component moves that work under the boundary, where it is caught (#379
+ * review).
+ */
+export function BoundaryContent({ render }: { render: () => React.ReactNode }) {
+  return <>{render()}</>;
+}
+
 export class TabErrorBoundary extends React.Component<Props, State> {
   state: State = { error: null };
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { restorableLayout, SIDE_PANEL_MIN } from '../restorableLayout';
+import { restorableLayout, SIDE_PANEL_MIN, SIDE_PANEL_MAX } from '../restorableLayout';
 
 describe('restorableLayout (#379)', () => {
   const aiHelper = ['document-main', 'ai-helper'];
@@ -30,9 +30,27 @@ describe('restorableLayout (#379)', () => {
     expect(restorableLayout(sliver, aiHelper)).toBeUndefined();
   });
 
+  it('discards a layout that would restore the document area as a sliver', () => {
+    // The side panel clears its own minimum here, so a min-only guard would let
+    // this through — but document-main at 2% is unusable (#379 review). It is
+    // also above the side max, another reason to reject.
+    const mainSliver = { 'document-main': 2, 'ai-helper': 98 };
+    expect(restorableLayout(mainSliver, aiHelper)).toBeUndefined();
+  });
+
+  it('discards a side panel restored above its maximum', () => {
+    const tooWide = { 'document-main': 45, 'ai-helper': 55 };
+    expect(restorableLayout(tooWide, aiHelper)).toBeUndefined();
+  });
+
   it('keeps a side panel exactly at the floor', () => {
     const atFloor = { 'document-main': 100 - SIDE_PANEL_MIN, 'ai-helper': SIDE_PANEL_MIN };
     expect(restorableLayout(atFloor, aiHelper)).toBe(atFloor);
+  });
+
+  it('keeps a side panel exactly at the maximum', () => {
+    const atMax = { 'document-main': 100 - SIDE_PANEL_MAX, 'ai-helper': SIDE_PANEL_MAX };
+    expect(restorableLayout(atMax, aiHelper)).toBe(atMax);
   });
 
   it('discards a layout with a non-numeric entry', () => {

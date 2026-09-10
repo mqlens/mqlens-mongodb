@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { useState } from 'react';
-import { TabErrorBoundary } from '../TabErrorBoundary';
+import { TabErrorBoundary, BoundaryContent } from '../TabErrorBoundary';
 
 // The boundary logs the caught error; silence it so the suite output stays
 // readable, and assert it still fires.
@@ -83,6 +83,25 @@ describe('TabErrorBoundary (#379)', () => {
 
     expect(screen.getByTestId('ok')).toBeInTheDocument();
     expect(screen.queryByTestId('tab-error-boundary')).toBeNull();
+  });
+
+  it('contains a throw from the render callback itself, not just the returned subtree', () => {
+    // The tab renderer runs synchronous work (lookups, IIFEs, serialization)
+    // before it returns a node. Passing its result as children would run that
+    // work in the PARENT's render, above the boundary, so a throw there would
+    // still escape. BoundaryContent defers the call into the boundary's own
+    // subtree, where it is caught (#379 review).
+    render(
+      <TabErrorBoundary>
+        <BoundaryContent
+          render={() => {
+            throw new Error('renderer threw before returning');
+          }}
+        />
+      </TabErrorBoundary>,
+    );
+    expect(screen.getByTestId('tab-error-boundary')).toBeInTheDocument();
+    expect(screen.getByTestId('tab-error-message')).toHaveTextContent('renderer threw before returning');
   });
 
   it('clears a stale error when resetKey changes', () => {
