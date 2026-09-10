@@ -104,6 +104,59 @@ describe('TabErrorBoundary (#379)', () => {
     expect(screen.getByTestId('tab-error-message')).toHaveTextContent('renderer threw before returning');
   });
 
+  it('shows the fallback even when a child throws a falsy value like null', () => {
+    // `null` is a legal throw. If the boundary used the caught value as its
+    // "any error?" flag, null would read as "no error" and it would re-render
+    // the crashing child instead of the fallback (#380 review).
+    function ThrowNull(): never {
+      throw null;
+    }
+    render(
+      <TabErrorBoundary>
+        <ThrowNull />
+      </TabErrorBoundary>,
+    );
+    expect(screen.getByTestId('tab-error-boundary')).toBeInTheDocument();
+  });
+
+  it('does not itself throw when a child throws a non-Error / non-string message', () => {
+    // An Error whose `.message` is an object would make a fallback that renders
+    // `error.message` throw while rendering — uncatchable, blanking the app
+    // (#380 review). The normalized message must stay a renderable string.
+    function ThrowWeird(): never {
+      const e = new Error('x');
+      // @ts-expect-error deliberately corrupting message to a non-string
+      e.message = { nested: 'not a string' };
+      throw e;
+    }
+    // A throw while rendering the fallback would escape this render() call and
+    // fail the test; reaching the assertions means it stayed contained.
+    render(
+      <TabErrorBoundary>
+        <ThrowWeird />
+      </TabErrorBoundary>,
+    );
+    expect(screen.getByTestId('tab-error-boundary')).toBeInTheDocument();
+    // Coerced to a safe string rather than rendered as an object (which would
+    // throw). The exact text isn't the point — that it's a string and the
+    // fallback survived is.
+    const shown = screen.getByTestId('tab-error-message').textContent ?? '';
+    expect(typeof shown).toBe('string');
+    expect(shown.length).toBeGreaterThan(0);
+  });
+
+  it('renders a bare string throw as its message', () => {
+    function ThrowString(): never {
+      throw 'just a string';
+    }
+    render(
+      <TabErrorBoundary>
+        <ThrowString />
+      </TabErrorBoundary>,
+    );
+    expect(screen.getByTestId('tab-error-message')).toHaveTextContent('just a string');
+  });
+
   it('clears a stale error when resetKey changes', () => {
     // Models the pane swapping which tab a boundary wraps: the new tab must not
     // inherit the old tab's error screen.

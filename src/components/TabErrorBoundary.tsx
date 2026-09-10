@@ -21,15 +21,39 @@ import { Button } from '@/components/ui/button';
 interface Props {
   children: React.ReactNode;
   resetKey?: unknown;
-  /** Reported for diagnostics; never used to render. */
-  onError?: (error: Error, info: React.ErrorInfo) => void;
+  /** Reported for diagnostics; never used to render. The thrown value is
+   *  `unknown` because JavaScript permits throwing any value, not just Error. */
+  onError?: (error: unknown, info: React.ErrorInfo) => void;
 }
 
 interface State {
-  error: Error | null;
+  // A separate flag rather than `error: X | null`: JS lets code throw a falsy
+  // value (`null`, `''`, `0`), and using the caught value as the sentinel would
+  // treat "a tab threw null" as "no error" and render the crashing child again
+  // (#380 review).
+  hasError: boolean;
+  message: string;
 }
 
-function TabErrorFallback({ error, onRetry }: { error: Error; onRetry: () => void }) {
+/**
+ * A safe, renderable one-line message for any thrown value.
+ *
+ * The fallback renders this as text, so it must be a string no matter what was
+ * thrown — an Error whose `.message` is itself an object would otherwise make
+ * the fallback throw while rendering, which the boundary cannot catch (#380
+ * review).
+ */
+function toDisplayMessage(error: unknown): string {
+  if (error instanceof Error) return String(error.message ?? error.name);
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error) ?? String(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function TabErrorFallback({ message, onRetry }: { message: string; onRetry: () => void }) {
   const { t } = useTranslation('common');
   return (
     <div
@@ -42,12 +66,12 @@ function TabErrorFallback({ error, onRetry }: { error: Error; onRetry: () => voi
         <p className="text-sm font-semibold text-foreground">{t('errorBoundary.title')}</p>
         <p className="max-w-md text-ui-xs text-muted-foreground">{t('errorBoundary.description')}</p>
       </div>
-      {error.message && (
+      {message && (
         <pre
           className="max-h-32 max-w-md overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-muted/40 px-3 py-2 text-left font-mono text-[10px] leading-relaxed text-muted-foreground"
           data-testid="tab-error-message"
         >
-          {error.message}
+          {message}
         </pre>
       )}
       <Button variant="outline" size="sm" onClick={onRetry} data-testid="tab-error-retry">
@@ -74,13 +98,13 @@ export function BoundaryContent({ render }: { render: () => React.ReactNode }) {
 }
 
 export class TabErrorBoundary extends React.Component<Props, State> {
-  state: State = { error: null };
+  state: State = { hasError: false, message: '' };
 
-  static getDerivedStateFromError(error: Error): State {
-    return { error };
+  static getDerivedStateFromError(error: unknown): State {
+    return { hasError: true, message: toDisplayMessage(error) };
   }
 
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
+  componentDidCatch(error: unknown, info: React.ErrorInfo) {
     // Keep the crash visible in the console for diagnosis — the fallback shows
     // the message but not the component stack.
     console.error('Tab content crashed:', error, info.componentStack);
@@ -90,14 +114,19 @@ export class TabErrorBoundary extends React.Component<Props, State> {
   componentDidUpdate(prev: Props) {
     // A changed resetKey means the parent swapped what this boundary wraps, so
     // a stale error should not keep hiding fresh, working content.
-    if (this.state.error && prev.resetKey !== this.props.resetKey) {
-      this.setState({ error: null });
+    if (this.state.hasError && prev.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, message: '' });
     }
   }
 
   render() {
-    if (this.state.error) {
-      return <TabErrorFallback error={this.state.error} onRetry={() => this.setState({ error: null })} />;
+    if (this.state.hasError) {
+      return (
+        <TabErrorFallback
+          message={this.state.message}
+          onRetry={() => this.setState({ hasError: false, message: '' })}
+        />
+      );
     }
     return this.props.children;
   }
