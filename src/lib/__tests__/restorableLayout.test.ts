@@ -48,6 +48,22 @@ describe('restorableLayout (#379)', () => {
     expect(restorableLayout(atFloor, aiHelper)).toBe(atFloor);
   });
 
+  it('discards a layout whose entries do not total 100%', () => {
+    // Each value is individually in-bounds, but they sum to 118%. The library
+    // normalizes proportions, scaling the side panel back under its floor —
+    // the sliver this guard exists to prevent (#380 review).
+    const overSum = { 'document-main': 100, 'ai-helper': 18 };
+    expect(restorableLayout(overSum, aiHelper)).toBeUndefined();
+    // And an under-sum layout is just as wrong.
+    const underSum = { 'document-main': 60, 'ai-helper': 30 };
+    expect(restorableLayout(underSum, aiHelper)).toBeUndefined();
+  });
+
+  it('tolerates the sub-percent float drift a drag can leave', () => {
+    const drifted = { 'document-main': 69.7, 'ai-helper': 30.3 };
+    expect(restorableLayout(drifted, aiHelper)).toBe(drifted);
+  });
+
   it('keeps a side panel exactly at the maximum', () => {
     const atMax = { 'document-main': 100 - SIDE_PANEL_MAX, 'ai-helper': SIDE_PANEL_MAX };
     expect(restorableLayout(atMax, aiHelper)).toBe(atMax);

@@ -34,6 +34,13 @@ export function restorableLayout(
   // Exactly the panels rendered now — same set, same count.
   if (Object.keys(saved).length !== panelIds.length) return undefined;
   if (!panelIds.every((id) => typeof saved[id] === 'number')) return undefined;
+  // Panel sizes are proportions of one group, so the per-panel bounds below are
+  // only meaningful if the entries actually total 100%. A layout that sums to,
+  // say, 118% passes each individual check but the library normalizes it back
+  // down — pushing the side panel under its floor again (#380 review). A small
+  // epsilon tolerates the float drift a drag can leave behind.
+  const total = panelIds.reduce((sum, id) => sum + saved[id], 0);
+  if (Math.abs(total - 100) > 0.5) return undefined;
   // The document area must not restore below its floor…
   if ('document-main' in saved && saved['document-main'] < DOCUMENT_MAIN_MIN) {
     return undefined;
