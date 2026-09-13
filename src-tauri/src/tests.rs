@@ -7340,6 +7340,27 @@ mod change_stream_tests {
             });
             assert!(would_retarget_live_profile(&existing, &incoming, &live("p1")));
         }
+
+        #[test]
+        fn allows_a_rename_when_the_stored_ssh_tunnel_is_present_but_disabled() {
+            // A disabled tunnel routes exactly as no tunnel does — connect_db
+            // gates on `enabled` — so `Some(disabled)` vs `None` is not a server
+            // change. The editor rebuilds a disabled tunnel as `None`, so a raw
+            // compare would refuse a rename-only edit on a live profile whose
+            // stored SSH is present but off (#384 review).
+            let mut existing = profile("p1", "mongodb://server:27017");
+            existing.ssh = Some(crate::ssh_tunnel::SshConfig {
+                enabled: false,
+                host: "bastion.example.com".to_string(),
+                port: 22,
+                user: "deploy".to_string(),
+                auth: crate::ssh_tunnel::SshAuth::Agent,
+            });
+            let mut incoming = profile("p1", "mongodb://server:27017");
+            incoming.name = "Prod (renamed)".to_string();
+            // incoming.ssh stays None, as buildSshConfig emits for a disabled tunnel.
+            assert!(!would_retarget_live_profile(&existing, &incoming, &live("p1")));
+        }
     }
 }
 

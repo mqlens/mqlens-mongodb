@@ -3077,6 +3077,18 @@ fn canonical_connection_uri(uri: &str) -> String {
     out
 }
 
+/// The SSH tunnel as it actually affects routing: a disabled config reaches the
+/// server exactly as no config does, because `connect_db` gates the tunnel on
+/// `enabled` (see `establish` in connections.rs). Comparing the raw
+/// `Option<SshConfig>` would read `Some(disabled)` vs `None` as a server change
+/// and refuse a rename- or color-only edit on a live profile whose stored SSH is
+/// present but turned off (#384 review).
+fn effective_ssh(
+    ssh: &Option<crate::ssh_tunnel::SshConfig>,
+) -> Option<&crate::ssh_tunnel::SshConfig> {
+    ssh.as_ref().filter(|c| c.enabled)
+}
+
 fn would_retarget_live_profile(
     existing: &connections::ConnectionProfile,
     incoming: &connections::ConnectionProfile,
@@ -3084,7 +3096,7 @@ fn would_retarget_live_profile(
 ) -> bool {
     let server_changed = canonical_connection_uri(&existing.uri)
         != canonical_connection_uri(&incoming.uri)
-        || existing.ssh != incoming.ssh;
+        || effective_ssh(&existing.ssh) != effective_ssh(&incoming.ssh);
     server_changed && meta.values().any(|m| m.profile_id == incoming.id)
 }
 
