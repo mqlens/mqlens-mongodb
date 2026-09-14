@@ -5,6 +5,7 @@ import { generateDocuments, inferTemplate, previewDocuments } from '../generate'
 import { aggregate, applyUpdate, find, inferSchema, matches, newObjectId } from '../mongo';
 import type { Doc } from '../seed';
 import type { Collection, CollectionQueries, E2EState, Server } from '../state';
+import { recordTask } from '../tasks';
 
 /** The backend takes filters, sorts and pipelines as JSON strings; blank means "none". */
 function parseJson<T>(value: unknown, fallback: T, what: string): T {
@@ -396,25 +397,15 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       const target = (database(id, db)[String(coll)] ??= { type: 'collection', docs: [], indexes: [] });
       target.docs.push(...docs.map((doc) => ({ _id: { $oid: newObjectId() }, ...doc })));
 
-      const now = Date.now();
-      const task = {
-        id: `generate-${now}-${state.tasks.length + 1}`,
+      return recordTask(state, {
         kind: 'generate',
         label: `Generate ${n} documents`,
         subLabel: `${String(db)}.${String(coll)}`,
-        status: 'running',
-        processed: 0,
+        startMessage: 'Generating documents…',
+        message: `Inserted ${n} documents`,
+        processed: n,
         total: n,
-        message: 'Generating documents…',
-        path: null,
-        error: null,
-        createdAtMs: now,
-        finishedAtMs: null,
-      };
-      // The backend returns the task as it starts. A fake run is already done,
-      // so the task list the app polls next shows it finished.
-      state.tasks.push({ ...task, status: 'completed', processed: n, message: `Inserted ${n} documents`, finishedAtMs: now });
-      return task;
+      });
     },
   };
 

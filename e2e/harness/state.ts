@@ -1,6 +1,16 @@
 // The fake backend's mutable state for one page load, built from the test's seed (#396).
 import { SAMPLE_MONITORING, SAMPLE_SERVER, SAMPLE_URI } from './seed';
-import type { Doc, IndexSeed, MongoshSeed, MonitoringSeed, ProfileSeed, Seed, VaultState } from './seed';
+import type {
+  Doc,
+  DumpFolderSeed,
+  IndexSeed,
+  MongoshSeed,
+  MonitoringSeed,
+  ProfileSeed,
+  Seed,
+  ToolSeed,
+  VaultState,
+} from './seed';
 
 export interface Collection {
   type: string;
@@ -48,6 +58,13 @@ export interface E2EState {
   monitoring: Required<MonitoringSeed>;
   mcp: { enabled: boolean; port: number; token: string; log: unknown[] };
   mongosh: Required<MongoshSeed>;
+  mongoTools: { mongodump: ToolSeed | null; mongorestore: ToolSeed | null };
+  dumpFolders: Record<string, DumpFolderSeed>;
+  /** Files the app can read, by path. */
+  files: Record<string, string>;
+  /** Files the app wrote (exports), by path. */
+  writtenFiles: Record<string, string>;
+  audit: { status: Record<string, unknown>; events: Array<Record<string, unknown>> };
 }
 
 function toServer(seed: Seed['servers'] extends Record<string, infer S> | undefined ? S : never): Server {
@@ -101,5 +118,18 @@ export function createState(seed: Seed): E2EState {
         detection,
       };
     })(),
+    mongoTools: structuredClone(
+      seed.mongoTools ?? {
+        mongodump: { path: '/usr/local/bin/mongodump', version: '100.10.0' },
+        mongorestore: { path: '/usr/local/bin/mongorestore', version: '100.10.0' },
+      },
+    ),
+    dumpFolders: structuredClone(seed.dumpFolders ?? {}),
+    files: structuredClone(seed.files ?? {}),
+    writtenFiles: {},
+    audit: {
+      status: { active: true, degradedReason: null, integrityError: null, droppedCount: 0, ...seed.audit?.status },
+      events: structuredClone(seed.audit?.events ?? []),
+    },
   };
 }

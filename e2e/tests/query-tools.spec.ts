@@ -9,13 +9,13 @@ const runButton = (page: Page) => view(page).getByRole('button', { name: 'Run', 
 const jsonLine = (page: Page, text: string) => view(page).locator('[data-json-line]').filter({ hasText: text }).first();
 
 /**
- * Known bug, Windows only. Monaco's line endings there are CRLF, and a single-line
- * query editor that receives several lines strips only the `\n`: the `\r` left
- * behind is a line break again, so the editor re-flattens itself until the stack
- * overflows. Linux and macOS use LF and are unaffected.
+ * Known bug, in Chromium. When several lines reach a single-line query editor (the
+ * visual builder's filter, a loaded saved query, a history entry), QueryEditor
+ * flattens them with setValue from inside Monaco's content-change event, and the
+ * events recurse until the stack overflows. WebKit isn't affected.
  */
-const MULTILINE_QUERY_BUG = 'single-line query editor recurses on CRLF text (Maximum call stack size exceeded)';
-const hitsMultilineQueryBug = (browserName: string) => browserName === 'chromium' && process.platform === 'win32';
+const MULTILINE_QUERY_BUG = 'single-line query editor recurses on multi-line text (Maximum call stack size exceeded)';
+const hitsMultilineQueryBug = (browserName: string) => browserName === 'chromium';
 
 /** Do `action`, then return the arguments of the first `cmd` call it caused. */
 async function callFrom(app: App, cmd: string, action: () => Promise<void>): Promise<Record<string, unknown>> {

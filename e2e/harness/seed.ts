@@ -62,11 +62,28 @@ export interface MongoshSeed {
   detection?: { path: string; version: string; source: string } | null;
 }
 
+export interface ToolSeed {
+  path: string;
+  version: string;
+}
+
+export interface DumpFolderSeed {
+  dbs: Array<{ name: string; collections: Array<{ name: string; hasMetadata: boolean; gzip: boolean }> }>;
+}
+
 export interface Seed {
   vault?: VaultState;
   monitoring?: MonitoringSeed;
   mcp?: McpSeed;
   mongosh?: MongoshSeed;
+  /** mongodump and mongorestore as detect_mongo_tools finds them; null when missing. Both found by default. */
+  mongoTools?: { mongodump: ToolSeed | null; mongorestore: ToolSeed | null };
+  /** What browse_dump_folder finds, by folder path. A dump to a folder adds its own. */
+  dumpFolders?: Record<string, DumpFolderSeed>;
+  /** Files the app can read, by path: import sources. */
+  files?: Record<string, string>;
+  /** The local audit log behind the Activity tab. */
+  audit?: { status?: Record<string, unknown>; events?: Array<Record<string, unknown>> };
   /** When set, `vault_unlock` rejects any other password. */
   vaultPassword?: string;
   settings?: Record<string, unknown>;
