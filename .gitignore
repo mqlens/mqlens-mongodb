@@ -13,6 +13,7 @@ coverage/
 test-results/
 playwright-report/
 blob-report/
+dist-e2e
 dist
 dist-ssr
 *.local

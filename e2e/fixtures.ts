@@ -1,7 +1,7 @@
 // Shared Playwright fixtures for the end-to-end suite (#396).
 import { test as base, expect, type Page } from '@playwright/test';
 import { CoverageReport } from 'monocart-coverage-reports';
-import { coverageOptions, withFullSourcePaths } from './coverage-setup/options';
+import { coverageOptions } from './coverage-setup/options';
 import type { Seed } from './harness/seed';
 
 export interface RecordedCall {
@@ -53,7 +53,7 @@ export const test = base.extend<{ collectCoverage: void; app: App }>({
       await use();
       if (enabled) {
         const entries = await page.coverage.stopJSCoverage();
-        await new CoverageReport(coverageOptions).add(withFullSourcePaths(entries));
+        await new CoverageReport(coverageOptions).add(entries);
       }
     },
     { auto: true },

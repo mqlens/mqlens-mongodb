@@ -22,12 +22,14 @@ declare global {
 
 const state = createState(window.__MQLENS_E2E_SEED__ ?? {});
 const backend = new Backend(state);
+registerAiHandlers(backend, state);
 registerAppHandlers(backend, state);
 registerDataHandlers(backend, state);
-registerAiHandlers(backend, state);
 window.__MQLENS_E2E__ = backend;
 
 mockWindows('main');
 mockIPC((cmd, args) => backend.handle(cmd, args as InvokeArgs), { shouldMockEvents: true });
 
-await import('../../src/main.tsx');
+// A dynamic import on purpose: a static one would be hoisted and run the app
+// before the mocks above exist.
+void import('../../src/main.tsx');

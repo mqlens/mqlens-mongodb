@@ -5,11 +5,13 @@ import type { CoverageReportOptions } from 'monocart-coverage-reports';
  * The gate the suite must keep, in percent. A ratchet: raise it as tests are
  * added, never lower it, until it reaches the 95% target in #396.
  */
-export const COVERAGE_GATE = { lines: 0, statements: 0 };
+export const COVERAGE_GATE = { lines: 26, statements: 25 };
 
-/** `src/...` for any path or URL that points into the app's source tree. */
-export function toSourcePath(pathOrUrl: string): string {
+/** `src/...` for any path or URL that points into the app's own source tree. */
+function toSourcePath(pathOrUrl: string): string {
   const clean = pathOrUrl.split(/[?#]/)[0].replace(/\\/g, '/');
+  // A dependency can have its own src/ folder; that is not the app's.
+  if (clean.includes('node_modules/')) return clean;
   const at = clean.lastIndexOf('/src/');
   return at >= 0 ? clean.slice(at + 1) : clean;
 }
@@ -28,50 +30,23 @@ function isAppSource(sourcePath: string): boolean {
   );
 }
 
-const INLINE_MAP = /(\/\/# sourceMappingURL=data:application\/json;(?:charset=utf-8;)?base64,)([A-Za-z0-9+/=]+)/;
-
-/**
- * Give each module's inline source map its full `src/...` path.
- *
- * Vite's dev server names a module's original source by file name alone
- * (`sources: ["App.tsx"]`), so every source path would reach the filters as a
- * bare file name, and files sharing a name in different folders would be merged
- * into one. The module's URL carries the real path, so it's written into the
- * map before the coverage is added.
- */
-export function withFullSourcePaths<T extends { url: string; source?: string }>(entries: T[]): T[] {
-  for (const entry of entries) {
-    if (!entry.source) continue;
-    const sourcePath = toSourcePath(new URL(entry.url, 'http://localhost').pathname);
-    if (!isAppSource(sourcePath)) continue;
-    const match = entry.source.match(INLINE_MAP);
-    if (!match) continue;
-    const map = JSON.parse(Buffer.from(match[2], 'base64').toString('utf8'));
-    map.sources = [sourcePath];
-    delete map.sourceRoot;
-    const encoded = Buffer.from(JSON.stringify(map), 'utf8').toString('base64');
-    entry.source = entry.source.replace(INLINE_MAP, `$1${encoded}`);
-  }
-  return entries;
-}
-
 export const coverageOptions: CoverageReportOptions = {
   name: 'MQLens end-to-end coverage',
   outputDir: './coverage/e2e',
   reports: ['console-summary', 'v8', 'json-summary', 'lcovonly'],
 
-  // Only the app's own TS/TSX modules as the Vite dev server serves them.
-  // Pre-bundled dependencies (/node_modules/.vite), Vite's client, stylesheets
-  // served as modules, and the harness in e2e/ are left out.
+  // The production build's bundled chunks. Their inline source maps are
+  // unpacked to the original modules, and only the app's own sources are kept:
+  // dependencies, the harness in e2e/, and Monaco (loaded from its CDN) are not.
   entryFilter: (entry) => {
     const { pathname } = new URL(entry.url, 'http://localhost');
-    return isAppSource(toSourcePath(pathname));
+    return pathname.startsWith('/assets/') && pathname.endsWith('.js');
   },
   sourcePath: (filePath) => toSourcePath(filePath),
   sourceFilter: (sourcePath) => isAppSource(toSourcePath(sourcePath)),
 
-  // Files no test loaded still count, at 0%, so the percentage is out of the
-  // whole app rather than only the parts a test happened to touch. They are
+  // Files the build never ran still count, at 0%, so the percentage is out of
+  // the whole app rather than only the parts a test happened to touch. They are
   // TypeScript, which the coverage parser can't read, so they're compiled to
   // JS with a source map (named by full path) first.
   all: {
