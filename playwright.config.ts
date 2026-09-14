@@ -27,6 +27,9 @@ export default defineConfig({
   workers: process.env.CI ? 2 : undefined,
   // Room for a slow CI runner; a healthy assertion settles well within it.
   expect: { timeout: 15_000 },
+  // Every test loads the whole app, and with many workers loading it at once a
+  // page can take a while to arrive, WebKit especially. A real hang still fails.
+  timeout: 60_000,
   reporter: process.env.CI
     ? [['list'], ['github'], ['html', { open: 'never' }]]
     : [['list'], ['html', { open: 'never' }]],

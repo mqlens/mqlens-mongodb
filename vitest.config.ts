@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
@@ -18,6 +18,9 @@ export default defineConfig({
     // `{ timeout: 5000 }` override in Sidebar.test.tsx.
     testTimeout: 15000,
     setupFiles: './src/test/setup.ts',
+    // e2e/ holds the Playwright suite (#396). Its *.spec.ts files match Vitest's
+    // default pattern but can only run under Playwright.
+    exclude: [...configDefaults.exclude, 'e2e/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'html'],

@@ -196,13 +196,35 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       collection(id, db, coll).docs.push(doc);
       return JSON.stringify(doc._id);
     },
-    update_document: ({ id, database: db, collection: coll, filter, update, document, replacement }) => {
+    update_document: ({ id, database: db, collection: coll, filter, original, edited, projection }) => {
+      // Like the backend (#275): the app sends the document as loaded and as
+      // edited, and only what changed is written. `projection` is null when the
+      // row came from a pipeline that reshapes documents, and then the backend
+      // refuses to write at all.
+      if (projection === null) throw 'This row came from an aggregation that reshapes documents, so it cannot be saved';
       const docs = collection(id, db, coll).docs;
       const where = parseJson<Doc>(filter, {}, 'filter');
       const at = docs.findIndex((doc) => matches(doc, where));
-      if (at < 0) throw 'No document matched the filter';
-      docs[at] = applyUpdate(docs[at], parseJson<Doc>(update ?? document ?? replacement, {}, 'update'));
-      return null;
+      if (at < 0) return 0;
+      const before = parseJson<Doc>(original, {}, 'document');
+      const after = parseJson<Doc>(edited, {}, 'document');
+      const set: Doc = {};
+      const unset: Doc = {};
+      for (const [key, value] of Object.entries(after)) {
+        if (key !== '_id' && JSON.stringify(before[key]) !== JSON.stringify(value)) set[key] = value;
+      }
+      // A field missing from the edit is a removal only when the row held the
+      // whole document; under a projection it may simply not have been shown.
+      const wholeDocument = Object.keys(parseJson<Doc>(projection, {}, 'projection')).length === 0;
+      if (wholeDocument) {
+        for (const key of Object.keys(before)) if (key !== '_id' && !(key in after)) unset[key] = '';
+      }
+      const change: Doc = {};
+      if (Object.keys(set).length > 0) change.$set = set;
+      if (Object.keys(unset).length > 0) change.$unset = unset;
+      if (Object.keys(change).length === 0) return 0;
+      docs[at] = applyUpdate(docs[at], change);
+      return 1;
     },
     delete_document: ({ id, database: db, collection: coll, filter }) => {
       const docs = collection(id, db, coll).docs;

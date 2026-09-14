@@ -21,7 +21,9 @@ export class App {
     await this.page.addInitScript((value) => {
       window.__MQLENS_E2E_SEED__ = value;
     }, seed);
-    await this.page.goto('/e2e/index.html');
+    // Not the full `load` event: nothing waits on it, and the assertions that
+    // follow already wait for the app itself to appear.
+    await this.page.goto('/e2e/index.html', { waitUntil: 'domcontentloaded' });
     this.opened = true;
   }
 

@@ -5,7 +5,7 @@ import type { CoverageReportOptions } from 'monocart-coverage-reports';
  * The gate the suite must keep, in percent. A ratchet: raise it as tests are
  * added, never lower it, until it reaches the 95% target in #396.
  */
-export const COVERAGE_GATE = { lines: 26, statements: 25 };
+export const COVERAGE_GATE = { lines: 31, statements: 29 };
 
 /** `src/...` for any path or URL that points into the app's own source tree. */
 function toSourcePath(pathOrUrl: string): string {
@@ -35,8 +35,9 @@ export const coverageOptions: CoverageReportOptions = {
   outputDir: './coverage/e2e',
   reports: ['console-summary', 'v8', 'json-summary', 'lcovonly'],
 
-  // The production build's bundled chunks. Their inline source maps are
-  // unpacked to the original modules, and only the app's own sources are kept:
+  // The production build's bundled chunks. Their source maps (fetched from the
+  // preview server) unpack them to the original modules, and only the app's own
+  // sources are kept:
   // dependencies, the harness in e2e/, and Monaco (loaded from its CDN) are not.
   entryFilter: (entry) => {
     const { pathname } = new URL(entry.url, 'http://localhost');
