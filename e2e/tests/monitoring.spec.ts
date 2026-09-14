@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { loadSample } from '../helpers';
+import { dismissHoverCards, loadSample } from '../helpers';
 
 const monitor = (page: Page) => page.getByTestId('monitoring-view');
 
@@ -8,6 +8,7 @@ const monitor = (page: Page) => page.getByTestId('monitoring-view');
 async function openMonitoring(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Connection Sample (mqlens_demo)' }).click({ button: 'right' });
   await page.getByTestId('ctx-monitor').click();
+  await dismissHoverCards(page);
   await expect(monitor(page)).toBeVisible();
 }
 

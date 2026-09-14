@@ -14,6 +14,7 @@ import { registerAdminHandlers } from './handlers/admin';
 import { registerAiHandlers } from './handlers/ai';
 import { registerAppHandlers } from './handlers/app';
 import { registerDataHandlers } from './handlers/data';
+import { registerShellHandlers } from './handlers/shell';
 import type { Seed } from './seed';
 import { createState } from './state';
 
@@ -34,6 +35,7 @@ registerAdminHandlers(backend, state);
 registerAiHandlers(backend, state);
 registerAppHandlers(backend, state);
 registerDataHandlers(backend, state);
+registerShellHandlers(backend, state);
 window.__MQLENS_E2E__ = backend;
 // Monaco from this repo's own copy, the same version the loader would fetch from
 // its CDN, so a run never depends on jsdelivr and editors load without a network

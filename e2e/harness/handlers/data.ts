@@ -18,6 +18,19 @@ function parseJson<T>(value: unknown, fallback: T, what: string): T {
   }
 }
 
+/**
+ * A filter as the server's explain reports it: a plain value becomes `$eq`, and
+ * several fields are joined under `$and`. Operators and `$and`/`$or` pass through.
+ */
+function parsedQuery(filter: Doc): Doc {
+  const clauses = Object.entries(filter).map(([key, value]): Doc => {
+    const isOperatorDoc =
+      typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).some((k) => k.startsWith('$'));
+    return { [key]: key.startsWith('$') || isOperatorDoc ? value : { $eq: value } };
+  });
+  return clauses.length === 1 ? clauses[0] : clauses.length === 0 ? {} : { $and: clauses };
+}
+
 /** The host list of a MongoDB URI, without scheme, credentials, database or options. */
 function hostsOf(uri: string): string {
   return uri
@@ -202,7 +215,11 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       const docs = collection(id, db, coll).docs;
       const returned = docs.filter((doc) => matches(doc, where)).length;
       return JSON.stringify({
-        queryPlanner: { namespace: `${String(db)}.${String(coll)}`, winningPlan: { stage: 'COLLSCAN', filter: where } },
+        queryPlanner: {
+          namespace: `${String(db)}.${String(coll)}`,
+          parsedQuery: parsedQuery(where),
+          winningPlan: { stage: 'COLLSCAN', filter: where },
+        },
         executionStats: { nReturned: returned, executionTimeMillis: 1, totalKeysExamined: 0, totalDocsExamined: docs.length },
       });
     },
@@ -336,6 +353,35 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
     // Schema
     analyze_schema: ({ id, database: db, collection: coll, sampleSize }) =>
       JSON.stringify(inferSchema(collection(id, db, coll).docs, Number(sampleSize ?? 0))),
+
+    // Views and validation rules
+    create_view: ({ id, database: db, viewName, sourceCollection, pipeline }) => {
+      const collections = database(id, db);
+      if (collections[String(viewName)]) throw `Collection already exists: ${String(db)}.${String(viewName)}`;
+      const stages = parseJson<Doc[]>(pipeline, [], 'pipeline');
+      if (!Array.isArray(stages)) throw 'A view pipeline must be an array of stages';
+      // A real view is computed on every read; the fake computes it once, when created.
+      collections[String(viewName)] = {
+        type: 'view',
+        docs: aggregate(collection(id, db, sourceCollection).docs, stages),
+        indexes: [],
+      };
+      return null;
+    },
+    get_collection_options: ({ id, database: db, collection: coll }) =>
+      structuredClone(
+        collection(id, db, coll).validation ?? { validator: '{}', validationLevel: '', validationAction: '' },
+      ),
+    set_validator: ({ id, database: db, collection: coll, validator, validationLevel, validationAction }) => {
+      const parsed = parseJson<unknown>(validator, {}, 'validator');
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw 'validator must be a document';
+      collection(id, db, coll).validation = {
+        validator: JSON.stringify(parsed, null, 2),
+        validationLevel: String(validationLevel ?? ''),
+        validationAction: String(validationAction ?? ''),
+      };
+      return null;
+    },
 
     // Data generation (#91)
     infer_generate_template: ({ id, database: db, collection: coll }) =>

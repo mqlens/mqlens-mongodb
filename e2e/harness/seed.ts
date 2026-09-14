@@ -53,10 +53,20 @@ export interface McpSeed {
   log?: unknown[];
 }
 
+export interface MongoshSeed {
+  /** Whether mongosh starts whatever path the app passes. Default true. */
+  available?: boolean;
+  /** Paths where mongosh starts even when it isn't otherwise available. */
+  binaries?: string[];
+  /** What `detect_mongosh_binary` finds; null when it finds nothing. */
+  detection?: { path: string; version: string; source: string } | null;
+}
+
 export interface Seed {
   vault?: VaultState;
   monitoring?: MonitoringSeed;
   mcp?: McpSeed;
+  mongosh?: MongoshSeed;
   /** When set, `vault_unlock` rejects any other password. */
   vaultPassword?: string;
   settings?: Record<string, unknown>;

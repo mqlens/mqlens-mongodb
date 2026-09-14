@@ -1,11 +1,13 @@
 // The fake backend's mutable state for one page load, built from the test's seed (#396).
 import { SAMPLE_MONITORING, SAMPLE_SERVER, SAMPLE_URI } from './seed';
-import type { Doc, IndexSeed, MonitoringSeed, ProfileSeed, Seed, VaultState } from './seed';
+import type { Doc, IndexSeed, MongoshSeed, MonitoringSeed, ProfileSeed, Seed, VaultState } from './seed';
 
 export interface Collection {
   type: string;
   docs: Doc[];
   indexes: IndexSeed[];
+  /** As `get_collection_options` reports it; absent means no validation set. */
+  validation?: { validator: string; validationLevel: string; validationAction: string };
 }
 
 export interface Server {
@@ -45,6 +47,7 @@ export interface E2EState {
   appVersion: string;
   monitoring: Required<MonitoringSeed>;
   mcp: { enabled: boolean; port: number; token: string; log: unknown[] };
+  mongosh: Required<MongoshSeed>;
 }
 
 function toServer(seed: Seed['servers'] extends Record<string, infer S> | undefined ? S : never): Server {
@@ -87,5 +90,16 @@ export function createState(seed: Seed): E2EState {
       token: seed.mcp?.token ?? 'e2e-token-1',
       log: structuredClone(seed.mcp?.log ?? []),
     },
+    mongosh: (() => {
+      const detection =
+        seed.mongosh?.detection === undefined
+          ? { path: '/usr/local/bin/mongosh', version: '2.3.2', source: 'path' }
+          : seed.mongosh.detection;
+      return {
+        available: seed.mongosh?.available ?? true,
+        binaries: [...(seed.mongosh?.binaries ?? []), ...(detection ? [detection.path] : [])],
+        detection,
+      };
+    })(),
   };
 }

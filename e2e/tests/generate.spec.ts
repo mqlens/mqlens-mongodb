@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { expandCollections, loadSample, setEditorText } from '../helpers';
+import { dismissHoverCards, expandCollections, loadSample, setEditorText } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary');
 const generateView = (page: Page) => page.getByTestId('generate-view');
@@ -14,6 +14,7 @@ async function openGenerate(page: Page, collection?: string): Promise<void> {
     await sidebar(page).getByText('sales_db', { exact: true }).click({ button: 'right' });
   }
   await page.getByRole('menuitem', { name: 'Generate Data…' }).click();
+  await dismissHoverCards(page);
   await expect(generateView(page)).toBeVisible();
 }
 
