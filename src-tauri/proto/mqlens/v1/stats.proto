@@ -1,0 +1,60 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+// StatsService reports storage statistics. Field names mirror the desktop's
+// DbStatsUi, CollStatsUi and IndexStatUi so both transports feed the same views.
+service StatsService {
+  rpc DbStats(DbStatsRequest) returns (DbStatsResponse);
+  rpc CollStats(CollStatsRequest) returns (CollStatsResponse);
+  rpc IndexStats(IndexStatsRequest) returns (IndexStatsResponse);
+}
+
+message DbStatsRequest {
+  string connection_id = 1;
+  string database = 2;
+}
+// Missing or non-numeric server fields read as 0.
+message DbStatsResponse {
+  int64 collections = 1;
+  int64 views = 2;
+  int64 objects = 3;
+  double avg_obj_size = 4;
+  int64 data_size = 5;
+  int64 storage_size = 6;
+  int64 indexes = 7;
+  int64 total_index_size = 8;
+}
+
+message CollStatsRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+}
+// On a sharded collection the counts and sizes are summed across shards.
+message CollStatsResponse {
+  int64 count = 1;
+  double avg_obj_size = 2;
+  int64 size = 3;
+  int64 storage_size = 4;
+  int64 nindexes = 5;
+  int64 total_index_size = 6;
+  bool capped = 7;
+}
+
+message IndexStatsRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+}
+// ops and since_ms are 0 when usage stats are unavailable (views, old servers).
+message IndexStat {
+  string name = 1;
+  int64 size_bytes = 2;
+  int64 ops = 3;
+  int64 since_ms = 4; // epoch milliseconds usage counting started
+}
+// Sorted by size_bytes, largest first.
+message IndexStatsResponse {
+  repeated IndexStat indexes = 1;
+}
