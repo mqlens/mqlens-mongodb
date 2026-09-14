@@ -95,6 +95,12 @@ export function registerAppHandlers(backend: Backend, state: E2EState): void {
     'plugin:dialog|open': () => structuredClone(state.dialog.open),
     'plugin:dialog|save': () => structuredClone(state.dialog.save),
     'plugin:fs|write_text_file': () => null,
+    // The plugin decodes the bytes it gets back itself.
+    'plugin:fs|read_text_file': ({ path }) => {
+      const text = state.files[String(path)];
+      if (text === undefined) throw `failed to open file at path: ${String(path)}`;
+      return Array.from(new TextEncoder().encode(text));
+    },
   };
 
   backend.register(handlers);
