@@ -14,6 +14,11 @@ export default async function globalTeardown(): Promise<void> {
   const results = await report.generate();
   if (!results) return;
 
+  // Enforced in CI, where the whole suite runs. A local run of a few files
+  // measures only what those files reach, so the gate would fail it for no
+  // reason; set E2E_COVERAGE_GATE=1 to enforce it locally too.
+  if (!process.env.CI && process.env.E2E_COVERAGE_GATE !== '1') return;
+
   const below = (Object.keys(COVERAGE_GATE) as Array<keyof typeof COVERAGE_GATE>).filter((metric) => {
     const pct = results.summary[metric].pct;
     return typeof pct !== 'number' || pct < COVERAGE_GATE[metric];

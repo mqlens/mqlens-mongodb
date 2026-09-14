@@ -366,26 +366,41 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
   return out;
 }
 
-/** The report `analyze_schema` returns: field paths with the BSON types seen at each. */
+/**
+ * The report `analyze_schema` returns, shaped like src-tauri/src/db/schema.rs:
+ * each dotted field path with the BSON types seen at it, how many sampled
+ * documents contain it (`presence`), and that as a fraction (`coverage`).
+ */
 export function inferSchema(docs: Doc[], sampleSize: number) {
   const sample = docs.slice(0, sampleSize > 0 ? sampleSize : docs.length);
   const stats = new Map<string, Map<string, number>>();
-  const visit = (value: unknown, path: string) => {
-    const type = bsonType(value);
-    const types = stats.get(path) ?? new Map<string, number>();
-    types.set(type, (types.get(type) ?? 0) + 1);
-    stats.set(path, types);
-    if (type === 'object') for (const [key, child] of Object.entries(value as Doc)) visit(child, `${path}.${key}`);
-  };
-  for (const doc of sample) for (const [key, value] of Object.entries(doc)) visit(value, key);
+  const presence = new Map<string, number>();
+  for (const doc of sample) {
+    const seen = new Set<string>();
+    const visit = (value: unknown, path: string) => {
+      const type = bsonType(value);
+      const types = stats.get(path) ?? new Map<string, number>();
+      types.set(type, (types.get(type) ?? 0) + 1);
+      stats.set(path, types);
+      seen.add(path);
+      if (type === 'object') for (const [key, child] of Object.entries(value as Doc)) visit(child, `${path}.${key}`);
+    };
+    for (const [key, value] of Object.entries(doc)) visit(value, key);
+    for (const path of seen) presence.set(path, (presence.get(path) ?? 0) + 1);
+  }
   return {
     sampled: sample.length,
     fields: [...stats.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([path, types]) => ({
-        path,
-        types: [...types.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count),
-      })),
+      .map(([path, types]) => {
+        const present = presence.get(path) ?? 0;
+        return {
+          path,
+          types: [...types.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count),
+          presence: present,
+          coverage: sample.length === 0 ? 0 : present / sample.length,
+        };
+      }),
   };
 }
 

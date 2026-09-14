@@ -17,6 +17,25 @@ function parseJson<T>(value: unknown, fallback: T, what: string): T {
   }
 }
 
+/** The host list of a MongoDB URI, without scheme, credentials, database or options. */
+function hostsOf(uri: string): string {
+  return uri
+    .replace(/^mongodb(\+srv)?:\/\//i, '')
+    .replace(/^[^@/]*@/, '')
+    .split(/[/?]/)[0]
+    .toLowerCase();
+}
+
+/**
+ * The seeded server a URI reaches. The connection editor builds URIs with
+ * options a seed doesn't spell out (`/?directConnection=true`, …), so a URI
+ * that isn't an exact key matches a seeded one by its hosts.
+ */
+function serverKeyFor(state: E2EState, uri: string): string | undefined {
+  if (state.servers[uri]) return uri;
+  return Object.keys(state.servers).find((key) => hostsOf(key) === hostsOf(uri));
+}
+
 export function registerDataHandlers(backend: Backend, state: E2EState): void {
   const connection = (id: unknown) => {
     const conn = state.connections[String(id)];
@@ -63,9 +82,11 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       return null;
     },
     connect_db: ({ uri }) => {
-      if (!state.servers[String(uri)]) throw `Database ping failed: no server answers at ${String(uri)}`;
+      const key = serverKeyFor(state, String(uri));
+      if (!key) throw `Database ping failed: no server answers at ${String(uri)}`;
       const id = `conn-${state.nextConnectionId++}`;
-      state.connections[id] = { uri: String(uri), profileId: null, name: String(uri), mode: 'readWrite' };
+      // Stored under the seeded server's key, which later lookups go through.
+      state.connections[id] = { uri: key, profileId: null, name: String(uri), mode: 'readWrite' };
       return id;
     },
     disconnect_db: async ({ id }) => {
@@ -92,7 +113,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
         send({ phase, status: 'ok' });
       }
       send({ phase: 'ping', status: 'start' });
-      if (!state.servers[String(uri)]) {
+      if (!serverKeyFor(state, String(uri))) {
         const message = `no server answers at ${String(uri)}`;
         send({ phase: 'ping', status: 'fail', message });
         throw message;

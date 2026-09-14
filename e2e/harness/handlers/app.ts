@@ -65,6 +65,10 @@ export function registerAppHandlers(backend: Backend, state: E2EState): void {
     focus_window: () => null,
     workspace_detach_tab: () => null,
     close_workspace_window: () => null,
+    // Tab-close cleanup: closing a tab releases its shell session and any change
+    // stream it ran, whether or not it had one.
+    close_shell_tab_session: () => null,
+    stop_change_stream: () => null,
 
     // Background polls
     get_resource_usage: () => ({ cpu_percent: 1.5, memory_bytes: 128 * 1024 * 1024 }),
