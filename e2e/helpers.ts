@@ -1,6 +1,28 @@
 // UI steps shared by specs (#396). Selectors follow what a user sees: sidebar
 // rows are plain clickable rows named by their text, not buttons.
 import { expect, type Locator, type Page } from '@playwright/test';
+import type { App } from './fixtures';
+
+/**
+ * Known bug, in Chromium. When several lines reach a single-line query editor (the
+ * visual builder's filter, a loaded saved query, a history entry, an AI query
+ * inserted and run), QueryEditor flattens them with setValue from inside Monaco's
+ * content-change event, and the events recurse until the stack overflows. WebKit
+ * isn't affected. Tests that hit it are marked `test.fail` with this reason.
+ */
+export const MULTILINE_QUERY_BUG = 'single-line query editor recurses on multi-line text (Maximum call stack size exceeded)';
+export const hitsMultilineQueryBug = (browserName: string) => browserName === 'chromium';
+
+/** The workspace tab on screen. */
+export const view = (page: Page) => page.locator('[data-testid^="tab-content-"]:not([hidden])');
+
+/** Do `action`, then return the arguments of the first `cmd` call it caused. */
+export async function callFrom(app: App, cmd: string, action: () => Promise<unknown>): Promise<Record<string, unknown>> {
+  const before = (await app.calls(cmd)).length;
+  await action();
+  await expect.poll(async () => (await app.calls(cmd)).length, `a ${cmd} call`).toBeGreaterThan(before);
+  return (await app.calls(cmd))[before].args as Record<string, unknown>;
+}
 
 /**
  * Replace the text of the Monaco editor inside `container`.

@@ -1,12 +1,19 @@
-// Server monitoring, the embedded MCP server, and the settings that probe the
-// local machine for tools and agents (#396).
+// Server monitoring, users and roles, the embedded MCP server, and the settings
+// that probe the local machine for tools and agents (#396).
 import type { Backend, Handler } from '../backend';
+import type { UserSeed } from '../seed';
 import type { E2EState } from '../state';
+
+/** Built-in roles every database offers, and those only admin adds. */
+const DATABASE_ROLES = ['read', 'readWrite', 'dbAdmin', 'dbOwner', 'userAdmin'];
+const ADMIN_ROLES = ['readAnyDatabase', 'readWriteAnyDatabase', 'dbAdminAnyDatabase', 'userAdminAnyDatabase', 'clusterMonitor', 'root'];
 
 export function registerAdminHandlers(backend: Backend, state: E2EState): void {
   const requireConnection = (id: unknown) => {
     if (!state.connections[String(id)]) throw `Connection not found: ${String(id)}`;
   };
+  const findUser = (database: unknown, username: unknown) =>
+    state.users.find((user) => user.db === database && user.user === username);
   const monitoring = state.monitoring;
   let tokenSerial = 1;
 
@@ -44,6 +51,43 @@ export function registerAdminHandlers(backend: Backend, state: E2EState): void {
     repl_set_status: ({ id }) => {
       requireConnection(id);
       return structuredClone(monitoring.replSet);
+    },
+
+    // Users and roles
+    list_users: ({ id, database }) => {
+      requireConnection(id);
+      return structuredClone(state.users.filter((user) => database == null || user.db === database));
+    },
+    list_roles: ({ id, database }) => {
+      requireConnection(id);
+      const db = String(database);
+      return [...DATABASE_ROLES, ...(db === 'admin' ? ADMIN_ROLES : [])].map((role) => ({ role, db, isBuiltin: true }));
+    },
+    create_user: ({ id, database, username, password, roles }) => {
+      requireConnection(id);
+      if (!password) throw 'A new user needs a password';
+      if (findUser(database, username)) throw `User "${String(username)}@${String(database)}" already exists`;
+      state.users.push({
+        user: String(username),
+        db: String(database),
+        roles: structuredClone(roles as UserSeed['roles']),
+        mechanisms: ['SCRAM-SHA-256'],
+      });
+      return null;
+    },
+    update_user: ({ id, database, username, roles }) => {
+      requireConnection(id);
+      const user = findUser(database, username);
+      if (!user) throw `User "${String(username)}@${String(database)}" not found`;
+      user.roles = structuredClone(roles as UserSeed['roles']);
+      return null;
+    },
+    drop_user: ({ id, database, username }) => {
+      requireConnection(id);
+      const user = findUser(database, username);
+      if (!user) throw `User "${String(username)}@${String(database)}" not found`;
+      state.users = state.users.filter((candidate) => candidate !== user);
+      return null;
     },
 
     // Embedded MCP server

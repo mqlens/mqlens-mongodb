@@ -1,21 +1,21 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
-import { dismissHoverCards, expandCollections, loadSample, openCollection, openInNewTab, setEditorText } from '../helpers';
+import {
+  dismissHoverCards,
+  expandCollections,
+  hitsMultilineQueryBug,
+  loadSample,
+  MULTILINE_QUERY_BUG,
+  openCollection,
+  openInNewTab,
+  setEditorText,
+} from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary');
 const view = (page: Page) => page.locator('[data-testid^="tab-content-"]:not([hidden])');
 const runButton = (page: Page) => view(page).getByRole('button', { name: 'Run', exact: true });
 /** The line of the results' JSON view that shows `text`. */
 const jsonLine = (page: Page, text: string) => view(page).locator('[data-json-line]').filter({ hasText: text }).first();
-
-/**
- * Known bug, in Chromium. When several lines reach a single-line query editor (the
- * visual builder's filter, a loaded saved query, a history entry), QueryEditor
- * flattens them with setValue from inside Monaco's content-change event, and the
- * events recurse until the stack overflows. WebKit isn't affected.
- */
-const MULTILINE_QUERY_BUG = 'single-line query editor recurses on multi-line text (Maximum call stack size exceeded)';
-const hitsMultilineQueryBug = (browserName: string) => browserName === 'chromium';
 
 /** Do `action`, then return the arguments of the first `cmd` call it caused. */
 async function callFrom(app: App, cmd: string, action: () => Promise<void>): Promise<Record<string, unknown>> {

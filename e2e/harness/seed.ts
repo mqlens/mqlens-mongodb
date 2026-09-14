@@ -62,6 +62,23 @@ export interface MongoshSeed {
   detection?: { path: string; version: string; source: string } | null;
 }
 
+/** One answer from generate_mql_query: the query it returns, or the error it fails with. */
+export type AiReplySeed = { query: Record<string, unknown>; thoughts?: string; notes?: string } | { error: string };
+
+export interface UserSeed {
+  user: string;
+  db: string;
+  roles: Array<{ role: string; db: string }>;
+  mechanisms: string[];
+}
+
+export interface GridFsFileSeed {
+  filename: string;
+  content: string;
+  contentType?: string | null;
+  uploadDate?: string;
+}
+
 export interface ToolSeed {
   path: string;
   version: string;
@@ -84,6 +101,14 @@ export interface Seed {
   files?: Record<string, string>;
   /** The local audit log behind the Activity tab. */
   audit?: { status?: Record<string, unknown>; events?: Array<Record<string, unknown>> };
+  /** Database users; SAMPLE_USERS by default, as the mock backend lists. */
+  users?: UserSeed[];
+  /** GridFS files by "database.bucket". */
+  gridfs?: Record<string, GridFsFileSeed[]>;
+  /** Replies generate_mql_query gives, in order; once they run out it fails as with no provider. */
+  aiReplies?: AiReplySeed[];
+  /** The models an AI provider lists. */
+  aiModels?: string[];
   /** When set, `vault_unlock` rejects any other password. */
   vaultPassword?: string;
   settings?: Record<string, unknown>;
@@ -99,6 +124,13 @@ export interface Seed {
 }
 
 const oid = (hex: string) => ({ $oid: hex });
+
+/** The users the Rust mock backend lists (src-tauri/src/db/users.rs). */
+export const SAMPLE_USERS: UserSeed[] = [
+  { user: 'admin', db: 'admin', roles: [{ role: 'root', db: 'admin' }], mechanisms: ['SCRAM-SHA-256'] },
+  { user: 'app_user', db: 'sales_db', roles: [{ role: 'readWrite', db: 'sales_db' }], mechanisms: ['SCRAM-SHA-256'] },
+  { user: 'analyst', db: 'sales_db', roles: [{ role: 'read', db: 'sales_db' }], mechanisms: ['SCRAM-SHA-256'] },
+];
 
 /** A standalone server with two operations in flight and a profile of past ones. */
 export const SAMPLE_MONITORING: Required<MonitoringSeed> = {

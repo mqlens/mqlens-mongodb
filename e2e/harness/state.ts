@@ -1,6 +1,7 @@
 // The fake backend's mutable state for one page load, built from the test's seed (#396).
-import { SAMPLE_MONITORING, SAMPLE_SERVER, SAMPLE_URI } from './seed';
+import { SAMPLE_MONITORING, SAMPLE_SERVER, SAMPLE_URI, SAMPLE_USERS } from './seed';
 import type {
+  AiReplySeed,
   Doc,
   DumpFolderSeed,
   IndexSeed,
@@ -9,6 +10,7 @@ import type {
   ProfileSeed,
   Seed,
   ToolSeed,
+  UserSeed,
   VaultState,
 } from './seed';
 
@@ -65,6 +67,32 @@ export interface E2EState {
   /** Files the app wrote (exports), by path. */
   writtenFiles: Record<string, string>;
   audit: { status: Record<string, unknown>; events: Array<Record<string, unknown>> };
+  users: UserSeed[];
+  gridfs: Record<string, GridFsFile[]>;
+  changeStreams: Record<string, ChangeStream>;
+  aiReplies: AiReplySeed[];
+  aiModels: string[];
+}
+
+/** A GridFS file as `list_gridfs_files` reports it, plus the content a download writes. */
+export interface GridFsFile {
+  id: string;
+  filename: string;
+  length: number;
+  chunk_size_bytes: number;
+  upload_date: string;
+  content_type: string | null;
+  content: string;
+}
+
+export interface ChangeStream {
+  connectionId: string;
+  database: string | null;
+  collection: string | null;
+  operationTypes: string[];
+  status: string;
+  lastSeq: number;
+  events: Array<Record<string, unknown>>;
 }
 
 function toServer(seed: Seed['servers'] extends Record<string, infer S> | undefined ? S : never): Server {
@@ -131,5 +159,23 @@ export function createState(seed: Seed): E2EState {
       status: { active: true, degradedReason: null, integrityError: null, droppedCount: 0, ...seed.audit?.status },
       events: structuredClone(seed.audit?.events ?? []),
     },
+    users: structuredClone(seed.users ?? SAMPLE_USERS),
+    gridfs: Object.fromEntries(
+      Object.entries(seed.gridfs ?? {}).map(([bucket, files]) => [
+        bucket,
+        files.map((file, i) => ({
+          id: JSON.stringify({ $oid: `64b0${String(i).padStart(20, '0')}` }),
+          filename: file.filename,
+          length: file.content.length,
+          chunk_size_bytes: 261_120,
+          upload_date: file.uploadDate ?? '2025-05-01T12:00:00Z',
+          content_type: file.contentType ?? null,
+          content: file.content,
+        })),
+      ]),
+    ),
+    changeStreams: {},
+    aiReplies: structuredClone(seed.aiReplies ?? []),
+    aiModels: structuredClone(seed.aiModels ?? []),
   };
 }
