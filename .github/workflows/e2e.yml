@@ -1,7 +1,7 @@
 name: E2E
 
-# End-to-end UI tests (#396). The real React app runs in Chromium and WebKit
-# against the Vite dev server, with Tauri's IPC answered by the fake backend in
+# End-to-end UI tests (#396). A production build of the React app runs in
+# Chromium and WebKit, with Tauri's IPC answered by the fake backend in
 # e2e/harness. Chromium also measures coverage, and the run fails if it drops
 # below the gate in e2e/coverage-setup/options.ts.
 on:
