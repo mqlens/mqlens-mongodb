@@ -8,7 +8,7 @@
 
 // The foundation lands before the commands that use it; until server mode is
 // routed (accounts, sessions, remote connections), only tests reach it.
-#![cfg_attr(not(test), allow(dead_code))]
+#![cfg_attr(not(test), allow(dead_code, unused_macros))]
 
 pub(crate) mod channel;
 pub(crate) mod ejson;

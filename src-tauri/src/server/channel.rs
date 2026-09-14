@@ -19,6 +19,23 @@ pub(crate) const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
 /// leave room for a batch of large documents.
 pub(crate) const MAX_DECODE_BYTES: usize = 64 * 1024 * 1024;
 
+/// Builds a generated gRPC client on a channel with `MAX_DECODE_BYTES` applied:
+/// `client!(DataServiceClient, channel)`.
+///
+/// Every client is built through this. One built directly keeps tonic's 4 MiB
+/// default and fails with `ResourceExhausted` on the first large batch or
+/// chunk, so `every_client_is_built_with_the_decode_limit` fails the tests if
+/// the hand-written server-mode code constructs one any other way.
+macro_rules! client {
+    ($client:ident, $channel:expr) => {
+        $client::new($channel).max_decoding_message_size($crate::server::channel::MAX_DECODE_BYTES)
+    };
+}
+// For other modules to name it by path. This file reaches the macro through
+// textual scope, so the import itself looks unused from here.
+#[allow(unused_imports)]
+pub(crate) use client;
+
 /// How to reach one MQLens Server.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ChannelConfig {
@@ -217,6 +234,9 @@ mod tests {
         assert!(channel(&config).is_ok());
     }
 
+    /// Past tonic's 4 MiB default decode limit, well within `MAX_DECODE_BYTES`.
+    const LARGE_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
+
     struct FakeCapabilities;
 
     #[tonic::async_trait]
@@ -236,6 +256,17 @@ mod tests {
                     .metadata_mut()
                     .insert(errors::CORRELATION_KEY, "corr-42".parse().unwrap());
                 return Err(status);
+            }
+            if request
+                .get_ref()
+                .connection_ids
+                .iter()
+                .any(|id| id == "large")
+            {
+                return Ok(Response::new(GetCapabilitiesResponse {
+                    procedures: vec!["x".repeat(LARGE_RESPONSE_BYTES)],
+                    ..Default::default()
+                }));
             }
             Ok(Response::new(GetCapabilitiesResponse {
                 server_version: "fake-1".to_string(),
@@ -266,8 +297,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let mut client =
-            CapabilityServiceClient::new(channel).max_decoding_message_size(MAX_DECODE_BYTES);
+        let mut client = client!(CapabilityServiceClient, channel);
 
         let resp = client
             .get_capabilities(GetCapabilitiesRequest {
@@ -307,11 +337,79 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let status = CapabilityServiceClient::new(channel)
+        let status = client!(CapabilityServiceClient, channel)
             .get_capabilities(GetCapabilitiesRequest::default())
             .await
             .unwrap_err();
         assert_eq!(status.code(), tonic::Code::Unavailable, "{status:?}");
         assert!(errors::describe(&status).starts_with("MQLens Server is unavailable"));
+    }
+
+    // tonic rejects a response over 4 MiB unless the client raises its limit.
+    #[tokio::test]
+    async fn clients_accept_responses_past_the_tonic_default_limit() {
+        const TONIC_DEFAULT_DECODE_BYTES: usize = 4 * 1024 * 1024;
+        assert!(LARGE_RESPONSE_BYTES > TONIC_DEFAULT_DECODE_BYTES);
+
+        let url = serve_fake().await;
+        let channel = channel(&ChannelConfig {
+            url,
+            ..Default::default()
+        })
+        .unwrap();
+        let resp = client!(CapabilityServiceClient, channel)
+            .get_capabilities(GetCapabilitiesRequest {
+                connection_ids: vec!["large".to_string()],
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(resp.procedures[0].len(), LARGE_RESPONSE_BYTES);
+    }
+
+    // A generated client constructed without `client!` keeps the 4 MiB default.
+    // This reads the hand-written server-mode sources, skipping the generated
+    // `pb` code, and names any such construction.
+    #[test]
+    fn every_client_is_built_with_the_decode_limit() {
+        // Split so this test's own source does not match.
+        let constructors = [
+            concat!("ServiceClient", "::new("),
+            concat!("ServiceClient", "::connect("),
+            concat!("ServiceClient", "::with_origin("),
+            concat!("ServiceClient", "::with_interceptor("),
+        ];
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("server");
+        let mut dirs = vec![root];
+        let mut scanned = 0;
+        let mut offenders = Vec::new();
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|name| name != "pb") {
+                        dirs.push(path);
+                    }
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    scanned += 1;
+                    let source = std::fs::read_to_string(&path).unwrap();
+                    for (i, line) in source.lines().enumerate() {
+                        if constructors.iter().any(|c| line.contains(c)) {
+                            offenders.push(format!("{}:{}", path.display(), i + 1));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            scanned >= 4,
+            "scanned only {scanned} files under src/server"
+        );
+        assert!(
+            offenders.is_empty(),
+            "build these clients with server::channel::client! so the decode limit applies: {offenders:?}"
+        );
     }
 }
