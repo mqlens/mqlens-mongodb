@@ -1,0 +1,18 @@
+<!doctype html>
+<!--
+  End-to-end test entry (#396). Same root element as ../index.html, but it loads
+  the harness, which installs a fake Tauri backend before booting src/main.tsx.
+  The shipped app never serves this page. Web fonts are left out so a test run
+  never depends on the network.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MQLens (e2e)</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/e2e/harness/boot.ts"></script>
+  </body>
+</html>

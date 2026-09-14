@@ -1,0 +1,10 @@
+{
+  // Type-checks the end-to-end harness and tests (#396): `npx tsc -p e2e`.
+  // Playwright transpiles these files itself when it runs them.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts", "../playwright.config.ts", "../src/vite-env.d.ts"]
+}

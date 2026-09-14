@@ -9,6 +9,10 @@ lerna-debug.log*
 
 node_modules
 coverage/
+# Playwright end-to-end run output (#396); coverage/e2e is covered above.
+test-results/
+playwright-report/
+blob-report/
 dist
 dist-ssr
 *.local

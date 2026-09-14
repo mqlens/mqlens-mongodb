@@ -15,6 +15,7 @@
     "test": "vitest run",
     "i18n:extract": "i18next-cli extract",
     "i18n:check": "i18next-cli extract --ci --dry-run",
+    "test:e2e": "playwright test",
     "coverage:frontend": "vitest run --coverage",
     "coverage:backend": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --ignore-filename-regex 'src-tauri/src/(lib|main)\\.rs'",
     "coverage": "npm run coverage:frontend && npm run coverage:backend"
@@ -63,6 +64,7 @@
     "tailwindcss": "^4.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -74,6 +76,7 @@
     "@vitest/coverage-v8": "^4.1.11",
     "i18next-cli": "^1.71.1",
     "jsdom": "^29.1.1",
+    "monocart-coverage-reports": "2.13.0",
     "typescript": "~5.8.3",
     "vite": "^8.2.2",
     "vitest": "^4.1.7"
