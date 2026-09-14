@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { dismissHoverCards, expandCollections, loadSample, setEditorText } from '../helpers';
+import { dismissHoverCards, expandCollections, getEditorText, loadSample, setEditorText } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary');
 const generateView = (page: Page) => page.getByTestId('generate-view');
@@ -105,6 +105,8 @@ test.describe('Generate data', () => {
     await view.getByTestId('generate-mode-raw').click();
     const editor = view.getByTestId('generate-raw-editor');
     const run = view.getByTestId('generate-run-btn');
+    // The raw editor opens on the template inferred from the collection.
+    await expect.poll(() => getEditorText(page, editor)).toContain('"address"');
 
     await setEditorText(page, editor, '{ "sku": "$uuid", "tags": { "$pick": [] } }');
     await expect(view.getByTestId('generate-footer-empty-pick')).toContainText('tags');

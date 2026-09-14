@@ -13,6 +13,24 @@ import type { App } from './fixtures';
 export const MULTILINE_QUERY_BUG = 'single-line query editor recurses on multi-line text (Maximum call stack size exceeded)';
 export const hitsMultilineQueryBug = (browserName: string) => browserName === 'chromium';
 
+/**
+ * The text of the Monaco editor inside `container`, from its model. Its DOM only
+ * holds the lines on screen, and while it renders only the line numbers.
+ */
+export async function getEditorText(page: Page, container: Locator): Promise<string> {
+  const node = await container.locator('.monaco-editor').first().elementHandle();
+  return page.evaluate(async (target) => {
+    type Editor = { getDomNode(): HTMLElement | null; getValue(): string };
+    const monaco = (await window.__MQLENS_E2E_MONACO__!()) as { editor: { getEditors(): Editor[] } };
+    const editor = monaco.editor.getEditors().find((candidate) => {
+      const dom = candidate.getDomNode();
+      return dom !== null && (dom === target || dom.contains(target) || target.contains(dom));
+    });
+    if (!editor) throw new Error('No Monaco editor inside the given element');
+    return editor.getValue();
+  }, node!);
+}
+
 /** The workspace tab on screen. */
 export const view = (page: Page) => page.locator('[data-testid^="tab-content-"]:not([hidden])');
 
@@ -44,6 +62,9 @@ export async function setEditorText(page: Page, container: Locator, text: string
         return dom !== null && (dom === target || dom.contains(target) || target.contains(dom));
       });
       if (!editor) throw new Error('No Monaco editor inside the given element');
+      // An editor that has just mounted isn't listened to yet: @monaco-editor/react
+      // subscribes to its changes an effect later. Let that happen first.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       editor.setValue(value);
       editor.focus();
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));

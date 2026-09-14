@@ -3,6 +3,7 @@ import { test, expect, type App } from '../fixtures';
 import {
   dismissHoverCards,
   expandCollections,
+  getEditorText,
   hitsMultilineQueryBug,
   loadSample,
   MULTILINE_QUERY_BUG,
@@ -174,10 +175,13 @@ test.describe('Query tools', () => {
     const seen = new Set<string>();
     for (const language of ['mongosh', 'Node.js', 'Python', 'Java', 'C#', 'Go']) {
       await view(page).getByTestId('query-code-lang').selectOption(language);
-      await expect.poll(async () => !seen.has(await code.innerText()), `${language} code differs`).toBe(true);
-      const text = await code.innerText();
-      expect(text).toContain('Premium');
-      seen.add(text);
+      await expect
+        .poll(async () => {
+          const text = await getEditorText(page, code);
+          return text.includes('Premium') && !seen.has(text);
+        }, `${language} code for the query`)
+        .toBe(true);
+      seen.add(await getEditorText(page, code));
     }
   });
 
