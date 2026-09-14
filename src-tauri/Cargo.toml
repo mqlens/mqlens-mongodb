@@ -75,6 +75,8 @@ fs4 = "0.13"
 tonic = { version = "0.14", default-features = false, features = ["codegen", "channel", "tls-ring", "tls-native-roots", "tls-webpki-roots"] }
 tonic-prost = "0.14"
 prost = "0.14"
+# Wipes MQLens Server access tokens from memory when a session lets go of them.
+zeroize = "1"
 
 [dev-dependencies]
 tiny_http = "0.12.0"

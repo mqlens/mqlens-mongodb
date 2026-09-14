@@ -153,7 +153,13 @@ pub struct AppState {
     pub resource_pids: Mutex<Vec<sysinfo::Pid>>,
     pub resource_tree_at: Mutex<Instant>,
     // In-memory vault key; None when locked or uninitialized.
-    pub vault_key: Mutex<Option<[u8; 32]>>,
+    //
+    // `Arc` so an MQLens Server session can read the key at the moment it stores
+    // a rotated refresh token (`server::key_source`), rather than a copy taken
+    // earlier that a lock or a password change has since made wrong.
+    pub vault_key: Arc<Mutex<Option<[u8; 32]>>>,
+    /// Signed-in MQLens Server sessions (server mode).
+    pub(crate) server: crate::server::ServerRuntime,
     /// Normalized connection URI (post-SSH-tunnel rewrite) retained per real
     /// connection id, for tools that need to hand a URI to an external
     /// process (mongodump/mongorestore). Never populated for mock connections.
@@ -234,7 +240,8 @@ impl AppState {
             sys: Mutex::new(sysinfo::System::new()),
             resource_pids: Mutex::new(Vec::new()),
             resource_tree_at: Mutex::new(Instant::now()),
-            vault_key: Mutex::new(None),
+            vault_key: Arc::new(Mutex::new(None)),
+            server: Default::default(),
             conn_uris: Mutex::new(HashMap::new()),
             workspace: Mutex::new(None),
             workspace_write_gen: Arc::new(AtomicU64::new(0)),

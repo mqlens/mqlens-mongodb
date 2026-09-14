@@ -152,6 +152,15 @@ const LOCAL_COMMANDS: &[&str] = &[
     "load_connection_profiles",
     "save_connection_profile",
     "delete_connection_profile",
+    // MQLens Server accounts and sign-in (server mode). They read and write the
+    // encrypted accounts file and call the server's auth and connection-listing
+    // endpoints, which return references only; none reaches a deployment's data.
+    "server_account_list",
+    "server_account_save",
+    "server_account_delete",
+    "server_sign_in",
+    "server_sign_out",
+    "server_list_connections",
     "test_connection_uri", // ephemeral test connection, never tracked in connection_meta
     "load_app_settings",
     "save_app_settings",

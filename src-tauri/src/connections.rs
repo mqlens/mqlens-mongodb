@@ -616,6 +616,10 @@ pub fn get_profiles_enc_path(app_handle: &tauri::AppHandle) -> PathBuf {
 pub fn get_settings_enc_path(app_handle: &tauri::AppHandle) -> PathBuf {
     config_dir_file(app_handle, "settings.json.enc")
 }
+/// MQLens Server accounts and their stored sessions (`server::accounts`).
+pub fn get_server_accounts_path(app_handle: &tauri::AppHandle) -> PathBuf {
+    config_dir_file(app_handle, crate::server::accounts::ACCOUNTS_FILE_NAME)
+}
 
 /// Append-only encrypted audit log (`audit.log.enc`).
 pub fn get_audit_log_path(app_handle: &tauri::AppHandle) -> PathBuf {
