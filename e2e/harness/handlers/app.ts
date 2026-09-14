@@ -2,6 +2,7 @@
 // crash logging and the Tauri plugins the app uses (#396).
 import type { Backend, Handler } from '../backend';
 import type { E2EState } from '../state';
+import { recordTask } from '../tasks';
 
 export function registerAppHandlers(backend: Backend, state: E2EState): void {
   const requireUnlocked = () => {
@@ -78,6 +79,17 @@ export function registerAppHandlers(backend: Backend, state: E2EState): void {
       if (task) task.status = 'cancelled';
       return null;
     },
+
+    // Managed tool install (mongosh, database tools), finished at once like every fake task.
+    start_tool_install_task: ({ tools }) =>
+      recordTask(state, {
+        kind: 'tool_install',
+        label: `Install ${((tools as string[] | undefined) ?? []).join(', ')}`,
+        startMessage: 'Downloading…',
+        message: 'Installed',
+        processed: 1,
+        total: 1,
+      }),
 
     // Updater and crash log
     update_check: () => null,
