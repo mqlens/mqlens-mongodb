@@ -128,11 +128,32 @@ jobs:
             exit 0
           fi
           CUR=$(node -p "require('./package.json').version")
-          NEW=$(node -e 'const p=process.argv[1].split(".").map(Number);const k=process.argv[2];if(k==="major"){p[0]++;p[1]=0;p[2]=0}else if(k==="minor"){p[1]++;p[2]=0}else{p[2]++}process.stdout.write(p.join("."))' "$CUR" "$BUMP")
-          echo "Releasing $CUR -> $NEW"
+          # Bump from the last PUBLISHED version, not from the version files. The
+          # files are bumped and pushed below, but the tag only exists once the
+          # builds publish the release, so a run that fails after this step leaves
+          # an untagged version in the files. v0.19.0 was bumped, failed every
+          # build and was never tagged; bumping from the files again made the next
+          # run skip it (0.19.0 -> 0.20.0). Bumping from the last stable tag re-cuts
+          # the same version instead, raised if newer commits need a bigger bump.
+          # The files still win when they are ahead of that (a deliberate manual
+          # bump), so the version never goes backwards. With no stable tag yet,
+          # bump from the files as before.
+          BASE="${LAST_TAG#mqlens-v}"
+          [ -n "$LAST_TAG" ] || BASE="$CUR"
+          NEW=$(node -e '
+            const [base, kind, cur] = process.argv.slice(1);
+            const p = base.split(".").map(Number);
+            if (kind === "major") { p[0]++; p[1] = 0; p[2] = 0 } else if (kind === "minor") { p[1]++; p[2] = 0 } else { p[2]++ }
+            const bumped = p.join(".");
+            const cmp = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0 };
+            process.stdout.write(cmp(cur, bumped) > 0 ? cur : bumped);
+          ' "$BASE" "$BUMP" "$CUR")
+          echo "Releasing $CUR -> $NEW (last stable tag: ${LAST_TAG:-<none>}, bump: $BUMP)"
           node -e '
             const fs=require("fs");const v=process.argv[1];
-            const sub=(p,re,to)=>{const s=fs.readFileSync(p,"utf8");const n=s.replace(re,to);if(n===s)throw new Error("no version match in "+p);fs.writeFileSync(p,n)};
+            // Fail only when the version field is missing. Re-cutting an untagged
+            // version finds it already set, which is not an error.
+            const sub=(p,re,to)=>{const s=fs.readFileSync(p,"utf8");if(!re.test(s))throw new Error("no version match in "+p);fs.writeFileSync(p,s.replace(re,to))};
             sub("package.json",/("version":\s*)"[^"]+"/,`$1"${v}"`);
             sub("src-tauri/tauri.conf.json",/("version":\s*)"[^"]+"/,`$1"${v}"`);
             sub("src-tauri/Cargo.toml",/^version = "[^"]+"/m,`version = "${v}"`);
@@ -151,8 +172,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           git config user.name "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
-          git commit -am "chore(release): mqlens-v${NEW} [skip ci]"
-          git push origin HEAD:main
+          # Re-cutting an untagged version finds the files already bumped, and
+          # `git commit` fails when there is nothing to commit.
+          if git diff --quiet; then
+            echo "Version files already at ${NEW}; nothing to commit."
+          else
+            git commit -am "chore(release): mqlens-v${NEW} [skip ci]"
+            git push origin HEAD:main
+          fi
           echo "version=$NEW" >> "$GITHUB_OUTPUT"
           echo "release=true" >> "$GITHUB_OUTPUT"
 

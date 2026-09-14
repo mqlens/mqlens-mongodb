@@ -1,0 +1,48 @@
+name: Website CI
+
+# Build the Astro site on PRs that touch it, without deploying. The deploy
+# workflow (website.yml) only runs after a push to dev, so a lockfile that
+# `npm ci` rejects, or a site that no longer builds, used to surface only as a
+# failed deploy after merge. #388 was that case: its lockfile was regenerated on
+# a newer npm, passed locally, and would have failed `npm ci` on the npm bundled
+# with the Node 22 the deploy uses. This job mirrors the deploy's build job
+# (same runner, Node version and commands) so those failures land on the PR.
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/website.yml'
+      - '.github/workflows/website-ci.yml'
+
+concurrency:
+  group: website-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  website:
+    name: website
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - run: npm ci
+
+      - name: Build
+        run: npm run build
+        # The build calls the GitHub API for download counts; the read-only
+        # token avoids the unauthenticated rate limit, as in the deploy.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

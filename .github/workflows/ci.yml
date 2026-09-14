@@ -13,6 +13,21 @@ permissions:
   contents: read
 
 jobs:
+  # `tauri build` refuses to start when a Tauri crate and its npm package are on
+  # different major.minor releases, but only the Release workflow runs it. Check
+  # the same pairing on every PR, so a one-sided dependency bump fails here
+  # instead of failing every platform build of the next release (#382, #387).
+  tauri-versions:
+    name: tauri versions
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Tauri crate/npm version check
+        run: npm run check:tauri-versions
+
   frontend:
     name: frontend
     runs-on: ubuntu-22.04
