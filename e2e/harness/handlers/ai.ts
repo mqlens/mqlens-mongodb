@@ -9,6 +9,29 @@ export function registerAiHandlers(backend: Backend, state: E2EState): void {
 
   const handlers: Record<string, Handler> = {
     ai_provider_options: () => structuredClone(state.aiProviders),
+    // The first two of src-tauri/src/ai_providers.rs PRESETS, shaped as the command returns them.
+    ai_provider_presets: () => [
+      {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        kind: 'openai-compatible',
+        baseUrl: 'https://api.deepseek.com/v1',
+        model: 'deepseek-chat',
+        command: '',
+        modelsCommand: '',
+        needsKey: true,
+      },
+      {
+        id: 'openrouter',
+        name: 'OpenRouter',
+        kind: 'openai-compatible',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        model: '',
+        command: '',
+        modelsCommand: '',
+        needsKey: true,
+      },
+    ],
     list_ai_models_for: () => [],
     generate_mql_query: () => {
       throw 'No AI provider is configured';

@@ -10,6 +10,7 @@ import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker.js?worker';
 import JsonWorker from 'monaco-editor/esm/vs/language/json/json.worker.js?worker';
 import TsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker.js?worker';
 import { Backend, type InvokeArgs } from './backend';
+import { registerAdminHandlers } from './handlers/admin';
 import { registerAiHandlers } from './handlers/ai';
 import { registerAppHandlers } from './handlers/app';
 import { registerDataHandlers } from './handlers/data';
@@ -29,6 +30,7 @@ declare global {
 
 const state = createState(window.__MQLENS_E2E_SEED__ ?? {});
 const backend = new Backend(state);
+registerAdminHandlers(backend, state);
 registerAiHandlers(backend, state);
 registerAppHandlers(backend, state);
 registerDataHandlers(backend, state);

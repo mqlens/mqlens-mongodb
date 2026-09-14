@@ -1,34 +1,6 @@
-import type { Locator, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { loadSample, openCollection } from '../helpers';
-
-/**
- * Replace the text of the Monaco editor inside `container`.
- *
- * Set through Monaco's own API rather than typed: typing lets Monaco auto-close
- * brackets and quotes, which turns `{ "a": 1 }` into `{ "a": 1 }}`. setValue
- * fires the same model-change events the app listens to. It then waits two
- * frames, so React has rendered the new value before the test clicks anything
- * that reads it.
- */
-async function setEditorText(page: Page, container: Locator, text: string): Promise<void> {
-  const node = await container.locator('.monaco-editor').first().elementHandle();
-  await page.evaluate(
-    async ({ target, value }) => {
-      type Editor = { getDomNode(): HTMLElement | null; setValue(v: string): void; focus(): void };
-      const monaco = (await window.__MQLENS_E2E_MONACO__!()) as { editor: { getEditors(): Editor[] } };
-      const editor = monaco.editor.getEditors().find((candidate) => {
-        const dom = candidate.getDomNode();
-        return dom !== null && (dom === target || dom.contains(target) || target.contains(dom));
-      });
-      if (!editor) throw new Error('No Monaco editor inside the given element');
-      editor.setValue(value);
-      editor.focus();
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    },
-    { target: node!, value: text },
-  );
-}
+import { loadSample, openCollection, setEditorText } from '../helpers';
 
 const view = (page: Page) => page.locator('[data-testid^="tab-content-"]:not([hidden])');
 

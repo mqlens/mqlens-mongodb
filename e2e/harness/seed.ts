@@ -35,8 +35,28 @@ export interface ProfileSeed {
   connection_mode?: string;
 }
 
+/** What the monitoring commands report; any part left out comes from SAMPLE_MONITORING. */
+export interface MonitoringSeed {
+  serverStatus?: Record<string, unknown>;
+  currentOps?: Array<Record<string, unknown> & { opid: number }>;
+  /** `system.profile` entries across databases; `read_profile` returns a database's own. */
+  profile?: Array<Record<string, unknown> & { ns: string }>;
+  /** Profiling level and slow threshold by database; a database not listed is off. */
+  profiling?: Record<string, { level: number; slowMs: number }>;
+  replSet?: Record<string, unknown>;
+}
+
+export interface McpSeed {
+  enabled?: boolean;
+  port?: number;
+  token?: string;
+  log?: unknown[];
+}
+
 export interface Seed {
   vault?: VaultState;
+  monitoring?: MonitoringSeed;
+  mcp?: McpSeed;
   /** When set, `vault_unlock` rejects any other password. */
   vaultPassword?: string;
   settings?: Record<string, unknown>;
@@ -52,6 +72,60 @@ export interface Seed {
 }
 
 const oid = (hex: string) => ({ $oid: hex });
+
+/** A standalone server with two operations in flight and a profile of past ones. */
+export const SAMPLE_MONITORING: Required<MonitoringSeed> = {
+  serverStatus: {
+    host: 'mock:27017',
+    version: '7.0.5',
+    uptimeSeconds: 7_200,
+    connections: { current: 5, available: 995, totalCreated: 42 },
+    opcounters: { insert: 12, query: 340, update: 8, delete: 2, getmore: 0, command: 910 },
+    memory: { residentMb: 128, virtualMb: 2_048 },
+    network: { bytesIn: 480_000, bytesOut: 1_250_000, numRequests: 1_260 },
+    cache: { bytesInCache: 52_428_800, maxBytes: 209_715_200, dirtyBytes: 0 },
+  },
+  currentOps: [
+    {
+      opid: 101,
+      op: 'query',
+      ns: 'sales_db.customers',
+      secsRunning: 7,
+      client: '127.0.0.1:52001',
+      desc: 'conn12',
+      command: '{"find":"customers","filter":{"tier":"Premium"}}',
+    },
+    {
+      opid: 102,
+      op: 'insert',
+      ns: 'user_analytics.events',
+      secsRunning: 0,
+      client: '127.0.0.1:52002',
+      desc: 'conn13',
+      command: '{"insert":"events","ordered":true}',
+    },
+  ],
+  profile: [
+    {
+      op: 'query',
+      ns: 'sales_db.customers',
+      millis: 180,
+      tsMs: 1_747_000_000_000,
+      planSummary: 'COLLSCAN',
+      command: '{"find":"customers","filter":{"joined":{"$gte":"2024-01-01"}}}',
+    },
+    {
+      op: 'update',
+      ns: 'sales_db.products',
+      millis: 14,
+      tsMs: 1_747_000_060_000,
+      planSummary: 'IXSCAN { _id: 1 }',
+      command: '{"update":"products","updates":[{"q":{"_id":1}}]}',
+    },
+  ],
+  profiling: {},
+  replSet: { isReplicaSet: false, clusterType: 'standalone', set: '', myStateStr: '', mongoVersion: '7.0.5', members: [] },
+};
 
 /**
  * The same sample data the Rust backend serves for `mongodb://mock`

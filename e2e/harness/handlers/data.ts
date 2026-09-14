@@ -1,6 +1,7 @@
 // Connection, database, collection, document, saved-query, index and schema
 // commands, answered from the in-memory servers in the fake backend's state (#396).
 import type { Backend, Handler } from '../backend';
+import { generateDocuments, inferTemplate, previewDocuments } from '../generate';
 import { aggregate, applyUpdate, find, inferSchema, matches, newObjectId } from '../mongo';
 import type { Doc } from '../seed';
 import type { Collection, CollectionQueries, E2EState, Server } from '../state';
@@ -335,6 +336,40 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
     // Schema
     analyze_schema: ({ id, database: db, collection: coll, sampleSize }) =>
       JSON.stringify(inferSchema(collection(id, db, coll).docs, Number(sampleSize ?? 0))),
+
+    // Data generation (#91)
+    infer_generate_template: ({ id, database: db, collection: coll }) =>
+      inferTemplate(inferSchema(collection(id, db, coll).docs, 100)),
+    preview_generated_documents: ({ template, count, seed }) =>
+      previewDocuments(String(template), count == null ? undefined : Number(count), seed == null ? undefined : Number(seed)),
+    start_generate_task: ({ id, database: db, collection: coll, template, count, seed }) => {
+      const n = Number(count);
+      if (!Number.isInteger(n) || n < 1 || n > 50_000) throw `count must be between 1 and 50000, got ${String(count)}`;
+      const docs = generateDocuments(String(template), n, seed == null ? undefined : Number(seed));
+      // A database-scoped run may name a collection that doesn't exist yet.
+      const target = (database(id, db)[String(coll)] ??= { type: 'collection', docs: [], indexes: [] });
+      target.docs.push(...docs.map((doc) => ({ _id: { $oid: newObjectId() }, ...doc })));
+
+      const now = Date.now();
+      const task = {
+        id: `generate-${now}-${state.tasks.length + 1}`,
+        kind: 'generate',
+        label: `Generate ${n} documents`,
+        subLabel: `${String(db)}.${String(coll)}`,
+        status: 'running',
+        processed: 0,
+        total: n,
+        message: 'Generating documents…',
+        path: null,
+        error: null,
+        createdAtMs: now,
+        finishedAtMs: null,
+      };
+      // The backend returns the task as it starts. A fake run is already done,
+      // so the task list the app polls next shows it finished.
+      state.tasks.push({ ...task, status: 'completed', processed: n, message: `Inserted ${n} documents`, finishedAtMs: now });
+      return task;
+    },
   };
 
   backend.register(handlers);

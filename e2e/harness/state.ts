@@ -1,6 +1,6 @@
 // The fake backend's mutable state for one page load, built from the test's seed (#396).
-import { SAMPLE_SERVER, SAMPLE_URI } from './seed';
-import type { Doc, IndexSeed, ProfileSeed, Seed, VaultState } from './seed';
+import { SAMPLE_MONITORING, SAMPLE_SERVER, SAMPLE_URI } from './seed';
+import type { Doc, IndexSeed, MonitoringSeed, ProfileSeed, Seed, VaultState } from './seed';
 
 export interface Collection {
   type: string;
@@ -43,6 +43,8 @@ export interface E2EState {
   aiProviders: unknown[];
   dialog: { open: unknown; save: unknown };
   appVersion: string;
+  monitoring: Required<MonitoringSeed>;
+  mcp: { enabled: boolean; port: number; token: string; log: unknown[] };
 }
 
 function toServer(seed: Seed['servers'] extends Record<string, infer S> | undefined ? S : never): Server {
@@ -78,5 +80,12 @@ export function createState(seed: Seed): E2EState {
     aiProviders: structuredClone(seed.aiProviders ?? []),
     dialog: { open: seed.dialog?.open ?? null, save: seed.dialog?.save ?? null },
     appVersion: seed.appVersion ?? '0.20.0',
+    monitoring: structuredClone({ ...SAMPLE_MONITORING, ...seed.monitoring }),
+    mcp: {
+      enabled: seed.mcp?.enabled ?? false,
+      port: seed.mcp?.port ?? 8765,
+      token: seed.mcp?.token ?? 'e2e-token-1',
+      log: structuredClone(seed.mcp?.log ?? []),
+    },
   };
 }
