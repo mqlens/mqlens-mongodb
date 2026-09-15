@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { dismissHoverCards, expandCollections, getEditorText, loadSample, setEditorText } from '../helpers';
+import { SAMPLE_URI } from '../harness/seed';
+import { connectStaging, dismissHoverCards, expandCollections, getEditorText, loadSample, setEditorText, STAGING_URI } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary');
 const generateView = (page: Page) => page.getByTestId('generate-view');
@@ -40,17 +41,17 @@ async function rowId(view: Locator, name: string): Promise<string> {
   return ids[0];
 }
 
-const docCount = (page: Page, db: string, coll: string) =>
+const docCount = (page: Page, uri: string, db: string, coll: string) =>
   page.evaluate(
-    ([database, collection]) =>
-      window.__MQLENS_E2E__!.state.servers['mongodb://mock'].databases[database]?.[collection]?.docs.length ?? 0,
-    [db, coll] as const,
+    ([server, database, collection]) =>
+      window.__MQLENS_E2E__!.state.servers[server].databases[database]?.[collection]?.docs.length ?? 0,
+    [uri, db, coll] as const,
   );
 
+// On a saved connection: the backend only validates what it generates for the sample server.
 test.describe('Generate data', () => {
   test.beforeEach(async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
   });
 
   test('seeds the builder from the collection\'s schema and previews documents', async ({ app, page }) => {
@@ -147,7 +148,7 @@ test.describe('Generate data', () => {
     const starts = await app.calls('start_generate_task');
     expect(starts).toHaveLength(1);
     expect(starts[0].args).toMatchObject({ database: 'sales_db', collection: 'customers', count: 5, seed: null });
-    expect(await docCount(page, 'sales_db', 'customers')).toBe(8);
+    expect(await docCount(page, STAGING_URI, 'sales_db', 'customers')).toBe(8);
   });
 
   test('checks the count and seed, and asks for a large count to be typed', async ({ app, page }) => {
@@ -200,6 +201,23 @@ test.describe('Generate data', () => {
     await page.getByTestId('dialog-confirm').click();
 
     await expect(view.getByTestId('generate-task-message')).toHaveText('Inserted 3 documents');
-    expect(await docCount(page, 'sales_db', 'leads')).toBe(3);
+    expect(await docCount(page, STAGING_URI, 'sales_db', 'leads')).toBe(3);
+  });
+});
+
+test.describe('Generate data on the sample connection', () => {
+  test('validates the documents without writing them', async ({ app, page }) => {
+    await app.open();
+    await loadSample(page);
+    await openGenerate(page, 'customers');
+    const view = generateView(page);
+    await expect(view.getByTestId('generate-preview-doc')).toHaveCount(3);
+    await view.getByTestId('generate-count-input').fill('5');
+
+    await view.getByTestId('generate-run-btn').click();
+    await page.getByTestId('dialog-confirm').click();
+
+    await expect(view.getByTestId('generate-task-message')).toHaveText('Validated 5 documents (mock connection — not written)');
+    expect(await docCount(page, SAMPLE_URI, 'sales_db', 'customers')).toBe(3);
   });
 });

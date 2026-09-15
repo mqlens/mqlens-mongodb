@@ -3,6 +3,7 @@ import { test, expect, type App } from '../fixtures';
 import { SAMPLE_SERVER, SAMPLE_URI, type Seed } from '../harness/seed';
 import {
   callFrom,
+  connectStaging,
   getEditorText,
   loadSample,
   openCollection,
@@ -117,7 +118,10 @@ test.describe('Query bar', () => {
 
 test.describe('Aggregation builder', () => {
   test('undoes and redoes, reorders stages, fills a $lookup, explains and opens in mongosh', async ({ app, page }) => {
-    await openCustomers(app, page);
+    // On a saved connection: the backend refuses pipelines and mongosh on the sample server.
+    await connectStaging(app, page);
+    await openCollection(page, 'sales_db', 'customers');
+    await expect(view(page)).toContainText('Alice Smith');
     await view(page).getByTestId('mode-aggregate-tab').click();
     const editor = view(page).getByTestId('aggregation-pipeline-editor');
     await setEditorText(page, editor.getByTestId('pipeline-stage-0'), '{ tier: "Premium" }');
@@ -163,12 +167,7 @@ test.describe('Aggregation builder', () => {
   });
 
   test('a confirm-destructive connection asks for the name before an $out stage writes', async ({ app, page }) => {
-    const uri = 'mongodb://staging.example:27017';
-    await app.open({
-      profiles: [{ id: 'p-staging', name: 'Staging', uri, connection_mode: 'confirm_destructive' }],
-      servers: { [uri]: SAMPLE_SERVER },
-    });
-    await page.getByTestId('conn-card-p-staging').click();
+    await connectStaging(app, page, {}, { connection_mode: 'confirm_destructive' });
     await openCollection(page, 'sales_db', 'customers');
     await view(page).getByTestId('mode-aggregate-tab').click();
     const editor = view(page).getByTestId('aggregation-pipeline-editor');

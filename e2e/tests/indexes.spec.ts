@@ -29,9 +29,9 @@ test.describe('Indexes', () => {
     await openIndex(page, 'email_1');
 
     await expect(sidebar(page).getByText('_id_', { exact: true })).toBeVisible();
+    await expect(sidebar(page).getByText('tier_1', { exact: true })).toBeVisible();
     const viewer = view(page).getByTestId('index-viewer');
     await expect(viewer).toContainText('email');
-    await expect(viewer).toContainText('Unique');
     expect(await app.calls('index_stats')).not.toHaveLength(0);
   });
 

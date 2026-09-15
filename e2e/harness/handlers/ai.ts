@@ -15,6 +15,9 @@ interface ProviderDraft {
 
 const SCOPE_FIELDS = ['connectionName', 'database', 'collection', 'variant'] as const;
 
+/** The messages a saved chat keeps (`MAX_MESSAGES` in src-tauri/src/chats.rs). */
+const MAX_CHAT_MESSAGES = 200;
+
 /** Whether a stored chat belongs to a history scope; a null scope takes in every chat. */
 function inScope(chat: Record<string, unknown>, scope: unknown): boolean {
   if (!scope) return true;
@@ -93,7 +96,28 @@ export function registerAiHandlers(backend: Backend, state: E2EState): void {
       chats.set(String(next.id), structuredClone(next));
       return null;
     },
-    append_chat_message: () => null,
+    // A reply that finished after its tab moved on, parked in its saved chat
+    // (src-tauri/src/chats.rs): the next message id, the oldest dropped past
+    // the limit, and the caller's timestamp. An unknown chat is ignored.
+    append_chat_message: ({ chatId, role, text, query, error, thoughts, toolCalls, updatedAt }) => {
+      const chat = chats.get(String(chatId));
+      if (!chat) return null;
+      const messages = Array.isArray(chat.messages) ? (chat.messages as Array<Record<string, unknown>>) : [];
+      const last = messages.reduce((max, message) => Math.max(max, Number(String(message.id).slice(1)) || 0), -1);
+      messages.push({
+        id: `m${last + 1}`,
+        role,
+        text,
+        ...(query == null ? {} : { query }),
+        ...(error == null ? {} : { error }),
+        ...(thoughts == null ? {} : { thoughts }),
+        ...(toolCalls == null ? {} : { toolCalls }),
+      });
+      if (messages.length > MAX_CHAT_MESSAGES) messages.splice(0, messages.length - MAX_CHAT_MESSAGES);
+      chat.messages = messages;
+      chat.updatedAt = updatedAt;
+      return null;
+    },
     delete_chat: ({ id }) => {
       chats.delete(String(id));
       return null;

@@ -10,6 +10,23 @@ export function registerAppHandlers(backend: Backend, state: E2EState): void {
     if (state.vault !== 'unlocked') throw 'vault is locked';
   };
 
+  // A locked vault never leaves the embedded MCP server listening
+  // (`mcp::stop_if_running`). Its settings still say it's enabled, so the next
+  // unlock starts it again with the token it had (`mcp::restore_on_unlock`).
+  let mcpToRestore: { port: number; token: string } | null = null;
+  const stopMcp = () => {
+    mcpToRestore = state.mcp.enabled ? { port: state.mcp.port, token: state.mcp.token } : null;
+    state.mcp.enabled = false;
+    state.mcp.token = '';
+  };
+  const restoreMcp = () => {
+    if (!mcpToRestore) return;
+    state.mcp.enabled = true;
+    state.mcp.port = mcpToRestore.port;
+    state.mcp.token = mcpToRestore.token;
+    mcpToRestore = null;
+  };
+
   const handlers: Record<string, Handler> = {
     // Vault and biometrics
     vault_status: () => state.vault,
@@ -21,10 +38,12 @@ export function registerAppHandlers(backend: Backend, state: E2EState): void {
     vault_unlock: ({ password }) => {
       if (state.vaultPassword !== null && password !== state.vaultPassword) throw 'Incorrect master password';
       state.vault = 'unlocked';
+      restoreMcp();
       return 'unlocked';
     },
     vault_lock: () => {
       state.vault = 'locked';
+      stopMcp();
       return null;
     },
     vault_change_password: ({ oldPassword, newPassword }) => {
@@ -32,10 +51,17 @@ export function registerAppHandlers(backend: Backend, state: E2EState): void {
       state.vaultPassword = String(newPassword);
       return null;
     },
+    // A reset deletes everything the vault held: the activity log, profiles and
+    // settings, the MCP server's saved state and the biometric copy of the key.
     vault_reset: () => {
+      state.audit.events = [];
       state.vault = 'uninitialized';
       state.vaultPassword = null;
       state.profiles = [];
+      state.settings = {};
+      stopMcp();
+      mcpToRestore = null;
+      state.biometric.enrolled = false;
       return null;
     },
     biometric_status: () => {
@@ -46,6 +72,7 @@ export function registerAppHandlers(backend: Backend, state: E2EState): void {
       if (!state.biometric.available || !state.biometric.enrolled) throw 'Biometric unlock is not available';
       if (state.biometric.unlockError) throw state.biometric.unlockError;
       state.vault = 'unlocked';
+      restoreMcp();
       return 'unlocked';
     },
     biometric_enable: () => {

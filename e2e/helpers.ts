@@ -2,6 +2,7 @@
 // rows are plain clickable rows named by their text, not buttons.
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { App } from './fixtures';
+import { SAMPLE_SERVER, type ProfileSeed, type Seed } from './harness/seed';
 
 /**
  * The text of the Monaco editor inside `container`, from its model. Its DOM only
@@ -67,6 +68,27 @@ export async function setEditorText(page: Page, container: Locator, text: string
 export async function loadSample(page: Page): Promise<void> {
   await page.getByTestId('qs-load-sample').click();
   await page.getByRole('button', { name: 'Connection Sample (mqlens_demo)' }).waitFor();
+}
+
+/** The URI of the saved "Staging" connection `connectStaging` opens. */
+export const STAGING_URI = 'mongodb://staging.example:27017';
+
+/**
+ * Open the app with a saved "Staging" connection to a server holding the
+ * sample data, and connect to it.
+ *
+ * The built-in sample server is a demo: the backend drops its writes and
+ * refuses some features on it. A test that writes, or that uses one of those
+ * features, runs here instead, on the same data behind an ordinary connection.
+ */
+export async function connectStaging(app: App, page: Page, seed: Seed = {}, profile: Partial<ProfileSeed> = {}): Promise<void> {
+  await app.open({
+    ...seed,
+    profiles: [{ id: 'p-staging', name: 'Staging', uri: STAGING_URI, ...profile }, ...(seed.profiles ?? [])],
+    servers: { [STAGING_URI]: SAMPLE_SERVER, ...seed.servers },
+  });
+  await page.getByTestId('conn-card-p-staging').click();
+  await page.getByRole('button', { name: 'Connection Staging' }).waitFor();
 }
 
 /**

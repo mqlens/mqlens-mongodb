@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
 import {
+  connectStaging,
   dismissHoverCards,
   expandCollections,
   getEditorText,
@@ -24,9 +25,13 @@ async function callFrom(app: App, cmd: string, action: () => Promise<void>): Pro
   return (await app.calls(cmd))[before].args as Record<string, unknown>;
 }
 
+/**
+ * Open customers on a saved connection. The sample server ignores projections,
+ * refuses pipelines and always explains with an index scan, so queries here run
+ * the way they do against a real server.
+ */
 async function openCustomers(app: App, page: Page): Promise<void> {
-  await app.open();
-  await loadSample(page);
+  await connectStaging(app, page);
   await openCollection(page, 'sales_db', 'customers');
   await expect(view(page)).toContainText('Alice Smith');
 }
@@ -259,8 +264,8 @@ test.describe('Query tools', () => {
   });
 
   test('creates a view from a pipeline and opens it', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    // The backend checks a view on the sample server and then creates nothing.
+    await connectStaging(app, page);
 
     await sidebar(page).getByRole('button', { name: 'Database sales_db' }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Create View' }).click();

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { loadSample, openCollection, setEditorText } from '../helpers';
+import { connectStaging, loadSample, openCollection, setEditorText } from '../helpers';
 
 const view = (page: Page) => page.locator('[data-testid^="tab-content-"]:not([hidden])');
 
@@ -9,10 +9,10 @@ async function runFilter(page: Page, filter: string): Promise<void> {
   await view(page).getByRole('button', { name: 'Run', exact: true }).click();
 }
 
+// On a saved connection: the backend drops every write to the sample server.
 test.describe('Documents in a collection', () => {
   test.beforeEach(async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openCollection(page, 'sales_db', 'customers');
     await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
   });
@@ -165,5 +165,19 @@ test.describe('Documents in a collection', () => {
     const args = deletes[0].args as { filter: string; confirmed: boolean };
     expect(JSON.parse(args.filter)).toEqual({ tier: 'Standard' });
     expect(args.confirmed).toBe(false);
+  });
+});
+
+test.describe('Documents on the sample connection', () => {
+  test('Explain Plan shows the sample server\'s canned index scan', async ({ app, page }) => {
+    await app.open();
+    await loadSample(page);
+    await openCollection(page, 'sales_db', 'customers');
+    await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
+
+    await view(page).getByTestId('explain-plan-tab').click();
+    const panel = view(page).getByTestId('explain-panel');
+    await expect(panel).toContainText('IXSCAN');
+    await expect(panel).toContainText('category_1');
   });
 });

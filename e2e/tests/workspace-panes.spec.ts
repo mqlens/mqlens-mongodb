@@ -1,9 +1,18 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
 import { SAMPLE_SERVER } from '../harness/seed';
-import { callFrom, dismissHoverCards, expandCollections, loadSample, openCollection, openInNewTab, setEditorText } from '../helpers';
+import {
+  callFrom,
+  connectStaging,
+  dismissHoverCards,
+  expandCollections,
+  loadSample,
+  openCollection,
+  openInNewTab,
+  setEditorText,
+  STAGING_URI,
+} from '../helpers';
 
-const STAGING_URI = 'mongodb://staging.example:27017';
 const strip = (page: Page) => page.getByTestId('workspace-tab-strip');
 const sidebar = (page: Page) => page.getByRole('complementary').first();
 
@@ -128,14 +137,14 @@ test.describe('Vault biometrics', () => {
   });
 });
 
+// On a saved connection: the backend runs mongosh only against a real server.
 test.describe('Shell AI and tool setup', () => {
   test('asks before running a destructive script from the shell AI panel', async ({ app, page }) => {
     const script = { query: { explanation: 'Removes every customer.', queryType: 'script', script: 'db.customers.deleteMany({})' } };
-    await app.open({
+    await connectStaging(app, page, {
       aiProviders: [{ id: 'openai', name: 'OpenAI', kind: 'openai-compatible', model: 'gpt-4.1', isDefault: true, usesModel: true, canListModels: false }],
       aiReplies: [script, script],
     });
-    await loadSample(page);
     await expandCollections(page, 'sales_db');
     await sidebar(page).getByText('customers', { exact: true }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Open mongosh Shell' }).click();
@@ -162,8 +171,7 @@ test.describe('Shell AI and tool setup', () => {
   });
 
   test('installs tools from the shell gate, and retries a failed install', async ({ app, page }) => {
-    await app.open({ mongosh: { available: false, detection: null } });
-    await loadSample(page);
+    await connectStaging(app, page, { mongosh: { available: false, detection: null } });
     await sidebar(page).getByRole('button', { name: 'Database sales_db' }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Open mongosh Shell' }).click();
     await dismissHoverCards(page);

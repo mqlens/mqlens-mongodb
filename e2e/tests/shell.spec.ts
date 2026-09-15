@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { dismissHoverCards, expandCollections, loadSample, setEditorText } from '../helpers';
+import { connectStaging, dismissHoverCards, expandCollections, setEditorText } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary');
 const shell = (page: Page) => page.getByTestId('mongo-shell');
@@ -27,10 +27,10 @@ async function run(page: Page, command: string): Promise<void> {
   await expect(button).toBeEnabled();
 }
 
+// On a saved connection: the backend runs mongosh only against a real server.
 test.describe('mongosh shell', () => {
   test('opens on a collection and runs its opening query', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openShell(page, 'customers');
 
     // A find goes to the Data Viewer as documents.
@@ -49,8 +49,7 @@ test.describe('mongosh shell', () => {
   });
 
   test('runs commands in the session', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openShell(page);
 
     // Opened on a database, the shell lists its collections.
@@ -88,8 +87,7 @@ test.describe('mongosh shell', () => {
   // failing so the suite says so once it's fixed.
   test('cls clears the console', async ({ app, page }) => {
     test.fail(true, 'cls leaves the transcript in place: the stored session restores it');
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openShell(page);
     await expect(transcript(page)).toContainText('transactions');
 
@@ -100,8 +98,7 @@ test.describe('mongosh shell', () => {
   });
 
   test('stops a command that won\'t finish by restarting the session', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openShell(page);
     await expect(transcript(page)).toContainText('transactions');
 
@@ -119,8 +116,7 @@ test.describe('mongosh shell', () => {
   });
 
   test('restarts the session on request', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openShell(page);
     await expect(transcript(page)).toContainText('transactions');
 
@@ -132,8 +128,7 @@ test.describe('mongosh shell', () => {
   });
 
   test('without mongosh, offers the binary it found and starts once it\'s chosen', async ({ app, page }) => {
-    await app.open({ mongosh: { available: false } });
-    await loadSample(page);
+    await connectStaging(app, page, { mongosh: { available: false } });
     await openShell(page);
 
     const gate = page.getByTestId('shell-session-gate');
@@ -147,11 +142,10 @@ test.describe('mongosh shell', () => {
   });
 
   test('without mongosh, retries and takes a binary picked from disk', async ({ app, page }) => {
-    await app.open({
+    await connectStaging(app, page, {
       mongosh: { available: false, detection: null, binaries: ['/opt/mongosh/bin/mongosh'] },
       dialog: { open: '/opt/mongosh/bin/mongosh' },
     });
-    await loadSample(page);
     await openShell(page);
 
     const gate = page.getByTestId('shell-session-gate');
@@ -168,8 +162,7 @@ test.describe('mongosh shell', () => {
   });
 
   test('suggests collection names after db.', async ({ page, app }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openShell(page);
     await expect(transcript(page)).toContainText('transactions');
 

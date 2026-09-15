@@ -1,11 +1,15 @@
 // GridFS buckets: listing, uploading, downloading and deleting files (#396).
+// The backend refuses every GridFS command on the built-in sample server.
 import type { Backend, Handler } from '../backend';
-import { databaseOf } from '../lookup';
+import { databaseOf, guardWritable, isMock } from '../lookup';
 import { newObjectId } from '../mongo';
 import type { E2EState, GridFsFile } from '../state';
 
 export function registerGridFsHandlers(backend: Backend, state: E2EState): void {
   const keyOf = (database: unknown, bucket: unknown) => `${String(database)}.${String(bucket)}`;
+  const refuseSample = (id: unknown) => {
+    if (isMock(state, id)) throw 'GridFS is not supported on mock connections';
+  };
   const bucketFiles = (id: unknown, database: unknown, bucket: unknown): GridFsFile[] => {
     databaseOf(state, id, database);
     return (state.gridfs[keyOf(database, bucket)] ??= []);
@@ -18,8 +22,9 @@ export function registerGridFsHandlers(backend: Backend, state: E2EState): void 
 
   const handlers: Record<string, Handler> = {
     // JSON text with snake_case fields and the id as Extended JSON, as the backend sends it.
-    list_gridfs_files: ({ id, database, bucket }) =>
-      JSON.stringify(
+    list_gridfs_files: ({ id, database, bucket }) => {
+      refuseSample(id);
+      return JSON.stringify(
         bucketFiles(id, database, bucket).map((file) => ({
           id: file.id,
           filename: file.filename,
@@ -28,8 +33,11 @@ export function registerGridFsHandlers(backend: Backend, state: E2EState): void 
           upload_date: file.upload_date,
           content_type: file.content_type,
         })),
-      ),
+      );
+    },
     upload_gridfs_file: ({ id, database, bucket, sourcePath, filename, contentType }) => {
+      guardWritable(state, id);
+      refuseSample(id);
       const files = bucketFiles(id, database, bucket);
       const content = state.files[String(sourcePath)];
       if (content === undefined) throw `No such file: ${String(sourcePath)}`;
@@ -46,11 +54,14 @@ export function registerGridFsHandlers(backend: Backend, state: E2EState): void 
       return file.id;
     },
     download_gridfs_file: ({ id, database, bucket, fileId, destPath }) => {
+      refuseSample(id);
       const file = fileIn(bucketFiles(id, database, bucket), fileId);
       state.writtenFiles[String(destPath)] = file.content;
       return file.length;
     },
     delete_gridfs_file: ({ id, database, bucket, fileId }) => {
+      guardWritable(state, id);
+      refuseSample(id);
       const files = bucketFiles(id, database, bucket);
       const file = fileIn(files, fileId);
       state.gridfs[keyOf(database, bucket)] = files.filter((candidate) => candidate !== file);

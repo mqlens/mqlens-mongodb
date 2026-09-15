@@ -1,8 +1,12 @@
 // Export, import, mongodump and mongorestore, copying collections and databases,
 // and the local audit log (#396).
+//
+// On the built-in sample server, exports read its data, imports and copies are
+// checked and counted but write nothing, and the database tools refuse it, as
+// in the backend.
 import type { Backend, Handler } from '../backend';
-import { collectionForWrite, collectionOf, databaseOf, serverOf } from '../lookup';
-import { aggregate, find, inferSchema, matches, newObjectId } from '../mongo';
+import { collectionForWrite, collectionOf, databaseOf, guardWritable, isMock, serverOf } from '../lookup';
+import { aggregate, find, includePath, inferSchema, jsonEqual, matches, mockFind, newObjectId } from '../mongo';
 import type { Doc } from '../seed';
 import type { E2EState } from '../state';
 import { recordTask } from '../tasks';
@@ -52,6 +56,15 @@ interface AuditFilter {
   ok?: boolean | null;
 }
 
+type ConflictMode = 'skip' | 'merge' | 'overwrite';
+
+const MOCK_AGGREGATE = 'Aggregation pipelines are not supported on mock connections';
+const MOCK_TOOLS = 'MongoDB Database Tools require a real connection, not a mock connection';
+/** How many documents an import writes at a time (`IMPORT_BATCH_SIZE`). */
+const IMPORT_BATCH_SIZE = 500;
+/** The most documents an export reads from the sample server. */
+const MOCK_EXPORT_LIMIT = 1000;
+
 const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
 /** An argument sent as JSON text; blank means none. */
@@ -60,10 +73,33 @@ function jsonArg<T>(value: unknown, fallback: T): T {
   return (typeof value === 'string' ? JSON.parse(value) : value) as T;
 }
 
+/** A copy's conflict mode, parsed as `ConflictMode::parse` does. */
+function conflictModeOf(value: unknown): ConflictMode {
+  const mode = String(value ?? 'merge').trim().toLowerCase();
+  if (mode === 'skip' || mode === 'merge' || mode === 'overwrite') return mode;
+  throw `Unknown conflict mode '${mode}'`;
+}
+
+/** The value at a dotted path through embedded documents, never into arrays, as a CSV cell reads it. */
+function valueAtPath(doc: Doc, path: string): unknown {
+  return path
+    .split('.')
+    .reduce<unknown>((node, part) => (typeof node === 'object' && node !== null && !Array.isArray(node) ? (node as Doc)[part] : undefined), doc);
+}
+
+/**
+ * Documents written out in an export format. With fields selected, JSON keeps
+ * a dotted path nested (`{ address: { city } }`), as the backend's projection
+ * does, and CSV has a column named by each selected path.
+ */
 function formatDocs(docs: Doc[], format: string, options: ExportOptions = {}): string {
   const fields = options.fields?.length ? options.fields : undefined;
   const shaped = fields
-    ? docs.map((doc) => Object.fromEntries(fields.filter((field) => field in doc).map((field) => [field, doc[field]])))
+    ? docs.map((doc) => {
+        const out: Doc = {};
+        for (const field of fields) includePath(out, doc, field);
+        return out;
+      })
     : docs;
   switch (format) {
     case 'json':
@@ -72,13 +108,13 @@ function formatDocs(docs: Doc[], format: string, options: ExportOptions = {}): s
       return shaped.map((doc) => JSON.stringify(doc)).join('\n');
     case 'csv': {
       const delimiter = options.csv?.delimiter || ',';
-      const columns = [...new Set(shaped.flatMap((doc) => Object.keys(doc)))];
+      const columns = fields ?? [...new Set(docs.flatMap((doc) => Object.keys(doc)))];
       const cell = (value: unknown) => {
         const text =
           value === undefined || value === null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
         return /["\n]/.test(text) || text.includes(delimiter) ? `"${text.replace(/"/g, '""')}"` : text;
       };
-      const rows = shaped.map((doc) => columns.map((column) => cell(doc[column])).join(delimiter));
+      const rows = docs.map((doc) => columns.map((column) => cell(valueAtPath(doc, column))).join(delimiter));
       return [...(options.csv?.includeHeaders === false ? [] : [columns.join(delimiter)]), ...rows].join('\n');
     }
     default:
@@ -89,16 +125,26 @@ function formatDocs(docs: Doc[], format: string, options: ExportOptions = {}): s
 function parseImport(text: string, format: string, csv: CsvOptions = {}): { docs: Doc[]; columns: string[] } {
   switch (format) {
     case 'json': {
-      const parsed = JSON.parse(text) as Doc | Doc[];
-      return { docs: Array.isArray(parsed) ? parsed : [parsed], columns: [] };
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch (error) {
+        throw `Invalid JSON: ${String(error)}`;
+      }
+      if (!Array.isArray(parsed)) throw 'Expected a JSON array of documents';
+      return { docs: parsed as Doc[], columns: [] };
     }
     case 'ndjson':
     case 'jsonl':
       return {
-        docs: text
-          .split(/\r?\n/)
-          .filter((line) => line.trim() !== '')
-          .map((line) => JSON.parse(line) as Doc),
+        docs: text.split(/\r?\n/).flatMap((line, i) => {
+          if (line.trim() === '') return [];
+          try {
+            return [JSON.parse(line) as Doc];
+          } catch (error) {
+            throw `NDJSON line ${i + 1}: ${String(error)}`;
+          }
+        }),
         columns: [],
       };
     case 'csv': {
@@ -123,7 +169,7 @@ function parseImport(text: string, format: string, csv: CsvOptions = {}): { docs
       };
     }
     default:
-      throw `e2e fake backend cannot read ${format} files`;
+      throw `Unsupported import format: ${format}`;
   }
 }
 
@@ -153,6 +199,8 @@ function restoreCommand(tool: string, options: RestoreOptions): string {
 }
 
 export function registerTransferHandlers(backend: Backend, state: E2EState): void {
+  let tombstoneSerial = 0;
+
   const sourceText = (source: unknown): string => {
     const { path, text } = (source ?? {}) as { path?: string; text?: string };
     if (typeof text === 'string') return text;
@@ -163,15 +211,21 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
   /** The documents a filtered export, its preview or its field scan covers. */
   const queried = (args: Record<string, unknown>): Doc[] => {
     const docs = collectionOf(state, args.id, args.database, args.collection).docs;
+    const mock = isMock(state, args.id);
     const pipeline = jsonArg<Doc[] | null>(args.pipeline, null);
-    if (pipeline) return aggregate(docs, pipeline);
-    return find(docs, {
+    if (pipeline) {
+      if (mock) throw MOCK_AGGREGATE;
+      return aggregate(docs, pipeline);
+    }
+    const options = {
       filter: jsonArg<Doc>(args.filter, {}),
       sort: jsonArg<Doc>(args.sort, {}),
-      projection: jsonArg<Doc>(args.projection, {}),
       skip: Number(args.skip ?? 0),
       limit: Number(args.limit ?? 0),
-    });
+    };
+    // The sample server ignores the projection and reads no more than 1000 documents.
+    if (mock) return mockFind(docs, { ...options, limit: options.limit > 0 ? options.limit : MOCK_EXPORT_LIMIT });
+    return find(docs, { ...options, projection: jsonArg<Doc>(args.projection, {}) });
   };
 
   const copyCollection = (
@@ -179,19 +233,21 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
     target: { id: unknown; db: unknown; coll: unknown },
     filter: Doc,
     includeIndexes: boolean,
-    conflictMode: string,
+    conflictMode: ConflictMode,
   ) => {
     const from = collectionOf(state, source.id, source.db, source.coll);
-    const existed = serverOf(state, target.id).databases[String(target.db)]?.[String(target.coll)] !== undefined;
+    const databases = serverOf(state, target.id).databases;
+    const existed = databases[String(target.db)]?.[String(target.coll)] !== undefined;
     if (existed && conflictMode === 'skip') {
       return { documentsCopied: 0, documentsSkipped: from.docs.length, indexesCreated: 0, skipped: true };
     }
+    // Overwrite drops the target first, and its own indexes go with it.
+    if (existed && conflictMode === 'overwrite') delete databases[String(target.db)][String(target.coll)];
     const to = collectionForWrite(state, target.id, target.db, target.coll);
-    if (conflictMode === 'replace' || conflictMode === 'overwrite') to.docs = [];
     let documentsCopied = 0;
     let documentsSkipped = 0;
     for (const doc of from.docs.filter((candidate) => matches(candidate, filter))) {
-      if (to.docs.some((existing) => JSON.stringify(existing._id) === JSON.stringify(doc._id))) {
+      if (to.docs.some((existing) => jsonEqual(existing._id, doc._id))) {
         documentsSkipped += 1;
         continue;
       }
@@ -210,12 +266,15 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
   };
 
   const auditMatches = (filter: AuditFilter) =>
-    state.audit.events.filter(
-      (event) =>
-        (!filter.op || event.op === filter.op) &&
-        (filter.ok === undefined || filter.ok === null || event.ok === filter.ok) &&
-        (!filter.summaryContains || String(event.summary).toLowerCase().includes(filter.summaryContains.toLowerCase())),
-    );
+    state.audit.events
+      .filter(
+        (event) =>
+          (!filter.op || event.op === filter.op) &&
+          (filter.ok === undefined || filter.ok === null || event.ok === filter.ok) &&
+          (!filter.summaryContains || String(event.summary).toLowerCase().includes(filter.summaryContains.toLowerCase())),
+      )
+      // Newest first, as the audit store orders them before it pages.
+      .sort((a, b) => Number(b.ts) - Number(a.ts));
 
   const handlers: Record<string, Handler> = {
     // Export
@@ -229,13 +288,14 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
     sample_export_fields: (args) =>
       inferSchema(queried({ ...args, sort: null, projection: null, skip: 0, limit: 0 }), 100).fields.map((field) => field.path),
     start_collection_export: ({ id, database, collection, format, path, options }) => {
-      const docs = collectionOf(state, id, database, collection).docs;
+      const all = collectionOf(state, id, database, collection).docs;
+      const docs = isMock(state, id) ? all.slice(0, MOCK_EXPORT_LIMIT) : all;
       state.writtenFiles[String(path)] = formatDocs(docs, String(format), options as ExportOptions);
       return recordTask(state, {
         kind: 'collection_export',
         label: `Export ${String(database)}.${String(collection)} as ${String(format).toUpperCase()}`,
         startMessage: 'Queued',
-        message: `Exported ${docs.length} documents`,
+        message: 'Export complete',
         processed: docs.length,
         total: docs.length,
         path: String(path),
@@ -248,7 +308,7 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
         kind: 'filtered_export',
         label: `Export ${String(args.database)}.${String(args.collection)} (filtered) as ${String(args.format).toUpperCase()}`,
         startMessage: 'Queued',
-        message: `Exported ${docs.length} documents`,
+        message: 'Export complete',
         processed: docs.length,
         total: docs.length,
         path: String(args.path),
@@ -270,26 +330,42 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       }
     },
     start_import_task: ({ id, database, collection, source, format, csvOptions, mode }) => {
+      guardWritable(state, id);
+      const importMode = String(mode ?? 'skip');
+      if (importMode !== 'skip' && importMode !== 'update' && importMode !== 'abort') {
+        throw 'Import mode must be skip, update, or abort';
+      }
       const { docs } = parseImport(sourceText(source), String(format), csvOptions as CsvOptions);
-      const target = collectionForWrite(state, id, database, collection);
-      let inserted = 0;
-      let updated = 0;
-      let skipped = 0;
+      const counts = { inserted: 0, updated: 0, skipped: 0 };
       let error: string | undefined;
-      for (const doc of docs) {
-        const incoming = doc._id === undefined ? { _id: { $oid: newObjectId() }, ...doc } : doc;
-        const at = target.docs.findIndex((existing) => JSON.stringify(existing._id) === JSON.stringify(incoming._id));
-        if (at < 0) {
-          target.docs.push(incoming);
-          inserted += 1;
-        } else if (mode === 'update') {
-          target.docs[at] = incoming;
-          updated += 1;
-        } else if (mode === 'abort') {
-          error = `Duplicate _id ${JSON.stringify(incoming._id)}: import stopped`;
-          break;
-        } else {
-          skipped += 1;
+      if (isMock(state, id)) {
+        // The sample server parses and counts every row and writes none of them.
+        if (importMode === 'update') counts.updated = docs.length;
+        else counts.inserted = docs.length;
+      } else {
+        const target = collectionForWrite(state, id, database, collection);
+        const stored = (doc: Doc) => (doc._id === undefined ? -1 : target.docs.findIndex((existing) => jsonEqual(existing._id, doc._id)));
+        for (let start = 0; start < docs.length; start += IMPORT_BATCH_SIZE) {
+          const batch = docs.slice(start, start + IMPORT_BATCH_SIZE);
+          // Abort checks a batch before writing any of it; the batches before it are already written.
+          const existing = importMode === 'abort' ? batch.filter((doc) => stored(doc) >= 0).length : 0;
+          if (existing > 0) {
+            error = `Import aborted: ${existing} document(s) already exist`;
+            break;
+          }
+          for (const doc of batch) {
+            const at = stored(doc);
+            if (at < 0) {
+              target.docs.push(doc._id === undefined ? { _id: { $oid: newObjectId() }, ...doc } : doc);
+              counts.inserted += 1;
+            } else if (importMode === 'update') {
+              // replace_one's modified count: an identical document isn't counted.
+              if (!jsonEqual(target.docs[at], doc)) counts.updated += 1;
+              target.docs[at] = doc;
+            } else {
+              counts.skipped += 1;
+            }
+          }
         }
       }
       const { path } = (source ?? {}) as { path?: string };
@@ -297,9 +373,9 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
         kind: 'import',
         label: `Import ${String(database)}.${String(collection)} from ${path ? basename(path) : 'pasted text'}`,
         startMessage: 'Queued',
-        message: `Inserted ${inserted}, updated ${updated}, skipped ${skipped}`,
+        message: error ? 'Task failed' : `Import complete: ${counts.inserted} inserted, ${counts.updated} updated, ${counts.skipped} skipped`,
         error,
-        processed: inserted + updated + skipped,
+        processed: counts.inserted + counts.updated + counts.skipped,
         total: docs.length,
       });
     },
@@ -311,6 +387,7 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       return dumpCommand(String(toolPath), options as DumpOptions);
     },
     start_dump_task: ({ id, toolPath, options }) => {
+      if (isMock(state, id)) throw MOCK_TOOLS;
       const server = serverOf(state, id);
       const dump = options as DumpOptions;
       if (!toolPath) throw 'mongodump was not found';
@@ -347,7 +424,8 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       return restoreCommand(String(toolPath), options as RestoreOptions);
     },
     start_restore_task: ({ id, toolPath, options }) => {
-      serverOf(state, id);
+      guardWritable(state, id);
+      if (isMock(state, id)) throw MOCK_TOOLS;
       if (!toolPath) throw 'mongorestore was not found';
       const restore = options as RestoreOptions;
       const source = restore.source.kind === 'folder' ? restore.source.dir : restore.source.file;
@@ -377,18 +455,39 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       };
     },
     start_collection_copy: (args) => {
+      guardWritable(state, args.targetId);
+      const mode = conflictModeOf(args.conflictMode);
+      const filter = jsonArg<Doc>(args.filter, {});
+      // A hard stop whatever the mode, whatever the app's preflight warned about.
+      if (args.sourceId === args.targetId && args.sourceDb === args.targetDb && args.sourceCollection === args.targetCollection) {
+        throw 'Source and target are the same collection — copy would overwrite itself';
+      }
+      const label = `Copy ${String(args.sourceDb)}.${String(args.sourceCollection)} → ${String(args.targetDb)}.${String(args.targetCollection)}`;
+      if (isMock(state, args.sourceId) || isMock(state, args.targetId)) {
+        // Simulated: every source document is reported copied, the filter and indexes are ignored, and nothing is written.
+        const count = collectionOf(state, args.sourceId, args.sourceDb, args.sourceCollection).docs.length;
+        return recordTask(state, {
+          kind: 'collection_copy',
+          label,
+          startMessage: 'Queued',
+          message: 'Copy complete',
+          processed: count,
+          total: count,
+          summary: { collectionsCopied: 1, documentsCopied: count, documentsSkipped: 0, indexesCreated: 0, skipped: [], failed: [] },
+        });
+      }
       const result = copyCollection(
         { id: args.sourceId, db: args.sourceDb, coll: args.sourceCollection },
         { id: args.targetId, db: args.targetDb, coll: args.targetCollection },
-        jsonArg<Doc>(args.filter, {}),
+        filter,
         Boolean(args.includeIndexes),
-        String(args.conflictMode ?? 'merge'),
+        mode,
       );
       return recordTask(state, {
         kind: 'collection_copy',
-        label: `Copy ${String(args.sourceDb)}.${String(args.sourceCollection)} → ${String(args.targetDb)}.${String(args.targetCollection)}`,
+        label,
         startMessage: 'Queued',
-        message: `Copied ${result.documentsCopied} documents`,
+        message: 'Copy complete',
         processed: result.documentsCopied,
         total: result.documentsCopied + result.documentsSkipped,
         summary: {
@@ -402,6 +501,11 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       });
     },
     start_database_copy: (args) => {
+      guardWritable(state, args.targetId);
+      const mode = conflictModeOf(args.conflictMode);
+      if (args.sourceId === args.targetId && args.sourceDb === args.targetDb) {
+        throw 'Source and target database are the same — copy would overwrite itself';
+      }
       const source = databaseOf(state, args.sourceId, args.sourceDb);
       const names = ((args.collections as string[] | null) ?? Object.keys(source)).filter(
         (name) => Boolean(args.includeViews) || source[name]?.type !== 'view',
@@ -414,13 +518,33 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
         skipped: [] as string[],
         failed: [] as unknown[],
       };
+      const label = `Copy ${String(args.sourceDb)} → ${String(args.targetDb)}`;
+      if (isMock(state, args.sourceId) || isMock(state, args.targetId)) {
+        // Simulated, and counting every chosen collection, time series included.
+        totals.collectionsCopied = names.length;
+        totals.documentsCopied = names.reduce((sum, name) => sum + (source[name]?.docs.length ?? 0), 0);
+        return recordTask(state, {
+          kind: 'database_copy',
+          label,
+          startMessage: 'Queued',
+          message: 'Copy complete',
+          processed: names.length,
+          total: names.length,
+          summary: totals,
+        });
+      }
       for (const name of names) {
+        if (source[name]?.type === 'timeseries') {
+          // Copying a time series collection is out of scope; it's reported as skipped.
+          totals.skipped.push(`${name} (timeseries)`);
+          continue;
+        }
         const result = copyCollection(
           { id: args.sourceId, db: args.sourceDb, coll: name },
           { id: args.targetId, db: args.targetDb, coll: name },
           {},
           Boolean(args.includeIndexes),
-          String(args.conflictMode ?? 'merge'),
+          mode,
         );
         if (result.skipped) totals.skipped.push(name);
         else totals.collectionsCopied += 1;
@@ -430,9 +554,9 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       }
       return recordTask(state, {
         kind: 'database_copy',
-        label: `Copy ${String(args.sourceDb)} → ${String(args.targetDb)}`,
+        label,
         startMessage: 'Queued',
-        message: `Copied ${totals.collectionsCopied} collections`,
+        message: 'Copy complete',
         processed: totals.collectionsCopied,
         total: names.length,
         summary: totals,
@@ -452,9 +576,36 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       state.writtenFiles[String(path)] = events.map((event) => JSON.stringify(event)).join('\n');
       return events.length;
     },
+    // Discarding a damaged log keeps the tombstones of earlier discards and adds
+    // one for this discard, so a discarded log never looks like it never existed.
     audit_discard_damaged_log: () => {
-      const discarded = state.audit.events.length;
-      state.audit.events = [];
+      const reason = state.audit.status.integrityError;
+      if (!reason) {
+        throw 'the activity log is intact, so there is nothing to discard. Old events are removed automatically by the retention setting.';
+      }
+      const tombstones = state.audit.events.filter((event) => event.op === 'audit_log_discarded');
+      const discarded = state.audit.events.length - tombstones.length;
+      tombstoneSerial += 1;
+      state.audit.events = [
+        ...tombstones,
+        {
+          id: `discarded-${tombstoneSerial}`,
+          ts: Date.now(),
+          connectionId: null,
+          profileName: null,
+          database: null,
+          collection: null,
+          op: 'audit_log_discarded',
+          source: 'ui',
+          ok: false,
+          error: String(reason),
+          durationMs: 0,
+          summary: `damaged activity log discarded — ${discarded} readable event(s) removed, the rest unverifiable; verified 0 record(s) up to chain unknown`,
+          argsJson: null,
+          levelAtRecord: '-',
+          schemaVersion: 1,
+        },
+      ];
       state.audit.status = { ...state.audit.status, integrityError: null };
       return discarded;
     },

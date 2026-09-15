@@ -1,9 +1,8 @@
 import type { Page } from '@playwright/test';
-import { test, expect, type App } from '../fixtures';
-import { SAMPLE_SERVER, type ProfileSeed, type Seed } from '../harness/seed';
-import { callFrom, dismissHoverCards, expandCollections, loadSample } from '../helpers';
+import { test, expect } from '../fixtures';
+import { SAMPLE_SERVER } from '../harness/seed';
+import { callFrom, connectStaging, dismissHoverCards, expandCollections, loadSample, STAGING_URI } from '../helpers';
 
-const STAGING_URI = 'mongodb://staging.example:27017';
 const sidebar = (page: Page) => page.getByRole('complementary').first();
 const databaseRow = (page: Page, name: string) => sidebar(page).getByRole('button', { name: `Database ${name}` });
 const toast = (page: Page, text: string | RegExp) => page.getByTestId('dialog-toast').filter({ hasText: text });
@@ -16,16 +15,6 @@ async function answer(page: Page, value: string): Promise<void> {
 async function menu(page: Page, row: ReturnType<Page['getByRole']>, item: string): Promise<void> {
   await row.click({ button: 'right' });
   await page.getByRole('menuitem', { name: item, exact: true }).click();
-}
-
-async function connectStaging(app: App, page: Page, profile: Partial<ProfileSeed> = {}, seed: Seed = {}): Promise<void> {
-  await app.open({
-    profiles: [{ id: 'p-staging', name: 'Staging', uri: STAGING_URI, ...profile }],
-    servers: { [STAGING_URI]: SAMPLE_SERVER },
-    ...seed,
-  });
-  await page.getByTestId('conn-card-p-staging').click();
-  await expect(sidebar(page).getByRole('button', { name: 'Connection Staging' })).toBeVisible();
 }
 
 test.describe('Sidebar on the sample connection', () => {
@@ -157,8 +146,8 @@ test.describe('Sidebar on a saved connection', () => {
     await connectStaging(
       app,
       page,
-      { uri: 'mongodb://reporter@staging.example:27017/?readPreference=secondaryPreferred' },
       { monitoring: { replSet } },
+      { uri: 'mongodb://reporter@staging.example:27017/?readPreference=secondaryPreferred' },
     );
 
     await sidebar(page).getByRole('button', { name: 'Connection Staging' }).hover();

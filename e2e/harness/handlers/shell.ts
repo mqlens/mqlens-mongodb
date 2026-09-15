@@ -6,6 +6,7 @@
 // reports an undefined one. A command that calls `sleep(` never finishes on its
 // own: it waits until its session is stopped, as a runaway script would.
 import type { Backend, Handler } from '../backend';
+import { guardWritable, isMock } from '../lookup';
 import type { E2EState } from '../state';
 
 interface Session {
@@ -32,6 +33,12 @@ export function registerShellHandlers(backend: Backend, state: E2EState): void {
     const conn = state.connections[connectionId];
     if (!conn) throw 'Connection not found';
     return state.servers[conn.uri].databases;
+  };
+
+  /** What the backend checks before it runs mongosh: a read-only connection, then the sample server. */
+  const checkConnection = (connectionId: unknown) => {
+    guardWritable(state, connectionId);
+    if (isMock(state, connectionId)) throw 'External mongosh sessions require a real MongoDB URI';
   };
 
   const requireBinary = (mongoshPath: unknown) => {
@@ -82,6 +89,7 @@ export function registerShellHandlers(backend: Backend, state: E2EState): void {
   const handlers: Record<string, Handler> = {
     start_mongosh_session: ({ connectionId, database, mongoshPath }) => {
       databasesOf(String(connectionId));
+      checkConnection(connectionId);
       requireBinary(mongoshPath);
       serial += 1;
       const id = `mongosh-${serial}`;
@@ -96,6 +104,7 @@ export function registerShellHandlers(backend: Backend, state: E2EState): void {
     // A multi-line script runs once, outside the session, against the tab's database.
     run_mongosh_script: async ({ connectionId, database, mongoshPath, script }) => {
       databasesOf(String(connectionId));
+      checkConnection(connectionId);
       requireBinary(mongoshPath);
       const once: Session = { connectionId: String(connectionId), database: String(database), pending: [] };
       const output: Output = { stdout: [], stderr: [] };

@@ -1,9 +1,15 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
-import { SAMPLE_SERVER, type Seed } from '../harness/seed';
-import { dismissHoverCards, expandCollections, loadSample, openCollection, setEditorText } from '../helpers';
+import {
+  connectStaging,
+  dismissHoverCards,
+  expandCollections,
+  loadSample,
+  openCollection,
+  setEditorText,
+  STAGING_URI,
+} from '../helpers';
 
-const STAGING_URI = 'mongodb://staging.example:27017';
 /** The id the fake backend gives the first connection. */
 const CONN = 'conn-1';
 
@@ -25,20 +31,6 @@ const docCount = (page: Page, uri: string, db: string, coll: string) =>
 async function lastArgs(app: App, cmd: string): Promise<Record<string, unknown>> {
   await expect.poll(async () => (await app.calls(cmd)).length, `a ${cmd} call`).toBeGreaterThan(0);
   return (await app.calls(cmd)).at(-1)!.args as Record<string, unknown>;
-}
-
-/**
- * Connect to a saved profile on a server that isn't the built-in mock: Dump,
- * Restore and Watch are hidden for mock connections.
- */
-async function connectStaging(app: App, page: Page, seed: Seed = {}): Promise<void> {
-  await app.open({
-    profiles: [{ id: 'p-staging', name: 'Staging', uri: STAGING_URI }],
-    servers: { [STAGING_URI]: SAMPLE_SERVER },
-    ...seed,
-  });
-  await page.getByTestId('conn-card-p-staging').click();
-  await expect(page.getByRole('button', { name: 'Connection Staging' })).toBeVisible();
 }
 
 async function connectionMenu(page: Page, item: string): Promise<void> {
@@ -95,13 +87,14 @@ test.describe('Export and import', () => {
     await page.getByTestId('export-view').getByTestId('export-full-btn').click();
     const row = tasks(page).getByTestId('task-row').first();
     await expect(row).toContainText('Export sales_db.products as JSON');
-    await expect(row).toContainText('Exported 3 documents');
+    await expect(row).toContainText('Export complete');
     expect(JSON.parse((await written(page, '/tmp/products.full.json')) ?? 'null')).toHaveLength(3);
   });
 
+  // Imports run on a saved connection: on the sample server the backend counts the rows and writes none.
   test('imports a file, updating documents that already exist', async ({ app, page }) => {
     const file = '/data/customers-update.json';
-    await app.open({
+    await connectStaging(app, page, {
       dialog: { open: file },
       files: {
         [file]: JSON.stringify([
@@ -110,7 +103,6 @@ test.describe('Export and import', () => {
         ]),
       },
     });
-    await loadSample(page);
     await openCollection(page, 'sales_db', 'customers');
     await view(page).getByTestId('import-btn').click();
     const importer = page.getByTestId('import-view');
@@ -123,14 +115,13 @@ test.describe('Export and import', () => {
     await importer.getByTestId('import-run-btn').click();
     const row = tasks(page).getByTestId('task-row').first();
     await expect(row).toContainText('customers-update.json');
-    await expect(row).toContainText('Inserted 1, updated 1, skipped 0');
-    expect(await docCount(page, 'mongodb://mock', 'sales_db', 'customers')).toBe(4);
+    await expect(row).toContainText('Import complete: 1 inserted, 1 updated, 0 skipped');
+    expect(await docCount(page, STAGING_URI, 'sales_db', 'customers')).toBe(4);
     expect(await lastArgs(app, 'start_import_task')).toMatchObject({ mode: 'update', format: 'json', source: { path: file } });
   });
 
   test('imports pasted CSV', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openCollection(page, 'sales_db', 'customers');
     await view(page).getByTestId('import-btn').click();
     const importer = page.getByTestId('import-view');
@@ -141,11 +132,12 @@ test.describe('Export and import', () => {
     await expect(importer.getByTestId('import-preview-grid')).toContainText('Frank Hill');
 
     await importer.getByTestId('import-run-btn').click();
-    await expect(tasks(page).getByTestId('task-row').first()).toContainText('Inserted 2, updated 0, skipped 0');
-    expect(await docCount(page, 'mongodb://mock', 'sales_db', 'customers')).toBe(5);
+    await expect(tasks(page).getByTestId('task-row').first()).toContainText('Import complete: 2 inserted, 0 updated, 0 skipped');
+    expect(await docCount(page, STAGING_URI, 'sales_db', 'customers')).toBe(5);
   });
 });
 
+// Dump, Restore and Watch are hidden for the sample connection, and the backend refuses the tools there.
 test.describe('mongodump and mongorestore', () => {
   test('dumps the server to a folder, then restores from it', async ({ app, page }) => {
     await connectStaging(app, page, { dialog: { open: '/backups/staging' } });
@@ -197,8 +189,8 @@ test.describe('mongodump and mongorestore', () => {
 
 test.describe('Copy to', () => {
   test('copies a collection under a new name', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    // On a saved connection: a copy involving the sample server is simulated and writes nothing.
+    await connectStaging(app, page);
     await expandCollections(page, 'sales_db');
     await sidebar(page).getByText('products', { exact: true }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Copy to…' }).click();
@@ -210,7 +202,7 @@ test.describe('Copy to', () => {
     await start.click();
 
     await expect(tasks(page).getByTestId('task-row').first()).toContainText('Copy sales_db.products → sales_db.products_archive');
-    expect(await docCount(page, 'mongodb://mock', 'sales_db', 'products_archive')).toBe(3);
+    expect(await docCount(page, STAGING_URI, 'sales_db', 'products_archive')).toBe(3);
     expect(await lastArgs(app, 'start_collection_copy')).toMatchObject({
       sourceCollection: 'products',
       targetCollection: 'products_archive',

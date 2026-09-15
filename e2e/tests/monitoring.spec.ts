@@ -1,12 +1,12 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { dismissHoverCards, loadSample } from '../helpers';
+import { connectStaging, dismissHoverCards, loadSample } from '../helpers';
 
 const monitor = (page: Page) => page.getByTestId('monitoring-view');
 
-/** Open the monitoring tab from the sample connection's context menu. */
-async function openMonitoring(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Connection Sample (mqlens_demo)' }).click({ button: 'right' });
+/** Open the monitoring tab from a connection's context menu. */
+async function openMonitoring(page: Page, connection = 'Staging'): Promise<void> {
+  await page.getByRole('button', { name: `Connection ${connection}` }).click({ button: 'right' });
   await page.getByTestId('ctx-monitor').click();
   await dismissHoverCards(page);
   await expect(monitor(page)).toBeVisible();
@@ -25,10 +25,11 @@ const REPLICA_SET = {
   ],
 };
 
+// On a saved connection, whose server reports what the test seeds. The sample
+// server answers with fixed values and ignores kills and profiling changes.
 test.describe('Monitoring', () => {
   test('shows server metrics and the operations in flight', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openMonitoring(page);
     const view = monitor(page);
 
@@ -64,8 +65,7 @@ test.describe('Monitoring', () => {
   });
 
   test('kills an operation only once confirmed', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openMonitoring(page);
     const view = monitor(page);
 
@@ -83,8 +83,7 @@ test.describe('Monitoring', () => {
   });
 
   test('profiler: lists a database\'s slow operations and sets the level', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openMonitoring(page);
     const view = monitor(page);
 
@@ -120,8 +119,7 @@ test.describe('Monitoring', () => {
   });
 
   test('cluster: a standalone server has no replica set to show', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await openMonitoring(page);
 
     await monitor(page).getByTestId('mon-tab-cluster').click();
@@ -129,8 +127,7 @@ test.describe('Monitoring', () => {
   });
 
   test('cluster: a sharded cluster points to its shards', async ({ app, page }) => {
-    await app.open({ monitoring: { replSet: { ...REPLICA_SET, isReplicaSet: false, clusterType: 'sharded', members: [] } } });
-    await loadSample(page);
+    await connectStaging(app, page, { monitoring: { replSet: { ...REPLICA_SET, isReplicaSet: false, clusterType: 'sharded', members: [] } } });
     await openMonitoring(page);
 
     await monitor(page).getByTestId('mon-tab-cluster').click();
@@ -138,8 +135,7 @@ test.describe('Monitoring', () => {
   });
 
   test('cluster: lists replica set members with their state and lag', async ({ app, page }) => {
-    await app.open({ monitoring: { replSet: REPLICA_SET } });
-    await loadSample(page);
+    await connectStaging(app, page, { monitoring: { replSet: REPLICA_SET } });
     await openMonitoring(page);
     const view = monitor(page);
 
@@ -152,8 +148,7 @@ test.describe('Monitoring', () => {
   });
 
   test('explains the role needed when the server refuses, and shows other errors', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    await connectStaging(app, page);
     await app.failNext('server_status', 'not authorized on admin to execute command { serverStatus: 1 } (13)');
     await app.failNext('current_ops', 'not authorized on admin to execute command { currentOp: 1 } (13)');
     await openMonitoring(page);
@@ -168,5 +163,15 @@ test.describe('Monitoring', () => {
     await app.failNext('server_status', 'connection reset by peer');
     await view.getByTestId('monitoring-refresh-now').click();
     await expect(view.getByTestId('monitoring-error')).toContainText('connection reset by peer');
+  });
+
+  test('on the sample connection, shows the demo server\'s fixed status and operation', async ({ app, page }) => {
+    await app.open();
+    await loadSample(page);
+    await openMonitoring(page, 'Sample (mqlens_demo)');
+    const view = monitor(page);
+
+    await expect(view).toContainText('mqlens-demo:27017');
+    await expect(view.getByTestId('op-row-10241')).toContainText('sales_db.orders');
   });
 });

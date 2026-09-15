@@ -126,6 +126,8 @@ export interface Seed {
 }
 
 const oid = (hex: string) => ({ $oid: hex });
+/** A secondary index as the mock backend lists it: never unique or sparse. */
+const index = (name: string, keys: Record<string, number>): IndexSeed => ({ name, keys });
 
 /** The users the Rust mock backend lists (src-tauri/src/db/users.rs). */
 export const SAMPLE_USERS: UserSeed[] = [
@@ -196,7 +198,8 @@ export const SAMPLE_SERVER: ServerSeed = {
   version: '7.0.5',
   databases: {
     admin: {
-      'system.users': { docs: [] },
+      // `get_mock_indexes` splits a name at its last underscore, so this reads as one field.
+      'system.users': { docs: [], indexes: [index('user_1_db_1', { user_1_db: 1 })] },
       'system.version': { docs: [] },
     },
     config: {},
@@ -208,7 +211,7 @@ export const SAMPLE_SERVER: ServerSeed = {
           { _id: oid('603d779f4f102e3a105c3121'), name: 'Bob Johnson', email: 'bob@example.com', tier: 'Standard', joined: '2024-03-15', address: { city: 'San Francisco', state: 'CA' } },
           { _id: oid('603d779f4f102e3a105c3122'), name: 'Charlie Brown', email: 'charlie@example.com', tier: 'Premium', joined: '2023-11-20', address: { city: 'Seattle', state: 'WA' } },
         ],
-        indexes: [{ name: 'email_1', keys: { email: 1 }, unique: true }],
+        indexes: [index('email_1', { email: 1 }), index('tier_1', { tier: 1 })],
       },
       transactions: {
         docs: [
@@ -216,6 +219,7 @@ export const SAMPLE_SERVER: ServerSeed = {
           { _id: oid('603d779f4f102e3a105c3221'), customer_name: 'Bob Johnson', amount: 199.99, items: ['Noise Cancelling Headphones'], status: 'Completed', timestamp: '2025-05-12T09:15:00Z' },
           { _id: oid('603d779f4f102e3a105c3222'), customer_name: 'Charlie Brown', amount: 549.49, items: ['Ergonomic Desk Chair', 'Monitor Stand'], status: 'Pending', timestamp: '2025-05-24T18:00:00Z' },
         ],
+        indexes: [index('timestamp_-1', { timestamp: -1 }), index('customer_name_1', { customer_name: 1 })],
       },
       products: {
         docs: [
@@ -223,13 +227,17 @@ export const SAMPLE_SERVER: ServerSeed = {
           { _id: oid('603d779f4f102e3a105c3321'), name: 'Noise Cancelling Headphones', category: 'Electronics', price: 199.99, stock: 150 },
           { _id: oid('603d779f4f102e3a105c3322'), name: 'Ergonomic Desk Chair', category: 'Office', price: 349.5, stock: 25 },
         ],
+        indexes: [index('price_1', { price: 1 }), index('category_1', { category: 1 })],
       },
       sensor_readings: {
         type: 'timeseries',
+        // The mock backend gives these the same ids as the products.
         docs: [
-          { _id: oid('603d779f4f102e3a105c3620'), sensor_id: 'temp-01', reading: 21.4, ts: { $date: '2026-05-24T22:00:00Z' } },
-          { _id: oid('603d779f4f102e3a105c3621'), sensor_id: 'temp-01', reading: 21.9, ts: { $date: '2026-05-24T22:05:00Z' } },
+          { _id: oid('603d779f4f102e3a105c3320'), timestamp: '2026-07-10T08:00:00Z', sensor_id: 'temp-01', value: 21.4, unit: 'C' },
+          { _id: oid('603d779f4f102e3a105c3321'), timestamp: '2026-07-10T08:05:00Z', sensor_id: 'temp-01', value: 21.9, unit: 'C' },
+          { _id: oid('603d779f4f102e3a105c3322'), timestamp: '2026-07-10T08:10:00Z', sensor_id: 'hum-02', value: 44.0, unit: '%' },
         ],
+        indexes: [index('timestamp_-1', { timestamp: -1 })],
       },
     },
     user_analytics: {
@@ -238,12 +246,14 @@ export const SAMPLE_SERVER: ServerSeed = {
           { _id: oid('603d779f4f102e3a105c3420'), event_type: 'page_view', path: '/home', timestamp: '2026-05-24T22:00:00Z' },
           { _id: oid('603d779f4f102e3a105c3421'), event_type: 'click', target: 'buy-now-btn', timestamp: '2026-05-24T22:05:00Z' },
         ],
+        indexes: [index('event_type_1', { event_type: 1 }), index('timestamp_-1', { timestamp: -1 })],
       },
       sessions: {
         docs: [
           { _id: oid('603d779f4f102e3a105c3520'), session_id: 'sess_001', duration_seconds: 180, referrer: 'google.com' },
           { _id: oid('603d779f4f102e3a105c3521'), session_id: 'sess_002', duration_seconds: 45, referrer: 'direct' },
         ],
+        indexes: [index('session_id_1', { session_id: 1 })],
       },
     },
   },

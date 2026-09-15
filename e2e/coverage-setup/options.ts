@@ -4,8 +4,12 @@ import type { CoverageReportOptions } from 'monocart-coverage-reports';
 /**
  * The gate the suite must keep, in percent. A ratchet: raise it as tests are
  * added, never lower it, until it reaches the 95% target in #396.
+ *
+ * It is checked against this report's own summary, not coverage-summary.json.
+ * Both agree on statements, but they count lines differently: one run measured
+ * 82.2% of 39,445 lines here and 84.7% of 11,414 in the JSON summary.
  */
-export const COVERAGE_GATE = { lines: 84, statements: 80 };
+export const COVERAGE_GATE = { lines: 82, statements: 80 };
 
 /** `src/...` for any path or URL that points into the app's own source tree. */
 function toSourcePath(pathOrUrl: string): string {

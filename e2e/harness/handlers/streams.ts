@@ -4,6 +4,7 @@
 // the fake backend's state; a poll hands over those after the sequence number
 // the app last saw, unless the stream is paused.
 import type { Backend, Handler } from '../backend';
+import { isMock } from '../lookup';
 import type { E2EState } from '../state';
 
 export function registerStreamHandlers(backend: Backend, state: E2EState): void {
@@ -22,6 +23,8 @@ export function registerStreamHandlers(backend: Backend, state: E2EState): void 
     },
     start_change_stream: ({ streamId, connectionId, database, collection, operationTypes }) => {
       if (!state.connections[String(connectionId)]) throw `Connection not found: ${String(connectionId)}`;
+      // The backend has no client to open a stream on for the sample server.
+      if (isMock(state, connectionId)) throw `connection ${String(connectionId)} is not open`;
       const previous = state.changeStreams[String(streamId)];
       state.changeStreams[String(streamId)] = {
         connectionId: String(connectionId),

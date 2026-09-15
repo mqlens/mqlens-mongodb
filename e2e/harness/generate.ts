@@ -4,7 +4,7 @@
 // src/lib/generateTemplate.ts. A template the fake can't make sense of is
 // rejected with an error, never guessed at. Generation draws from a seeded
 // PRNG, so a seed repeats its preview as it does in the backend.
-import { inferSchema, newObjectId } from './mongo';
+import type { inferSchema } from './mongo';
 import type { Doc } from './seed';
 
 type BareKind = 'name' | 'firstName' | 'lastName' | 'email' | 'objectId' | 'uuid' | 'bool';
@@ -51,6 +51,14 @@ function optionsAt(value: unknown, what: string): Record<string, unknown> {
   return value;
 }
 
+/** A range's bounds, refused when they are the wrong way round as the backend refuses them. */
+function range(options: Record<string, unknown>, what: string, defaults: { min?: number; max?: number } = {}) {
+  const min = numberAt(options.min ?? defaults.min, `${what}.min`);
+  const max = numberAt(options.max ?? defaults.max, `${what}.max`);
+  if (min > max) throw `${what} min must be <= max`;
+  return { min, max };
+}
+
 function parseSpec(value: unknown, path: string): Spec {
   if (typeof value === 'string') {
     if (!value.startsWith('$')) return { kind: 'literal', value };
@@ -77,18 +85,11 @@ function parseSpec(value: unknown, path: string): Spec {
   switch (key) {
     case '$literal':
       return { kind: 'literal', value: inner };
-    case '$int': {
-      const options = optionsAt(inner, what);
-      return { kind: 'int', min: numberAt(options.min ?? 0, `${what}.min`), max: numberAt(options.max ?? 1000, `${what}.max`) };
-    }
+    case '$int':
+      return { kind: 'int', ...range(optionsAt(inner, what), what, { min: 0, max: 1000 }) };
     case '$float': {
       const options = optionsAt(inner, what);
-      return {
-        kind: 'float',
-        min: numberAt(options.min, `${what}.min`),
-        max: numberAt(options.max, `${what}.max`),
-        decimals: numberAt(options.decimals ?? 2, `${what}.decimals`),
-      };
+      return { kind: 'float', ...range(options, what), decimals: numberAt(options.decimals ?? 2, `${what}.decimals`) };
     }
     case '$date': {
       const options = optionsAt(inner, what);
@@ -99,6 +100,7 @@ function parseSpec(value: unknown, path: string): Spec {
       const from = typeof options.from === 'string' ? Date.parse(options.from) : NaN;
       const to = typeof options.to === 'string' ? Date.parse(options.to) : NaN;
       if (Number.isNaN(from) || Number.isNaN(to)) throw `${what} needs past_days, or from and to as ISO dates`;
+      if (from > to) throw `${what} from must be <= to`;
       return { kind: 'date', from, to };
     }
     case '$lorem':
@@ -109,12 +111,7 @@ function parseSpec(value: unknown, path: string): Spec {
     case '$array': {
       const options = optionsAt(inner, what);
       if (!('of' in options)) throw `${what} needs "of"`;
-      return {
-        kind: 'array',
-        of: parseSpec(options.of, `${path}[]`),
-        min: numberAt(options.min, `${what}.min`),
-        max: numberAt(options.max, `${what}.max`),
-      };
+      return { kind: 'array', of: parseSpec(options.of, `${path}[0]`), ...range(options, what) };
     }
     default:
       throw `unknown generator "${key}" at ${path}`;
@@ -146,6 +143,10 @@ function seededRandom(seed: number): () => number {
   };
 }
 
+/** `count` bytes from the seeded generator. */
+const randomBytes = (random: () => number, count: number) => Array.from({ length: count }, () => Math.floor(random() * 256));
+const hex = (bytes: number[]) => bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
 function generate(spec: Spec, random: () => number): unknown {
   const between = (min: number, max: number) => min + Math.floor(random() * (max - min + 1));
   const oneOf = <T>(values: readonly T[]): T => values[Math.floor(random() * values.length)];
@@ -163,10 +164,15 @@ function generate(spec: Spec, random: () => number): unknown {
     case 'email':
       return `${oneOf(FIRST_NAMES)}.${oneOf(LAST_NAMES)}${between(1, 99)}@example.com`.toLowerCase();
     case 'objectId':
-      return { $oid: newObjectId() };
+      // All twelve bytes come from the seeded generator, as in the backend, so a seed repeats its ids.
+      return { $oid: hex(randomBytes(random, 12)) };
     case 'uuid': {
-      const hex = Array.from({ length: 32 }, () => Math.floor(random() * 16).toString(16)).join('');
-      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+      // A version 4 UUID: the version nibble is 4 and the variant bits are 10.
+      const bytes = randomBytes(random, 16);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const text = hex(bytes);
+      return `${text.slice(0, 8)}-${text.slice(8, 12)}-${text.slice(12, 16)}-${text.slice(16, 20)}-${text.slice(20)}`;
     }
     case 'bool':
       return random() < 0.5;
@@ -239,8 +245,8 @@ function typeFallback(type: string): unknown {
  * A starter template inferred from a schema report, by the rules of
  * `infer_template_from_schema`: skip `_id`, build objects from their children's
  * paths, then a generator from the field name or else its dominant type. The
- * backend also turns a low-cardinality field into a `$pick`; the fake's schema
- * report has no enum values, so that step is left out.
+ * backend also turns a low-cardinality field into a `$pick`; the fake leaves
+ * that step out.
  */
 export function inferTemplate(report: ReturnType<typeof inferSchema>): string {
   const root: Record<string, unknown> = {};

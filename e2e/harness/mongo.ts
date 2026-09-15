@@ -62,6 +62,19 @@ export function compareValues(a: unknown, b: unknown): number {
 const sameType = (a: unknown, b: unknown) => typeRank(comparable(a)) === typeRank(comparable(b));
 const valuesEqual = (a: unknown, b: unknown) => sameType(a, b) && compareValues(a, b) === 0;
 
+/** Equality of two JSON values, with objects equal whatever order their keys are in. */
+export function jsonEqual(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((value, i) => jsonEqual(value, b[i]));
+  }
+  if (isPlainObject(a) || isPlainObject(b)) {
+    if (!isPlainObject(a) || !isPlainObject(b)) return false;
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length && keys.every((key) => key in b && jsonEqual(a[key], b[key]));
+  }
+  return a === b;
+}
+
 /** Every value at a dotted path. Arrays on the way are searched element-wise, as MongoDB does. */
 export function valuesAt(doc: unknown, path: string): unknown[] {
   let current: unknown[] = [doc];
@@ -220,6 +233,33 @@ function deletePath(target: Doc, path: string): void {
   if (isPlainObject(node)) delete node[parts[parts.length - 1]];
 }
 
+/**
+ * Copy what a dotted path selects from `source` into `out`, the way an
+ * inclusion projection does. An array on the way stays an array: each embedded
+ * document in it keeps what the rest of the path selects, and other elements
+ * drop out.
+ */
+export function includePath(out: Record<string, unknown>, source: unknown, path: string): void {
+  const [head, ...rest] = path.split('.');
+  if (!isPlainObject(source) || isEjsonWrapper(source) || !(head in source)) return;
+  const value = source[head];
+  if (rest.length === 0) {
+    out[head] = structuredClone(value);
+  } else if (Array.isArray(value)) {
+    const elements = value.filter((element) => isPlainObject(element) && !isEjsonWrapper(element));
+    const previous = Array.isArray(out[head]) ? (out[head] as unknown[]) : [];
+    out[head] = elements.map((element, i) => {
+      const target = isPlainObject(previous[i]) ? previous[i] : {};
+      includePath(target, element, rest.join('.'));
+      return target;
+    });
+  } else if (isPlainObject(value) && !isEjsonWrapper(value)) {
+    const target = isPlainObject(out[head]) ? out[head] : {};
+    includePath(target, value, rest.join('.'));
+    out[head] = target;
+  }
+}
+
 /** `"$field"` → that field's value; anything else is a literal. */
 function evaluate(doc: Doc, expression: unknown): unknown {
   if (typeof expression === 'string' && expression.startsWith('$')) return valuesAt(doc, expression.slice(1))[0] ?? null;
@@ -237,12 +277,8 @@ export function project(doc: Doc, spec: Record<string, unknown>): Doc {
     const out: Doc = {};
     if (!isExclude(spec._id) && '_id' in doc) out._id = doc._id;
     for (const [path, value] of shaping) {
-      if (isInclude(value)) {
-        const found = valuesAt(doc, path);
-        if (found.length > 0) setPath(out, path, found[0]);
-      } else {
-        setPath(out, path, evaluate(doc, value));
-      }
+      if (isInclude(value)) includePath(out, doc, path);
+      else setPath(out, path, evaluate(doc, value));
     }
     return out;
   }
@@ -264,6 +300,41 @@ export function find(docs: Doc[], { filter = {}, sort = {}, projection = {}, ski
   if (skip > 0) out = out.slice(skip);
   if (limit > 0) out = out.slice(0, limit);
   return out.map((doc) => project(doc, projection));
+}
+
+/**
+ * The sample server's filter (`execute_mock_query` in src-tauri/src/mock_db.rs):
+ * each top-level field must equal the filter's value exactly, so an operator
+ * such as `{ $gt: 1 }` matches nothing.
+ */
+export function mockMatches(doc: Doc, filter: Doc): boolean {
+  return Object.entries(filter).every(([key, value]) => key in doc && jsonEqual(doc[key], value));
+}
+
+/**
+ * A query on the sample server, as `execute_mock_query` runs it: exact
+ * top-level matching, a sort on each key in turn (numbers by value, anything
+ * else by its JSON text), no projection, and a limit of 100 when none is given
+ * and never more than 1000.
+ */
+export function mockFind(docs: Doc[], { filter = {}, sort = {}, skip = 0, limit = 0 }: FindOptions): Doc[] {
+  let out = docs.filter((doc) => mockMatches(doc, filter));
+  for (const [key, direction] of Object.entries(sort)) {
+    const descending = Number(direction) === -1;
+    out = [...out].sort((a, b) => {
+      let order: number;
+      if (!(key in a) || !(key in b)) order = Number(key in a) - Number(key in b);
+      else if (typeof a[key] === 'number' && typeof b[key] === 'number') order = (a[key] as number) - (b[key] as number);
+      else {
+        const [left, right] = [JSON.stringify(a[key]), JSON.stringify(b[key])];
+        order = left < right ? -1 : left > right ? 1 : 0;
+      }
+      return descending ? -order : order;
+    });
+  }
+  const start = Math.min(Math.max(skip, 0), out.length);
+  const size = limit <= 0 ? 100 : Math.min(limit, 1000);
+  return out.slice(start, start + size);
 }
 
 function group(docs: Doc[], spec: Record<string, unknown>): Doc[] {
@@ -325,7 +396,8 @@ export function aggregate(docs: Doc[], pipeline: Doc[]): Doc[] {
       case '$skip': out = out.slice(Number(arg)); break;
       case '$limit': out = out.slice(0, Number(arg)); break;
       case '$project': out = out.map((doc) => project(doc, arg as Doc)); break;
-      case '$count': out = [{ [String(arg)]: out.length }]; break;
+      // With no documents coming in, $count emits none rather than a zero.
+      case '$count': out = out.length === 0 ? [] : [{ [String(arg)]: out.length }]; break;
       case '$group': out = group(out, arg as Doc); break;
       case '$unwind': out = unwind(out, arg); break;
       case '$addFields':
@@ -366,15 +438,20 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
   return out;
 }
 
+const MAX_ENUM_VALUES = 25;
+
 /**
  * The report `analyze_schema` returns, shaped like src-tauri/src/db/schema.rs:
  * each dotted field path with the BSON types seen at it, how many sampled
- * documents contain it (`presence`), and that as a fraction (`coverage`).
+ * documents contain it (`presence`), and that as a fraction (`coverage`). A
+ * field whose values are all strings, numbers or booleans, with no more than 25
+ * distinct ones, also lists them (`enumValues`).
  */
 export function inferSchema(docs: Doc[], sampleSize: number) {
   const sample = docs.slice(0, sampleSize > 0 ? sampleSize : docs.length);
   const stats = new Map<string, Map<string, number>>();
   const presence = new Map<string, number>();
+  const seenValues = new Map<string, unknown[]>();
   for (const doc of sample) {
     const seen = new Set<string>();
     const visit = (value: unknown, path: string) => {
@@ -383,22 +460,31 @@ export function inferSchema(docs: Doc[], sampleSize: number) {
       types.set(type, (types.get(type) ?? 0) + 1);
       stats.set(path, types);
       seen.add(path);
+      if (value !== null && value !== undefined) seenValues.set(path, [...(seenValues.get(path) ?? []), value]);
       if (type === 'object') for (const [key, child] of Object.entries(value as Doc)) visit(child, `${path}.${key}`);
     };
     for (const [key, value] of Object.entries(doc)) visit(value, key);
     for (const path of seen) presence.set(path, (presence.get(path) ?? 0) + 1);
   }
+  const enumOf = (path: string): unknown[] | undefined => {
+    const values = seenValues.get(path) ?? [];
+    if (values.length === 0 || !values.every((value) => ['string', 'number', 'boolean'].includes(typeof value))) return undefined;
+    const distinct = values.filter((value, i) => values.indexOf(value) === i);
+    return distinct.length <= MAX_ENUM_VALUES ? distinct.sort(compareValues) : undefined;
+  };
   return {
     sampled: sample.length,
     fields: [...stats.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([path, types]) => {
         const present = presence.get(path) ?? 0;
+        const enumValues = enumOf(path);
         return {
           path,
           types: [...types.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count),
           presence: present,
           coverage: sample.length === 0 ? 0 : present / sample.length,
+          ...(enumValues ? { enumValues } : {}),
         };
       }),
   };

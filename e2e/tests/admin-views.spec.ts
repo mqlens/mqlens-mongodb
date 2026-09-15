@@ -1,9 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { SAMPLE_SERVER } from '../harness/seed';
-import { callFrom, dismissHoverCards, expandCollections, loadSample } from '../helpers';
+import { callFrom, connectStaging, dismissHoverCards, expandCollections } from '../helpers';
 
-const STAGING_URI = 'mongodb://staging.example:27017';
 const sidebar = (page: Page) => page.getByRole('complementary');
 
 const written = (page: Page, path: string) =>
@@ -15,11 +13,12 @@ async function choose(page: Page, trigger: ReturnType<Page['getByTestId']>, opti
   await page.getByRole('option', { name: option }).click();
 }
 
+// These run on a saved connection. The backend drops user changes on the
+// sample server, refuses GridFS there, and has no change stream to open on it.
 test.describe('User management', () => {
   test.beforeEach(async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
-    await page.getByRole('button', { name: 'Connection Sample (mqlens_demo)' }).click({ button: 'right' });
+    await connectStaging(app, page);
+    await page.getByRole('button', { name: 'Connection Staging' }).click({ button: 'right' });
     await page.getByTestId('ctx-users').click();
     await dismissHoverCards(page);
   });
@@ -69,12 +68,11 @@ test.describe('User management', () => {
 
 test.describe('GridFS', () => {
   test('lists, downloads, uploads and deletes files in a bucket', async ({ app, page }) => {
-    await app.open({
+    await connectStaging(app, page, {
       gridfs: { 'sales_db.fs': [{ filename: 'invoice-001.pdf', content: 'PDF-1.7 fake invoice', contentType: 'application/pdf' }] },
       files: { '/uploads/report.csv': 'region,total\nnorth,10' },
       dialog: { open: '/uploads/report.csv', save: '/downloads/invoice-001.pdf' },
     });
-    await loadSample(page);
     await sidebar(page).getByRole('button', { name: 'Database sales_db' }).click({ button: 'right' });
     await page.getByTestId('ctx-add-gridfs-bucket-conn-1-sales_db').click();
     // The bucket name defaults to fs.
@@ -113,11 +111,7 @@ test.describe('Watch', () => {
 
   test('shows changes as they arrive, opens one, filters, pauses and clears', async ({ app, page }) => {
     // Watching needs a real server: the menu item is hidden for the mock connection.
-    await app.open({
-      profiles: [{ id: 'p-staging', name: 'Staging', uri: STAGING_URI }],
-      servers: { [STAGING_URI]: SAMPLE_SERVER },
-    });
-    await page.getByTestId('conn-card-p-staging').click();
+    await connectStaging(app, page);
     await expandCollections(page, 'sales_db');
     await sidebar(page).getByText('customers', { exact: true }).click({ button: 'right' });
     await page.getByTestId('ctx-watch-collection').click();

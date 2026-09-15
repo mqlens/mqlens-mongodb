@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
 import { SAMPLE_SERVER } from '../harness/seed';
-import { callFrom, dismissHoverCards, expandCollections, loadSample, openCollection, setEditorText, view } from '../helpers';
+import { callFrom, connectStaging, dismissHoverCards, expandCollections, loadSample, openCollection, setEditorText, view } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary').first();
 /** Ask for a manual update check, once the app (and its update prompt) is on screen. */
@@ -147,8 +147,8 @@ test.describe('Dialogs and appearance', () => {
 
 test.describe('Shell console and hover cards', () => {
   test('finds text in the shell transcript, selects all, and runs driver-backed commands', async ({ app, page }) => {
-    await app.open();
-    await loadSample(page);
+    // On a saved connection: the backend refuses mongosh and pipelines on the sample server.
+    await connectStaging(app, page);
     await expandCollections(page, 'sales_db');
     await sidebar(page).getByText('customers', { exact: true }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Open mongosh Shell' }).click();
