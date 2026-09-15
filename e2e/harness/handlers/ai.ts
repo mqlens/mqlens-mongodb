@@ -9,8 +9,54 @@ interface ProviderDraft {
   name?: string;
   kind?: string;
   base_url?: string;
+  api_key?: string;
   model?: string;
   command?: string;
+}
+
+/**
+ * Services known to authenticate every request, by a URL on their host: the
+ * key-needing presets first, then the built-in OpenAI, Anthropic and Gemini
+ * endpoints (`authenticated_service` in src-tauri/src/ai_providers.rs).
+ */
+const AUTHENTICATED_SERVICES: Array<[string, string]> = [
+  ['https://api.deepseek.com/v1', 'DeepSeek'],
+  ['https://openrouter.ai/api/v1', 'OpenRouter'],
+  ['https://api.groq.com/openai/v1', 'Groq'],
+  ['https://api.together.xyz/v1', 'Together AI'],
+  ['https://api.mistral.ai/v1', 'Mistral'],
+  ['https://api.x.ai/v1', 'xAI (Grok)'],
+  ['https://api.anthropic.com/v1', 'Anthropic-compatible endpoint'],
+  ['https://api.openai.com/v1/chat/completions', 'OpenAI'],
+  ['https://api.anthropic.com/v1/messages', 'Anthropic'],
+  ['https://generativelanguage.googleapis.com/v1beta/models', 'Google Gemini'],
+];
+
+/** An http(s) URL, or null for anything this app wouldn't send a request to. */
+function parseHttpUrl(url: string): URL | null {
+  try {
+    const parsed = new URL(url.trim());
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname !== '' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+const hostOf = (url: string) => parseHttpUrl(url)?.hostname.toLowerCase() ?? null;
+
+/** The service a URL reaches, when it's one that authenticates requests; the scheme doesn't matter. */
+function authenticatedService(url: string): string | undefined {
+  const host = hostOf(url);
+  return host === null ? undefined : AUTHENTICATED_SERVICES.find(([known]) => hostOf(known) === host)?.[1];
+}
+
+/** Whether a request to `url` would leave this machine without TLS (`is_cleartext_remote`). */
+function isCleartextRemote(url: string): boolean {
+  const parsed = parseHttpUrl(url);
+  if (!parsed || parsed.protocol !== 'http:') return false;
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return false;
+  return !(/^127\.\d+\.\d+\.\d+$/.test(host) || host === '::1');
 }
 
 const SCOPE_FIELDS = ['connectionName', 'database', 'collection', 'variant'] as const;
@@ -57,17 +103,39 @@ export function registerAiHandlers(backend: Backend, state: E2EState): void {
     ],
     list_ai_models_for: () => structuredClone(state.aiModels),
     list_ai_models: () => structuredClone(state.aiModels),
-    // The checks of ai_providers.rs validate_provider a form can trip, with its messages.
+    // `AiProvider::validate` and `check_transport` (src-tauri/src/ai_providers.rs),
+    // in their order and with their messages.
     validate_ai_provider: ({ provider }) => {
       const draft = (provider ?? {}) as ProviderDraft;
-      if (!draft.id) throw 'A provider needs an id.';
-      if (!draft.name) throw `Provider \`${draft.id}\` needs a display name.`;
+      const name = draft.name?.trim() ?? '';
+      if (!draft.id?.trim()) throw 'A provider needs an id.';
+      if (!name) throw `Provider \`${draft.id}\` needs a display name.`;
       if (draft.kind === 'local-cli') {
-        if (!draft.command) throw `${draft.name} needs a command.`;
+        const command = draft.command?.trim() ?? '';
+        if (!command) throw `${draft.name} needs a command.`;
+        if (command.includes('{model}') && !draft.model?.trim()) {
+          throw `${draft.name}'s command uses {model} but no model is set. Load the list or type one.`;
+        }
         return null;
       }
-      if (!draft.base_url) throw `${draft.name} has no endpoint URL. Add one in Settings → AI.`;
-      if (!draft.model) throw `${draft.name} needs a model name.`;
+      const baseUrl = draft.base_url?.trim() ?? '';
+      if (!baseUrl) throw `${draft.name} has no endpoint URL. Add one in Settings → AI.`;
+      if (hostOf(baseUrl) === null) {
+        throw `${draft.name}'s URL must be an http:// or https:// address with a host. \`${baseUrl}\` is not one.`;
+      }
+      if (!draft.model?.trim()) throw `${draft.name} needs a model name.`;
+      // Transport first: over http:// the answer is "use https", not "add a key".
+      const service = authenticatedService(baseUrl);
+      if (service && parseHttpUrl(baseUrl)?.protocol !== 'https:') {
+        throw `${draft.name} must reach ${service} over https://. Over http:// the collection schema, your prompt and any API key would cross the network in clear text.`;
+      }
+      const key = draft.api_key?.trim() ?? '';
+      if (key && isCleartextRemote(baseUrl)) {
+        throw `${draft.name}'s API key would be sent in clear text, because its URL is http:// and not on this machine. Use https://, or remove the key.`;
+      }
+      if (!key && service) {
+        throw `${draft.name} needs an API key: ${service} authenticates every request, so without one the collection schema and your prompt would be sent to it unauthenticated.`;
+      }
       return null;
     },
     generate_mql_query: () => {

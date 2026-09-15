@@ -33,6 +33,11 @@ const MOCK_GENERATE_CAP = 10_000;
 const GENERATE_CAP = 50_000;
 /** The history entries kept per collection (`HISTORY_CAP` in src-tauri/src/queries.rs). */
 const HISTORY_CAP = 20;
+/** The most documents an aggregation returns (`MAX_AGGREGATE_RESULTS` in src-tauri/src/limits.rs). */
+const MAX_AGGREGATE_RESULTS = 1_000;
+
+/** A find's page size as `normalize_query_limit` sets it: 100 when none is given, never more than 1000. */
+const normalizeQueryLimit = (limit: number) => (limit <= 0 ? 100 : Math.min(limit, 1_000));
 
 /** The backend takes filters, sorts and pipelines as JSON strings; blank means "none". */
 function parseJson<T>(value: unknown, fallback: T, what: string): T {
@@ -226,7 +231,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       };
       for (const doc of results) {
         const incoming = withId(structuredClone(doc));
-        const refusal = duplicateKey(ns, replacement, incoming);
+        const refusal = validationError(replacement, incoming) ?? duplicateKey(ns, replacement, incoming);
         if (refusal) throw refusal;
         replacement.docs.push(incoming);
       }
@@ -249,25 +254,30 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
     for (const doc of results) {
       const at = to.docs.findIndex((stored) => jsonEqual(keyOf(stored), keyOf(doc)));
       if (at >= 0) {
+        let updated: Doc;
         switch (spec.whenMatched ?? 'merge') {
           case 'merge':
-            to.docs[at] = { ...to.docs[at], ...structuredClone(doc) };
+            updated = { ...to.docs[at], ...structuredClone(doc) };
             break;
           case 'replace':
-            to.docs[at] = { ...structuredClone(doc), _id: to.docs[at]._id };
+            updated = { ...structuredClone(doc), _id: to.docs[at]._id };
             break;
           case 'keepExisting':
-            break;
+            continue;
           case 'fail':
             throw "$merge with whenMatched: fail found an existing document with the same values for the 'on' field";
           default:
             throw `Unsupported $merge whenMatched ${JSON.stringify(spec.whenMatched)} in the e2e fake backend`;
         }
+        // The updated document goes through the validator and unique indexes, as any update does.
+        const refusal = validationError(to, updated, to.docs[at]) ?? duplicateKey(ns, to, updated, to.docs[at]);
+        if (refusal) throw refusal;
+        to.docs[at] = updated;
       } else {
         switch (spec.whenNotMatched ?? 'insert') {
           case 'insert': {
             const incoming = withId(structuredClone(doc));
-            const refusal = duplicateKey(ns, to, incoming);
+            const refusal = validationError(to, incoming) ?? duplicateKey(ns, to, incoming);
             if (refusal) throw refusal;
             to.docs.push(incoming);
             break;
@@ -447,8 +457,8 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
         skip: Number(skip ?? 0),
       };
       const docs = collection(id, db, coll).docs;
-      // The sample server checks the projection but doesn't apply it.
-      const rows = isMock(state, id) ? mockFind(docs, options) : find(docs, options);
+      // The sample server checks the projection but doesn't apply it. Both cap the page the same way.
+      const rows = isMock(state, id) ? mockFind(docs, options) : find(docs, { ...options, limit: normalizeQueryLimit(options.limit) });
       return rows.map((doc) => JSON.stringify(doc));
     },
     count_documents: ({ id, database: db, collection: coll, filter }) => {
@@ -469,6 +479,9 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       if (writeAt >= 0) {
         writeAggregateOutput(id, db, stages[writeAt], results);
         return [];
+      }
+      if (results.length > MAX_AGGREGATE_RESULTS) {
+        throw `Aggregation result capped at ${MAX_AGGREGATE_RESULTS} documents — add a $limit stage for larger pipelines`;
       }
       return results.map((doc) => JSON.stringify(doc));
     },

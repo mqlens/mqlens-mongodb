@@ -5,6 +5,7 @@
 // checked and counted but write nothing, and the database tools refuse it, as
 // in the backend.
 import type { Backend, Handler } from '../backend';
+import { toBsonBase64 } from '../bson';
 import { collectionForWrite, collectionOf, databaseOf, guardWritable, isMock, serverOf } from '../lookup';
 import { aggregate, find, includePath, inferSchema, jsonEqual, matches, mockFind, newObjectId } from '../mongo';
 import type { Doc } from '../seed';
@@ -17,6 +18,7 @@ import { defineView } from '../views';
 interface ExportOptions {
   fields?: string[];
   csv?: { delimiter?: string; includeHeaders?: boolean };
+  xlsx?: { includeHeaders?: boolean };
 }
 
 interface CsvOptions {
@@ -133,6 +135,9 @@ function valueAtPath(doc: Doc, path: string): unknown {
     .reduce<unknown>((node, part) => (typeof node === 'object' && node !== null && !Array.isArray(node) ? (node as Doc)[part] : undefined), doc);
 }
 
+/** A tabular export's columns when no fields are chosen: every top-level field, in sorted order, as the backend collects them. */
+const sortedColumns = (docs: Doc[]) => [...new Set(docs.flatMap((doc) => Object.keys(doc)))].sort();
+
 /**
  * Documents written out in an export format. With fields selected, JSON keeps
  * a dotted path nested (`{ address: { city } }`), as the backend's projection
@@ -154,7 +159,7 @@ function formatDocs(docs: Doc[], format: string, options: ExportOptions = {}): s
       return shaped.map((doc) => JSON.stringify(doc)).join('\n');
     case 'csv': {
       const delimiter = options.csv?.delimiter || ',';
-      const columns = fields ?? [...new Set(docs.flatMap((doc) => Object.keys(doc)))];
+      const columns = fields ?? sortedColumns(docs);
       const cell = (value: unknown) => {
         const text =
           value === undefined || value === null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
@@ -162,6 +167,27 @@ function formatDocs(docs: Doc[], format: string, options: ExportOptions = {}): s
       };
       const rows = docs.map((doc) => columns.map((column) => cell(valueAtPath(doc, column))).join(delimiter));
       return [...(options.csv?.includeHeaders === false ? [] : [columns.join(delimiter)]), ...rows].join('\n');
+    }
+    case 'bson':
+      // The .bson file's bytes, base64-encoded: the fake records written files as text.
+      return toBsonBase64(shaped);
+    case 'xlsx': {
+      // The sheet's rows as the Excel writer fills them (src-tauri/src/db/export/xlsx.rs),
+      // as JSON: the fake records written files as text, not as a workbook.
+      const columns = fields ?? sortedColumns(docs);
+      const cell = (value: unknown): unknown => {
+        if (value === undefined || value === null) return null;
+        if (typeof value !== 'object') return value;
+        const wrapped = value as Record<string, unknown>;
+        if (typeof wrapped.$oid === 'string') return wrapped.$oid;
+        if ('$date' in wrapped) {
+          const date = wrapped.$date;
+          return new Date(typeof date === 'object' && date !== null ? Number((date as Doc).$numberLong) : (date as string | number)).toISOString();
+        }
+        return JSON.stringify(value);
+      };
+      const rows = docs.map((doc) => columns.map((column) => cell(valueAtPath(doc, column))));
+      return JSON.stringify({ sheet: [...(options.xlsx?.includeHeaders === false ? [] : [columns]), ...rows] });
     }
     default:
       throw `e2e fake backend cannot write ${format} files`;
