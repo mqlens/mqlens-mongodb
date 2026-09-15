@@ -334,6 +334,13 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
     if (path !== undefined && state.files[path] !== undefined) return state.files[path];
     throw `No such file: ${String(path)}`;
   };
+  /** An import's source text. BSON is binary, which the backend reads only from a file. */
+  const importText = (source: unknown, format: unknown): string => {
+    if (String(format) === 'bson' && typeof (source as { text?: unknown } | null)?.text === 'string') {
+      throw 'BSON import requires a file source';
+    }
+    return sourceText(source);
+  };
 
   /** The documents a filtered export, its preview or its field scan covers. */
   const queried = (args: Record<string, unknown>): Doc[] => {
@@ -458,7 +465,7 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
     // Import
     preview_import: ({ source, format, csvOptions, limit }) => {
       try {
-        const { docs, columns } = parseImport(sourceText(source), String(format), csvOptions as CsvOptions);
+        const { docs, columns } = parseImport(importText(source, format), String(format), csvOptions as CsvOptions);
         return {
           docs: docs.slice(0, Number(limit ?? 20)).map((doc) => JSON.stringify(doc)),
           columns,
@@ -475,7 +482,7 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       if (importMode !== 'skip' && importMode !== 'update' && importMode !== 'abort') {
         throw 'Import mode must be skip, update, or abort';
       }
-      const { docs } = parseImport(sourceText(source), String(format), csvOptions as CsvOptions);
+      const { docs } = parseImport(importText(source, format), String(format), csvOptions as CsvOptions);
       const counts = { inserted: 0, updated: 0, skipped: 0 };
       let error: string | undefined;
       if (isMock(state, id)) {

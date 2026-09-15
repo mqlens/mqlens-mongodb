@@ -12,6 +12,7 @@ import { collectionForWrite, guardWritable, isMock } from '../lookup';
 import {
   aggregate,
   applyUpdate,
+  bsonEqual,
   find,
   inferSchema,
   jsonEqual,
@@ -221,14 +222,21 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
     }
     const keyOf = (doc: Doc) => on.map((field) => valuesAt(doc, field)[0] ?? null);
     for (const doc of results) {
-      const at = to.docs.findIndex((stored) => jsonEqual(keyOf(stored), keyOf(doc)));
+      // Keys compare as BSON values, so a result's { $numberLong: "1" } matches a stored 1.
+      const at = to.docs.findIndex((stored) => bsonEqual(keyOf(stored), keyOf(doc)));
       if (at >= 0) {
+        const whenMatched = spec.whenMatched ?? 'merge';
+        // Matched on other fields, a result with a different _id would change the stored document's immutable _id.
+        if ((whenMatched === 'merge' || whenMatched === 'replace') && doc._id !== undefined && !bsonEqual(doc._id, to.docs[at]._id)) {
+          throw "$merge failed to update the matching document, did you attempt to modify the _id or the shard key? :: caused by :: Performing an update on the path '_id' would modify the immutable field '_id'";
+        }
         let updated: Doc;
-        switch (spec.whenMatched ?? 'merge') {
+        switch (whenMatched) {
           case 'merge':
             updated = { ...to.docs[at], ...structuredClone(doc) };
             break;
           case 'replace':
+            // A result without an _id keeps the stored document's.
             updated = { ...structuredClone(doc), _id: to.docs[at]._id };
             break;
           case 'keepExisting':

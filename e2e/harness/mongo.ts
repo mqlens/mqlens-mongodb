@@ -149,6 +149,10 @@ function regexFrom(pattern: unknown, options: unknown): RegExp {
   return new RegExp(String(pattern), String(options ?? ''));
 }
 
+/** Whether a string value, or any string element of an array value, matches, as a query's regular expression does. */
+const regexMatches = (value: unknown, re: RegExp) =>
+  (Array.isArray(value) ? value : [value]).some((element) => typeof element === 'string' && re.test(element));
+
 /** The BSON type name MongoDB gives a value in relaxed Extended JSON. */
 export function bsonType(value: unknown): string {
   if (value === null || value === undefined) return 'null';
@@ -197,7 +201,7 @@ const isOperatorObject = (value: unknown): value is Record<string, unknown> =>
 function fieldMatches(values: unknown[], condition: unknown): boolean {
   if (isPlainObject(condition) && '$regularExpression' in condition) {
     const re = regexFrom(condition, undefined);
-    return values.some((value) => typeof value === 'string' && re.test(value));
+    return values.some((value) => regexMatches(value, re));
   }
   if (!isOperatorObject(condition)) {
     return values.some((value) => equalsOrContains(value, condition)) || (values.length === 0 && condition === null);
@@ -224,7 +228,7 @@ function fieldMatches(values: unknown[], condition: unknown): boolean {
         return values.length > 0 === Boolean(arg);
       case '$regex': {
         const re = regexFrom(arg, condition.$options);
-        return values.some((value) => typeof value === 'string' && re.test(value));
+        return values.some((value) => regexMatches(value, re));
       }
       case '$options':
         return true;
