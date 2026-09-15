@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
 import type { AiReplySeed } from '../harness/seed';
-import { callFrom, hitsMultilineQueryBug, loadSample, MULTILINE_QUERY_BUG, openCollection, view } from '../helpers';
+import { callFrom, loadSample, openCollection, view } from '../helpers';
 
 const PROVIDERS = [
   {
@@ -43,8 +43,7 @@ async function ask(panel: ReturnType<Page['getByTestId']>, prompt: string): Prom
 }
 
 test.describe('AI helper chat', () => {
-  test('generates a query and runs it in the collection', async ({ app, page, browserName }) => {
-    test.fail(hitsMultilineQueryBug(browserName), MULTILINE_QUERY_BUG);
+  test('generates a query and runs it in the collection', async ({ app, page }) => {
     const panel = await openHelper(app, page, [PREMIUM_QUERY]);
     await expect(panel.getByTestId('ai-chat-provider-picker')).toBeVisible();
 

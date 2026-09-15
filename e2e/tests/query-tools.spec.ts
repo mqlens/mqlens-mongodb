@@ -4,9 +4,7 @@ import {
   dismissHoverCards,
   expandCollections,
   getEditorText,
-  hitsMultilineQueryBug,
   loadSample,
-  MULTILINE_QUERY_BUG,
   openCollection,
   openInNewTab,
   setEditorText,
@@ -95,8 +93,7 @@ test.describe('Query tools', () => {
     await expect(second).toHaveCount(0);
   });
 
-  test('visual query builder writes and applies the filter', async ({ app, page, browserName }) => {
-    test.fail(hitsMultilineQueryBug(browserName), MULTILINE_QUERY_BUG);
+  test('visual query builder writes and applies the filter', async ({ app, page }) => {
     await openCustomers(app, page);
 
     await view(page).getByTestId('toggle-query-builder').click();
@@ -110,8 +107,7 @@ test.describe('Query tools', () => {
     await expect(view(page)).not.toContainText('Bob Johnson');
   });
 
-  test('saves, loads and deletes a query, and pins a default', async ({ app, page, browserName }) => {
-    test.fail(hitsMultilineQueryBug(browserName), MULTILINE_QUERY_BUG);
+  test('saves, loads and deletes a query, and pins a default', async ({ app, page }) => {
     await openCustomers(app, page);
     await runFilter(page, '{ tier: "Premium" }');
     await expect(view(page)).not.toContainText('Bob Johnson');
@@ -150,8 +146,7 @@ test.describe('Query tools', () => {
     expect(cleared.default).toBeNull();
   });
 
-  test('query history lists earlier queries and applies one', async ({ app, page, browserName }) => {
-    test.fail(hitsMultilineQueryBug(browserName), MULTILINE_QUERY_BUG);
+  test('query history lists earlier queries and applies one', async ({ app, page }) => {
     await openCustomers(app, page);
     await runFilter(page, '{ tier: "Standard" }');
     await expect(view(page)).not.toContainText('Alice Smith');

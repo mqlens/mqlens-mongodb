@@ -4,9 +4,7 @@ import { SAMPLE_SERVER, SAMPLE_URI, type Seed } from '../harness/seed';
 import {
   callFrom,
   getEditorText,
-  hitsMultilineQueryBug,
   loadSample,
-  MULTILINE_QUERY_BUG,
   openCollection,
   setEditorText,
   view,
@@ -29,8 +27,7 @@ async function openCustomers(app: App, page: Page, seed: Seed = {}): Promise<voi
 const lastFilter = async (app: App) => JSON.parse(String(((await app.calls('execute_mql_query')).at(-1)!.args as { filter: string }).filter));
 
 test.describe('Visual query builder', () => {
-  test('builds query, projection and sort rules, matches any, and clears them', async ({ app, page, browserName }) => {
-    test.fail(hitsMultilineQueryBug(browserName), MULTILINE_QUERY_BUG);
+  test('builds query, projection and sort rules, matches any, and clears them', async ({ app, page }) => {
     await openCustomers(app, page);
     await view(page).getByTestId('toggle-query-builder').click();
     const panel = view(page).getByTestId('query-builder-panel');

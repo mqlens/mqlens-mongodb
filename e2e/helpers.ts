@@ -4,16 +4,6 @@ import { expect, type Locator, type Page } from '@playwright/test';
 import type { App } from './fixtures';
 
 /**
- * Known bug, in Chromium. When several lines reach a single-line query editor (the
- * visual builder's filter, a loaded saved query, a history entry, an AI query
- * inserted and run), QueryEditor flattens them with setValue from inside Monaco's
- * content-change event, and the events recurse until the stack overflows. WebKit
- * isn't affected. Tests that hit it are marked `test.fail` with this reason.
- */
-export const MULTILINE_QUERY_BUG = 'single-line query editor recurses on multi-line text (Maximum call stack size exceeded)';
-export const hitsMultilineQueryBug = (browserName: string) => browserName === 'chromium';
-
-/**
  * The text of the Monaco editor inside `container`, from its model. Its DOM only
  * holds the lines on screen, and while it renders only the line numbers.
  */
