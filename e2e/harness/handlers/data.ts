@@ -22,6 +22,7 @@ import {
   newObjectId,
   valuesAt,
 } from '../mongo';
+import { parseExactJson } from '../numeric';
 import { buildFieldUpdate, parseProjection } from '../projection';
 import type { Doc } from '../seed';
 import type { Collection, CollectionQueries, E2EState, Server } from '../state';
@@ -41,13 +42,16 @@ const MAX_AGGREGATE_RESULTS = 1_000;
 /** A find's page size as `normalize_query_limit` sets it: 100 when none is given, never more than 1000. */
 const normalizeQueryLimit = (limit: number) => (limit <= 0 ? 100 : Math.min(limit, 1_000));
 
-/** The backend takes filters, sorts and pipelines as JSON strings; blank means "none". */
+/**
+ * The backend takes filters, sorts and pipelines as JSON strings; blank means
+ * "none". An integer past 2^53 stays exact, as serde_json reads it.
+ */
 function parseJson<T>(value: unknown, fallback: T, what: string): T {
   if (value === undefined || value === null) return fallback;
   if (typeof value !== 'string') return value as T;
   if (value.trim() === '') return fallback;
   try {
-    return JSON.parse(value) as T;
+    return parseExactJson(value) as T;
   } catch (error) {
     throw `Invalid MQL ${what} JSON: ${String(error)}`;
   }

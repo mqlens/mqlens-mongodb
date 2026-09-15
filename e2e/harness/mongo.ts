@@ -3,6 +3,7 @@
 // It covers the query and aggregation features the app's UI can produce. An
 // operator or stage it doesn't implement is rejected with a clear message
 // rather than ignored, so a test can't pass on a silently wrong result.
+import { addNumeric, averageNumbers, compareNumbers, numericValue, readNumeric, sumNumbers } from './numeric';
 import type { Doc } from './seed';
 
 const EJSON_WRAPPERS = new Set([
@@ -25,6 +26,7 @@ const unsupported = (what: string): never => {
 export function comparable(value: unknown): unknown {
   if (!isPlainObject(value)) return value;
   if ('$oid' in value) return String(value.$oid);
+  if ('$symbol' in value) return String(value.$symbol);
   if ('$date' in value) {
     const date = value.$date;
     if (typeof date === 'string') return Date.parse(date);
@@ -67,75 +69,71 @@ function typeRank(value: unknown): number {
   return 13;
 }
 
-/** A number's exact value as coefficient × 10^exponent, or NaN, or an infinity. */
-type ExactNumber = { nan: true } | { infinity: 1 | -1 } | { coefficient: bigint; exponent: number };
-
-const TEN = BigInt(10);
-
-/** A double's exact value: its binary fraction m × 2^p written as m × 5^-p × 10^p. */
-function exactDouble(value: number): ExactNumber {
-  if (Number.isNaN(value)) return { nan: true };
-  if (!Number.isFinite(value)) return { infinity: value < 0 ? -1 : 1 };
-  if (Number.isInteger(value)) return { coefficient: BigInt(value), exponent: 0 };
-  const view = new DataView(new ArrayBuffer(8));
-  view.setFloat64(0, value);
-  const high = view.getUint32(0);
-  const biased = (high >>> 20) & 0x7ff;
-  let mantissa = (BigInt(high & 0xf_ffff) << BigInt(32)) | BigInt(view.getUint32(4));
-  if (biased !== 0) mantissa |= BigInt(1) << BigInt(52);
-  const power = (biased === 0 ? 1 : biased) - 1075;
-  const coefficient = mantissa * BigInt(5) ** BigInt(-power);
-  return { coefficient: high >>> 31 ? -coefficient : coefficient, exponent: power };
-}
-
-/** A `$numberDecimal` string's exact value. */
-function exactDecimal(text: string): ExactNumber {
-  const match = /^([+-]?)(?:(s?nan)|(inf|infinity)|(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?)$/i.exec(text.trim());
-  if (!match || match[2]) return { nan: true };
-  const negative = match[1] === '-';
-  if (match[3]) return { infinity: negative ? -1 : 1 };
-  const fraction = match[5] ?? '';
-  const coefficient = BigInt(`${match[4] ?? ''}${fraction}` || '0');
-  return { coefficient: negative ? -coefficient : coefficient, exponent: Number(match[6] ?? 0) - fraction.length };
-}
-
-/** Any numeric value's exact value, without passing a long or a decimal through a double. */
-function exactNumber(value: unknown): ExactNumber {
-  if (typeof value === 'number') return exactDouble(value);
-  const wrapper = value as Record<string, unknown>;
-  try {
-    if ('$numberLong' in wrapper) return { coefficient: BigInt(String(wrapper.$numberLong)), exponent: 0 };
-    if ('$numberInt' in wrapper) return { coefficient: BigInt(String(wrapper.$numberInt)), exponent: 0 };
-  } catch {
-    return { nan: true };
-  }
-  if ('$numberDecimal' in wrapper) return exactDecimal(String(wrapper.$numberDecimal));
-  return exactDouble(Number(wrapper.$numberDouble));
-}
-
 /**
- * Two numbers in BSON order, compared exactly whatever their representation,
- * so longs past 2^53 and decimals with more digits than a double holds stay
- * distinct. NaN sorts before every other number and equals itself.
+ * Two field lists in BSON order: each pair compares by type, then by name, then
+ * by value, and the list that runs out first sorts first. Embedded documents
+ * compare by their fields in order, and arrays by their elements.
  */
-function compareNumbers(a: unknown, b: unknown): number {
-  if (typeof a === 'number' && typeof b === 'number' && !Number.isNaN(a) && !Number.isNaN(b)) return a < b ? -1 : a > b ? 1 : 0;
-  const x = exactNumber(a);
-  const y = exactNumber(b);
-  if ('nan' in x || 'nan' in y) return ('nan' in x ? 0 : 1) - ('nan' in y ? 0 : 1);
-  const infinity = (n: ExactNumber) => ('infinity' in n ? n.infinity : 0);
-  if ('infinity' in x || 'infinity' in y) return Math.sign(infinity(x) - infinity(y));
-  const { coefficient: c1, exponent: e1 } = x as { coefficient: bigint; exponent: number };
-  const { coefficient: c2, exponent: e2 } = y as { coefficient: bigint; exponent: number };
-  const left = e1 > e2 ? c1 * TEN ** BigInt(e1 - e2) : c1;
-  const right = e2 > e1 ? c2 * TEN ** BigInt(e2 - e1) : c2;
-  return left < right ? -1 : left > right ? 1 : 0;
+function compareFields(a: Array<[string, unknown]>, b: Array<[string, unknown]>): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i += 1) {
+    const [nameA, valueA] = a[i];
+    const [nameB, valueB] = b[i];
+    const rank = typeRank(valueA) - typeRank(valueB);
+    if (rank !== 0) return Math.sign(rank);
+    if (nameA !== nameB) return nameA < nameB ? -1 : 1;
+    const order = compareValues(valueA, valueB);
+    if (order !== 0) return order;
+  }
+  return Math.sign(a.length - b.length);
+}
+
+/** Binary data's bytes, as a string of byte values, and its subtype. */
+function binaryOf(value: Record<string, unknown>): [string, number] {
+  if ('$uuid' in value) {
+    const hex = String(value.$uuid).replace(/-/g, '');
+    return [(hex.match(/../g) ?? []).map((pair) => String.fromCharCode(parseInt(pair, 16))).join(''), 4];
+  }
+  const body = value.$binary as { base64?: unknown; subType?: unknown };
+  return [atob(String(body.base64 ?? '')), parseInt(String(body.subType ?? '0'), 16)];
 }
 
 export function compareValues(a: unknown, b: unknown): number {
   const rank = typeRank(a) - typeRank(b);
   if (rank !== 0) return rank;
-  if (typeRank(a) === 2) return compareNumbers(a, b);
+  switch (typeRank(a)) {
+    // Numbers compare exactly, whatever their representation.
+    case 2:
+      return compareNumbers(a, b);
+    // Embedded documents by their fields and arrays by their elements, never by their JSON text.
+    case 4:
+      return compareFields(Object.entries(a as Doc), Object.entries(b as Doc));
+    case 5:
+      return compareFields(
+        (a as unknown[]).map((value, i): [string, unknown] => [String(i), value]),
+        (b as unknown[]).map((value, i): [string, unknown] => [String(i), value]),
+      );
+    // Binary data by length, then subtype, then bytes.
+    case 6: {
+      const [x, xType] = binaryOf(a as Record<string, unknown>);
+      const [y, yType] = binaryOf(b as Record<string, unknown>);
+      if (x.length !== y.length) return Math.sign(x.length - y.length);
+      if (xType !== yType) return Math.sign(xType - yType);
+      return x < y ? -1 : x > y ? 1 : 0;
+    }
+    // Timestamps by their seconds, then their increment.
+    case 10: {
+      const x = (a as { $timestamp: { t: unknown; i: unknown } }).$timestamp;
+      const y = (b as { $timestamp: { t: unknown; i: unknown } }).$timestamp;
+      return Math.sign(Number(x.t) - Number(y.t)) || Math.sign(Number(x.i) - Number(y.i));
+    }
+    // Regular expressions by pattern, then options.
+    case 11: {
+      const x = (a as { $regularExpression: { pattern: string; options: string } }).$regularExpression;
+      const y = (b as { $regularExpression: { pattern: string; options: string } }).$regularExpression;
+      if (x.pattern !== y.pattern) return x.pattern < y.pattern ? -1 : 1;
+      return x.options < y.options ? -1 : x.options > y.options ? 1 : 0;
+    }
+  }
   const x = comparable(a);
   const y = comparable(b);
   if (typeof x === 'number' && typeof y === 'number') return x - y;
@@ -666,13 +664,10 @@ function group(docs: Doc[], spec: Record<string, unknown>): Doc[] {
       if (field === '_id') continue;
       const [op, expr] = Object.entries(accumulator as Doc)[0] ?? [];
       const values = members.map((member) => evaluate(member, expr));
-      // $sum and $avg take only numeric values and ignore every other type, as MongoDB does.
-      const numbers = values
-        .filter((value) => ['int', 'long', 'double', 'decimal'].includes(bsonType(value)))
-        .map((value) => Number(comparable(value)));
       switch (op) {
-        case '$sum': out[field] = typeof expr === 'number' ? expr * members.length : numbers.reduce((a, b) => a + b, 0); break;
-        case '$avg': out[field] = numbers.length ? numbers.reduce((a, b) => a + b, 0) / numbers.length : null; break;
+        // $sum and $avg take only numeric values, ignore every other type, and keep BSON's numeric types and precision.
+        case '$sum': out[field] = sumNumbers(values); break;
+        case '$avg': out[field] = averageNumbers(values); break;
         case '$min': out[field] = [...values].sort(compareValues)[0] ?? null; break;
         case '$max': out[field] = [...values].sort(compareValues).at(-1) ?? null; break;
         case '$first': out[field] = values[0] ?? null; break;
@@ -754,14 +749,26 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
         case '$set': updatePath(out, path, value); break;
         case '$unset': deletePath(out, path); break;
         case '$inc': {
-          // MongoDB increments only a number by a number, or starts a missing field at zero.
+          // MongoDB increments only a number by a number, or sets a missing field to the increment.
           const numeric = (candidate: unknown) => ['int', 'long', 'double', 'decimal'].includes(bsonType(candidate));
           if (!numeric(value)) throw `Cannot increment with non-numeric argument: {${path}: ${JSON.stringify(value)}}`;
           const current = valuesAt(out, path)[0];
           if (current !== undefined && !numeric(current)) {
             throw `Cannot apply $inc to a value of non-numeric type. {_id: ${JSON.stringify(doc._id)}} has the field '${path}' of non-numeric type ${bsonType(current)}`;
           }
-          updatePath(out, path, Number(comparable(current ?? 0)) + Number(comparable(value)));
+          if (current === undefined) {
+            updatePath(out, path, structuredClone(value));
+            break;
+          }
+          const had = readNumeric(current);
+          const by = readNumeric(value);
+          if (!had || !by) return unsupported(`$inc of ${JSON.stringify(current)} by ${JSON.stringify(value)}`);
+          // The sum keeps BSON's numeric types and precision: an int widens to a long, and a long that overflows fails.
+          const sum = addNumeric(had, by);
+          if (!sum) {
+            throw `Failed to apply $inc operations to current value ((NumberLong)${String(had.value)}) for document {_id: ${JSON.stringify(doc._id)}}`;
+          }
+          updatePath(out, path, numericValue(sum));
           break;
         }
         case '$push': {

@@ -4,7 +4,8 @@
 // A validator is a `$jsonSchema` and any query operators beside it. The fake
 // understands the `$jsonSchema` keywords the app's rules use; any other keyword
 // is rejected with a clear message rather than ignored.
-import { bsonType, comparable, jsonEqual, matches } from './mongo';
+import { bsonType, jsonEqual, matches } from './mongo';
+import { compareNumbers, parseExactJson } from './numeric';
 import type { Doc } from './seed';
 import type { Collection } from './state';
 
@@ -68,11 +69,12 @@ function accepts(value: unknown, schema: Schema): boolean {
         if (!(rule as unknown[]).some((choice) => jsonEqual(choice, value))) return false;
         break;
       // Bounds apply to every numeric BSON type, Extended JSON wrappers such as $numberLong included.
+      // Compared exactly, so a long or a decimal can't slip past a bound by rounding to it.
       case 'minimum':
-        if (NUMBER_TYPES.includes(bsonType(value)) && Number(comparable(value)) < Number(rule)) return false;
+        if (NUMBER_TYPES.includes(bsonType(value)) && compareNumbers(value, rule) < 0) return false;
         break;
       case 'maximum':
-        if (NUMBER_TYPES.includes(bsonType(value)) && Number(comparable(value)) > Number(rule)) return false;
+        if (NUMBER_TYPES.includes(bsonType(value)) && compareNumbers(value, rule) > 0) return false;
         break;
       case 'minLength':
         if (typeof value === 'string' && value.length < Number(rule)) return false;
@@ -109,7 +111,8 @@ export function validationError(target: Collection, doc: Doc, stored?: Doc): str
   const rules = target.validation;
   if (!rules) return null;
   if ((rules.validationLevel || 'strict') === 'off' || (rules.validationAction || 'error') === 'warn') return null;
-  const { $jsonSchema, ...query } = JSON.parse(rules.validator) as Doc;
+  // Parsed exactly, so a bound past 2^53 isn't rounded before it's compared.
+  const { $jsonSchema, ...query } = parseExactJson(rules.validator) as Doc;
   const valid = (candidate: Doc) =>
     ($jsonSchema === undefined || accepts(candidate, $jsonSchema as Schema)) && matches(candidate, query);
   if (rules.validationLevel === 'moderate' && stored !== undefined && !valid(stored)) return null;

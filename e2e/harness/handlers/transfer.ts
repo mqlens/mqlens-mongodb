@@ -372,8 +372,10 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
     const from = collectionOf(state, source.id, source.db, source.coll);
     const databases = serverOf(state, target.id).databases;
     const existed = databases[String(target.db)]?.[String(target.coll)] !== undefined;
+    // A skipped collection copies and skips no documents (`was_skipped` in src-tauri/src/db/copy.rs):
+    // documentsSkipped counts only rows merge mode refuses as duplicates.
     if (existed && conflictMode === 'skip') {
-      return { documentsCopied: 0, documentsSkipped: from.docs.length, indexesCreated: 0, skipped: true };
+      return { documentsCopied: 0, documentsSkipped: 0, indexesCreated: 0, skipped: true };
     }
     // Overwrite drops the target first, and its own indexes go with it.
     if (existed && conflictMode === 'overwrite') delete databases[String(target.db)][String(target.coll)];

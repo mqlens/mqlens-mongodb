@@ -153,6 +153,11 @@ function decimalText(bytes: Uint8Array): string {
     coefficient = bits & ((big(1) << big(113)) - big(1));
     if (coefficient > DECIMAL_MAX_COEFFICIENT) coefficient = big(0);
   }
+  return formatDecimal(sign, coefficient, exponent);
+}
+
+/** A finite decimal's text as the bson crate displays it: plain notation near zero, scientific otherwise. */
+export function formatDecimal(negative: boolean, coefficient: bigint, exponent: number): string {
   const digits = coefficient.toString();
   const adjusted = exponent + digits.length - 1;
   let text: string;
@@ -163,7 +168,7 @@ function decimalText(bytes: Uint8Array): string {
   } else {
     text = `${digits[0]}${digits.length > 1 ? `.${digits.slice(1)}` : ''}E${adjusted > 0 ? '+' : ''}${adjusted}`;
   }
-  return `${sign ? '-' : ''}${text}`;
+  return `${negative ? '-' : ''}${text}`;
 }
 
 /**
