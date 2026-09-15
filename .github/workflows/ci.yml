@@ -112,4 +112,7 @@ jobs:
           workspaces: src-tauri
       - name: Backend tests with coverage
         # Fail the build if line coverage drops below 70% (the agreed target floor).
-        run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --fail-under-lines 70 --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs'
+        # The generated MQLens Server client (src/server/pb) is excluded: it is
+        # produced by buf, not written here, and most of it is client methods a
+        # given build never calls.
+        run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --summary-only --fail-under-lines 70 --ignore-filename-regex 'src-tauri/src/((lib|main)\.rs|server/pb/)'

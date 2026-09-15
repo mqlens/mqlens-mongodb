@@ -1,0 +1,70 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service MetadataService {
+  rpc ListDatabases(ListDatabasesRequest) returns (ListDatabasesResponse);
+  rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
+  rpc MongoVersion(MongoVersionRequest) returns (MongoVersionResponse);
+  rpc ListIndexes(ListIndexesRequest) returns (ListIndexesResponse);
+  rpc CreateIndex(CreateIndexRequest) returns (MetadataAck);
+  rpc DropIndex(DropIndexRequest) returns (MetadataAck);
+}
+
+message MetadataAck {}
+
+message ListDatabasesRequest {
+  string connection_id = 1;
+}
+message ListDatabasesResponse {
+  repeated string databases = 1;
+}
+
+message ListCollectionsRequest {
+  string connection_id = 1;
+  string database = 2;
+}
+message CollectionInfo {
+  string name = 1;
+  string type = 2; // "collection" | "view" | "timeseries"
+}
+message ListCollectionsResponse {
+  repeated CollectionInfo collections = 1;
+}
+
+message MongoVersionRequest {
+  string connection_id = 1;
+}
+message MongoVersionResponse {
+  string version = 1;
+}
+
+message IndexInfo {
+  string name = 1;
+  string keys_json = 2; // canonical Extended JSON of the key pattern
+  bool unique = 3;
+  bool sparse = 4;
+}
+message ListIndexesRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+}
+message ListIndexesResponse {
+  repeated IndexInfo indexes = 1;
+}
+message CreateIndexRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string keys_json = 4; // e.g. {"email":1}
+  bool unique = 5;
+  bool sparse = 6;
+  string name = 7; // optional
+}
+message DropIndexRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string name = 4;
+}

@@ -1,0 +1,52 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service AuthService {
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc Refresh(RefreshRequest) returns (LoginResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
+}
+
+message LoginRequest {
+  string tenant = 1; // tenant slug
+  oneof login {
+    OidcCode oidc = 2;
+    LocalCreds local = 3;
+  }
+}
+message OidcCode {
+  string code = 1;
+  string redirect_uri = 2;
+  string code_verifier = 3;
+}
+message LocalCreds {
+  string email = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string access_token = 1; // JWT
+  string refresh_token = 2;
+  int64 expires_at = 3; // unix seconds
+  Principal principal = 4;
+}
+message RefreshRequest {
+  string refresh_token = 1;
+}
+message LogoutRequest {
+  string refresh_token = 1;
+}
+message LogoutResponse {}
+message WhoAmIRequest {}
+message WhoAmIResponse {
+  Principal principal = 1;
+}
+
+message Principal {
+  string tenant = 1;
+  string user_id = 2;
+  string email = 3;
+  repeated string roles = 4;
+}

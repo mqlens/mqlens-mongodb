@@ -1,0 +1,63 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service WriteService {
+  rpc InsertDocument(InsertDocumentRequest) returns (InsertDocumentResponse);
+  rpc UpdateDocument(UpdateDocumentRequest) returns (WriteResult);
+  rpc ReplaceDocument(ReplaceDocumentRequest) returns (WriteResult);
+  rpc DeleteDocument(DeleteDocumentRequest) returns (WriteResult);
+  rpc UpdateMany(UpdateManyRequest) returns (WriteResult);
+  rpc DeleteMany(DeleteManyRequest) returns (WriteResult);
+}
+
+message WriteResult {
+  int64 matched_count = 1;
+  int64 modified_count = 2;
+  int64 deleted_count = 3;
+  string upserted_id_json = 4;
+}
+
+message InsertDocumentRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string document_json = 4;
+}
+message InsertDocumentResponse {
+  string inserted_id_json = 1;
+}
+
+message UpdateDocumentRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+  string update_json = 5;
+}
+message ReplaceDocumentRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+  string replacement_json = 5;
+}
+message DeleteDocumentRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+}
+message UpdateManyRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+  string update_json = 5;
+}
+message DeleteManyRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+}

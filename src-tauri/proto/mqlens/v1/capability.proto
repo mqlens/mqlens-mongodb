@@ -1,0 +1,40 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+import "mqlens/v1/auth.proto";
+
+// CapabilityService tells a client what this server offers and what the
+// caller may do, so the client can disable what is unavailable instead of
+// failing when it is used. It reads only the store and never touches a
+// deployment.
+service CapabilityService {
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+}
+
+message GetCapabilitiesRequest {
+  // Connections to report op classes for. Empty returns server-wide
+  // information only. At most 200 per call.
+  repeated string connection_ids = 1;
+}
+
+message GetCapabilitiesResponse {
+  string server_version = 1;
+  // Every mounted RPC as "/package.Service/Method", sorted. A procedure being
+  // listed is the contract that the server serves it.
+  repeated string procedures = 2;
+  // Behaviour flags within procedures, sorted. An absent flag means the
+  // behaviour is unsupported.
+  repeated string features = 3;
+  Principal principal = 4;
+  // One entry per requested connection id, in request order.
+  repeated ConnectionCapabilities connections = 5;
+}
+
+message ConnectionCapabilities {
+  string connection_id = 1;
+  // A subset of "read", "write", "ddl" and "admin". Empty when the caller
+  // cannot reach the connection, which includes ids that do not exist, so the
+  // response never reveals whether an ungranted connection exists.
+  repeated string op_classes = 2;
+}

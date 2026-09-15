@@ -1,0 +1,132 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+// AdminService powers the admin web UI. All RPCs require an admin/owner role.
+service AdminService {
+  rpc ListConnections(AdminListConnectionsRequest) returns (AdminListConnectionsResponse);
+  rpc CreateConnection(CreateConnectionRequest) returns (CreateConnectionResponse);
+  rpc DeleteConnection(DeleteConnectionRequest) returns (AdminAck);
+  rpc TestConnection(TestConnectionRequest) returns (TestConnectionResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc SetUserRoles(SetUserRolesRequest) returns (AdminAck);
+  rpc ListAuditEvents(ListAuditEventsRequest) returns (ListAuditEventsResponse);
+  // Per-connection grants. owner/admin reach every connection in their own
+  // tenant implicitly; every other role needs a grant created here.
+  rpc ListGrants(ListGrantsRequest) returns (ListGrantsResponse);
+  rpc GrantConnection(GrantConnectionRequest) returns (AdminAck);
+  rpc RevokeConnection(RevokeConnectionRequest) returns (AdminAck);
+}
+
+message AdminAck {}
+
+message AdminConnection {
+  string id = 1;
+  string name = 2;
+  repeated string tags = 3;
+  string deployment_kind = 4;
+  int64 created_at = 5;
+}
+message AdminListConnectionsRequest {}
+message AdminListConnectionsResponse {
+  repeated AdminConnection connections = 1;
+}
+
+message CreateConnectionRequest {
+  string name = 1;
+  string deployment_kind = 2;
+  repeated string tags = 3;
+  string uri = 4; // sealed server-side; never returned
+}
+message CreateConnectionResponse {
+  string id = 1;
+}
+
+message DeleteConnectionRequest {
+  string id = 1;
+}
+
+message TestConnectionRequest {
+  string uri = 1;
+}
+message TestConnectionResponse {
+  bool ok = 1;
+  string error = 2;
+}
+
+message AdminUser {
+  string id = 1;
+  string email = 2;
+  string kind = 3;
+  repeated string roles = 4;
+  string status = 5;
+}
+message ListUsersRequest {}
+message ListUsersResponse {
+  repeated AdminUser users = 1;
+}
+
+message CreateUserRequest {
+  string email = 1;
+  string password = 2;
+  repeated string roles = 3;
+}
+message CreateUserResponse {
+  string id = 1;
+}
+
+message SetUserRolesRequest {
+  string user_id = 1;
+  repeated string roles = 2;
+}
+
+message AuditEvent {
+  string id = 1;
+  int64 ts = 2;
+  string actor = 3;
+  string connection_id = 4;
+  string op = 5;
+  string db = 6;
+  string coll = 7;
+  string summary = 8;
+  int64 doc_count = 9;
+  int64 duration_ms = 10;
+  string status = 11;
+}
+message ListAuditEventsRequest {
+  int64 limit = 1;
+}
+message ListAuditEventsResponse {
+  repeated AuditEvent events = 1;
+}
+
+// A grant binds a principal to one connection. principal_type is
+// "role", "user", or "group"; principal_id is a role name, user id, or
+// IdP group name.
+message ConnectionGrant {
+  string connection_id = 1;
+  string principal_type = 2;
+  string principal_id = 3;
+  int64 created_at = 4;
+}
+
+// connection_id filters to one connection; empty lists every grant in the tenant.
+message ListGrantsRequest {
+  string connection_id = 1;
+}
+message ListGrantsResponse {
+  repeated ConnectionGrant grants = 1;
+}
+
+message GrantConnectionRequest {
+  string connection_id = 1;
+  string principal_type = 2;
+  string principal_id = 3;
+}
+
+message RevokeConnectionRequest {
+  string connection_id = 1;
+  string principal_type = 2;
+  string principal_id = 3;
+}

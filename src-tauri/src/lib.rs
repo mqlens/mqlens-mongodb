@@ -26,6 +26,7 @@ pub(crate) mod mock_db;
 pub mod monitoring;
 pub mod path_env;
 pub mod queries;
+pub(crate) mod server;
 pub mod ssh_tunnel;
 mod namespace_guard;
 mod state;

@@ -1,0 +1,52 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service DataService {
+  rpc Find(FindRequest) returns (stream FindBatch);
+  rpc Count(CountRequest) returns (CountResponse);
+  rpc Aggregate(AggregateRequest) returns (stream FindBatch);
+  rpc Explain(ExplainRequest) returns (ExplainResponse);
+}
+
+message AggregateRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string pipeline_json = 4; // Extended JSON array of stages
+}
+
+message ExplainRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string kind = 4;        // "find" | "aggregate"
+  string query_json = 5;  // filter (find) or pipeline array (aggregate)
+}
+message ExplainResponse {
+  string plan_json = 1; // canonical Extended JSON
+}
+
+message FindRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;     // Extended JSON
+  string sort_json = 5;
+  string projection_json = 6;
+  int64 skip = 7;
+  int64 limit = 8;
+}
+message FindBatch {
+  repeated string documents_ejson = 1; // canonical Extended JSON
+}
+
+message CountRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string filter_json = 4;
+}
+message CountResponse {
+  int64 count = 1;
+}

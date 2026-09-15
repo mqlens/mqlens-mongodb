@@ -68,7 +68,17 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 # Cross-process advisory lock on the audit log so two MQLens instances cannot
 # interleave appends and break its hash chain.
 fs4 = "0.13"
+# MQLens Server client (server mode). The generated code in src/server/pb is
+# produced by the buf plugins pinned in buf.gen.yaml, which target this tonic and
+# prost line; bump them together. TLS uses ring explicitly: the lock file already
+# carries both ring and aws-lc-rs, and rustls refuses to pick between them.
+tonic = { version = "0.14", default-features = false, features = ["codegen", "channel", "tls-ring", "tls-native-roots", "tls-webpki-roots"] }
+tonic-prost = "0.14"
+prost = "0.14"
 
 [dev-dependencies]
 tiny_http = "0.12.0"
+# The in-process fake MQLens Server used by the server-mode tests.
+tonic = { version = "0.14", default-features = false, features = ["server", "router"] }
+tokio-stream = { version = "0.1", features = ["net"] }
 
