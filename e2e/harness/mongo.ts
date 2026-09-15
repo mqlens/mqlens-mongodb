@@ -8,6 +8,7 @@ import type { Doc } from './seed';
 const EJSON_WRAPPERS = new Set([
   '$oid', '$date', '$numberInt', '$numberLong', '$numberDouble', '$numberDecimal',
   '$binary', '$uuid', '$regularExpression', '$timestamp', '$minKey', '$maxKey', '$symbol', '$code',
+  '$dbPointer', '$undefined',
 ]);
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -66,9 +67,75 @@ function typeRank(value: unknown): number {
   return 13;
 }
 
+/** A number's exact value as coefficient × 10^exponent, or NaN, or an infinity. */
+type ExactNumber = { nan: true } | { infinity: 1 | -1 } | { coefficient: bigint; exponent: number };
+
+const TEN = BigInt(10);
+
+/** A double's exact value: its binary fraction m × 2^p written as m × 5^-p × 10^p. */
+function exactDouble(value: number): ExactNumber {
+  if (Number.isNaN(value)) return { nan: true };
+  if (!Number.isFinite(value)) return { infinity: value < 0 ? -1 : 1 };
+  if (Number.isInteger(value)) return { coefficient: BigInt(value), exponent: 0 };
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, value);
+  const high = view.getUint32(0);
+  const biased = (high >>> 20) & 0x7ff;
+  let mantissa = (BigInt(high & 0xf_ffff) << BigInt(32)) | BigInt(view.getUint32(4));
+  if (biased !== 0) mantissa |= BigInt(1) << BigInt(52);
+  const power = (biased === 0 ? 1 : biased) - 1075;
+  const coefficient = mantissa * BigInt(5) ** BigInt(-power);
+  return { coefficient: high >>> 31 ? -coefficient : coefficient, exponent: power };
+}
+
+/** A `$numberDecimal` string's exact value. */
+function exactDecimal(text: string): ExactNumber {
+  const match = /^([+-]?)(?:(s?nan)|(inf|infinity)|(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?)$/i.exec(text.trim());
+  if (!match || match[2]) return { nan: true };
+  const negative = match[1] === '-';
+  if (match[3]) return { infinity: negative ? -1 : 1 };
+  const fraction = match[5] ?? '';
+  const coefficient = BigInt(`${match[4] ?? ''}${fraction}` || '0');
+  return { coefficient: negative ? -coefficient : coefficient, exponent: Number(match[6] ?? 0) - fraction.length };
+}
+
+/** Any numeric value's exact value, without passing a long or a decimal through a double. */
+function exactNumber(value: unknown): ExactNumber {
+  if (typeof value === 'number') return exactDouble(value);
+  const wrapper = value as Record<string, unknown>;
+  try {
+    if ('$numberLong' in wrapper) return { coefficient: BigInt(String(wrapper.$numberLong)), exponent: 0 };
+    if ('$numberInt' in wrapper) return { coefficient: BigInt(String(wrapper.$numberInt)), exponent: 0 };
+  } catch {
+    return { nan: true };
+  }
+  if ('$numberDecimal' in wrapper) return exactDecimal(String(wrapper.$numberDecimal));
+  return exactDouble(Number(wrapper.$numberDouble));
+}
+
+/**
+ * Two numbers in BSON order, compared exactly whatever their representation,
+ * so longs past 2^53 and decimals with more digits than a double holds stay
+ * distinct. NaN sorts before every other number and equals itself.
+ */
+function compareNumbers(a: unknown, b: unknown): number {
+  if (typeof a === 'number' && typeof b === 'number' && !Number.isNaN(a) && !Number.isNaN(b)) return a < b ? -1 : a > b ? 1 : 0;
+  const x = exactNumber(a);
+  const y = exactNumber(b);
+  if ('nan' in x || 'nan' in y) return ('nan' in x ? 0 : 1) - ('nan' in y ? 0 : 1);
+  const infinity = (n: ExactNumber) => ('infinity' in n ? n.infinity : 0);
+  if ('infinity' in x || 'infinity' in y) return Math.sign(infinity(x) - infinity(y));
+  const { coefficient: c1, exponent: e1 } = x as { coefficient: bigint; exponent: number };
+  const { coefficient: c2, exponent: e2 } = y as { coefficient: bigint; exponent: number };
+  const left = e1 > e2 ? c1 * TEN ** BigInt(e1 - e2) : c1;
+  const right = e2 > e1 ? c2 * TEN ** BigInt(e2 - e1) : c2;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export function compareValues(a: unknown, b: unknown): number {
   const rank = typeRank(a) - typeRank(b);
   if (rank !== 0) return rank;
+  if (typeRank(a) === 2) return compareNumbers(a, b);
   const x = comparable(a);
   const y = comparable(b);
   if (typeof x === 'number' && typeof y === 'number') return x - y;
@@ -161,13 +228,23 @@ export function bsonType(value: unknown): string {
   if (typeof value === 'string') return 'string';
   // A JSON integer becomes an int32 when it fits and an int64 when it doesn't, as `Bson::try_from` reads it.
   if (typeof value === 'number') return Number.isInteger(value) ? (value >= -0x8000_0000 && value <= 0x7fff_ffff ? 'int' : 'long') : 'double';
+  // Extended JSON wrappers, recognised by their key in `Bson::try_from`'s order, named as `$type` names them.
   if (isPlainObject(value)) {
     if ('$oid' in value) return 'objectId';
-    if ('$date' in value) return 'date';
-    if ('$numberLong' in value) return 'long';
-    if ('$numberDecimal' in value) return 'decimal';
-    if ('$numberDouble' in value) return 'double';
+    if ('$symbol' in value) return 'symbol';
+    if ('$regularExpression' in value) return 'regex';
     if ('$numberInt' in value) return 'int';
+    if ('$numberLong' in value) return 'long';
+    if ('$numberDouble' in value) return 'double';
+    if ('$numberDecimal' in value) return 'decimal';
+    if ('$binary' in value || '$uuid' in value) return 'binData';
+    if ('$code' in value) return '$scope' in value ? 'javascriptWithScope' : 'javascript';
+    if ('$timestamp' in value) return 'timestamp';
+    if ('$date' in value) return 'date';
+    if ('$minKey' in value) return 'minKey';
+    if ('$maxKey' in value) return 'maxKey';
+    if ('$dbPointer' in value) return 'dbPointer';
+    if ('$undefined' in value) return 'undefined';
     return 'object';
   }
   return typeof value;
@@ -177,8 +254,9 @@ const NUMBER_TYPE_NAMES = ['int', 'long', 'double', 'decimal'];
 
 /** The BSON type codes `$type` accepts, by the alias it also accepts. */
 const TYPE_CODES: Record<number, string> = {
-  1: 'double', 2: 'string', 3: 'object', 4: 'array', 5: 'binData', 7: 'objectId', 8: 'bool', 9: 'date',
-  10: 'null', 11: 'regex', 16: 'int', 17: 'timestamp', 18: 'long', 19: 'decimal', [-1]: 'minKey', 127: 'maxKey',
+  1: 'double', 2: 'string', 3: 'object', 4: 'array', 5: 'binData', 6: 'undefined', 7: 'objectId', 8: 'bool', 9: 'date',
+  10: 'null', 11: 'regex', 12: 'dbPointer', 13: 'javascript', 14: 'symbol', 15: 'javascriptWithScope', 16: 'int',
+  17: 'timestamp', 18: 'long', 19: 'decimal', [-1]: 'minKey', 127: 'maxKey',
 };
 const TYPE_ALIASES = new Set([...Object.values(TYPE_CODES), 'number']);
 
@@ -312,6 +390,25 @@ function setPath(target: Doc, path: string, value: unknown): void {
     node = node[part] as Record<string, unknown>;
   }
   node[parts[parts.length - 1]] = value;
+}
+
+/**
+ * Assign a dotted path the way a `$set` or `$addFields` stage, or a computed
+ * projection field, does: an array on the way keeps its shape and has the rest
+ * of the path assigned in each of its elements, and anything else that isn't
+ * an embedded document is replaced by one.
+ */
+function addFieldPath(target: Record<string, unknown>, parts: string[], value: unknown): void {
+  const [head, ...rest] = parts;
+  if (head === '__proto__' || head === 'constructor' || head === 'prototype') throw unsafeKey(head);
+  target[head] = rest.length === 0 ? structuredClone(value) : assignWithin(target[head], rest, value);
+}
+
+function assignWithin(current: unknown, parts: string[], value: unknown): unknown {
+  if (Array.isArray(current)) return current.map((element) => assignWithin(element, parts, value));
+  const doc = isPlainObject(current) && !isEjsonWrapper(current) ? current : {};
+  addFieldPath(doc, parts, value);
+  return doc;
 }
 
 /**
@@ -490,7 +587,7 @@ export function project(doc: Doc, spec: Record<string, unknown>): Doc {
     if (!isExclude(spec._id) && '_id' in doc) out._id = doc._id;
     for (const [path, value] of shaping) {
       if (isInclude(value)) includePath(out, doc, path);
-      else setPath(out, path, evaluate(doc, value));
+      else addFieldPath(out, path.split('.'), evaluate(doc, value));
     }
     return out;
   }
@@ -635,7 +732,7 @@ export function aggregate(docs: Doc[], pipeline: Doc[]): Doc[] {
       case '$set':
         out = out.map((doc) => {
           const copy = structuredClone(doc);
-          for (const [path, expr] of Object.entries(arg as Doc)) setPath(copy, path, evaluate(doc, expr));
+          for (const [path, expr] of Object.entries(arg as Doc)) addFieldPath(copy, path.split('.'), evaluate(doc, expr));
           return copy;
         });
         break;
@@ -685,6 +782,9 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
 
 const MAX_ENUM_VALUES = 25;
 
+/** Where the schema report's type names (`bson_type_label` in src-tauri/src/db/schema.rs) differ from `$type`'s. */
+const SCHEMA_TYPE_NAMES: Record<string, string> = { binData: 'binary', javascriptWithScope: 'javascript' };
+
 /**
  * A value's text for enum detection, as `enum_scalar` gives it: strings,
  * numbers and booleans have one. Null has none (`null`) and leaves the field's
@@ -721,7 +821,7 @@ export function inferSchema(docs: Doc[], sampleSize: number) {
   for (const doc of sample) {
     const seen = new Set<string>();
     const visit = (value: unknown, path: string) => {
-      const type = bsonType(value);
+      const type = SCHEMA_TYPE_NAMES[bsonType(value)] ?? bsonType(value);
       const types = stats.get(path) ?? new Map<string, number>();
       types.set(type, (types.get(type) ?? 0) + 1);
       stats.set(path, types);
