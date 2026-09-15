@@ -76,8 +76,10 @@ export function registerAdminHandlers(backend: Backend, state: E2EState): void {
   const requireConnection = (id: unknown) => {
     if (!state.connections[String(id)]) throw `Connection not found: ${String(id)}`;
   };
-  const findUser = (database: unknown, username: unknown) =>
-    state.users.find((user) => user.db === database && user.user === username);
+  /** The users on the server a connection reaches; each server keeps its own. */
+  const usersOf = (id: unknown) => (state.users[state.connections[String(id)].uri] ??= []);
+  const findUser = (id: unknown, database: unknown, username: unknown) =>
+    usersOf(id).find((user) => user.db === database && user.user === username);
   const checkRoles = (roles: unknown) => {
     if ((roles as UserSeed['roles'] | null | undefined)?.some((role) => !role.role || !role.db)) {
       throw 'Every role needs both a role name and a database';
@@ -128,7 +130,7 @@ export function registerAdminHandlers(backend: Backend, state: E2EState): void {
     // Users and roles
     list_users: ({ id, database }) => {
       requireConnection(id);
-      const users = isMock(state, id) ? SAMPLE_USERS : state.users;
+      const users = isMock(state, id) ? SAMPLE_USERS : usersOf(id);
       return structuredClone(users.filter((user) => database == null || user.db === database));
     },
     list_roles: ({ id, database }) => {
@@ -143,8 +145,8 @@ export function registerAdminHandlers(backend: Backend, state: E2EState): void {
       if (!password) throw 'Password is required';
       checkRoles(roles);
       if (isMock(state, id)) return null;
-      if (findUser(database, username)) throw `User "${String(username)}@${String(database)}" already exists`;
-      state.users.push({
+      if (findUser(id, database, username)) throw `User "${String(username)}@${String(database)}" already exists`;
+      usersOf(id).push({
         user: String(username),
         db: String(database),
         roles: structuredClone(roles as UserSeed['roles']),
@@ -157,7 +159,7 @@ export function registerAdminHandlers(backend: Backend, state: E2EState): void {
       if (!password && roles == null) throw 'Nothing to update: provide a new password and/or roles';
       checkRoles(roles);
       if (isMock(state, id)) return null;
-      const user = findUser(database, username);
+      const user = findUser(id, database, username);
       if (!user) throw `User "${String(username)}@${String(database)}" not found`;
       if (roles != null) user.roles = structuredClone(roles as UserSeed['roles']);
       return null;
@@ -165,9 +167,10 @@ export function registerAdminHandlers(backend: Backend, state: E2EState): void {
     drop_user: ({ id, database, username }) => {
       guardWritable(state, id);
       if (isMock(state, id)) return null;
-      const user = findUser(database, username);
+      const user = findUser(id, database, username);
       if (!user) throw `User "${String(username)}@${String(database)}" not found`;
-      state.users = state.users.filter((candidate) => candidate !== user);
+      const uri = state.connections[String(id)].uri;
+      state.users[uri] = usersOf(id).filter((candidate) => candidate !== user);
       return null;
     },
 

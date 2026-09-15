@@ -106,14 +106,25 @@ function parseSpec(value: unknown, path: string): Spec {
     case '$date': {
       const options = optionsAt(inner, what);
       if ('past_days' in options) {
+        // A whole number of days that fits in a u32, as the backend's parser reads it.
+        const days = options.past_days;
+        if (typeof days !== 'number' || !Number.isInteger(days) || days < 0) throw `${what} past_days must be a non-negative integer`;
+        if (days > 0xffff_ffff) throw `${what} past_days out of range`;
         const now = Date.now();
-        return { kind: 'date', from: now - numberAt(options.past_days, `${what}.past_days`) * DAY_MS, to: now };
+        return { kind: 'date', from: now - days * DAY_MS, to: now };
       }
-      const from = typeof options.from === 'string' ? Date.parse(options.from) : NaN;
-      const to = typeof options.to === 'string' ? Date.parse(options.to) : NaN;
-      if (Number.isNaN(from) || Number.isNaN(to)) throw `${what} needs past_days, or from and to as ISO dates`;
-      if (from > to) throw `${what} from must be <= to`;
-      return { kind: 'date', from, to };
+      if ('from' in options && 'to' in options) {
+        for (const bound of ['from', 'to'] as const) {
+          if (typeof options[bound] !== 'string') throw `${what} ${bound} must be an ISO date string`;
+        }
+        const from = Date.parse(options.from as string);
+        const to = Date.parse(options.to as string);
+        if (Number.isNaN(from)) throw `${what} from: invalid RFC 3339 date`;
+        if (Number.isNaN(to)) throw `${what} to: invalid RFC 3339 date`;
+        if (from > to) throw `${what} from must be <= to`;
+        return { kind: 'date', from, to };
+      }
+      throw `${what} needs past_days, or from and to as ISO dates`;
     }
     case '$lorem':
       return { kind: 'lorem', words: numberAt(optionsAt(inner, what).words, `${what}.words`) };

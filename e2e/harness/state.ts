@@ -70,7 +70,8 @@ export interface E2EState {
   /** Files the app wrote (exports), by path. */
   writtenFiles: Record<string, string>;
   audit: { status: Record<string, unknown>; events: Array<Record<string, unknown>> };
-  users: UserSeed[];
+  /** Database users by server URI; each server keeps its own. */
+  users: Record<string, UserSeed[]>;
   /** GridFS files by server URI, then by "database.bucket". */
   gridfs: Record<string, Record<string, GridFsFile[]>>;
   changeStreams: Record<string, ChangeStream>;
@@ -182,7 +183,8 @@ export function createState(seed: Seed): E2EState {
       status: { active: true, degradedReason: null, integrityError: null, droppedCount: 0, ...seed.audit?.status },
       events: structuredClone(seed.audit?.events ?? []),
     },
-    users: structuredClone(seed.users ?? SAMPLE_USERS),
+    // The seeded users start out on every seeded server.
+    users: Object.fromEntries(Object.keys(servers).map((uri) => [uri, structuredClone(seed.users ?? SAMPLE_USERS)])),
     gridfs: Object.fromEntries(Object.keys(servers).map((uri) => [uri, toGridFs(seed.gridfs ?? {})])),
     changeStreams: {},
     aiReplies: structuredClone(seed.aiReplies ?? []),

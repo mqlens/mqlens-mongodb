@@ -17,9 +17,9 @@ const unsupported = (what: string): never => {
 };
 
 /**
- * Whether a value has one of the named types. JSON can't tell an integer-valued
- * double from an int, so any number passes `double`, and an integer passes
- * `int` and `long`.
+ * Whether a value has one of the named types. BSON type names are exact, as
+ * MongoDB matches them: an integer is an int, or a long past 32 bits, and any
+ * other number a double. Only `number` takes every numeric type.
  */
 function hasType(value: unknown, wanted: unknown, keyword: 'bsonType' | 'type'): boolean {
   const actual = bsonType(value);
@@ -31,8 +31,6 @@ function hasType(value: unknown, wanted: unknown, keyword: 'bsonType' | 'type'):
       if (['object', 'array', 'string', 'null'].includes(name)) return actual === name;
       return unsupported(`type "${name}"`);
     }
-    if (name === 'double' || name === 'decimal') return NUMBER_TYPES.includes(actual);
-    if (name === 'long') return actual === 'int' || actual === 'long';
     return actual === name;
   });
 }

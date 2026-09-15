@@ -119,7 +119,8 @@ export function bsonType(value: unknown): string {
   if (Array.isArray(value)) return 'array';
   if (typeof value === 'boolean') return 'bool';
   if (typeof value === 'string') return 'string';
-  if (typeof value === 'number') return Number.isInteger(value) ? 'int' : 'double';
+  // A JSON integer becomes an int32 when it fits and an int64 when it doesn't, as `Bson::try_from` reads it.
+  if (typeof value === 'number') return Number.isInteger(value) ? (value >= -0x8000_0000 && value <= 0x7fff_ffff ? 'int' : 'long') : 'double';
   if (isPlainObject(value)) {
     if ('$oid' in value) return 'objectId';
     if ('$date' in value) return 'date';
@@ -413,8 +414,18 @@ export function aggregate(docs: Doc[], pipeline: Doc[]): Doc[] {
     switch (name) {
       case '$match': out = out.filter((doc) => matches(doc, arg as Doc)); break;
       case '$sort': out = sortDocs(out, arg as Doc); break;
-      case '$skip': out = out.slice(Number(arg)); break;
-      case '$limit': out = out.slice(0, Number(arg)); break;
+      case '$skip': {
+        const count = Number(arg);
+        if (!Number.isInteger(count) || count < 0) throw 'invalid argument to $skip stage: Expected a non-negative number';
+        out = out.slice(count);
+        break;
+      }
+      case '$limit': {
+        const count = Number(arg);
+        if (!Number.isInteger(count) || count <= 0) throw 'the limit must be positive';
+        out = out.slice(0, count);
+        break;
+      }
       case '$project': out = out.map((doc) => project(doc, arg as Doc)); break;
       // With no documents coming in, $count emits none rather than a zero.
       case '$count': out = out.length === 0 ? [] : [{ [String(arg)]: out.length }]; break;
