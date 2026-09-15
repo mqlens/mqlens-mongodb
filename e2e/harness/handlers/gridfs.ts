@@ -10,10 +10,13 @@ export function registerGridFsHandlers(backend: Backend, state: E2EState): void 
   const refuseSample = (id: unknown) => {
     if (isMock(state, id)) throw 'GridFS is not supported on mock connections';
   };
-  const bucketFiles = (id: unknown, database: unknown, bucket: unknown): GridFsFile[] => {
+  /** The bucket's files on the server the connection reaches; each server keeps its own. */
+  const bucketsOf = (id: unknown, database: unknown) => {
     databaseOf(state, id, database);
-    return (state.gridfs[keyOf(database, bucket)] ??= []);
+    return (state.gridfs[state.connections[String(id)].uri] ??= {});
   };
+  const bucketFiles = (id: unknown, database: unknown, bucket: unknown): GridFsFile[] =>
+    (bucketsOf(id, database)[keyOf(database, bucket)] ??= []);
   const fileIn = (files: GridFsFile[], fileId: unknown): GridFsFile => {
     const file = files.find((candidate) => candidate.id === String(fileId));
     if (!file) throw `File not found: ${String(fileId)}`;
@@ -62,9 +65,9 @@ export function registerGridFsHandlers(backend: Backend, state: E2EState): void 
     delete_gridfs_file: ({ id, database, bucket, fileId }) => {
       guardWritable(state, id);
       refuseSample(id);
-      const files = bucketFiles(id, database, bucket);
-      const file = fileIn(files, fileId);
-      state.gridfs[keyOf(database, bucket)] = files.filter((candidate) => candidate !== file);
+      const file = fileIn(bucketFiles(id, database, bucket), fileId);
+      const buckets = bucketsOf(id, database);
+      buckets[keyOf(database, bucket)] = buckets[keyOf(database, bucket)].filter((candidate) => candidate !== file);
       return null;
     },
   };

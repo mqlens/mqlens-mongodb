@@ -10,6 +10,7 @@ import { aggregate, find, includePath, inferSchema, jsonEqual, matches, mockFind
 import type { Doc } from '../seed';
 import type { E2EState } from '../state';
 import { recordTask } from '../tasks';
+import { duplicateKey } from '../unique';
 
 interface ExportOptions {
   fields?: string[];
@@ -435,28 +436,38 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
         else counts.inserted = docs.length;
       } else {
         const target = collectionForWrite(state, id, database, collection);
+        const ns = `${String(database)}.${String(collection)}`;
         const stored = (doc: Doc) => (doc._id === undefined ? -1 : target.docs.findIndex((existing) => jsonEqual(existing._id, doc._id)));
-        for (let start = 0; start < docs.length; start += IMPORT_BATCH_SIZE) {
-          const batch = docs.slice(start, start + IMPORT_BATCH_SIZE);
-          // Abort checks a batch before writing any of it; the batches before it are already written.
-          const existing = importMode === 'abort' ? batch.filter((doc) => stored(doc) >= 0).length : 0;
-          if (existing > 0) {
-            error = `Import aborted: ${existing} document(s) already exist`;
-            break;
-          }
-          for (const doc of batch) {
-            const at = stored(doc);
-            if (at < 0) {
-              target.docs.push(doc._id === undefined ? { _id: { $oid: newObjectId() }, ...doc } : doc);
-              counts.inserted += 1;
-            } else if (importMode === 'update') {
-              // replace_one's modified count: an identical document isn't counted.
-              if (!jsonEqual(target.docs[at], doc)) counts.updated += 1;
-              target.docs[at] = doc;
-            } else {
-              counts.skipped += 1;
+        // Every write goes through the collection's unique indexes. A duplicate key
+        // fails the import with MongoDB's error, prefixed as the backend's write
+        // prefixes it, and what was written before it stays, as with ordered writes.
+        try {
+          for (let start = 0; start < docs.length; start += IMPORT_BATCH_SIZE) {
+            const batch = docs.slice(start, start + IMPORT_BATCH_SIZE);
+            // Abort checks a batch before writing any of it; the batches before it are already written.
+            const existing = importMode === 'abort' ? batch.filter((doc) => stored(doc) >= 0).length : 0;
+            if (existing > 0) throw `Import aborted: ${existing} document(s) already exist`;
+            for (const doc of batch) {
+              const at = stored(doc);
+              if (at < 0) {
+                const incoming = doc._id === undefined ? { _id: { $oid: newObjectId() }, ...doc } : doc;
+                const clash = duplicateKey(ns, target, incoming);
+                if (clash) throw `Failed to ${importMode === 'update' ? 'import (insert)' : 'import'}: ${clash}`;
+                target.docs.push(incoming);
+                counts.inserted += 1;
+              } else if (importMode === 'update') {
+                const clash = duplicateKey(ns, target, doc, target.docs[at]);
+                if (clash) throw `Failed to import (update): ${clash}`;
+                // replace_one's modified count: an identical document isn't counted.
+                if (!jsonEqual(target.docs[at], doc)) counts.updated += 1;
+                target.docs[at] = doc;
+              } else {
+                counts.skipped += 1;
+              }
             }
           }
+        } catch (failure) {
+          error = String(failure);
         }
       }
       const { path } = (source ?? {}) as { path?: string };

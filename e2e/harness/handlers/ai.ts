@@ -93,9 +93,20 @@ export function registerAiHandlers(backend: Backend, state: E2EState): void {
           messageCount: Array.isArray(chat.messages) ? chat.messages.length : 0,
         })),
     load_chat: ({ id }) => structuredClone(chats.get(String(id)) ?? null),
+    // A panel saves the whole chat from the copy it loaded. A reply parked since
+    // then by append_chat_message isn't in that copy, so it's kept at the end
+    // (`merge_appended`), and the newest messages up to the limit are stored.
     save_chat: ({ chat }) => {
-      const next = chat as Record<string, unknown>;
-      chats.set(String(next.id), structuredClone(next));
+      const next = structuredClone(chat as Record<string, unknown>);
+      const stored = chats.get(String(next.id));
+      const messages = Array.isArray(next.messages) ? (next.messages as Array<Record<string, unknown>>) : [];
+      if (stored && Array.isArray(stored.messages)) {
+        const have = new Set(messages.map((message) => message.id));
+        const missed = (stored.messages as Array<Record<string, unknown>>).filter((message) => !have.has(message.id));
+        messages.push(...structuredClone(missed));
+      }
+      next.messages = messages.slice(-MAX_CHAT_MESSAGES);
+      chats.set(String(next.id), next);
       return null;
     },
     // A reply that finished after its tab moved on, parked in its saved chat

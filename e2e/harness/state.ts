@@ -4,6 +4,7 @@ import type {
   AiReplySeed,
   Doc,
   DumpFolderSeed,
+  GridFsFileSeed,
   IndexSeed,
   MongoshSeed,
   MonitoringSeed,
@@ -68,7 +69,8 @@ export interface E2EState {
   writtenFiles: Record<string, string>;
   audit: { status: Record<string, unknown>; events: Array<Record<string, unknown>> };
   users: UserSeed[];
-  gridfs: Record<string, GridFsFile[]>;
+  /** GridFS files by server URI, then by "database.bucket". */
+  gridfs: Record<string, Record<string, GridFsFile[]>>;
   changeStreams: Record<string, ChangeStream>;
   aiReplies: AiReplySeed[];
   aiModels: string[];
@@ -109,6 +111,24 @@ function toServer(seed: Seed['servers'] extends Record<string, infer S> | undefi
     }
   }
   return { version: seed.version ?? '7.0.5', databases };
+}
+
+/** The seeded GridFS files, as every seeded server holds them. */
+function toGridFs(seed: Record<string, GridFsFileSeed[]>): Record<string, GridFsFile[]> {
+  return Object.fromEntries(
+    Object.entries(seed).map(([bucket, files]) => [
+      bucket,
+      files.map((file, i) => ({
+        id: JSON.stringify({ $oid: `64b0${String(i).padStart(20, '0')}` }),
+        filename: file.filename,
+        length: file.content.length,
+        chunk_size_bytes: 261_120,
+        upload_date: file.uploadDate ?? '2025-05-01T12:00:00Z',
+        content_type: file.contentType ?? null,
+        content: file.content,
+      })),
+    ]),
+  );
 }
 
 export function createState(seed: Seed): E2EState {
@@ -161,20 +181,7 @@ export function createState(seed: Seed): E2EState {
       events: structuredClone(seed.audit?.events ?? []),
     },
     users: structuredClone(seed.users ?? SAMPLE_USERS),
-    gridfs: Object.fromEntries(
-      Object.entries(seed.gridfs ?? {}).map(([bucket, files]) => [
-        bucket,
-        files.map((file, i) => ({
-          id: JSON.stringify({ $oid: `64b0${String(i).padStart(20, '0')}` }),
-          filename: file.filename,
-          length: file.content.length,
-          chunk_size_bytes: 261_120,
-          upload_date: file.uploadDate ?? '2025-05-01T12:00:00Z',
-          content_type: file.contentType ?? null,
-          content: file.content,
-        })),
-      ]),
-    ),
+    gridfs: Object.fromEntries(Object.keys(servers).map((uri) => [uri, toGridFs(seed.gridfs ?? {})])),
     changeStreams: {},
     aiReplies: structuredClone(seed.aiReplies ?? []),
     aiModels: structuredClone(seed.aiModels ?? []),

@@ -393,7 +393,10 @@ function unwind(docs: Doc[], spec: unknown): Doc[] {
   const keepEmpty = isPlainObject(spec) && spec.preserveNullAndEmptyArrays === true;
   return docs.flatMap((doc) => {
     const value = valuesAt(doc, path)[0];
-    if (!Array.isArray(value) || value.length === 0) return keepEmpty || (value !== undefined && !Array.isArray(value)) ? [doc] : [];
+    // A missing, null or empty value drops the document unless it's asked to be
+    // kept; any other value that isn't an array unwinds as itself.
+    if (value === undefined || value === null || (Array.isArray(value) && value.length === 0)) return keepEmpty ? [doc] : [];
+    if (!Array.isArray(value)) return [doc];
     return value.map((element) => {
       const copy = structuredClone(doc);
       setPath(copy, path, element);

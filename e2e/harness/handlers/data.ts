@@ -9,21 +9,11 @@
 import type { Backend, Handler } from '../backend';
 import { generateDocuments, inferTemplate, previewDocuments } from '../generate';
 import { collectionForWrite, guardWritable, isMock } from '../lookup';
-import {
-  aggregate,
-  applyUpdate,
-  find,
-  inferSchema,
-  jsonEqual,
-  matches,
-  mockFind,
-  mockMatches,
-  newObjectId,
-  valuesAt,
-} from '../mongo';
+import { aggregate, applyUpdate, find, inferSchema, jsonEqual, matches, mockFind, mockMatches, newObjectId } from '../mongo';
 import type { Doc } from '../seed';
 import type { Collection, CollectionQueries, E2EState, Server } from '../state';
 import { recordTask } from '../tasks';
+import { duplicateIndexKey, duplicateKey } from '../unique';
 
 const MOCK_AGGREGATE = 'Aggregation pipelines are not supported on mock connections';
 const MOCK_GENERATE_CAP = 10_000;
@@ -139,67 +129,6 @@ function fieldUpdate(before: Doc, after: Doc, prefix = ''): { set: Doc; unset: D
     if (!(key in after)) unset[`${prefix}${key}`] = '';
   }
   return { set, unset };
-}
-
-/** MongoDB's duplicate key error text, for an index and the key it found twice. */
-const duplicateKeyError = (ns: string, index: string, fields: string[], key: unknown[]) =>
-  `E11000 duplicate key error collection: ${ns} index: ${index} dup key: { ${fields
-    .map((field, i) => `${field}: ${JSON.stringify(key[i])}`)
-    .join(', ')} }`;
-
-/**
- * Every key a document puts in an index, as MongoDB builds a multikey index:
- * an array on a field's path adds one entry per element, an empty array
- * indexes as undefined, and a missing field as null.
- */
-function indexKeys(doc: Doc, fields: string[]): unknown[][] {
-  let keys: unknown[][] = [[]];
-  for (const field of fields) {
-    const found = valuesAt(doc, field);
-    const values =
-      found.length === 0
-        ? [null]
-        : found.flatMap((value) => (!Array.isArray(value) ? [value] : value.length === 0 ? [{ $undefined: true }] : value));
-    keys = keys.flatMap((key) => values.map((value) => [...key, value]));
-  }
-  return keys;
-}
-
-/**
- * MongoDB's duplicate key error for writing `doc` into `target`, when its `_id`
- * or any key it gives a unique index already belongs to another document.
- * `replacing` is the stored document an update replaces, which doesn't count.
- */
-function duplicateKey(ns: string, target: Collection, doc: Doc, replacing?: Doc): string | null {
-  const unique = [{ name: '_id_', keys: { _id: 1 } }, ...target.indexes.filter((index) => index.unique)];
-  for (const index of unique) {
-    const fields = Object.keys(index.keys);
-    const wanted = indexKeys(doc, fields);
-    for (const existing of target.docs) {
-      if (existing === replacing) continue;
-      const taken = indexKeys(existing, fields);
-      const clash = wanted.find((key) => taken.some((other) => jsonEqual(other, key)));
-      if (clash) return duplicateKeyError(ns, index.name, fields, clash);
-    }
-  }
-  return null;
-}
-
-/**
- * MongoDB's error for building a unique index over documents that already
- * share a key. A document repeating a key inside its own array is fine; only
- * another document's copy clashes.
- */
-function duplicateIndexKey(ns: string, name: string, keys: Doc, docs: Doc[]): string | null {
-  const fields = Object.keys(keys);
-  const seen: unknown[][] = [];
-  for (const doc of docs) {
-    const own = indexKeys(doc, fields);
-    const clash = own.find((key) => seen.some((other) => jsonEqual(other, key)));
-    if (clash) return duplicateKeyError(ns, name, fields, clash);
-    seen.push(...own);
-  }
-  return null;
 }
 
 /** The host list of a MongoDB URI, without scheme, credentials, database or options. */
@@ -599,7 +528,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       const parsedKeys = parseJson<Doc>(keys, {}, 'index keys');
       // MongoDB won't build a unique index over documents that already share a key.
       if (unique && !mock) {
-        const clash = duplicateIndexKey(`${String(db)}.${String(coll)}`, name, parsedKeys, found.docs);
+        const clash = duplicateIndexKey(`${String(db)}.${String(coll)}`, name, parsedKeys, found.docs, Boolean(sparse));
         if (clash) throw `Failed to create index: ${clash}`;
       }
       found.indexes.push({ name, keys: parsedKeys, unique: Boolean(unique), sparse: Boolean(sparse) });
@@ -637,13 +566,19 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       if (!Array.isArray(stages)) throw 'Aggregation pipeline must be a JSON array of stages';
       if (isMock(state, id)) return null;
       const collections = database(id, db);
-      if (collections[String(viewName)]) throw `Collection already exists: ${String(db)}.${String(viewName)}`;
-      // A real view is computed on every read; the fake computes it once, when created.
-      collections[String(viewName)] = {
-        type: 'view',
-        docs: aggregate(collection(id, db, sourceCollection).docs, stages as Doc[]),
-        indexes: [],
-      };
+      const ns = `${String(db)}.${String(viewName)}`;
+      if (collections[String(viewName)]) throw `Collection already exists: ${ns}`;
+      // A view is its pipeline over whatever its source holds when it's read,
+      // so a later change to the source shows through. It can't be written to.
+      const view: Collection = { type: 'view', docs: [], indexes: [] };
+      Object.defineProperty(view, 'docs', {
+        enumerable: true,
+        get: () => aggregate(collections[String(sourceCollection)]?.docs ?? [], stages as Doc[]),
+        set: () => {
+          throw `Namespace ${ns} is a view, not a collection`;
+        },
+      });
+      collections[String(viewName)] = view;
       return null;
     },
     get_collection_options: ({ id, database: db, collection: coll }) => {

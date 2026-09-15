@@ -19,14 +19,20 @@ async function typeInto(page: Page, container: Locator, text: string): Promise<v
 /**
  * The suggestions include `label`. Field names arrive with the collection's
  * schema, so the list can first open on only the language's own words; close
- * it and ask again until they're in.
+ * it and ask again until they're in. When they never come, the failure lists
+ * the schema requests the app made, which is where field names come from.
  */
-async function expectSuggestion(page: Page, label: string): Promise<void> {
-  await expect(async () => {
-    await page.keyboard.press('Escape');
-    await page.keyboard.press('Control+Space');
-    await expect(suggestions(page)).toContainText(label, { timeout: 2_000 });
-  }).toPass({ timeout: 20_000 });
+async function expectSuggestion(app: App, page: Page, label: string): Promise<void> {
+  try {
+    await expect(async () => {
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+Space');
+      await expect(suggestions(page)).toContainText(label, { timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
+  } catch (error) {
+    const schema = (await app.calls('analyze_schema')).map((call) => ({ args: call.args, error: call.error }));
+    throw new Error(`${String(error)}\nanalyze_schema calls: ${JSON.stringify(schema)}`);
+  }
   await page.keyboard.press('Escape');
 }
 
@@ -42,15 +48,15 @@ test.describe('Editor completions', () => {
     await openCustomers(app, page);
 
     await typeInto(page, view(page).getByTestId('query-filter-input'), '{ tie');
-    await expectSuggestion(page, 'tier');
+    await expectSuggestion(app, page, 'tier');
     await typeInto(page, view(page).getByTestId('query-filter-input'), '{ tier: { $e');
-    await expectSuggestion(page, '$eq');
+    await expectSuggestion(app, page, '$eq');
 
     await view(page).getByTestId('query-options-toggle').click();
     await typeInto(page, view(page).getByTestId('projection-query-input'), '{ ema');
-    await expectSuggestion(page, 'email');
+    await expectSuggestion(app, page, 'email');
     await typeInto(page, view(page).getByTestId('sort-query-input'), '{ joi');
-    await expectSuggestion(page, 'joined');
+    await expectSuggestion(app, page, 'joined');
   });
 
   test('suggest stage bodies in the aggregation builder', async ({ app, page }) => {
@@ -61,15 +67,15 @@ test.describe('Editor completions', () => {
 
     await stage.locator('select').selectOption('$group');
     await typeInto(page, stage, '{ _id: null, total: { $su');
-    await expectSuggestion(page, '$sum');
+    await expectSuggestion(app, page, '$sum');
 
     await stage.locator('select').selectOption('$project');
     await typeInto(page, stage, '{ ti');
-    await expectSuggestion(page, 'tier');
+    await expectSuggestion(app, page, 'tier');
 
     await stage.locator('select').selectOption('$lookup');
     await typeInto(page, stage, '{ fr');
-    await expectSuggestion(page, 'from');
+    await expectSuggestion(app, page, 'from');
   });
 });
 
