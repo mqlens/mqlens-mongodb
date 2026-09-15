@@ -21,6 +21,8 @@ export interface Collection {
   indexes: IndexSeed[];
   /** As `get_collection_options` reports it; absent means no validation set. */
   validation?: { validator: string; validationLevel: string; validationAction: string };
+  /** Set on a view: the collection it reads, by name, and its pipeline. */
+  view?: { on: string; pipeline: Doc[] };
 }
 
 export interface Server {

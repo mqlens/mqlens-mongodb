@@ -11,6 +11,8 @@ import type { Doc } from '../seed';
 import type { E2EState } from '../state';
 import { recordTask } from '../tasks';
 import { duplicateKey } from '../unique';
+import { validationError } from '../validation';
+import { defineView } from '../views';
 
 interface ExportOptions {
   fields?: string[];
@@ -336,10 +338,13 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
     // Overwrite drops the target first, and its own indexes go with it.
     if (existed && conflictMode === 'overwrite') delete databases[String(target.db)][String(target.coll)];
     const to = collectionForWrite(state, target.id, target.db, target.coll);
+    const ns = `${String(target.db)}.${String(target.coll)}`;
     let documentsCopied = 0;
     let documentsSkipped = 0;
+    // Written unordered. A row MongoDB refuses as a duplicate key, on `_id` or on
+    // any unique index, is retried alone and counted as skipped.
     for (const doc of from.docs.filter((candidate) => matches(candidate, filter))) {
-      if (to.docs.some((existing) => jsonEqual(existing._id, doc._id))) {
+      if (duplicateKey(ns, to, doc)) {
         documentsSkipped += 1;
         continue;
       }
@@ -438,25 +443,30 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
         const target = collectionForWrite(state, id, database, collection);
         const ns = `${String(database)}.${String(collection)}`;
         const stored = (doc: Doc) => (doc._id === undefined ? -1 : target.docs.findIndex((existing) => jsonEqual(existing._id, doc._id)));
-        // Every write goes through the collection's unique indexes. A duplicate key
-        // fails the import with MongoDB's error, prefixed as the backend's write
-        // prefixes it, and what was written before it stays, as with ordered writes.
+        // Every write goes through the collection's validator and unique indexes. A
+        // refusal fails the import with MongoDB's error, prefixed as the backend's
+        // write prefixes it, and what was written before it stays, as with ordered writes.
         try {
           for (let start = 0; start < docs.length; start += IMPORT_BATCH_SIZE) {
             const batch = docs.slice(start, start + IMPORT_BATCH_SIZE);
+            // The backend looks up which of a batch's ids are stored before writing
+            // any of it. Two new documents sharing an id are both inserted, and the
+            // second fails; they aren't taken for a stored document.
+            const storedBefore = new Set(batch.filter((doc) => stored(doc) >= 0).map((doc) => JSON.stringify(doc._id)));
             // Abort checks a batch before writing any of it; the batches before it are already written.
-            const existing = importMode === 'abort' ? batch.filter((doc) => stored(doc) >= 0).length : 0;
-            if (existing > 0) throw `Import aborted: ${existing} document(s) already exist`;
+            if (importMode === 'abort' && storedBefore.size > 0) {
+              throw `Import aborted: ${storedBefore.size} document(s) already exist`;
+            }
             for (const doc of batch) {
-              const at = stored(doc);
+              const at = doc._id !== undefined && storedBefore.has(JSON.stringify(doc._id)) ? stored(doc) : -1;
               if (at < 0) {
                 const incoming = doc._id === undefined ? { _id: { $oid: newObjectId() }, ...doc } : doc;
-                const clash = duplicateKey(ns, target, incoming);
-                if (clash) throw `Failed to ${importMode === 'update' ? 'import (insert)' : 'import'}: ${clash}`;
+                const refusal = validationError(target, incoming) ?? duplicateKey(ns, target, incoming);
+                if (refusal) throw `Failed to ${importMode === 'update' ? 'import (insert)' : 'import'}: ${refusal}`;
                 target.docs.push(incoming);
                 counts.inserted += 1;
               } else if (importMode === 'update') {
-                const clash = duplicateKey(ns, target, doc, target.docs[at]);
+                const clash = validationError(target, doc, target.docs[at]) ?? duplicateKey(ns, target, doc, target.docs[at]);
                 if (clash) throw `Failed to import (update): ${clash}`;
                 // replace_one's modified count: an identical document isn't counted.
                 if (!jsonEqual(target.docs[at], doc)) counts.updated += 1;
@@ -609,9 +619,8 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
         throw 'Source and target database are the same — copy would overwrite itself';
       }
       const source = databaseOf(state, args.sourceId, args.sourceDb);
-      const names = ((args.collections as string[] | null) ?? Object.keys(source)).filter(
-        (name) => Boolean(args.includeViews) || source[name]?.type !== 'view',
-      );
+      const chosen = args.collections as string[] | null;
+      const names = Object.keys(source).filter((name) => !chosen || chosen.includes(name));
       const totals = {
         collectionsCopied: 0,
         documentsCopied: 0,
@@ -636,7 +645,24 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
         });
       }
       for (const name of names) {
-        if (source[name]?.type === 'timeseries') {
+        const definition = source[name].view;
+        if (source[name].type === 'view') {
+          // A view is recreated from its definition, reading its source by name in
+          // the target database, or skipped when views aren't asked for.
+          if (!args.includeViews || !definition) {
+            totals.skipped.push(name);
+            continue;
+          }
+          const targetDb = (serverOf(state, args.targetId).databases[String(args.targetDb)] ??= {});
+          const ns = `${String(args.targetDb)}.${name}`;
+          if (targetDb[name]) totals.failed.push({ collection: name, error: `Failed to create view: Collection already exists. NS: ${ns}` });
+          else {
+            targetDb[name] = defineView(targetDb, ns, definition.on, definition.pipeline);
+            totals.collectionsCopied += 1;
+          }
+          continue;
+        }
+        if (source[name].type === 'timeseries') {
           // Copying a time series collection is out of scope; it's reported as skipped.
           totals.skipped.push(`${name} (timeseries)`);
           continue;

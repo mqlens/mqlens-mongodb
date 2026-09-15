@@ -113,7 +113,8 @@ function regexFrom(pattern: unknown, options: unknown): RegExp {
   return new RegExp(String(pattern), String(options ?? ''));
 }
 
-function bsonType(value: unknown): string {
+/** The BSON type name MongoDB gives a value in relaxed Extended JSON. */
+export function bsonType(value: unknown): string {
   if (value === null || value === undefined) return 'null';
   if (Array.isArray(value)) return 'array';
   if (typeof value === 'boolean') return 'bool';
@@ -447,7 +448,11 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
         case '$inc': setPath(out, path, Number(comparable(valuesAt(out, path)[0] ?? 0)) + Number(comparable(value))); break;
         case '$push': {
           const current = valuesAt(out, path)[0];
-          setPath(out, path, [...(Array.isArray(current) ? current : []), value]);
+          // MongoDB refuses to push onto a field that holds anything but an array.
+          if (current !== undefined && !Array.isArray(current)) {
+            throw `The field '${path}' must be an array but is of type ${bsonType(current)} in document {_id: ${JSON.stringify(doc._id)}}`;
+          }
+          setPath(out, path, [...(current ?? []), value]);
           break;
         }
         default: unsupported(`update operator ${op}`);

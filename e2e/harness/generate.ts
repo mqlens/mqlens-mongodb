@@ -89,7 +89,13 @@ function parseSpec(value: unknown, path: string): Spec {
       return { kind: 'int', ...range(optionsAt(inner, what), what, { min: 0, max: 1000 }) };
     case '$float': {
       const options = optionsAt(inner, what);
-      return { kind: 'float', ...range(options, what), decimals: numberAt(options.decimals ?? 2, `${what}.decimals`) };
+      const decimals = options.decimals ?? 2;
+      if (typeof decimals !== 'number' || !Number.isInteger(decimals) || decimals < 0) {
+        throw `${what} decimals must be a non-negative integer`;
+      }
+      const bounds = range(options, what);
+      if (decimals > 10) throw `${what} decimals must be <= 10`;
+      return { kind: 'float', ...bounds, decimals };
     }
     case '$date': {
       const options = optionsAt(inner, what);

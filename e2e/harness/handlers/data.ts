@@ -14,6 +14,8 @@ import type { Doc } from '../seed';
 import type { Collection, CollectionQueries, E2EState, Server } from '../state';
 import { recordTask } from '../tasks';
 import { duplicateIndexKey, duplicateKey } from '../unique';
+import { validationError } from '../validation';
+import { defineView } from '../views';
 
 const MOCK_AGGREGATE = 'Aggregation pipelines are not supported on mock connections';
 const MOCK_GENERATE_CAP = 10_000;
@@ -390,8 +392,9 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       if (isMock(state, id)) return 'mock-inserted-id';
       const target = collectionForWrite(state, id, db, coll);
       doc._id ??= { $oid: newObjectId() };
-      const clash = duplicateKey(`${String(db)}.${String(coll)}`, target, doc);
-      if (clash) throw `Failed to insert document: ${clash}`;
+      // MongoDB checks the collection's validator, then its unique indexes.
+      const refusal = validationError(target, doc) ?? duplicateKey(`${String(db)}.${String(coll)}`, target, doc);
+      if (refusal) throw `Failed to insert document: ${refusal}`;
       target.docs.push(doc);
       return JSON.stringify(doc._id);
     },
@@ -422,9 +425,11 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       if (at < 0) return 0;
       const next = applyUpdate(found.docs[at], change);
       if (jsonEqual(next, found.docs[at])) return 0;
-      // MongoDB refuses an update that gives a unique index a key another document has, and changes nothing.
-      const clash = duplicateKey(`${String(db)}.${String(coll)}`, found, next, found.docs[at]);
-      if (clash) throw `Failed to update document: ${clash}`;
+      // MongoDB refuses an update the validator rejects, or one that gives a unique
+      // index a key another document has, and changes nothing.
+      const refusal =
+        validationError(found, next, found.docs[at]) ?? duplicateKey(`${String(db)}.${String(coll)}`, found, next, found.docs[at]);
+      if (refusal) throw `Failed to update document: ${refusal}`;
       found.docs[at] = next;
       return 1;
     },
@@ -465,12 +470,17 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       let modified = 0;
       for (const [i, doc] of found.docs.entries()) {
         if (!matches(doc, where)) continue;
-        const next = applyUpdate(doc, change);
+        let next: Doc;
+        try {
+          next = applyUpdate(doc, change);
+        } catch (error) {
+          throw `Failed to update documents: ${String(error)}`;
+        }
         if (!('_id' in next) || !jsonEqual(next._id, doc._id)) {
           throw "Failed to update documents: Performing an update on the path '_id' would modify the immutable field '_id'";
         }
         if (jsonEqual(next, doc)) continue;
-        const clash = duplicateKey(ns, found, next, doc);
+        const clash = validationError(found, next, doc) ?? duplicateKey(ns, found, next, doc);
         if (clash) throw `Failed to update documents: ${clash}`;
         found.docs[i] = next;
         modified += 1;
@@ -564,21 +574,17 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
         throw `Invalid aggregation pipeline JSON: ${String(error)}`;
       }
       if (!Array.isArray(stages)) throw 'Aggregation pipeline must be a JSON array of stages';
+      // Every stage has to be a document, which the backend checks before its sample-server shortcut.
+      for (const stage of stages) {
+        if (typeof stage !== 'object' || stage === null || Array.isArray(stage)) {
+          throw `Invalid aggregation stage: expected a document, found ${stage === null ? 'null' : Array.isArray(stage) ? 'an array' : typeof stage}`;
+        }
+      }
       if (isMock(state, id)) return null;
       const collections = database(id, db);
       const ns = `${String(db)}.${String(viewName)}`;
       if (collections[String(viewName)]) throw `Collection already exists: ${ns}`;
-      // A view is its pipeline over whatever its source holds when it's read,
-      // so a later change to the source shows through. It can't be written to.
-      const view: Collection = { type: 'view', docs: [], indexes: [] };
-      Object.defineProperty(view, 'docs', {
-        enumerable: true,
-        get: () => aggregate(collections[String(sourceCollection)]?.docs ?? [], stages as Doc[]),
-        set: () => {
-          throw `Namespace ${ns} is a view, not a collection`;
-        },
-      });
-      collections[String(viewName)] = view;
+      collections[String(viewName)] = defineView(collections, ns, String(sourceCollection), stages as Doc[]);
       return null;
     },
     get_collection_options: ({ id, database: db, collection: coll }) => {
@@ -619,10 +625,24 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       }
       const docs = generateDocuments(String(template), n, seed == null ? undefined : Number(seed));
       // The sample server generates every batch to check the template, then drops it.
+      let written = 0;
+      let error: string | undefined;
       if (!mock) {
         // A database-scoped run may name a collection that doesn't exist yet.
         const target = collectionForWrite(state, id, db, coll);
-        target.docs.push(...docs.map((doc) => ({ _id: { $oid: newObjectId() }, ...doc })));
+        const ns = `${String(db)}.${String(coll)}`;
+        // Written with ordered inserts: a document the validator or a unique index
+        // refuses fails the task, and the documents before it stay.
+        for (const doc of docs) {
+          const incoming = { _id: { $oid: newObjectId() }, ...doc };
+          const refusal = validationError(target, incoming) ?? duplicateKey(ns, target, incoming);
+          if (refusal) {
+            error = `Failed to insert: ${refusal}`;
+            break;
+          }
+          target.docs.push(incoming);
+          written += 1;
+        }
       }
 
       return recordTask(state, {
@@ -630,8 +650,9 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
         label: `Generate ${n} documents`,
         subLabel: `${String(db)}.${String(coll)}`,
         startMessage: 'Generating documents…',
-        message: mock ? `Validated ${n} documents (mock connection — not written)` : `Inserted ${n} documents`,
-        processed: n,
+        message: error ? 'Task failed' : mock ? `Validated ${n} documents (mock connection — not written)` : `Inserted ${n} documents`,
+        error,
+        processed: mock ? n : written,
         total: n,
       });
     },
