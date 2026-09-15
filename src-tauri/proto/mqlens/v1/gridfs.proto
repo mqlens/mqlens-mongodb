@@ -1,0 +1,51 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service GridFsService {
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc DownloadFile(DownloadFileRequest) returns (stream FileChunk);
+  rpc UploadFile(stream UploadChunk) returns (UploadFileResponse);
+  // Removes the file document and all of its chunks.
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+}
+
+message DeleteFileRequest {
+  string connection_id = 1;
+  string database = 2;
+  string bucket = 3;        // empty => "fs"
+  string file_id_ejson = 4; // {"_id": <id>} in Extended JSON, as UploadFile returns; a ListFiles document also works
+}
+message DeleteFileResponse {}
+
+message ListFilesRequest {
+  string connection_id = 1;
+  string database = 2;
+  string bucket = 3; // empty => "fs"
+}
+message ListFilesResponse {
+  repeated string files_ejson = 1; // canonical Extended JSON file documents
+}
+
+message DownloadFileRequest {
+  string connection_id = 1;
+  string database = 2;
+  string bucket = 3;
+  string file_id_ejson = 4; // Extended JSON of the file _id value
+}
+message FileChunk {
+  bytes data = 1;
+}
+
+// The first UploadChunk carries the metadata (+ optional first bytes);
+// subsequent messages carry only data.
+message UploadChunk {
+  string connection_id = 1;
+  string database = 2;
+  string bucket = 3;
+  string filename = 4;
+  bytes data = 5;
+}
+message UploadFileResponse {
+  string file_id_ejson = 1;
+}

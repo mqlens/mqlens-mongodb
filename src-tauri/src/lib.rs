@@ -26,6 +26,7 @@ pub(crate) mod mock_db;
 pub mod monitoring;
 pub mod path_env;
 pub mod queries;
+pub(crate) mod server;
 pub mod ssh_tunnel;
 mod namespace_guard;
 mod state;
@@ -3166,6 +3167,127 @@ async fn delete_connection_profile(
 }
 
 #[tauri::command]
+async fn server_account_list(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<server::accounts::ServerAccountView>, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::account_list_impl(&state, &path)
+}
+
+#[tauri::command]
+async fn server_account_save(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account: server::accounts::ServerAccountInput,
+) -> Result<server::accounts::ServerAccountView, String> {
+    let started = Instant::now();
+    let summary = format!("save MQLens Server account {}", account.name.trim());
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::account_save_impl(&state, &path, account).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_account_save",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &summary,
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_account_delete(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::account_delete_impl(&state, &path, &id).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_account_delete",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("delete MQLens Server account {id}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_sign_in(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    password: String,
+) -> Result<server::accounts::ServerAccountView, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::sign_in_impl(&state, &path, &account_id, password).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_sign_in",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("sign in to MQLens Server account {account_id}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_sign_out(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+) -> Result<server::commands::SignOutResult, String> {
+    let started = Instant::now();
+    let path = connections::get_server_accounts_path(&app_handle);
+    let result = server::commands::sign_out_impl(&state, &path, &account_id).await;
+    audit::maybe_record_result(
+        &state,
+        None,
+        None,
+        None,
+        "server_sign_out",
+        audit::OpClass::Write,
+        Some("ui"),
+        started,
+        &format!("sign out of MQLens Server account {account_id}"),
+        None,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+async fn server_list_connections(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<server::commands::RemoteConnectionView>, String> {
+    let path = connections::get_server_accounts_path(&app_handle);
+    server::commands::list_connections_impl(&state, &path, &account_id).await
+}
+
+#[tauri::command]
 async fn load_app_settings(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -3344,6 +3466,9 @@ async fn vault_lock(state: tauri::State<'_, AppState>) -> Result<(), String> {
     // it reads through `require_key`-gated seams, same precondition as
     // enabling it in the first place.
     mcp::stop_if_running(&state).await?;
+    // Same for server mode: its sessions store their tokens under the key. The
+    // stored tokens stay, so unlocking resumes them without signing in again.
+    state.server.clear().await;
     Ok(())
 }
 
@@ -3356,10 +3481,16 @@ async fn vault_reset(
     // a replacement vault would start with a log its new key cannot authenticate,
     // so auditing would be sealed from the first unlock. Abort instead.
     audit::reset_store(&app_handle, &state)?;
+    // The accounts file is about to become unreadable: end its sessions on their
+    // servers while the key still opens it. Bounded, so an unreachable server
+    // cannot hold up a reset.
+    let server_accounts_path = connections::get_server_accounts_path(&app_handle);
+    server::commands::sign_out_all_best_effort(&state, &server_accounts_path).await;
     for p in [
         connections::get_vault_meta_path(&app_handle),
         connections::get_profiles_enc_path(&app_handle),
         connections::get_settings_enc_path(&app_handle),
+        server_accounts_path,
     ] {
         if p.exists() {
             std::fs::remove_file(&p).map_err(|e| format!("remove {}: {e}", p.display()))?;
@@ -3395,6 +3526,13 @@ async fn vault_change_password(
     let profiles_path = connections::get_profiles_enc_path(&app_handle);
     let settings_path = connections::get_settings_enc_path(&app_handle);
     let audit_log_path = connections::get_audit_log_path(&app_handle);
+    let server_accounts_path = connections::get_server_accounts_path(&app_handle);
+
+    // Held from before the accounts file is re-encrypted until the new key is
+    // live: a server session storing a refreshed token in between would write
+    // it under the old key, over the rotated file. Taken before the audit lock,
+    // whose failure paths must reopen the audit session.
+    let server_accounts_lock = server::accounts::lock(&server_accounts_path)?;
 
     // Close the audit session so the log is not being appended to while it is
     // re-encrypted, but keep its cross-process lock: releasing it would let a
@@ -3417,6 +3555,8 @@ async fn vault_change_password(
             connections::prepare_reencrypt_file(&old_key, &new_key, &profiles_path)?;
         let new_settings =
             connections::prepare_reencrypt_file(&old_key, &new_key, &settings_path)?;
+        let new_server_accounts =
+            connections::prepare_reencrypt_file(&old_key, &new_key, &server_accounts_path)?;
         // Returns the log *and* its state sidecar; both are keyed and must land
         // together or the new-key log would be checked against an old-key count.
         let new_audit_files =
@@ -3428,6 +3568,7 @@ async fn vault_change_password(
         let mut files = vec![
             (profiles_path.clone(), new_profiles),
             (settings_path.clone(), new_settings),
+            (server_accounts_path.clone(), new_server_accounts),
         ];
         files.extend(new_audit_files.into_iter().map(|(p, b)| (p, Some(b))));
         connections::commit_vault_rotation(files, &meta_path, &new_meta)
@@ -3453,6 +3594,7 @@ async fn vault_change_password(
     rotated?;
 
     *state.vault_key.lock_safe()? = Some(new_key);
+    drop(server_accounts_lock);
     // Approach A: a password change derives a new key; keep biometrics working transparently.
     biometric::restore_key_if_enrolled(&app_handle, &new_key);
     Ok(())
@@ -3807,6 +3949,12 @@ pub fn run() {
             load_connection_profiles,
             save_connection_profile,
             delete_connection_profile,
+            server_account_list,
+            server_account_save,
+            server_account_delete,
+            server_sign_in,
+            server_sign_out,
+            server_list_connections,
             connections::test_connection_uri,
             load_app_settings,
             save_app_settings,

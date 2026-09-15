@@ -1,0 +1,16 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service ShellService {
+  // Bidirectional: client keystrokes -> mongosh stdin; mongosh output -> client.
+  rpc MongoshSession(stream MongoshClientMsg) returns (stream MongoshServerMsg);
+}
+
+message MongoshClientMsg {
+  string connection_id = 1; // set on the first message
+  bytes input = 2;
+}
+message MongoshServerMsg {
+  bytes output = 1;
+}

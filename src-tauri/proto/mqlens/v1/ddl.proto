@@ -1,0 +1,72 @@
+syntax = "proto3";
+package mqlens.v1;
+option go_package = "github.com/mqlens/mqlens-server/gen/mqlens/v1;mqlensv1";
+
+service DdlService {
+  rpc CreateCollection(CreateCollectionRequest) returns (DdlAck);
+  rpc DropCollection(DropCollectionRequest) returns (DdlAck);
+  rpc RenameCollection(RenameCollectionRequest) returns (DdlAck);
+  rpc CreateView(CreateViewRequest) returns (DdlAck);
+  rpc DropDatabase(DropDatabaseRequest) returns (DdlAck);
+  rpc RenameDatabase(RenameDatabaseRequest) returns (DdlAck);
+  rpc GetCollectionOptions(GetCollectionOptionsRequest) returns (CollectionValidation);
+  rpc SetValidator(SetValidatorRequest) returns (DdlAck);
+}
+
+message DdlAck {}
+
+message GetCollectionOptionsRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+}
+message CollectionValidation {
+  string validator = 1;         // relaxed Extended JSON, "{}" when no validator is set
+  string validation_level = 2;  // "off" | "moderate" | "strict" | "" when unset
+  string validation_action = 3; // "error" | "warn" | "" when unset
+}
+
+// validator is Extended JSON, so a value written by GetCollectionOptions can be
+// sent straight back. An empty validator clears validation. An empty level or
+// action leaves that setting unchanged.
+message SetValidatorRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string validator = 4;
+  string validation_level = 5;
+  string validation_action = 6;
+}
+
+message CreateCollectionRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+}
+message DropCollectionRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+}
+message RenameCollectionRequest {
+  string connection_id = 1;
+  string database = 2;
+  string collection = 3;
+  string new_name = 4;
+}
+message CreateViewRequest {
+  string connection_id = 1;
+  string database = 2;
+  string view = 3;
+  string view_on = 4;
+  string pipeline_json = 5;
+}
+message DropDatabaseRequest {
+  string connection_id = 1;
+  string database = 2;
+}
+message RenameDatabaseRequest {
+  string connection_id = 1;
+  string database = 2;
+  string new_name = 3;
+}
