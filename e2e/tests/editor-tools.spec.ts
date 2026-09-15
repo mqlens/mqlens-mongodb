@@ -16,8 +16,17 @@ async function typeInto(page: Page, container: Locator, text: string): Promise<v
   await page.keyboard.press('Control+Space');
 }
 
+/**
+ * The suggestions include `label`. Field names arrive with the collection's
+ * schema, so the list can first open on only the language's own words; close
+ * it and ask again until they're in.
+ */
 async function expectSuggestion(page: Page, label: string): Promise<void> {
-  await expect(suggestions(page)).toContainText(label);
+  await expect(async () => {
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+Space');
+    await expect(suggestions(page)).toContainText(label, { timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
   await page.keyboard.press('Escape');
 }
 

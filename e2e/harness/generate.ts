@@ -242,11 +242,27 @@ function typeFallback(type: string): unknown {
 }
 
 /**
+ * A field's enum values as a `$pick`, as `enum_pick_values` builds it: turned
+ * back into the field's dominant type, or all left as text when any one of
+ * them doesn't convert.
+ */
+function enumPick(values: string[], dominant: string | undefined): unknown {
+  let converted: unknown[] | undefined;
+  if (dominant === 'int' || dominant === 'long') {
+    converted = values.map((value) => (/^[+-]?\d+$/.test(value) ? Number(value) : undefined));
+  } else if (dominant === 'double' || dominant === 'decimal') {
+    converted = values.map((value) => (value.trim() !== '' && Number.isFinite(Number(value)) ? Number(value) : undefined));
+  } else if (dominant === 'bool') {
+    converted = values.map((value) => (value === 'true' ? true : value === 'false' ? false : undefined));
+  }
+  return { $pick: converted?.every((value) => value !== undefined) ? converted : values };
+}
+
+/**
  * A starter template inferred from a schema report, by the rules of
  * `infer_template_from_schema`: skip `_id`, build objects from their children's
- * paths, then a generator from the field name or else its dominant type. The
- * backend also turns a low-cardinality field into a `$pick`; the fake leaves
- * that step out.
+ * paths, then a `$pick` of the field's enum values, or else a generator from
+ * its name, or else from its dominant type.
  */
 export function inferTemplate(report: ReturnType<typeof inferSchema>): string {
   const root: Record<string, unknown> = {};
@@ -254,7 +270,11 @@ export function inferTemplate(report: ReturnType<typeof inferSchema>): string {
     if (field.path === '_id' || field.path.startsWith('_id.')) continue;
     const dominant = field.types[0]?.type;
     if (dominant === 'object') continue;
-    const spec = nameHeuristic(field.path, dominant) ?? (dominant === undefined ? undefined : typeFallback(dominant));
+    const enumValues = (field as { enumValues?: string[] }).enumValues;
+    const spec =
+      (enumValues?.length ? enumPick(enumValues, dominant) : undefined) ??
+      nameHeuristic(field.path, dominant) ??
+      (dominant === undefined ? undefined : typeFallback(dominant));
     if (spec === undefined) continue;
 
     const segments = field.path.split('.');

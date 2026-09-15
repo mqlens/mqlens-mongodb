@@ -457,17 +457,38 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
 const MAX_ENUM_VALUES = 25;
 
 /**
+ * A value's text for enum detection, as `enum_scalar` gives it: strings,
+ * numbers and booleans have one. Null has none (`null`) and leaves the field's
+ * enum alone; anything else, such as an object, array, ObjectId or date, rules
+ * the field out (`false`).
+ */
+function enumText(value: unknown): string | null | false {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (isPlainObject(value)) {
+    for (const key of ['$numberInt', '$numberLong', '$numberDouble']) if (key in value) return String(Number(value[key]));
+  }
+  return false;
+}
+
+/**
  * The report `analyze_schema` returns, shaped like src-tauri/src/db/schema.rs:
  * each dotted field path with the BSON types seen at it, how many sampled
  * documents contain it (`presence`), and that as a fraction (`coverage`). A
  * field whose values are all strings, numbers or booleans, with no more than 25
- * distinct ones, also lists them (`enumValues`).
+ * distinct ones, also lists them as sorted text (`enumValues`).
  */
 export function inferSchema(docs: Doc[], sampleSize: number) {
   const sample = docs.slice(0, sampleSize > 0 ? sampleSize : docs.length);
   const stats = new Map<string, Map<string, number>>();
   const presence = new Map<string, number>();
-  const seenValues = new Map<string, unknown[]>();
+  const enumTexts = new Map<string, Set<string>>();
+  const notEnum = new Set<string>();
+  const ruleOut = (path: string) => {
+    notEnum.add(path);
+    enumTexts.delete(path);
+  };
   for (const doc of sample) {
     const seen = new Set<string>();
     const visit = (value: unknown, path: string) => {
@@ -476,31 +497,34 @@ export function inferSchema(docs: Doc[], sampleSize: number) {
       types.set(type, (types.get(type) ?? 0) + 1);
       stats.set(path, types);
       seen.add(path);
-      if (value !== null && value !== undefined) seenValues.set(path, [...(seenValues.get(path) ?? []), value]);
+      if (!notEnum.has(path)) {
+        const text = enumText(value);
+        if (text === false) ruleOut(path);
+        else if (text !== null) {
+          const texts = enumTexts.get(path) ?? new Set<string>();
+          texts.add(text);
+          if (texts.size > MAX_ENUM_VALUES) ruleOut(path);
+          else enumTexts.set(path, texts);
+        }
+      }
       if (type === 'object') for (const [key, child] of Object.entries(value as Doc)) visit(child, `${path}.${key}`);
     };
     for (const [key, value] of Object.entries(doc)) visit(value, key);
     for (const path of seen) presence.set(path, (presence.get(path) ?? 0) + 1);
   }
-  const enumOf = (path: string): unknown[] | undefined => {
-    const values = seenValues.get(path) ?? [];
-    if (values.length === 0 || !values.every((value) => ['string', 'number', 'boolean'].includes(typeof value))) return undefined;
-    const distinct = values.filter((value, i) => values.indexOf(value) === i);
-    return distinct.length <= MAX_ENUM_VALUES ? distinct.sort(compareValues) : undefined;
-  };
   return {
     sampled: sample.length,
     fields: [...stats.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([path, types]) => {
         const present = presence.get(path) ?? 0;
-        const enumValues = enumOf(path);
+        const texts = enumTexts.get(path);
         return {
           path,
           types: [...types.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count),
           presence: present,
           coverage: sample.length === 0 ? 0 : present / sample.length,
-          ...(enumValues ? { enumValues } : {}),
+          ...(texts && texts.size > 0 ? { enumValues: [...texts].sort() } : {}),
         };
       }),
   };

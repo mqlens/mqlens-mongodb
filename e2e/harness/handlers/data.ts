@@ -81,6 +81,33 @@ function mockExplain(db: string, coll: string, filter: unknown): string {
   );
 }
 
+/**
+ * What a profile connects to, compared the way `would_retarget_live_profile`
+ * compares it: the URI with its option names lower-cased and its options in key
+ * order (a repeated option keeps its own order), plus the SSH tunnel when one
+ * is on.
+ */
+function serverIdentity(profile: Record<string, unknown>): string {
+  const uri = String(profile.uri ?? '');
+  const at = uri.indexOf('?');
+  let canonical = uri;
+  if (at >= 0) {
+    const keyOf = (param: string) => param.split('=')[0];
+    const params = uri
+      .slice(at + 1)
+      .split('&')
+      .filter((param) => param !== '')
+      .map((param) => {
+        const eq = param.indexOf('=');
+        return eq < 0 ? param.toLowerCase() : `${param.slice(0, eq).toLowerCase()}${param.slice(eq)}`;
+      })
+      .sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
+    canonical = `${uri.slice(0, at)}?${params.join('&')}`;
+  }
+  const ssh = profile.ssh as { enabled?: boolean } | undefined;
+  return JSON.stringify([canonical, ssh?.enabled ? ssh : null]);
+}
+
 /** An embedded document, as opposed to a scalar, an array or an Extended JSON value such as `{ $oid }`. */
 const isSubDocument = (value: unknown): value is Doc =>
   typeof value === 'object' && value !== null && !Array.isArray(value) && !Object.keys(value).some((key) => key.startsWith('$'));
@@ -120,34 +147,57 @@ const duplicateKeyError = (ns: string, index: string, fields: string[], key: unk
     .map((field, i) => `${field}: ${JSON.stringify(key[i])}`)
     .join(', ')} }`;
 
-/** The value of each indexed field in `doc`; a missing field indexes as null. */
-const indexKey = (doc: Doc, fields: string[]) => fields.map((field) => valuesAt(doc, field)[0] ?? null);
+/**
+ * Every key a document puts in an index, as MongoDB builds a multikey index:
+ * an array on a field's path adds one entry per element, an empty array
+ * indexes as undefined, and a missing field as null.
+ */
+function indexKeys(doc: Doc, fields: string[]): unknown[][] {
+  let keys: unknown[][] = [[]];
+  for (const field of fields) {
+    const found = valuesAt(doc, field);
+    const values =
+      found.length === 0
+        ? [null]
+        : found.flatMap((value) => (!Array.isArray(value) ? [value] : value.length === 0 ? [{ $undefined: true }] : value));
+    keys = keys.flatMap((key) => values.map((value) => [...key, value]));
+  }
+  return keys;
+}
 
 /**
  * MongoDB's duplicate key error for writing `doc` into `target`, when its `_id`
- * or a unique index's key already belongs to another document. `replacing` is
- * the stored document an update is about to replace, which doesn't count.
+ * or any key it gives a unique index already belongs to another document.
+ * `replacing` is the stored document an update replaces, which doesn't count.
  */
 function duplicateKey(ns: string, target: Collection, doc: Doc, replacing?: Doc): string | null {
   const unique = [{ name: '_id_', keys: { _id: 1 } }, ...target.indexes.filter((index) => index.unique)];
   for (const index of unique) {
     const fields = Object.keys(index.keys);
-    const wanted = indexKey(doc, fields);
-    if (target.docs.some((existing) => existing !== replacing && jsonEqual(indexKey(existing, fields), wanted))) {
-      return duplicateKeyError(ns, index.name, fields, wanted);
+    const wanted = indexKeys(doc, fields);
+    for (const existing of target.docs) {
+      if (existing === replacing) continue;
+      const taken = indexKeys(existing, fields);
+      const clash = wanted.find((key) => taken.some((other) => jsonEqual(other, key)));
+      if (clash) return duplicateKeyError(ns, index.name, fields, clash);
     }
   }
   return null;
 }
 
-/** MongoDB's error for building a unique index over documents that already share a key. */
+/**
+ * MongoDB's error for building a unique index over documents that already
+ * share a key. A document repeating a key inside its own array is fine; only
+ * another document's copy clashes.
+ */
 function duplicateIndexKey(ns: string, name: string, keys: Doc, docs: Doc[]): string | null {
   const fields = Object.keys(keys);
   const seen: unknown[][] = [];
   for (const doc of docs) {
-    const key = indexKey(doc, fields);
-    if (seen.some((other) => jsonEqual(other, key))) return duplicateKeyError(ns, name, fields, key);
-    seen.push(key);
+    const own = indexKeys(doc, fields);
+    const clash = own.find((key) => seen.some((other) => jsonEqual(other, key)));
+    if (clash) return duplicateKeyError(ns, name, fields, clash);
+    seen.push(...own);
   }
   return null;
 }
@@ -210,6 +260,15 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
     save_connection_profile: ({ profile }) => {
       const next = structuredClone(profile) as E2EState['profiles'][number];
       const at = state.profiles.findIndex((existing) => existing.id === next.id);
+      // A profile with an open connection can't move to another server: that
+      // session would stay on the old one under the new settings.
+      if (
+        at >= 0 &&
+        serverIdentity(state.profiles[at] as unknown as Record<string, unknown>) !== serverIdentity(next as unknown as Record<string, unknown>) &&
+        Object.values(state.connections).some((conn) => conn.profileId === next.id)
+      ) {
+        throw "This connection is open in another window. Close it there before changing its server, so that session isn't left pointing at the old one.";
+      }
       if (at >= 0) state.profiles[at] = next;
       else state.profiles.push(next);
       return null;
@@ -469,17 +528,21 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       }
       if (isMock(state, id)) return 0;
       const found = collection(id, db, coll);
+      const ns = `${String(db)}.${String(coll)}`;
       // MongoDB's modified count: a match the update leaves as it was doesn't count.
+      // A document the update can't take stops it with MongoDB's error, and like
+      // a multi-update that stops at its first error, the documents already
+      // updated keep their change.
       let modified = 0;
       for (const [i, doc] of found.docs.entries()) {
         if (!matches(doc, where)) continue;
         const next = applyUpdate(doc, change);
-        // `_id` is immutable. Like a multi-update that stops at its first error,
-        // the documents already updated keep their change.
         if (!('_id' in next) || !jsonEqual(next._id, doc._id)) {
           throw "Failed to update documents: Performing an update on the path '_id' would modify the immutable field '_id'";
         }
         if (jsonEqual(next, doc)) continue;
+        const clash = duplicateKey(ns, found, next, doc);
+        if (clash) throw `Failed to update documents: ${clash}`;
         found.docs[i] = next;
         modified += 1;
       }
