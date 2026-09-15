@@ -9,7 +9,18 @@
 import type { Backend, Handler } from '../backend';
 import { generateDocuments, inferTemplate, previewDocuments } from '../generate';
 import { collectionForWrite, guardWritable, isMock } from '../lookup';
-import { aggregate, applyUpdate, find, inferSchema, jsonEqual, matches, mockFind, mockMatches, newObjectId } from '../mongo';
+import {
+  aggregate,
+  applyUpdate,
+  find,
+  inferSchema,
+  jsonEqual,
+  matches,
+  mockFind,
+  mockMatches,
+  newObjectId,
+  valuesAt,
+} from '../mongo';
 import type { Doc } from '../seed';
 import type { Collection, CollectionQueries, E2EState, Server } from '../state';
 import { recordTask } from '../tasks';
@@ -20,6 +31,8 @@ import { defineView } from '../views';
 const MOCK_AGGREGATE = 'Aggregation pipelines are not supported on mock connections';
 const MOCK_GENERATE_CAP = 10_000;
 const GENERATE_CAP = 50_000;
+/** The history entries kept per collection (`HISTORY_CAP` in src-tauri/src/queries.rs). */
+const HISTORY_CAP = 20;
 
 /** The backend takes filters, sorts and pipelines as JSON strings; blank means "none". */
 function parseJson<T>(value: unknown, fallback: T, what: string): T {
@@ -184,6 +197,91 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       viaMcp: false,
       mode: conn.mode,
     }));
+
+  /**
+   * Write an aggregation's results the way its final `$out` or `$merge` stage
+   * does. `$out` replaces the target's documents and keeps its indexes.
+   * `$merge` matches on `on` (by default `_id`) and, by default, merges a match
+   * and inserts the rest. An option the fake doesn't implement is rejected.
+   */
+  const writeAggregateOutput = (id: unknown, db: unknown, stage: Doc, results: Doc[]) => {
+    const targetOf = (into: unknown) =>
+      typeof into === 'string'
+        ? { db: String(db), coll: into }
+        : { db: String((into as Doc).db ?? db), coll: String((into as Doc).coll) };
+    const withId = (doc: Doc): Doc => (doc._id === undefined ? { _id: { $oid: newObjectId() }, ...doc } : doc);
+
+    if ('$out' in stage) {
+      const target = targetOf(stage.$out);
+      const ns = `${target.db}.${target.coll}`;
+      const collections = (server(id).databases[target.db] ??= {});
+      const existing = collections[target.coll];
+      if (existing?.type === 'view') throw `Namespace ${ns} is a view, not a collection`;
+      // Built aside and swapped in whole, so a refused document leaves the old collection as it was.
+      const replacement: Collection = {
+        type: 'collection',
+        docs: [],
+        indexes: structuredClone(existing?.indexes ?? []),
+        validation: existing?.validation,
+      };
+      for (const doc of results) {
+        const incoming = withId(structuredClone(doc));
+        const refusal = duplicateKey(ns, replacement, incoming);
+        if (refusal) throw refusal;
+        replacement.docs.push(incoming);
+      }
+      collections[target.coll] = replacement;
+      return;
+    }
+
+    const spec: Doc = typeof stage.$merge === 'string' ? { into: stage.$merge } : (stage.$merge as Doc);
+    const target = targetOf(spec.into);
+    const ns = `${target.db}.${target.coll}`;
+    const on = spec.on === undefined ? ['_id'] : (Array.isArray(spec.on) ? spec.on : [spec.on]).map(String);
+    const to = collectionForWrite(state, id, target.db, target.coll);
+    if (to.type === 'view') throw `Namespace ${ns} is a view, not a collection`;
+    // Matching on anything but _id needs a unique index on exactly those fields.
+    const onId = on.length === 1 && on[0] === '_id';
+    if (!onId && !to.indexes.some((index) => index.unique && jsonEqual(Object.keys(index.keys).sort(), [...on].sort()))) {
+      throw 'Cannot find index to verify that join fields will be unique';
+    }
+    const keyOf = (doc: Doc) => on.map((field) => valuesAt(doc, field)[0] ?? null);
+    for (const doc of results) {
+      const at = to.docs.findIndex((stored) => jsonEqual(keyOf(stored), keyOf(doc)));
+      if (at >= 0) {
+        switch (spec.whenMatched ?? 'merge') {
+          case 'merge':
+            to.docs[at] = { ...to.docs[at], ...structuredClone(doc) };
+            break;
+          case 'replace':
+            to.docs[at] = { ...structuredClone(doc), _id: to.docs[at]._id };
+            break;
+          case 'keepExisting':
+            break;
+          case 'fail':
+            throw "$merge with whenMatched: fail found an existing document with the same values for the 'on' field";
+          default:
+            throw `Unsupported $merge whenMatched ${JSON.stringify(spec.whenMatched)} in the e2e fake backend`;
+        }
+      } else {
+        switch (spec.whenNotMatched ?? 'insert') {
+          case 'insert': {
+            const incoming = withId(structuredClone(doc));
+            const refusal = duplicateKey(ns, to, incoming);
+            if (refusal) throw refusal;
+            to.docs.push(incoming);
+            break;
+          }
+          case 'discard':
+            break;
+          case 'fail':
+            throw '$merge could not find a matching document in the target collection for at least one document in the source collection';
+          default:
+            throw `Unsupported $merge whenNotMatched ${JSON.stringify(spec.whenNotMatched)} in the e2e fake backend`;
+        }
+      }
+    }
+  };
 
   const handlers: Record<string, Handler> = {
     // Profiles and connections
@@ -360,9 +458,19 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
     },
     execute_aggregate: ({ id, database: db, collection: coll, pipeline, confirmed }) => {
       const stages = parseJson<Doc[]>(pipeline, [], 'pipeline');
-      if (stages.some((stage) => '$out' in stage || '$merge' in stage)) guardWritable(state, id, { destructive: true, confirmed });
+      const writeAt = stages.findIndex((stage) => '$out' in stage || '$merge' in stage);
+      if (writeAt >= 0) guardWritable(state, id, { destructive: true, confirmed });
       if (isMock(state, id)) throw MOCK_AGGREGATE;
-      return aggregate(collection(id, db, coll).docs, stages).map((doc) => JSON.stringify(doc));
+      if (writeAt >= 0 && writeAt !== stages.length - 1) {
+        throw `${'$out' in stages[writeAt] ? '$out' : '$merge'} can only be the final stage in the pipeline`;
+      }
+      const results = aggregate(collection(id, db, coll).docs, writeAt >= 0 ? stages.slice(0, -1) : stages);
+      // A pipeline that ends in $out or $merge writes its results and returns none.
+      if (writeAt >= 0) {
+        writeAggregateOutput(id, db, stages[writeAt], results);
+        return [];
+      }
+      return results.map((doc) => JSON.stringify(doc));
     },
     explain_mql_query: ({ id, database: db, collection: coll, filter }) => {
       if (isMock(state, id)) return mockExplain(String(db), String(coll), filter);
@@ -507,8 +615,15 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       entry.saved = (entry.saved as Doc[]).filter((existing) => existing.id !== id);
       return null;
     },
+    // Newest first, without an earlier entry for the same query, and no more
+    // than HISTORY_CAP of them (`push_history`).
     record_history: ({ connectionName, db, collection: coll, entry }) => {
-      queriesFor(connectionName, db, coll).history.unshift(entry);
+      const queries = queriesFor(connectionName, db, coll);
+      const next = entry as Doc;
+      queries.history = [next, ...(queries.history as Doc[]).filter((earlier) => !jsonEqual(earlier.query, next.query))].slice(
+        0,
+        HISTORY_CAP,
+      );
       return null;
     },
     set_default_query: ({ connectionName, db, collection: coll, default: value }) => {

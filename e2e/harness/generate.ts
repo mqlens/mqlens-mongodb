@@ -122,8 +122,16 @@ function parseSpec(value: unknown, path: string): Spec {
       return { kind: 'pick', values: inner };
     case '$array': {
       const options = optionsAt(inner, what);
-      if (!('of' in options)) throw `${what} needs "of"`;
-      return { kind: 'array', of: parseSpec(options.of, `${path}[0]`), ...range(options, what) };
+      if (!('of' in options)) throw `${what} requires of`;
+      const of = parseSpec(options.of, `${path}[0]`);
+      // The backend reads both bounds as unsigned integers; anything else is a missing bound.
+      for (const bound of ['min', 'max'] as const) {
+        const value = options[bound];
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) throw `${what} requires ${bound}`;
+      }
+      const bounds = range(options, what);
+      for (const bound of ['min', 'max'] as const) if (bounds[bound] > 0xffff_ffff) throw `${what} ${bound} out of range`;
+      return { kind: 'array', of, ...bounds };
     }
     default:
       throw `unknown generator "${key}" at ${path}`;

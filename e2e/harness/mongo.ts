@@ -445,7 +445,17 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
       switch (op) {
         case '$set': setPath(out, path, value); break;
         case '$unset': deletePath(out, path); break;
-        case '$inc': setPath(out, path, Number(comparable(valuesAt(out, path)[0] ?? 0)) + Number(comparable(value))); break;
+        case '$inc': {
+          // MongoDB increments only a number by a number, or starts a missing field at zero.
+          const numeric = (candidate: unknown) => ['int', 'long', 'double', 'decimal'].includes(bsonType(candidate));
+          if (!numeric(value)) throw `Cannot increment with non-numeric argument: {${path}: ${JSON.stringify(value)}}`;
+          const current = valuesAt(out, path)[0];
+          if (current !== undefined && !numeric(current)) {
+            throw `Cannot apply $inc to a value of non-numeric type. {_id: ${JSON.stringify(doc._id)}} has the field '${path}' of non-numeric type ${bsonType(current)}`;
+          }
+          setPath(out, path, Number(comparable(current ?? 0)) + Number(comparable(value)));
+          break;
+        }
         case '$push': {
           const current = valuesAt(out, path)[0];
           // MongoDB refuses to push onto a field that holds anything but an array.
