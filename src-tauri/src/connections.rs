@@ -117,7 +117,7 @@ fn default_locale() -> String {
     "system".to_string()
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AppearanceSettings {
     #[serde(default = "default_preset_id")]
     pub preset_id: String,
@@ -137,6 +137,39 @@ pub struct AppearanceSettings {
     pub ui_zoom: f32,
     #[serde(default = "default_query_bar_height")]
     pub query_bar_height: u8,
+}
+
+/// Written out rather than derived: a derived `Default` ignores the serde
+/// default functions above (they apply only when deserializing), so a fresh
+/// install's `AppSettings` carried an empty preset, mode and fonts and a zero
+/// font size.
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            preset_id: default_preset_id(),
+            mode: default_theme_mode(),
+            overrides: std::collections::HashMap::new(),
+            font_sans: default_font_sans(),
+            font_mono: default_font_mono(),
+            font_size: default_font_size(),
+            spacing_density: default_spacing_density(),
+            ui_zoom: default_ui_zoom(),
+            query_bar_height: default_query_bar_height(),
+        }
+    }
+}
+
+/// The appearance of a settings file written before appearance was saved.
+///
+/// Its empty `preset_id` tells ThemeProvider nothing was saved, so it keeps the
+/// theme it recovered locally (the appearance cache, or the legacy
+/// `mqlens-theme` keys) instead of replacing it with the defaults. A brand-new
+/// `AppSettings` has no such theme to keep and gets real defaults.
+fn unsaved_appearance() -> AppearanceSettings {
+    AppearanceSettings {
+        preset_id: String::new(),
+        ..AppearanceSettings::default()
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -195,7 +228,7 @@ pub struct AppSettings {
     #[serde(default = "default_update_channel")]
     pub update_channel: String,
     // UI appearance: theme preset, fonts, font size, spacing density.
-    #[serde(default)]
+    #[serde(default = "unsaved_appearance")]
     pub appearance: AppearanceSettings,
     /// Whether the embedded MCP server should be running (#350).
     ///
@@ -1103,6 +1136,48 @@ pub async fn test_connection_uri(
         let _ = on_phase.send(update);
     };
     run_connection_test(&uri, ssh.as_ref(), &emit).await
+}
+
+#[cfg(test)]
+mod appearance_default_tests {
+    use super::*;
+
+    #[test]
+    fn fresh_settings_carry_the_default_appearance() {
+        let appearance = AppSettings::default().appearance;
+        assert_eq!(appearance.preset_id, "mqlens-dark");
+        assert_eq!(appearance.mode, "dark");
+        assert_eq!(appearance.font_sans, "Inter");
+        assert_eq!(appearance.font_mono, "JetBrains Mono");
+        assert_eq!(appearance.font_size, 13);
+        assert_eq!(appearance.spacing_density, "cozy");
+        assert_eq!(appearance.ui_zoom, 1.0);
+        assert_eq!(appearance.query_bar_height, 29);
+        assert!(appearance.overrides.is_empty());
+    }
+
+    /// Constructing a default appearance and reading one with no fields set must
+    /// not drift apart again.
+    #[test]
+    fn default_matches_deserializing_an_empty_appearance() {
+        let from_empty: AppearanceSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(from_empty, AppearanceSettings::default());
+    }
+
+    /// A settings file from before appearance was saved must read as unsaved, or
+    /// ThemeProvider replaces the theme it recovered locally with the defaults.
+    /// Any later settings write must keep it that way.
+    #[test]
+    fn a_settings_file_without_an_appearance_reads_as_unsaved() {
+        let settings: AppSettings = serde_json::from_str(r#"{"locale":"en"}"#).unwrap();
+        assert_eq!(settings.appearance.preset_id, "");
+
+        let merged = merge_settings_patch(&settings, &serde_json::json!({ "locale": "de" })).unwrap();
+        let saved = serde_json::to_string(&merged).unwrap();
+        let reread: AppSettings = serde_json::from_str(&saved).unwrap();
+        assert_eq!(reread.locale, "de");
+        assert_eq!(reread.appearance.preset_id, "");
+    }
 }
 
 #[cfg(test)]

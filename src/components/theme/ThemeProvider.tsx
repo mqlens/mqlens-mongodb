@@ -47,11 +47,16 @@ async function loadAppearanceFromSettings(): Promise<ThemeConfig | null> {
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [config, setConfig] = useState<ThemeConfig>(readInitialThemeConfig);
   const [resolvedMode, setResolvedMode] = useState<"dark" | "light">("dark");
-  const skipAutoSaveRef = useRef(true);
+  // The config hydration last put into state. Auto-save skips exactly that
+  // object, so a loaded appearance is not written straight back, and nothing
+  // else. A "skip the next change" flag set up front outlived a load that never
+  // happened (a fresh install has no appearance to load) and swallowed the
+  // user's first change instead.
+  const hydratedConfigRef = useRef<ThemeConfig | null>(null);
   const hydrationDoneRef = useRef(false);
 
   const applyLoadedConfig = useCallback((next: ThemeConfig) => {
-    skipAutoSaveRef.current = true;
+    hydratedConfigRef.current = next;
     setConfig(next);
     writeAppearanceCache(next);
   }, []);
@@ -173,10 +178,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // Persist appearance when theme settings change (sidebar picker, settings tab, etc.)
   useEffect(() => {
     if (!hydrationDoneRef.current) return;
-    if (skipAutoSaveRef.current) {
-      skipAutoSaveRef.current = false;
-      return;
-    }
+    if (config === hydratedConfigRef.current) return;
     writeAppearanceCache(config);
     const timer = window.setTimeout(() => {
       saveAppearance().catch(() => {

@@ -103,8 +103,12 @@ jobs:
           # Squash-merged PRs collapse their commits into one body whose subjects
           # survive as "* feat: …" bullets — accept the optional "* " prefix so a
           # squash merge of dev still produces a release.
+          # Only the Conventional Commits markers mean a breaking change: "!" before
+          # the colon, or a footer line starting with the upper-case token
+          # "BREAKING CHANGE:" (or "BREAKING-CHANGE:"). Prose that only mentions a
+          # breaking change must not count; #398's body did, and it released 1.0.0.
           SUBJECTS=$(git log --no-merges --pretty=%B ${RANGE})
-          if echo "$SUBJECTS" | grep -qiE '(^|[[:space:]])BREAKING[ -]CHANGE' \
+          if echo "$SUBJECTS" | grep -qE '^(\* )?BREAKING[ -]CHANGE:' \
              || echo "$SUBJECTS" | grep -qE '^(\* )?[a-z]+(\([^)]*\))?!:'; then
             BUMP=major
           elif echo "$SUBJECTS" | grep -qE '^(\* )?feat(\([^)]*\))?:'; then

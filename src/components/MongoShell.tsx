@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AIChatPanel, type ChatMessage } from './AIChatPanel';
+import type { IndexInfo } from './Sidebar';
 import { buildRunnableCommand, guardScriptRun, type GeneratedQuery } from '../lib/mongoCommand';
 import { DataGrid } from './DataGrid';
 import { registerMongoCompletionProvider, setModelMeta, clearModelMeta } from '../lib/monacoMongo';
@@ -194,6 +195,11 @@ const firstArg = (argText: string) => {
   return argText;
 };
 
+// mongosh prints with util.inspect, which leaves identifier-like keys bare and
+// quotes the rest: `{ 'profile.email': 1 }`, `{ '$**': 1 }`.
+const shellKey = (key: string): string =>
+  /^[a-zA-Z_][a-zA-Z_0-9]*$/.test(key) ? key : `'${key.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+
 const stringifyShellValue = (value: unknown, indent = 0): string => {
   const pad = '  '.repeat(indent);
   const padNext = '  '.repeat(indent + 1);
@@ -209,11 +215,28 @@ const stringifyShellValue = (value: unknown, indent = 0): string => {
     const entries = Object.entries(value as Record<string, unknown>);
     if (entries.length === 0) return '{}';
     return `{\n${entries
-      .map(([key, val]) => `${padNext}${key}: ${stringifyShellValue(val, indent + 1)}`)
+      .map(([key, val]) => `${padNext}${shellKey(key)}: ${stringifyShellValue(val, indent + 1)}`)
       .join(',\n')}\n${pad}}`;
   }
   return String(value);
 };
+
+/**
+ * `list_indexes` rows in the shape mongosh prints for `getIndexes()`: `key`
+ * holds the parsed key pattern, and `unique`/`sparse` appear only when set.
+ * The backend has no index version, so there is no `v`. A key pattern that
+ * does not parse is shown as the raw string rather than hidden.
+ */
+export const toShellIndexes = (indexes: IndexInfo[]) =>
+  indexes.map(({ name, keys, unique, sparse }) => {
+    let key: unknown = keys;
+    try {
+      key = JSON.parse(keys);
+    } catch {
+      // Keep the raw string.
+    }
+    return { key, name, ...(unique && { unique }), ...(sparse && { sparse }) };
+  });
 
 /**
  * A transcript entry as plain text — what the user sees, and what find searches.
@@ -756,13 +779,13 @@ export const MongoShell: React.FC<MongoShellProps> = ({
 
     const updateStartupEntry = (mongodbVersion: string, mongoshVersion: string) => {
       if (cancelled) return;
-      setEntries((prev) => {
+      changeEntries((prev) => {
         if (prev.length === 0 || prev[0].kind !== 'text') return prev;
+        const lines = buildStartupLines(startupLogId, connectionTarget, mongodbVersion, mongoshVersion);
+        // Unchanged, as on a fresh mount: no write, so nothing to notify.
+        if (prev[0].lines.join('\n') === lines.join('\n')) return prev;
         const next = [...prev];
-        next[0] = {
-          kind: 'text',
-          lines: buildStartupLines(startupLogId, connectionTarget, mongodbVersion, mongoshVersion),
-        };
+        next[0] = { kind: 'text', lines };
         return next;
       });
     };
@@ -808,20 +831,19 @@ export const MongoShell: React.FC<MongoShellProps> = ({
       mountedRef.current = false;
     };
   }, []);
-  const appendEntries = (added: ShellEntry[]) => {
-    if (added.length === 0) return;
+  const changeEntries = (update: (current: ShellEntry[]) => ShellEntry[]) => {
     if (!sessionKey) {
       // No tab identity: this instance's state is the only transcript there is.
       if (mountedRef.current) {
         setEntries((prev) => {
-          const next = [...prev, ...added];
+          const next = update(prev);
           entriesRef.current = next;
           return next;
         });
       }
       return;
     }
-    // Append against the REGISTRY, mounted or not. A slow command can still be
+    // Change the REGISTRY, mounted or not. A slow command can still be
     // running when the tab is switched away and back, leaving two MongoShell
     // instances alive with two independent `entriesRef`s. Basing either one on
     // its own snapshot means the later completion silently drops whatever the
@@ -829,14 +851,26 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     // command finishes after the remount, the mounted instance's next append
     // (and the mirror effect behind it) would overwrite the registry with a
     // `prev` that never saw that output.
+    //
+    // Every change goes this way, not only appends. One made with `setEntries`
+    // alone is not in the registry until the mirror effect runs, and any write
+    // landing before then notifies the watcher with the stored transcript,
+    // which replaces the change before it is ever saved: `cls` was undone by
+    // its own command's completion, and the banner kept saying "detecting...".
     const base = readShellSession(sessionKey)?.entries ?? entriesRef.current;
-    const next = [...base, ...added];
+    const next = update(base);
+    if (next === base) return;
     entriesRef.current = next;
     // Also show it here, so the visible console reflects everything the tab has
     // accumulated rather than only what this instance witnessed.
     if (mountedRef.current) setEntries(next);
     persistSession({ entries: next });
   };
+  const appendEntries = (added: ShellEntry[]) => {
+    if (added.length === 0) return;
+    changeEntries((current) => [...current, ...added]);
+  };
+  const clearTranscript = () => changeEntries(() => []);
 
   const appendCommandOutput = (output: MongoshCommandOutput) => {
     const nextEntries: ShellEntry[] = [];
@@ -1219,7 +1253,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
     setActive(started);
     try {
       if (/^(cls|clear)$/i.test(raw)) {
-        setEntries([]);
+        clearTranscript();
         setTab('console');
         return;
       }
@@ -1308,8 +1342,8 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           appendEntries([{ kind: 'value', value: count }, { kind: 'note', text: `${Math.round((performance.now() - started) * 10) / 10} ms` }]);
           setTab('console');
         } else if (op === 'getIndexes') {
-          const indexes = await invoke<string[]>('list_indexes', { id: connectionId, db: currentDb, collection: collName });
-          appendEntries([{ kind: 'value', value: indexes.map((name) => ({ name })) }]);
+          const indexes = await invoke<IndexInfo[]>('list_indexes', { id: connectionId, db: currentDb, collection: collName });
+          appendEntries([{ kind: 'value', value: toShellIndexes(indexes) }]);
           setTab('console');
         }
         return;
@@ -1650,7 +1684,7 @@ export const MongoShell: React.FC<MongoShellProps> = ({
           </Tabs>
           <span className="flex-1" />
           {tab === 'console' ? (
-            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title={t('mongoShell.console.clearTitle')} onClick={() => setEntries([])}>
+            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title={t('mongoShell.console.clearTitle')} onClick={clearTranscript}>
               <Eraser size={12} />
             </Button>
           ) : (
