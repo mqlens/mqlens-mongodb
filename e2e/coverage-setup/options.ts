@@ -5,7 +5,7 @@ import type { CoverageReportOptions } from 'monocart-coverage-reports';
  * The gate the suite must keep, in percent. A ratchet: raise it as tests are
  * added, never lower it, until it reaches the 95% target in #396.
  */
-export const COVERAGE_GATE = { lines: 81, statements: 77 };
+export const COVERAGE_GATE = { lines: 84, statements: 80 };
 
 /** `src/...` for any path or URL that points into the app's own source tree. */
 function toSourcePath(pathOrUrl: string): string {

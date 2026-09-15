@@ -109,6 +109,8 @@ export interface Seed {
   aiReplies?: AiReplySeed[];
   /** The models an AI provider lists. */
   aiModels?: string[];
+  /** Touch ID / Windows Hello as biometric_status reports it; unavailable by default. */
+  biometric?: { available?: boolean; enrolled?: boolean; biometryType?: number; unlockError?: string | null };
   /** When set, `vault_unlock` rejects any other password. */
   vaultPassword?: string;
   settings?: Record<string, unknown>;

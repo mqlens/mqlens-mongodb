@@ -72,6 +72,7 @@ export interface E2EState {
   changeStreams: Record<string, ChangeStream>;
   aiReplies: AiReplySeed[];
   aiModels: string[];
+  biometric: { available: boolean; enrolled: boolean; biometryType: number; unlockError: string | null };
 }
 
 /** A GridFS file as `list_gridfs_files` reports it, plus the content a download writes. */
@@ -177,5 +178,11 @@ export function createState(seed: Seed): E2EState {
     changeStreams: {},
     aiReplies: structuredClone(seed.aiReplies ?? []),
     aiModels: structuredClone(seed.aiModels ?? []),
+    biometric: {
+      available: seed.biometric?.available ?? false,
+      enrolled: seed.biometric?.enrolled ?? false,
+      biometryType: seed.biometric?.biometryType ?? 0,
+      unlockError: seed.biometric?.unlockError ?? null,
+    },
   };
 }

@@ -38,12 +38,24 @@ export function registerAppHandlers(backend: Backend, state: E2EState): void {
       state.profiles = [];
       return null;
     },
-    biometric_status: () => ({ available: false, biometryType: 0, enrolled: false }),
-    biometric_unlock: () => {
-      throw 'Biometric unlock is not available';
+    biometric_status: () => {
+      const { available, biometryType, enrolled } = state.biometric;
+      return { available, biometryType, enrolled };
     },
-    biometric_enable: () => null,
-    biometric_disable: () => null,
+    biometric_unlock: () => {
+      if (!state.biometric.available || !state.biometric.enrolled) throw 'Biometric unlock is not available';
+      if (state.biometric.unlockError) throw state.biometric.unlockError;
+      state.vault = 'unlocked';
+      return 'unlocked';
+    },
+    biometric_enable: () => {
+      state.biometric.enrolled = true;
+      return null;
+    },
+    biometric_disable: () => {
+      state.biometric.enrolled = false;
+      return null;
+    },
 
     // Settings
     load_app_settings: () => {
