@@ -60,6 +60,95 @@ function document(doc: Record<string, unknown>): number[] {
   return [...int32(body.length + 5), ...body, 0];
 }
 
+const decoder = new TextDecoder();
+
+/**
+ * The documents in a `.bson` file, as relaxed Extended JSON: the reverse of
+ * `toBsonBase64`, for a BSON import. The fake's files are text, so the bytes
+ * arrive base64-encoded. A type the fake doesn't decode is rejected.
+ */
+export function fromBsonBase64(base64: string): Doc[] {
+  const bytes = Uint8Array.from(atob(base64.trim()), (char) => char.charCodeAt(0));
+  const view = new DataView(bytes.buffer);
+  const hexOf = (from: number, to: number) => [...bytes.subarray(from, to)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
+  const readDocument = (at: number): [Doc, number] => {
+    if (at + 5 > bytes.length) throw 'Invalid BSON: truncated document';
+    const size = view.getInt32(at, true);
+    if (size < 5 || at + size > bytes.length) throw 'Invalid BSON: truncated document';
+    const doc: Doc = {};
+    let pos = at + 4;
+    while (pos < at + size - 1) {
+      const type = bytes[pos];
+      const nameEnd = bytes.indexOf(0, pos + 1);
+      const name = decoder.decode(bytes.subarray(pos + 1, nameEnd));
+      pos = nameEnd + 1;
+      let value: unknown;
+      switch (type) {
+        case 0x01:
+          value = view.getFloat64(pos, true);
+          pos += 8;
+          break;
+        case 0x02: {
+          const length = view.getInt32(pos, true);
+          value = decoder.decode(bytes.subarray(pos + 4, pos + 4 + length - 1));
+          pos += 4 + length;
+          break;
+        }
+        case 0x03:
+        case 0x04: {
+          const [inner, next] = readDocument(pos);
+          value = type === 0x04 ? Object.values(inner) : inner;
+          pos = next;
+          break;
+        }
+        case 0x07:
+          value = { $oid: hexOf(pos, pos + 12) };
+          pos += 12;
+          break;
+        case 0x08:
+          value = bytes[pos] === 1;
+          pos += 1;
+          break;
+        case 0x09: {
+          const millis = Number(view.getBigInt64(pos, true));
+          const year = new Date(millis).getUTCFullYear();
+          // Relaxed Extended JSON writes a date from 1970 to 9999 as ISO text.
+          value = millis >= 0 && year <= 9999 ? { $date: new Date(millis).toISOString() } : { $date: { $numberLong: String(millis) } };
+          pos += 8;
+          break;
+        }
+        case 0x0a:
+          value = null;
+          break;
+        case 0x10:
+          value = view.getInt32(pos, true);
+          pos += 4;
+          break;
+        case 0x12: {
+          const long = view.getBigInt64(pos, true);
+          value = Number.isSafeInteger(Number(long)) ? Number(long) : { $numberLong: long.toString() };
+          pos += 8;
+          break;
+        }
+        default:
+          throw `e2e fake backend cannot read BSON type 0x${type.toString(16)}`;
+      }
+      // Defined rather than assigned, so a field named __proto__ stays a plain field.
+      Object.defineProperty(doc, name, { value, enumerable: true, writable: true, configurable: true });
+    }
+    return [doc, at + size];
+  };
+
+  const docs: Doc[] = [];
+  for (let at = 0; at < bytes.length; ) {
+    const [doc, next] = readDocument(at);
+    docs.push(doc);
+    at = next;
+  }
+  return docs;
+}
+
 /**
  * The documents as a `.bson` file holds them, one after another, as base64:
  * the fake records written files as text.

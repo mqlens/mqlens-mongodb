@@ -5,7 +5,7 @@
 // checked and counted but write nothing, and the database tools refuse it, as
 // in the backend.
 import type { Backend, Handler } from '../backend';
-import { toBsonBase64 } from '../bson';
+import { fromBsonBase64, toBsonBase64 } from '../bson';
 import { collectionForWrite, collectionOf, databaseOf, guardWritable, isMock, serverOf } from '../lookup';
 import { aggregate, find, includePath, inferSchema, jsonEqual, matches, mockFind, newObjectId } from '../mongo';
 import type { Doc } from '../seed';
@@ -288,6 +288,13 @@ function parseImport(text: string, format: string, csv: CsvOptions = {}): { docs
         columns: header,
       };
     }
+    case 'bson':
+      // A .bson file's documents one after another; the fake's files are text, so its bytes are base64-encoded.
+      try {
+        return { docs: fromBsonBase64(text), columns: [] };
+      } catch (error) {
+        throw typeof error === 'string' ? error : `Invalid BSON: ${String(error)}`;
+      }
     default:
       throw `Unsupported import format: ${format}`;
   }

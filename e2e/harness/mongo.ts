@@ -203,20 +203,45 @@ export function matches(doc: Doc, filter: Doc): boolean {
   });
 }
 
+/**
+ * The value a document sorts by at `path`. An array, or several values reached
+ * through one, sorts by its lowest element ascending and its highest
+ * descending, as MongoDB sorts a multikey field; a missing field sorts as null.
+ */
+function sortKey(doc: Doc, path: string, descending: boolean): unknown {
+  const values = valuesAt(doc, path).flatMap((value) => (Array.isArray(value) ? value : [value]));
+  if (values.length === 0) return null;
+  return values.reduce((best, value) => {
+    const order = compareValues(value, best);
+    return (descending ? order > 0 : order < 0) ? value : best;
+  });
+}
+
 export function sortDocs(docs: Doc[], spec: Record<string, unknown>): Doc[] {
   const keys = Object.entries(spec);
   if (keys.length === 0) return docs;
   return [...docs].sort((a, b) => {
     for (const [path, direction] of keys) {
-      const order = compareValues(valuesAt(a, path)[0] ?? null, valuesAt(b, path)[0] ?? null);
-      if (order !== 0) return Number(direction) < 0 ? -order : order;
+      const descending = Number(direction) < 0;
+      const order = compareValues(sortKey(a, path, descending), sortKey(b, path, descending));
+      if (order !== 0) return descending ? -order : order;
     }
     return 0;
   });
 }
 
+/**
+ * The error for a field name that would reach Object.prototype through an
+ * assignment or a delete. MongoDB allows these names; the fake refuses them
+ * rather than let a test's data pollute prototypes.
+ */
+const unsafeKey = (part: string) => `e2e fake backend refuses the field name ${part}`;
+
 function setPath(target: Doc, path: string, value: unknown): void {
   const parts = path.split('.');
+  for (const part of parts) {
+    if (part === '__proto__' || part === 'constructor' || part === 'prototype') throw unsafeKey(part);
+  }
   let node: Record<string, unknown> = target;
   for (const part of parts.slice(0, -1)) {
     if (!isPlainObject(node[part])) node[part] = {};
@@ -235,6 +260,7 @@ function updatePath(target: Doc, path: string, value: unknown): void {
   let node: Record<string, unknown> | unknown[] = target;
   for (let i = 0; i < parts.length; i += 1) {
     const part = parts[i];
+    if (part === '__proto__' || part === 'constructor' || part === 'prototype') throw unsafeKey(part);
     let key: string | number = part;
     if (Array.isArray(node)) {
       if (!/^\d+$/.test(part)) throw `Cannot create field '${part}' in element {${parts[i - 1]}: ${JSON.stringify(node)}}`;
@@ -255,14 +281,35 @@ function updatePath(target: Doc, path: string, value: unknown): void {
   }
 }
 
+/**
+ * Remove a dotted path the way `$unset` does. A numeric part indexes into an
+ * array, and unsetting an array element leaves null in its place, since MongoDB
+ * keeps the array's length. A path that isn't there changes nothing.
+ */
 function deletePath(target: Doc, path: string): void {
   const parts = path.split('.');
   let node: unknown = target;
-  for (const part of parts.slice(0, -1)) {
-    if (!isPlainObject(node)) return;
-    node = node[part];
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i];
+    if (part === '__proto__' || part === 'constructor' || part === 'prototype') throw unsafeKey(part);
+    const last = i === parts.length - 1;
+    if (Array.isArray(node)) {
+      if (!/^\d+$/.test(part) || Number(part) >= node.length) return;
+      if (last) {
+        node[Number(part)] = null;
+        return;
+      }
+      node = node[Number(part)];
+    } else if (isPlainObject(node) && !isEjsonWrapper(node) && Object.prototype.hasOwnProperty.call(node, part)) {
+      if (last) {
+        delete node[part];
+        return;
+      }
+      node = node[part];
+    } else {
+      return;
+    }
   }
-  if (isPlainObject(node)) delete node[parts[parts.length - 1]];
 }
 
 /**
@@ -273,7 +320,8 @@ function deletePath(target: Doc, path: string): void {
  */
 export function includePath(out: Record<string, unknown>, source: unknown, path: string): void {
   const [head, ...rest] = path.split('.');
-  if (!isPlainObject(source) || isEjsonWrapper(source) || !(head in source)) return;
+  if (head === '__proto__' || head === 'constructor' || head === 'prototype') throw unsafeKey(head);
+  if (!isPlainObject(source) || isEjsonWrapper(source) || !Object.prototype.hasOwnProperty.call(source, head)) return;
   const value = source[head];
   if (rest.length === 0) {
     out[head] = structuredClone(value);
@@ -310,7 +358,8 @@ function excludePath(target: unknown, path: string): void {
     return;
   }
   const [head, ...rest] = path.split('.');
-  if (!isPlainObject(target) || isEjsonWrapper(target) || !(head in target)) return;
+  if (head === '__proto__' || head === 'constructor' || head === 'prototype') throw unsafeKey(head);
+  if (!isPlainObject(target) || isEjsonWrapper(target) || !Object.prototype.hasOwnProperty.call(target, head)) return;
   if (rest.length === 0) delete target[head];
   else excludePath(target[head], rest.join('.'));
 }
@@ -321,6 +370,9 @@ export function project(doc: Doc, spec: Record<string, unknown>): Doc {
   const isInclude = (value: unknown) => value === 1 || value === true;
   const isExclude = (value: unknown) => value === 0 || value === false;
   const shaping = entries.filter(([key, value]) => key !== '_id' && !isExclude(value));
+  // Only _id may be excluded from a projection that includes or computes fields.
+  const excluded = entries.find(([key, value]) => key !== '_id' && isExclude(value));
+  if (shaping.length > 0 && excluded) throw `Cannot do exclusion on field ${excluded[0]} in inclusion projection`;
   if (shaping.length > 0) {
     const out: Doc = {};
     if (!isExclude(spec._id) && '_id' in doc) out._id = doc._id;
