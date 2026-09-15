@@ -85,8 +85,14 @@ function parseSpec(value: unknown, path: string): Spec {
   switch (key) {
     case '$literal':
       return { kind: 'literal', value: inner };
-    case '$int':
-      return { kind: 'int', ...range(optionsAt(inner, what), what, { min: 0, max: 1000 }) };
+    case '$int': {
+      const options = optionsAt(inner, what);
+      // Both bounds are whole numbers, as the backend's parser requires.
+      for (const bound of ['min', 'max'] as const) {
+        if (bound in options && !Number.isInteger(options[bound])) throw `${what} ${bound} must be an integer`;
+      }
+      return { kind: 'int', ...range(options, what, { min: 0, max: 1000 }) };
+    }
     case '$float': {
       const options = optionsAt(inner, what);
       const decimals = options.decimals ?? 2;

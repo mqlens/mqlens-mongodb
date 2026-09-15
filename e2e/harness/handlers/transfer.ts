@@ -10,7 +10,7 @@ import { aggregate, find, includePath, inferSchema, jsonEqual, matches, mockFind
 import type { Doc } from '../seed';
 import type { E2EState } from '../state';
 import { recordTask } from '../tasks';
-import { duplicateKey } from '../unique';
+import { duplicateIndexKey, duplicateKey } from '../unique';
 import { validationError } from '../validation';
 import { defineView } from '../views';
 
@@ -342,8 +342,11 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
     let documentsCopied = 0;
     let documentsSkipped = 0;
     // Written unordered. A row MongoDB refuses as a duplicate key, on `_id` or on
-    // any unique index, is retried alone and counted as skipped.
+    // any unique index, is retried alone and counted as skipped; any other
+    // refusal, such as the target's validator, fails the copy.
     for (const doc of from.docs.filter((candidate) => matches(candidate, filter))) {
+      const refused = validationError(to, doc);
+      if (refused) throw `Insert into target failed: ${refused}`;
       if (duplicateKey(ns, to, doc)) {
         documentsSkipped += 1;
         continue;
@@ -351,10 +354,16 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       to.docs.push(structuredClone(doc));
       documentsCopied += 1;
     }
+    // Indexes are built after the documents are in. One the target already has is
+    // left alone, and a unique one the documents don't satisfy fails the copy.
     let indexesCreated = 0;
     if (includeIndexes) {
       for (const index of from.indexes) {
         if (to.indexes.some((existing) => existing.name === index.name)) continue;
+        if (index.unique) {
+          const clash = duplicateIndexKey(ns, index.name, index.keys, to.docs, Boolean(index.sparse));
+          if (clash) throw `Failed to create index on target: ${clash}`;
+        }
         to.indexes.push(structuredClone(index));
         indexesCreated += 1;
       }
@@ -588,13 +597,19 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
           summary: { collectionsCopied: 1, documentsCopied: count, documentsSkipped: 0, indexesCreated: 0, skipped: [], failed: [] },
         });
       }
-      const result = copyCollection(
-        { id: args.sourceId, db: args.sourceDb, coll: args.sourceCollection },
-        { id: args.targetId, db: args.targetDb, coll: args.targetCollection },
-        filter,
-        Boolean(args.includeIndexes),
-        mode,
-      );
+      let result: ReturnType<typeof copyCollection>;
+      try {
+        result = copyCollection(
+          { id: args.sourceId, db: args.sourceDb, coll: args.sourceCollection },
+          { id: args.targetId, db: args.targetDb, coll: args.targetCollection },
+          filter,
+          Boolean(args.includeIndexes),
+          mode,
+        );
+      } catch (failure) {
+        // The copy's task fails with the error; what it wrote before failing stays.
+        return recordTask(state, { kind: 'collection_copy', label, startMessage: 'Queued', message: 'Task failed', error: String(failure), processed: 0 });
+      }
       return recordTask(state, {
         kind: 'collection_copy',
         label,
@@ -667,13 +682,20 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
           totals.skipped.push(`${name} (timeseries)`);
           continue;
         }
-        const result = copyCollection(
-          { id: args.sourceId, db: args.sourceDb, coll: name },
-          { id: args.targetId, db: args.targetDb, coll: name },
-          {},
-          Boolean(args.includeIndexes),
-          mode,
-        );
+        let result: ReturnType<typeof copyCollection>;
+        try {
+          result = copyCollection(
+            { id: args.sourceId, db: args.sourceDb, coll: name },
+            { id: args.targetId, db: args.targetDb, coll: name },
+            {},
+            Boolean(args.includeIndexes),
+            mode,
+          );
+        } catch (failure) {
+          // A collection that fails is listed with its error, and the copy carries on.
+          totals.failed.push({ collection: name, error: String(failure) });
+          continue;
+        }
         if (result.skipped) totals.skipped.push(name);
         else totals.collectionsCopied += 1;
         totals.documentsCopied += result.documentsCopied;

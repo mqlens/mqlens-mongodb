@@ -44,7 +44,12 @@ test.describe('Indexes', () => {
     await expect(modal).toBeVisible();
     await setKeyField(modal.getByTestId('index-key-field-0'), 'tier');
     await modal.getByTestId('index-key-direction-0').selectOption('-1');
-    await modal.getByTestId('index-name-input').fill('tier_-1');
+    // The name follows the keys until it's edited. Wait for it to catch up before
+    // typing over it, or the two writes can land together.
+    const name = modal.getByTestId('index-name-input');
+    await expect(name).toHaveValue('tier_-1');
+    await name.fill('tier_-1');
+    await expect(name).toHaveValue('tier_-1');
     await modal.getByTestId('save-index-btn').click();
 
     await expect(modal).toHaveCount(0);
