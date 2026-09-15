@@ -103,13 +103,8 @@ test.describe('Dialogs and appearance', () => {
     return { settings, saved };
   }
 
-  // Known bug. A fresh install's settings carry an appearance with an empty
-  // preset_id: AppearanceSettings derives Default, which ignores its serde
-  // default functions. ThemeProvider then loads no config, so the flag that
-  // skips the change hydration makes is still set when the user makes their
-  // first change, and that change is neither saved nor cached.
+  // A fresh install's first change used to be lost (#403).
   test('saves the first appearance change after a fresh start', async ({ app, page }) => {
-    test.fail(true, 'the first appearance change after a fresh start is not saved');
     const { settings, saved } = await openAppearance(app, page);
     await settings.getByRole('button', { name: /^Nord/ }).click();
     await expect.poll(async () => (await saved()).length, { timeout: 5_000 }).toBeGreaterThan(0);
@@ -119,12 +114,13 @@ test.describe('Dialogs and appearance', () => {
     const { settings, saved } = await openAppearance(app, page);
     const saves = async () => (await saved()).length;
 
-    // Two changes: the first is lost to the bug above, the second saves both.
+    // Each change saves, so wait for the one that carries both.
     await settings.getByRole('button', { name: /^Nord/ }).click();
     await settings.getByRole('combobox').first().click();
     await page.getByRole('option', { name: 'Light', exact: true }).click();
-    await expect.poll(saves).toBeGreaterThan(0);
-    expect((await saved()).at(-1)).toMatchObject({ preset_id: expect.stringContaining('nord'), mode: 'light' });
+    await expect
+      .poll(async () => (await saved()).at(-1))
+      .toMatchObject({ preset_id: expect.stringContaining('nord'), mode: 'light' });
     await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(false);
 
     const download = page.waitForEvent('download');

@@ -81,12 +81,7 @@ test.describe('mongosh shell', () => {
 
   });
 
-  // Known bug. `cls` empties the component's entries, but the command's own
-  // completion then writes the tab's stored session, whose watcher puts the
-  // stored transcript straight back before the cleared one is saved. Marked as
-  // failing so the suite says so once it's fixed.
   test('cls clears the console', async ({ app, page }) => {
-    test.fail(true, 'cls leaves the transcript in place: the stored session restores it');
     await connectStaging(app, page);
     await openShell(page);
     await expect(transcript(page)).toContainText('transactions');
