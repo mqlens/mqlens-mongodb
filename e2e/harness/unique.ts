@@ -1,6 +1,6 @@
 // Unique index checks for the fake backend's writes (#396): the duplicate key
 // errors MongoDB gives an insert, an update, an import or an index build.
-import { jsonEqual, valuesAt } from './mongo';
+import { bsonEqual, valuesAt } from './mongo';
 import type { Doc, IndexSeed } from './seed';
 import type { Collection } from './state';
 
@@ -83,7 +83,8 @@ export function duplicateKey(ns: string, target: Collection, doc: Doc, replacing
     for (const existing of target.docs) {
       if (existing === replacing || leftOut(index.sparse, existing, fields)) continue;
       const taken = indexKeys(existing, fields);
-      const clash = wanted.find((key) => taken.some((other) => jsonEqual(other, key)));
+      // Keys compare as BSON values, so a stored 1 and an incoming { $numberLong: "1" } clash.
+      const clash = wanted.find((key) => taken.some((other) => bsonEqual(other, key)));
       if (clash) return duplicateKeyError(ns, index.name, fields, clash);
     }
   }
@@ -102,9 +103,67 @@ export function duplicateIndexKey(ns: string, name: string, keys: Doc, docs: Doc
   for (const doc of docs) {
     if (leftOut(sparse, doc, fields)) continue;
     const own = indexKeys(doc, fields);
-    const clash = own.find((key) => seen.some((other) => jsonEqual(other, key)));
+    const clash = own.find((key) => seen.some((other) => bsonEqual(other, key)));
     if (clash) return duplicateKeyError(ns, name, fields, clash);
     seen.push(...own);
+  }
+  return null;
+}
+
+/**
+ * The arrays a document meets along an index field's path, by the dotted path
+ * each one sits at. An array held directly in another array isn't followed, as
+ * MongoDB doesn't expand one.
+ */
+function arraysOn(node: unknown, parts: string[], at: string, found: string[]): void {
+  if (Array.isArray(node)) {
+    if (!found.includes(at)) found.push(at);
+    for (const element of node) if (!Array.isArray(element)) arraysOn(element, parts, at, found);
+    return;
+  }
+  if (parts.length === 0 || !isDocument(node)) return;
+  const [head, ...rest] = parts;
+  if (!Object.prototype.hasOwnProperty.call(node, head)) return;
+  arraysOn(node[head], rest, at === '' ? head : `${at}.${head}`, found);
+}
+
+const leafName = (path: string) => path.slice(path.lastIndexOf('.') + 1);
+
+/**
+ * MongoDB's error for a document a compound index can't key: two of its fields
+ * reach different arrays that aren't nested one inside the other, so their
+ * elements can't be paired (`cannot index parallel arrays [b] [a]`).
+ */
+function parallelArraysError(keys: Doc, doc: Doc): string | null {
+  const fields = Object.keys(keys);
+  if (fields.length < 2) return null;
+  const seen: string[] = [];
+  for (const field of fields) {
+    const arrays: string[] = [];
+    arraysOn(doc, field.split('.'), '', arrays);
+    for (const array of arrays) {
+      const other = seen.find((earlier) => earlier !== array && !array.startsWith(`${earlier}.`) && !earlier.startsWith(`${array}.`));
+      if (other !== undefined) return `cannot index parallel arrays [${leafName(array)}] [${leafName(other)}]`;
+    }
+    for (const array of arrays) if (!seen.includes(array)) seen.push(array);
+  }
+  return null;
+}
+
+/** The parallel-array error writing `doc` into `target` gets from any of its indexes. */
+export function parallelArrays(target: Collection, doc: Doc): string | null {
+  for (const index of target.indexes) {
+    const error = parallelArraysError(index.keys, doc);
+    if (error) return error;
+  }
+  return null;
+}
+
+/** The parallel-array error building an index on `keys` over `docs` gets. */
+export function parallelArraysOver(keys: Doc, docs: Doc[]): string | null {
+  for (const doc of docs) {
+    const error = parallelArraysError(keys, doc);
+    if (error) return error;
   }
   return null;
 }

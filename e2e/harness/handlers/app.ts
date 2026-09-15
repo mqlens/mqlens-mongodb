@@ -1,8 +1,15 @@
 // App shell commands: vault, settings, workspace, windows, polling, updater,
 // crash logging and the Tauri plugins the app uses (#396).
 import type { Backend, Handler } from '../backend';
+import { jsonEqual } from '../mongo';
 import type { E2EState } from '../state';
 import { recordTask } from '../tasks';
+
+/** The settings the AI provider options are built from, and the built-in keys (`ai_options_changed` in src-tauri/src/lib.rs). */
+const AI_OPTION_FIELDS = [
+  'ai_provider', 'ai_providers', 'anthropic_model', 'openai_model', 'gemini_model', 'local_commands',
+  'anthropic_api_key', 'openai_api_key', 'gemini_api_key',
+];
 
 export function registerAppHandlers(backend: Backend, state: E2EState): void {
   const requireUnlocked = () => {
@@ -89,9 +96,14 @@ export function registerAppHandlers(backend: Backend, state: E2EState): void {
       requireUnlocked();
       return structuredClone(state.settings);
     },
-    patch_app_settings: ({ patch }) => {
+    patch_app_settings: async ({ patch }) => {
       requireUnlocked();
+      const before = structuredClone(state.settings);
       Object.assign(state.settings, patch as Record<string, unknown>);
+      // Every open AI panel re-reads its provider options when a setting they're built from changes.
+      if (AI_OPTION_FIELDS.some((field) => !jsonEqual(before[field], state.settings[field]))) {
+        await backend.emit('ai-providers-changed', null);
+      }
       return null;
     },
 

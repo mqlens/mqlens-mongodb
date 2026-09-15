@@ -120,7 +120,6 @@ export interface Seed {
   /** Servers the app can connect to, keyed by connection URI. */
   servers?: Record<string, ServerSeed>;
   appVersion?: string;
-  aiProviders?: unknown[];
   /** Canned answers for native file dialogs; null means the user cancelled. */
   dialog?: { open?: unknown; save?: unknown };
 }

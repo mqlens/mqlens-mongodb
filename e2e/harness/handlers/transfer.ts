@@ -11,7 +11,7 @@ import { aggregate, find, includePath, inferSchema, jsonEqual, matches, mockFind
 import type { Doc } from '../seed';
 import type { E2EState } from '../state';
 import { recordTask } from '../tasks';
-import { duplicateIndexKey, duplicateKey } from '../unique';
+import { duplicateIndexKey, duplicateKey, parallelArrays, parallelArraysOver } from '../unique';
 import { validationError } from '../validation';
 import { defineView } from '../views';
 
@@ -378,7 +378,7 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
     // any unique index, is retried alone and counted as skipped; any other
     // refusal, such as the target's validator, fails the copy.
     for (const doc of from.docs.filter((candidate) => matches(candidate, filter))) {
-      const refused = validationError(to, doc);
+      const refused = validationError(to, doc) ?? parallelArrays(to, doc);
       if (refused) throw `Insert into target failed: ${refused}`;
       if (duplicateKey(ns, to, doc)) {
         documentsSkipped += 1;
@@ -388,15 +388,16 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       documentsCopied += 1;
     }
     // Indexes are built after the documents are in. One the target already has is
-    // left alone, and a unique one the documents don't satisfy fails the copy.
+    // left alone, and one the documents can't satisfy fails the copy: parallel
+    // arrays under a compound key, or a key a unique index finds twice.
     let indexesCreated = 0;
     if (includeIndexes) {
       for (const index of from.indexes) {
         if (to.indexes.some((existing) => existing.name === index.name)) continue;
-        if (index.unique) {
-          const clash = duplicateIndexKey(ns, index.name, index.keys, to.docs, Boolean(index.sparse));
-          if (clash) throw `Failed to create index on target: ${clash}`;
-        }
+        const clash =
+          parallelArraysOver(index.keys, to.docs) ??
+          (index.unique ? duplicateIndexKey(ns, index.name, index.keys, to.docs, Boolean(index.sparse)) : null);
+        if (clash) throw `Failed to create index on target: ${clash}`;
         to.indexes.push(structuredClone(index));
         indexesCreated += 1;
       }
@@ -503,12 +504,13 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
               const at = doc._id !== undefined && storedBefore.has(JSON.stringify(doc._id)) ? stored(doc) : -1;
               if (at < 0) {
                 const incoming = doc._id === undefined ? { _id: { $oid: newObjectId() }, ...doc } : doc;
-                const refusal = validationError(target, incoming) ?? duplicateKey(ns, target, incoming);
+                const refusal = validationError(target, incoming) ?? parallelArrays(target, incoming) ?? duplicateKey(ns, target, incoming);
                 if (refusal) throw `Failed to ${importMode === 'update' ? 'import (insert)' : 'import'}: ${refusal}`;
                 target.docs.push(incoming);
                 counts.inserted += 1;
               } else if (importMode === 'update') {
-                const clash = validationError(target, doc, target.docs[at]) ?? duplicateKey(ns, target, doc, target.docs[at]);
+                const clash =
+                  validationError(target, doc, target.docs[at]) ?? parallelArrays(target, doc) ?? duplicateKey(ns, target, doc, target.docs[at]);
                 if (clash) throw `Failed to import (update): ${clash}`;
                 // replace_one's modified count: an identical document isn't counted.
                 if (!jsonEqual(target.docs[at], doc)) counts.updated += 1;

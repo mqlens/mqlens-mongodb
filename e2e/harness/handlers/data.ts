@@ -21,10 +21,11 @@ import {
   newObjectId,
   valuesAt,
 } from '../mongo';
+import { buildFieldUpdate, parseProjection } from '../projection';
 import type { Doc } from '../seed';
 import type { Collection, CollectionQueries, E2EState, Server } from '../state';
 import { recordTask } from '../tasks';
-import { duplicateIndexKey, duplicateKey } from '../unique';
+import { duplicateIndexKey, duplicateKey, parallelArrays, parallelArraysOver } from '../unique';
 import { validationError } from '../validation';
 import { defineView } from '../views';
 
@@ -118,39 +119,6 @@ function serverIdentity(profile: Record<string, unknown>): string {
   return JSON.stringify([canonical, ssh?.enabled ? ssh : null]);
 }
 
-/** An embedded document, as opposed to a scalar, an array or an Extended JSON value such as `{ $oid }`. */
-const isSubDocument = (value: unknown): value is Doc =>
-  typeof value === 'object' && value !== null && !Array.isArray(value) && !Object.keys(value).some((key) => key.startsWith('$'));
-
-/**
- * The update that turns a row as loaded into the row as edited, the way
- * build_field_update makes it (src-tauri/src/db/documents.rs). Embedded
- * documents on both sides are compared field by field and written as dotted
- * paths, so a projected edit of `address.city` leaves `address.state` alone.
- * Anything else that changed is set whole, and a field the row showed that the
- * edit dropped is unset. The top-level `_id` is never part of it.
- */
-function fieldUpdate(before: Doc, after: Doc, prefix = ''): { set: Doc; unset: Doc } {
-  const set: Doc = {};
-  const unset: Doc = {};
-  for (const [key, value] of Object.entries(after)) {
-    if (prefix === '' && key === '_id') continue;
-    const path = `${prefix}${key}`;
-    if (key in before && isSubDocument(before[key]) && isSubDocument(value)) {
-      const inner = fieldUpdate(before[key] as Doc, value, `${path}.`);
-      Object.assign(set, inner.set);
-      Object.assign(unset, inner.unset);
-    } else if (!(key in before) || !jsonEqual(before[key], value)) {
-      set[path] = value;
-    }
-  }
-  for (const key of Object.keys(before)) {
-    if (prefix === '' && key === '_id') continue;
-    if (!(key in after)) unset[`${prefix}${key}`] = '';
-  }
-  return { set, unset };
-}
-
 /** The host list of a MongoDB URI, without scheme, credentials, database or options. */
 function hostsOf(uri: string): string {
   return uri
@@ -231,7 +199,8 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       };
       for (const doc of results) {
         const incoming = withId(structuredClone(doc));
-        const refusal = validationError(replacement, incoming) ?? duplicateKey(ns, replacement, incoming);
+        const refusal =
+          validationError(replacement, incoming) ?? parallelArrays(replacement, incoming) ?? duplicateKey(ns, replacement, incoming);
         if (refusal) throw refusal;
         replacement.docs.push(incoming);
       }
@@ -270,14 +239,15 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
             throw `Unsupported $merge whenMatched ${JSON.stringify(spec.whenMatched)} in the e2e fake backend`;
         }
         // The updated document goes through the validator and unique indexes, as any update does.
-        const refusal = validationError(to, updated, to.docs[at]) ?? duplicateKey(ns, to, updated, to.docs[at]);
+        const refusal =
+          validationError(to, updated, to.docs[at]) ?? parallelArrays(to, updated) ?? duplicateKey(ns, to, updated, to.docs[at]);
         if (refusal) throw refusal;
         to.docs[at] = updated;
       } else {
         switch (spec.whenNotMatched ?? 'insert') {
           case 'insert': {
             const incoming = withId(structuredClone(doc));
-            const refusal = validationError(to, incoming) ?? duplicateKey(ns, to, incoming);
+            const refusal = validationError(to, incoming) ?? parallelArrays(to, incoming) ?? duplicateKey(ns, to, incoming);
             if (refusal) throw refusal;
             to.docs.push(incoming);
             break;
@@ -513,43 +483,39 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       if (isMock(state, id)) return 'mock-inserted-id';
       const target = collectionForWrite(state, id, db, coll);
       doc._id ??= { $oid: newObjectId() };
-      // MongoDB checks the collection's validator, then its unique indexes.
-      const refusal = validationError(target, doc) ?? duplicateKey(`${String(db)}.${String(coll)}`, target, doc);
+      // MongoDB checks the collection's validator, then keys the document for its indexes.
+      const refusal =
+        validationError(target, doc) ?? parallelArrays(target, doc) ?? duplicateKey(`${String(db)}.${String(coll)}`, target, doc);
       if (refusal) throw `Failed to insert document: ${refusal}`;
       target.docs.push(doc);
       return JSON.stringify(doc._id);
     },
     update_document: ({ id, database: db, collection: coll, filter, original, edited, projection }) => {
       // Like the backend (#275): the app sends the document as loaded and as
-      // edited, and only what changed is written. `projection` is null when the
-      // row came from a pipeline that reshapes documents, and then the backend
-      // refuses to write at all.
+      // edited, with the projection the row came back under, and only what
+      // changed is written. An edit that would lose or overwrite what the
+      // projection hid is refused, and nothing is written for rows from a
+      // pipeline that reshapes documents, which arrive with a null projection.
       guardWritable(state, id);
-      if (projection === null) {
-        throw 'cannot save: these rows did not come from a plain query, so MQLens cannot tell which stored document each one came from. Re-run as a find query to edit documents.';
-      }
+      const where = parseJson<Doc>(filter, {}, 'filter');
       const before = parseJson<Doc>(original, {}, 'document');
       const after = parseJson<Doc>(edited, {}, 'document');
-      if ('_id' in before) {
-        if (!('_id' in after)) throw "cannot remove _id: a document's _id is immutable. Restore it and save again.";
-        if (!jsonEqual(before._id, after._id)) throw "cannot change _id: a document's _id is immutable. Insert a new document instead.";
-      }
-      const { set, unset } = fieldUpdate(before, after);
-      const change: Doc = {};
-      if (Object.keys(set).length > 0) change.$set = set;
-      if (Object.keys(unset).length > 0) change.$unset = unset;
-      if (Object.keys(change).length === 0) return 0;
+      const plan = buildFieldUpdate(before, after, parseProjection(projection));
+      if (plan === null) return 0;
       if (isMock(state, id)) return 1;
       const found = collection(id, db, coll);
-      const where = parseJson<Doc>(filter, {}, 'filter');
       const at = found.docs.findIndex((doc) => matches(doc, where));
       if (at < 0) return 0;
-      const next = applyUpdate(found.docs[at], change);
+      // A changed field name an update operator can't address is saved by
+      // replacing the document, which the backend does only when it was loaded whole.
+      const next = 'replace' in plan ? structuredClone(after) : applyUpdate(found.docs[at], plan.update);
       if (jsonEqual(next, found.docs[at])) return 0;
-      // MongoDB refuses an update the validator rejects, or one that gives a unique
-      // index a key another document has, and changes nothing.
+      // MongoDB refuses an update the validator rejects, one its indexes can't key,
+      // or one that gives a unique index a key another document has, and changes nothing.
       const refusal =
-        validationError(found, next, found.docs[at]) ?? duplicateKey(`${String(db)}.${String(coll)}`, found, next, found.docs[at]);
+        validationError(found, next, found.docs[at]) ??
+        parallelArrays(found, next) ??
+        duplicateKey(`${String(db)}.${String(coll)}`, found, next, found.docs[at]);
       if (refusal) throw `Failed to update document: ${refusal}`;
       found.docs[at] = next;
       return 1;
@@ -601,7 +567,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
           throw "Failed to update documents: Performing an update on the path '_id' would modify the immutable field '_id'";
         }
         if (jsonEqual(next, doc)) continue;
-        const clash = validationError(found, next, doc) ?? duplicateKey(ns, found, next, doc);
+        const clash = validationError(found, next, doc) ?? parallelArrays(found, next) ?? duplicateKey(ns, found, next, doc);
         if (clash) throw `Failed to update documents: ${clash}`;
         found.docs[i] = next;
         modified += 1;
@@ -664,9 +630,12 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       if (exists && mock) return null;
       if (exists) throw `Index already exists: ${name}`;
       const parsedKeys = parseJson<Doc>(keys, {}, 'index keys');
-      // MongoDB won't build a unique index over documents that already share a key.
-      if (unique && !mock) {
-        const clash = duplicateIndexKey(`${String(db)}.${String(coll)}`, name, parsedKeys, found.docs, Boolean(sparse));
+      // MongoDB won't build a compound index over a document with parallel
+      // arrays, or a unique index over documents that already share a key.
+      if (!mock) {
+        const clash =
+          parallelArraysOver(parsedKeys, found.docs) ??
+          (unique ? duplicateIndexKey(`${String(db)}.${String(coll)}`, name, parsedKeys, found.docs, Boolean(sparse)) : null);
         if (clash) throw `Failed to create index: ${clash}`;
       }
       found.indexes.push({ name, keys: parsedKeys, unique: Boolean(unique), sparse: Boolean(sparse) });
@@ -763,7 +732,7 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
         // refuses fails the task, and the documents before it stay.
         for (const doc of docs) {
           const incoming = { _id: { $oid: newObjectId() }, ...doc };
-          const refusal = validationError(target, incoming) ?? duplicateKey(ns, target, incoming);
+          const refusal = validationError(target, incoming) ?? parallelArrays(target, incoming) ?? duplicateKey(ns, target, incoming);
           if (refusal) {
             error = `Failed to insert: ${refusal}`;
             break;

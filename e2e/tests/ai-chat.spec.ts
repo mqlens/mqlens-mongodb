@@ -3,17 +3,8 @@ import { test, expect, type App } from '../fixtures';
 import type { AiReplySeed } from '../harness/seed';
 import { callFrom, loadSample, openCollection, view } from '../helpers';
 
-const PROVIDERS = [
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    kind: 'openai-compatible',
-    model: 'gpt-4.1',
-    isDefault: true,
-    usesModel: true,
-    canListModels: true,
-  },
-];
+/** Settings with OpenAI as the default provider, so the picker starts on it. */
+const OPENAI_DEFAULT = { ai_provider: 'openai', openai_model: 'gpt-4.1' };
 
 const PREMIUM_QUERY: AiReplySeed = {
   query: { explanation: 'Customers on the Premium tier.', queryType: 'find', filter: { tier: 'Premium' } },
@@ -27,7 +18,7 @@ const COUNT_BY_TIER: AiReplySeed = {
 };
 
 async function openHelper(app: App, page: Page, aiReplies: AiReplySeed[]) {
-  await app.open({ aiProviders: PROVIDERS, aiModels: ['gpt-4.1', 'gpt-4o-mini'], aiReplies });
+  await app.open({ settings: OPENAI_DEFAULT, aiModels: ['gpt-4.1', 'gpt-4o-mini'], aiReplies });
   await loadSample(page);
   await openCollection(page, 'sales_db', 'customers');
   await expect(view(page)).toContainText('Alice Smith');

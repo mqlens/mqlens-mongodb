@@ -13,7 +13,7 @@ const EJSON_WRAPPERS = new Set([
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const isEjsonWrapper = (value: unknown): boolean =>
+export const isEjsonWrapper = (value: unknown): boolean =>
   isPlainObject(value) && Object.keys(value).some((key) => EJSON_WRAPPERS.has(key));
 
 const unsupported = (what: string): never => {
@@ -79,7 +79,24 @@ export function compareValues(a: unknown, b: unknown): number {
 }
 
 const sameType = (a: unknown, b: unknown) => typeRank(a) === typeRank(b);
-const valuesEqual = (a: unknown, b: unknown) => sameType(a, b) && compareValues(a, b) === 0;
+
+/**
+ * BSON equality: the same type, numbers by value whatever their representation,
+ * embedded documents field by field in order, and arrays element by element.
+ * A query's equality and a unique index's keys both compare this way.
+ */
+export function bsonEqual(a: unknown, b: unknown): boolean {
+  if (!sameType(a, b)) return false;
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((value, i) => bsonEqual(value, b[i]));
+  if (isPlainObject(a) && isPlainObject(b) && !isEjsonWrapper(a) && !isEjsonWrapper(b)) {
+    const keys = Object.keys(a);
+    const others = Object.keys(b);
+    return keys.length === others.length && keys.every((key, i) => key === others[i] && bsonEqual(a[key], b[key]));
+  }
+  return compareValues(a, b) === 0;
+}
+
+const valuesEqual = bsonEqual;
 
 /** Equality of two JSON values, with objects equal whatever order their keys are in. */
 export function jsonEqual(a: unknown, b: unknown): boolean {
@@ -152,6 +169,25 @@ export function bsonType(value: unknown): string {
   return typeof value;
 }
 
+const NUMBER_TYPE_NAMES = ['int', 'long', 'double', 'decimal'];
+
+/** The BSON type codes `$type` accepts, by the alias it also accepts. */
+const TYPE_CODES: Record<number, string> = {
+  1: 'double', 2: 'string', 3: 'object', 4: 'array', 5: 'binData', 7: 'objectId', 8: 'bool', 9: 'date',
+  10: 'null', 11: 'regex', 16: 'int', 17: 'timestamp', 18: 'long', 19: 'decimal', [-1]: 'minKey', 127: 'maxKey',
+};
+const TYPE_ALIASES = new Set([...Object.values(TYPE_CODES), 'number']);
+
+/** A `$type` argument as its alias, refused the way MongoDB refuses one it doesn't know. */
+function typeAlias(arg: unknown): string {
+  if (typeof arg === 'number') {
+    if (!(arg in TYPE_CODES)) throw `Invalid numerical type code: ${arg}`;
+    return TYPE_CODES[arg];
+  }
+  if (typeof arg !== 'string' || !TYPE_ALIASES.has(arg)) throw `Unknown type name alias: ${String(arg)}`;
+  return arg;
+}
+
 const isOperatorObject = (value: unknown): value is Record<string, unknown> =>
   isPlainObject(value) &&
   Object.keys(value).length > 0 &&
@@ -204,8 +240,13 @@ function fieldMatches(values: unknown[], condition: unknown): boolean {
         );
       case '$not':
         return !fieldMatches(values, arg);
-      case '$type':
-        return values.some((value) => (Array.isArray(arg) ? arg : [arg]).includes(bsonType(value)));
+      case '$type': {
+        const wanted = (Array.isArray(arg) ? arg : [arg]).map(typeAlias);
+        const isWanted = (value: unknown) =>
+          wanted.includes(bsonType(value)) || (wanted.includes('number') && NUMBER_TYPE_NAMES.includes(bsonType(value)));
+        // An array matches by its own type, or by the type of any of its elements.
+        return values.some((value) => isWanted(value) || (Array.isArray(value) && value.some(isWanted)));
+      }
       default:
         return unsupported(`query operator ${op}`);
     }
@@ -329,6 +370,54 @@ function deletePath(target: Doc, path: string): void {
       return;
     }
   }
+}
+
+const PUSH_MODIFIERS = new Set(['$each', '$position', '$slice', '$sort']);
+
+/**
+ * The array a `$push` leaves. A plain value is appended. With `$each` its values
+ * go in at `$position` (counted from the end when negative), then the whole
+ * array is sorted by `$sort` and cut to `$slice` (the last ones when negative),
+ * in that order, as MongoDB applies the modifiers.
+ */
+function pushed(current: unknown[], value: unknown): unknown[] {
+  if (!isPlainObject(value) || !('$each' in value)) {
+    if (isOperatorObject(value)) unsupported(`$push of ${JSON.stringify(value)} without $each`);
+    return [...current, value];
+  }
+  for (const key of Object.keys(value)) {
+    if (!PUSH_MODIFIERS.has(key)) throw `Unrecognized clause in $push: ${key}`;
+  }
+  const each = value.$each;
+  if (!Array.isArray(each)) throw `The argument to $each in $push must be an array but it was of type: ${bsonType(each)}`;
+  const isInteger = (raw: unknown) =>
+    ['int', 'long', 'double'].includes(bsonType(raw)) && Number.isInteger(Number(comparable(raw)));
+
+  let out = [...current];
+  let at = out.length;
+  if (value.$position !== undefined) {
+    if (!isInteger(value.$position)) throw `The value for $position must be an integer value, not of type: ${bsonType(value.$position)}`;
+    const position = Number(comparable(value.$position));
+    at = position < 0 ? Math.max(0, out.length + position) : Math.min(position, out.length);
+  }
+  out.splice(at, 0, ...structuredClone(each));
+  if (value.$sort !== undefined) {
+    const sort = value.$sort;
+    if (sort === 1 || sort === -1) {
+      const direction = Number(sort);
+      out.sort((a, b) => direction * compareValues(a, b));
+    } else if (isPlainObject(sort) && Object.keys(sort).length > 0 && Object.values(sort).every((d) => d === 1 || d === -1)) {
+      out = sortDocs(out as Doc[], sort);
+    } else {
+      throw 'The $sort is invalid: use 1/-1 to sort the whole element, or {field:1/-1} to sort embedded fields';
+    }
+  }
+  if (value.$slice !== undefined) {
+    if (!isInteger(value.$slice)) throw `The value for $slice must be an integer value but was given type: ${bsonType(value.$slice)}`;
+    const slice = Number(comparable(value.$slice));
+    out = slice < 0 ? out.slice(Math.max(0, out.length + slice)) : out.slice(0, slice);
+  }
+  return out;
 }
 
 /**
@@ -577,7 +666,7 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
           if (current !== undefined && !Array.isArray(current)) {
             throw `The field '${path}' must be an array but is of type ${bsonType(current)} in document {_id: ${JSON.stringify(doc._id)}}`;
           }
-          updatePath(out, path, [...(current ?? []), value]);
+          updatePath(out, path, pushed(Array.isArray(current) ? current : [], value));
           break;
         }
         default: unsupported(`update operator ${op}`);

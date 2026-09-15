@@ -57,10 +57,10 @@ export interface E2EState {
   tasks: Array<Record<string, unknown>>;
   /** Messages the app sent to `log_frontend_error`: uncaught errors a test must not produce. */
   frontendErrors: string[];
-  aiProviders: unknown[];
   dialog: { open: unknown; save: unknown };
   appVersion: string;
-  monitoring: Required<MonitoringSeed>;
+  /** What the monitoring commands report, by server URI; each server keeps its own. */
+  monitoring: Record<string, Required<MonitoringSeed>>;
   mcp: { enabled: boolean; port: number; token: string; log: unknown[] };
   mongosh: Required<MongoshSeed>;
   mongoTools: { mongodump: ToolSeed | null; mongorestore: ToolSeed | null };
@@ -149,10 +149,12 @@ export function createState(seed: Seed): E2EState {
     queries: {},
     tasks: [],
     frontendErrors: [],
-    aiProviders: structuredClone(seed.aiProviders ?? []),
     dialog: { open: seed.dialog?.open ?? null, save: seed.dialog?.save ?? null },
     appVersion: seed.appVersion ?? '0.20.0',
-    monitoring: structuredClone({ ...SAMPLE_MONITORING, ...seed.monitoring }),
+    // The seeded monitoring starts out on every seeded server.
+    monitoring: Object.fromEntries(
+      Object.keys(servers).map((uri) => [uri, structuredClone({ ...SAMPLE_MONITORING, ...seed.monitoring })]),
+    ),
     mcp: {
       enabled: seed.mcp?.enabled ?? false,
       port: seed.mcp?.port ?? 8765,

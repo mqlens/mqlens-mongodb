@@ -6,7 +6,7 @@
 // their writes are checked and then dropped.
 import type { Backend, Handler } from '../backend';
 import { guardWritable, isMock } from '../lookup';
-import { SAMPLE_USERS, type UserSeed } from '../seed';
+import { SAMPLE_MONITORING, SAMPLE_USERS, type UserSeed } from '../seed';
 import type { E2EState } from '../state';
 
 /** Built-in roles every database offers, and those only admin adds. */
@@ -85,46 +85,48 @@ export function registerAdminHandlers(backend: Backend, state: E2EState): void {
       throw 'Every role needs both a role name and a database';
     }
   };
-  const monitoring = state.monitoring;
+  /** The monitoring state of the server a connection reaches; each server keeps its own. */
+  const monitoringOf = (id: unknown) => (state.monitoring[state.connections[String(id)].uri] ??= structuredClone(SAMPLE_MONITORING));
   let tokenSerial = 1;
 
   const handlers: Record<string, Handler> = {
     // Monitoring
     server_status: ({ id }) => {
       requireConnection(id);
-      return structuredClone(isMock(state, id) ? MOCK_SERVER_STATUS : monitoring.serverStatus);
+      return structuredClone(isMock(state, id) ? MOCK_SERVER_STATUS : monitoringOf(id).serverStatus);
     },
     current_ops: ({ id }) => {
       requireConnection(id);
-      return structuredClone(isMock(state, id) ? MOCK_CURRENT_OPS : monitoring.currentOps);
+      return structuredClone(isMock(state, id) ? MOCK_CURRENT_OPS : monitoringOf(id).currentOps);
     },
     kill_op: ({ id, opid }) => {
       guardWritable(state, id);
       if (isMock(state, id)) return null;
+      const monitoring = monitoringOf(id);
       monitoring.currentOps = monitoring.currentOps.filter((op) => op.opid !== opid);
       return null;
     },
     get_profiling_status: ({ id, database }) => {
       requireConnection(id);
       if (isMock(state, id)) return { level: 0, slowMs: 100 };
-      return structuredClone(monitoring.profiling[String(database)] ?? { level: 0, slowMs: 100 });
+      return structuredClone(monitoringOf(id).profiling[String(database)] ?? { level: 0, slowMs: 100 });
     },
     set_profiling_level: ({ id, database, level, slowMs }) => {
       guardWritable(state, id);
       const next = { level: Number(level), slowMs: Number(slowMs) };
-      if (!isMock(state, id)) monitoring.profiling[String(database)] = next;
+      if (!isMock(state, id)) monitoringOf(id).profiling[String(database)] = next;
       return structuredClone(next);
     },
     read_profile: ({ id, database, limit }) => {
       requireConnection(id);
       if (isMock(state, id)) return structuredClone(MOCK_PROFILE);
       return structuredClone(
-        monitoring.profile.filter((entry) => entry.ns.split('.')[0] === database).slice(0, Number(limit ?? 50)),
+        monitoringOf(id).profile.filter((entry) => entry.ns.split('.')[0] === database).slice(0, Number(limit ?? 50)),
       );
     },
     repl_set_status: ({ id }) => {
       requireConnection(id);
-      return structuredClone(isMock(state, id) ? MOCK_REPL_SET : monitoring.replSet);
+      return structuredClone(isMock(state, id) ? MOCK_REPL_SET : monitoringOf(id).replSet);
     },
 
     // Users and roles

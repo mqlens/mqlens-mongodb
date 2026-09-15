@@ -142,7 +142,7 @@ test.describe('Shell AI and tool setup', () => {
   test('asks before running a destructive script from the shell AI panel', async ({ app, page }) => {
     const script = { query: { explanation: 'Removes every customer.', queryType: 'script', script: 'db.customers.deleteMany({})' } };
     await connectStaging(app, page, {
-      aiProviders: [{ id: 'openai', name: 'OpenAI', kind: 'openai-compatible', model: 'gpt-4.1', isDefault: true, usesModel: true, canListModels: false }],
+      settings: { ai_provider: 'openai', openai_model: 'gpt-4.1' },
       aiReplies: [script, script],
     });
     await expandCollections(page, 'sales_db');

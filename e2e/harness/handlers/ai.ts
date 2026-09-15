@@ -1,6 +1,7 @@
-// AI helper commands (#396). Providers and the models they list come from the
-// seed. Each generation takes the next reply from the seed's queue; once the
-// queue is empty it fails the way it does with no provider configured.
+// AI helper commands (#396). Providers come from the saved settings, and the
+// models they list from the seed. Each generation takes the next reply from the
+// seed's queue; once the queue is empty it fails the way it does with no
+// provider configured.
 import type { Backend, Handler } from '../backend';
 import type { E2EState } from '../state';
 
@@ -12,6 +13,63 @@ interface ProviderDraft {
   api_key?: string;
   model?: string;
   command?: string;
+  models_command?: string;
+}
+
+/** The built-in agents' command templates (`default_local_command` in src-tauri/src/connections.rs). */
+const DEFAULT_LOCAL_COMMANDS: Record<string, string> = {
+  'claude-code': 'claude -p {prompt}',
+  codex: 'codex exec {prompt}',
+  cursor: 'cursor-agent -p {prompt}',
+  antigravity: 'antigravity {prompt}',
+};
+
+const LOCAL_AGENTS: Array<[string, string]> = [
+  ['claude-code', 'Claude Code (local)'],
+  ['codex', 'Codex (local)'],
+  ['cursor', 'Cursor (local)'],
+  ['antigravity', 'Antigravity (local)'],
+];
+
+/**
+ * The providers the chat panel can pick from, built from the saved settings the
+ * way `ai_provider_options` builds them (src-tauri/src/lib.rs): the built-in
+ * vendors and local agents, then the user's own, with the settings default
+ * flagged. A setting that was never saved takes the backend's default.
+ */
+function providerOptions(settings: Record<string, unknown>): unknown[] {
+  const text = (key: string, fallback: string) => (typeof settings[key] === 'string' ? (settings[key] as string) : fallback);
+  const defaultId = text('ai_provider', 'anthropic').trim();
+  const localCommands = (settings.local_commands ?? {}) as Record<string, string>;
+  const entry = (id: string, name: string, kind: string, model: string, usesModel: boolean, canListModels: boolean) => ({
+    id,
+    name,
+    kind,
+    model,
+    isDefault: id === defaultId,
+    usesModel,
+    canListModels,
+  });
+  const agentCommand = (agent: string) => (localCommands[agent]?.trim() ? localCommands[agent] : DEFAULT_LOCAL_COMMANDS[agent]);
+  return [
+    entry('anthropic', 'Anthropic (Claude)', 'anthropic-compatible', text('anthropic_model', 'claude-opus-4-8'), true, true),
+    entry('openai', 'OpenAI (ChatGPT)', 'openai-compatible', text('openai_model', 'gpt-4o'), true, true),
+    // Listed for selection only: `list_ai_models_for` refuses Gemini.
+    entry('gemini', 'Google Gemini', 'gemini', text('gemini_model', 'gemini-1.5-flash'), true, false),
+    // A built-in agent uses a model only when its command slots one in, and never lists models.
+    ...LOCAL_AGENTS.map(([agent, label]) => entry(agent, label, 'local-cli', '', agentCommand(agent).includes('{model}'), false)),
+    ...((settings.ai_providers ?? []) as ProviderDraft[]).map((provider) => {
+      const local = provider.kind === 'local-cli';
+      return entry(
+        provider.id ?? '',
+        provider.name ?? '',
+        provider.kind ?? '',
+        provider.model ?? '',
+        !local || (provider.command ?? '').includes('{model}'),
+        local ? (provider.models_command ?? '').trim() !== '' : true,
+      );
+    }),
+  ];
 }
 
 /**
@@ -77,7 +135,7 @@ export function registerAiHandlers(backend: Backend, state: E2EState): void {
   const claims = new Map<string, string>();
 
   const handlers: Record<string, Handler> = {
-    ai_provider_options: () => structuredClone(state.aiProviders),
+    ai_provider_options: () => providerOptions(state.settings),
     // The first two of src-tauri/src/ai_providers.rs PRESETS, shaped as the command returns them.
     ai_provider_presets: () => [
       {

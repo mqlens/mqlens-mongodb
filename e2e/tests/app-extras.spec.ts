@@ -200,7 +200,7 @@ test.describe('Shell console and hover cards', () => {
 test.describe('AI helper images', () => {
   test('attaches a PNG and sends it, and refuses other files', async ({ app, page }) => {
     await app.open({
-      aiProviders: [{ id: 'openai', name: 'OpenAI', kind: 'openai-compatible', model: 'gpt-4.1', isDefault: true, usesModel: true, canListModels: false }],
+      settings: { ai_provider: 'openai', openai_model: 'gpt-4.1' },
       aiReplies: [{ query: { explanation: 'Premium customers.', queryType: 'find', filter: { tier: 'Premium' } } }],
     });
     await loadSample(page);
