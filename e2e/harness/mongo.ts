@@ -225,6 +225,36 @@ function setPath(target: Doc, path: string, value: unknown): void {
   node[parts[parts.length - 1]] = value;
 }
 
+/**
+ * Set a dotted path the way an update operator does. A numeric part indexes
+ * into an array, padding it with nulls; a missing part becomes an embedded
+ * document; and a part under anything else is refused, as MongoDB refuses it.
+ */
+function updatePath(target: Doc, path: string, value: unknown): void {
+  const parts = path.split('.');
+  let node: Record<string, unknown> | unknown[] = target;
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i];
+    let key: string | number = part;
+    if (Array.isArray(node)) {
+      if (!/^\d+$/.test(part)) throw `Cannot create field '${part}' in element {${parts[i - 1]}: ${JSON.stringify(node)}}`;
+      key = Number(part);
+      while (node.length < key) node.push(null);
+    }
+    const holder = node as Record<string | number, unknown>;
+    if (i === parts.length - 1) {
+      holder[key] = value;
+      return;
+    }
+    const next = holder[key];
+    if (next === undefined) holder[key] = {};
+    else if ((!isPlainObject(next) && !Array.isArray(next)) || isEjsonWrapper(next)) {
+      throw `Cannot create field '${parts[i + 1]}' in element {${part}: ${JSON.stringify(next)}}`;
+    }
+    node = holder[key] as Record<string, unknown> | unknown[];
+  }
+}
+
 function deletePath(target: Doc, path: string): void {
   const parts = path.split('.');
   let node: unknown = target;
@@ -372,7 +402,10 @@ function group(docs: Doc[], spec: Record<string, unknown>): Doc[] {
       if (field === '_id') continue;
       const [op, expr] = Object.entries(accumulator as Doc)[0] ?? [];
       const values = members.map((member) => evaluate(member, expr));
-      const numbers = values.map((value) => Number(comparable(value))).filter((n) => !Number.isNaN(n));
+      // $sum and $avg take only numeric values and ignore every other type, as MongoDB does.
+      const numbers = values
+        .filter((value) => ['int', 'long', 'double', 'decimal'].includes(bsonType(value)))
+        .map((value) => Number(comparable(value)));
       switch (op) {
         case '$sum': out[field] = typeof expr === 'number' ? expr * members.length : numbers.reduce((a, b) => a + b, 0); break;
         case '$avg': out[field] = numbers.length ? numbers.reduce((a, b) => a + b, 0) / numbers.length : null; break;
@@ -454,7 +487,7 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
   for (const [op, fields] of Object.entries(update)) {
     for (const [path, value] of Object.entries(fields as Doc)) {
       switch (op) {
-        case '$set': setPath(out, path, value); break;
+        case '$set': updatePath(out, path, value); break;
         case '$unset': deletePath(out, path); break;
         case '$inc': {
           // MongoDB increments only a number by a number, or starts a missing field at zero.
@@ -464,7 +497,7 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
           if (current !== undefined && !numeric(current)) {
             throw `Cannot apply $inc to a value of non-numeric type. {_id: ${JSON.stringify(doc._id)}} has the field '${path}' of non-numeric type ${bsonType(current)}`;
           }
-          setPath(out, path, Number(comparable(current ?? 0)) + Number(comparable(value)));
+          updatePath(out, path, Number(comparable(current ?? 0)) + Number(comparable(value)));
           break;
         }
         case '$push': {
@@ -473,7 +506,7 @@ export function applyUpdate(doc: Doc, update: Doc): Doc {
           if (current !== undefined && !Array.isArray(current)) {
             throw `The field '${path}' must be an array but is of type ${bsonType(current)} in document {_id: ${JSON.stringify(doc._id)}}`;
           }
-          setPath(out, path, [...(current ?? []), value]);
+          updatePath(out, path, [...(current ?? []), value]);
           break;
         }
         default: unsupported(`update operator ${op}`);

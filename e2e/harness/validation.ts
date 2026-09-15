@@ -4,7 +4,7 @@
 // A validator is a `$jsonSchema` and any query operators beside it. The fake
 // understands the `$jsonSchema` keywords the app's rules use; any other keyword
 // is rejected with a clear message rather than ignored.
-import { bsonType, jsonEqual, matches } from './mongo';
+import { bsonType, comparable, jsonEqual, matches } from './mongo';
 import type { Doc } from './seed';
 import type { Collection } from './state';
 
@@ -67,11 +67,12 @@ function accepts(value: unknown, schema: Schema): boolean {
       case 'enum':
         if (!(rule as unknown[]).some((choice) => jsonEqual(choice, value))) return false;
         break;
+      // Bounds apply to every numeric BSON type, Extended JSON wrappers such as $numberLong included.
       case 'minimum':
-        if (typeof value === 'number' && value < Number(rule)) return false;
+        if (NUMBER_TYPES.includes(bsonType(value)) && Number(comparable(value)) < Number(rule)) return false;
         break;
       case 'maximum':
-        if (typeof value === 'number' && value > Number(rule)) return false;
+        if (NUMBER_TYPES.includes(bsonType(value)) && Number(comparable(value)) > Number(rule)) return false;
         break;
       case 'minLength':
         if (typeof value === 'string' && value.length < Number(rule)) return false;

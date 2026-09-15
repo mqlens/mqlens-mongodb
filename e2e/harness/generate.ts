@@ -126,8 +126,13 @@ function parseSpec(value: unknown, path: string): Spec {
       }
       throw `${what} needs past_days, or from and to as ISO dates`;
     }
-    case '$lorem':
-      return { kind: 'lorem', words: numberAt(optionsAt(inner, what).words, `${what}.words`) };
+    case '$lorem': {
+      // A word count that fits in a u32, as the backend's parser reads it; anything else counts as missing.
+      const words = optionsAt(inner, what).words;
+      if (typeof words !== 'number' || !Number.isInteger(words) || words < 0) throw `${what} requires words`;
+      if (words > 0xffff_ffff) throw `${what} words out of range`;
+      return { kind: 'lorem', words };
+    }
     case '$pick':
       if (!Array.isArray(inner) || inner.length === 0) throw `${what} needs at least one value`;
       return { kind: 'pick', values: inner };
