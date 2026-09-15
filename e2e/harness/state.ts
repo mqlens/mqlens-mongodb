@@ -99,6 +99,8 @@ export interface ChangeStream {
   status: string;
   lastSeq: number;
   events: Array<Record<string, unknown>>;
+  /** Events the buffer evicted since the stream started, as `StreamBuffer::dropped` counts them. */
+  dropped: number;
 }
 
 function toServer(seed: Seed['servers'] extends Record<string, infer S> | undefined ? S : never): Server {

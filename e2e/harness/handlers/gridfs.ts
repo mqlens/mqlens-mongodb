@@ -5,6 +5,19 @@ import { databaseOf, guardWritable, isMock } from '../lookup';
 import { newObjectId } from '../mongo';
 import type { E2EState, GridFsFile } from '../state';
 
+/** The most files a listing returns (`MAX_GRIDFS_LIST` in src-tauri/src/limits.rs). */
+const MAX_GRIDFS_LIST = 500;
+
+const utf8 = new TextEncoder();
+
+/** Two strings in MongoDB's binary order: by their UTF-8 bytes. */
+function compareBytes(a: string, b: string): number {
+  const x = utf8.encode(a);
+  const y = utf8.encode(b);
+  for (let i = 0; i < Math.min(x.length, y.length); i += 1) if (x[i] !== y[i]) return x[i] - y[i];
+  return x.length - y.length;
+}
+
 export function registerGridFsHandlers(backend: Backend, state: E2EState): void {
   const keyOf = (database: unknown, bucket: unknown) => `${String(database)}.${String(bucket)}`;
   const refuseSample = (id: unknown) => {
@@ -24,11 +37,13 @@ export function registerGridFsHandlers(backend: Backend, state: E2EState): void 
   };
 
   const handlers: Record<string, Handler> = {
-    // JSON text with snake_case fields and the id as Extended JSON, as the backend sends it.
+    // JSON text with snake_case fields and the id as Extended JSON, as the backend
+    // sends it, sorted by filename and capped as its query is.
     list_gridfs_files: ({ id, database, bucket }) => {
       refuseSample(id);
+      const files = [...bucketFiles(id, database, bucket)].sort((a, b) => compareBytes(a.filename, b.filename));
       return JSON.stringify(
-        bucketFiles(id, database, bucket).map((file) => ({
+        files.slice(0, MAX_GRIDFS_LIST).map((file) => ({
           id: file.id,
           filename: file.filename,
           length: file.length,

@@ -546,17 +546,20 @@ export function mockFind(docs: Doc[], { filter = {}, sort = {}, skip = 0, limit 
 }
 
 function group(docs: Doc[], spec: Record<string, unknown>): Doc[] {
-  const groups = new Map<string, { id: unknown; docs: Doc[] }>();
+  const groups: Array<{ id: unknown; docs: Doc[] }> = [];
   for (const doc of docs) {
     const id = isPlainObject(spec._id) && !isEjsonWrapper(spec._id)
       ? Object.fromEntries(Object.entries(spec._id).map(([key, expr]) => [key, evaluate(doc, expr)]))
       : evaluate(doc, spec._id ?? null);
-    const key = JSON.stringify(id);
-    const bucket = groups.get(key) ?? { id, docs: [] };
+    // Group keys compare as BSON values, so 1 and { $numberLong: "1" } share a group, keyed by the first.
+    let bucket = groups.find((candidate) => bsonEqual(candidate.id, id));
+    if (!bucket) {
+      bucket = { id, docs: [] };
+      groups.push(bucket);
+    }
     bucket.docs.push(doc);
-    groups.set(key, bucket);
   }
-  return [...groups.values()].map(({ id, docs: members }) => {
+  return groups.map(({ id, docs: members }) => {
     const out: Doc = { _id: id };
     for (const [field, accumulator] of Object.entries(spec)) {
       if (field === '_id') continue;

@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { test, expect } from '../fixtures';
+import { test, expect, type App } from '../fixtures';
 import { callFrom, connectStaging, dismissHoverCards, expandCollections } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary');
@@ -100,24 +100,32 @@ test.describe('GridFS', () => {
 });
 
 test.describe('Watch', () => {
-  /** Hand a change event to every open stream, as the server would. */
-  const pushChange = (page: Page, change: Record<string, unknown>) =>
-    page.evaluate((event) => {
-      for (const stream of Object.values(window.__MQLENS_E2E__!.state.changeStreams)) {
-        stream.lastSeq += 1;
-        stream.events.push({ ...event, seq: stream.lastSeq, atMs: Date.now() });
-      }
-    }, change);
+  /** Hand a change event to every open stream, as the server would, `times` times over. */
+  const pushChange = (page: Page, change: Record<string, unknown>, times = 1) =>
+    page.evaluate(
+      ({ event, times }) => {
+        for (const stream of Object.values(window.__MQLENS_E2E__!.state.changeStreams)) {
+          for (let i = 0; i < times; i += 1) {
+            stream.lastSeq += 1;
+            stream.events.push({ ...event, seq: stream.lastSeq, atMs: Date.now() });
+          }
+        }
+      },
+      { event: change, times },
+    );
 
-  test('shows changes as they arrive, opens one, filters, pauses and clears', async ({ app, page }) => {
-    // Watching needs a real server: the menu item is hidden for the mock connection.
+  /** Open the Watch tab on sales_db.customers of a saved connection: the menu item is hidden for the mock one. */
+  const watchCustomers = async (app: App, page: Page) => {
     await connectStaging(app, page);
     await expandCollections(page, 'sales_db');
     await sidebar(page).getByText('customers', { exact: true }).click({ button: 'right' });
     await page.getByTestId('ctx-watch-collection').click();
     await dismissHoverCards(page);
-
     await expect(page.getByTestId('watch-status')).toHaveText('live');
+  };
+
+  test('shows changes as they arrive, opens one, filters, pauses and clears', async ({ app, page }) => {
+    await watchCustomers(app, page);
     await pushChange(page, {
       operationType: 'insert',
       database: 'sales_db',
@@ -151,5 +159,18 @@ test.describe('Watch', () => {
 
     await page.getByTestId('watch-clear').click();
     await expect(events).toHaveCount(0);
+  });
+
+  test('says how many changes were dropped when more arrive than the buffer keeps', async ({ app, page }) => {
+    await watchCustomers(app, page);
+    await expect(page.getByTestId('watch-dropped')).toHaveCount(0);
+
+    // The backend keeps the newest 1,000 events, so two more push out the two oldest.
+    await pushChange(
+      page,
+      { operationType: 'delete', database: 'sales_db', collection: 'customers', documentKey: { _id: { $oid: '603d779f4f102e3a105c3121' } } },
+      1_002,
+    );
+    await expect(page.getByTestId('watch-dropped')).toContainText('2');
   });
 });

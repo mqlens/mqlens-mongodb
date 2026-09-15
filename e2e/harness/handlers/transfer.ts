@@ -7,7 +7,7 @@
 import type { Backend, Handler } from '../backend';
 import { fromBsonBase64, toBsonBase64 } from '../bson';
 import { collectionForWrite, collectionOf, databaseOf, guardWritable, isMock, serverOf } from '../lookup';
-import { aggregate, find, includePath, inferSchema, jsonEqual, matches, mockFind, newObjectId } from '../mongo';
+import { aggregate, bsonEqual, find, includePath, inferSchema, jsonEqual, matches, mockFind, newObjectId } from '../mongo';
 import type { Doc } from '../seed';
 import type { E2EState } from '../state';
 import { recordTask } from '../tasks';
@@ -485,7 +485,9 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
       } else {
         const target = collectionForWrite(state, id, database, collection);
         const ns = `${String(database)}.${String(collection)}`;
-        const stored = (doc: Doc) => (doc._id === undefined ? -1 : target.docs.findIndex((existing) => jsonEqual(existing._id, doc._id)));
+        // The backend finds stored ids with `$in`, so an id matches a stored one of equal
+        // BSON value: `1` and `{ $numberLong: "1" }` are the same document.
+        const stored = (doc: Doc) => (doc._id === undefined ? -1 : target.docs.findIndex((existing) => bsonEqual(existing._id, doc._id)));
         // Every write goes through the collection's validator and unique indexes. A
         // refusal fails the import with MongoDB's error, prefixed as the backend's
         // write prefixes it, and what was written before it stays, as with ordered writes.
@@ -495,13 +497,14 @@ export function registerTransferHandlers(backend: Backend, state: E2EState): voi
             // The backend looks up which of a batch's ids are stored before writing
             // any of it. Two new documents sharing an id are both inserted, and the
             // second fails; they aren't taken for a stored document.
-            const storedBefore = new Set(batch.filter((doc) => stored(doc) >= 0).map((doc) => JSON.stringify(doc._id)));
-            // Abort checks a batch before writing any of it; the batches before it are already written.
-            if (importMode === 'abort' && storedBefore.size > 0) {
-              throw `Import aborted: ${storedBefore.size} document(s) already exist`;
+            const storedIds = [...new Set(batch.map(stored).filter((at) => at >= 0))].map((at) => target.docs[at]._id);
+            // Abort checks a batch before writing any of it, counting the stored documents
+            // it found; the batches before it are already written.
+            if (importMode === 'abort' && storedIds.length > 0) {
+              throw `Import aborted: ${storedIds.length} document(s) already exist`;
             }
             for (const doc of batch) {
-              const at = doc._id !== undefined && storedBefore.has(JSON.stringify(doc._id)) ? stored(doc) : -1;
+              const at = doc._id !== undefined && storedIds.some((id) => bsonEqual(id, doc._id)) ? stored(doc) : -1;
               if (at < 0) {
                 const incoming = doc._id === undefined ? { _id: { $oid: newObjectId() }, ...doc } : doc;
                 const refusal = validationError(target, incoming) ?? parallelArrays(target, incoming) ?? duplicateKey(ns, target, incoming);
