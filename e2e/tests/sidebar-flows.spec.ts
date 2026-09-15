@@ -53,7 +53,7 @@ test.describe('Sidebar on the sample connection', () => {
 });
 
 test.describe('Sidebar on a saved connection', () => {
-  test('renames a collection and its database with the tree expanded to its indexes', async ({ app, page }) => {
+  test('renames a collection with the tree expanded to its indexes, and a database without a time-series collection', async ({ app, page }) => {
     await connectStaging(app, page);
     await expandCollections(page, 'sales_db');
     await sidebar(page).getByText('customers', { exact: true }).click();
@@ -67,10 +67,17 @@ test.describe('Sidebar on a saved connection', () => {
     await dismissHoverCards(page);
     await expect(sidebar(page).getByText('clients', { exact: true }).first()).toBeVisible();
 
+    // sales_db holds sensor_readings, a time-series collection, which the backend won't move.
     await menu(page, databaseRow(page, 'sales_db'), 'Rename Database');
     await answer(page, 'sales');
+    await page.getByTestId('dialog-confirm').click();
+    await expect(toast(page, 'is time-series')).toBeVisible();
+    await dismissHoverCards(page);
+
+    await menu(page, databaseRow(page, 'user_analytics'), 'Rename Database');
+    await answer(page, 'analytics');
     await callFrom(app, 'rename_database', () => page.getByTestId('dialog-confirm').click());
-    await expect(databaseRow(page, 'sales')).toBeVisible();
+    await expect(databaseRow(page, 'analytics')).toBeVisible();
   });
 
   test('reports sidebar commands that fail', async ({ app, page }) => {

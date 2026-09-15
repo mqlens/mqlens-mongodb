@@ -128,12 +128,21 @@ test.describe('Export and import', () => {
 
     await importer.getByTestId('import-source-paste').click();
     await importer.getByTestId('import-format-select').selectOption('csv');
-    await importer.getByTestId('import-paste-textarea').fill('name,tier\nEve Adams,Standard\nFrank Hill,Premium');
+    // A quoted field keeps the delimiter and a doubled quote inside it.
+    await importer
+      .getByTestId('import-paste-textarea')
+      .fill('name,tier,note\nEve Adams,Standard,"likes, commas"\nFrank Hill,Premium,"says ""hi"""');
     await expect(importer.getByTestId('import-preview-grid')).toContainText('Frank Hill');
+    await expect(importer.getByTestId('import-preview-grid')).toContainText('likes, commas');
 
     await importer.getByTestId('import-run-btn').click();
     await expect(tasks(page).getByTestId('task-row').first()).toContainText('Import complete: 2 inserted, 0 updated, 0 skipped');
     expect(await docCount(page, STAGING_URI, 'sales_db', 'customers')).toBe(5);
+    const notes = await page.evaluate(
+      (uri) => window.__MQLENS_E2E__!.state.servers[uri].databases.sales_db.customers.docs.flatMap((doc) => (doc.note ? [doc.note] : [])),
+      STAGING_URI,
+    );
+    expect(notes).toEqual(['likes, commas', 'says "hi"']);
   });
 });
 

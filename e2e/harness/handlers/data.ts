@@ -114,17 +114,40 @@ function fieldUpdate(before: Doc, after: Doc, prefix = ''): { set: Doc; unset: D
   return { set, unset };
 }
 
-/** MongoDB's duplicate key error for `doc`, when its `_id` or a unique index's key is already taken. */
-function duplicateKey(ns: string, target: Collection, doc: Doc): string | null {
+/** MongoDB's duplicate key error text, for an index and the key it found twice. */
+const duplicateKeyError = (ns: string, index: string, fields: string[], key: unknown[]) =>
+  `E11000 duplicate key error collection: ${ns} index: ${index} dup key: { ${fields
+    .map((field, i) => `${field}: ${JSON.stringify(key[i])}`)
+    .join(', ')} }`;
+
+/** The value of each indexed field in `doc`; a missing field indexes as null. */
+const indexKey = (doc: Doc, fields: string[]) => fields.map((field) => valuesAt(doc, field)[0] ?? null);
+
+/**
+ * MongoDB's duplicate key error for writing `doc` into `target`, when its `_id`
+ * or a unique index's key already belongs to another document. `replacing` is
+ * the stored document an update is about to replace, which doesn't count.
+ */
+function duplicateKey(ns: string, target: Collection, doc: Doc, replacing?: Doc): string | null {
   const unique = [{ name: '_id_', keys: { _id: 1 } }, ...target.indexes.filter((index) => index.unique)];
   for (const index of unique) {
     const fields = Object.keys(index.keys);
-    const keyOf = (candidate: Doc) => fields.map((field) => valuesAt(candidate, field)[0] ?? null);
-    const wanted = keyOf(doc);
-    if (target.docs.some((existing) => jsonEqual(keyOf(existing), wanted))) {
-      const shown = fields.map((field, i) => `${field}: ${JSON.stringify(wanted[i])}`).join(', ');
-      return `E11000 duplicate key error collection: ${ns} index: ${index.name} dup key: { ${shown} }`;
+    const wanted = indexKey(doc, fields);
+    if (target.docs.some((existing) => existing !== replacing && jsonEqual(indexKey(existing, fields), wanted))) {
+      return duplicateKeyError(ns, index.name, fields, wanted);
     }
+  }
+  return null;
+}
+
+/** MongoDB's error for building a unique index over documents that already share a key. */
+function duplicateIndexKey(ns: string, name: string, keys: Doc, docs: Doc[]): string | null {
+  const fields = Object.keys(keys);
+  const seen: unknown[][] = [];
+  for (const doc of docs) {
+    const key = indexKey(doc, fields);
+    if (seen.some((other) => jsonEqual(other, key))) return duplicateKeyError(ns, name, fields, key);
+    seen.push(key);
   }
   return null;
 }
@@ -286,6 +309,12 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       if (!dbs[String(from)]) throw `Source database "${String(from)}" does not exist`;
       if (dbs[String(to)]) throw `Target database "${String(to)}" already exists`;
       const moved = dbs[String(from)];
+      // The backend moves plain collections only, and checks every one before it creates anything.
+      for (const [name, coll] of Object.entries(moved)) {
+        if (coll.type === 'view') throw `Cannot rename database: collection "${name}" is a view`;
+        if (coll.type === 'timeseries') throw `Cannot rename database: collection "${name}" is time-series`;
+        if (coll.type !== 'collection') throw `Cannot rename database: collection "${name}" has an unsupported type`;
+      }
       dbs[String(to)] = moved;
       delete dbs[String(from)];
       return {
@@ -399,13 +428,16 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       if (Object.keys(unset).length > 0) change.$unset = unset;
       if (Object.keys(change).length === 0) return 0;
       if (isMock(state, id)) return 1;
-      const docs = collection(id, db, coll).docs;
+      const found = collection(id, db, coll);
       const where = parseJson<Doc>(filter, {}, 'filter');
-      const at = docs.findIndex((doc) => matches(doc, where));
+      const at = found.docs.findIndex((doc) => matches(doc, where));
       if (at < 0) return 0;
-      const next = applyUpdate(docs[at], change);
-      if (jsonEqual(next, docs[at])) return 0;
-      docs[at] = next;
+      const next = applyUpdate(found.docs[at], change);
+      if (jsonEqual(next, found.docs[at])) return 0;
+      // MongoDB refuses an update that gives a unique index a key another document has, and changes nothing.
+      const clash = duplicateKey(`${String(db)}.${String(coll)}`, found, next, found.docs[at]);
+      if (clash) throw `Failed to update document: ${clash}`;
+      found.docs[at] = next;
       return 1;
     },
     delete_document: ({ id, database: db, collection: coll, filter }) => {
@@ -491,11 +523,18 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       guardWritable(state, id);
       const found = collection(id, db, coll);
       const name = String(indexName);
+      const mock = isMock(state, id);
       const exists = found.indexes.some((index) => index.name === name);
       // The sample server keeps its own list of indexes, which this adds to; a name it already has stays as it is.
-      if (exists && isMock(state, id)) return null;
+      if (exists && mock) return null;
       if (exists) throw `Index already exists: ${name}`;
-      found.indexes.push({ name, keys: parseJson<Doc>(keys, {}, 'index keys'), unique: Boolean(unique), sparse: Boolean(sparse) });
+      const parsedKeys = parseJson<Doc>(keys, {}, 'index keys');
+      // MongoDB won't build a unique index over documents that already share a key.
+      if (unique && !mock) {
+        const clash = duplicateIndexKey(`${String(db)}.${String(coll)}`, name, parsedKeys, found.docs);
+        if (clash) throw `Failed to create index: ${clash}`;
+      }
+      found.indexes.push({ name, keys: parsedKeys, unique: Boolean(unique), sparse: Boolean(sparse) });
       return null;
     },
     delete_index: ({ id, database: db, collection: coll, indexName }) => {

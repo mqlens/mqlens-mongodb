@@ -251,7 +251,7 @@ export const SAMPLE_SERVER: ServerSeed = {
       sessions: {
         docs: [
           { _id: oid('603d779f4f102e3a105c3520'), session_id: 'sess_001', duration_seconds: 180, referrer: 'google.com' },
-          { _id: oid('603d779f4f102e3a105c3521'), session_id: 'sess_002', duration_seconds: 45, referrer: 'direct' },
+          { _id: oid('603d779f4f102e3a105c3521'), session_id: 'sess_002', duration_seconds: 950, referrer: 'github.com' },
         ],
         indexes: [index('session_id_1', { session_id: 1 })],
       },

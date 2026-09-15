@@ -27,6 +27,8 @@ function inScope(chat: Record<string, unknown>, scope: unknown): boolean {
 
 export function registerAiHandlers(backend: Backend, state: E2EState): void {
   const chats = new Map<string, Record<string, unknown>>();
+  // Which panel holds each open chat, by chat id (`open_chats` in chats.rs).
+  const claims = new Map<string, string>();
 
   const handlers: Record<string, Handler> = {
     ai_provider_options: () => structuredClone(state.aiProviders),
@@ -126,10 +128,38 @@ export function registerAiHandlers(backend: Backend, state: E2EState): void {
       for (const [id, chat] of chats) if (inScope(chat, scope)) chats.delete(id);
       return null;
     },
-    retarget_chat_scope: () => null,
-    claim_chat: () => true,
-    release_chat: () => null,
-    release_owner_chats: () => null,
+    // A renamed namespace takes its saved chats with it. A null collection moves
+    // every chat in the database, and a null variant every variant.
+    retarget_chat_scope: ({ connectionName, database, collection, variant, newDatabase, newCollection }) => {
+      for (const chat of chats.values()) {
+        const moves =
+          chat.connectionName === connectionName &&
+          chat.database === database &&
+          (collection == null || chat.collection === collection) &&
+          (variant == null || chat.variant === variant);
+        if (!moves) continue;
+        chat.database = newDatabase;
+        if (newCollection != null) chat.collection = newCollection;
+      }
+      return null;
+    },
+    // One panel at a time holds a chat, so two can't overwrite each other's
+    // snapshots. Claiming again as the holder succeeds; another owner is refused.
+    claim_chat: ({ chatId, owner }) => {
+      const holder = claims.get(String(chatId));
+      if (holder !== undefined && holder !== owner) return false;
+      claims.set(String(chatId), String(owner));
+      return true;
+    },
+    // A release from anyone but the holder is ignored, so a late one can't free a chat its new holder took.
+    release_chat: ({ chatId, owner }) => {
+      if (claims.get(String(chatId)) === owner) claims.delete(String(chatId));
+      return null;
+    },
+    release_owner_chats: ({ owner }) => {
+      for (const [id, holder] of claims) if (holder === owner) claims.delete(id);
+      return null;
+    },
   };
 
   backend.register(handlers);

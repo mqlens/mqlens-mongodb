@@ -18,9 +18,52 @@ interface ExportOptions {
 
 interface CsvOptions {
   delimiter?: string;
+  quote?: string;
   skipLines?: number;
   hasHeaders?: boolean;
   columnTypes?: Record<string, string>;
+}
+
+/**
+ * Records in delimited text, as the `csv` crate reads them for an import: a
+ * quoted field may hold the delimiter, a doubled quote and line breaks, rows
+ * may differ in length, and blank lines are skipped.
+ */
+function csvRecords(text: string, delimiter: string, quote: string): string[][] {
+  const records: string[][] = [];
+  let record: string[] = [];
+  let field = '';
+  let quoted = false;
+  let pending = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (quoted) {
+      if (char !== quote) field += char;
+      else if (text[i + 1] === quote) {
+        field += quote;
+        i += 1;
+      } else quoted = false;
+    } else if (char === quote) {
+      quoted = true;
+      pending = true;
+    } else if (char === delimiter) {
+      record.push(field);
+      field = '';
+      pending = true;
+    } else if (char === '\n' || char === '\r') {
+      if (char === '\r' && text[i + 1] === '\n') i += 1;
+      record.push(field);
+      if (record.length > 1 || record[0] !== '') records.push(record);
+      record = [];
+      field = '';
+      pending = false;
+    } else {
+      field += char;
+      pending = true;
+    }
+  }
+  if (pending) records.push([...record, field]);
+  return records;
 }
 
 type DumpScope = { kind: 'server' } | { kind: 'db'; db: string } | { kind: 'collection'; db: string; coll: string };
@@ -148,23 +191,23 @@ function parseImport(text: string, format: string, csv: CsvOptions = {}): { docs
         columns: [],
       };
     case 'csv': {
-      // Plain delimited cells: enough for the specs' files, not a CSV parser.
-      const delimiter = csv.delimiter || ',';
-      const lines = text
-        .split(/\r?\n/)
-        .slice(csv.skipLines ?? 0)
-        .filter((line) => line.trim() !== '');
-      const split = (line: string) => line.split(delimiter).map((cell) => cell.trim().replace(/^"(.*)"$/, '$1'));
-      const header =
-        csv.hasHeaders === false ? split(lines[0] ?? '').map((_, i) => `field${i + 1}`) : split(lines.shift() ?? '');
-      const typed = (column: string, value: string): unknown => {
-        const type = csv.columnTypes?.[column];
+      const delimiter = csv.delimiter ?? ',';
+      const quote = csv.quote ?? '"';
+      if (delimiter.length !== 1) throw 'CSV delimiter must be a single ASCII character';
+      if (quote.length !== 1) throw 'CSV text qualifier must be a single ASCII character';
+      // Skipped lines are dropped as plain lines before the CSV reader sees the text.
+      const records = csvRecords(text.split(/\r?\n/).slice(csv.skipLines ?? 0).join('\n'), delimiter, quote);
+      const header = csv.hasHeaders === false ? (records[0] ?? []).map((_, i) => `field${i + 1}`) : (records.shift() ?? []);
+      const typed = (column: string | undefined, value: string): unknown => {
+        const type = column === undefined ? undefined : csv.columnTypes?.[column];
         if (type === 'number' || type === 'int' || type === 'double') return Number(value);
         if (type === 'boolean' || type === 'bool') return value === 'true';
         return value;
       };
       return {
-        docs: lines.map((line) => Object.fromEntries(split(line).map((value, i) => [header[i], typed(header[i], value)]))),
+        docs: records.map((cells) =>
+          Object.fromEntries(cells.map((value, i) => [header[i] ?? `field${i + 1}`, typed(header[i], value)])),
+        ),
         columns: header,
       };
     }
