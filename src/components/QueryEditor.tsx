@@ -30,6 +30,9 @@ function getOverflowNode(): HTMLElement | undefined {
   return overflowNode;
 }
 
+/** Monaco breaks lines at "\r\n", "\r" and "\n" alike, so all three go. */
+const toSingleLine = (text: string) => text.replace(/\r\n|\r|\n/g, '');
+
 interface QueryEditorProps {
   surface: Surface;
   value: string;
@@ -205,7 +208,11 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
       defaultLanguage="javascript"
       language="javascript"
       theme={theme}
-      value={value}
+      // Callers hand a single-line field pretty-printed JSON (the visual
+      // builder, a saved query, a history entry). Flattening it here means the
+      // editor never rewrites text it was given — and never reports a reflowed
+      // copy back through onChange, which the builder syncs its rules from.
+      value={singleLine ? toSingleLine(value) : value}
       onChange={(v) => onChange(v ?? '')}
       wrapperProps={testid ? { 'data-testid': testid } : undefined}
       beforeMount={(monaco: Monaco) => {
@@ -254,14 +261,33 @@ export const QueryEditor: React.FC<QueryEditorProps> = ({
             () => onRunRef.current?.(),
             '!suggestWidgetVisible && !renameInputVisible && !inSnippetMode',
           );
+          // Typing can still break the line: a multi-line paste, Shift+Enter.
+          // Join the lines back up, but not from inside this event — editing
+          // the model while Monaco delivers its change re-enters that delivery.
+          // Rewriting it there with only "\n" removed overflowed the stack:
+          // under a CRLF model (Monaco's default for a Windows user agent) the
+          // "\r" left behind still broke lines, so each rewrite fired another.
+          let joinQueued = false;
+          const joinLines = () => {
+            joinQueued = false;
+            const model = ed.getModel();
+            if (!model || model.isDisposed() || model.getLineCount() === 1) return;
+            const lines = model.getLinesContent();
+            const pos = ed.getPosition();
+            // The caret stays after the character it followed.
+            const column = pos
+              ? lines.slice(0, pos.lineNumber - 1).reduce((n, line) => n + line.length, 0) + pos.column
+              : null;
+            ed.executeEdits('single-line', [
+              { range: model.getFullModelRange(), text: lines.join(''), forceMoveMarkers: true },
+            ]);
+            if (column !== null) ed.setPosition({ lineNumber: 1, column });
+            ed.pushUndoStop();
+          };
           ed.onDidChangeModelContent(() => {
-            const v = ed.getValue();
-            if (v.includes('\n')) {
-              const flat = v.replace(/\n/g, '');
-              const pos = ed.getPosition();
-              ed.setValue(flat);
-              if (pos) ed.setPosition({ lineNumber: 1, column: Math.min(pos.column, flat.length + 1) });
-            }
+            if (joinQueued || (ed.getModel()?.getLineCount() ?? 1) === 1) return;
+            joinQueued = true;
+            queueMicrotask(joinLines);
           });
         }
         const model = ed.getModel();
