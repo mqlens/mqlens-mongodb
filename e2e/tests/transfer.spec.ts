@@ -128,21 +128,28 @@ test.describe('Export and import', () => {
 
     await importer.getByTestId('import-source-paste').click();
     await importer.getByTestId('import-format-select').selectOption('csv');
-    // A quoted field keeps the delimiter and a doubled quote inside it.
+    // A quoted field keeps the delimiter and a doubled quote inside it, and a
+    // cell in an untyped column that reads as JSON imports as that value.
     await importer
       .getByTestId('import-paste-textarea')
-      .fill('name,tier,note\nEve Adams,Standard,"likes, commas"\nFrank Hill,Premium,"says ""hi"""');
+      .fill('name,tier,visits,vip,note\nEve Adams,Standard,7,true,"likes, commas"\nFrank Hill,Premium,12,false,"says ""hi"""');
     await expect(importer.getByTestId('import-preview-grid')).toContainText('Frank Hill');
     await expect(importer.getByTestId('import-preview-grid')).toContainText('likes, commas');
 
     await importer.getByTestId('import-run-btn').click();
     await expect(tasks(page).getByTestId('task-row').first()).toContainText('Import complete: 2 inserted, 0 updated, 0 skipped');
     expect(await docCount(page, STAGING_URI, 'sales_db', 'customers')).toBe(5);
-    const notes = await page.evaluate(
-      (uri) => window.__MQLENS_E2E__!.state.servers[uri].databases.sales_db.customers.docs.flatMap((doc) => (doc.note ? [doc.note] : [])),
+    const imported = await page.evaluate(
+      (uri) =>
+        window.__MQLENS_E2E__!.state.servers[uri].databases.sales_db.customers.docs
+          .filter((doc) => 'note' in doc)
+          .map(({ visits, vip, note }) => ({ visits, vip, note })),
       STAGING_URI,
     );
-    expect(notes).toEqual(['likes, commas', 'says "hi"']);
+    expect(imported).toEqual([
+      { visits: 7, vip: true, note: 'likes, commas' },
+      { visits: 12, vip: false, note: 'says "hi"' },
+    ]);
   });
 });
 

@@ -165,6 +165,56 @@ function formatDocs(docs: Doc[], format: string, options: ExportOptions = {}): s
   }
 }
 
+/** A parsed JSON value as an import document; the backend refuses anything but an object. */
+function asDocument(value: unknown): Doc {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw 'Expected a JSON object (e.g. { "field": value })';
+  return value as Doc;
+}
+
+const INTEGER = /^[+-]?\d+$/;
+const RFC_3339 = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
+
+/**
+ * One CSV cell under its column's type, as `convert_csv_cell` converts it
+ * (src-tauri/src/db/documents.rs). An untyped cell becomes its JSON value when
+ * it parses as JSON and stays text otherwise. `row` counts data rows from 1.
+ */
+function convertCsvCell(cell: string, column: string, type: string | undefined, row: number): unknown {
+  const fail = (name: string): never => {
+    throw `CSV row ${row}, column "${column}": cannot convert "${cell}" to ${name}`;
+  };
+  const trimmed = cell.trim();
+  switch (type ?? 'auto') {
+    case 'auto':
+      if (cell === '') return '';
+      try {
+        return JSON.parse(cell);
+      } catch {
+        return cell;
+      }
+    case 'string':
+      return cell;
+    case 'number':
+      return trimmed !== '' && !Number.isNaN(Number(trimmed)) ? Number(trimmed) : fail('number');
+    case 'boolean':
+      if (trimmed.toLowerCase() === 'true') return true;
+      if (trimmed.toLowerCase() === 'false') return false;
+      return fail('boolean');
+    case 'date': {
+      const millis = INTEGER.test(trimmed) ? Number(trimmed) : RFC_3339.test(trimmed) ? Date.parse(trimmed) : NaN;
+      return Number.isNaN(millis) ? fail('date (RFC-3339 or epoch millis)') : { $date: new Date(millis).toISOString() };
+    }
+    case 'json':
+      try {
+        return JSON.parse(cell);
+      } catch {
+        return fail('json');
+      }
+    default:
+      throw `e2e fake backend has no CSV column type ${type}`;
+  }
+}
+
 function parseImport(text: string, format: string, csv: CsvOptions = {}): { docs: Doc[]; columns: string[] } {
   switch (format) {
     case 'json': {
@@ -175,7 +225,8 @@ function parseImport(text: string, format: string, csv: CsvOptions = {}): { docs
         throw `Invalid JSON: ${String(error)}`;
       }
       if (!Array.isArray(parsed)) throw 'Expected a JSON array of documents';
-      return { docs: parsed as Doc[], columns: [] };
+      // One element that isn't an object refuses the whole file.
+      return { docs: parsed.map(asDocument), columns: [] };
     }
     case 'ndjson':
     case 'jsonl':
@@ -183,9 +234,9 @@ function parseImport(text: string, format: string, csv: CsvOptions = {}): { docs
         docs: text.split(/\r?\n/).flatMap((line, i) => {
           if (line.trim() === '') return [];
           try {
-            return [JSON.parse(line) as Doc];
+            return [asDocument(JSON.parse(line))];
           } catch (error) {
-            throw `NDJSON line ${i + 1}: ${String(error)}`;
+            throw `NDJSON line ${i + 1}: ${error instanceof SyntaxError ? `Invalid JSON: ${String(error)}` : String(error)}`;
           }
         }),
         columns: [],
@@ -198,15 +249,12 @@ function parseImport(text: string, format: string, csv: CsvOptions = {}): { docs
       // Skipped lines are dropped as plain lines before the CSV reader sees the text.
       const records = csvRecords(text.split(/\r?\n/).slice(csv.skipLines ?? 0).join('\n'), delimiter, quote);
       const header = csv.hasHeaders === false ? (records[0] ?? []).map((_, i) => `field${i + 1}`) : (records.shift() ?? []);
-      const typed = (column: string | undefined, value: string): unknown => {
-        const type = column === undefined ? undefined : csv.columnTypes?.[column];
-        if (type === 'number' || type === 'int' || type === 'double') return Number(value);
-        if (type === 'boolean' || type === 'bool') return value === 'true';
-        return value;
-      };
       return {
-        docs: records.map((cells) =>
-          Object.fromEntries(cells.map((value, i) => [header[i] ?? `field${i + 1}`, typed(header[i], value)])),
+        // Each column takes its cell, an empty one when the row is short; cells past the last column are dropped.
+        docs: records.map((cells, row) =>
+          Object.fromEntries(
+            header.map((column, i) => [column, convertCsvCell(cells[i] ?? '', column, csv.columnTypes?.[column], row + 1)]),
+          ),
         ),
         columns: header,
       };

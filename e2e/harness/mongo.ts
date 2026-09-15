@@ -267,6 +267,22 @@ function evaluate(doc: Doc, expression: unknown): unknown {
   return expression;
 }
 
+/**
+ * Remove what a dotted path selects, the way an exclusion projection does. An
+ * array on the way has the rest of the path removed from each embedded
+ * document in it.
+ */
+function excludePath(target: unknown, path: string): void {
+  if (Array.isArray(target)) {
+    for (const element of target) excludePath(element, path);
+    return;
+  }
+  const [head, ...rest] = path.split('.');
+  if (!isPlainObject(target) || isEjsonWrapper(target) || !(head in target)) return;
+  if (rest.length === 0) delete target[head];
+  else excludePath(target[head], rest.join('.'));
+}
+
 export function project(doc: Doc, spec: Record<string, unknown>): Doc {
   const entries = Object.entries(spec);
   if (entries.length === 0) return doc;
@@ -283,7 +299,7 @@ export function project(doc: Doc, spec: Record<string, unknown>): Doc {
     return out;
   }
   const out = structuredClone(doc);
-  for (const [path, value] of entries) if (isExclude(value)) deletePath(out, path);
+  for (const [path, value] of entries) if (isExclude(value)) excludePath(out, path);
   return out;
 }
 

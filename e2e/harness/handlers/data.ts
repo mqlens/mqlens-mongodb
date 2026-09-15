@@ -471,13 +471,18 @@ export function registerDataHandlers(backend: Backend, state: E2EState): void {
       const found = collection(id, db, coll);
       // MongoDB's modified count: a match the update leaves as it was doesn't count.
       let modified = 0;
-      found.docs = found.docs.map((doc) => {
-        if (!matches(doc, where)) return doc;
+      for (const [i, doc] of found.docs.entries()) {
+        if (!matches(doc, where)) continue;
         const next = applyUpdate(doc, change);
-        if (jsonEqual(next, doc)) return doc;
+        // `_id` is immutable. Like a multi-update that stops at its first error,
+        // the documents already updated keep their change.
+        if (!('_id' in next) || !jsonEqual(next._id, doc._id)) {
+          throw "Failed to update documents: Performing an update on the path '_id' would modify the immutable field '_id'";
+        }
+        if (jsonEqual(next, doc)) continue;
+        found.docs[i] = next;
         modified += 1;
-        return next;
-      });
+      }
       return modified;
     },
 
