@@ -36,22 +36,41 @@ export function comparable(value: unknown): unknown {
   return value;
 }
 
-/** BSON's cross-type sort order, reduced to the types the app's data uses. */
+const NUMBER_WRAPPERS = ['$numberInt', '$numberLong', '$numberDouble', '$numberDecimal'];
+
+/**
+ * BSON's cross-type order: MinKey, null, numbers, strings, objects, arrays,
+ * binary data, ObjectIds, booleans, dates, timestamps, regular expressions,
+ * MaxKey. It reads the Extended JSON value before its wrapper is removed, so an
+ * ObjectId and the same hex string are different types, as are a date and its
+ * milliseconds, and neither equals the other.
+ */
 function typeRank(value: unknown): number {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === 'number') return 1;
-  if (typeof value === 'string') return 2;
-  if (Array.isArray(value)) return 4;
-  if (typeof value === 'object') return 3;
-  if (typeof value === 'boolean') return 5;
-  return 6;
+  if (value === null || value === undefined) return 1;
+  if (typeof value === 'number') return 2;
+  if (typeof value === 'string') return 3;
+  if (Array.isArray(value)) return 5;
+  if (typeof value === 'boolean') return 8;
+  if (isPlainObject(value)) {
+    if ('$minKey' in value) return 0;
+    if (NUMBER_WRAPPERS.some((key) => key in value)) return 2;
+    if ('$symbol' in value) return 3;
+    if ('$binary' in value || '$uuid' in value) return 6;
+    if ('$oid' in value) return 7;
+    if ('$date' in value) return 9;
+    if ('$timestamp' in value) return 10;
+    if ('$regularExpression' in value) return 11;
+    if ('$maxKey' in value) return 12;
+    return 4;
+  }
+  return 13;
 }
 
 export function compareValues(a: unknown, b: unknown): number {
+  const rank = typeRank(a) - typeRank(b);
+  if (rank !== 0) return rank;
   const x = comparable(a);
   const y = comparable(b);
-  const rank = typeRank(x) - typeRank(y);
-  if (rank !== 0) return rank;
   if (typeof x === 'number' && typeof y === 'number') return x - y;
   if (typeof x === 'boolean' && typeof y === 'boolean') return Number(x) - Number(y);
   const left = typeof x === 'string' ? x : JSON.stringify(x);
@@ -59,7 +78,7 @@ export function compareValues(a: unknown, b: unknown): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-const sameType = (a: unknown, b: unknown) => typeRank(comparable(a)) === typeRank(comparable(b));
+const sameType = (a: unknown, b: unknown) => typeRank(a) === typeRank(b);
 const valuesEqual = (a: unknown, b: unknown) => sameType(a, b) && compareValues(a, b) === 0;
 
 /** Equality of two JSON values, with objects equal whatever order their keys are in. */
