@@ -173,7 +173,15 @@ test.describe('Importing connections', () => {
 
     await paste(pasted);
     await expect.poll(async () => (await savedProfiles(app)).map((profile) => profile.name)).toEqual(['Reporting', 'audit.example']);
-    expect(await page.evaluate(() => localStorage.getItem('mqlens_folders'))).toContain('Prod');
+    // Both profiles are filed under the Prod folder the paste named.
+    const stored = await page.evaluate(() => ({
+      folders: JSON.parse(localStorage.getItem('mqlens_folders') ?? '[]') as Array<{ id: string; name: string }>,
+      placement: JSON.parse(localStorage.getItem('mqlens_profile_folders') ?? '{}') as Record<string, string>,
+    }));
+    const prod = stored.folders.find((folder) => folder.name === 'Prod');
+    expect(prod).toBeDefined();
+    const ids = (await savedProfiles(app)).map((profile) => String(profile.id));
+    expect(ids.map((id) => stored.placement[id])).toEqual([prod!.id, prod!.id]);
   });
 
   test('imports from the clipboard, and says when it holds no URI', async ({ app, page, context, browserName }) => {

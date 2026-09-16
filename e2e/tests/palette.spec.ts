@@ -41,7 +41,10 @@ test.describe('Command palette', () => {
     const entry = palette(page).getByText('Saved query: Premium customers');
     await expect(entry).toBeVisible();
     const ran = await callFrom(app, 'execute_mql_query', () => entry.click());
+    expect(ran).toMatchObject({ database: 'sales_db', collection: 'customers' });
     expect(JSON.parse(String(ran.filter))).toEqual({ tier: 'Premium' });
+    await expect(view(page).getByText('Charlie Brown').first()).toBeVisible();
+    await expect(view(page).getByText('Bob Johnson')).toHaveCount(0);
   });
 
   test('narrows what it lists to the sidebar filter', async ({ app, page }) => {
