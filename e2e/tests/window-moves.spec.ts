@@ -42,8 +42,8 @@ function workspace(revision: number, main: StoredTab[], win2: StoredTab[]) {
   };
 }
 
-/** Tell this window that win-2 exists, holding `win2`, without changing this window's own tabs. */
-const announceSecondWindow = (app: App, revision: number, win2: StoredTab[] = []) =>
+/** Tell this window that win-2 exists, holding `win2` (a window other than main always holds a tab), without changing this window's own tabs. */
+const announceSecondWindow = (app: App, revision: number, win2: StoredTab[]) =>
   app.emit('workspace-changed', { revision, origin: 'win-2', crossWindow: false, workspace: workspace(revision, [], win2) });
 
 const ops = async (app: App) => (await app.calls('workspace_apply')).map((call) => (call.args as { op: Record<string, unknown> }).op);
@@ -58,7 +58,7 @@ async function draftOnCustomers(app: App, page: Page): Promise<void> {
   await connectStaging(app, page);
   await openCollection(page, 'sales_db', 'customers');
   await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
-  await announceSecondWindow(app, 70);
+  await announceSecondWindow(app, 70, [stagingTab('transactions')]);
   await view(page).getByTestId('insert-doc-btn').click();
   await setEditorText(page, page.getByTestId('document-edit-modal'), '{ "name": "Dana White" }');
 }
@@ -161,7 +161,7 @@ test.describe('Tabs another window holds', () => {
       revision: 90,
       origin: 'win-2',
       crossWindow: true,
-      workspace: workspace(90, [stagingTab('customers'), transactions], []),
+      workspace: workspace(90, [stagingTab('customers'), transactions], [stagingTab('products')]),
     });
     await expect(strip(page).getByText('transactions', { exact: true })).toBeVisible();
     await expect(strip(page).getByText('Export: customers', { exact: true })).toBeVisible();
