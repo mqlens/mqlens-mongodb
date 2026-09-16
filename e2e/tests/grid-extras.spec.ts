@@ -151,8 +151,13 @@ test.describe('Copying', () => {
 
     await jsonLine(page, '"doc-0"').click();
     await page.keyboard.press('ControlOrMeta+a');
-    await page.keyboard.press('ControlOrMeta+c');
-    await expect.poll(() => clipboard(page)).toContain('"doc-49"');
+    // The view learns of the select-all from `selectionchange`, which the browser
+    // fires a task later. A copy pressed before that is the browser's own, of the
+    // rows on screen, so copy again until the view's rebuilt copy lands.
+    await expect(async () => {
+      await page.keyboard.press('ControlOrMeta+c');
+      expect(await clipboard(page)).toContain('"doc-49"');
+    }).toPass({ timeout: 15_000 });
     const copied = await clipboard(page);
     expect(copied).toContain('"doc-0"');
     expect(copied).toContain('… }');
