@@ -105,7 +105,7 @@ test.describe('A tab that crashes', () => {
 
 test.describe('Splits inside splits', () => {
   test('restores a nested split, reorders a tab in the inner pane, and closes it', async ({ app, page }) => {
-    const [customers, products, transactions] = [storedTab('customers'), storedTab('products'), storedTab('transactions')];
+    const [customers, products, transactions, readings] = ['customers', 'products', 'transactions', 'sensor_readings'].map(storedTab);
     await app.open({
       profiles: [{ id: 'p-staging', name: 'Staging', uri: STAGING_URI }],
       servers: { [STAGING_URI]: SAMPLE_SERVER },
@@ -128,7 +128,7 @@ test.describe('Splits inside splits', () => {
                   ratio: 0.5,
                   children: [
                     { kind: 'pane', id: 'pane-2', tabIds: [products.id, transactions.id], activeTabId: products.id },
-                    { kind: 'pane', id: 'pane-3', tabIds: [transactions.id], activeTabId: transactions.id },
+                    { kind: 'pane', id: 'pane-3', tabIds: [readings.id], activeTabId: readings.id },
                   ],
                 },
               ],
@@ -136,7 +136,7 @@ test.describe('Splits inside splits', () => {
             focusedPaneId: 'pane-2',
           },
         ],
-        tabs: [customers, products, transactions],
+        tabs: [customers, products, transactions, readings],
       },
     });
 
@@ -144,9 +144,14 @@ test.describe('Splits inside splits', () => {
     const inner = strips(page).nth(1);
     await expect(inner.getByText('products', { exact: true })).toBeVisible();
 
-    // Dropping a tab on its own pane's strip reorders it there.
-    await dragTab(page, 'transactions', inner, 0.1, 0.5);
-    await expect(inner.getByText('transactions', { exact: true })).toBeVisible();
+    // A tab dropped on its own pane's strip moves to the end of that pane.
+    const order = async () => {
+      const labels = await inner.locator('[draggable="true"]').allTextContents();
+      return [labels.findIndex((label) => label.includes('products')), labels.findIndex((label) => label.includes('transactions'))];
+    };
+    expect(await order()).toEqual([0, 1]);
+    await dragTab(page, 'products', inner, 0.5, 0.5);
+    await expect.poll(order).toEqual([1, 0]);
 
     // Closing the last tab of the third pane leaves the two others.
     await strips(page).nth(2).getByRole('button', { name: /^Close / }).first().click();

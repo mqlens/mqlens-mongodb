@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type App } from '../fixtures';
 import type { ProfileSeed } from '../harness/seed';
-import { connectStaging, dismissHoverCards, expandCollections, openCollection, view } from '../helpers';
+import { connectStaging, dismissHoverCards, expandCollections, view } from '../helpers';
 
 // Pinned items, favourites and the sidebar's own listings (#396). Pins and
 // favourites live in localStorage and are shared with the app's other windows,
@@ -90,28 +90,32 @@ test.describe('Pins and favourites', () => {
 test.describe('Listing failures', () => {
   test('keeps going when indexes, collections or databases cannot be listed', async ({ app, page }) => {
     await connect(app, page);
-    // The collection's own row has to be open before it lists its indexes.
-    await openCollection(page, 'sales_db', 'customers');
-    await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
+    await expandCollections(page, 'sales_db');
+    const failed = async (cmd: string) => (await app.calls(cmd)).some((call) => call.error !== undefined);
 
-    // Indexes: the group opens empty rather than breaking the tree.
+    // Indexes: a collection lists them the first time its row opens. When that
+    // fails, the collection still opens.
     await app.failNext('list_indexes', 'not authorized on sales_db to execute listIndexes');
-    await sidebar(page).getByText('indexes', { exact: true }).first().click();
+    await sidebar(page).getByText('products', { exact: true }).click();
     await dismissHoverCards(page);
-    await expect(sidebar(page).getByText('customers', { exact: true })).toBeVisible();
+    await expect.poll(() => failed('list_indexes')).toBe(true);
+    await expect(view(page).getByText('SuperBook Pro').first()).toBeVisible();
 
-    // Collections: the database says so, and the group loads them when asked again.
-    await app.failNext('list_collections', 'not authorized on sales_db to execute listCollections');
-    await databaseRow(page, 'sales_db').click();
+    // Collections: a database not listed yet says why, and its group lists them when asked again.
+    await app.failNext('list_collections', 'not authorized on user_analytics to execute listCollections');
+    await databaseRow(page, 'user_analytics').click();
     await dismissHoverCards(page);
-    await databaseRow(page, 'sales_db').click();
+    await expect(page.getByTestId('dialog-toast').filter({ hasText: 'Could not list collections in user_analytics' })).toBeVisible();
+    expect(await failed('list_collections')).toBe(true);
+    await sidebar(page).getByText('Collections', { exact: true }).last().click();
     await dismissHoverCards(page);
-    await expect(sidebar(page).getByText('Collections', { exact: true }).first()).toBeVisible();
+    await expect(sidebar(page).getByText('events', { exact: true })).toBeVisible();
 
     // Databases: refreshing the connection.
     await app.failNext('list_databases', 'not authorized to execute listDatabases');
     await connectionRow(page).getByRole('button', { name: 'Refresh databases' }).click();
     await dismissHoverCards(page);
+    await expect.poll(() => failed('list_databases')).toBe(true);
     await expect(connectionRow(page)).toBeVisible();
   });
 

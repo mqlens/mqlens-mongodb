@@ -37,10 +37,13 @@ test.describe('Workspace tabs', () => {
     await openCollection(page, 'sales_db', 'customers');
     await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
 
-    const openTwice = async (label: string, open: () => Promise<void>) => {
+    // Each open starts from the collection tab, so the view has to come forward to be seen.
+    const openTwice = async (label: string, shown: string, open: () => Promise<void>) => {
       for (let i = 0; i < 2; i += 1) {
+        await strip(page).getByText('customers', { exact: true }).click();
         await open();
         await expect(strip(page).getByText(label, { exact: true })).toHaveCount(1);
+        await expect(view(page).getByTestId(shown)).toBeVisible();
       }
     };
     const fromCollectionTab = (button: string) => async () => {
@@ -62,28 +65,28 @@ test.describe('Workspace tabs', () => {
       await dismissHoverCards(page);
     };
 
-    await openTwice('Export: customers', fromCollectionTab('export-btn'));
-    await openTwice('Import: customers', fromCollectionTab('import-btn'));
-    await openTwice('Watch: customers', collectionMenu('Watch changes…'));
+    await openTwice('Export: customers', 'export-view', fromCollectionTab('export-btn'));
+    await openTwice('Import: customers', 'import-view', fromCollectionTab('import-btn'));
+    await openTwice('Watch: customers', 'watch-panel', collectionMenu('Watch changes…'));
     // The collection menu's shell comes with a find to run; a second open hands it to the open tab.
-    await openTwice('mongosh: customers', collectionMenu('Open mongosh Shell'));
-    await openTwice('Schema: customers', collectionMenu('Analyze Schema'));
-    await openTwice('Validation: customers', collectionMenu('Validation Rules'));
-    await openTwice('Generate: customers', collectionMenu('Generate Data…'));
-    await openTwice('Dump: sales_db', collectionMenu('Dump (mongodump)…'));
-    await openTwice('New View: sales_db', databaseMenu('Create View'));
+    await openTwice('mongosh: customers', 'mongo-shell', collectionMenu('Open mongosh Shell'));
+    await openTwice('Schema: customers', 'schema-view', collectionMenu('Analyze Schema'));
+    await openTwice('Validation: customers', 'validation-rules-view', collectionMenu('Validation Rules'));
+    await openTwice('Generate: customers', 'generate-view', collectionMenu('Generate Data…'));
+    await openTwice('Dump: sales_db', 'dump-view', collectionMenu('Dump (mongodump)…'));
+    await openTwice('New View: sales_db', 'create-view', databaseMenu('Create View'));
     // Scoped to a database, the Users tab takes that database each time it's opened.
-    await openTwice('Users: Staging', databaseMenu('Manage Users'));
-    await openTwice('Restore: Staging', () => connectionMenu(page, 'ctx-restore-conn-1'));
-    await openTwice('Activity', () => page.getByTestId('status-bar-activity').click());
+    await openTwice('Users: Staging', 'user-management-view', databaseMenu('Manage Users'));
+    await openTwice('Restore: Staging', 'restore-view', () => connectionMenu(page, 'ctx-restore-conn-1'));
+    await openTwice('Activity', 'activity-panel', () => page.getByTestId('status-bar-activity').click());
 
     await sidebar(page).getByText('indexes', { exact: true }).first().click();
     await dismissHoverCards(page);
-    await openTwice('customers.email_1', sidebarRow('email_1'));
+    await openTwice('customers.email_1', 'index-viewer', sidebarRow('email_1'));
 
     await sidebar(page).getByText('GridFS Buckets', { exact: true }).click();
     await dismissHoverCards(page);
-    await openTwice('GridFS: fs', sidebarRow('fs'));
+    await openTwice('GridFS: fs', 'gridfs-view', sidebarRow('fs'));
   });
 });
 

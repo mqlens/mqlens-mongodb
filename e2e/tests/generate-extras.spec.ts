@@ -90,6 +90,8 @@ test.describe('Generate templates', () => {
     await expect(view.getByTestId('generate-preview-doc')).toHaveCount(3);
     await view.getByTestId('generate-mode-raw').click();
     const editor = view.getByTestId('generate-raw-editor');
+    // It fills in the template itself as it opens; text typed before that would be replaced.
+    await expect.poll(() => getEditorText(page, editor)).toContain('"name"');
 
     await setEditorText(page, editor, '{ "x": { "$foo": {} } }');
     await expect(view.getByTestId('generate-custom-notice')).toBeVisible();

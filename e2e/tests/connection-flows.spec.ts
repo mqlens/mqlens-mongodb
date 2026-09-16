@@ -114,6 +114,9 @@ test.describe('Connecting from the editor', () => {
 
     await button(page, 'Test Connection').click();
     await expect(page.getByTestId('test-result-summary')).toBeVisible();
+    await expect(page.getByTestId('test-result-summary')).not.toHaveText('Connection test successful');
+    // Only a failed test offers its error details.
+    await expect(page.getByTestId('test-error-details-toggle')).toBeVisible();
     expect(await app.calls('test_connection_uri')).not.toHaveLength(0);
   });
 });
