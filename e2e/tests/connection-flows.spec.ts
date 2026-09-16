@@ -239,9 +239,10 @@ test.describe('Saved connection settings', () => {
     await expect(page.getByTestId('color-picker-custom-preview')).toBeVisible();
     expect(await colorOf()).toBe('#aabbcc');
 
+    // A tag that isn't hex shows the picker's default, and is saved back as it was.
     await editProfile(page, 'Named');
     await expect(page.getByTestId('color-picker-custom')).toHaveValue('#3b82f6');
-    await colorOf();
+    expect(await colorOf()).toBe('red');
 
     await button(page, 'New...').click();
     await page.getByLabel('Display Name').fill('Tagged');
