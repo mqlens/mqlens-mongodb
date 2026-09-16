@@ -43,6 +43,29 @@ export class App {
   failNext(cmd: string, message: string): Promise<void> {
     return this.page.evaluate(([name, text]) => window.__MQLENS_E2E__!.failNext(name, text), [cmd, message] as const);
   }
+
+  /**
+   * Hold the next call to `cmd` until the returned function is called. The call
+   * is recorded as soon as the app makes it, so `calls` shows it while it waits.
+   */
+  async hold(cmd: string): Promise<() => Promise<void>> {
+    await this.page.evaluate((name) => window.__MQLENS_E2E__!.holdNext(name), cmd);
+    return () => this.page.evaluate((name) => window.__MQLENS_E2E__!.release(name), cmd);
+  }
+
+  /** Deliver a backend event to the app, as the Rust side's `emit` would. */
+  async emit(event: string, payload: unknown): Promise<void> {
+    await this.page.evaluate(([name, value]) => window.__MQLENS_E2E__!.emit(name, value), [event, payload] as const);
+  }
+
+  /**
+   * The errors the app has reported through `log_frontend_error`, which are then
+   * cleared. For a test that makes the app fail on purpose: every test fails if
+   * any are left at the end.
+   */
+  takeFrontendErrors(): Promise<string[]> {
+    return this.page.evaluate(() => window.__MQLENS_E2E__!.state.frontendErrors.splice(0));
+  }
 }
 
 export const test = base.extend<{ collectCoverage: void; app: App }>({

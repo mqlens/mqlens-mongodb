@@ -25,6 +25,9 @@ export class Backend {
   readonly unhandled = new Set<string>();
   private readonly handlers = new Map<string, Handler>();
   private readonly failures = new Map<string, string[]>();
+  /** Gates the next calls to a command wait on, oldest first, and the functions that open them. */
+  private readonly holds = new Map<string, Array<Promise<void>>>();
+  private readonly releases = new Map<string, Array<() => void>>();
 
   constructor(readonly state: E2EState) {}
 
@@ -40,6 +43,25 @@ export class Backend {
     this.failures.set(cmd, queue);
   }
 
+  /**
+   * Hold the next call to `cmd` until `release(cmd)`: it is recorded when it
+   * arrives, then waits, then answers as it otherwise would. A reply that is
+   * still coming lets a test act while the app waits for it.
+   */
+  holdNext(cmd: string): void {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    this.holds.set(cmd, [...(this.holds.get(cmd) ?? []), gate]);
+    this.releases.set(cmd, [...(this.releases.get(cmd) ?? []), open]);
+  }
+
+  /** Let the oldest held call to `cmd` go on; one released before it arrives isn't held at all. */
+  release(cmd: string): void {
+    this.releases.get(cmd)?.shift()?.();
+  }
+
   /** Deliver a Tauri event to the app's `listen` handlers, as the backend's `emit` would. */
   emit(event: string, payload: unknown): Promise<unknown> {
     const internals = (window as unknown as { __TAURI_INTERNALS__: TauriInternals }).__TAURI_INTERNALS__;
@@ -49,6 +71,9 @@ export class Backend {
   async handle(cmd: string, args: InvokeArgs): Promise<unknown> {
     const record: CallRecord = { cmd, args };
     this.calls.push(record);
+
+    const gate = this.holds.get(cmd)?.shift();
+    if (gate) await gate;
 
     const injected = this.failures.get(cmd)?.shift();
     if (injected !== undefined) {

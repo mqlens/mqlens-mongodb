@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { callFrom, connectStaging, dismissHoverCards, openCollection, view } from '../helpers';
+import { SAMPLE_SERVER } from '../harness/seed';
+import { callFrom, connectStaging, dismissHoverCards, openCollection, STAGING_URI, view } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary').first();
 const strip = (page: Page) => page.getByTestId('workspace-tab-strip');
@@ -24,6 +25,65 @@ test.describe('Workspace tabs', () => {
     for (let i = 0; i < 2; i += 1) await page.getByRole('button', { name: 'Open Settings' }).click();
     await expect(page.getByTestId('settings-view')).toHaveCount(1);
     await expect(page.getByTestId('settings-view')).toBeVisible();
+  });
+
+  test('every other kind of view, opened again, brings back its one tab', async ({ app, page }) => {
+    // A GridFS bucket in sales_db, so its row can be opened too.
+    const sales = { ...SAMPLE_SERVER.databases.sales_db, 'fs.files': {}, 'fs.chunks': {} };
+    await connectStaging(app, page, {
+      servers: { [STAGING_URI]: { ...SAMPLE_SERVER, databases: { ...SAMPLE_SERVER.databases, sales_db: sales } } },
+      gridfs: { 'sales_db.fs': [{ filename: 'invoice.pdf', content: 'PDF' }] },
+    });
+    await openCollection(page, 'sales_db', 'customers');
+    await expect(view(page).getByText('Alice Smith').first()).toBeVisible();
+
+    const openTwice = async (label: string, open: () => Promise<void>) => {
+      for (let i = 0; i < 2; i += 1) {
+        await open();
+        await expect(strip(page).getByText(label, { exact: true })).toHaveCount(1);
+      }
+    };
+    const fromCollectionTab = (button: string) => async () => {
+      await strip(page).getByText('customers', { exact: true }).click();
+      await view(page).getByTestId(button).click();
+    };
+    const collectionMenu = (item: string) => async () => {
+      await sidebar(page).getByText('customers', { exact: true }).first().click({ button: 'right' });
+      await page.getByRole('menuitem', { name: item, exact: true }).click();
+      await dismissHoverCards(page);
+    };
+    const databaseMenu = (item: string) => async () => {
+      await sidebar(page).getByRole('button', { name: 'Database sales_db' }).click({ button: 'right' });
+      await page.getByRole('menuitem', { name: item, exact: true }).click();
+      await dismissHoverCards(page);
+    };
+    const sidebarRow = (text: string) => async () => {
+      await sidebar(page).getByText(text, { exact: true }).click();
+      await dismissHoverCards(page);
+    };
+
+    await openTwice('Export: customers', fromCollectionTab('export-btn'));
+    await openTwice('Import: customers', fromCollectionTab('import-btn'));
+    await openTwice('Watch: customers', collectionMenu('Watch changes…'));
+    // The collection menu's shell comes with a find to run; a second open hands it to the open tab.
+    await openTwice('mongosh: customers', collectionMenu('Open mongosh Shell'));
+    await openTwice('Schema: customers', collectionMenu('Analyze Schema'));
+    await openTwice('Validation: customers', collectionMenu('Validation Rules'));
+    await openTwice('Generate: customers', collectionMenu('Generate Data…'));
+    await openTwice('Dump: sales_db', collectionMenu('Dump (mongodump)…'));
+    await openTwice('New View: sales_db', databaseMenu('Create View'));
+    // Scoped to a database, the Users tab takes that database each time it's opened.
+    await openTwice('Users: Staging', databaseMenu('Manage Users'));
+    await openTwice('Restore: Staging', () => connectionMenu(page, 'ctx-restore-conn-1'));
+    await openTwice('Activity', () => page.getByTestId('status-bar-activity').click());
+
+    await sidebar(page).getByText('indexes', { exact: true }).first().click();
+    await dismissHoverCards(page);
+    await openTwice('customers.email_1', sidebarRow('email_1'));
+
+    await sidebar(page).getByText('GridFS Buckets', { exact: true }).click();
+    await dismissHoverCards(page);
+    await openTwice('GridFS: fs', sidebarRow('fs'));
   });
 });
 

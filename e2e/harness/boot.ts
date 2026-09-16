@@ -32,7 +32,8 @@ declare global {
   }
 }
 
-const state = createState(window.__MQLENS_E2E_SEED__ ?? {});
+const seed = window.__MQLENS_E2E_SEED__ ?? {};
+const state = createState(seed);
 const backend = new Backend(state);
 registerAdminHandlers(backend, state);
 registerAiHandlers(backend, state);
@@ -58,7 +59,7 @@ loader.config({ monaco });
 // instance the app's editors share.
 window.__MQLENS_E2E_MONACO__ = () => loader.init();
 
-mockWindows('main');
+mockWindows(seed.windowLabel ?? 'main');
 mockIPC((cmd, args) => backend.handle(cmd, args as InvokeArgs), { shouldMockEvents: true });
 
 // A dynamic import on purpose: a static one would be hoisted and run the app

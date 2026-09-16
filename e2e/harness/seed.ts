@@ -89,6 +89,8 @@ export interface DumpFolderSeed {
 }
 
 export interface Seed {
+  /** The label of the window the app runs in; "main" by default, another label for a window opened later. */
+  windowLabel?: string;
   vault?: VaultState;
   monitoring?: MonitoringSeed;
   mcp?: McpSeed;
