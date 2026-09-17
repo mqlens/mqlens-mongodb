@@ -52,6 +52,8 @@ test.describe('Generate templates', () => {
     await expect(view.getByTestId('generate-preview-doc')).toHaveCount(3);
     await view.getByTestId('generate-mode-raw').click();
     const editor = view.getByTestId('generate-raw-editor');
+    // It fills in the template itself as it opens; text typed before that would be replaced.
+    await expect.poll(() => getEditorText(page, editor)).toContain('"name"');
     await setEditorText(
       page,
       editor,
@@ -74,7 +76,7 @@ test.describe('Generate templates', () => {
     );
     await expect(view.getByTestId('generate-mode-builder')).toBeEnabled();
     await view.getByTestId('generate-mode-builder').click();
-    expect(await fieldNames(view)).toEqual(expect.arrayContaining(['status', 'visits', 'tags', 'score', 'joined', 'code', 'who', 'vip']));
+    await expect.poll(() => fieldNames(view)).toEqual(expect.arrayContaining(['status', 'visits', 'tags', 'score', 'joined', 'code', 'who', 'vip']));
 
     // An edit in the builder writes the template again from the rows.
     await view.getByTestId('generate-add-field-root').click();

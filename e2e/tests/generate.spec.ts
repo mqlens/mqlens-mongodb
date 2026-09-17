@@ -128,7 +128,7 @@ test.describe('Generate data', () => {
     await expect(view.getByTestId('generate-custom-notice')).toHaveCount(0);
     await expect(view.getByTestId('generate-preview-doc').first()).toContainText('"qty":1');
     await view.getByTestId('generate-mode-builder').click();
-    expect(await fieldNames(view)).toEqual(['sku', 'qty']);
+    await expect.poll(() => fieldNames(view)).toEqual(['sku', 'qty']);
   });
 
   test('generates documents into the collection once confirmed', async ({ app, page }) => {
