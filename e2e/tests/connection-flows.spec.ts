@@ -228,12 +228,12 @@ test.describe('Saved connection settings', () => {
     const aws = await save();
     expect(aws).toContain('MONGODB-AWS');
     expect(aws).toMatch(/authSource=(\$|%24)external/);
-    expect(aws).toContain('AWS_SESSION_TOKEN');
+    expect(decodeURIComponent(aws)).toContain('AWS_SESSION_TOKEN:tok-123');
 
     await editProfile(page, 'Kerberos');
     await editorTab(page, 'Authentication').click();
     await expect.poll(() => inputValues(page)).toContain('mongosvc');
-    expect(await save()).toContain('SERVICE_NAME');
+    expect(decodeURIComponent(await save())).toContain('SERVICE_NAME:mongosvc');
   });
 
   test('tags a connection with a preset or custom colour, and reads short and named tags back', async ({ app, page }) => {

@@ -84,7 +84,7 @@ test.describe('Workspace tabs', () => {
 
   test('views opened from a database, the connection and the status bar, opened again, bring back their one tab', async ({ app, page }) => {
     const openTwice = await reopening(app, page);
-    await openTwice('Dump: sales_db', 'dump-view', collectionMenu(page, 'Dump (mongodump)…'));
+    await openTwice('Dump: sales_db', 'dump-view', databaseMenu(page, 'Dump (mongodump)…'));
     await openTwice('New View: sales_db', 'create-view', databaseMenu(page, 'Create View'));
     // Scoped to a database, the Users tab takes that database each time it's opened.
     await openTwice('Users: Staging', 'user-management-view', databaseMenu(page, 'Manage Users'));
