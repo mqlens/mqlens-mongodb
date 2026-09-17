@@ -60,16 +60,20 @@ test.describe('Pins and favourites', () => {
     await rowMenu(page, connectionRow(page), /favorites/i);
     await rowMenu(page, databaseRow(page, 'sales_db'), /favorites/i);
 
-    // Favouriting opens the Favorites section itself; a connection is labelled as one.
-    await expect(sidebar(page).getByText('connection', { exact: true })).toBeVisible();
-    await expect(sidebar(page).getByText('sales_db', { exact: true }).first()).toBeVisible();
+    // Favouriting opens the Favorites section itself. The connection tree lists
+    // the same databases, so look only inside the section.
+    const favorites = sidebar(page).getByRole('button', { name: 'Favorites', exact: true }).locator('xpath=..');
+    await expect(favorites.getByText('connection', { exact: true })).toBeVisible();
+    await expect(favorites.getByText('sales_db', { exact: true })).toBeVisible();
+    await expect(favorites.getByText('user_analytics', { exact: true })).toHaveCount(0);
 
     await page.evaluate(() => {
       localStorage.setItem('mqlens_favorites', JSON.stringify([{ kind: 'database', connectionName: 'Staging', db: 'user_analytics' }]));
       window.dispatchEvent(new StorageEvent('storage', { key: 'mqlens_favorites' }));
     });
-    await expect(sidebar(page).getByText('connection', { exact: true })).toHaveCount(0);
-    await expect(sidebar(page).getByText('user_analytics', { exact: true }).first()).toBeVisible();
+    await expect(favorites.getByText('user_analytics', { exact: true })).toBeVisible();
+    await expect(favorites.getByText('sales_db', { exact: true })).toHaveCount(0);
+    await expect(favorites.getByText('connection', { exact: true })).toHaveCount(0);
   });
 
   test('a pin saved while nothing can be written says so', async ({ app, page }) => {
@@ -116,7 +120,9 @@ test.describe('Listing failures', () => {
     await connectionRow(page).getByRole('button', { name: 'Refresh databases' }).click();
     await dismissHoverCards(page);
     await expect.poll(() => failed('list_databases')).toBe(true);
-    await expect(connectionRow(page)).toBeVisible();
+    // The databases listed before stay listed.
+    await expect(databaseRow(page, 'sales_db')).toBeVisible();
+    await expect(databaseRow(page, 'user_analytics')).toBeVisible();
   });
 
   test('the stats card follows the row the pointer is on', async ({ app, page }) => {
