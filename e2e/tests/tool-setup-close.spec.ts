@@ -7,14 +7,14 @@ import { connectStaging, dismissHoverCards } from '../helpers';
 
 const sidebar = (page: Page) => page.getByRole('complementary');
 
-/** Open the installer from the shell's gate, with installs that always succeed. */
-async function openInstaller(app: App, page: Page): Promise<void> {
+/** Open the installer from the shell's gate, with an install that ends in `status`. */
+async function openInstaller(app: App, page: Page, status = 'completed'): Promise<void> {
   await connectStaging(app, page, { mongosh: { available: false, detection: null } });
   await sidebar(page).getByRole('button', { name: 'Database sales_db' }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Open mongosh Shell' }).click();
   await dismissHoverCards(page);
 
-  await page.evaluate(() => {
+  await page.evaluate((taskStatus) => {
     const e2e = window.__MQLENS_E2E__!;
     e2e.register({
       start_tool_install_task: () => {
@@ -23,20 +23,20 @@ async function openInstaller(app: App, page: Page): Promise<void> {
           id: 'install-1',
           kind: 'tool_install',
           label: 'Install tools',
-          status: 'completed',
+          status: taskStatus,
           processed: 1,
           total: 1,
           message: 'Installed',
           path: null,
           error: null,
           createdAtMs: now,
-          finishedAtMs: now,
+          finishedAtMs: taskStatus === 'running' ? null : now,
         };
         e2e.state.tasks.unshift(task);
         return task;
       },
     });
-  });
+  }, status);
   await page.getByTestId('shell-install-tools-btn').click();
   await expect(page.getByTestId('toolsetup-dialog')).toBeVisible();
 }
@@ -54,6 +54,19 @@ test.describe('The tool installer', () => {
 
     // The tools are looked at again, so the shell can use what was installed.
     await expect.poll(async () => (await app.calls('managed_tools_status')).length).toBeGreaterThan(1);
+    expect(await app.takeFrontendErrors()).toEqual([]);
+  });
+
+  test('cancels an install that is still running', async ({ app, page }) => {
+    await openInstaller(app, page, 'running');
+    const dialog = page.getByTestId('toolsetup-dialog');
+    await dialog.getByTestId('toolsetup-install-btn').click();
+
+    // Cancel belongs to the running install, and asks the backend to end it.
+    await dialog.getByTestId('toolsetup-cancel-btn').click();
+    await expect.poll(async () => (await app.calls('cancel_task')).map((call) => call.args)).toEqual([
+      { id: 'install-1' },
+    ]);
     expect(await app.takeFrontendErrors()).toEqual([]);
   });
 });
