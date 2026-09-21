@@ -71,4 +71,29 @@ test.describe('The values a chart is given', () => {
     await expect(chart.locator('.recharts-bar-rectangle').first()).toBeVisible();
     expect(await app.takeFrontendErrors()).toEqual([]);
   });
+
+  test('draws the same points as any of the shapes on offer', async ({ app, page }) => {
+    const chart = await openChart(app, page);
+    await pick(page, chart, 'X axis', 'region');
+
+    // Each shape is drawn by its own chart; a pie slices the same groups up.
+    for (const [type, marker] of [
+      ['line', '.recharts-line'],
+      ['area', '.recharts-area'],
+      ['scatter', '.recharts-scatter'],
+      ['pie', '.recharts-pie'],
+    ] as const) {
+      await pick(page, chart, 'Chart type', type);
+      await expect(chart.locator(marker).first()).toBeVisible();
+    }
+
+    // Scattering each document on its own puts numbers on both axes. A pie of
+    // single documents means nothing, so raw mode does not offer one.
+    await chart.getByRole('tab', { name: /raw|each document/i }).click();
+    await pick(page, chart, 'Y axis', 'amount');
+    await pick(page, chart, 'X axis', '_id');
+    await pick(page, chart, 'Chart type', 'scatter');
+    await expect(chart.locator('.recharts-scatter').first()).toBeVisible();
+    expect(await app.takeFrontendErrors()).toEqual([]);
+  });
 });

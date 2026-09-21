@@ -59,6 +59,27 @@ test.describe('The tool installer', () => {
     expect(await app.takeFrontendErrors()).toEqual([]);
   });
 
+  test('installs only the tools that are still ticked', async ({ app, page }) => {
+    await openInstaller(app, page);
+    const dialog = page.getByTestId('toolsetup-dialog');
+    const mongosh = dialog.getByTestId('toolsetup-check-mongosh');
+    const tools = dialog.getByTestId('toolsetup-check-mongodb-database-tools');
+
+    // Only what is missing is ticked to begin with — mongosh is already
+    // installed here, so reinstalling it is a choice the user makes.
+    await expect(tools).toBeChecked();
+    await expect(mongosh).not.toBeChecked();
+
+    await mongosh.check();
+    await expect(mongosh).toBeChecked();
+    await tools.uncheck();
+    await expect(tools).not.toBeChecked();
+    await dialog.getByTestId('toolsetup-install-btn').click();
+    await expect
+      .poll(async () => (await app.calls('start_tool_install_task')).map((call) => call.args))
+      .toEqual([expect.objectContaining({ tools: ['mongosh'] })]);
+  });
+
   test('cancels an install that is still running', async ({ app, page }) => {
     await openInstaller(app, page, 'running');
     const dialog = page.getByTestId('toolsetup-dialog');
