@@ -185,6 +185,59 @@ test.describe('Query tools', () => {
     }
   });
 
+  test('query code carries the projection, sort and skip of a find', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByTestId('query-options-toggle').click();
+    const options = view(page).getByTestId('query-options-section');
+    await setEditorText(page, options.getByTestId('projection-query-input'), '{ name: 1 }');
+    await setEditorText(page, options.getByTestId('sort-query-input'), '{ name: -1 }');
+    await options.getByRole('spinbutton').first().fill('1');
+    await runButton(page).click();
+    await expect(view(page)).not.toContainText('Charlie Brown');
+
+    await view(page).getByTestId('query-code-tab').click();
+    const code = view(page).getByTestId('query-code-content');
+    // What each driver calls the same three options.
+    const expected: Record<string, string[]> = {
+      mongosh: ['{"name":1}', '.sort({"name":-1})', '.skip(1)'],
+      'Node.js': ['.project(', '.sort(', '.skip(1)'],
+      Python: [', loads(', '.sort(list(', '.skip(1)'],
+      Java: ['.projection(Document.parse(', '.sort(Document.parse(', '.skip(1)'],
+      'C#': ['.Project(BsonDocument.Parse(', '.Sort(BsonDocument.Parse(', '.Skip(1)'],
+      Go: ['SetProjection(projection)', 'SetSort(sort)', 'SetSkip(1)'],
+    };
+    for (const [language, fragments] of Object.entries(expected)) {
+      await view(page).getByTestId('query-code-lang').selectOption(language);
+      for (const fragment of fragments) {
+        await expect.poll(() => getEditorText(page, code), `${language} code contains ${fragment}`).toContain(fragment);
+      }
+    }
+  });
+
+  test('query code of an aggregate tab is its pipeline, in every language', async ({ app, page }) => {
+    await openCustomers(app, page);
+    await view(page).getByTestId('mode-aggregate-tab').click();
+    await setEditorText(page, view(page).getByTestId('aggregation-pipeline-editor').getByTestId('pipeline-stage-0'), '{ tier: "Premium" }');
+    await runButton(page).click();
+    await expect(view(page)).not.toContainText('Bob Johnson');
+
+    await view(page).getByTestId('query-code-tab').click();
+    const code = view(page).getByTestId('query-code-content');
+    const expected: Record<string, string> = {
+      mongosh: '.aggregate(',
+      'Node.js': 'collection.aggregate(pipeline)',
+      Python: 'collection.aggregate(pipeline)',
+      Java: 'collection.aggregate(Arrays.asList(',
+      'C#': 'collection.Aggregate<BsonDocument>(pipeline)',
+      Go: 'collection.Aggregate(ctx, pipeline)',
+    };
+    for (const [language, fragment] of Object.entries(expected)) {
+      await view(page).getByTestId('query-code-lang').selectOption(language);
+      await expect.poll(() => getEditorText(page, code), `${language} code for the pipeline`).toContain(fragment);
+      expect(await getEditorText(page, code)).toContain('Premium');
+    }
+  });
+
   test('compares two documents', async ({ app, page }) => {
     await openCustomers(app, page);
 
