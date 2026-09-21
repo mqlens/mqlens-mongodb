@@ -2,14 +2,18 @@
 import type { CoverageReportOptions } from 'monocart-coverage-reports';
 
 /**
- * The gate the suite must keep, in percent. A ratchet: raise it as tests are
- * added, never lower it, until it reaches the 95% target in #396.
+ * The gate the suite must keep, in percent. A ratchet: raised as tests were
+ * added, never lowered. Statements have now reached the 95% target in #396,
+ * so this is where it stops going up on purpose — what is left uncovered is
+ * defensive guards, catch blocks for values the backend cannot send, and
+ * branches the app's own wiring makes unreachable (see the notes in
+ * MongoShell.tsx around `ranExternally` for the largest such pocket).
  *
  * It is checked against this report's own summary, not coverage-summary.json.
  * Both agree on statements, but they count lines differently: one run measured
  * 82.2% of 39,445 lines here and 84.7% of 11,414 in the JSON summary.
  */
-export const COVERAGE_GATE = { lines: 92, statements: 93 };
+export const COVERAGE_GATE = { lines: 93, statements: 95 };
 
 /**
  * Set by the CI workflow on each shard, which runs part of the suite. A shard
