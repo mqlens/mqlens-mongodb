@@ -4,7 +4,6 @@ import { DOC_SYNTAX_TOKENS, DOC_TOKEN_POSTFIX } from "./monacoDocLanguage";
 
 export type MqlensMonacoThemeId = "mqlens-light" | "mqlens-dark";
 
-let registered = false;
 
 /** CSS vars store HSL components as `215 14% 17%`; Monaco requires `#rrggbb`. */
 export function hslComponentsToHex(components: string): string {
@@ -162,26 +161,6 @@ function defineThemes(monaco: Monaco, resolve: MonacoTokenResolver): void {
       "editorWidget.border": resolve("border", "#454545"),
     },
   });
-}
-
-export function registerMqlensMonacoThemes(
-  monaco: Monaco,
-  resolve: MonacoTokenResolver = cssTokenResolver,
-  themeId: MqlensMonacoThemeId = getMqlensMonacoThemeId()
-): void {
-  if (registered) return;
-  defineThemes(monaco, resolve);
-  registered = true;
-  monaco.editor.setTheme(themeId);
-}
-
-export function refreshMqlensMonacoTheme(
-  monaco: Monaco,
-  resolve: MonacoTokenResolver = cssTokenResolver,
-  themeId: MqlensMonacoThemeId = getMqlensMonacoThemeId()
-): void {
-  defineThemes(monaco, resolve);
-  monaco.editor.setTheme(themeId);
 }
 
 /**

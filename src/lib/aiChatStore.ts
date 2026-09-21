@@ -105,6 +105,7 @@ export function newChatId(): string {
   // id that two tabs could collide on is worth avoiding on its own merits.
   const webCrypto = globalThis.crypto;
   if (typeof webCrypto?.randomUUID === 'function') return webCrypto.randomUUID();
+  /* v8 ignore next 4 -- every engine the app runs on has randomUUID */
   const bytes = webCrypto.getRandomValues(new Uint8Array(16));
   return `chat-${Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, '0'))

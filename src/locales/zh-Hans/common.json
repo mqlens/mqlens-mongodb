@@ -38,7 +38,6 @@
     "aggregationPipelineApplied": "已应用聚合管道",
     "cannotDeleteNoId": "无法删除：该文档没有 _id。",
     "copiedDocumentsAs_other": "已将 {{count}} 个文档复制为 {{format}}",
-    "copiedMongoshCommand": "已复制 mongosh 命令",
     "copiedToClipboard": "已复制{{what}} —— 右键点击目标并选择“粘贴到这里”。",
     "copyFailed": "复制失败：{{detail}}",
     "copyWhatCollections_other": "{{count}} 个 Collection",

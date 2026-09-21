@@ -39,7 +39,6 @@
     "cannotDeleteNoId": "Löschen nicht möglich: Dieses Dokument hat keine _id.",
     "copiedDocumentsAs_one": "{{count}} Dokument als {{format}} kopiert",
     "copiedDocumentsAs_other": "{{count}} Dokumente als {{format}} kopiert",
-    "copiedMongoshCommand": "mongosh-Befehl kopiert",
     "copiedToClipboard": "{{what}} kopiert — Rechtsklick auf ein Ziel und „Hier einfügen“ wählen.",
     "copyFailed": "Kopieren fehlgeschlagen: {{detail}}",
     "copyWhatCollections_one": "{{count}} Collection",

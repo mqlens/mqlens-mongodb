@@ -39,7 +39,6 @@
     "cannotDeleteNoId": "Cannot delete: this document has no _id.",
     "copiedDocumentsAs_one": "Copied {{count}} document(s) as {{format}}",
     "copiedDocumentsAs_other": "Copied {{count}} document(s) as {{format}}",
-    "copiedMongoshCommand": "Copied mongosh command",
     "copiedToClipboard": "Copied {{what}} — right-click a target and choose “Paste here”.",
     "copyFailed": "Copy failed: {{detail}}",
     "copyWhatCollections_one": "{{count}} collection(s)",

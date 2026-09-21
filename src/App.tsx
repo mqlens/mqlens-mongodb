@@ -172,7 +172,8 @@ interface DocumentEdit {
 const newEditId = (): string =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
-    : `edit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    : /* v8 ignore next -- every engine the app runs on has randomUUID */
+      `edit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export interface QueryTab {
   id: string;

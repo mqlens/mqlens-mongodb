@@ -33,8 +33,6 @@ vi.mock('../../lib/monacoAppTheme', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/monacoAppTheme')>();
   return {
     ...actual,
-    registerMqlensMonacoThemes: vi.fn(),
-    refreshMqlensMonacoTheme: vi.fn(),
   };
 });
 

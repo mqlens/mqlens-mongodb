@@ -161,7 +161,6 @@ export default defineConfig({
       'common:toast.projectionCleared',
       'common:toast.sortCleared',
       'common:toast.openedInMongosh',
-      'common:toast.copiedMongoshCommand',
       'transfer:restoreView.options.flags.drop',
       'transfer:restoreView.options.flags.keepIndexVersion',
       'transfer:restoreView.options.flags.noIndexRestore',
