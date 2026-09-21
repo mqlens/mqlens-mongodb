@@ -9,7 +9,7 @@ import type { CoverageReportOptions } from 'monocart-coverage-reports';
  * Both agree on statements, but they count lines differently: one run measured
  * 82.2% of 39,445 lines here and 84.7% of 11,414 in the JSON summary.
  */
-export const COVERAGE_GATE = { lines: 89, statements: 89 };
+export const COVERAGE_GATE = { lines: 92, statements: 93 };
 
 /**
  * Set by the CI workflow on each shard, which runs part of the suite. A shard
