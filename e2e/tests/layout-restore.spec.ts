@@ -9,15 +9,26 @@ import { connectStaging, openCollection, view } from '../helpers';
 const LAYOUT_KEY = 'react-resizable-panels:document-viewer-workspace';
 const PANELS = 'document-main,ai-helper';
 
-/** Start with `layout` remembered for the document/AI-helper split. */
+/**
+ * Start with `layout` remembered for the document/AI-helper split.
+ *
+ * Written once per case and then reloaded into, rather than seeded with an
+ * init script each time: those accumulate, and every earlier one runs again on
+ * the next navigation in no guaranteed order — so a later case could be shown
+ * an earlier case's layout.
+ */
 async function openWithLayout(app: App, page: Page, layout: unknown[]): Promise<void> {
-  await page.addInitScript(
+  if (!app.isOpen) await connectStaging(app, page);
+  await page.evaluate(
     ({ key, panels, saved }) => {
       localStorage.setItem(key, JSON.stringify({ [panels]: { layout: saved } }));
     },
     { key: LAYOUT_KEY, panels: PANELS, saved: layout },
   );
-  await connectStaging(app, page);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  // The fake backend starts over with the reload, so the connection is opened again.
+  await page.getByTestId('conn-card-p-staging').click();
+  await page.getByRole('button', { name: 'Connection Staging' }).waitFor();
   await openCollection(page, 'sales_db', 'customers');
   await expect(view(page)).toContainText('Alice Smith');
   // The helper remembers whether it was open, so only open it when it is not.

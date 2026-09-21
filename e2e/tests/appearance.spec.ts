@@ -29,6 +29,23 @@ const savedAppearances = async (app: App) =>
     .map((call) => (call.args as { patch: { appearance?: unknown } }).patch.appearance)
     .filter((appearance) => appearance !== undefined);
 
+/**
+ * Start with `cached` in the appearance cache, behind a locked vault.
+ *
+ * Written once per case and then reloaded into, rather than seeded with an
+ * init script each time: those accumulate, and every earlier one runs again on
+ * the next navigation in no guaranteed order.
+ */
+async function cachedAppearance(app: App, page: Page, cached: unknown): Promise<void> {
+  if (!app.isOpen) await app.open({ vault: 'locked', vaultPassword: 's3cret' });
+  await page.evaluate(
+    (value) => localStorage.setItem('mqlens-appearance', typeof value === 'string' ? value : JSON.stringify(value)),
+    cached,
+  );
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('vault-unlock')).toBeVisible();
+}
+
 test.describe('The appearance the app starts in', () => {
   test('comes from the settings, and is not written straight back', async ({ app, page }) => {
     await app.open({ settings: { appearance: NORD_LIGHT } });
@@ -57,31 +74,22 @@ test.describe('The appearance the app starts in', () => {
 
   test('uses its own cache before the settings can be read', async ({ app, page }) => {
     // Written on the last run, and read before anything is unlocked.
-    await page.addInitScript(() => {
-      localStorage.setItem(
-        'mqlens-appearance',
-        JSON.stringify({ preset_id: 'github-light', mode: 'light', overrides: {}, font_size: 13, spacing_density: 'cozy' }),
-      );
+    await cachedAppearance(app, page, {
+      preset_id: 'github-light',
+      mode: 'light',
+      overrides: {},
+      font_size: 13,
+      spacing_density: 'cozy',
     });
-    await app.open({ vault: 'locked', vaultPassword: 's3cret' });
-    await expect(page.getByTestId('vault-unlock')).toBeVisible();
 
     expect(await theme(page)).toMatchObject({ preset: 'github-light', mode: 'light' });
   });
 
   test('ignores a cache it cannot read, or one that names no theme', async ({ app, page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('mqlens-appearance', '{ not json');
-    });
-    await app.open({ vault: 'locked' });
-    await expect(page.getByTestId('vault-unlock')).toBeVisible();
+    await cachedAppearance(app, page, '{ not json');
     expect((await theme(page)).mode).toBe('dark');
 
-    await page.addInitScript(() => {
-      localStorage.setItem('mqlens-appearance', JSON.stringify({ mode: 'light' }));
-    });
-    await app.open({ vault: 'locked' });
-    await expect(page.getByTestId('vault-unlock')).toBeVisible();
+    await cachedAppearance(app, page, { mode: 'light' });
     expect((await theme(page)).mode).toBe('dark');
   });
 });

@@ -6,12 +6,18 @@ import { test, expect, type App } from '../fixtures';
 
 const settings = (page: Page) => page.getByTestId('settings-view');
 
-/** Start the app with `snapshot` as the last update check it remembers. */
+/**
+ * Start the app with `snapshot` as the last update check it remembers.
+ *
+ * Written once per case and then reloaded into, rather than seeded with an
+ * init script each time: those accumulate, and every earlier one runs again on
+ * the next navigation in no guaranteed order — so a later case could read an
+ * earlier case's snapshot.
+ */
 async function openUpdatesWith(app: App, page: Page, snapshot: string): Promise<void> {
-  await page.addInitScript((value) => {
-    localStorage.setItem('mqlens.update-check.snapshot', value);
-  }, snapshot);
-  await app.open();
+  if (!app.isOpen) await app.open();
+  await page.evaluate((value) => localStorage.setItem('mqlens.update-check.snapshot', value), snapshot);
+  await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: 'Open Settings' }).click();
   await settings(page).getByTestId('settings-tab-updates').click();
 }
