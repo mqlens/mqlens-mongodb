@@ -48,12 +48,14 @@ test.describe('The tool installer', () => {
     await dialog.getByTestId('toolsetup-install-btn').click();
     await expect.poll(async () => (await app.calls('start_tool_install_task')).length).toBe(1);
 
-    // Dismissed rather than finished: the install still has to be taken up.
+    // Dismissed rather than finished: the install still has to be taken up. The
+    // look at the tools that follows is refused, which is not fatal either.
+    await app.failNext('managed_tools_status', 'tool directory is unreadable');
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
 
-    // The tools are looked at again, so the shell can use what was installed.
     await expect.poll(async () => (await app.calls('managed_tools_status')).length).toBeGreaterThan(1);
+    expect((await app.calls('managed_tools_status')).some((call) => call.error)).toBe(true);
     expect(await app.takeFrontendErrors()).toEqual([]);
   });
 
