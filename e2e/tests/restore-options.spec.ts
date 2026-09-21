@@ -104,11 +104,17 @@ test.describe('Restore options', () => {
     await expect(page.getByTestId('restore-opt-gzip')).not.toBeChecked();
 
     await page.getByTestId('restore-opt-drop').check();
+    // The preview is debounced, and it sits above the confirmation: let it land
+    // before clicking, or the click is aimed at the layout it had before.
+    await expect(page.getByTestId('restore-preview-cmd')).toContainText('--drop');
     await page.getByTestId('restore-run-btn').click();
-    await expect(page.getByTestId('restore-drop-confirm')).toContainText('(entire archive)');
+    const confirm = page.getByTestId('restore-drop-confirm');
+    await expect(confirm).toContainText('(entire archive)');
 
-    await page.getByTestId('restore-drop-confirm').getByRole('button', { name: 'Cancel' }).click();
-    await expect(page.getByTestId('restore-drop-confirm')).toHaveCount(0);
+    await expect(async () => {
+      await confirm.getByRole('button', { name: 'Cancel' }).click();
+      await expect(confirm).toHaveCount(0, { timeout: 2_000 });
+    }).toPass({ timeout: 15_000 });
     expect(await app.calls('start_restore_task')).toHaveLength(0);
   });
 
