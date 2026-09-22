@@ -250,3 +250,62 @@ async fn a_connect_can_be_cancelled_by_its_login_id() {
     assert!(state.connections.lock().unwrap().is_empty());
     assert!(state.oidc_sessions.lock().unwrap().is_empty(), "a cancelled connect leaves no login behind");
 }
+
+// ---- a human who takes their time ------------------------------------------
+//
+// Every test above completes the IdP redirect the instant the browser
+// "opens". A real person takes 30-60 s. The connection test sets 5 s connect
+// and server-selection timeouts, and connect sets 10 s (`apply_main_timeouts`),
+// so these prove a login slower than both still succeeds.
+
+/// Longer than every timeout either path sets.
+const SLOW_HUMAN: std::time::Duration = std::time::Duration::from_secs(12);
+
+/// Like `simulating_opener_with`, but the "human" finishes the IdP redirect
+/// only after `SLOW_HUMAN`.
+fn slow_opener(http: reqwest::Client) -> BrowserOpener {
+    Arc::new(move |url: &str| {
+        let url = url.to_string();
+        let http = http.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(SLOW_HUMAN).await;
+            let _ = http.get(&url).send().await;
+        });
+        Ok(())
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_browser_login_outlasts_the_connection_tests_timeouts() {
+    let Some((uri, idp)) = fixture() else { return };
+    let http = idp_client(idp);
+    let state = AppState::new();
+    let (log, emit) = phase_recorder();
+    let login = HumanLogin { config: None, login_id: Some("test-slow".into()), open: slow_opener(http.clone()), http };
+
+    let started = std::time::Instant::now();
+    let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
+    let took = started.elapsed();
+
+    assert_eq!(result, Ok(()), "a slow login must still pass the test (took {took:?}): {:?}", log.lock().unwrap());
+    assert!(took >= SLOW_HUMAN, "the login must really have been slow, took {took:?}");
+    let log = log.lock().unwrap().clone();
+    assert!(log.contains(&row(TestPhase::Authenticate, "ok")), "{log:?}");
+    assert_eq!(log.last(), Some(&row(TestPhase::Ping, "ok")), "{log:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_browser_login_outlasts_the_connect_timeouts() {
+    let Some((uri, idp)) = fixture() else { return };
+    let http = idp_client(idp);
+    let state = AppState::new();
+    let login = HumanLogin { config: None, login_id: Some("connect-slow".into()), open: slow_opener(http.clone()), http };
+
+    let started = std::time::Instant::now();
+    let result = crate::connect_db_with_login(&state, &uri, None, login).await;
+    let took = started.elapsed();
+
+    let id = result.unwrap_or_else(|e| panic!("a slow login must still connect (took {took:?}): {e}"));
+    assert!(took >= SLOW_HUMAN, "the login must really have been slow, took {took:?}");
+    assert!(state.connections.lock().unwrap().contains_key(&id));
+}
