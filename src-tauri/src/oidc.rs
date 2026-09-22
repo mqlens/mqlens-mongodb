@@ -168,19 +168,32 @@ pub struct Endpoints {
     pub token: String,
 }
 
-/// IdP endpoints must be HTTPS. The loopback exception is compiled only
-/// into test builds — a release binary has no code path that accepts
-/// `http://`, which is why this is `#[cfg(test)]` and not an environment
-/// variable.
+/// IdP endpoints must be HTTPS. The loopback exception lives in its own
+/// item-level `#[cfg(test)]`-gated function (below), not as an inline `if
+/// cfg(test)` check here — a release binary does not compile
+/// `loopback_exception`'s body at all, so no refactor of this function can
+/// widen the exception into a runtime flag without a release build failing
+/// to compile.
 pub fn require_secure(url: &str) -> Result<(), OidcError> {
     if url.starts_with("https://") {
         return Ok(());
     }
     #[cfg(test)]
-    if url.starts_with("http://127.0.0.1:") || url.starts_with("http://[::1]:") {
+    if loopback_exception(url) {
         return Ok(());
     }
     Err(OidcError::InsecureEndpoint)
+}
+
+/// The `http://` loopback exception, used only so tests can run a mock IdP
+/// on `127.0.0.1`/`[::1]`. Gated at the item level, not just at its call
+/// site in `require_secure`: a release build never compiles this function's
+/// body, so relocating this check (or calling it unconditionally) fails to
+/// build in release mode rather than merely failing a test that might not
+/// notice the move.
+#[cfg(test)]
+fn loopback_exception(url: &str) -> bool {
+    url.starts_with("http://127.0.0.1:") || url.starts_with("http://[::1]:")
 }
 
 #[derive(serde::Deserialize)]
@@ -418,24 +431,51 @@ mod tests {
         assert_eq!(discover(&idp.issuer(), &http).await, Err(OidcError::DiscoveryFailed));
     }
 
-    /// Guards the `#[cfg(test)]` gate on `require_secure`. If someone
-    /// converts it to an env var or a runtime setting, this fails and
-    /// explains why not.
+    /// Guards the release-build guarantee that endpoint validation has no
+    /// runtime-reachable `http://` acceptance path. Both checks scan only
+    /// the *production* portion of this file — everything before `mod
+    /// tests` — deliberately excluding the test module itself, whose own
+    /// doc comments (like this one) legitimately discuss the very
+    /// substrings the scan looks for; scanning them would make this test
+    /// fail on its own explanation rather than on a real bypass. Two
+    /// checks, deliberately different in kind:
+    ///
+    /// 1. Structural: `loopback_exception` — the only place in this module
+    ///    that accepts a plain `http://` URL — must carry an item-level
+    ///    `#[cfg(test)]`. That property is enforced by the compiler, not by
+    ///    this test: a release build does not compile that function's body
+    ///    at all, so a future refactor that extracts the check into a
+    ///    helper and calls it unconditionally (the bypass a bare `if
+    ///    cfg(test)` inline check was vulnerable to) fails to *build* in
+    ///    release mode, regardless of whether this test still passes.
+    /// 2. Textual, as a backstop over the whole production span
+    ///    (deliberately not scoped to one function's span, so moving code
+    ///    elsewhere in the module cannot hide it): no environment-variable
+    ///    lookup appears anywhere, so nobody has turned the exception into
+    ///    a runtime flag.
+    ///
+    /// This does not prove no *other*, differently-named helper could ever
+    /// accept `http://` unconditionally — no text scan can rule that out.
+    /// It proves this specific exception cannot be relocated out from under
+    /// its gate without a release build breaking.
     #[test]
     fn the_http_exception_is_compile_time_only() {
         let source = include_str!("oidc.rs");
-        let gate = source
-            .split("pub fn require_secure")
-            .nth(1)
-            .expect("require_secure must exist");
-        let body = gate.split("\n}").next().unwrap();
+        let production_source = source
+            .split("\n#[cfg(test)]\nmod tests {")
+            .next()
+            .expect("mod tests must exist");
         assert!(
-            body.contains("#[cfg(test)]"),
-            "the http:// exception must stay #[cfg(test)]-gated"
+            production_source.contains("#[cfg(test)]\nfn loopback_exception"),
+            "the http:// loopback exception must be its own item-level \
+             #[cfg(test)]-gated function, not just an `if` inside \
+             require_secure — an item-level gate means a release build \
+             fails to compile if the check is ever called from outside \
+             #[cfg(test)]"
         );
         assert!(
-            !body.contains("env::var") && !body.contains("env!"),
-            "the http:// exception must never be reachable at runtime"
+            !production_source.contains("env::var") && !production_source.contains("env!"),
+            "the http:// exception must never be reachable at runtime via an environment variable"
         );
     }
 }
