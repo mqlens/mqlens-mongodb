@@ -1506,20 +1506,8 @@ mod tests {
         );
     }
 
-    /// A TCP listener that accepts and then never says a word, so a
-    /// connection test passes Parse, Resolve and Connect and reaches the ping
-    /// — where authentication would happen — without any MongoDB server.
-    async fn silent_server() -> u16 {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            let mut held = Vec::new();
-            while let Ok((socket, _)) = listener.accept().await {
-                held.push(socket);
-            }
-        });
-        port
-    }
+    // Passes Parse, Resolve and Connect, so a test against it reaches the ping.
+    use crate::oidc_login::test_support::silent_server;
 
     type PhaseLog = std::sync::Arc<std::sync::Mutex<Vec<(TestPhase, String)>>>;
 

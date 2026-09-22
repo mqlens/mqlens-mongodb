@@ -57,6 +57,11 @@ const CONNECTION_NOT_FOUND: &str = "connection not found";
 /// non-opted-in profile id, same rationale as `CONNECTION_NOT_FOUND`.
 const PROFILE_NOT_FOUND: &str = "profile not found";
 
+/// `connect`'s refusal for an opted-in profile that signs in through the
+/// browser (MONGODB-OIDC, #430). Names the way forward: the user connects in
+/// MQLens, and the agent then finds that connection in `list_connections`.
+const OIDC_LOGIN_REQUIRED: &str = "interactive login required in MQLens: this profile signs in through the browser (MONGODB-OIDC). Ask the user to connect it in MQLens, then use that connection from list_connections.";
+
 /// `find`/`aggregate` output caps (Global Constraints: "result caps default
 /// 50 docs / 1 MB with explicit truncation markers") — the safety net on
 /// what's actually returned to the agent, independent of `find`'s own MQL
@@ -203,6 +208,17 @@ pub async fn connect_impl(state: &AppState, profiles_path: &Path, profile_id: &s
         .into_iter()
         .find(|p| p.id == profile_id && p.mcp_enabled)
         .ok_or_else(|| PROFILE_NOT_FOUND.to_string())?;
+
+    // #430: an agent never starts a human OIDC login — it would put a browser
+    // window on the user's desktop that nobody asked for. Refused before any
+    // session, listener or browser exists, and decided from the string alone
+    // (no parse, so no SRV lookup). A connection the user opened themselves
+    // stays usable through `list_connections`; this only stops an agent from
+    // opening one. Checked after the opt-in lookup so the refusal cannot tell
+    // an agent anything about profiles it may not see.
+    if crate::oidc_login::uri_requests_oidc(&profile.uri) {
+        return Err(OIDC_LOGIN_REQUIRED.to_string());
+    }
 
     let connection_id = crate::connect_db_impl(state, &profile.uri, profile.ssh.as_ref()).await?;
     crate::set_connection_meta_impl(state, &connection_id, &profile.id, &profile.name, true, profile.connection_mode)?;
@@ -986,6 +1002,74 @@ mod tests {
         let unknown = connect_impl(&state, &path, "does-not-exist").await.unwrap_err();
         assert_eq!(not_opted, PROFILE_NOT_FOUND);
         assert_eq!(not_opted, unknown, "non-opted and unknown profile ids must be indistinguishable");
+    }
+
+    /// #430: an agent must never start a browser login on the user's desktop.
+    /// The profile's server is real enough that, without the guard, connect
+    /// would register a login and try to reach it — so the watch below would
+    /// see an entry. With the guard the call returns before any exists.
+    #[tokio::test]
+    async fn connect_refuses_an_oidc_profile_before_any_login_exists() {
+        let state = AppState::new();
+        unlock(&state);
+        let port = crate::oidc_login::test_support::silent_server().await;
+        let path = tmp_profiles_path("connect-oidc.enc");
+        let mut oidc = profile("p-oidc", "Corp SSO", true);
+        oidc.uri = format!(
+            "mongodb://127.0.0.1:{port}/?authMechanism=MONGODB-OIDC&authSource=$external&serverSelectionTimeoutMS=1500"
+        );
+        write_profiles(&path, &[oidc]);
+
+        let call = connect_impl(&state, &path, "p-oidc");
+        let watch = async {
+            let mut saw_login = false;
+            for _ in 0..80 {
+                saw_login |= !state.oidc_sessions.lock().unwrap().is_empty();
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            saw_login
+        };
+        let (result, saw_login) = tokio::join!(call, watch);
+
+        assert!(!saw_login, "no login session may exist for an agent's request");
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("interactive login required in MQLens"),
+            "the agent must be told to log in inside MQLens, got: {error}"
+        );
+        assert!(state.connection_meta.lock().unwrap().is_empty());
+        assert!(state.mcp.lock().unwrap().session_connections.is_empty());
+    }
+
+    /// The guard decides from the string alone. An SRV name under `.invalid`
+    /// would fail its DNS lookup if anything parsed it, so getting the
+    /// refusal back — not a lookup error — shows no network I/O happened.
+    #[tokio::test]
+    async fn connect_refuses_an_oidc_profile_without_resolving_its_srv_name() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("connect-oidc-srv.enc");
+        let mut oidc = profile("p-oidc", "Corp SSO", true);
+        oidc.uri = "mongodb+srv://oidc-cluster.invalid/?authMechanism=MONGODB-OIDC&authSource=$external".to_string();
+        write_profiles(&path, &[oidc]);
+
+        let error = connect_impl(&state, &path, "p-oidc").await.unwrap_err();
+
+        assert!(error.contains("interactive login required in MQLens"), "got: {error}");
+    }
+
+    /// The guard must not leak which profiles exist: a non-opted-in OIDC
+    /// profile still gets the uniform not-found error.
+    #[tokio::test]
+    async fn a_non_opted_in_oidc_profile_is_still_indistinguishable_from_an_unknown_one() {
+        let state = AppState::new();
+        unlock(&state);
+        let path = tmp_profiles_path("connect-oidc-hidden.enc");
+        let mut oidc = profile("p-oidc", "Corp SSO", false);
+        oidc.uri = "mongodb://127.0.0.1:1/?authMechanism=MONGODB-OIDC&authSource=$external".to_string();
+        write_profiles(&path, &[oidc]);
+
+        assert_eq!(connect_impl(&state, &path, "p-oidc").await.unwrap_err(), PROFILE_NOT_FOUND);
     }
 
     #[tokio::test]

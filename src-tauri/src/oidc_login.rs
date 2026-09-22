@@ -189,6 +189,25 @@ pub fn uri_requests_oidc(uri: &str) -> bool {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    /// A TCP listener that accepts and then never says a word. A connect or
+    /// connection test against it gets as far as the driver trying to reach
+    /// the server — where a login would be registered and authentication
+    /// would happen — with no MongoDB anywhere. Returns its port.
+    pub(crate) async fn silent_server() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        port
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
@@ -398,19 +417,7 @@ mod tests {
 
     // ---- the connect path ------------------------------------------------
 
-    /// Accepts and never answers: the driver gets as far as trying to reach
-    /// the server, with no MongoDB anywhere.
-    async fn silent_server() -> u16 {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            let mut held = Vec::new();
-            while let Ok((socket, _)) = listener.accept().await {
-                held.push(socket);
-            }
-        });
-        port
-    }
+    use super::test_support::silent_server;
 
     /// Connect has no phase channel, so the only way the UI can cancel its
     /// login is by the id it minted before invoking. The entry must exist
