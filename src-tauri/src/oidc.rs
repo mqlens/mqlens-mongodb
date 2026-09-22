@@ -12,7 +12,7 @@ pub(crate) const B64: base64::engine::general_purpose::GeneralPurpose =
 
 /// A PKCE code verifier. Deliberately opaque: its `Debug` redacts, because a
 /// verifier in a log is as good as the authorization code it protects.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PkceVerifier(String);
 
 impl std::fmt::Debug for PkceVerifier {
@@ -230,6 +230,69 @@ pub async fn discover(issuer: &str, http: &reqwest::Client) -> Result<Endpoints,
         authorization: document.authorization_endpoint,
         token: document.token_endpoint,
     })
+}
+
+use mongodb::options::oidc::IdpServerInfo;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct AuthorizationRequest {
+    pub url: String,
+    pub state: String,
+    pub nonce: String,
+    pub verifier: PkceVerifier,
+}
+
+/// Percent-encode everything that is not an RFC 3986 unreserved character, so
+/// a scope or redirect containing `&`, `#` or a space cannot change what the
+/// URL means.
+fn encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            other => format!("%{:02X}", other),
+        })
+        .collect()
+}
+
+/// Build the Authorization Code + PKCE request. IdP identity comes from
+/// `idp` — the metadata MongoDB handed us — never from the connection editor.
+pub fn build_authorization_request(
+    endpoints: &Endpoints,
+    idp: &IdpServerInfo,
+    redirect_uri: &str,
+) -> Result<AuthorizationRequest, OidcError> {
+    require_secure(&endpoints.authorization)?;
+    let client_id = idp.client_id.as_deref().ok_or(OidcError::MissingClientId)?;
+
+    let verifier = PkceVerifier::generate();
+    let state = random_token();
+    let nonce = random_token();
+
+    let mut scopes = vec!["openid".to_string()];
+    for scope in idp.request_scopes.iter().flatten() {
+        if scope != "openid" {
+            scopes.push(scope.clone());
+        }
+    }
+
+    let separator = if endpoints.authorization.contains('?') { '&' } else { '?' };
+    let url = format!(
+        "{base}{separator}response_type=code&client_id={client}&redirect_uri={redirect}\
+         &scope={scope}&state={state}&nonce={nonce}&code_challenge={challenge}\
+         &code_challenge_method=S256",
+        base = endpoints.authorization,
+        client = encode(client_id),
+        redirect = encode(redirect_uri),
+        scope = encode(&scopes.join(" ")),
+        state = encode(&state),
+        nonce = encode(&nonce),
+        challenge = encode(&verifier.challenge()),
+    );
+
+    Ok(AuthorizationRequest { url, state, nonce, verifier })
 }
 
 #[cfg(test)]
@@ -477,5 +540,118 @@ mod tests {
             !production_source.contains("env::var") && !production_source.contains("env!"),
             "the http:// exception must never be reachable at runtime via an environment variable"
         );
+    }
+
+    fn test_endpoints() -> Endpoints {
+        Endpoints {
+            authorization: "https://idp.example.com/authorize".into(),
+            token: "https://idp.example.com/token".into(),
+        }
+    }
+
+    fn idp_info(client_id: Option<&str>, scopes: Option<Vec<&str>>) -> IdpServerInfo {
+        IdpServerInfo::builder()
+            .issuer("https://idp.example.com".to_string())
+            .client_id(client_id.map(str::to_string))
+            .request_scopes(scopes.map(|s| s.into_iter().map(str::to_string).collect()))
+            .build()
+    }
+
+    #[test]
+    fn the_authorization_url_carries_everything_the_idp_needs() {
+        let request = build_authorization_request(
+            &test_endpoints(),
+            &idp_info(Some("client-abc"), Some(vec!["profile"])),
+            "http://127.0.0.1:41234/callback",
+        )
+        .unwrap();
+
+        let url = url_params(&request.url);
+        assert_eq!(url.get("response_type").map(String::as_str), Some("code"));
+        assert_eq!(url.get("client_id").map(String::as_str), Some("client-abc"));
+        assert_eq!(
+            url.get("redirect_uri").map(String::as_str),
+            Some("http://127.0.0.1:41234/callback")
+        );
+        assert_eq!(url.get("code_challenge_method").map(String::as_str), Some("S256"));
+        assert_eq!(url.get("code_challenge"), Some(&request.verifier.challenge()));
+        assert_eq!(url.get("state"), Some(&request.state));
+        assert_eq!(url.get("nonce"), Some(&request.nonce));
+        // `openid` is always requested; the IdP's own scopes are added to it.
+        let scope = url.get("scope").cloned().unwrap_or_default();
+        assert!(scope.split(' ').any(|s| s == "openid"), "got {scope}");
+        assert!(scope.split(' ').any(|s| s == "profile"), "got {scope}");
+    }
+
+    #[test]
+    fn the_verifier_never_appears_in_the_authorization_url() {
+        let request = build_authorization_request(
+            &test_endpoints(),
+            &idp_info(Some("client-abc"), None),
+            "http://127.0.0.1:41234/callback",
+        )
+        .unwrap();
+        assert!(
+            !request.url.contains(request.verifier.as_str()),
+            "the verifier must stay local until the token exchange"
+        );
+    }
+
+    #[test]
+    fn a_deployment_without_a_client_id_fails_loudly() {
+        assert_eq!(
+            build_authorization_request(
+                &test_endpoints(),
+                &idp_info(None, None),
+                "http://127.0.0.1:41234/callback",
+            ),
+            Err(OidcError::MissingClientId)
+        );
+    }
+
+    #[test]
+    fn two_requests_never_share_state_nonce_or_verifier() {
+        let a = build_authorization_request(&test_endpoints(), &idp_info(Some("c"), None), "http://127.0.0.1:1/callback").unwrap();
+        let b = build_authorization_request(&test_endpoints(), &idp_info(Some("c"), None), "http://127.0.0.1:1/callback").unwrap();
+        assert_ne!(a.state, b.state);
+        assert_ne!(a.nonce, b.nonce);
+        assert_ne!(a.verifier.as_str(), b.verifier.as_str());
+    }
+
+    /// Minimal query parser so the assertions above read as data, not regex.
+    fn url_params(url: &str) -> std::collections::HashMap<String, String> {
+        url.split_once('?')
+            .map(|(_, query)| query)
+            .unwrap_or("")
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    percent_decode(v),
+                )
+            })
+            .collect()
+    }
+
+    fn percent_decode(value: &str) -> String {
+        let bytes = value.replace('+', " ").into_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' && i + 2 < bytes.len() {
+                if let Ok(byte) = u8::from_str_radix(
+                    std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("zz"),
+                    16,
+                ) {
+                    out.push(byte);
+                    i += 3;
+                    continue;
+                }
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        String::from_utf8_lossy(&out).into_owned()
     }
 }
