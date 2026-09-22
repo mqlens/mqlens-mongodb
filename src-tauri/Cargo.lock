@@ -6464,6 +6464,7 @@ dependencies = [
  "glob",
  "jsonwebtoken",
  "mongodb",
+ "percent-encoding",
  "rand 0.10.2",
  "reqwest 0.12.28",
  "rmcp",

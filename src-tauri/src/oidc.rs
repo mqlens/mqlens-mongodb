@@ -668,7 +668,7 @@ impl OidcSession {
         self.authorization_url.lock().ok()?.clone()
     }
 
-    fn set_authorization_url(&self, url: String) {
+    pub(crate) fn set_authorization_url(&self, url: String) {
         *self.authorization_url.lock().expect("authorization_url mutex poisoned") = Some(url);
     }
 

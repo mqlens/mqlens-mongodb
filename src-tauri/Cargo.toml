@@ -39,6 +39,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 russh = "0.63.1"
 sysinfo = "0.38.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Decodes URI option values the way the MongoDB driver does, so the MCP guard
+# sees `authMechanism` exactly as the driver would (#430). Already locked
+# transitively (via mongodb and url), so this adds no crate.
+percent-encoding = "2"
 argon2 = "0.6"
 aes-gcm = "0.11"
 rand = "0.10"

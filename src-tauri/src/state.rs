@@ -117,6 +117,11 @@ pub struct AppState {
     /// leaving the survivor unable to confirm anything.
     pub mcp_helper_requesters: Mutex<Vec<HelperRun>>,
     pub connections: Mutex<HashMap<String, Client>>,
+    /// Human MONGODB-OIDC logins whose connect or test call is still in
+    /// flight, keyed by the caller's login id (#430). This is how the UI
+    /// cancels a login and how "Open browser again" finds its URL. An entry
+    /// lives only as long as that call — see `oidc_login::LoginRegistration`.
+    pub oidc_sessions: crate::oidc_login::OidcSessions,
     pub mocks: Mutex<HashMap<String, bool>>,
     pub mock_indexes: Mutex<HashMap<String, Vec<IndexInfo>>>,
     pub mongosh_sessions: Mutex<HashMap<String, Arc<MongoshSession>>>,
@@ -222,6 +227,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
+            oidc_sessions: Mutex::new(HashMap::new()),
             mocks: Mutex::new(HashMap::new()),
             mock_indexes: Mutex::new(HashMap::new()),
             mongosh_sessions: Mutex::new(HashMap::new()),
