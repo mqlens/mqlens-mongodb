@@ -161,12 +161,71 @@ impl std::fmt::Display for OidcError {
     }
 }
 
+/// The endpoints an IdP advertises via discovery, both HTTPS-validated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Endpoints {
+    pub authorization: String,
+    pub token: String,
+}
+
+/// IdP endpoints must be HTTPS. The loopback exception is compiled only
+/// into test builds — a release binary has no code path that accepts
+/// `http://`, which is why this is `#[cfg(test)]` and not an environment
+/// variable.
+pub fn require_secure(url: &str) -> Result<(), OidcError> {
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if url.starts_with("http://127.0.0.1:") || url.starts_with("http://[::1]:") {
+        return Ok(());
+    }
+    Err(OidcError::InsecureEndpoint)
+}
+
+#[derive(serde::Deserialize)]
+struct DiscoveryDocument {
+    issuer: String,
+    authorization_endpoint: String,
+    token_endpoint: String,
+}
+
+/// Fetch `{issuer}/.well-known/openid-configuration` and validate it. The
+/// document must name the issuer we asked for, and both endpoints must be
+/// HTTPS — an IdP that points us somewhere else is not one we follow.
+pub async fn discover(issuer: &str, http: &reqwest::Client) -> Result<Endpoints, OidcError> {
+    require_secure(issuer)?;
+    let url = format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'));
+    let document: DiscoveryDocument = http
+        .get(&url)
+        .send()
+        .await
+        .map_err(|_| OidcError::DiscoveryFailed)?
+        .error_for_status()
+        .map_err(|_| OidcError::DiscoveryFailed)?
+        .json()
+        .await
+        .map_err(|_| OidcError::DiscoveryFailed)?;
+
+    if document.issuer.trim_end_matches('/') != issuer.trim_end_matches('/') {
+        return Err(OidcError::DiscoveryFailed);
+    }
+    require_secure(&document.authorization_endpoint)?;
+    require_secure(&document.token_endpoint)?;
+
+    Ok(Endpoints {
+        authorization: document.authorization_endpoint,
+        token: document.token_endpoint,
+    })
+}
+
 #[cfg(test)]
 pub mod mock_idp;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mock_idp::MockIdp;
 
     /// RFC 7636 Appendix B's worked example. If this drifts, our challenge is
     /// not the one any IdP will compute.
@@ -310,5 +369,73 @@ mod tests {
         let debug = format!("{error:?}");
         assert!(!debug.contains("secret-code"), "Debug leaked secret in: {debug}");
         assert!(debug.contains("unrecognized"), "Unknown code should render as unrecognized: {debug}");
+    }
+
+    #[test]
+    fn plain_http_endpoints_are_refused() {
+        assert_eq!(
+            require_secure("http://idp.example.com/authorize"),
+            Err(OidcError::InsecureEndpoint)
+        );
+        assert_eq!(require_secure("https://idp.example.com/authorize"), Ok(()));
+    }
+
+    /// The loopback exception exists only so tests can run a mock IdP. It is
+    /// `#[cfg(test)]`-gated, so this passing here says nothing about release
+    /// builds — `the_http_exception_is_compile_time_only` below is the real
+    /// guard.
+    #[test]
+    fn loopback_http_is_allowed_in_tests_only() {
+        assert_eq!(require_secure("http://127.0.0.1:8080/authorize"), Ok(()));
+        // Not loopback, still refused even under cfg(test).
+        assert_eq!(
+            require_secure("http://10.0.0.5:8080/authorize"),
+            Err(OidcError::InsecureEndpoint)
+        );
+    }
+
+    #[tokio::test]
+    async fn discovery_reads_the_endpoints_the_idp_advertises() {
+        let idp = MockIdp::start();
+        let http = reqwest::Client::new();
+        let endpoints = discover(&idp.issuer(), &http).await.unwrap();
+        assert_eq!(endpoints.authorization, format!("{}/authorize", idp.issuer()));
+        assert_eq!(endpoints.token, format!("{}/token", idp.issuer()));
+    }
+
+    /// The brief's original version of this test swapped `127.0.0.1` for
+    /// `localhost` in the requested issuer URL. That exercises scheme
+    /// validation (`localhost` is not loopback-whitelisted, so it would
+    /// have failed as `InsecureEndpoint`, not `DiscoveryFailed`) rather than
+    /// issuer matching. This version keeps the request on `127.0.0.1` and
+    /// makes the *document* lie about its own issuer instead, which is the
+    /// actual defence under test: an IdP claiming to be someone else.
+    #[tokio::test]
+    async fn discovery_rejects_an_issuer_that_does_not_match_itself() {
+        let idp = MockIdp::start();
+        idp.lie_about_issuer();
+        let http = reqwest::Client::new();
+        assert_eq!(discover(&idp.issuer(), &http).await, Err(OidcError::DiscoveryFailed));
+    }
+
+    /// Guards the `#[cfg(test)]` gate on `require_secure`. If someone
+    /// converts it to an env var or a runtime setting, this fails and
+    /// explains why not.
+    #[test]
+    fn the_http_exception_is_compile_time_only() {
+        let source = include_str!("oidc.rs");
+        let gate = source
+            .split("pub fn require_secure")
+            .nth(1)
+            .expect("require_secure must exist");
+        let body = gate.split("\n}").next().unwrap();
+        assert!(
+            body.contains("#[cfg(test)]"),
+            "the http:// exception must stay #[cfg(test)]-gated"
+        );
+        assert!(
+            !body.contains("env::var") && !body.contains("env!"),
+            "the http:// exception must never be reachable at runtime"
+        );
     }
 }

@@ -27,6 +27,11 @@ struct Inner {
     encoding_key: jsonwebtoken::EncodingKey,
     modulus_b64: String,
     requests: Mutex<Vec<TokenRequestRecord>>,
+    /// When set, the discovery document advertises this `issuer` instead of
+    /// the real one, while every route still serves from the real loopback
+    /// address. Lets tests exercise the defence against an IdP that claims
+    /// to be someone else.
+    lying_issuer: Mutex<Option<String>>,
 }
 
 /// A single-key, single-issuer OIDC provider double bound to a random
@@ -71,6 +76,7 @@ impl MockIdp {
             encoding_key,
             modulus_b64,
             requests: Mutex::new(Vec::new()),
+            lying_issuer: Mutex::new(None),
         });
         let server = Arc::new(server);
 
@@ -101,6 +107,15 @@ impl MockIdp {
     /// The most recent `POST /token` call this provider has seen, if any.
     pub fn last_token_request(&self) -> Option<TokenRequestRecord> {
         self.inner.requests.lock().unwrap().last().cloned()
+    }
+
+    /// From now on, the discovery document's `issuer` field names a
+    /// different value than the address actually serving it. Requests still
+    /// land on the real loopback server; only the advertised `issuer`
+    /// string is a lie.
+    pub fn lie_about_issuer(&self) {
+        let fake = format!("{}-imposter", self.inner.issuer);
+        *self.inner.lying_issuer.lock().unwrap() = Some(fake);
     }
 }
 
@@ -136,7 +151,9 @@ fn handle_request(mut request: tiny_http::Request, inner: &Inner) {
 
     let response = match (request.method(), path.as_str()) {
         (tiny_http::Method::Get, "/.well-known/openid-configuration") => {
-            json_response(discovery_document(&inner.issuer))
+            let lying = inner.lying_issuer.lock().unwrap().clone();
+            let advertised_issuer = lying.as_deref().unwrap_or(&inner.issuer);
+            json_response(discovery_document(&inner.issuer, advertised_issuer))
         }
         (tiny_http::Method::Get, "/jwks") => json_response(jwks_document(&inner.modulus_b64)),
         (tiny_http::Method::Get, "/authorize") => authorize_response(&query),
@@ -166,9 +183,12 @@ fn json_response(body: serde_json::Value) -> tiny_http::ResponseBox {
         .boxed()
 }
 
-fn discovery_document(issuer: &str) -> serde_json::Value {
+/// `issuer` is the real address routes are served from (used to build the
+/// endpoint URLs); `advertised_issuer` is what the document claims in its
+/// `issuer` field, which [`MockIdp::lie_about_issuer`] can make differ.
+fn discovery_document(issuer: &str, advertised_issuer: &str) -> serde_json::Value {
     serde_json::json!({
-        "issuer": issuer,
+        "issuer": advertised_issuer,
         "authorization_endpoint": format!("{issuer}/authorize"),
         "token_endpoint": format!("{issuer}/token"),
         "jwks_uri": format!("{issuer}/jwks"),
