@@ -83,6 +83,8 @@ interface ConnectionProfile {
   mcp_enabled?: boolean;
   /** Read-only / confirm-destructive production safeguard. Mirrors backend `ConnectionProfile::connection_mode`. */
   connection_mode?: ConnectionMode;
+  /** Human OIDC settings (#430). Mirrors backend `ConnectionProfile::oidc`. */
+  oidc?: { allowed_hosts?: string[] } | null;
 }
 
 interface ConnectionManagerProps {
@@ -141,6 +143,10 @@ const BLANK_CONN = {
   authDb: 'admin',
   awsSessionToken: '',
   kerberosServiceName: '',
+  // Comma-separated host allowlist for human OIDC login (#430), editor-only
+  // text — never written into the URI (`ClientOptions::parse` rejects
+  // ALLOWED_HOSTS), split into the profile's `oidc.allowed_hosts` on save.
+  oidcAllowedHosts: '',
   tlsMode: 'off',
   tlsCa: '',
   tlsClientCert: '',
@@ -346,6 +352,7 @@ export const parseUriIntoFields = (uri: string) => {
       'MONGODB-AWS': 'aws',
       GSSAPI: 'kerberos',
       PLAIN: 'ldap',
+      'MONGODB-OIDC': 'oidc',
     };
     const mechanism = mechanisms[(param('authMechanism') || '').toUpperCase()];
     // A URI with credentials and no mechanism is SCRAM, the server default.
@@ -443,8 +450,9 @@ export const buildUri = (s: typeof BLANK_CONN) => {
   let creds = '';
   if (s.authMethod !== 'none' && s.authUser) {
     const u = encodeURIComponent(s.authUser);
-    // X509 derives the user from the cert; GSSAPI uses a Kerberos ticket — neither sends a password.
-    const usesPassword = s.authPass && s.authMethod !== 'x509' && s.authMethod !== 'kerberos';
+    // X509 derives the user from the cert; GSSAPI uses a Kerberos ticket; OIDC
+    // authenticates through the browser — none of the three sends a password.
+    const usesPassword = s.authPass && s.authMethod !== 'x509' && s.authMethod !== 'kerberos' && s.authMethod !== 'oidc';
     const p = usesPassword ? `:${encodeURIComponent(s.authPass)}` : '';
     creds = `${u}${p}@`;
   }
@@ -465,8 +473,12 @@ export const buildUri = (s: typeof BLANK_CONN) => {
   if (s.authMethod === 'aws') params.push('authMechanism=MONGODB-AWS');
   if (s.authMethod === 'kerberos') params.push('authMechanism=GSSAPI');
   if (s.authMethod === 'ldap') params.push('authMechanism=PLAIN');
+  // MONGODB-OIDC (#430): the mechanism only. `oidcAllowedHosts` never
+  // reaches the URI — `ClientOptions::parse` rejects ALLOWED_HOSTS outright,
+  // so it travels to the backend as the profile's `oidc.allowed_hosts` instead.
+  if (s.authMethod === 'oidc') params.push('authMechanism=MONGODB-OIDC');
   // External mechanisms (M5) authenticate against $external; SCRAM uses the chosen auth DB.
-  const isExternalAuth = ['x509', 'aws', 'kerberos', 'ldap'].includes(s.authMethod);
+  const isExternalAuth = ['x509', 'aws', 'kerberos', 'ldap', 'oidc'].includes(s.authMethod);
   if (isExternalAuth) {
     params.push('authSource=$external');
   } else if (s.authMethod !== 'none' && s.authDb) {
@@ -511,6 +523,21 @@ export const buildUri = (s: typeof BLANK_CONN) => {
   const dbPath = s.defaultDb ? `/${s.defaultDb}` : '';
   const scheme = isSrv ? 'mongodb+srv' : 'mongodb';
   return `${scheme}://${creds}${hosts}${dbPath}${params.length ? '?' + params.join('&') : ''}`;
+};
+
+/**
+ * Build the profile's OIDC config from editor state (#430), or `null` when
+ * the method isn't OIDC or there is no explicit host to allow. Backs every
+ * connect/test-uri call site and the profile save path, so the allowed-hosts
+ * text field is split in exactly one place.
+ */
+export const buildOidcConfig = (s: typeof BLANK_CONN): { allowed_hosts: string[] } | null => {
+  if (s.authMethod !== 'oidc') return null;
+  const hosts = s.oidcAllowedHosts
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean);
+  return hosts.length ? { allowed_hosts: hosts } : null;
 };
 
 // Build the structured SSH tunnel config the backend expects, or null when disabled.
@@ -783,6 +810,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       colorTag: profile.color_tag || '',
       mcpEnabled: profile.mcp_enabled ?? false,
       connectionMode: profile.connection_mode ?? 'normal',
+      // Allowed hosts never round-trip through the URI (the driver rejects
+      // ALLOWED_HOSTS there), so they are restored from the profile alone —
+      // the same source save reads them from (#430).
+      oidcAllowedHosts: (profile.oidc?.allowed_hosts ?? []).join(', '),
       ...sshFields,
     };
     setEditorState(opened);
@@ -911,6 +942,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         : null,
       mcp_enabled: tested ? tested.state.mcpEnabled : editorState.mcpEnabled,
       connection_mode: tested ? tested.state.connectionMode : editorState.connectionMode,
+      oidc: buildOidcConfig(tested ? tested.state : editorState),
     };
 
     setLoading(true);
@@ -961,6 +993,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     // `mongodb://mock:27017` — and connect to something the user never wrote.
     const uri = existing ? existing.uri : buildUri(editorState);
     const ssh = existing ? existing.ssh ?? null : buildSshConfig(editorState);
+    const oidc = existing ? existing.oidc ?? null : buildOidcConfig(editorState);
     // Keyed on the saved profile, not on `existing`: an edited profile still
     // saves back onto its own id, and `addActiveConnection` dedupes by
     // profileId — so connecting a second time would leave the user on the old
@@ -980,7 +1013,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setTestResult(null);
     setError(null);
     try {
-      const connId = await invoke<string>('connect_db', { uri, ssh });
+      const connId = await invoke<string>('connect_db', { uri, ssh, oidc });
       handedOverRef.current = null;
       // The editor was dismissed while this was in flight. There is no longer a
       // surface to offer the connection on, and `pendingSave` set now would be
@@ -1233,7 +1266,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null });
+      const connId = await invoke<string>('connect_db', { uri: profile.uri, ssh: profile.ssh ?? null, oidc: profile.oidc ?? null });
       onConnect(connId, profile.name, profile.uri, profile.id, profile.color_tag ?? undefined, profile.connection_mode ?? 'normal');
     } catch (err: any) {
       setError(String(err));
@@ -1577,6 +1610,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       await invoke('test_connection_uri', {
         uri: targetUri,
         ssh: buildSshConfig(editorState),
+        oidc: buildOidcConfig(editorState),
         onPhase: channel,
       });
       setTestProgress(100);
@@ -2275,7 +2309,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   <div className="flex flex-col gap-1">
                     <Label>{t('auth.method')}</Label>
                     <Select value={editorState.authMethod} onValueChange={(v) => setEditorState(prev => ({ ...prev, authMethod: v }))}>
-                      <SelectTrigger className="h-8 text-xs">
+                      <SelectTrigger className="h-8 text-xs" data-testid="auth-method-select">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className={NESTED_SELECT_Z}>
@@ -2286,6 +2320,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         <SelectItem value="aws">{t('auth.methodAws')}</SelectItem>
                         <SelectItem value="kerberos">{t('auth.methodKerberos')}</SelectItem>
                         <SelectItem value="ldap">{t('auth.methodLdap')}</SelectItem>
+                        <SelectItem value="oidc">{t('auth.methodOidc')}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -2293,14 +2328,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   {editorState.authMethod !== 'none' && (() => {
                     const m = editorState.authMethod;
                     const isScram = m === 'scram-1' || m === 'scram-256';
-                    const isExternal = m === 'x509' || m === 'aws' || m === 'kerberos' || m === 'ldap';
+                    const isExternal = m === 'x509' || m === 'aws' || m === 'kerberos' || m === 'ldap' || m === 'oidc';
                     const userLabel =
                       m === 'aws' ? t('auth.userLabelAws')
                       : m === 'kerberos' ? t('auth.userLabelKerberos')
                       : m === 'x509' ? t('auth.userLabelX509')
                       : t('auth.userLabelDefault');
                     const passLabel = m === 'aws' ? t('auth.passLabelAws') : t('auth.passLabelDefault');
-                    const showPasswordField = m !== 'x509' && m !== 'kerberos';
+                    const showPasswordField = m !== 'x509' && m !== 'kerberos' && m !== 'oidc';
                     return (
                     <div className="flex flex-col gap-2 border-t border-border pt-2.5">
                       <div className="flex gap-2">
@@ -2390,6 +2425,26 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                             Authenticates against the <code>$external</code> database.
                           </Trans>
                         </p>
+                      )}
+                      {m === 'oidc' && (
+                        <>
+                          <p className="m-0 text-[10px] text-muted-foreground">
+                            {t('auth.oidcNote')}
+                          </p>
+                          <div className="flex flex-col gap-1">
+                            <Label htmlFor="oidc-allowed-hosts">{t('auth.oidcAllowedHosts')}</Label>
+                            <Input
+                              id="oidc-allowed-hosts"
+                              type="text"
+                              value={editorState.oidcAllowedHosts}
+                              onChange={e => setEditorState(prev => ({ ...prev, oidcAllowedHosts: e.target.value }))}
+                              placeholder="mongo.corp.example.com"
+                            />
+                            <span className="text-[10.5px] leading-relaxed text-muted-foreground">
+                              {t('auth.oidcAllowedHostsHelp')}
+                            </span>
+                          </div>
+                        </>
                       )}
                     </div>
                     );

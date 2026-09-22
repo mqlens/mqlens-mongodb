@@ -155,6 +155,8 @@ interface ConnectionProfile {
   name: string;
   uri: string;
   color_tag?: string;
+  /** Human OIDC settings (#430). Mirrors backend `ConnectionProfile::oidc`. */
+  oidc?: { allowed_hosts?: string[] } | null;
 }
 
 interface SidebarProps {

@@ -5,11 +5,13 @@ import {
   ConnectionManager,
   buildUri,
   buildSshConfig,
+  buildOidcConfig,
   parseUriIntoFields,
   summarizeConnectionError,
   suggestConnectionName,
 } from '../ConnectionManager';
 import { DialogProvider } from '../dialogs/DialogProvider';
+import { stripUriSecrets } from '../../lib/connection';
 import enErrors from '../../locales/en/errors.json';
 
 // ConnectionManager now uses the in-app dialog system, so it must render inside a provider.
@@ -785,6 +787,7 @@ describe('ConnectionManager Component', () => {
         color_tag: null,
         mcp_enabled: false,
         connection_mode: 'normal',
+        oidc: null,
       });
       // The nested modal should be closed
       expect(screen.queryByText('New Connection')).not.toBeInTheDocument();
@@ -2631,6 +2634,231 @@ describe('URI import and export', () => {
         { name: 'Production', uri: 'mongodb://user:pw@prod.example.com:27017/app' },
       ]);
       expect(screen.queryByTestId('import-uri-success')).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe('OIDC auth method and URI round-trip (#430)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const openAuthTab = async () => {
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+  };
+
+  it('builds an OIDC URI with the mechanism and $external, and drops a stale password', () => {
+    const uri = buildUri({ ...baseConn, authMethod: 'oidc', authPass: 'leftover-pw' });
+    expect(uri).toContain('authMechanism=MONGODB-OIDC');
+    expect(uri).toContain('authSource=$external');
+    expect(uri).not.toContain('authMechanismProperties');
+    expect(uri).not.toContain('leftover-pw');
+  });
+
+  it('never writes ALLOWED_HOSTS into the URI, because the driver rejects it', () => {
+    const uri = buildUri({
+      ...baseConn,
+      authMethod: 'oidc',
+      oidcAllowedHosts: 'mongo.corp.example.com',
+    });
+    expect(uri).not.toContain('ALLOWED_HOSTS');
+    expect(uri).not.toContain('mongo.corp.example.com');
+  });
+
+  it('restores the auth method from an imported OIDC URI (allowed hosts are never in the URI)', () => {
+    const state = parseUriIntoFields(
+      'mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC&authSource=$external',
+    );
+    expect(state.authMethod).toBe('oidc');
+    expect(state.authDb).toBe('admin');
+  });
+
+  it('round-trips an OIDC URI without drift', () => {
+    const uri = 'mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC&authSource=$external';
+    const rebuilt = buildUri({ ...baseConn, ...parseUriIntoFields(uri) });
+    expect(rebuilt).toContain('authMechanism=MONGODB-OIDC');
+    expect(rebuilt).toContain('authSource=$external');
+  });
+
+  it('keeps no token material in a redacted OIDC URI', () => {
+    const uri = 'mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC&authSource=$external';
+    expect(stripUriSecrets(uri)).toBe(uri);
+  });
+
+  describe('buildOidcConfig', () => {
+    it('splits the allowed-hosts text on commas, trims, and drops empties', () => {
+      expect(
+        buildOidcConfig({ ...baseConn, authMethod: 'oidc', oidcAllowedHosts: ' a.example.com ,, b.example.com ,' }),
+      ).toEqual({ allowed_hosts: ['a.example.com', 'b.example.com'] });
+    });
+
+    it('returns null when the method is not oidc, even with hosts typed in', () => {
+      expect(
+        buildOidcConfig({ ...baseConn, authMethod: 'scram-256', oidcAllowedHosts: 'a.example.com' }),
+      ).toBeNull();
+    });
+
+    it('returns null when oidc is selected but the host list is empty', () => {
+      expect(buildOidcConfig({ ...baseConn, authMethod: 'oidc', oidcAllowedHosts: '  , ,' })).toBeNull();
+    });
+  });
+
+  it('offers OIDC in the auth selector', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await openAuthTab();
+    fireEvent.click(screen.getByTestId('auth-method-select'));
+    expect(await screen.findByRole('option', { name: /oidc \(browser login\)/i })).toBeInTheDocument();
+  });
+
+  it('hides password and auth-database fields for OIDC and explains the browser login', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await openAuthTab();
+    await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/authentication database/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/opens in your system browser/i)).toBeInTheDocument();
+  });
+
+  it('splits the allowed-hosts field on commas, trims, and drops empties on save', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await openAuthTab();
+    await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+
+    fireEvent.change(screen.getByLabelText(/allowed hosts/i), {
+      target: { value: ' mongo.corp.example.com ,, other.example.com ,' },
+    });
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Self-managed OIDC' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => {
+      expect(savedProfile?.oidc).toEqual({
+        allowed_hosts: ['mongo.corp.example.com', 'other.example.com'],
+      });
+    });
+  });
+
+  it('sends oidc:null on save when the auth method is not oidc', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /new\.\.\./i }));
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Plain' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => {
+      expect(savedProfile?.oidc).toBeNull();
+    });
+  });
+
+  it('sends oidc:null on save when oidc is selected but the allowed-hosts list is empty', async () => {
+    let savedProfile: any = null;
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'save_connection_profile') {
+        savedProfile = args.profile;
+        return Promise.resolve();
+      }
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    await openAuthTab();
+    await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+    fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: 'Atlas OIDC' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => {
+      expect(savedProfile?.oidc).toBeNull();
+    });
+  });
+
+  it('restores allowed hosts from the saved profile on reopen, not from the URI', async () => {
+    const profile = {
+      id: 'p-oidc',
+      name: 'Corp OIDC',
+      uri: 'mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC&authSource=$external',
+      ssh: null,
+      color_tag: null,
+      oidc: { allowed_hosts: ['mongo.corp.example.com', 'backup.corp.example.com'] },
+    };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'load_connection_profiles') return Promise.resolve([profile]);
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen={true} onClose={() => {}} onConnect={() => {}} />);
+    fireEvent.click((await screen.findAllByText('Corp OIDC'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^authentication$/i }));
+    expect(screen.getByLabelText(/allowed hosts/i)).toHaveValue('mongo.corp.example.com, backup.corp.example.com');
+  });
+
+  it('sends the OIDC config built from the editor when connecting an unsaved configuration', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'connect_db') return Promise.resolve('conn-oidc-1');
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openAuthTab();
+    await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+    fireEvent.change(screen.getByLabelText(/allowed hosts/i), {
+      target: { value: 'mongo.corp.example.com' },
+    });
+
+    fireEvent.click(screen.getByTestId('editor-connect-btn'));
+
+    await waitFor(() => {
+      const call = calls.find((c) => c.cmd === 'connect_db');
+      expect(call?.args?.oidc).toEqual({ allowed_hosts: ['mongo.corp.example.com'] });
+    });
+  });
+
+  it('sends the OIDC config built from the editor to test_connection_uri', async () => {
+    const calls: any[] = [];
+    mockInvoke.mockImplementation((cmd: string, args: any) => {
+      calls.push({ cmd, args });
+      if (cmd === 'load_connection_profiles') return Promise.resolve([]);
+      if (cmd === 'test_connection_uri') return Promise.resolve();
+      return Promise.reject(new Error(`Unhandled mock: ${cmd}`));
+    });
+    render(<ConnectionManager isOpen onClose={() => {}} onConnect={() => {}} />);
+    await openAuthTab();
+    await pickSelectOption('auth-method-select', /oidc \(browser login\)/i);
+    fireEvent.change(screen.getByLabelText(/allowed hosts/i), {
+      target: { value: 'mongo.corp.example.com' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /test connection/i }));
+
+    await waitFor(() => {
+      const call = calls.find((c) => c.cmd === 'test_connection_uri');
+      expect(call?.args?.oidc).toEqual({ allowed_hosts: ['mongo.corp.example.com'] });
     });
   });
 });
