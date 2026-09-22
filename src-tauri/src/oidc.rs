@@ -776,6 +776,64 @@ async fn run_flow_inner(
     exchange_code(&endpoints, &client_id, &code, &request.verifier, &redirect_uri, &http).await
 }
 
+use futures::future::FutureExt as _;
+use mongodb::options::oidc::Callback;
+use mongodb::options::{AuthMechanism, ClientOptions};
+
+/// Attach the human OIDC callback — and only for `MONGODB-OIDC`. Every other
+/// mechanism is left exactly as parsed.
+///
+/// `allowed_hosts` is applied here rather than in the URI because
+/// `ClientOptions::parse` rejects `ALLOWED_HOSTS` outright. An empty list
+/// leaves the driver's own secure defaults in place; we never broaden them.
+///
+/// `http` is injected rather than built here so callers can supply a client
+/// with different TLS trust (e.g. a test's self-signed CA) without this
+/// function ever touching the MongoDB connection's own TLS settings.
+pub fn attach_human_callback(
+    options: &mut ClientOptions,
+    session: Arc<OidcSession>,
+    allowed_hosts: &[String],
+    open: BrowserOpener,
+    http: reqwest::Client,
+) {
+    let Some(credential) = options.credential.as_mut() else {
+        return;
+    };
+    if credential.mechanism != Some(AuthMechanism::MongoDbOidc) {
+        return;
+    }
+
+    if !allowed_hosts.is_empty() {
+        let hosts: mongodb::bson::Array = allowed_hosts
+            .iter()
+            .map(|host| mongodb::bson::Bson::String(host.clone()))
+            .collect();
+        let properties = credential
+            .mechanism_properties
+            .get_or_insert_with(mongodb::bson::Document::new);
+        properties.insert("ALLOWED_HOSTS", hosts);
+    }
+
+    credential.oidc_callback = Callback::human(move |context: CallbackContext| {
+        let session = session.clone();
+        let open = open.clone();
+        let http = http.clone();
+        async move {
+            run_flow(context, session, open, http)
+                .await
+                .map_err(to_driver_error)
+        }
+        .boxed()
+    });
+}
+
+/// Map our taxonomy onto a driver error. The message is the category only —
+/// `OidcError::Display` is already safe to surface.
+fn to_driver_error(error: OidcError) -> mongodb::error::Error {
+    mongodb::error::Error::custom(format!("{error}"))
+}
+
 #[cfg(test)]
 pub mod mock_idp;
 
@@ -1692,6 +1750,117 @@ mod tests {
                      deadline and a pre-cancelled session; got {error:?}"
                 ),
             }
+        }
+    }
+
+    mod attach_human_callback_tests {
+        use super::*;
+
+        fn noop_session() -> Arc<OidcSession> {
+            OidcSession::new(Arc::new(|_| {}))
+        }
+
+        fn noop_opener() -> BrowserOpener {
+            Arc::new(|_: &str| Ok(()))
+        }
+
+        #[tokio::test]
+        async fn the_callback_attaches_only_for_mongodb_oidc() {
+            let mut oidc = ClientOptions::parse(
+                "mongodb://localhost:27017/?authMechanism=MONGODB-OIDC&authSource=$external",
+            )
+            .await
+            .unwrap();
+            attach_human_callback(
+                &mut oidc,
+                noop_session(),
+                &[],
+                noop_opener(),
+                reqwest::Client::new(),
+            );
+            assert_eq!(
+                oidc.credential.as_ref().unwrap().mechanism,
+                Some(AuthMechanism::MongoDbOidc)
+            );
+
+            // SCRAM must be left exactly as parsed.
+            let mut scram = ClientOptions::parse(
+                "mongodb://user:pass@localhost:27017/?authMechanism=SCRAM-SHA-256",
+            )
+            .await
+            .unwrap();
+            let before = format!("{:?}", scram.credential);
+            attach_human_callback(
+                &mut scram,
+                noop_session(),
+                &[],
+                noop_opener(),
+                reqwest::Client::new(),
+            );
+            assert_eq!(format!("{:?}", scram.credential), before, "SCRAM must be untouched");
+        }
+
+        #[tokio::test]
+        async fn allowed_hosts_are_applied_as_a_mechanism_property_not_a_uri_option() {
+            let mut options = ClientOptions::parse(
+                "mongodb://mongo.corp.example.com:27017/?authMechanism=MONGODB-OIDC&authSource=$external",
+            )
+            .await
+            .unwrap();
+            attach_human_callback(
+                &mut options,
+                noop_session(),
+                &["mongo.corp.example.com".to_string()],
+                noop_opener(),
+                reqwest::Client::new(),
+            );
+
+            let properties = options
+                .credential
+                .as_ref()
+                .unwrap()
+                .mechanism_properties
+                .as_ref()
+                .expect("ALLOWED_HOSTS must be set");
+            let hosts = properties.get_array("ALLOWED_HOSTS").unwrap();
+            assert_eq!(hosts.len(), 1);
+            assert_eq!(hosts[0].as_str(), Some("mongo.corp.example.com"));
+        }
+
+        /// The driver rejects ALLOWED_HOSTS in a URI outright. This pins that we
+        /// never try, because the failure mode is a connection that cannot even
+        /// parse.
+        #[tokio::test]
+        async fn allowed_hosts_in_a_uri_is_a_parse_error_we_must_never_produce() {
+            let parsed = ClientOptions::parse(
+                "mongodb://localhost:27017/?authMechanism=MONGODB-OIDC&authMechanismProperties=ALLOWED_HOSTS:example.com",
+            )
+            .await;
+            assert!(parsed.is_err(), "the driver must still reject this");
+        }
+
+        #[tokio::test]
+        async fn an_empty_allowed_hosts_list_leaves_the_driver_defaults_alone() {
+            let mut options = ClientOptions::parse(
+                "mongodb://localhost:27017/?authMechanism=MONGODB-OIDC&authSource=$external",
+            )
+            .await
+            .unwrap();
+            attach_human_callback(
+                &mut options,
+                noop_session(),
+                &[],
+                noop_opener(),
+                reqwest::Client::new(),
+            );
+            let has_hosts = options
+                .credential
+                .as_ref()
+                .unwrap()
+                .mechanism_properties
+                .as_ref()
+                .is_some_and(|p| p.get_array("ALLOWED_HOSTS").is_ok());
+            assert!(!has_hosts, "no explicit hosts means the driver's secure defaults apply");
         }
     }
 }
