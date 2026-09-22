@@ -67,6 +67,8 @@ const LOCAL_COMMANDS: &[&str] = &[
     // Appends an uncaught-frontend-error report to a local log file; no DB.
     "log_frontend_error",
     "connect_db",
+    "cancel_oidc_login", // flips an in-process OIDC login's cancel flag; no DB I/O
+    "reopen_oidc_login", // reopens a stored login URL in the system browser; no DB I/O
     "detect_mongo_tools",
     "detect_mongosh_binary",
     "start_tool_install_task",

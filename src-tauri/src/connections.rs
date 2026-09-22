@@ -1221,16 +1221,27 @@ pub async fn run_connection_test_with_oidc(
     // the login's entry removed.
 }
 
+/// `oidc` and `login_id` are optional so an older frontend that omits them
+/// still tests; `login_id` is what lets the dialog cancel or reopen an OIDC
+/// login while the test runs (#430).
 #[tauri::command]
 pub async fn test_connection_uri(
+    state: tauri::State<'_, crate::state::AppState>,
     uri: String,
     ssh: Option<crate::ssh_tunnel::SshConfig>,
+    oidc: Option<OidcProfileConfig>,
+    login_id: Option<String>,
     on_phase: tauri::ipc::Channel<PhaseUpdate>,
 ) -> Result<(), String> {
     let emit = move |update: PhaseUpdate| {
         let _ = on_phase.send(update);
     };
-    run_connection_test(&uri, ssh.as_ref(), &emit).await
+    let login = crate::oidc_login::HumanLogin::interactive(
+        oidc.as_ref(),
+        login_id,
+        crate::oidc_login::system_browser_opener(),
+    );
+    run_connection_test_with_oidc(&state.oidc_sessions, &uri, ssh.as_ref(), login, &emit).await
 }
 
 #[cfg(test)]

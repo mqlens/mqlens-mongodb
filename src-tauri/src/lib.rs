@@ -1470,13 +1470,38 @@ pub(crate) fn connection_is_mock(state: &AppState, id: &str) -> Result<bool, Str
 }
 
 // Tauri Command wrappers (kept private to module to avoid reimport collisions)
+/// `oidc` and `login_id` are optional so an older frontend that omits them
+/// still connects; without a `login_id` an OIDC login cannot be cancelled
+/// from the UI, though the driver's five-minute deadline still bounds it.
 #[tauri::command]
 async fn connect_db(
     state: tauri::State<'_, AppState>,
     uri: String,
     ssh: Option<ssh_tunnel::SshConfig>,
+    oidc: Option<connections::OidcProfileConfig>,
+    login_id: Option<String>,
 ) -> Result<String, String> {
-    connect_db_impl(&state, &uri, ssh.as_ref()).await
+    connect_db_with_oidc_impl(
+        &state,
+        &uri,
+        ssh.as_ref(),
+        oidc.as_ref(),
+        login_id,
+        oidc_login::system_browser_opener(),
+    )
+    .await
+}
+
+/// Cancel a browser login whose connect or test is still in flight (#430).
+#[tauri::command]
+fn cancel_oidc_login(state: tauri::State<'_, AppState>, login_id: String) -> Result<(), String> {
+    oidc_login::cancel_oidc_login_impl(&state, &login_id)
+}
+
+/// "Open browser again" for a login in flight, reusing its URL (#430).
+#[tauri::command]
+fn reopen_oidc_login(state: tauri::State<'_, AppState>, login_id: String) -> Result<(), String> {
+    oidc_login::reopen_oidc_login_impl(&state, &login_id, &oidc_login::system_browser_opener())
 }
 
 /// Find mongodump/mongorestore: configured dir, managed install, then PATH.
@@ -3757,6 +3782,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             log_frontend_error,
             connect_db,
+            cancel_oidc_login,
+            reopen_oidc_login,
             detect_mongo_tools,
             detect_mongosh_binary,
             start_dump_task,
