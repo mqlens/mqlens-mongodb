@@ -104,15 +104,16 @@ pub struct HumanLogin<'a> {
     /// The id the UI minted to cancel or reopen this login, if any.
     pub login_id: Option<String>,
     pub open: BrowserOpener,
-    /// For the IdP. Production uses a plain client with normal TLS trust;
-    /// only tests substitute one that also trusts a TEST-ONLY CA.
-    pub http: reqwest::Client,
+    /// For the IdP. `None` — production — builds a plain client with normal
+    /// TLS trust, and only once `prepare_human_login` knows the connection is
+    /// OIDC. Only tests substitute one that also trusts a TEST-ONLY CA.
+    pub http: Option<reqwest::Client>,
 }
 
 impl<'a> HumanLogin<'a> {
     /// A login the user started and is watching: the system browser opens.
     pub fn interactive(config: Option<&'a OidcProfileConfig>, login_id: Option<String>, open: BrowserOpener) -> Self {
-        Self { config, login_id, open, http: reqwest::Client::new() }
+        Self { config, login_id, open, http: None }
     }
 
     /// For callers no human is watching: no browser ever opens.
@@ -182,7 +183,8 @@ pub fn prepare_human_login<'s>(
     }
     let registration = register_login(sessions, login.login_id, session.clone())?;
     let allowed_hosts = login.config.map(|c| c.allowed_hosts.as_slice()).unwrap_or(&[]);
-    attach_human_callback(options, session, allowed_hosts, login.open, login.http);
+    let http = login.http.unwrap_or_else(reqwest::Client::new);
+    attach_human_callback(options, session, allowed_hosts, login.open, http);
     Ok(Some(registration))
 }
 
@@ -540,6 +542,15 @@ mod tests {
             crate::oidc::OidcPhase::Failed(OidcError::TokenRejected),
         ]);
         assert_eq!(report.ping_failure_key(), Some("auth.oidc.errors.tokenRejected"));
+    }
+
+    /// Every connect and test describes a login, SCRAM included, so building
+    /// the IdP client up front would be wasted work for all of them — and
+    /// `reqwest::Client::new` panics if the TLS backend fails to initialise.
+    #[test]
+    fn describing_a_login_builds_no_http_client() {
+        assert!(HumanLogin::unattended().http.is_none());
+        assert!(HumanLogin::interactive(None, Some("login-1".into()), no_browser_opener()).http.is_none());
     }
 
     // ---- openers ---------------------------------------------------------

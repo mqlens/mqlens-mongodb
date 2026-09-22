@@ -165,7 +165,7 @@ async fn a_connection_test_reports_the_real_login_as_its_authenticate_row() {
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: None, login_id: Some("test-ok".into()), open: opener, http };
+    let login = HumanLogin { config: None, login_id: Some("test-ok".into()), open: opener, http: Some(http) };
 
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
 
@@ -199,7 +199,7 @@ async fn cancelling_a_connection_test_reports_the_cancelled_login_not_a_ping_err
     let (opener, opened) = recording_opener();
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: None, login_id: Some("test-cancel".into()), open: opener, http };
+    let login = HumanLogin { config: None, login_id: Some("test-cancel".into()), open: opener, http: Some(http) };
 
     let (result, ()) = tokio::join!(
         run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit),
@@ -222,7 +222,7 @@ async fn connecting_runs_the_login_and_keeps_the_authenticated_client() {
     let http = idp_client(idp);
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
-    let login = HumanLogin { config: None, login_id: Some("connect-ok".into()), open: opener, http };
+    let login = HumanLogin { config: None, login_id: Some("connect-ok".into()), open: opener, http: Some(http) };
 
     let id = crate::connect_db_with_login(&state, &uri, None, login)
         .await
@@ -249,7 +249,7 @@ async fn a_connect_can_be_cancelled_by_its_login_id() {
     let http = idp_client(idp);
     let (opener, opened) = recording_opener();
     let state = AppState::new();
-    let login = HumanLogin { config: None, login_id: Some("connect-cancel".into()), open: opener, http };
+    let login = HumanLogin { config: None, login_id: Some("connect-cancel".into()), open: opener, http: Some(http) };
 
     let (result, ()) = tokio::join!(
         crate::connect_db_with_login(&state, &uri, None, login),
@@ -294,7 +294,7 @@ async fn a_slow_browser_login_outlasts_the_connection_tests_timeouts() {
     let http = idp_client(idp);
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: None, login_id: Some("test-slow".into()), open: slow_opener(http.clone()), http };
+    let login = HumanLogin { config: None, login_id: Some("test-slow".into()), open: slow_opener(http.clone()), http: Some(http) };
 
     let started = std::time::Instant::now();
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
@@ -313,7 +313,7 @@ async fn a_slow_browser_login_outlasts_the_connect_timeouts() {
     let _shared = FAILPOINT_LOCK.read().await;
     let http = idp_client(idp);
     let state = AppState::new();
-    let login = HumanLogin { config: None, login_id: Some("connect-slow".into()), open: slow_opener(http.clone()), http };
+    let login = HumanLogin { config: None, login_id: Some("connect-slow".into()), open: slow_opener(http.clone()), http: Some(http) };
 
     let started = std::time::Instant::now();
     let result = crate::connect_db_with_login(&state, &uri, None, login).await;
@@ -363,7 +363,7 @@ async fn a_connection_test_whose_ping_fails_after_the_login_reports_login_ok_pin
     let (opener, _opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
     let (log, emit) = phase_recorder();
-    let login = HumanLogin { config: None, login_id: Some("test-ping-fails".into()), open: opener, http };
+    let login = HumanLogin { config: None, login_id: Some("test-ping-fails".into()), open: opener, http: Some(http) };
 
     let result = run_connection_test_with_oidc(&state.oidc_sessions, &uri, None, login, &emit).await;
     disarm(&admin).await;
@@ -383,7 +383,7 @@ async fn a_connect_whose_ping_fails_after_the_login_reports_login_ok_ping_failed
     let http = idp_client(idp);
     let (opener, opened) = simulating_opener_with(http.clone());
     let state = AppState::new();
-    let login = HumanLogin { config: None, login_id: Some("connect-ping-fails".into()), open: opener, http };
+    let login = HumanLogin { config: None, login_id: Some("connect-ping-fails".into()), open: opener, http: Some(http) };
 
     let result = crate::connect_db_with_login(&state, &uri, None, login).await;
     disarm(&admin).await;
